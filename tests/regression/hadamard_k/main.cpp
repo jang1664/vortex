@@ -40,8 +40,8 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-// Frees only the per-case I/O + args buffers so the device connection and
-// kernel binary stay resident across the multiple test cases below.
+// Frees the per-case I/O + args buffers before closing the shared device and
+// kernel handles.
 static void free_case_buffers() {
   if (input_buffer) { vx_mem_free(input_buffer); input_buffer = nullptr; }
   if (output_buffer) { vx_mem_free(output_buffer); output_buffer = nullptr; }
@@ -115,7 +115,9 @@ static void initialize_random(std::vector<data_t>& vec) {
 }
 
 static void print_usage(const char* prog) {
-  printf("Usage: %s [-rows N] [-seed S] [-k kernel.vxbin]\n", prog);
+  printf("Usage: %s [-rows N] [-dim D] [-K BASE] "
+         "[-seed S] [-k kernel.vxbin]\n",
+         prog);
 }
 
 // Runs one FWHT self-test case for a given (dim, K) pair, matching
@@ -238,11 +240,17 @@ static bool run_case(const char* name, uint32_t rows, uint32_t dim, uint32_t K, 
 
 int main(int argc, char *argv[]) {
   uint32_t rows = 4;
+  uint32_t dim = 64;
+  uint32_t K = 1;
   uint32_t seed = 42;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-rows") == 0 && i + 1 < argc) {
       rows = static_cast<uint32_t>(atoi(argv[++i]));
+    } else if (strcmp(argv[i], "-dim") == 0 && i + 1 < argc) {
+      dim = static_cast<uint32_t>(atoi(argv[++i]));
+    } else if (strcmp(argv[i], "-K") == 0 && i + 1 < argc) {
+      K = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-seed") == 0 && i + 1 < argc) {
       seed = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
@@ -256,30 +264,23 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (rows == 0) {
-    fprintf(stderr, "Invalid shape: rows=%u\n", rows);
+  if (rows == 0 || dim == 0 || K == 0
+      || (K == 1 && !is_pow2(dim))
+      || (K > 1 && (dim % K != 0 || !is_pow2(dim / K)))) {
+    fprintf(stderr, "Invalid shape: rows=%u dim=%u K=%u\n", rows, dim, K);
     return -1;
   }
 
   printf("Hadamard-K Test Configuration:\n");
   printf("  Rows: %u\n", rows);
+  printf("  Dim:  %u\n", dim);
+  printf("  K:    %u\n", K);
   printf("  Seed: %u\n", seed);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
-  bool pass = true;
-
-  // Case (a): K == 1, dim a pure power of 2 -> full transform. Must match
-  // the original (non-early-stop) kernel's behavior exactly.
-  pass &= run_case("K1_pow2_full_transform", rows, /*dim=*/64, /*K=*/1, seed);
-
-  // Case (b): small analog of LLaMA-2-7B's n=11008,K=172 (11008/172=64 is a
-  // power of 2): dim=24, K=3, dim/K=8 is a power of 2. Validates the
-  // early-stop logic against the CPU butterfly stopped at K -- i.e. the
-  // pre-base-matmul intermediate -- without needing the real 172x172 (or a
-  // 3x3) base matrix.
-  pass &= run_case("K3_early_stop_pre_basematmul", rows, /*dim=*/24, /*K=*/3, seed);
+  const bool pass = run_case("requested", rows, dim, K, seed);
 
   printf("\n[Performance]\n");
   vx_dump_perf(device, stdout);
@@ -287,9 +288,9 @@ int main(int argc, char *argv[]) {
   cleanup();
 
   if (!pass) {
-    printf("\nHadamard-K self-test: OVERALL FAIL\n");
+    printf("\nHadamard-K requested case: FAIL\n");
     return -1;
   }
-  printf("\nHadamard-K self-test: OVERALL PASS\n");
+  printf("\nHadamard-K requested case: PASS\n");
   return 0;
 }

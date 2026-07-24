@@ -7,7 +7,7 @@
 
 using data_t = fp16_t;
 
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
+#if defined(RMS_NORM_USE_SHUFFLE_WARP) || defined(RMS_NORM_USE_ADAPTIVE_REDUCTION)
 static inline uint32_t float_to_bits(float value) {
   union { float f; uint32_t u; } v;
   v.f = value;
@@ -47,6 +47,28 @@ static inline float warp_rms(float sum_sq, uint32_t lane,
   return shfl_idx_float(rms, 0);
 }
 #endif
+
+static inline float reduce_rms(float sum_sq, uint32_t tid, uint32_t bdim,
+                               uint32_t K, float eps) {
+#ifdef RMS_NORM_USE_SHUFFLE_WARP
+  return warp_rms(sum_sq, tid, K, eps);
+#else
+#ifdef RMS_NORM_USE_ADAPTIVE_REDUCTION
+  if (bdim == NUM_THREADS)
+    return warp_rms(sum_sq, tid, K, eps);
+#endif
+  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
+  cache[tid] = sum_sq;
+  __syncthreads();
+  uint32_t r = bdim >> 1;
+  while (r != 0) {
+    if (tid < r) cache[tid] += cache[tid + r];
+    __syncthreads();
+    r >>= 1;
+  }
+  return 1.0f / sqrtf(cache[0] / (float)K + eps);
+#endif
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Two kernels, same binary:
@@ -89,20 +111,7 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
     float v = fp16_to_float(pInputRow[i]);
     sum_sq += v * v;
   }
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
-  const float rms = warp_rms(sum_sq, tid, K, eps);
-#else
-  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
-  cache[tid] = sum_sq;
-  __syncthreads();
-  int r = bdim / 2;
-  while (r != 0) {
-    if ((int)tid < r) cache[tid] += cache[tid + r];
-    __syncthreads();
-    r /= 2;
-  }
-  const float rms = 1.0f / sqrtf(cache[0] / (float)K + eps);
-#endif
+  const float rms = reduce_rms(sum_sq, tid, bdim, K, eps);
 
   // Phase 2: normalize + gamma, row-major write.
   for (uint32_t i = tid; i < K; i += bdim) {
@@ -158,20 +167,7 @@ void kernel_rms_norm_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     float v = fp16_to_float(pInputRow[i]);
     sum_sq += v * v;
   }
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
-  const float rms = warp_rms(sum_sq, tid, K, eps);
-#else
-  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
-  cache[tid] = sum_sq;
-  __syncthreads();
-  int r = bdim / 2;
-  while (r != 0) {
-    if ((int)tid < r) cache[tid] += cache[tid + r];
-    __syncthreads();
-    r /= 2;
-  }
-  const float rms = 1.0f / sqrtf(cache[0] / (float)K + eps);
-#endif
+  const float rms = reduce_rms(sum_sq, tid, bdim, K, eps);
 
   const uint32_t mt_idx = m >> log2_mt;
   const uint32_t m0 = m & mt_mask;

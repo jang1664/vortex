@@ -53,6 +53,71 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t out_N = (N + mxu_nt - 1u) & ~(mxu_nt - 1u);
   const uint32_t out_row_bytes = out_N >> 1;
 
+  if (arg->flat_source_transposed == 1u) {
+    // Llama K-cache fast path. The standalone source byte already contains
+    // the two adjacent logical-K nibbles required by WTRANS=1, so no unpack /
+    // repack is needed. A persistent flat grid also avoids hundreds of tiny
+    // 3-D blocks for long prefill sequences.
+    const uint32_t total_bytes = K * (N >> 1);
+    const uint32_t total_threads = gridDim.x * blockDim.x;
+    const uint32_t thread_id =
+        blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t log2_src_row_bytes = arg->log2_n - 1u;
+    const uint32_t src_pair_mask = (N >> 1) - 1u;
+    const uint32_t log2_nt_bytes = arg->log2_n + log2_mxu_nt - 1u;
+    const uint32_t log2_micro_bytes =
+        log2_mxu_nt + log2_mxu_kt - 1u;
+    const uint32_t k_pair_mask = (mxu_kt >> 1) - 1u;
+    const uint32_t n_in_mask = mxu_nt - 1u;
+
+    for (uint32_t i = thread_id; i < total_bytes; i += total_threads) {
+      const uint32_t logical_n = i >> log2_src_row_bytes;
+      const uint32_t source_pair = i & src_pair_mask;
+      const uint32_t nt = logical_n >> log2_mxu_nt;
+      const uint32_t kb = source_pair >> (log2_mxu_kt - 1u);
+      const uint32_t n_in_sub = logical_n & n_in_mask;
+      const uint32_t k_pair = source_pair & k_pair_mask;
+      const uint64_t dst_off =
+          ((uint64_t)nt << log2_nt_bytes)
+        + ((uint64_t)kb << log2_micro_bytes)
+        + ((uint64_t)n_in_sub << (log2_mxu_kt - 1u))
+        + k_pair;
+      dst[dst_off] = src[i];
+    }
+    return;
+  }
+
+  if (arg->flat_source_transposed == 2u) {
+    // Full prefill WTRANS=0 fast path. Flatten (k, nt) chunks onto a small
+    // persistent grid and copy the already packed 16-byte N tile directly.
+    const uint32_t log2_n_tiles = arg->log2_n - log2_mxu_nt;
+    const uint32_t total_chunks = K << log2_n_tiles;
+    const uint32_t total_threads = gridDim.x * blockDim.x;
+    const uint32_t thread_id =
+        blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t n_tile_mask = (1u << log2_n_tiles) - 1u;
+    const uint32_t log2_row_bytes = arg->log2_n - 1u;
+    for (uint32_t i = thread_id; i < total_chunks; i += total_threads) {
+      const uint32_t k = i >> log2_n_tiles;
+      const uint32_t nt = i & n_tile_mask;
+      const uint32_t kt = k >> log2_kt;
+      const uint32_t k_local = k & (kt_size - 1u);
+      const uint64_t src_off =
+          ((uint64_t)k << log2_row_bytes)
+        + ((uint64_t)nt << (log2_mxu_nt - 1u));
+      const uint64_t dst_off =
+          ((uint64_t)kt << (log2_kt + log2_row_bytes))
+        + ((uint64_t)nt << (log2_kt + log2_mxu_nt - 1u))
+        + ((uint64_t)k_local << (log2_mxu_nt - 1u));
+      const uint64_t* src64 =
+          reinterpret_cast<const uint64_t*>(src + src_off);
+      uint64_t* dst64 = reinterpret_cast<uint64_t*>(dst + dst_off);
+      dst64[0] = src64[0];
+      dst64[1] = src64[1];
+    }
+    return;
+  }
+
   if (SOURCE_TRANSPOSED != 0) {
     if (WTRANS == 0) return;
 

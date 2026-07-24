@@ -38,6 +38,46 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t log2_ng_per_mxu_nt = arg->log2_ng_per_mxu_nt;
   const uint32_t log2_qblk          = arg->log2_qblk;
 
+  if (arg->flat_mode == 1u) {
+    const uint32_t log2_slot_elems = 8u; // 512-byte aligned slot / fp16
+    const uint32_t slot_elems = 1u << log2_slot_elems;
+    const uint32_t total_elems =
+        arg->n_dma_tiles << log2_slot_elems;
+    const uint32_t total_threads = gridDim.x * blockDim.x;
+    const uint32_t thread_id =
+        blockIdx.x * blockDim.x + threadIdx.x;
+    for (uint32_t i = thread_id; i < total_elems; i += total_threads) {
+      const uint32_t slot = i >> log2_slot_elems;
+      const uint32_t elem = i & (slot_elems - 1u);
+      reinterpret_cast<uint16_t*>(dst)[i] =
+          elem < DEFAULT_DMA_NT
+              ? reinterpret_cast<const uint16_t*>(src)[
+                    slot * DEFAULT_DMA_NT + elem]
+              : 0;
+    }
+    return;
+  }
+
+  if (arg->flat_mode == 2u) {
+    const uint32_t log2_elems_per_kt =
+        log2_qblk - log2_mxu_nt + log2_kt;
+    const uint32_t elems_per_kt = 1u << log2_elems_per_kt;
+    const uint32_t total_elems =
+        arg->k_tiles << log2_elems_per_kt;
+    const uint32_t total_threads = gridDim.x * blockDim.x;
+    const uint32_t thread_id =
+        blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t k_mask = (1u << log2_kt) - 1u;
+    for (uint32_t i = thread_id; i < total_elems; i += total_threads) {
+      const uint32_t kt = i >> log2_elems_per_kt;
+      const uint32_t elem = i & (elems_per_kt - 1u);
+      const uint32_t source_row = (kt << log2_kt) + (elem & k_mask);
+      reinterpret_cast<uint16_t*>(dst)[i] =
+          reinterpret_cast<const uint16_t*>(src)[source_row];
+    }
+    return;
+  }
+
   const uint32_t kt_size = 1u << log2_kt;
   const uint32_t nt_size = 1u << log2_nt;
   const uint32_t mxu_nt = 1u << log2_mxu_nt;

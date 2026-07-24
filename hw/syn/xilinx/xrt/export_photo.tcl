@@ -41,16 +41,69 @@ proc require_category_roots {label patterns} {
     return $roots
 }
 
-proc highlight_category {label rgb roots} {
-    highlight_objects -rgb $rgb -leaf_cells $roots
-    puts [format "%-42s RGB={%s}" $label [join $rgb " "]]
+proc collect_leaf_cells {roots} {
+    set name_filters {}
+    foreach root $roots {
+        lappend name_filters "NAME =~ $root/*"
+    }
+    set filter_expression [format {IS_PRIMITIVE == 1 && (%s)} \
+        [join $name_filters { || }]]
+    return [lsort -unique [get_cells -quiet -hierarchical \
+        -filter $filter_expression]]
+}
+
+proc exclude_leaf_cells {all_cells excluded_cells} {
+    set excluded [dict create]
+    foreach cell $excluded_cells {
+        dict set excluded $cell 1
+    }
+
+    set result {}
+    foreach cell $all_cells {
+        if {![dict exists $excluded $cell]} {
+            lappend result $cell
+        }
+    }
+    return $result
+}
+
+proc highlight_category {label rgb cells} {
+    highlight_objects -rgb $rgb $cells
+    puts [format "%-42s cells=%d RGB={%s}" \
+        $label [llength $cells] [join $rgb " "]]
 }
 
 proc apply_floorplan_colors {category_specs roots_by_category overlay_order} {
+    # Keep the photo limited to highlighted leaf cells. Vivado can restore
+    # selected or marked objects from the GUI session; selected cells/nets can
+    # make the Device window draw gray bundled connectivity on top of the
+    # placement view.
+    unselect_objects -quiet
+    unmark_objects -quiet
+
     set highlighted [get_highlighted_objects -quiet]
     if {[llength $highlighted] != 0} {
         unhighlight_objects $highlighted
     }
+
+    # Resolve hierarchy roots to primitive cell objects before highlighting.
+    # Highlighting the complete vortex_axi hierarchy with -leaf_cells makes
+    # Vivado's zoomed-out Device view synthesize a gray Bundle Net glyph. Misc
+    # is instead the explicit set difference of vortex_axi leaf cells and all
+    # four named categories.
+    set cells_by_category [dict create]
+    set claimed_cells {}
+    foreach key $overlay_order {
+        if {$key eq "misc"} {
+            continue
+        }
+        set cells [collect_leaf_cells [dict get $roots_by_category $key]]
+        dict set cells_by_category $key $cells
+        set claimed_cells [concat $claimed_cells $cells]
+    }
+    set all_cells [collect_leaf_cells [dict get $roots_by_category misc]]
+    dict set cells_by_category misc \
+        [exclude_leaf_cells $all_cells [lsort -unique $claimed_cells]]
 
     puts "Applying Vortex_axi floorplan colors:"
     foreach key $overlay_order {
@@ -58,8 +111,11 @@ proc apply_floorplan_colors {category_specs roots_by_category overlay_order} {
         highlight_category \
             [dict get $spec label] \
             [dict get $spec rgb] \
-            [dict get $roots_by_category $key]
+            [dict get $cells_by_category $key]
     }
+
+    # Do not leave any transient selection that could enable net connectivity.
+    unselect_objects -quiet
 }
 
 proc parse_utilization_number {value context} {

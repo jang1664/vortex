@@ -9,6 +9,10 @@
 
 using data_t = fp16_t;
 
+#ifndef HEAD_CONCAT_VARIANT_TAG
+#define HEAD_CONCAT_VARIANT_TAG 0
+#endif
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -88,8 +92,16 @@ int main(int argc, char *argv[]) {
   init_input(h_input);
   build_reference(h_input, h_ref, batch, seq, heads, headdim);
 
-  printf("head_concat batch=%u seq=%u heads=%u headdim=%u\n",
-         batch, seq, heads, headdim);
+#if HEAD_CONCAT_VARIANT_TAG == 1
+  const char* variant = "chunk16_packed";
+  const uint32_t work_items =
+      batch * seq * heads * ((headdim + 15u) >> 4);
+#else
+  const char* variant = "baseline";
+  const uint32_t work_items = static_cast<uint32_t>(elems);
+#endif
+  printf("head_concat batch=%u seq=%u heads=%u headdim=%u variant=%s\n",
+         batch, seq, heads, headdim, variant);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -105,7 +117,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
   const uint32_t blocks = std::min(
-      (uint32_t)((elems + tpb - 1) / tpb),
+      (work_items + tpb - 1) / tpb,
       std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};

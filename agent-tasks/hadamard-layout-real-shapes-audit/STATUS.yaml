@@ -1,0 +1,68 @@
+task: hadamard-layout-real-shapes-audit
+status: completed
+created: "2026-07-22 22:59"
+updated: "2026-07-23 01:07"
+summary: >
+  Compare the real SpinQuant PyTorch graph shapes with gen_kernel_cfgs.py and
+  the hadamard_layout_fused latency benchmark, then determine whether large
+  batch or sequence shapes require a kernel or host-interface upgrade.
+logs:
+  - time: "2026-07-22 22:59"
+    entry: >
+      Started a read-only implementation audit. The immediate failure is the
+      latency benchmark host guard rejecting rows above the 128-row GEMM-A
+      tile, while the generated Llama2 suite passes full sequence lengths as
+      rows. Existing unrelated worktree changes will be preserved.
+  - time: "2026-07-22 23:03"
+    entry: >
+      Confirmed that the layer-accuracy PyTorch fused backend and
+      gen_kernel_cfgs.py agree on prefill and generation matrix grouping for
+      Llama2 and Llama3. The device kernel, GEMM-A offset helper, and PyTorch
+      custom-op wrapper support rows spanning multiple 128-row tiles; the
+      native operator test includes rows=160 and prior real-C4 full-layer
+      validation used sequence length 160. The latency benchmark alone adds
+      the invalid rows<=128 guard. It also recognizes only Llama2 base_k=172
+      and misses Llama3 dim=14336/base_k=28. The standalone generator test
+      suite passed 25/25; the PyTorch conformance test could not run with the
+      system Python because torch is not installed there.
+  - time: "2026-07-23 00:46"
+    entry: >
+      Resumed to implement the requested fix. The implementation will remove
+      the invalid 128-row host limit, align base_k selection with the PyTorch
+      SpinQuant contract, and add focused multi-tile and Llama3 coverage. All
+      validation will use the vortex conda environment.
+  - time: "2026-07-23 01:07"
+    entry: >
+      Removed the invalid rows<=128 checks from both host frontends and aligned
+      base_k selection with PyTorch get_hadK for base 172, base 28, and pure
+      power-of-two dimensions. Added unconditional regression cases for a
+      160-row multi-M-tile transform and Llama3-8B dim=14336/base_k=28. Both
+      host binaries and the device kernel compile with the C4 configuration.
+      In the vortex conda environment, 25 generator tests and the generator
+      conformance test pass. Simx smoke tests pass for m=160/k=128 and
+      m=1/k=14336. Real C4 blackbox correctness passes all five requested,
+      multi-tile, mixed-radix, Llama2, and Llama3 cases with zero errors. The
+      exact m=32768/n=1/k=11008 latency benchmark passed shape validation and
+      ran on C4 for more than six minutes; it was intentionally interrupted
+      because completing this performance measurement was outside the focused
+      correctness gate and would keep the FPGA occupied for much longer.
+pitfalls:
+  - >
+    The latency benchmark flags use m for rows per matrix and n for matrix
+    count; they are not necessarily conventional GEMM M and N.
+  - >
+    HADAMARD_TILE_DMA_MT=128 is an output layout tile size, not a maximum
+    logical row count. The shared GEMM-A offset helper explicitly advances
+    across mt_idx tiles.
+  - >
+    The general serving model and the layer-accuracy graph are different
+    scopes: the former documents and executes online R4 only, while the latter
+    is the explicit R3-plus-R4 contract used by the latency workload generator.
+  - >
+    Importing torch from the repository root in the vortex conda environment
+    fails backend autoload because the local torch_vortex package is not on the
+    import path. Run PyTorch checks from pytorch/ and insert spinquant/ for the
+    layer-accuracy package.
+  - >
+    A configured build may not yet contain libvortex-simx.so. Build
+    build/runtime/simx with the same CONFIGS before using run-simx-bench.

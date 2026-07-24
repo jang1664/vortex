@@ -7,6 +7,10 @@
 #include <cstring>
 #include <vector>
 
+#ifndef KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG
+#define KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG 0
+#endif
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -382,21 +386,24 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
 
 static int run_persistent_update_test(uint32_t capacity,
                                       uint32_t position,
-                                      uint32_t persistent_kind) {
-  constexpr uint32_t N = 128;
-  constexpr uint32_t QBLK = 128;
+                                      uint32_t persistent_kind,
+                                      bool emit_correction_qparams,
+                                      uint32_t N,
+                                      uint32_t QBLK,
+                                      uint32_t DMA_MT,
+                                      uint32_t DMA_KT,
+                                      uint32_t DMA_NT) {
   constexpr uint32_t QDIR = 1;
-  constexpr uint32_t DMA_MT = DEFAULT_DMA_MT;
-  constexpr uint32_t DMA_KT = DEFAULT_DMA_KT;
-  constexpr uint32_t DMA_NT = DEFAULT_DMA_NT;
   const uint32_t source_transposed = persistent_kind == 1 ? 1u : 0u;
   const uint32_t wtrans = source_transposed;
   const uint32_t gemm_qdir = persistent_kind == 1 ? 0u : 1u;
   const uint32_t quant_mode = persistent_kind == 1
       ? KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC
       : KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC;
-  if (capacity == 0 || position >= capacity) {
-    printf("ERROR: persistent position must be smaller than non-zero capacity\n");
+  if (N == 0 || (N & 1u) != 0 || !is_pow2_u32(QBLK) || QBLK < N
+      || capacity == 0 || position >= capacity) {
+    printf("ERROR: persistent update requires even non-zero N, power-of-two "
+           "QBLK>=N, and position < non-zero capacity\n");
     return 1;
   }
 
@@ -441,8 +448,8 @@ static int run_persistent_update_test(uint32_t capacity,
                        k, 0, reference_logical_scale[k], reference_logical_zero[k]);
   }
 
-  printf("persistent KV update kind=%s capacity=%u position=%u\n",
-         persistent_kind == 1 ? "K" : "V", capacity, position);
+  printf("persistent KV update kind=%s N=%u QBLK=%u capacity=%u position=%u\n",
+         persistent_kind == 1 ? "K" : "V", N, QBLK, capacity, position);
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, token.size() * sizeof(fp16_t),
@@ -450,19 +457,23 @@ static int run_persistent_update_test(uint32_t capacity,
   RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_READ_WRITE, &weight_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_READ_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_READ_WRITE, &zero_buffer));
-  RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
-                        VX_MEM_READ_WRITE, &logical_scale_buffer));
-  RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
-                        VX_MEM_READ_WRITE, &logical_zero_buffer));
+  if (emit_correction_qparams) {
+    RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
+                          VX_MEM_READ_WRITE, &logical_scale_buffer));
+    RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
+                          VX_MEM_READ_WRITE, &logical_zero_buffer));
+  }
   RT_CHECK(vx_copy_to_dev(src_buffer, token.data(), 0,
                           token.size() * sizeof(fp16_t)));
   RT_CHECK(vx_copy_to_dev(weight_buffer, initial_weight.data(), 0, weight_bytes));
   RT_CHECK(vx_copy_to_dev(scale_buffer, initial_scale.data(), 0, scale_bytes));
   RT_CHECK(vx_copy_to_dev(zero_buffer, initial_zero.data(), 0, scale_bytes));
-  RT_CHECK(vx_copy_to_dev(logical_scale_buffer, logical_scale.data(), 0,
-                          logical_count * sizeof(fp16_t)));
-  RT_CHECK(vx_copy_to_dev(logical_zero_buffer, logical_zero.data(), 0,
-                          logical_count * sizeof(fp16_t)));
+  if (emit_correction_qparams) {
+    RT_CHECK(vx_copy_to_dev(logical_scale_buffer, logical_scale.data(), 0,
+                            logical_count * sizeof(fp16_t)));
+    RT_CHECK(vx_copy_to_dev(logical_zero_buffer, logical_zero.data(), 0,
+                            logical_count * sizeof(fp16_t)));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -470,11 +481,15 @@ static int run_persistent_update_test(uint32_t capacity,
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t tpb = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+      ? (uint32_t)num_threads
+      : std::min(256u, (uint32_t)(num_warps * num_threads));
   const uint32_t work_items = std::max(N >> 1, gemm_qdir == 0 ? 1u : N >> 5);
-  const uint32_t blocks = std::min(
-      (work_items + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+  const uint32_t blocks = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+      ? 1u
+      : std::min(
+            (work_items + tpb - 1u) / tpb,
+            std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
   if (!init_kernel_arg(arg, capacity, N, QBLK, QDIR, wtrans, gemm_qdir,
@@ -493,18 +508,22 @@ static int run_persistent_update_test(uint32_t capacity,
   RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));
   RT_CHECK(vx_mem_address(scale_buffer, &arg.scale_addr));
   RT_CHECK(vx_mem_address(zero_buffer, &arg.zero_addr));
-  RT_CHECK(vx_mem_address(logical_scale_buffer, &arg.logical_scale_addr));
-  RT_CHECK(vx_mem_address(logical_zero_buffer, &arg.logical_zero_addr));
+  if (emit_correction_qparams) {
+    RT_CHECK(vx_mem_address(logical_scale_buffer, &arg.logical_scale_addr));
+    RT_CHECK(vx_mem_address(logical_zero_buffer, &arg.logical_zero_addr));
+  }
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
   RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
   RT_CHECK(vx_copy_from_dev(weight.data(), weight_buffer, 0, weight_bytes));
   RT_CHECK(vx_copy_from_dev(scale.data(), scale_buffer, 0, scale_bytes));
   RT_CHECK(vx_copy_from_dev(zero.data(), zero_buffer, 0, scale_bytes));
-  RT_CHECK(vx_copy_from_dev(logical_scale.data(), logical_scale_buffer, 0,
-                            logical_count * sizeof(fp16_t)));
-  RT_CHECK(vx_copy_from_dev(logical_zero.data(), logical_zero_buffer, 0,
-                            logical_count * sizeof(fp16_t)));
+  if (emit_correction_qparams) {
+    RT_CHECK(vx_copy_from_dev(logical_scale.data(), logical_scale_buffer, 0,
+                              logical_count * sizeof(fp16_t)));
+    RT_CHECK(vx_copy_from_dev(logical_zero.data(), logical_zero_buffer, 0,
+                              logical_count * sizeof(fp16_t)));
+  }
 
   size_t errors = 0;
   auto check_bytes = [&errors](const char* name,
@@ -523,13 +542,15 @@ static int run_persistent_update_test(uint32_t capacity,
   check_bytes("Weight", weight, reference_weight);
   check_bytes("Scale", scale, reference_scale);
   check_bytes("Zero", zero, reference_zero);
-  for (size_t i = 0; i < logical_count; ++i) {
-    if (logical_scale[i] != reference_logical_scale[i]
-        || logical_zero[i] != reference_logical_zero[i]) {
-      if (errors < 8) {
-        printf("Logical qparam mismatch at %zu\n", i);
+  if (emit_correction_qparams) {
+    for (size_t i = 0; i < logical_count; ++i) {
+      if (logical_scale[i] != reference_logical_scale[i]
+          || logical_zero[i] != reference_logical_zero[i]) {
+        if (errors < 8) {
+          printf("Logical qparam mismatch at %zu\n", i);
+        }
+        ++errors;
       }
-      ++errors;
     }
   }
   vx_dump_perf(device, stdout);
@@ -558,6 +579,7 @@ int main(int argc, char *argv[]) {
   uint32_t head_col_offset = 0;
   bool emit_correction_qparams = false;
   bool gemm_qdir_set = false;
+  bool append_update = false;
   uint32_t persistent_kind = 0;
   uint32_t cache_capacity = 0;
   uint32_t cache_position = 0;
@@ -594,8 +616,28 @@ int main(int argc, char *argv[]) {
       const char* kind = argv[++i];
       persistent_kind = strcmp(kind, "k") == 0 ? 1u : strcmp(kind, "v") == 0 ? 2u : 0u;
     }
+    else if (strcmp(argv[i], "--cache-update") == 0) {
+      const char* mode = argv[++i];
+      if (strcmp(mode, "full") == 0) append_update = false;
+      else if (strcmp(mode, "append") == 0) append_update = true;
+      else {
+        printf("ERROR: --cache-update must be full or append\n");
+        return 1;
+      }
+    }
+    else if (strncmp(argv[i], "--cache-update=", 15) == 0) {
+      const char* mode = argv[i] + 15;
+      if (strcmp(mode, "full") == 0) append_update = false;
+      else if (strcmp(mode, "append") == 0) append_update = true;
+      else {
+        printf("ERROR: --cache-update must be full or append\n");
+        return 1;
+      }
+    }
     else if (strcmp(argv[i], "--cache-capacity") == 0) cache_capacity = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--cache-capacity=", 17) == 0) cache_capacity = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--cache-position") == 0) cache_position = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--cache-position=", 17) == 0) cache_position = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--layout-from") == 0) src_layout = parse_src_layout(argv[++i]);
     else if (strncmp(argv[i], "--layout-from=", 14) == 0) src_layout = parse_src_layout(argv[i] + 14);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -605,15 +647,51 @@ int main(int argc, char *argv[]) {
              "[--layout-from row_major_fp16|gemm_c_tiled] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
              "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams] "
+             "[--cache-update full|append] "
              "[--persistent-kind k|v --cache-capacity N --cache-position N]\n", argv[0]);
       return 0;
     }
   }
+  if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (persistent_kind != 0) {
     return run_persistent_update_test(cache_capacity, cache_position,
-                                      persistent_kind);
+                                      persistent_kind, true, 128, 128,
+                                      DEFAULT_DMA_MT, DEFAULT_DMA_KT,
+                                      DEFAULT_DMA_NT);
   }
-  if (!gemm_qdir_set) GEMM_QDIR = QDIR;
+  if (append_update) {
+    if (K != 1 || QDIR != 1 || QBLK < N
+        || cache_capacity == 0 || cache_position >= cache_capacity) {
+      printf("ERROR: append correctness mode requires K=1, QDIR=1, "
+             "one source quant group (QBLK>=N), and "
+             "cache-position < cache-capacity\n");
+      return 1;
+    }
+    if (!is_pow2_u32(DMA_MT) || !is_pow2_u32(DMA_KT)
+        || !is_pow2_u32(DMA_NT)
+        || (DMA_KT & (TILE_DMA_MXU_KT - 1u)) != 0
+        || (DMA_NT & (TILE_DMA_MXU_NT - 1u)) != 0
+        || (GEMM_QDIR == 0 && DMA_KT < QBLK)) {
+      printf("ERROR: append MT/KT/NT must be valid power-of-two tiles, "
+             "and GEMM_QDIR=0 requires KT>=QBLK\n");
+      return 1;
+    }
+    if (SOURCE_TRANSPOSED != 0 && WTRANS == 1 && GEMM_QDIR == 0
+        && quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+      persistent_kind = 1;
+    } else if (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && GEMM_QDIR == 1
+               && quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+      persistent_kind = 2;
+    } else {
+      printf("ERROR: append correctness mode supports the decode KV-K "
+             "and KV-V configurations\n");
+      return 1;
+    }
+    return run_persistent_update_test(cache_capacity, cache_position,
+                                      persistent_kind,
+                                      emit_correction_qparams, N, QBLK,
+                                      DMA_MT, DMA_KT, DMA_NT);
+  }
   if (source_total_n == 0) source_total_n = N;
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                                SOURCE_TRANSPOSED, quant_mode,

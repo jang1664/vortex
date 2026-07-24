@@ -130,6 +130,9 @@ int main(int argc, char *argv[]) {
   while ((tpb << 1) <= threads_per_block) tpb <<= 1;
 #if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
   tpb = (uint32_t)num_threads;
+#elif RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 2
+  if (M >= num_warps)
+    tpb = (uint32_t)num_threads;
 #endif
 
   kernel_arg_t kernel_arg = {};

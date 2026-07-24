@@ -737,6 +737,7 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
         DEFAULT_LLM_GEN_KV,
         DEFAULT_LLM_PREFILL_SEQ,
         DEFAULT_LLM_QBLK,
+        DEFAULT_HADAMARD_VARIANT,
         DEFAULT_WORKLOAD_VARIANT,
         LLM_STAGES,
         build_llm_kernels,
@@ -755,6 +756,10 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
         qblk=int(raw.get("qblk", DEFAULT_LLM_QBLK)),
         variant=str(raw.get("variant", DEFAULT_WORKLOAD_VARIANT)),
         max_seq_len=(None if max_seq_len_raw is None else int(max_seq_len_raw)),
+        hadamard_variant=str(raw.get(
+            "hadamard_variant",
+            raw.get("hadamard-variant", DEFAULT_HADAMARD_VARIANT),
+        )),
     )
 
     implemented_only = bool(raw.get("implemented_only", True))

@@ -45,10 +45,28 @@ static uint32_t log2_u32(uint32_t value) {
   return result;
 }
 
+static bool is_power_of_two(uint32_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
+static uint32_t next_power_of_two(uint32_t value) {
+  if (value <= 1)
+    return 1;
+  --value;
+  value |= value >> 1;
+  value |= value >> 2;
+  value |= value >> 4;
+  value |= value >> 8;
+  value |= value >> 16;
+  return value + 1;
+}
+
 static uint32_t spinquant_base_k(uint32_t dim) {
-  if (dim == 11008)
+  if (dim % 172 == 0 && is_power_of_two(dim / 172))
     return 172;
-  return (dim != 0 && (dim & (dim - 1)) == 0) ? 1 : 0;
+  if (dim % 28 == 0 && is_power_of_two(dim / 28))
+    return 28;
+  return is_power_of_two(dim) ? 1 : 0;
 }
 
 static void initialize_values(std::vector<data_t>& values, float scale) {
@@ -66,6 +84,9 @@ int main(int argc, char** argv) {
   uint32_t rows = 2;
   uint32_t matrix_count = 32;
   uint32_t dim = 128;
+  bool factorized = true;
+  uint32_t input_layout = HADAMARD_INPUT_ROW_MAJOR;
+  bool padded_row_launch = false;
   for (int index = 1; index < argc; ++index) {
     if (std::strcmp(argv[index], "-m") == 0 && index + 1 < argc)
       rows = static_cast<uint32_t>(std::strtoul(argv[++index], nullptr, 10));
@@ -73,11 +94,51 @@ int main(int argc, char** argv) {
       matrix_count = static_cast<uint32_t>(std::strtoul(argv[++index], nullptr, 10));
     else if (std::strcmp(argv[index], "-k") == 0 && index + 1 < argc)
       dim = static_cast<uint32_t>(std::strtoul(argv[++index], nullptr, 10));
+    else if (std::strcmp(argv[index], "--hadamard-variant") == 0
+             && index + 1 < argc) {
+      const char* value = argv[++index];
+      if (std::strcmp(value, "zero_padding") == 0)
+        factorized = false;
+      else if (std::strcmp(value, "factorized") == 0)
+        factorized = true;
+      else {
+        std::fprintf(stderr, "Unsupported Hadamard variant: %s\n", value);
+        return -1;
+      }
+    }
+    else if (std::strcmp(argv[index], "--layout-from") == 0
+             && index + 1 < argc) {
+      const char* value = argv[++index];
+      if (std::strcmp(value, "row_major_fp16") == 0
+          || std::strcmp(value, "head_major_row_fp16") == 0)
+        input_layout = HADAMARD_INPUT_ROW_MAJOR;
+      else if (std::strcmp(value, "gemm_a_tiled") == 0)
+        input_layout = HADAMARD_INPUT_GEMM_A_TILED;
+      else {
+        std::fprintf(stderr, "Unsupported input layout: %s\n", value);
+        return -1;
+      }
+    }
+    else if (std::strcmp(argv[index], "--launch-rows") == 0
+             && index + 1 < argc) {
+      const char* value = argv[++index];
+      if (std::strcmp(value, "real") == 0)
+        padded_row_launch = false;
+      else if (std::strcmp(value, "padded") == 0)
+        padded_row_launch = true;
+      else {
+        std::fprintf(stderr, "Unsupported row launch mode: %s\n", value);
+        return -1;
+      }
+    }
     else if (std::strcmp(argv[index], "-h") == 0 ||
              std::strcmp(argv[index], "--help") == 0) {
       std::printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
                   "[--output=PATH] [--output-append] "
-                  "[--power-measure-latency[=on|off]] [-m rows] [-n matrices] [-k dim]\n",
+                  "[--power-measure-latency[=on|off]] [-m rows] [-n matrices] [-k dim] "
+                  "[--hadamard-variant zero_padding|factorized] "
+                  "[--layout-from row_major_fp16|head_major_row_fp16|gemm_a_tiled] "
+                  "[--launch-rows real|padded]\n",
                   argv[0]);
       return 0;
     } else {
@@ -87,23 +148,49 @@ int main(int argc, char** argv) {
   }
 
   const uint32_t base_k = spinquant_base_k(dim);
-  if (rows == 0 || rows > HADAMARD_TILE_DMA_MT || matrix_count == 0 ||
-      base_k == 0 || dim % HADAMARD_TILE_MXU_KT != 0) {
+  if (rows == 0 || matrix_count == 0 || base_k == 0 ||
+      dim % HADAMARD_TILE_MXU_KT != 0) {
     std::fprintf(stderr, "Unsupported shape: m=%u n=%u k=%u\n",
                  rows, matrix_count, dim);
     return -1;
   }
 
   const uint32_t m_pad = (rows + 7u) & ~7u;
-  const uint64_t input_elems = static_cast<uint64_t>(matrix_count) * rows * dim;
+  const uint32_t scratch_dim = factorized ? dim : next_power_of_two(dim);
+  const uint64_t logical_input_elems =
+      static_cast<uint64_t>(matrix_count) * rows * dim;
   const uint64_t output_elems = static_cast<uint64_t>(matrix_count) * m_pad * dim;
+  const uint64_t input_elems =
+      input_layout == HADAMARD_INPUT_GEMM_A_TILED
+          ? output_elems : logical_input_elems;
   const uint64_t input_bytes = input_elems * sizeof(data_t);
   const uint64_t matrix_bytes = static_cast<uint64_t>(base_k) * base_k * sizeof(data_t);
   const uint64_t output_bytes = output_elems * sizeof(data_t);
 
-  std::vector<data_t> input(input_elems);
+  std::vector<data_t> logical_input(logical_input_elems);
+  std::vector<data_t> input(input_elems, 0);
   std::vector<data_t> matrix(static_cast<size_t>(base_k) * base_k);
-  initialize_values(input, 1.0f);
+  initialize_values(logical_input, 1.0f);
+  if (input_layout == HADAMARD_INPUT_GEMM_A_TILED) {
+    for (uint32_t matrix_idx = 0; matrix_idx < matrix_count; ++matrix_idx) {
+      const uint64_t logical_base =
+          (uint64_t)matrix_idx * rows * dim;
+      const uint64_t tiled_base =
+          (uint64_t)matrix_idx * m_pad * dim;
+      for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t column = 0; column < dim; ++column) {
+          const uint64_t offset = tiled_base + gemm_a_tiled_elem_offset(
+              row, column, m_pad, dim,
+              log2_u32(HADAMARD_TILE_DMA_MT),
+              log2_u32(HADAMARD_TILE_MXU_KT));
+          input[offset] = logical_input[
+              logical_base + (uint64_t)row * dim + column];
+        }
+      }
+    }
+  } else {
+    input = logical_input;
+  }
   for (uint32_t row = 0; row < base_k; ++row) {
     for (uint32_t column = 0; column < base_k; ++column) {
       const float value = row == column ? 1.0f
@@ -118,11 +205,27 @@ int main(int argc, char** argv) {
 
   RT_CHECK(vx_dev_open(&device));
   uint64_t num_threads = 0;
+  uint64_t num_warps = 1;
   uint32_t max_local_mem = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  RT_CHECK(vx_check_occupancy(device, static_cast<uint32_t>(num_threads),
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG >= 1
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
+#endif
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
+  const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
+  const uint32_t factor_width = factorized ? dim / base_k : scratch_dim;
+  const bool use_multiwarp =
+      static_cast<uint64_t>(matrix_count) * launched_rows < num_warps
+      && (!factorized || factor_width > num_threads);
+  const uint32_t launch_threads = static_cast<uint32_t>(
+      num_threads * (use_multiwarp ? num_warps : 1u));
+#else
+  const uint32_t launch_threads =
+      static_cast<uint32_t>(num_threads * num_warps);
+#endif
+  RT_CHECK(vx_check_occupancy(device, launch_threads,
                               &max_local_mem));
-  if (static_cast<uint64_t>(dim) * sizeof(float) > max_local_mem) {
+  if (static_cast<uint64_t>(scratch_dim) * sizeof(float) > max_local_mem) {
     std::fprintf(stderr, "Hadamard scratch does not fit in local memory\n");
     cleanup();
     return -1;
@@ -137,8 +240,9 @@ int main(int argc, char** argv) {
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;
-  arg.grid_dim[0] = matrix_count * m_pad;
-  arg.block_dim[0] = static_cast<uint32_t>(num_threads);
+  arg.grid_dim[0] =
+      matrix_count * (padded_row_launch ? m_pad : rows);
+  arg.block_dim[0] = launch_threads;
   RT_CHECK(vx_mem_address(input_buffer, &arg.input_addr));
   RT_CHECK(vx_mem_address(matrix_buffer, &arg.matrix_addr));
   RT_CHECK(vx_mem_address(output_buffer, &arg.output_addr));
@@ -146,8 +250,10 @@ int main(int argc, char** argv) {
   arg.rows = rows;
   arg.m_pad = m_pad;
   arg.dim = dim;
-  arg.base_k = base_k;
-  arg.width = dim / base_k;
+  arg.base_k = factorized ? base_k : 0;
+  arg.width = factorized ? dim / base_k : scratch_dim;
+  arg.input_layout = input_layout;
+  arg.padded_row_launch = padded_row_launch ? 1u : 0u;
   arg.inv_sqrt_dim = 1.0f / std::sqrt(static_cast<float>(dim));
   arg.log2_mt = log2_u32(HADAMARD_TILE_DMA_MT);
   arg.log2_mxu_kt = log2_u32(HADAMARD_TILE_MXU_KT);

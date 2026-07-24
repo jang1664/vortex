@@ -95,7 +95,9 @@ int main(int argc, char *argv[]) {
   }
 
   const uint32_t M_pad = (M + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-#if ELMUL_LAYOUT_FUSED_VARIANT_TAG == 1
+#if ELMUL_LAYOUT_FUSED_VARIANT_TAG == 2
+  const char* variant = "linear_skip_pad_rows";
+#elif ELMUL_LAYOUT_FUSED_VARIANT_TAG == 1
   const char* variant = "linear_same_layout";
 #else
   const char* variant = "baseline";

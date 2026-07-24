@@ -28,6 +28,12 @@ static inline float silu(float x) {
   return x / (1.0f + vx_expf(-x));
 }
 
+#ifdef SILU_LINEAR_SKIP_PAD_ROWS
+static inline bool is_power_of_two(uint32_t value) {
+  return value != 0u && (value & (value - 1u)) == 0u;
+}
+#endif
+
 void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   auto pInput  = reinterpret_cast<data_t *>(arg->input_addr);
   auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
@@ -73,6 +79,28 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
 
 #ifdef SILU_USE_LINEAR_TILED
   if (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) {
+#ifdef SILU_LINEAR_SKIP_PAD_ROWS
+    if (M_real != M_pad && M_real < mt && is_power_of_two(M_real)) {
+      // Generation uses M=1/2/4 with M_pad=8. Compact useful elements in a
+      // 32-column slot occupy [M_real][32]; insert each [M_pad][32] tile gap
+      // with shifts while avoiding all padded-row SiLU evaluations.
+      const uint32_t log2_m = __builtin_ctz(M_real);
+      const uint32_t log2_compact_group = log2_m + log2_mxu_nt;
+      const uint32_t log2_padded_group =
+          __builtin_ctz(M_pad) + log2_mxu_nt;
+      const uint32_t compact_group_mask =
+          (1u << log2_compact_group) - 1u;
+      const uint32_t total = M_real * K;
+      for (uint32_t i = thread_id; i < total; i += total_threads) {
+        const uint32_t physical_i =
+            ((i >> log2_compact_group) << log2_padded_group)
+          + (i & compact_group_mask);
+        pOutput[physical_i] =
+            float_to_fp16(silu(fp16_to_float(pInput[physical_i])));
+      }
+      return;
+    }
+#endif
     // Input and output use the same GEMM-C slot order. Pad rows contain zero
     // and may be processed safely, avoiding all row/tile address decoding.
     const uint32_t total = M_pad * K;

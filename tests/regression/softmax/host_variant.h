@@ -12,6 +12,7 @@
 #define SOFTMAX_VARIANT_DMA_ROW 4
 #define SOFTMAX_VARIANT_DMA_SERIAL 5
 #define SOFTMAX_VARIANT_REV2 6
+#define SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED 7
 
 #ifndef SOFTMAX_VARIANT
 #define SOFTMAX_VARIANT SOFTMAX_VARIANT_REV1
@@ -22,13 +23,16 @@
     SOFTMAX_VARIANT != SOFTMAX_VARIANT_OPT_ALIGN && \
     SOFTMAX_VARIANT != SOFTMAX_VARIANT_DMA_ROW && \
     SOFTMAX_VARIANT != SOFTMAX_VARIANT_DMA_SERIAL && \
-    SOFTMAX_VARIANT != SOFTMAX_VARIANT_REV2
+    SOFTMAX_VARIANT != SOFTMAX_VARIANT_REV2 && \
+    SOFTMAX_VARIANT != SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
 #error "Unsupported SOFTMAX_VARIANT value"
 #endif
 
 static inline const char* softmax_variant_name() {
 #if SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
   return "dma_serial";
+#elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
+  return "rev2_shuffle_grouped";
 #elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
   return "rev2";
 #elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW
@@ -47,7 +51,8 @@ static inline uint32_t softmax_output_mem_flags() {
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   return VX_MEM_WRITE;
 #else
   return VX_MEM_READ | VX_MEM_WRITE;
@@ -62,7 +67,8 @@ static inline bool softmax_uses_pitched_hbm() {
 #if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   return true;
 #else
   return false;
@@ -71,7 +77,8 @@ static inline bool softmax_uses_pitched_hbm() {
 
 static inline uint32_t softmax_row_pitch_bytes(uint32_t seq_len_k, uint32_t elem_bytes) {
   uint32_t row_bytes = seq_len_k * elem_bytes;
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   return softmax_align_up_u32(row_bytes, 64u);
 #else
   return softmax_uses_pitched_hbm() ? softmax_align_up_u32(row_bytes, 256u) : row_bytes;
@@ -83,7 +90,8 @@ static inline uint32_t softmax_effective_row_pitch_bytes(
     uint32_t requested_stride,
     uint32_t elem_bytes,
     bool explicit_stride) {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   (void)seq_len_k;
   (void)explicit_stride;
   return softmax_row_pitch_bytes(requested_stride, elem_bytes);
@@ -95,7 +103,8 @@ static inline uint32_t softmax_effective_row_pitch_bytes(
 }
 
 static inline uint32_t softmax_hbm_alloc_alignment() {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   return 64u;
 #else
   return softmax_uses_pitched_hbm() ? 512u : 64u;
@@ -106,7 +115,8 @@ static inline uint32_t softmax_threads_per_block(
     uint64_t num_warps,
     uint64_t num_threads) {
 #if SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   (void)num_warps;
   return static_cast<uint32_t>(num_threads);
 #else
@@ -149,7 +159,8 @@ static inline void softmax_print_variant_launch(
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
     SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2 || \
+    SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
   printf("Rows: %u total, %u rows/block, ~%u row tiles/block\n",
          total_rows, rows_per_block, (row_tiles + grid_x - 1) / grid_x);
 #else

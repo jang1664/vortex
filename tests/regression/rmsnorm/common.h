@@ -8,6 +8,30 @@
 // Kernel IDs
 #define KERNEL_RMSNORM  0
 
+#ifndef RMSNORM_VARIANT_TAG
+#define RMSNORM_VARIANT_TAG 0
+#endif
+
+static inline uint32_t rmsnorm_threads_per_block(
+    uint32_t total_tokens,
+    uint32_t num_warps,
+    uint32_t num_threads) {
+  uint32_t max_threads = num_warps * num_threads;
+  if (max_threads > 256u)
+    max_threads = 256u;
+
+  uint32_t reduction_threads = 1u;
+  while ((reduction_threads << 1) <= max_threads)
+    reduction_threads <<= 1;
+
+#if RMSNORM_VARIANT_TAG == 1
+  return (total_tokens < num_warps) ? reduction_threads : num_threads;
+#else
+  (void)total_tokens;
+  return reduction_threads;
+#endif
+}
+
 // Kernel arguments structure
 typedef struct {
   uint32_t kernel_id;

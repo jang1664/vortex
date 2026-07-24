@@ -126,6 +126,11 @@ int main(int argc, char *argv[]) {
   printf("  Seq Length:   %d\n", seq_len);
   printf("  Hidden Dim:   %d\n", hidden_dim);
   printf("  Epsilon:      %e\n", eps);
+#if RMSNORM_VARIANT_TAG == 1
+  printf("  Variant:      adaptive_m_rows\n");
+#else
+  printf("  Variant:      baseline\n");
+#endif
   
   uint32_t total_tokens = batch_size * seq_len;
   uint32_t input_size = total_tokens * hidden_dim;
@@ -178,7 +183,9 @@ int main(int argc, char *argv[]) {
   // Grid/Block configuration
   // Each block processes one token
   // Use multiple threads per block for shared memory reduction
-  uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t threads_per_block =
+      rmsnorm_threads_per_block(total_tokens, (uint32_t)num_warps,
+                                (uint32_t)num_threads);
   kernel_arg.grid_dim[0] = total_tokens;  // One block per token
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;

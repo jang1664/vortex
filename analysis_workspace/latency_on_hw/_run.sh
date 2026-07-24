@@ -28,4 +28,22 @@ elif [[ "$model" == "llama3" ]]; then
       --no-power-auto-duration \
       --retry \
       | tee -i logs/main_llama3.log
+elif [[ "$model" == "llama3p2_1b" ]]; then
+  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama3p2_1b \
+  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
+      --input generated_suites/llama3p2_1b_main \
+      --output outputs_llama3p2_1b_main \
+      --power-kernel-iterations=auto \
+      --no-power-auto-duration \
+      --retry \
+      | tee -i logs/main_llama3p2_1b.log
+elif [[ "$model" == "llama3p2_3b" ]]; then
+  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama3p2_3b \
+  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
+      --input generated_suites/llama3p2_3b_main \
+      --output outputs_llama3p2_3b_main \
+      --power-kernel-iterations=auto \
+      --no-power-auto-duration \
+      --retry \
+      | tee -i logs/main_llama3p2_3b.log
 fi

@@ -96,7 +96,9 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   uint32_t M_pad = (M + 7u) & ~7u;
-#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
+#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 2
+  const char* variant = "adaptive_m_rows";
+#elif RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
   const char* variant = "shuffle_warp";
 #else
   const char* variant = "baseline";
@@ -191,6 +193,9 @@ int main(int argc, char** argv) {
   while ((tpb << 1) <= threads_per_block) tpb <<= 1;
 #if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
   const uint32_t rms_tpb = (uint32_t)num_threads_dev;
+#elif RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 2
+  const uint32_t rms_tpb =
+      (M < num_warps_dev) ? tpb : (uint32_t)num_threads_dev;
 #else
   const uint32_t rms_tpb = tpb;
 #endif

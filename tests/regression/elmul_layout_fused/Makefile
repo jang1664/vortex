@@ -7,14 +7,17 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 
 SRCS := $(SRC_DIR)/main.cpp
 
-ELMUL_LAYOUT_FUSED_VARIANT ?= linear_same_layout
-ELMUL_LAYOUT_FUSED_VARIANTS := baseline linear_same_layout
+ELMUL_LAYOUT_FUSED_VARIANT ?= linear_skip_pad_rows
+ELMUL_LAYOUT_FUSED_VARIANTS := baseline linear_same_layout linear_skip_pad_rows
 ifneq ($(filter $(ELMUL_LAYOUT_FUSED_VARIANT),$(ELMUL_LAYOUT_FUSED_VARIANTS)),$(ELMUL_LAYOUT_FUSED_VARIANT))
   $(error Unsupported ELMUL_LAYOUT_FUSED_VARIANT=$(ELMUL_LAYOUT_FUSED_VARIANT); expected one of: $(ELMUL_LAYOUT_FUSED_VARIANTS))
 endif
 
 VX_SRCS := $(SRC_DIR)/kernel.$(ELMUL_LAYOUT_FUSED_VARIANT).cpp
-ifeq ($(ELMUL_LAYOUT_FUSED_VARIANT),linear_same_layout)
+ifeq ($(ELMUL_LAYOUT_FUSED_VARIANT),linear_skip_pad_rows)
+  CXXFLAGS += -DELMUL_LAYOUT_FUSED_VARIANT_TAG=2
+  VX_CFLAGS += -DELMUL_LAYOUT_FUSED_VARIANT_TAG=2
+else ifeq ($(ELMUL_LAYOUT_FUSED_VARIANT),linear_same_layout)
   CXXFLAGS += -DELMUL_LAYOUT_FUSED_VARIANT_TAG=1
   VX_CFLAGS += -DELMUL_LAYOUT_FUSED_VARIANT_TAG=1
 else

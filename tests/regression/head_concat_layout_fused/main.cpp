@@ -181,7 +181,9 @@ int main(int argc, char *argv[]) {
 
   printf("head_concat_layout_fused batch=%u seq=%u heads=%u headdim=%u q_per_kv=%u\n",
          batch, seq, heads, headdim, query_heads_per_kv);
-#if HEAD_CONCAT_LAYOUT_FUSED_VARIANT_TAG == 1
+#if HEAD_CONCAT_LAYOUT_FUSED_VARIANT_TAG == 2
+  printf("variant=subwarp_chunk16\n");
+#elif HEAD_CONCAT_LAYOUT_FUSED_VARIANT_TAG == 1
   printf("variant=chunk16_packed\n");
 #else
   printf("variant=baseline\n");
