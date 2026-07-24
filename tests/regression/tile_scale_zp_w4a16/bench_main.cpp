@@ -3,6 +3,7 @@
 #include <vortex.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -228,24 +229,44 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_alloc(device, total_bytes, VX_MEM_WRITE, &dst_buf));
   RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_elems * sizeof(uint16_t)));
 
+  uint64_t num_cores = 0;
+  uint64_t num_warps = 0;
   uint64_t num_threads = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   if (num_threads == 0) {
     printf("ERROR: VX_CAPS_NUM_THREADS returned 0\n");
     cleanup();
     return 1;
   }
-  const uint32_t tpb = uint32_t(num_threads);
+  const uint32_t flat_mode =
+      SOURCE_TRANSPOSED != 0 && QDIR == 1 && GEMM_QDIR == 0
+          && QBLK == N && N == DMA_KT
+          && (K & (DMA_NT - 1u)) == 0
+      ? 1u
+      : (SOURCE_TRANSPOSED == 0 && QDIR == 1 && GEMM_QDIR == 1
+             && QBLK == N && is_pow2(N)
+             && (N & (TILE_DMA_MXU_NT - 1u)) == 0
+             && (K & (DMA_KT - 1u)) == 0
+         ? 2u : 0u);
+  const uint32_t tpb = flat_mode != 0
+      ? std::min(256u, uint32_t(num_warps * num_threads))
+      : uint32_t(num_threads);
   const uint32_t out_k = output_K();
   const uint32_t k_tiles = ceil_div_pow2(out_k, DMA_KT);
   const uint32_t ng_per_mxu_nt = ceil_div_pow2(TILE_DMA_MXU_NT, QBLK);
   const uint32_t slot_elems = max_slot_bytes / TILE_ELEM_BYTES;
-  const uint32_t blocks_x = (slot_elems + tpb - 1) / tpb;
+  const uint32_t blocks_x = flat_mode != 0
+      ? std::min(
+            ((total_bytes / TILE_ELEM_BYTES) + tpb - 1u) / tpb,
+            std::max(1u, uint32_t(num_cores) * 4u))
+      : (slot_elems + tpb - 1) / tpb;
 
   kernel_arg_t karg = {};
   karg.grid_dim[0] = blocks_x;
-  karg.grid_dim[1] = nt_dma_count;
-  karg.grid_dim[2] = k_tiles;
+  karg.grid_dim[1] = flat_mode != 0 ? 1u : nt_dma_count;
+  karg.grid_dim[2] = flat_mode != 0 ? 1u : k_tiles;
   karg.block_dim[0] = tpb;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
@@ -269,6 +290,7 @@ int main(int argc, char** argv) {
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
   karg.log2_ng_per_mxu_nt = (GEMM_QDIR == 1) ? log2_u32(ng_per_mxu_nt) : 0;
   karg.log2_qblk = log2_u32(QBLK);
+  karg.flat_mode = flat_mode;
   karg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
 

@@ -5,6 +5,13 @@
 
 #define KERNEL_KV_CACHE_QUANT_W4A16 0
 
+#define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
+#define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
+#define KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC 2
+
+#define KV_CACHE_QUANT_MAPPING_THREAD_GROUP 0
+#define KV_CACHE_QUANT_MAPPING_WARP_GROUP 1
+
 typedef struct {
   uint32_t kernel_id;
   uint32_t grid_dim[3];
@@ -19,7 +26,10 @@ typedef struct {
   uint32_t N;
   uint32_t QBLK;
   uint32_t QDIR;
-  uint32_t WTRANS;      // Accepted for CLI parity; packed source remains n-pair row-major.
+  uint32_t WTRANS;      // Consumed by the following standalone tiler; this output stays row-major.
+  uint32_t quant_mode;
+  uint32_t mapping_mode;
+  uint32_t log2_qblk;   // UINT32_MAX when QBLK is not a power of two.
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 #endif // _KV_CACHE_QUANT_W4A16_COMMON_H_

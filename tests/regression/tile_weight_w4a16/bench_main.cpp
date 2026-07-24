@@ -3,6 +3,7 @@
 #include <vortex.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -128,14 +129,30 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_alloc(device, dst_bytes, VX_MEM_WRITE, &dst_buf));
   RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
 
+  uint64_t num_cores = 0;
+  uint64_t num_warps = 0;
   uint64_t num_threads = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   if (num_threads == 0) {
     printf("ERROR: VX_CAPS_NUM_THREADS returned 0\n");
     cleanup();
     return 1;
   }
-  const uint32_t threads_per_block = uint32_t(num_threads);
+  const bool flat_source_transposed =
+      SOURCE_TRANSPOSED != 0 && WTRANS != 0
+      && is_pow2(N) && N >= TILE_DMA_MXU_KT && N <= TILE_DMA_KT
+      && (K & (TILE_DMA_MXU_NT - 1u)) == 0;
+  const bool flat_wtrans0 =
+      SOURCE_TRANSPOSED == 0 && WTRANS == 0
+      && is_pow2(N) && N >= TILE_DMA_MXU_NT
+      && (K & (TILE_DMA_KT - 1u)) == 0;
+  const uint32_t flat_mode =
+      flat_source_transposed ? 1u : (flat_wtrans0 ? 2u : 0u);
+  const uint32_t threads_per_block = (flat_mode != 0)
+      ? std::min(256u, uint32_t(num_warps * num_threads))
+      : uint32_t(num_threads);
   const uint32_t logical_K = out_K;
   const uint32_t logical_N = out_N;
   const uint32_t k_tiles = (logical_K + TILE_DMA_KT - 1) / TILE_DMA_KT;
@@ -147,9 +164,21 @@ int main(int argc, char** argv) {
                                       : (cur_kb * TILE_DMA_MXU_NT * (TILE_DMA_MXU_KT / 2));
 
   kernel_arg_t karg = {};
-  karg.grid_dim[0] = (chunks_per_nt_kt + threads_per_block - 1) / threads_per_block;
-  karg.grid_dim[1] = n_tiles;
-  karg.grid_dim[2] = k_tiles;
+  if (flat_mode != 0) {
+    const uint32_t work_items = flat_mode == 1u
+        ? uint32_t(src_bytes)
+        : K * (N / TILE_DMA_MXU_NT);
+    karg.grid_dim[0] = std::min(
+        (work_items + threads_per_block - 1u) / threads_per_block,
+        std::max(1u, uint32_t(num_cores) * 4u));
+    karg.grid_dim[1] = 1;
+    karg.grid_dim[2] = 1;
+  } else {
+    karg.grid_dim[0] =
+        (chunks_per_nt_kt + threads_per_block - 1) / threads_per_block;
+    karg.grid_dim[1] = n_tiles;
+    karg.grid_dim[2] = k_tiles;
+  }
   karg.block_dim[0] = threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
@@ -162,6 +191,8 @@ int main(int argc, char** argv) {
   karg.log2_kt = log2_u32(TILE_DMA_KT);
   karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
+  karg.log2_n = is_pow2(N) ? log2_u32(N) : UINT32_MAX;
+  karg.flat_source_transposed = flat_mode;
   karg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
 

@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
   uint32_t rows = 2;
   uint32_t matrix_count = 32;
   uint32_t dim = 128;
-  bool factorized = false;
+  bool factorized = true;
   uint32_t input_layout = HADAMARD_INPUT_ROW_MAJOR;
   bool padded_row_launch = false;
   for (int index = 1; index < argc; ++index) {
@@ -213,8 +213,10 @@ int main(int argc, char** argv) {
 #endif
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
   const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
+  const uint32_t factor_width = factorized ? dim / base_k : scratch_dim;
   const bool use_multiwarp =
-      static_cast<uint64_t>(matrix_count) * launched_rows < num_warps;
+      static_cast<uint64_t>(matrix_count) * launched_rows < num_warps
+      && (!factorized || factor_width > num_threads);
   const uint32_t launch_threads = static_cast<uint32_t>(
       num_threads * (use_multiwarp ? num_warps : 1u));
 #else

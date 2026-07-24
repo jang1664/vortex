@@ -106,7 +106,9 @@ int main(int argc, char *argv[]) {
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_RMSNORM;
-  uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t threads_per_block =
+      rmsnorm_threads_per_block(total_tokens, (uint32_t)num_warps,
+                                (uint32_t)num_threads);
   kernel_arg.grid_dim[0] = total_tokens;
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;

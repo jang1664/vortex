@@ -534,7 +534,6 @@ KV_FUSED_HELPER uint8_t quant_with_params(const fp16_t* src,
   return (uint8_t)(q & 0x0f);
 }
 
-#if KV_FUSED_SOURCE_CURSOR
 KV_FUSED_HELPER uint8_t quantize_loaded_value(fp16_t value_bits,
                                              float scale,
                                              float zero,
@@ -549,7 +548,6 @@ KV_FUSED_HELPER uint8_t quantize_loaded_value(fp16_t value_bits,
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
 }
-#endif
 
 KV_FUSED_HELPER uint64_t weight_offset_wtrans0(uint32_t K,
                                       uint32_t N,
@@ -917,9 +915,20 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     float scale = 1.0f;
     float zero = 0.0f;
 #if KV_FUSED_PERSISTENT_WARP
-    compute_params_warp(src, K, N, QBLK, SOURCE_QDIR, 0, 0, src_layout,
-                        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
-                        source_view, threadIdx.x, &scale, &zero);
+    const bool contiguous_single_row =
+        K == 1u && source_view.total_k == 1u
+        && source_view.row_offset == 0u;
+    const fp16_t* persistent_src = contiguous_single_row
+        ? src + source_view.col_offset
+        : src;
+    const source_view_t persistent_view = contiguous_single_row
+        ? source_view_t{1u, N, 0u, 0u}
+        : source_view;
+    compute_params_warp(
+        persistent_src, K, N, QBLK, SOURCE_QDIR, 0, 0,
+        contiguous_single_row ? SRC_LAYOUT_ROW_MAJOR : src_layout,
+        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+        persistent_view, threadIdx.x, &scale, &zero);
 #else
     compute_params(src, K, N, QBLK, SOURCE_QDIR, 0, 0, src_layout,
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
@@ -931,12 +940,23 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     for (uint32_t pair = thread_id; pair < (N >> 1); pair += total_threads) {
       const uint32_t d0 = pair << 1;
-      const uint8_t q0 = quant_with_params(
-          src, K, N, 0, d0, src_layout, log2_mt, log2_mxu_nt,
-          quant_scale, zero, quant_mode, source_view);
-      const uint8_t q1 = quant_with_params(
-          src, K, N, 0, d0 + 1, src_layout, log2_mt, log2_mxu_nt,
-          quant_scale, zero, quant_mode, source_view);
+      const bool contiguous_single_row =
+          K == 1u && source_view.total_k == 1u
+          && source_view.row_offset == 0u;
+      const uint8_t q0 = contiguous_single_row
+          ? quantize_loaded_value(
+                src[source_view.col_offset + d0],
+                quant_scale, zero, quant_mode)
+          : quant_with_params(
+                src, K, N, 0, d0, src_layout, log2_mt, log2_mxu_nt,
+                quant_scale, zero, quant_mode, source_view);
+      const uint8_t q1 = contiguous_single_row
+          ? quantize_loaded_value(
+                src[source_view.col_offset + d0 + 1u],
+                quant_scale, zero, quant_mode)
+          : quant_with_params(
+                src, K, N, 0, d0 + 1, src_layout, log2_mt, log2_mxu_nt,
+                quant_scale, zero, quant_mode, source_view);
       const uint8_t packed = (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
       if (SOURCE_TRANSPOSED != 0) {
         weight[weight_offset_wtrans1(weight_K, weight_N, d0, position,

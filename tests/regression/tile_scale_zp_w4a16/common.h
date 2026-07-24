@@ -40,6 +40,7 @@ typedef struct {
   uint32_t log2_mxu_nt;
   uint32_t log2_qblk;           // log2(QBLK)
   uint32_t log2_ng_per_mxu_nt;  // qdir=1: log2(ceil(MXU_NT/QBLK))
+  uint32_t flat_mode;            // 1: transposed K qparams, 2: V qparam replication
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 #endif // _COMMON_H_

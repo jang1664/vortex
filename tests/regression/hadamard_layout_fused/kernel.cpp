@@ -72,29 +72,83 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     __syncthreads();
   }
 
-  for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
-    float transformed;
-    if (zero_padding || arg->base_k == 1) {
-      transformed = scratch[column] * arg->inv_sqrt_dim;
-    } else {
-      const uint32_t out_k = column / arg->width;
-      const uint32_t width_col = column - out_k * arg->width;
-      transformed = 0.0f;
-      for (uint32_t in_k = 0; in_k < arg->base_k; ++in_k) {
-        const float coefficient = fp16_to_float(
-            matrix[(uint64_t)out_k * arg->base_k + in_k]);
-        // Preserve the standalone butterfly -> fp16 -> base-matmul rounding
-        // boundary while eliminating its intermediate global-memory buffer.
-        const float intermediate = fp16_to_float(float_to_fp16(
-            scratch[(uint64_t)in_k * arg->width + width_col]
-            * arg->inv_sqrt_dim));
-        transformed += coefficient * intermediate;
-      }
+  // The standalone factorized path materializes the scaled butterfly output
+  // as fp16 before the base transform. Preserve that rounding boundary once
+  // per intermediate element instead of repeating the same float -> fp16 ->
+  // float conversion for every out_k.
+  if (!zero_padding && arg->base_k > 1) {
+    for (uint32_t column = tid; column < scratch_dim;
+         column += blockDim.x) {
+      scratch[column] = fp16_to_float(
+          float_to_fp16(scratch[column] * arg->inv_sqrt_dim));
     }
-    const uint64_t offset = output_base + gemm_a_tiled_elem_offset(
-        row, column, arg->m_pad, arg->dim,
-        arg->log2_mt, arg->log2_mxu_kt);
-    output[offset] = float_to_fp16(transformed);
+    __syncthreads();
+  }
+
+  if (zero_padding || arg->base_k == 1) {
+    for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
+      const float transformed = scratch[column] * arg->inv_sqrt_dim;
+      const uint64_t offset = output_base + gemm_a_tiled_elem_offset(
+          row, column, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt);
+      output[offset] = float_to_fp16(transformed);
+    }
+    return;
+  }
+
+  // Keep a thread on one butterfly column while producing four base-transform
+  // outputs. Each intermediate scratch value is then loaded once and reused
+  // by four accumulators instead of being loaded once per out_k.
+  for (uint32_t width_col = tid; width_col < arg->width;
+       width_col += blockDim.x) {
+    uint32_t out_k = 0;
+    for (; out_k + 3 < arg->base_k; out_k += 4) {
+      const data_t* matrix0 = matrix + (uint64_t)(out_k + 0) * arg->base_k;
+      const data_t* matrix1 = matrix + (uint64_t)(out_k + 1) * arg->base_k;
+      const data_t* matrix2 = matrix + (uint64_t)(out_k + 2) * arg->base_k;
+      const data_t* matrix3 = matrix + (uint64_t)(out_k + 3) * arg->base_k;
+      float sum0 = 0.0f;
+      float sum1 = 0.0f;
+      float sum2 = 0.0f;
+      float sum3 = 0.0f;
+      for (uint32_t in_k = 0; in_k < arg->base_k; ++in_k) {
+        const float intermediate =
+            scratch[(uint64_t)in_k * arg->width + width_col];
+        sum0 += fp16_to_float(matrix0[in_k]) * intermediate;
+        sum1 += fp16_to_float(matrix1[in_k]) * intermediate;
+        sum2 += fp16_to_float(matrix2[in_k]) * intermediate;
+        sum3 += fp16_to_float(matrix3[in_k]) * intermediate;
+      }
+      const uint32_t column0 = (out_k + 0) * arg->width + width_col;
+      const uint32_t column1 = (out_k + 1) * arg->width + width_col;
+      const uint32_t column2 = (out_k + 2) * arg->width + width_col;
+      const uint32_t column3 = (out_k + 3) * arg->width + width_col;
+      output[output_base + gemm_a_tiled_elem_offset(
+          row, column0, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt)] = float_to_fp16(sum0);
+      output[output_base + gemm_a_tiled_elem_offset(
+          row, column1, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt)] = float_to_fp16(sum1);
+      output[output_base + gemm_a_tiled_elem_offset(
+          row, column2, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt)] = float_to_fp16(sum2);
+      output[output_base + gemm_a_tiled_elem_offset(
+          row, column3, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt)] = float_to_fp16(sum3);
+    }
+    for (; out_k < arg->base_k; ++out_k) {
+      const data_t* matrix_row =
+          matrix + (uint64_t)out_k * arg->base_k;
+      float sum = 0.0f;
+      for (uint32_t in_k = 0; in_k < arg->base_k; ++in_k) {
+        sum += fp16_to_float(matrix_row[in_k])
+            * scratch[(uint64_t)in_k * arg->width + width_col];
+      }
+      const uint32_t column = out_k * arg->width + width_col;
+      output[output_base + gemm_a_tiled_elem_offset(
+          row, column, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt)] = float_to_fp16(sum);
+    }
   }
 }
 

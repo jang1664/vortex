@@ -14,50 +14,30 @@ using data_t = fp16_t;
 // 
 // This is used in GLU variants (SwiGLU, GeGLU) for LLaMA-style FFN
 // 
-// Strategy: M x K traversal with a 32-wide inner K chunk. This matches the
-// optimized silu_layout_fused_v2 loop nest while keeping row-major output.
+// Strategy: flat grid-stride traversal over 32-element chunks. Keeping the
+// chunk-local loop preserves contiguous row-major accesses while distributing
+// both M and K across the full grid.
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   auto pInput = reinterpret_cast<data_t *>(arg->input_addr);
   auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
   const uint32_t size = arg->size;
-  const uint32_t M = arg->M ? arg->M : 1;
-  const uint32_t K = arg->K ? arg->K : size;
   constexpr uint32_t CHUNK = 32;
   constexpr uint32_t LOG2_CHUNK = 5;
 
-  uint32_t total_threads = gridDim.x * blockDim.x;
-  uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
-  uint32_t k_chunks = (K + CHUNK - 1) >> LOG2_CHUNK;
+  const uint32_t total_threads = gridDim.x * blockDim.x;
+  const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t total_chunks = (size + CHUNK - 1) >> LOG2_CHUNK;
 
-  if ((K & (CHUNK - 1)) == 0) {
-    for (uint32_t m = 0; m < M; ++m) {
-      uint64_t row_base = (uint64_t)m * K;
-      for (uint32_t k_chunk = thread_id; k_chunk < k_chunks; k_chunk += total_threads) {
-        uint32_t k_base = k_chunk << LOG2_CHUNK;
+  for (uint32_t chunk = thread_id; chunk < total_chunks;
+       chunk += total_threads) {
+    const uint32_t begin = chunk << LOG2_CHUNK;
+    const uint32_t end = ((begin + CHUNK) < size) ? (begin + CHUNK) : size;
 
-        for (uint32_t k = 0; k < CHUNK; ++k) {
-          uint64_t i = row_base + k_base + k;
-          float x = fp16_to_float(pInput[i]);
-          pOutput[i] = float_to_fp16(x / (1.0f + vx_expf(-x)));
-        }
-      }
-    }
-    return;
-  }
-
-  for (uint32_t m = 0; m < M; ++m) {
-    uint64_t row_base = (uint64_t)m * K;
-    for (uint32_t k_chunk = thread_id; k_chunk < k_chunks; k_chunk += total_threads) {
-      uint32_t k_base = k_chunk << LOG2_CHUNK;
-      uint32_t k_end = ((k_base + CHUNK) < K) ? (k_base + CHUNK) : K;
-
-      for (uint32_t k = k_base; k < k_end; ++k) {
-        uint64_t i = row_base + k;
-        float x = fp16_to_float(pInput[i]);
-        pOutput[i] = float_to_fp16(x / (1.0f + vx_expf(-x)));
-      }
+    for (uint32_t i = begin; i < end; ++i) {
+      float x = fp16_to_float(pInput[i]);
+      pOutput[i] = float_to_fp16(x / (1.0f + vx_expf(-x)));
     }
   }
 }

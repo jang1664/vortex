@@ -13,6 +13,10 @@
 
 using data_t = fp16_t;
 
+#ifndef HADAMARD_BASE_VARIANT_TAG
+#define HADAMARD_BASE_VARIANT_TAG 0
+#endif
+
 static vx_device_h device = nullptr;
 static vx_buffer_h kernel_buffer = nullptr;
 static vx_buffer_h args_buffer = nullptr;
@@ -100,8 +104,13 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &threads));
   const uint32_t block_dim =
       std::min<uint32_t>(256, static_cast<uint32_t>(warps * threads));
+#if HADAMARD_BASE_VARIANT_TAG == 1
+  const uint64_t work_items = static_cast<uint64_t>(rows) * width;
+#else
+  const uint64_t work_items = total;
+#endif
   const uint32_t grid_dim = static_cast<uint32_t>(
-      (total + block_dim - 1) / block_dim);
+      (work_items + block_dim - 1) / block_dim);
 
   const uint64_t tensor_bytes = total * sizeof(data_t);
   const uint64_t matrix_bytes =

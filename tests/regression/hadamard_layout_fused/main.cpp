@@ -205,8 +205,11 @@ static bool run_case(const char* name,
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &warps));
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
   const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
+  const uint32_t factor_width =
+      factorized ? dim / base_k : next_power_of_two(dim);
   const bool use_multiwarp =
-      static_cast<uint64_t>(matrix_count) * launched_rows < warps;
+      static_cast<uint64_t>(matrix_count) * launched_rows < warps
+      && (!factorized || factor_width > threads);
   const uint32_t launch_threads = static_cast<uint32_t>(
       threads * (use_multiwarp ? warps : 1u));
 #else

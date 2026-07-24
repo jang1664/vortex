@@ -11,7 +11,8 @@ static inline uint32_t effective_stop_stride(const kernel_arg_t* arg) {
 }
 
 void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
-  auto input = reinterpret_cast<data_t *>(arg->input_addr);
+  auto input = reinterpret_cast<const data_t *>(arg->input_addr);
+  auto matrix = reinterpret_cast<const data_t *>(arg->matrix_addr);
   auto output = reinterpret_cast<data_t *>(arg->output_addr);
 
   const uint32_t row = blockIdx.x;
@@ -44,6 +45,62 @@ void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
       buf[base + stride] = a - b;
     }
     __syncthreads();
+  }
+
+  if (arg->base_k > 1) {
+    // Match the former two-kernel boundary once, then reuse each rounded
+    // butterfly intermediate across four base-transform outputs.
+    for (uint32_t i = tid; i < dim; i += block_size) {
+      buf[i] = fp16_to_float(float_to_fp16(buf[i] * scale));
+    }
+    __syncthreads();
+
+    for (uint32_t width_col = tid; width_col < arg->width;
+         width_col += block_size) {
+      uint32_t out_k = 0;
+      for (; out_k + 3 < arg->base_k; out_k += 4) {
+        const data_t* matrix0 =
+            matrix + (uint64_t)(out_k + 0) * arg->base_k;
+        const data_t* matrix1 =
+            matrix + (uint64_t)(out_k + 1) * arg->base_k;
+        const data_t* matrix2 =
+            matrix + (uint64_t)(out_k + 2) * arg->base_k;
+        const data_t* matrix3 =
+            matrix + (uint64_t)(out_k + 3) * arg->base_k;
+        float sum0 = 0.0f;
+        float sum1 = 0.0f;
+        float sum2 = 0.0f;
+        float sum3 = 0.0f;
+        for (uint32_t in_k = 0; in_k < arg->base_k; ++in_k) {
+          const float intermediate =
+              buf[(uint64_t)in_k * arg->width + width_col];
+          sum0 += fp16_to_float(matrix0[in_k]) * intermediate;
+          sum1 += fp16_to_float(matrix1[in_k]) * intermediate;
+          sum2 += fp16_to_float(matrix2[in_k]) * intermediate;
+          sum3 += fp16_to_float(matrix3[in_k]) * intermediate;
+        }
+        output[row_offset + (out_k + 0) * arg->width + width_col] =
+            float_to_fp16(sum0);
+        output[row_offset + (out_k + 1) * arg->width + width_col] =
+            float_to_fp16(sum1);
+        output[row_offset + (out_k + 2) * arg->width + width_col] =
+            float_to_fp16(sum2);
+        output[row_offset + (out_k + 3) * arg->width + width_col] =
+            float_to_fp16(sum3);
+      }
+      for (; out_k < arg->base_k; ++out_k) {
+        const data_t* matrix_row =
+            matrix + (uint64_t)out_k * arg->base_k;
+        float sum = 0.0f;
+        for (uint32_t in_k = 0; in_k < arg->base_k; ++in_k) {
+          sum += fp16_to_float(matrix_row[in_k])
+              * buf[(uint64_t)in_k * arg->width + width_col];
+        }
+        output[row_offset + out_k * arg->width + width_col] =
+            float_to_fp16(sum);
+      }
+    }
+    return;
   }
 
   for (uint32_t i = tid; i < dim; i += block_size) {

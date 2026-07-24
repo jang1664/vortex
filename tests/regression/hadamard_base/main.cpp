@@ -10,6 +10,10 @@
 
 using data_t = fp16_t;
 
+#ifndef HADAMARD_BASE_VARIANT_TAG
+#define HADAMARD_BASE_VARIANT_TAG 0
+#endif
+
 #define RT_CHECK(expr) \
   do {                 \
     if ((expr) != 0)   \
@@ -57,7 +61,11 @@ int main() {
   const uint32_t block = std::min<uint32_t>(256, warps * threads);
   kernel_arg_t karg{};
   karg.kernel_id = KERNEL_HADAMARD_BASE;
+#if HADAMARD_BASE_VARIANT_TAG == 1
+  karg.grid_dim[0] = (rows * width + block - 1) / block;
+#else
   karg.grid_dim[0] = (total + block - 1) / block;
+#endif
   karg.grid_dim[1] = karg.grid_dim[2] = 1;
   karg.block_dim[0] = block;
   karg.block_dim[1] = karg.block_dim[2] = 1;

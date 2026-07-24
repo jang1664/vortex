@@ -31,10 +31,12 @@ static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
 static vx_buffer_h args_buffer = nullptr;
 static vx_buffer_h input_buffer = nullptr;
+static vx_buffer_h matrix_buffer = nullptr;
 static vx_buffer_h output_buffer = nullptr;
 
 static void cleanup() {
   if (input_buffer) vx_mem_free(input_buffer);
+  if (matrix_buffer) vx_mem_free(matrix_buffer);
   if (output_buffer) vx_mem_free(output_buffer);
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
@@ -55,6 +57,18 @@ static uint32_t next_power_of_two(uint32_t value) {
   return value + 1;
 }
 
+static bool is_power_of_two(uint32_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
+static uint32_t spinquant_base_k(uint32_t dim) {
+  if (dim % 172 == 0 && is_power_of_two(dim / 172))
+    return 172;
+  if (dim % 28 == 0 && is_power_of_two(dim / 28))
+    return 28;
+  return is_power_of_two(dim) ? 1 : 0;
+}
+
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& value : vec) {
     const float x = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
@@ -65,7 +79,9 @@ static void initialize_random(std::vector<data_t>& vec) {
 static void print_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
          "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-         "[-rows N] [-dim D] [-K BASE] [-seed S] [-k kernel.vxbin]\n",
+         "[-rows N] [-dim D] [-K BASE] [-seed S] [-k kernel.vxbin]\n"
+         "  Default: factorized SpinQuant base inferred from D; use -K 0 "
+         "for zero padding.\n",
          prog);
 }
 
@@ -78,7 +94,7 @@ int main(int argc, char *argv[]) {
   uint32_t rows = 4;
   uint32_t dim = 11008;
   uint32_t seed = 42;
-  uint32_t base_k = 0;
+  uint32_t base_k = std::numeric_limits<uint32_t>::max();
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-rows") == 0 && i + 1 < argc) {
@@ -103,6 +119,16 @@ int main(int argc, char *argv[]) {
   if (rows == 0 || dim == 0 || dim > (1u << 30)) {
     fprintf(stderr, "Invalid shape: rows=%u dim=%u\n", rows, dim);
     return -1;
+  }
+  if (base_k == std::numeric_limits<uint32_t>::max()) {
+    base_k = spinquant_base_k(dim);
+    if (base_k == 0) {
+      fprintf(stderr,
+              "Cannot infer factorized SpinQuant base for dim=%u; "
+              "pass -K 0 to select zero padding\n",
+              dim);
+      return -1;
+    }
   }
   if (base_k != 0) {
     const uint32_t width = dim / base_k;
@@ -130,8 +156,12 @@ int main(int argc, char *argv[]) {
   }
 
   std::vector<data_t> h_input(numel);
+  const uint32_t matrix_dim = std::max(1u, base_k);
+  std::vector<data_t> h_matrix(
+      static_cast<size_t>(matrix_dim) * matrix_dim);
   srand(seed);
   initialize_random(h_input);
+  initialize_random(h_matrix);
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -145,7 +175,12 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
 
-  const uint32_t threads_per_block = std::min(256u, static_cast<uint32_t>(num_warps * num_threads));
+  const uint32_t factor_width =
+      base_k == 0 ? padded_dim : dim / base_k;
+  const bool use_multiwarp =
+      rows < num_warps && (base_k == 0 || factor_width > num_threads);
+  const uint32_t threads_per_block = static_cast<uint32_t>(
+      num_threads * (use_multiwarp ? num_warps : 1u));
   uint32_t max_localmem = 0;
   RT_CHECK(vx_check_occupancy(device, threads_per_block, &max_localmem));
   const uint32_t scratch_bytes = padded_dim * sizeof(float);
@@ -158,8 +193,13 @@ int main(int argc, char *argv[]) {
   }
 
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
+  const uint64_t matrix_bytes =
+      static_cast<uint64_t>(h_matrix.size()) * sizeof(data_t);
+  RT_CHECK(vx_mem_alloc(device, matrix_bytes, VX_MEM_READ, &matrix_buffer));
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_WRITE, &output_buffer));
   RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+  RT_CHECK(vx_copy_to_dev(
+      matrix_buffer, h_matrix.data(), 0, matrix_bytes));
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_HADAMARD;
@@ -170,11 +210,14 @@ int main(int argc, char *argv[]) {
   kernel_arg.block_dim[1] = 1;
   kernel_arg.block_dim[2] = 1;
   RT_CHECK(vx_mem_address(input_buffer, &kernel_arg.input_addr));
+  RT_CHECK(vx_mem_address(matrix_buffer, &kernel_arg.matrix_addr));
   RT_CHECK(vx_mem_address(output_buffer, &kernel_arg.output_addr));
   kernel_arg.rows = rows;
   kernel_arg.dim = dim;
   kernel_arg.padded_dim = padded_dim;
   kernel_arg.stop_stride = stop_stride;
+  kernel_arg.base_k = base_k;
+  kernel_arg.width = factor_width;
   kernel_arg.inv_sqrt_dim = 1.0f / std::sqrt(static_cast<float>(dim));
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));

@@ -54,18 +54,30 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 32;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
+  uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
     else if (strcmp(argv[i], "-n") == 0) N = atoi(argv[++i]);
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--quant-mode") == 0)
+      quant_mode = parse_kv_cache_quant_mode(argv[++i]);
+    else if (strncmp(argv[i], "--quant-mode=", 13) == 0)
+      quant_mode = parse_kv_cache_quant_mode(argv[i] + 13);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS]\n", argv[0]);
+             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|"
+             "spinquant_signed_symmetric]\n", argv[0]);
       return 0;
     }
+  }
+  if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1
+      || quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    printf("ERROR: require even N, QBLK>0, QDIR/WTRANS in {0,1}, and a valid quant mode\n");
+    return 1;
   }
 
   const size_t src_elems = (size_t)K * N;
@@ -93,10 +105,13 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  uint32_t tpb = kv_cache_quant_threads_per_block(num_warps, num_threads);
   uint32_t work_items = kv_cache_quant_work_items(K, N, QBLK, QDIR);
+  uint32_t mapping_mode = kv_cache_quant_mapping_mode(
+      work_items, QDIR, QBLK, num_cores, num_warps);
+  uint32_t tpb = kv_cache_quant_threads_per_block(
+      mapping_mode, num_warps, num_threads);
   uint32_t blocks = kv_cache_quant_blocks(
-      work_items, tpb, num_cores, num_warps);
+      work_items, tpb, mapping_mode, num_cores, num_warps);
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_KV_CACHE_QUANT_W4A16;
@@ -115,6 +130,9 @@ int main(int argc, char *argv[]) {
   arg.QBLK = QBLK;
   arg.QDIR = QDIR;
   arg.WTRANS = WTRANS;
+  arg.quant_mode = quant_mode;
+  arg.mapping_mode = mapping_mode;
+  arg.log2_qblk = kv_cache_quant_log2(QBLK);
   arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 

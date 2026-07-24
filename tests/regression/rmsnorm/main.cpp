@@ -22,10 +22,6 @@
 
 using data_t = fp16_t;
 
-#ifndef RMSNORM_VARIANT_TAG
-#define RMSNORM_VARIANT_TAG 0
-#endif
-
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -187,19 +183,9 @@ int main(int argc, char *argv[]) {
   // Grid/Block configuration
   // Each block processes one token
   // Use multiple threads per block for shared memory reduction
-  const uint32_t max_threads_per_block =
-      std::min(256u, (uint32_t)(num_warps * num_threads));
-  uint32_t reduction_threads = 1;
-  while ((reduction_threads << 1) <= max_threads_per_block) {
-    reduction_threads <<= 1;
-  }
-#if RMSNORM_VARIANT_TAG == 1
   const uint32_t threads_per_block =
-      (total_tokens < num_warps) ? reduction_threads
-                                 : (uint32_t)num_threads;
-#else
-  const uint32_t threads_per_block = reduction_threads;
-#endif
+      rmsnorm_threads_per_block(total_tokens, (uint32_t)num_warps,
+                                (uint32_t)num_threads);
   kernel_arg.grid_dim[0] = total_tokens;  // One block per token
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
