@@ -1,0 +1,69 @@
+task: woq-postprocess-parity
+state: COMPLETE
+updated: "2026-07-24 20:43"
+goal: >-
+  Align WoQ postprocess, accumulator, and two-bank read FIFOs with WKV while
+  preserving only QDIR and GEMM-tree weight-loading differences.
+spec: agent-tasks/woq-postprocess-parity/woq-postprocess-parity-spec.md
+changed_files:
+  - hw/rtl/patch/VX_woq_gemm_unit.sv
+  - analysis_workspace/arr_level_comparison/extract.py
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-24 20:39"
+    result: FAIL
+    implementation: >-
+      Ported WKV postprocess and two-bank FIFO control into WoQ.
+    verification: >-
+      verify_rtl gemm_unit smoke test and direct WoQ VCS closure passed, but
+      both shared patch RTLs leave acc_mem_accum_start_bank undriven. The
+      existing power TB uses acc_cnt=0 and cannot cover this path.
+    feedback: >-
+      Drive acc_mem_accum_start_bank from get_acc_mem_idx of the start
+      acc_mem_base_addr in both WKV and WoQ, then rerun verification.
+  - iteration: 2
+    timestamp: "2026-07-24 20:43"
+    result: PASS
+    implementation: >-
+      Added the shared start-bank driver to WKV and WoQ and removed the dead
+      aggregate credit-count declaration from both variants.
+    verification: >-
+      verify_rtl VCS unittest and the 61-source WoQ VCS
+      compile/elaboration/smoke simulation passed. Both start-bank signals
+      have exactly one driver and extractor checks passed.
+    feedback: >-
+      Existing power smoke TB keeps acc_cnt at zero, so nonzero accumulator
+      scheduling remains outside this verification run.
+log:
+  - timestamp: "2026-07-24 20:25"
+    action: "Confirmed scope and created the implementation specification."
+    result: >-
+      WKV is the shared-postprocess reference; WoQ remains QCOL-only and keeps
+      the WoQ GEMM tree.
+  - timestamp: "2026-07-24 20:42"
+    action: "Implemented shared postprocess parity and FIFO report normalization."
+    result: >-
+      WoQ now uses WKV's FP wrapper settings, current accumulator control, and
+      two depth-4 read FIFOs. Generated FIFO instances aggregate into the
+      u_acc_rd_fifo breakdown row.
+  - timestamp: "2026-07-24 20:39"
+    action: "Ran verification iteration 1."
+    result: >-
+      Compile and smoke simulation passed; verification failed on the
+      undriven shared accumulator start-bank selector.
+  - timestamp: "2026-07-24 20:43"
+    action: "Fixed the shared start-bank driver and ran verification iteration 2."
+    result: >-
+      Verification passed: VCS unittest, WoQ closure compile/elaboration/smoke,
+      structural driver checks, and extractor checks all succeeded.
+pitfalls:
+  - >-
+    The existing extractor misses generated FIFO instance names and assigns
+    their area and power to u_misc.
+  - >-
+    The current WoQ RTL uses older FP wrapper and single-FIFO settings, so the
+    existing synthesis comparison is not architecture-isolated.
+  - >-
+    The WKV source-of-truth uses acc_mem_accum_start_bank without an explicit
+    driver; verification must determine whether the shared logic needs a
+    common WKV/WoQ fix.

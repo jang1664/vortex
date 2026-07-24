@@ -10,13 +10,13 @@ usage() {
     cat <<'EOF'
 Usage: ./make_figures.sh [--extract | --extract-breakdown]
 
-Extract synthesis results and regenerate arr_level_comparison figures and tables.
+Extract GEMM synthesis reports and regenerate arr_level_comparison figures and tables.
 
 Environment:
   PYTHON=/path/to/python   Python interpreter to use (default: auto-detected)
 
 Options:
-  --extract                Rebuild both CSVs from reports before plotting (default)
+  --extract                Rebuild data_fpint_mxu.csv and breakdown from GEMM reports (default)
   --extract-breakdown      Rebuild only wkvwoq_breakdown.csv from GEMM reports
   -h, --help               Show this help text
 EOF
@@ -99,7 +99,7 @@ case "$extract_mode" in
         ;;
 esac
 
-for input in data.csv wkvwoq_breakdown.csv; do
+for input in data_base.csv data_fpint_mxu.csv wkvwoq_breakdown.csv; do
     if [ ! -s "$input" ]; then
         echo "error: missing required input: $script_dir/$input" >&2
         echo "       run with --extract on a machine with the source reports, or check out the cached CSVs" >&2

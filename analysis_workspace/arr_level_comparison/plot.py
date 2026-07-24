@@ -1,4 +1,4 @@
-"""Generate figures from data.csv.
+"""Generate figures from data_base.csv and data_fpint_mxu.csv.
 
 Outputs (PNG + PDF):
   fig1_per_component_power.{png,pdf}
@@ -11,12 +11,13 @@ Outputs (PNG + PDF):
   table_efficiency.csv
       TOPS/W and TOPS/mm^2 for FPxFP (analytic) vs WoQ FPxINT (synth) vs
       WKV FPxINT (synth). Used as a paper table.
+  fig10_wkv_vs_woq_relative_breakdown.{svg,png}
+      Fig. 9 datapath groups normalized to WKV=1, with WoQ/WKV labels.
 """
 
 from __future__ import annotations
 
 import csv
-import re
 from pathlib import Path
 
 import matplotlib
@@ -26,9 +27,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-CSV = HERE / "data.csv"
-VORTEX_BUILD_GEMM = HERE.parents[1] / "build" / "hw" / "syn" / "synopsys" \
-    / "gemm_unit_breakdown" / "syn" / "run" / "v0"
+BASE_CSV = HERE / "data_base.csv"
+GEMM_CSV = HERE / "data_fpint_mxu.csv"
 
 BLUE_DARK = "#0f4c81"
 BLUE = "#2f80b7"
@@ -68,9 +68,9 @@ def display_name(name: str) -> str:
     return name.replace("_", " ")
 
 
-def load() -> list[dict]:
+def load_csv(path: Path) -> list[dict]:
     rows = []
-    with CSV.open() as f:
+    with path.open() as f:
         for r in csv.DictReader(f):
             for k, v in list(r.items()):
                 if k.endswith(("_uw", "_um2", "_ns")) or k == "period_ns":
@@ -79,6 +79,38 @@ def load() -> list[dict]:
                     except ValueError:
                         r[k] = 0.0
             rows.append(r)
+    return rows
+
+
+def load() -> list[dict]:
+    """Load static scalar/INT data and extracted GEMM data."""
+    rows = load_csv(BASE_CSV) + load_csv(GEMM_CSV)
+    keys = [(row["design"], row["precision"]) for row in rows]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        duplicate_text = ", ".join(
+            f"{design}/{precision}" for design, precision in duplicates
+        )
+        raise ValueError(f"duplicate rows across input CSVs: {duplicate_text}")
+
+    required = {
+        ("fp_mult", "FP16"),
+        ("fp_addsub", "FP32"),
+        ("fp_i2flt", "FP16"),
+        ("fp_flt2i", "FP16"),
+        ("int_mac_pe", "INT8/INT32"),
+        ("VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc"),
+        (
+            "VX_woq_gemm_unit_32x32_mpGEMM",
+            "FP16act/INT4w(W-only)->FP32acc",
+        ),
+    }
+    missing = sorted(required - set(keys))
+    if missing:
+        missing_text = ", ".join(
+            f"{design}/{precision}" for design, precision in missing
+        )
+        raise ValueError(f"required input rows are missing: {missing_text}")
     return rows
 
 
@@ -303,23 +335,27 @@ def fig5_tops_per_mm2(rows):
 
 
 def fig6_wkv_vs_w_only(rows):
-    """VX_gemm_unit_top (WKV-quant) vs fpint m32.tr4.tc8 (W-only quant).
+    """VX_gemm_unit_top (WKV-quant) vs VX_woq_gemm_unit_top (W-only quant).
 
     Both are 32x32 mpGEMM at 100 MHz, FP16 act x INT4 weight, fully unrolled
     (1024 MAC/cycle = 204.8 GFLOP/s). VX additionally supports K/V quant
-    (scale + zero-point per row/col); fpint supports only weight quant.
+    (scale + zero-point per row/col); WoQ supports only weight quant.
     """
     vx = get(rows, "VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc")
-    fp = get(rows, "fpint_m32_W_only_quant_scaled", "FP16act/INT4w(W-only)")
-    if not vx or not fp:
+    woq = get(
+        rows,
+        "VX_woq_gemm_unit_32x32_mpGEMM",
+        "FP16act/INT4w(W-only)->FP32acc",
+    )
+    if not vx or not woq:
         return
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 5.2))
-    cats = ["VX (WKV-quant)", "fpint m32 (W-only)"]
+    cats = ["VX (WKV-quant)", "VX (W-only quant)"]
     colors = [BLUE, GREEN]
 
     # Power
-    pw = [vx["total_uw"] / 1000, fp["total_uw"] / 1000]  # mW
+    pw = [vx["total_uw"] / 1000, woq["total_uw"] / 1000]  # mW
     bars = axes[0].bar(cats, pw, color=colors)
     for b, v in zip(bars, pw):
         axes[0].text(b.get_x() + b.get_width() / 2, v, f"{v:.1f} mW",
@@ -330,7 +366,7 @@ def fig6_wkv_vs_w_only(rows):
     axes[0].set_axisbelow(True)
 
     # Area
-    ar = [vx["area_um2"] / 1e6, fp["area_um2"] / 1e6]  # mm^2
+    ar = [vx["area_um2"] / 1e6, woq["area_um2"] / 1e6]  # mm^2
     bars = axes[1].bar(cats, ar, color=colors)
     for b, v in zip(bars, ar):
         axes[1].text(b.get_x() + b.get_width() / 2, v, f"{v:.3f} mm²",
@@ -348,14 +384,14 @@ def fig6_wkv_vs_w_only(rows):
     plt.close(fig)
     flops_s = 32 * 32 * 2 * 1e8
     tops_vx = flops_s / vx["total_uw"] / 1e6
-    tops_fp = flops_s / fp["total_uw"] / 1e6
+    tops_woq = flops_s / woq["total_uw"] / 1e6
     dens_vx = (flops_s / 1e12) / (vx["area_um2"] / 1e6)
-    dens_fp = (flops_s / 1e12) / (fp["area_um2"] / 1e6)
+    dens_woq = (flops_s / 1e12) / (woq["area_um2"] / 1e6)
     print(f"[fig6] WKV vs W-only:")
     print(f"  VX (WKV)   : {pw[0]:.2f} mW, {ar[0]:.3f} mm^2, "
           f"{tops_vx:.2f} TOPS/W, {dens_vx:.3f} TOPS/mm^2")
-    print(f"  fpint(W-on): {pw[1]:.2f} mW, {ar[1]:.3f} mm^2, "
-          f"{tops_fp:.2f} TOPS/W, {dens_fp:.3f} TOPS/mm^2")
+    print(f"  VX (W-only): {pw[1]:.2f} mW, {ar[1]:.3f} mm^2, "
+          f"{tops_woq:.2f} TOPS/W, {dens_woq:.3f} TOPS/mm^2")
 
 
 def fig7_wkv_vs_woq_breakdown():
@@ -545,11 +581,48 @@ def fig8_wkv_vs_woq_breakdown():
     print(f"[fig8] wrote {out}; WKV overhead = {total_overhead:.3f} mW")
 
 
-def fig9_wkv_vs_woq_breakdown():
-    """Combined power/area breakdown with paper-facing datapath groups."""
+WKV_WOQ_GROUPS = [
+    ("MXU", {
+        "u_mxu",
+    }, "#17365d"),
+    ("Preprocess", {
+        "u_pre_proc_pipe_buffer",
+        "u_prealigner",
+        "u_prealign_blk_idx_pipe",
+        "u_prealign_max_exp_pipe",
+        "u_in_pipe",
+        "u_act_reduce",
+        "u_zp_mul_out_reg",
+        "u_act_reduce_shl_vec",
+    }, "#4c78a8"),
+    ("Postprocess", {
+        "u_out_scaler_vec",
+        "u_int2fp_vec",
+        "u_accumulator_vec",
+        "u_acc_rd_fifo",
+        "u_merger_vec",
+        "u_merge_out_reg",
+        "u_scaler_bypass_pipe",
+        "u_f32_to_f16_vec",
+        *{
+            f"gen_mxu_output_dly_{i}__u_mxu_output_dly_pipe"
+            for i in range(32)
+        },
+    }, "#b7c9e2"),
+    ("Misc", {
+        "u_misc",
+    }, "#8c8c8c"),
+    ("Input scaler", {
+        "u_in_scaler_vec",
+    }, "#2ca25f"),
+]
+
+
+def load_grouped_wkv_woq_breakdown(figure_name):
+    """Load and aggregate module rows into the paper-facing datapath groups."""
     bd_path = HERE / "wkvwoq_breakdown.csv"
     if not bd_path.exists():
-        return
+        return None
     insts, wkv_p, woq_p, wkv_a, woq_a = [], [], [], [], []
     with bd_path.open() as f:
         r = csv.DictReader(f)
@@ -560,47 +633,11 @@ def fig9_wkv_vs_woq_breakdown():
             wkv_a.append(float(row["WKV_area_um2"]) / 1e6)
             woq_a.append(float(row["WoQ_area_um2"]) / 1e6)
 
-    groups = [
-        ("MXU", {
-            "u_mxu",
-        }, "#17365d"),
-        ("Preprocess", {
-            "u_pre_proc_pipe_buffer",
-            "u_prealigner",
-            "u_prealign_blk_idx_pipe",
-            "u_prealign_max_exp_pipe",
-            "u_in_pipe",
-            "u_act_reduce",
-            "u_zp_mul_out_reg",
-            "u_act_reduce_shl_vec",
-        }, "#4c78a8"),
-        ("Postprocess", {
-            "u_out_scaler_vec",
-            "u_int2fp_vec",
-            "u_accumulator_vec",
-            "u_acc_rd_fifo",
-            "u_merger_vec",
-            "u_merge_out_reg",
-            "u_scaler_bypass_pipe",
-            "u_f32_to_f16_vec",
-            *{
-                f"gen_mxu_output_dly_{i}__u_mxu_output_dly_pipe"
-                for i in range(32)
-            },
-        }, "#b7c9e2"),
-        ("Misc", {
-            "u_misc",
-        }, "#8c8c8c"),
-        ("Input scaler", {
-            "u_in_scaler_vec",
-        }, "#2ca25f"),
-    ]
-
-    assigned = [inst for _, members, _ in groups for inst in members]
+    assigned = [inst for _, members, _ in WKV_WOQ_GROUPS for inst in members]
     duplicate_insts = sorted({inst for inst in assigned if assigned.count(inst) > 1})
     if duplicate_insts:
         raise ValueError(
-            "fig9 breakdown assigns modules to multiple groups: "
+            f"{figure_name} breakdown assigns modules to multiple groups: "
             + ", ".join(duplicate_insts)
         )
     unknown_insts = sorted(set(insts) - set(assigned))
@@ -611,22 +648,39 @@ def fig9_wkv_vs_woq_breakdown():
             details.append("unassigned modules: " + ", ".join(unknown_insts))
         if missing_insts:
             details.append("missing modules: " + ", ".join(missing_insts))
-        raise ValueError("fig9 breakdown grouping mismatch; " + "; ".join(details))
+        raise ValueError(
+            f"{figure_name} breakdown grouping mismatch; " + "; ".join(details)
+        )
 
     index_by_inst = {inst: i for i, inst in enumerate(insts)}
 
     def aggregate(values):
         return [
             sum(values[index_by_inst[inst]] for inst in members)
-            for _, members, _ in groups
+            for _, members, _ in WKV_WOQ_GROUPS
         ]
 
-    labels = [label for label, _, _ in groups]
-    colors = [color for _, _, color in groups]
-    grouped_wkv_p = aggregate(wkv_p)
-    grouped_woq_p = aggregate(woq_p)
-    grouped_wkv_a = aggregate(wkv_a)
-    grouped_woq_a = aggregate(woq_a)
+    return {
+        "labels": [label for label, _, _ in WKV_WOQ_GROUPS],
+        "colors": [color for _, _, color in WKV_WOQ_GROUPS],
+        "wkv_power": aggregate(wkv_p),
+        "woq_power": aggregate(woq_p),
+        "wkv_area": aggregate(wkv_a),
+        "woq_area": aggregate(woq_a),
+    }
+
+
+def fig9_wkv_vs_woq_breakdown():
+    """Combined power/area breakdown with paper-facing datapath groups."""
+    breakdown = load_grouped_wkv_woq_breakdown("fig9")
+    if breakdown is None:
+        return
+    labels = breakdown["labels"]
+    colors = breakdown["colors"]
+    grouped_wkv_p = breakdown["wkv_power"]
+    grouped_woq_p = breakdown["woq_power"]
+    grouped_wkv_a = breakdown["wkv_area"]
+    grouped_woq_a = breakdown["woq_area"]
 
     with plt.rc_context({
         "font.size": 4.5,
@@ -690,32 +744,106 @@ def fig9_wkv_vs_woq_breakdown():
           f"power totals WKV={power_totals[0]:.2f} mW WoQ={power_totals[1]:.2f} mW, "
           f"area totals WKV={area_totals[0]:.3f} mm^2 WoQ={area_totals[1]:.3f} mm^2")
 
-def _parse_woq_totals():
-    """Parse WoQ top-level power (W -> uW) and area (um^2) from synthesis."""
-    pwr_rpt = VORTEX_BUILD_GEMM / "pwr_woq.run1" / "reports" \
-        / "VX_woq_gemm_unit_top_report_power.report"
-    area_rpt = VORTEX_BUILD_GEMM / "syn_topo_woq.run1" / "reports" \
-        / "14_VX_woq_gemm_unit_top.mapped.area.rpt"
-    total_uw = None
-    if pwr_rpt.exists():
-        # Averaged Power format: cols Int Switch Leak Total in Watts.
-        line_re = re.compile(
-            r"^VX_woq_gemm_unit_top\s+"
-            r"([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+"
-            r"\d+\.\d+\s*$"
+
+def fig10_wkv_vs_woq_relative_breakdown():
+    """Fig. 9 breakdown normalized to WKV, without an x-axis scale."""
+    breakdown = load_grouped_wkv_woq_breakdown("fig10")
+    if breakdown is None:
+        return
+
+    labels = breakdown["labels"]
+    colors = breakdown["colors"]
+
+    def normalize_to_wkv(wkv_values, woq_values):
+        wkv_total = sum(wkv_values)
+        if wkv_total <= 0:
+            raise ValueError("fig10 cannot normalize a zero-valued WKV total")
+        return (
+            [value / wkv_total for value in wkv_values],
+            [value / wkv_total for value in woq_values],
         )
-        for line in pwr_rpt.read_text(errors="ignore").splitlines():
-            m = line_re.match(line)
-            if m:
-                total_uw = float(m.group(4)) * 1e6  # W -> uW
-                break
-    area_um2 = None
-    if area_rpt.exists():
-        m = re.search(r"^\s*Total cell area:\s+([\d.]+)",
-                      area_rpt.read_text(errors="ignore"), re.MULTILINE)
-        if m:
-            area_um2 = float(m.group(1))
-    return total_uw, area_um2
+
+    wkv_power, woq_power = normalize_to_wkv(
+        breakdown["wkv_power"], breakdown["woq_power"]
+    )
+    wkv_area, woq_area = normalize_to_wkv(
+        breakdown["wkv_area"], breakdown["woq_area"]
+    )
+
+    with plt.rc_context({
+        "font.size": 4.5,
+        "axes.titlesize": 4.5,
+        "axes.labelsize": 4.5,
+        "xtick.labelsize": 4.5,
+        "ytick.labelsize": 4.5,
+        "legend.fontsize": 4.5,
+    }):
+        fig, axes = plt.subplots(
+            2, 1, figsize=(ONE_COL_WIDTH, 1.8),
+            gridspec_kw={"hspace": 0.45},
+        )
+        cats = ["WKV", "WoQ"]
+
+        def draw_relative_stacked_h(ax, wkv_values, woq_values, title):
+            totals = [0.0, 0.0]
+            local_handles = []
+            for label, color, wkv_value, woq_value in zip(
+                    labels, colors, wkv_values, woq_values):
+                values = [wkv_value, woq_value]
+                bars = ax.barh(
+                    cats, values, left=totals, height=0.42,
+                    color=color, label=label, edgecolor="white",
+                    linewidth=0.45,
+                )
+                local_handles.append(bars[0])
+                totals = [
+                    total + value for total, value in zip(totals, values)
+                ]
+
+            xmax = max(totals) * 1.14
+            ax.set_xlim(0, xmax)
+            ax.set_title(title, fontsize=4.5)
+            ax.set_xlabel("")
+            ax.set_xticks([])
+            ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+            ax.text(
+                totals[0] + xmax * 0.015, 0, f"{totals[0]:.1f}",
+                ha="left", va="center", fontsize=4.5,
+            )
+            ax.text(
+                totals[1] + xmax * 0.015, 1, f"{totals[1]:.2f}×",
+                ha="left", va="center", fontsize=4.5,
+            )
+            return local_handles, totals
+
+        handles, power_totals = draw_relative_stacked_h(
+            axes[0], wkv_power, woq_power, "power"
+        )
+        _, area_totals = draw_relative_stacked_h(
+            axes[1], wkv_area, woq_area, "area"
+        )
+
+        fig.legend(
+            handles, labels,
+            loc="lower center", bbox_to_anchor=(0.5, 0.02),
+            ncol=5, columnspacing=0.8, handlelength=1.2,
+            handletextpad=0.4, framealpha=0.95,
+        )
+        fig.subplots_adjust(
+            left=0.08, right=0.93, top=0.94, bottom=0.23, hspace=0.45
+        )
+        outputs = []
+        for ext in ("svg", "png"):
+            out = HERE / f"fig10_wkv_vs_woq_relative_breakdown.{ext}"
+            fig.savefig(out, dpi=300, bbox_inches="tight")
+            outputs.append(out)
+        plt.close(fig)
+
+    print(
+        f"[fig10] wrote {', '.join(str(out) for out in outputs)}; "
+        f"WoQ/WKV power={power_totals[1]:.3f}, "
+        f"area={area_totals[1]:.3f}"
+    )
 
 
 def table_efficiency(rows):
@@ -734,6 +862,11 @@ def table_efficiency(rows):
     fp_addsub = get(rows, "fp_addsub", "FP32")
     flt2i = get(rows, "fp_flt2i", "FP16")
     wkv = get(rows, "VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc")
+    woq = get(
+        rows,
+        "VX_woq_gemm_unit_32x32_mpGEMM",
+        "FP16act/INT4w(W-only)->FP32acc",
+    )
 
     fpxfp_p = (1024 * fp_mult["total_uw"]
                + 992 * fp_addsub["total_uw"]
@@ -742,16 +875,11 @@ def table_efficiency(rows):
                + 992 * fp_addsub["area_um2"]
                + 32 * flt2i["area_um2"])
 
-    woq_p, woq_a = _parse_woq_totals()
-    if woq_p is None or woq_a is None:
-        print("[table] WoQ synthesis reports missing — skipping CSV")
-        return
-
     tops = 32 * 32 * 2 * 1e8 / 1e12  # 0.2048 TOPS
 
     configs = [
         ("FPxFP (analytic compose)", fpxfp_p, fpxfp_a),
-        ("WoQ FPxINT (synth)",       woq_p,   woq_a),
+        ("WoQ FPxINT (synth)",       woq["total_uw"], woq["area_um2"]),
         ("WKV FPxINT (synth)",       wkv["total_uw"], wkv["area_um2"]),
     ]
     metrics = [(tops / (p / 1e6), tops / (a / 1e6)) for _, p, a in configs]
@@ -787,6 +915,7 @@ def main():
     fig7_wkv_vs_woq_breakdown()
     fig8_wkv_vs_woq_breakdown()
     fig9_wkv_vs_woq_breakdown()
+    fig10_wkv_vs_woq_relative_breakdown()
     table_efficiency(rows)
     print(f"saved figures to {HERE}")
 
