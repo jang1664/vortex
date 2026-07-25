@@ -4,6 +4,12 @@
 #include "../vector_common/fp16.h"
 #include <stdint.h>
 
+#ifndef KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+#define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
+#define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
+#define KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC 2
+#endif
+
 static inline uint32_t ceil_div_u32(uint32_t a, uint32_t b) {
   return (a + b - 1u) / b;
 }
@@ -39,6 +45,16 @@ static inline uint8_t kv_get_nibble(const uint8_t* packed,
   (void)K;
   const uint8_t byte = packed[(uint64_t)k * (N >> 1) + (n >> 1)];
   return (n & 1u) ? (byte >> 4) : (byte & 0x0fu);
+}
+
+static inline int32_t kv_signed_int4(uint8_t nibble) {
+  const uint8_t bits = nibble & 0x0fu;
+  return (int32_t)bits - (int32_t)((bits & 0x08u) << 1);
+}
+
+static inline int32_t kv_signed_int16(uint16_t bits) {
+  return (int32_t)bits
+       - (int32_t)((uint32_t)(bits & 0x8000u) << 1);
 }
 
 static inline uint8_t kv_quantize_value(float x, float scale, int16_t zp) {

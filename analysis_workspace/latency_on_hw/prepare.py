@@ -181,12 +181,36 @@ def gemm_only_out_name(model: str) -> str:
     return f"{model}_gemm_only_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
 
 
+def gemm_only_no_area_norm_out_name(model: str) -> str:
+    return (
+        f"{model}_gemm_only_no_area_norm_"
+        f"{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
+    )
+
+
+def gemm_only_energy_out_name(model: str, power_metric: str) -> str:
+    return (
+        f"{model}_gemm_only_energy_per_token_stacked_by_name_{power_metric}_"
+        f"{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
+    )
+
+
 def energy_out_name(model: str, power_metric: str) -> str:
     return f"{model}_energy_per_token_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
 
 
 def energy_stacked_out_name(model: str, power_metric: str) -> str:
     return f"{model}_energy_per_token_stacked_by_{E2E_STACK_BY}_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+
+
+def energy_gemm_layout_vector_stacked_out_name(
+    model: str,
+    power_metric: str,
+) -> str:
+    return (
+        f"{model}_energy_per_token_gemm_layout_vector_stacked_by_name_backend_"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    )
 
 RAW_DB_SUBDIRS = (
     "C1",
@@ -283,6 +307,13 @@ E2E_STACK_BY = "kind"
 RELATIVE = True
 RELATIVE_SCOPE = "x_tick"  # global, subplot, or x_tick
 
+# Dequantization is excluded from the main latency comparison, but retained
+# in energy data so it can be shown as a separate energy component.
+INCLUDE_DEQUANTIZATION_IN_LATENCY = False
+INCLUDE_DEQUANTIZATION_IN_ENERGY = True
+# Whether the C4-alone variant is included in generated plots and totals.
+INCLUDE_C4_ALONE = False
+
 # Optional row filters are applied after compose/estimate and before aggregation.
 # Examples:
 # PLOT_ROW_FILTERS = (lambda df: df["kind"].eq("gemm"),)
@@ -347,11 +378,34 @@ ENERGY_SHAPE_FILTER = _target_shape_filter(
     generation_batches=ENERGY_GENERATION_BATCHES,
     generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
 )
-PLOT_ROW_FILTERS = (E2E_SHAPE_FILTER,)
+
+
+def exclude_dequantization_kernels(df: pd.DataFrame) -> pd.Series:
+    return df["kind"].astype(str).ne("dequantization")
+
+
+LATENCY_DEQUANTIZATION_FILTERS = (
+    ()
+    if INCLUDE_DEQUANTIZATION_IN_LATENCY
+    else (exclude_dequantization_kernels,)
+)
+ENERGY_DEQUANTIZATION_FILTERS = (
+    ()
+    if INCLUDE_DEQUANTIZATION_IN_ENERGY
+    else (exclude_dequantization_kernels,)
+)
+PLOT_ROW_FILTERS = (E2E_SHAPE_FILTER, *LATENCY_DEQUANTIZATION_FILTERS)
+
+
+def _apply_global_row_filters(row_filters: tuple | None) -> tuple:
+    return tuple(PLOT_ROW_FILTERS if row_filters is None else row_filters)
 
 
 def exclude_c4_alone(df):
     return df["variant"].ne(C4_ALONE_VARIANT)
+
+
+C4_ALONE_FILTERS = () if INCLUDE_C4_ALONE else (exclude_c4_alone,)
 
 
 # Display labels and order are part of the prepared Excel-facing CSV schema.
@@ -708,7 +762,7 @@ def _make_suite_options(
     shape_selection: ShapeSelection | None,
     case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> tuple[list, SuiteBarPlotOptions]:
-    plot_row_filters = tuple(PLOT_ROW_FILTERS if row_filters is None else row_filters)
+    plot_row_filters = _apply_global_row_filters(row_filters)
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
         plot_row_filters = (*plot_row_filters, exclude_c4_alone)
     suites = load_suites(suite_tag, model=model, shape_selection=shape_selection)
@@ -748,7 +802,7 @@ def export_suite_figure_data(
     out_name: str,
     stacked: bool,
     stack_by: str = STACK_BY,
-    include_c4_alone: bool = False,
+    include_c4_alone: bool = INCLUDE_C4_ALONE,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
     case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
@@ -799,7 +853,7 @@ def load_or_export_suite_figure_data(
     out_name: str,
     stacked: bool,
     stack_by: str = STACK_BY,
-    include_c4_alone: bool = False,
+    include_c4_alone: bool = INCLUDE_C4_ALONE,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
     case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
@@ -881,21 +935,35 @@ def load_or_export_no_area_norm_figure_data(
     out_name: str,
     stacked: bool,
     stack_by: str = STACK_BY,
+    row_filters: tuple | None = None,
+    shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
 ) -> PlotRunResult:
-    if source.versions is not None and not LATENCY_SCALE_RULES:
+    if getattr(source, "versions", None) is not None and not LATENCY_SCALE_RULES:
         return export_no_area_norm_figure_data(source, out_name=out_name)
+    rebuild_kwargs = {
+        "model": model,
+        "suite_tag": suite_tag,
+        "out_name": out_name,
+        "stacked": stacked,
+        "stack_by": stack_by,
+        "include_c4_alone": INCLUDE_C4_ALONE,
+        "case_latency_scale_rules": (),
+    }
+    if row_filters is not None:
+        rebuild_kwargs["row_filters"] = row_filters
+    if row_filters is not None or shape_selection != E2E_SHAPE_SELECTION:
+        rebuild_kwargs["shape_selection"] = shape_selection
     return load_or_export_suite_figure_data(
-        model=model,
-        suite_tag=suite_tag,
-        out_name=out_name,
-        stacked=stacked,
-        stack_by=stack_by,
-        include_c4_alone=False,
-        case_latency_scale_rules=(),
+        **rebuild_kwargs,
     )
 
 
-GEMM_ONLY_FILTERS = (GEMM_ONLY_SHAPE_FILTER, lambda df: df["kind"].eq("gemm"), exclude_c4_alone)
+GEMM_ONLY_FILTERS = (
+    GEMM_ONLY_SHAPE_FILTER,
+    *LATENCY_DEQUANTIZATION_FILTERS,
+    lambda df: df["kind"].eq("gemm"),
+    *C4_ALONE_FILTERS,
+)
 main_all_result: PlotRunResult | None = None
 
 # Energy per token.
@@ -923,6 +991,7 @@ def _energy_composed_rows(
         main_result is not None
         and main_result.composed is not None
         and _shape_selection_matches(E2E_SHAPE_SELECTION, ENERGY_SHAPE_SELECTION)
+        and INCLUDE_DEQUANTIZATION_IN_LATENCY == INCLUDE_DEQUANTIZATION_IN_ENERGY
     ):
         return main_result.composed
 
@@ -931,8 +1000,8 @@ def _energy_composed_rows(
         suite_tag=suite_tag,
         out_name=out_name,
         stacked=False,
-        include_c4_alone=False,
-        row_filters=(ENERGY_SHAPE_FILTER,),
+        include_c4_alone=INCLUDE_C4_ALONE,
+        row_filters=(ENERGY_SHAPE_FILTER, *ENERGY_DEQUANTIZATION_FILTERS),
         shape_selection=ENERGY_SHAPE_SELECTION,
     )
     return rebuilt.composed
@@ -945,17 +1014,26 @@ def export_energy_figure_data_pair(
     main_result: PlotRunResult | None,
     out_name: str,
     stacked_out_name: str,
+    gemm_layout_vector_stacked_out_name: str | None = None,
     power_metric: str,
     fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
     force_rebuild: bool | None = None,
-) -> tuple[str, str]:
-    """Build flat and stacked energy tables from one shared energy calculation."""
+) -> tuple[str, ...]:
+    """Build energy tables from one shared flat/kind/name-backend calculation."""
     force = FORCE_REBUILD_FIGURE_DATA if force_rebuild is None else force_rebuild
-    output_names = (out_name, stacked_out_name)
+    output_names = (
+        (out_name, stacked_out_name)
+        if gemm_layout_vector_stacked_out_name is None
+        else (
+            out_name,
+            stacked_out_name,
+            gemm_layout_vector_stacked_out_name,
+        )
+    )
     output_paths = tuple(figure_data_path(name) for name in output_names)
     cached = tuple(USE_FIGURE_DATA_CACHE and path.exists() and not force for path in output_paths)
     if all(cached):
-        return "cache", "cache"
+        return tuple("cache" for _name in output_names)
 
     composition_out_name = next(name for name, is_cached in zip(output_names, cached) if not is_cached)
     composed = _energy_composed_rows(
@@ -974,7 +1052,7 @@ def export_energy_figure_data_pair(
         fpga_period_s=fpga_period_s,
     )
     totals = summarize_energy_rows(rows)
-    label_maps = plot_label_maps(include_c4_alone=False)
+    label_maps = plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE)
 
     summary = add_relative_energy_values(totals, relative_scope=RELATIVE_SCOPE)
     result = plot_script.EnergyExcelResult(
@@ -998,7 +1076,102 @@ def export_energy_figure_data_pair(
         label_maps=label_maps,
         stack_by=E2E_STACK_BY,
     )
-    return "rebuilt", "rebuilt"
+
+    if gemm_layout_vector_stacked_out_name is not None:
+        for row in rows:
+            row["name_backend"] = latency_plot_module._stack_key(
+                pd.Series(row),
+                "name_backend",
+            )
+        components = summarize_energy_rows(rows, group_by=("name_backend",))
+        summary = add_relative_energy_component_values(
+            components,
+            totals,
+            relative_scope=RELATIVE_SCOPE,
+        )
+        result = plot_script.EnergyExcelResult(
+            summary=pd.DataFrame(summary),
+            figure_path=(
+                FIGURE_OUTPUT_ROOT
+                / gemm_layout_vector_stacked_out_name
+                / "energy_per_token_gemm_layout_vector_stacked.png"
+            ),
+        )
+        plot_script.write_energy_stacked_figure_data_csv(
+            result,
+            label_maps=label_maps,
+            stack_by="name_backend",
+        )
+
+    return tuple("rebuilt" for _name in output_names)
+
+
+def export_gemm_only_energy_figure_data(
+    *,
+    model: str,
+    suite_tag: str,
+    gemm_only_result: PlotRunResult | None,
+    out_name: str,
+    power_metric: str,
+    fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
+    force_rebuild: bool | None = None,
+) -> str:
+    """Build name-stacked GEMM-only energy-per-token figure data."""
+    force = FORCE_REBUILD_FIGURE_DATA if force_rebuild is None else force_rebuild
+    output_path = figure_data_path(out_name)
+    if USE_FIGURE_DATA_CACHE and output_path.exists() and not force:
+        return "cache"
+
+    if gemm_only_result is not None and gemm_only_result.composed is not None:
+        composed = gemm_only_result.composed
+    else:
+        rebuilt = export_suite_figure_data(
+            model=model,
+            suite_tag=suite_tag,
+            out_name=out_name,
+            stacked=True,
+            stack_by=STACK_BY,
+            include_c4_alone=INCLUDE_C4_ALONE,
+            row_filters=GEMM_ONLY_FILTERS,
+            shape_selection=GEMM_ONLY_SHAPE_SELECTION,
+        )
+        composed = rebuilt.composed
+
+    records = (
+        list(composed.to_dict(orient="records"))
+        if hasattr(composed, "to_dict")
+        else list(composed)
+    )
+    rows = energy_rows_from_records(
+        records,
+        raw_dbs_for_model(model),
+        idle_power_w=ENERGY_IDLE_POWER_W,
+        include_idle_power=INCLUDE_IDLE_POWER,
+        power_metric=power_metric,
+        fpga_period_s=fpga_period_s,
+    )
+    totals = summarize_energy_rows(rows)
+    components = summarize_energy_rows(rows, group_by=(STACK_BY,))
+    summary = add_relative_energy_component_values(
+        components,
+        totals,
+        relative_scope=RELATIVE_SCOPE,
+    )
+    result = plot_script.EnergyExcelResult(
+        summary=pd.DataFrame(summary),
+        figure_path=(
+            FIGURE_OUTPUT_ROOT
+            / out_name
+            / "gemm_only_energy_per_token_stacked.png"
+        ),
+    )
+    plot_script.write_energy_stacked_figure_data_csv(
+        result,
+        label_maps=plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE),
+        stack_by=STACK_BY,
+    )
+    return "rebuilt"
+
 
 BUILD_LLAMA_COMPARE = False
 LLAMA_COMPARE_OUT_DIR = FIGURE_OUTPUT_ROOT / "llama_compare"
@@ -1108,12 +1281,12 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
         stacked=False,
         stack_by=STACK_BY,
         relative=False,
-        label_maps=plot_label_maps(include_c4_alone=False),
+        label_maps=plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE),
         value_orders=VALUE_ORDERS,
         latency_scale_rules=tuple(LATENCY_SCALE_RULES),
         case_latency_scale_rules=tuple(CASE_LATENCY_SCALE_RULES),
         latency_estimate=LATENCY_ESTIMATE,
-        row_filters=(),
+        row_filters=LATENCY_DEQUANTIZATION_FILTERS,
     )
     versions = prepare_suite_bar_data_versions(suites, options)
     warn_interpolation_estimates(versions.final.composed, context=f"llama_compare:{model_spec['model']}")
@@ -1232,6 +1405,7 @@ def main() -> int:
         e2e_gemm_layout_stacked_name = e2e_gemm_layout_stacked_out_name(model)
         no_area_norm_stacked_name = e2e_no_area_norm_stacked_out_name(model)
         gemm_name = gemm_only_out_name(model)
+        gemm_no_area_norm_name = gemm_only_no_area_norm_out_name(model)
 
         print(f"model: {model}")
         print(f"suite tag: {suite_tag}")
@@ -1241,7 +1415,7 @@ def main() -> int:
             suite_tag=suite_tag,
             out_name=main_name,
             stacked=False,
-            include_c4_alone=False,
+            include_c4_alone=INCLUDE_C4_ALONE,
         )
         print(f"{model} E2E figure data source: {main_all_result.cache_status}")
 
@@ -1263,7 +1437,7 @@ def main() -> int:
             out_name=e2e_stacked_name,
             stacked=True,
             stack_by=E2E_STACK_BY,
-            include_c4_alone=False,
+            include_c4_alone=INCLUDE_C4_ALONE,
         )
         print(f"{model} E2E stacked figure data source: {e2e_stacked_result.cache_status}")
 
@@ -1273,7 +1447,7 @@ def main() -> int:
             out_name=e2e_gemm_layout_stacked_name,
             stacked=True,
             stack_by="name_backend",
-            include_c4_alone=False,
+            include_c4_alone=INCLUDE_C4_ALONE,
         )
         print(
             f"{model} E2E GEMM + layout stacked figure data source: "
@@ -1300,21 +1474,48 @@ def main() -> int:
             row_filters=GEMM_ONLY_FILTERS,
             shape_selection=GEMM_ONLY_SHAPE_SELECTION,
             stacked=True,
-            include_c4_alone=False,
+            include_c4_alone=INCLUDE_C4_ALONE,
         )
         print(f"{model} GEMM-only figure data source: {main_all_gemm_only_result.cache_status}")
 
+        gemm_no_area_norm_result = load_or_export_no_area_norm_figure_data(
+            main_all_gemm_only_result,
+            model=model,
+            suite_tag=suite_tag,
+            out_name=gemm_no_area_norm_name,
+            stacked=True,
+            stack_by=STACK_BY,
+            row_filters=GEMM_ONLY_FILTERS,
+            shape_selection=GEMM_ONLY_SHAPE_SELECTION,
+        )
+        print(
+            f"{model} GEMM-only figure data without area normalization source: "
+            f"{gemm_no_area_norm_result.cache_status}"
+        )
+
         energy_names = []
         energy_stacked_names = []
+        energy_gemm_layout_vector_stacked_names = []
+        gemm_only_energy_names = []
         for power_metric in ENERGY_POWER_METRICS:
             energy_name = energy_out_name(model, power_metric)
             energy_stacked_name = energy_stacked_out_name(model, power_metric)
-            energy_cache_status, energy_stacked_cache_status = export_energy_figure_data_pair(
+            energy_gemm_layout_vector_stacked_name = (
+                energy_gemm_layout_vector_stacked_out_name(model, power_metric)
+            )
+            (
+                energy_cache_status,
+                energy_stacked_cache_status,
+                energy_gemm_layout_vector_stacked_cache_status,
+            ) = export_energy_figure_data_pair(
                 model=model,
                 suite_tag=suite_tag,
                 main_result=main_all_result,
                 out_name=energy_name,
                 stacked_out_name=energy_stacked_name,
+                gemm_layout_vector_stacked_out_name=(
+                    energy_gemm_layout_vector_stacked_name
+                ),
                 power_metric=power_metric,
             )
             print(f"{model} {power_metric} energy figure data source: {energy_cache_status}")
@@ -1325,6 +1526,27 @@ def main() -> int:
                 f"{energy_stacked_cache_status}"
             )
             energy_stacked_names.append(energy_stacked_name)
+            print(
+                f"{model} {power_metric} GEMM + layout + vector stacked "
+                "energy figure data source: "
+                f"{energy_gemm_layout_vector_stacked_cache_status}"
+            )
+            energy_gemm_layout_vector_stacked_names.append(
+                energy_gemm_layout_vector_stacked_name
+            )
+            gemm_only_energy_name = gemm_only_energy_out_name(model, power_metric)
+            gemm_only_energy_cache_status = export_gemm_only_energy_figure_data(
+                model=model,
+                suite_tag=suite_tag,
+                gemm_only_result=main_all_gemm_only_result,
+                out_name=gemm_only_energy_name,
+                power_metric=power_metric,
+            )
+            print(
+                f"{model} {power_metric} GEMM-only energy figure data source: "
+                f"{gemm_only_energy_cache_status}"
+            )
+            gemm_only_energy_names.append(gemm_only_energy_name)
 
         prepared_outputs.extend(
             [
@@ -1340,8 +1562,18 @@ def main() -> int:
                 total_data_path(no_area_norm_stacked_name),
                 figure_data_path(gemm_name),
                 total_data_path(gemm_name),
+                figure_data_path(gemm_no_area_norm_name),
+                total_data_path(gemm_no_area_norm_name),
                 *(figure_data_path(energy_name) for energy_name in energy_names),
                 *(figure_data_path(energy_name) for energy_name in energy_stacked_names),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in energy_gemm_layout_vector_stacked_names
+                ),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in gemm_only_energy_names
+                ),
             ]
         )
 

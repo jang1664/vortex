@@ -107,6 +107,15 @@ logical op:
   `fpint_gemm_improve` and models vector-side fused layout kernels such as
   `rms_norm_layout_fused` and `silu_layout_fused`.
 
+W4-to-fp16 dequantization is emitted according to the consuming GEMM backend,
+not according to the workload name alone. An `sgemm_tcu` consumer remains an
+fp16-by-fp16 GEMM and therefore gets an explicit `kv_cache_dequant_w4a16`
+stage for its W4 operand. This includes static projection/FFN weights and the
+dynamic K/V cache operands. An `fpint_gemm_naive` or `fpint_gemm_improve`
+consumer reads the packed W4 operand directly, so C3 and both C4 layout
+variants do not emit a dequantization stage. The C2 hybrid emits
+dequantization only for its two `sgemm_tcu` attention GEMMs.
+
 GEMM kernels are not layout-fused. If a future direct GEMM-to-GEMM boundary is
 added, it needs a standalone layout bridge unless an explicit compatibility
 rule exists. In the current Llama2 graph, `attn_pv` feeds `attn_head_concat`,
@@ -137,7 +146,7 @@ backend names:
 | `head_concat_layout_fused` | per-head GEMM-C tiled PV output | GEMM-A tiled `o_proj` input | Fuses PV detile, head concat, and `o_proj` tile-input preparation. |
 | `kv_cache_quant_w4a16` | fp16 row-major `[K, N]` | uint4 packed row-major `[K, N/2]` plus row-major fp16 scale and int16 zero-point | Standalone dynamic K/V cache quantization. |
 | `kv_cache_quant_layout_fused_w4a16` | fp16 row-major or GEMM-C tiled cache tensor | uint4 GEMM-W tiled payload plus GEMM tiled scale/zp buffers | Fused K/V cache quantization for direct fpint GEMM-W consumption; K path outputs `gemm_w_tiled_transposed` for logical `K^T`, while V path outputs `gemm_w_tiled`. |
-| `kv_cache_dequant_w4a16` | uint4 packed row-major plus qparams | fp16 row-major `[K, N]` | Debug/reference dequant path. |
+| `kv_cache_dequant_w4a16` | packed W4 row-major plus fp16 scale and int16 zero-point | fp16 row-major `[K, N]` | Runtime dequantization for fp16 `sgemm_tcu` consumers. Supports legacy unsigned asymmetric INT4, signed asymmetric INT4, and signed symmetric INT4; SpinQuant K/V use the signed modes. |
 
 `rope_layout_fused --layout-to row_major` is used for K-cache data before
 K-cache quantization. The standalone layout variant uses `kv_cache_quant_w4a16`

@@ -209,6 +209,55 @@ workloads:
             self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", by_op["kv_cache_quant_rope_k_to_attn_qkT"].args)
             self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
 
+    def test_sgemm_spinquant_workload_expands_runtime_dequant_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            suite_path = Path(tmp) / "suite.yaml"
+            suite_path.write_text(
+                """
+name: w4_dequant_suite
+defaults:
+  warmup: 1
+  iterations: 2
+workloads:
+  - id: llama2_w4_dequant
+    model: llama2-7b
+    stage: generation
+    batch: 1
+    gen_kv_len: 512
+    qblk: 32
+    variant: all_sgemm_tcu_spinquant
+    filter_backend: kv_cache_dequant_w4a16
+""".lstrip()
+            )
+
+            suite = load_suite(suite_path, repo_root=Path.cwd())
+            by_op = {case.op: case for case in suite.cases}
+
+            self.assertEqual(9, len(suite.cases))
+            self.assertEqual(
+                "kv_cache_dequant_w4a16",
+                by_op["dequant_q_proj_weight_to_fp16"].app,
+            )
+            self.assertEqual(
+                "-k 4096 -n 4096 -q 32 -d 0 -t 0 "
+                "--quant-mode signed_int4_asymmetric",
+                by_op["dequant_q_proj_weight_to_fp16"].args,
+            )
+            self.assertEqual(
+                "-k 512 -n 128 -q 128 -d 1 -t 1 "
+                "--quant-mode spinquant_signed_asymmetric",
+                by_op["kv_cache_dequant_k_to_attn_qkT"].args,
+            )
+            self.assertEqual(
+                "-k 512 -n 128 -q 128 -d 1 -t 0 "
+                "--quant-mode spinquant_signed_symmetric",
+                by_op["kv_cache_dequant_v_to_attn_pv"].args,
+            )
+            self.assertEqual(
+                1024,
+                by_op["kv_cache_dequant_k_to_attn_qkT"].calls_per_forward,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

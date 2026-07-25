@@ -100,6 +100,10 @@ class NoAreaNormE2ETests(unittest.TestCase):
             versions=SimpleNamespace(base=object(), estimated=object()),
             cache_status="rebuilt",
         )
+        gemm_result = SimpleNamespace(
+            versions=SimpleNamespace(base=object(), estimated=object()),
+            cache_status="rebuilt",
+        )
         other_result = SimpleNamespace(cache_status="cache")
         derived_result = SimpleNamespace(cache_status="derived")
 
@@ -111,7 +115,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(
                 prepare,
                 "load_or_export_suite_figure_data",
-                side_effect=(main_result, stacked_result, other_result, other_result),
+                side_effect=(main_result, stacked_result, other_result, gemm_result),
             ) as load_mock,
             patch.object(
                 prepare,
@@ -133,6 +137,10 @@ class NoAreaNormE2ETests(unittest.TestCase):
                 unittest.mock.call(
                     stacked_result,
                     out_name=prepare.e2e_no_area_norm_stacked_out_name("llama2_7b"),
+                ),
+                unittest.mock.call(
+                    gemm_result,
+                    out_name=prepare.gemm_only_no_area_norm_out_name("llama2_7b"),
                 ),
             ],
         )
@@ -164,6 +172,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
                     other_result,
                     no_area_norm_result,
                     other_result,
+                    no_area_norm_result,
                 ),
             ) as load_mock,
             patch.object(prepare, "export_no_area_norm_figure_data") as derive_mock,
@@ -187,6 +196,23 @@ class NoAreaNormE2ETests(unittest.TestCase):
         self.assertTrue(no_area_norm_stacked_call.kwargs["stacked"])
         self.assertEqual(no_area_norm_stacked_call.kwargs["stack_by"], prepare.E2E_STACK_BY)
         self.assertEqual(no_area_norm_stacked_call.kwargs["case_latency_scale_rules"], ())
+        gemm_no_area_norm_call = load_mock.call_args_list[6]
+        self.assertEqual(
+            gemm_no_area_norm_call.kwargs["out_name"],
+            prepare.gemm_only_no_area_norm_out_name("llama2_7b"),
+        )
+        self.assertEqual(
+            gemm_no_area_norm_call.kwargs["row_filters"],
+            prepare.GEMM_ONLY_FILTERS,
+        )
+        self.assertEqual(
+            gemm_no_area_norm_call.kwargs["shape_selection"],
+            prepare.GEMM_ONLY_SHAPE_SELECTION,
+        )
+        self.assertEqual(
+            gemm_no_area_norm_call.kwargs["case_latency_scale_rules"],
+            (),
+        )
 
     def test_prepare_can_disable_case_latency_scaling(self) -> None:
         with (
@@ -261,6 +287,42 @@ class NoAreaNormE2ETests(unittest.TestCase):
         self.assertFalse(_candidate_matches_kind(csv_path, "e2e_no_area_norm"))
         self.assertFalse(_candidate_matches_kind(csv_path, "e2e_stacked"))
         self.assertFalse(_candidate_matches_kind(csv_path, "main_all"))
+
+    def test_gemm_only_no_area_norm_data_has_a_distinct_plot_kind(self) -> None:
+        csv_path = (
+            Path("llama2_7b_gemm_only_no_area_norm_prefill_b1_s1024")
+            / EXCEL_FIGURE_DATA_CSV
+        )
+
+        self.assertTrue(
+            _candidate_matches_kind(csv_path, "gemm_only_no_area_norm")
+        )
+        self.assertFalse(_candidate_matches_kind(csv_path, "gemm_only"))
+
+    def test_gemm_only_no_area_norm_uses_existing_gemm_legend_groups(self) -> None:
+        knobs = plot.PlotKnobs()
+
+        self.assertEqual(
+            knobs.llama_gemm_only_no_area_norm.stack_groups,
+            knobs.llama_gemm_only.stack_groups,
+        )
+        self.assertEqual(
+            knobs.llama_gemm_only_no_area_norm.stack_palette,
+            knobs.llama_gemm_only.stack_palette,
+        )
+
+    def test_cli_accepts_gemm_only_no_area_norm_plot_and_input(self) -> None:
+        args = parse_args(
+            [
+                "--plot",
+                "llama_gemm_only_no_area_norm",
+                "--llama3-gemm-no-area-norm-data",
+                "llama3.csv",
+            ]
+        )
+
+        self.assertEqual(args.plot, "llama_gemm_only_no_area_norm")
+        self.assertEqual(args.llama3_gemm_no_area_norm_data, "llama3.csv")
 
     def test_flat_e2e_plots_share_the_compact_stacked_layout(self) -> None:
         knobs = plot.PlotKnobs()

@@ -84,6 +84,112 @@ class GemmLayoutPlotTests(unittest.TestCase):
 
         self.assertTrue(knobs.relative)
 
+    def test_all_plot_knobs_default_to_auto_value_label_fontsize(self) -> None:
+        knobs = plot.PlotKnobs()
+
+        for item in vars(knobs).values():
+            self.assertEqual(item.value_label_fontsize, "auto")
+
+    def test_all_plot_knobs_use_tight_subplot_x_margin(self) -> None:
+        knobs = plot.PlotKnobs()
+
+        for item in vars(knobs).values():
+            self.assertEqual(item.subplot_x_margin, 0.01)
+
+    def test_batch_labels_are_placed_near_the_subplot_upper_edge(self) -> None:
+        knobs = plot.PlotKnobs()
+
+        for item in vars(knobs).values():
+            self.assertEqual(item.x_group_label_y, 0.98)
+
+    def test_decode_bars_are_wider_without_changing_prefill(self) -> None:
+        knobs = plot.WideBarKnobs()
+
+        self.assertEqual(
+            plot._stage_bar_width(
+                knobs,
+                "Prefill",
+                0.18,
+                max_width=0.24,
+            ),
+            0.18,
+        )
+        self.assertAlmostEqual(
+            plot._stage_bar_width(
+                knobs,
+                "Decode",
+                0.18,
+                max_width=0.24,
+            ),
+            0.216,
+        )
+
+    def test_decode_bar_width_is_capped_to_preserve_a_visible_gap(self) -> None:
+        knobs = plot.StackedBarKnobs(
+            stage_bar_width_scales={"Decode": 10.0},
+        )
+
+        self.assertEqual(
+            plot._stage_bar_width(
+                knobs,
+                "Decode",
+                knobs.bar_width,
+                max_width=plot.MAX_BAR_FILL_RATIO,
+            ),
+            plot.MAX_BAR_FILL_RATIO,
+        )
+
+    def test_auto_value_label_fits_inside_bar_width(self) -> None:
+        _pd, plt = plot._import_plot_modules()
+        fig, ax = plt.subplots(figsize=(3.5, 2.0))
+        knobs = plot.WideBarKnobs(
+            value_label_fontsize="auto",
+            value_label_auto_max_fontsize=12.0,
+            value_label_rotation=0.0,
+            save_png=False,
+            save_pdf=False,
+            save_svg=False,
+        )
+        bars = ax.bar([0.0], [123456.0], width=0.08)
+        ax.set_xlim(-1.0, 1.0)
+        plot._add_value_labels(ax, bars, knobs)
+        fig.tight_layout()
+        plot._fit_auto_value_labels(fig, knobs)
+
+        fig.set_dpi(min(knobs.dpi, 300.0))
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        label_width = ax.texts[0].get_window_extent(renderer=renderer).width
+        left_px = ax.transData.transform((-0.04, 0.0))[0]
+        right_px = ax.transData.transform((0.04, 0.0))[0]
+        available_width = (
+            abs(right_px - left_px) * plot.VALUE_LABEL_AUTO_WIDTH_SCALE
+        )
+        self.assertTrue(ax.texts[0].get_visible())
+        self.assertLessEqual(label_width, available_width + 0.5)
+        self.assertLess(ax.texts[0].get_fontsize(), 12.0)
+        plt.close(fig)
+
+    def test_llama_subplot_titles_do_not_use_l2_l3_abbreviations(self) -> None:
+        knobs = plot.PlotKnobs().llama_e2e_gemm_layout_vector_stacked
+
+        self.assertEqual(
+            plot._format_subplot_title(
+                knobs,
+                model="Llama 2",
+                stage="Prefill",
+            ),
+            "llama2 Prefill",
+        )
+        self.assertEqual(
+            plot._format_subplot_title(
+                knobs,
+                model="Llama 3",
+                stage="Decode",
+            ),
+            "llama3 Decode",
+        )
+
     def test_layout_backend_suffix_is_preserved_for_c3_correspondence(self) -> None:
         self.assertEqual(
             plot._layout_base_backend("kv_cache_quant_layout_fused_w4a16"),

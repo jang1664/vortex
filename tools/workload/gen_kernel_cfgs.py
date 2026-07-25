@@ -121,6 +121,7 @@ ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
 STANDARD_KV_CACHE_QUANT_VARIANTS = frozenset((
     ALL_FPINT_GEMM_NAIVE_VARIANT,
     ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT,
+    ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT,
     ALL_SGEMM_TCU_VARIANT,
 ))
 LAYOUT_MXU_KT = 32
@@ -580,6 +581,150 @@ def _kv_cache_quant_kernel(name: str,
         shape=shape,
         variant=variant,
     )
+
+
+def _w4a16_dequant_kernel(name: str,
+                          stage: str,
+                          *,
+                          K: int,
+                          N: int,
+                          QBLK: int,
+                          QDIR: int,
+                          WTRANS: int,
+                          calls_per_forward: int,
+                          producer: str,
+                          consumer: str,
+                          layout_group: str,
+                          variant: str,
+                          quant_mode: str,
+                          cache_len: int | None = None,
+                          operand_kind: str = "weight") -> dict:
+    shape = {
+        "K": K,
+        "N": N,
+        "QBLK": QBLK,
+        "QDIR": QDIR,
+        "WTRANS": WTRANS,
+        "layout_from": "packed_w4a16_row_major",
+        "qparam_layout_from": "qparams_row_major",
+        "layout_to": "row_major_fp16",
+        "producer": producer,
+        "consumer": consumer,
+        "layout_group": layout_group,
+        "quant_mode": quant_mode,
+        "operand_kind": operand_kind,
+    }
+    if cache_len is not None:
+        shape["cache_len"] = cache_len
+    return _llm_kernel(
+        name=name,
+        kind="dequantization",
+        backend="kv_cache_dequant_w4a16",
+        stage=stage,
+        args=(
+            f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}"
+            f" --quant-mode {quant_mode}"
+        ),
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _sgemm_static_weight_dequant_name(op: str) -> str:
+    return f"dequant_{op}_weight_to_fp16"
+
+
+def _kv_cache_dequant_name(attn_name: str) -> str:
+    if attn_name == "attn_qkT":
+        return "kv_cache_dequant_k_to_attn_qkT"
+    if attn_name == "attn_pv":
+        return "kv_cache_dequant_v_to_attn_pv"
+    raise ValueError(f"no KV-cache dequant stage for {attn_name!r}")
+
+
+def _apply_sgemm_w4a16_dequant_stages(kernels: list[dict],
+                                      *,
+                                      stage: str,
+                                      seq_kv: int,
+                                      layers: int,
+                                      batch: int,
+                                      heads_kv: int,
+                                      head_dim: int,
+                                      qblk: int,
+                                      variant: str) -> list[dict]:
+    """Materialize W4 operands as fp16 only for FP-TCU GEMM consumers."""
+    per_head_kv = layers * batch * heads_kv
+    spinquant = _is_spinquant_variant(variant)
+    out: list[dict] = []
+    for kernel in kernels:
+        if kernel.get("backend") != "sgemm_tcu":
+            out.append(kernel)
+            continue
+
+        name = str(kernel["name"])
+        if name == "attn_qkT":
+            out.append(_w4a16_dequant_kernel(
+                _kv_cache_dequant_name(name),
+                stage,
+                K=seq_kv,
+                N=head_dim,
+                QBLK=head_dim,
+                QDIR=1,
+                WTRANS=1,
+                calls_per_forward=per_head_kv,
+                producer="kv_cache_quant_rope_k_to_attn_qkT",
+                consumer=name,
+                layout_group="k_cache_to_fp16_attn_qkT",
+                variant=variant,
+                quant_mode=(
+                    "spinquant_signed_asymmetric"
+                    if spinquant else "legacy_uint4_asymmetric"
+                ),
+                cache_len=seq_kv,
+                operand_kind="kv_cache_k",
+            ))
+        elif name == "attn_pv":
+            out.append(_w4a16_dequant_kernel(
+                _kv_cache_dequant_name(name),
+                stage,
+                K=seq_kv,
+                N=head_dim,
+                QBLK=head_dim,
+                QDIR=1,
+                WTRANS=0,
+                calls_per_forward=per_head_kv,
+                producer="kv_cache_quant_v_cache_to_attn_pv",
+                consumer=name,
+                layout_group="v_cache_to_fp16_attn_pv",
+                variant=variant,
+                quant_mode=(
+                    "spinquant_signed_symmetric"
+                    if spinquant else "legacy_uint4_asymmetric"
+                ),
+                cache_len=seq_kv,
+                operand_kind="kv_cache_v",
+            ))
+        else:
+            shape = dict(kernel.get("shape") or {})
+            out.append(_w4a16_dequant_kernel(
+                _sgemm_static_weight_dequant_name(name),
+                stage,
+                K=int(shape["K"]),
+                N=int(shape["N"]),
+                QBLK=qblk,
+                QDIR=0,
+                WTRANS=0,
+                calls_per_forward=int(kernel["calls_per_forward"]),
+                producer=f"param:{name}.weight/qparams",
+                consumer=name,
+                layout_group=f"{name}_w4_to_fp16",
+                variant=variant,
+                quant_mode="signed_int4_asymmetric",
+                operand_kind="static_weight",
+            ))
+        out.append(kernel)
+    return out
 
 
 def _kv_cache_quant_layout_fused_kernel(name: str,
@@ -1872,6 +2017,18 @@ def build_decoder_pass_kernels(config: dict,
     else:
         kernels = out
 
+    kernels = _apply_sgemm_w4a16_dequant_stages(
+        kernels,
+        stage=stage,
+        seq_kv=seq_kv,
+        layers=L,
+        batch=batch,
+        heads_kv=H_kv,
+        head_dim=D,
+        qblk=qblk,
+        variant=variant,
+    )
+
     if spinquant:
         return _apply_spinquant_hadamard_variant(
             kernels,
@@ -2297,6 +2454,7 @@ def _standard_quant_is_cache_store_only(kernels_by_name: dict[str, dict],
         quant is not None
         and quant.get("backend") == "kv_cache_quant_w4a16"
         and tiled_layout_name not in names
+        and _kv_cache_dequant_name(attn_name) not in names
         and not _standard_quant_feeds_attention(
             kernels_by_name,
             names,
@@ -2335,7 +2493,9 @@ def _set_flow_by_name(kernels_by_name: dict[str, dict],
         _set_flow(kernel, inputs, outputs)
 
 
-def _static_weight_inputs(op: str, backend: str) -> list[dict]:
+def _static_weight_inputs(op: str,
+                          backend: str,
+                          kernels_by_name: dict[str, dict]) -> list[dict]:
     if backend == FPINT_GEMM_IMPROVE_BACKEND:
         return [
             _input_flow("W", f"param:{op}.weight", "gemm_w_tiled"),
@@ -2347,6 +2507,9 @@ def _static_weight_inputs(op: str, backend: str) -> list[dict]:
             _input_flow("scale/zp", f"param:{op}.qparams", "row_major"),
         ]
     if backend == "sgemm_tcu":
+        dequant_name = _sgemm_static_weight_dequant_name(op)
+        if dequant_name in kernels_by_name:
+            return [_input_flow("B", dequant_name, "row_major_fp16")]
         return [_input_flow("B", f"param:{op}.weight", "row_major_fp16")]
     return [_input_flow("B", f"param:{op}.weight", "row_major")]
 
@@ -2378,6 +2541,48 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         kernel["outputs"] = []
 
     _annotate_generic_layout_flows(kernels)
+
+    for op in (
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ):
+        dequant_name = _sgemm_static_weight_dequant_name(op)
+        dequant = kernels_by_name.get(dequant_name)
+        if not dequant:
+            continue
+        _set_flow(
+            dequant,
+            inputs=[
+                _input_flow(
+                    "packed",
+                    f"param:{op}.weight",
+                    "packed_w4a16_row_major",
+                ),
+                _input_flow(
+                    "scale/zp",
+                    f"param:{op}.qparams",
+                    "qparams_row_major",
+                ),
+            ],
+            outputs=[_output_flow("B", op, "row_major_fp16")],
+        )
+
+    for attn_name, quant_name in (
+        ("attn_qkT", "kv_cache_quant_rope_k_to_attn_qkT"),
+        ("attn_pv", "kv_cache_quant_v_cache_to_attn_pv"),
+    ):
+        dequant_name = _kv_cache_dequant_name(attn_name)
+        dequant = kernels_by_name.get(dequant_name)
+        if not dequant:
+            continue
+        _set_flow(
+            dequant,
+            inputs=[
+                _input_flow("packed", quant_name, "packed_w4a16_row_major"),
+                _input_flow("scale/zp", quant_name, "qparams_row_major"),
+            ],
+            outputs=[_output_flow("B", attn_name, "row_major_fp16")],
+        )
 
     has_qkv_tile = "layout_input_layernorm_to_qkv" in names
     input_norm_out_layout = (
@@ -2438,7 +2643,7 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             kernels_by_name,
             proj,
             inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
-                   + _static_weight_inputs(proj, backend),
+                   + _static_weight_inputs(proj, backend, kernels_by_name),
             outputs=outputs,
         )
 
@@ -2524,7 +2729,21 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     k_quant = kernels_by_name.get("kv_cache_quant_rope_k_to_attn_qkT")
     if k_quant:
         shape = dict(k_quant.get("shape") or {})
-        if k_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+        k_dequant_name = _kv_cache_dequant_name("attn_qkT")
+        if k_dequant_name in names:
+            outputs = [
+                _output_flow(
+                    "packed",
+                    k_dequant_name,
+                    "packed_w4a16_row_major",
+                ),
+                _output_flow(
+                    "scale/zp",
+                    k_dequant_name,
+                    "qparams_row_major",
+                ),
+            ]
+        elif k_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
             outputs = [
                 _output_flow("W", "attn_qkT", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
                 _output_flow("scale/zp", "attn_qkT", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
@@ -2580,7 +2799,13 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             "rope_q",
         ], names) or "rope_q"
         a_layout = _producer_output_layout(kernels_by_name, a_source, _gemm_a_layout(backend))
-        if "layout_rope_k_to_attn_qkT" in names:
+        k_dequant_name = _kv_cache_dequant_name("attn_qkT")
+        if k_dequant_name in names:
+            w_source = k_dequant_name
+            scale_source = ""
+            w_layout = "row_major_fp16"
+            scale_layout = "row_major"
+        elif "layout_rope_k_to_attn_qkT" in names:
             w_source = "layout_rope_k_to_attn_qkT"
             scale_source = "layout_rope_k_qparams_to_attn_qkT"
             w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
@@ -2639,7 +2864,21 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     v_quant = kernels_by_name.get("kv_cache_quant_v_cache_to_attn_pv")
     if v_quant:
         shape = dict(v_quant.get("shape") or {})
-        if v_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+        v_dequant_name = _kv_cache_dequant_name("attn_pv")
+        if v_dequant_name in names:
+            outputs = [
+                _output_flow(
+                    "packed",
+                    v_dequant_name,
+                    "packed_w4a16_row_major",
+                ),
+                _output_flow(
+                    "scale/zp",
+                    v_dequant_name,
+                    "qparams_row_major",
+                ),
+            ]
+        elif v_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
             outputs = [
                 _output_flow("W", "attn_pv", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
                 _output_flow("scale/zp", "attn_pv", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
@@ -2684,7 +2923,13 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         default_w_layout = _gemm_w_layout(backend, int(attn_shape.get("WTRANS", 0)))
         default_qparam_layout = _gemm_qparam_layout(backend)
         a_source = _first_existing(["layout_attn_softmax_to_attn_pv", "attn_softmax"], names) or "attn_softmax"
-        if "layout_v_cache_to_attn_pv" in names:
+        v_dequant_name = _kv_cache_dequant_name("attn_pv")
+        if v_dequant_name in names:
+            w_source = v_dequant_name
+            scale_source = ""
+            w_layout = "row_major_fp16"
+            scale_layout = "row_major"
+        elif "layout_v_cache_to_attn_pv" in names:
             w_source = "layout_v_cache_to_attn_pv"
             scale_source = "layout_v_cache_qparams_to_attn_pv"
             w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
@@ -2748,7 +2993,7 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             kernels_by_name,
             "o_proj",
             inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
-                   + _static_weight_inputs("o_proj", backend),
+                   + _static_weight_inputs("o_proj", backend, kernels_by_name),
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
 
@@ -2786,7 +3031,7 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             kernels_by_name,
             proj,
             inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
-                   + _static_weight_inputs(proj, backend),
+                   + _static_weight_inputs(proj, backend, kernels_by_name),
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
 
@@ -2831,7 +3076,7 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             kernels_by_name,
             "down_proj",
             inputs=[_input_flow("A", a_source, a_layout)]
-                   + _static_weight_inputs("down_proj", backend),
+                   + _static_weight_inputs("down_proj", backend, kernels_by_name),
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
 

@@ -202,7 +202,7 @@ class KernelVariantTest(unittest.TestCase):
             attn_pv["inputs"],
         )
 
-    def test_all_sgemm_variant_emits_append_kv_cache_quant_side_path(self) -> None:
+    def test_all_sgemm_variant_dequantizes_w4_operands_for_fp_tcu(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
             stages=["generation"],
@@ -216,7 +216,12 @@ class KernelVariantTest(unittest.TestCase):
         rope_k = _kernel_by_name(payload, "rope_k")
         v_proj = _kernel_by_name(payload, "v_proj")
         k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        k_dequant = _kernel_by_name(payload, "kv_cache_dequant_k_to_attn_qkT")
         v_quant = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+        v_dequant = _kernel_by_name(payload, "kv_cache_dequant_v_to_attn_pv")
+        q_weight_dequant = _kernel_by_name(
+            payload, "dequant_q_proj_weight_to_fp16"
+        )
         attn_qk = _kernel_by_name(payload, "attn_qkT")
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
@@ -228,15 +233,30 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(512, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
         self.assertIn(
-            {"role": "packed", "target": "kv_cache:k", "layout": "packed_w4a16_row_major"},
+            {
+                "role": "packed",
+                "target": "kv_cache_dequant_k_to_attn_qkT",
+                "layout": "packed_w4a16_row_major",
+            },
             k_quant["outputs"],
         )
-        self.assertIn(
+        self.assertNotIn(
             {"role": "k", "target": "attn_qkT", "layout": "row_major"},
             rope_k["outputs"],
         )
+        self.assertEqual("kv_cache_dequant_w4a16", k_dequant["backend"])
+        self.assertEqual(
+            "-k 512 -n 128 -q 128 -d 1 -t 1 "
+            "--quant-mode legacy_uint4_asymmetric",
+            k_dequant["args"],
+        )
+        self.assertEqual(1024, k_dequant["calls_per_forward"])
         self.assertIn(
-            {"role": "B", "source": "rope_k", "layout": "row_major_fp16"},
+            {
+                "role": "B",
+                "source": "kv_cache_dequant_k_to_attn_qkT",
+                "layout": "row_major_fp16",
+            },
             attn_qk["inputs"],
         )
 
@@ -248,16 +268,49 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(512, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
         self.assertIn(
-            {"role": "packed", "target": "kv_cache:v", "layout": "packed_w4a16_row_major"},
+            {
+                "role": "packed",
+                "target": "kv_cache_dequant_v_to_attn_pv",
+                "layout": "packed_w4a16_row_major",
+            },
             v_quant["outputs"],
         )
         self.assertIn(
-            {"role": "C", "target": "attn_pv", "layout": "row_major_fp16"},
+            {
+                "role": "C",
+                "target": "kv_cache_quant_v_cache_to_attn_pv",
+                "layout": "row_major_fp16",
+            },
             v_proj["outputs"],
         )
+        self.assertEqual("kv_cache_dequant_w4a16", v_dequant["backend"])
+        self.assertEqual(
+            "-k 512 -n 128 -q 128 -d 1 -t 0 "
+            "--quant-mode legacy_uint4_asymmetric",
+            v_dequant["args"],
+        )
         self.assertIn(
-            {"role": "B", "source": "v_proj", "layout": "row_major_fp16"},
+            {
+                "role": "B",
+                "source": "kv_cache_dequant_v_to_attn_pv",
+                "layout": "row_major_fp16",
+            },
             attn_pv["inputs"],
+        )
+        self.assertEqual("kv_cache_dequant_w4a16", q_weight_dequant["backend"])
+        self.assertEqual(
+            "-k 4096 -n 4096 -q 32 -d 0 -t 0 "
+            "--quant-mode signed_int4_asymmetric",
+            q_weight_dequant["args"],
+        )
+        q_proj = _kernel_by_name(payload, "q_proj")
+        self.assertIn(
+            {
+                "role": "B",
+                "source": "dequant_q_proj_weight_to_fp16",
+                "layout": "row_major_fp16",
+            },
+            q_proj["inputs"],
         )
 
     def test_naive_fpint_layout_view_marks_row_major_operands(self) -> None:
@@ -299,6 +352,39 @@ class KernelVariantTest(unittest.TestCase):
         self.assertNotIn("gemm_w_tiled", text)
         self.assertNotIn("gemm_scale_zp_tiled", text)
         self.assertNotIn("gemm_c_tiled", text)
+
+    def test_w4_dequant_is_emitted_only_for_sgemm_tcu_consumers(self) -> None:
+        expected_counts = {
+            "all_sgemm_tcu_spinquant": 9,
+            "attn_sgemm_tcu_fpint_gemm_naive_spinquant": 2,
+            "attn_sgemm_tcu_fpint_gemm_improve_spinquant": 2,
+            "all_fpint_gemm_naive_spinquant": 0,
+            "all_fpint_gemm_improve_alone_layout_spinquant": 0,
+            "all_fpint_gemm_improve_fused_layout_spinquant": 0,
+        }
+        for variant, expected_count in expected_counts.items():
+            with self.subTest(variant=variant):
+                payload = build_llm_kernels(
+                    model_name="llama2-7b",
+                    stages=["generation"],
+                    batch=1,
+                    prefill_seq_len=8,
+                    gen_kv_len=512,
+                    qblk=32,
+                    variant=variant,
+                )
+                by_name = {
+                    str(kernel["name"]): kernel
+                    for kernel in payload["kernels"]
+                }
+                dequant_kernels = [
+                    kernel for kernel in payload["kernels"]
+                    if kernel["backend"] == "kv_cache_dequant_w4a16"
+                ]
+                self.assertEqual(expected_count, len(dequant_kernels))
+                for dequant in dequant_kernels:
+                    consumer = str(dequant["shape"]["consumer"])
+                    self.assertEqual("sgemm_tcu", by_name[consumer]["backend"])
 
     def test_all_sgemm_variant_maps_generation_and_excludes_lm_head(self) -> None:
         payload = build_llm_kernels(
@@ -537,6 +623,7 @@ class KernelVariantTest(unittest.TestCase):
         k_had = _kernel_by_name(payload, "spinquant_r3_k_hadamard")
         r4_had = _kernel_by_name(payload, "spinquant_r4_mlp_hadamard")
         k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        k_dequant = _kernel_by_name(payload, "kv_cache_dequant_k_to_attn_qkT")
         attn_qk = _kernel_by_name(payload, "attn_qkT")
 
         self.assertEqual("hadamard", q_had["backend"])
@@ -555,8 +642,17 @@ class KernelVariantTest(unittest.TestCase):
             k_quant["inputs"],
         )
         self.assertIn(
-            {"role": "B", "source": "spinquant_r3_k_hadamard", "layout": "row_major_fp16"},
+            {
+                "role": "B",
+                "source": "kv_cache_dequant_k_to_attn_qkT",
+                "layout": "row_major_fp16",
+            },
             attn_qk["inputs"],
+        )
+        self.assertEqual(
+            "-k 8 -n 128 -q 128 -d 1 -t 1 "
+            "--quant-mode spinquant_signed_asymmetric",
+            k_dequant["args"],
         )
         self.assertEqual("-rows 8 -dim 11008 -K 172", r4_had["args"])
         self.assertEqual("hadamard", r4_had["backend"])

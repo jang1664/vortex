@@ -7,12 +7,13 @@ void kernel_kv_cache_dequant(kernel_arg_t *__UNIFORM__ arg) {
   auto src = reinterpret_cast<uint8_t *>(arg->src_addr);
   auto dst = reinterpret_cast<fp16_t *>(arg->dst_addr);
   auto scales = reinterpret_cast<fp16_t *>(arg->scale_addr);
-  auto zeros = reinterpret_cast<int16_t *>(arg->zero_addr);
+  auto zeros = reinterpret_cast<uint16_t *>(arg->zero_addr);
 
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
   const uint32_t QBLK = arg->QBLK;
   const uint32_t QDIR = arg->QDIR;
+  const uint32_t quant_mode = arg->quant_mode;
   const uint32_t total = K * N;
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -21,10 +22,13 @@ void kernel_kv_cache_dequant(kernel_arg_t *__UNIFORM__ arg) {
   for (uint32_t idx = thread_id; idx < total; idx += total_threads) {
     const uint32_t k = idx / N;
     const uint32_t n = idx - k * N;
-    const uint8_t q = kv_get_nibble(src, K, N, k, n);
+    const uint8_t q_bits = kv_get_nibble(src, K, N, k, n);
+    const int32_t q = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+        ? (int32_t)q_bits
+        : (int32_t)kv_signed_int4(q_bits);
     const uint64_t qidx = kv_qparam_index(k, n, K, N, QBLK, QDIR);
     const float scale = fp16_to_float(scales[qidx]);
-    const int16_t zp = zeros[qidx];
+    const int32_t zp = kv_signed_int16(zeros[qidx]);
     dst[idx] = float_to_fp16(((float)q - (float)zp) * scale);
   }
 }

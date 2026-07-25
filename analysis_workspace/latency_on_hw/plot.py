@@ -7,7 +7,7 @@ import csv
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 
 DEFAULT_OUT_BASE = "output_figure"
@@ -24,8 +24,11 @@ PLOT_CHOICES = (
     "llama_e2e_gemm_layout_vector_stacked",
     "llama_e2e_stacked",
     "llama_gemm_only",
+    "llama_gemm_only_no_area_norm",
+    "llama_gemm_only_energy",
     "llama_energy",
     "llama_energy_stacked",
+    "llama_energy_gemm_layout_vector_stacked",
     "latency",
     "all",
 )
@@ -64,10 +67,16 @@ AXIS_LABEL_FONTSIZE = MIN_FONT_SIZE
 TICK_LABEL_FONTSIZE = MIN_FONT_SIZE
 LEGEND_TITLE_FONTSIZE = MIN_FONT_SIZE+0.2
 LEGEND_FONTSIZE = MIN_FONT_SIZE
-VALUE_LABEL_FONTSIZE = MIN_FONT_SIZE
+VALUE_LABEL_FONTSIZE: float | Literal["auto"] = "auto"
+VALUE_LABEL_AUTO_MAX_FONTSIZE = MIN_FONT_SIZE
+VALUE_LABEL_AUTO_WIDTH_SCALE = 0.92
+STACKED_LABEL_EDGE_PADDING_PX = 1.0
 
 X_GROUP_AXIS = "batch"
 X_GROUP_GAP = 0.35
+SUBPLOT_X_MARGIN = 0.01
+DECODE_BAR_WIDTH_SCALE = 1.20
+MAX_BAR_FILL_RATIO = 0.96
 VALUE_LABELS = True
 E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
@@ -116,20 +125,18 @@ BAR_PALETTE = (
     "#F28E2B",
     "#E15759",
 )
-GEMM_ONLY_STACK_PALETTE = (
-    "#4D4D4D",
-    "#7F7F7F",
-    "#BDBDBD",
+STACK_PALETTE = (
     "#08306B",
     "#2171B5",
     "#6BAED6",
     "#00441B",
     "#238B45",
     "#74C476",
-    "#016C59",
-    "#3690C0",
-    "#A1D99B",
+    "#4D4D4D",
+    "#7F7F7F",
+    "#BDBDBD",
 )
+GEMM_ONLY_STACK_PALETTE = STACK_PALETTE
 
 
 @dataclass
@@ -150,13 +157,17 @@ class WideBarKnobs:
     legend_fontsize: float = LEGEND_FONTSIZE
     legend_title_fontsize: float = LEGEND_TITLE_FONTSIZE
     bar_width: float = 0.18
+    stage_bar_width_scales: dict[str, float] = field(
+        default_factory=lambda: {"Decode": DECODE_BAR_WIDTH_SCALE}
+    )
     bar_edgecolor: str = BAR_EDGECOLOR
     bar_linewidth: float = BAR_LINEWIDTH
     bar_alpha: float = BAR_ALPHA
     palette: tuple[str, ...] | None = None
     value_labels: bool = VALUE_LABELS
     value_label_format: str = "{:.2g}"
-    value_label_fontsize: float = VALUE_LABEL_FONTSIZE
+    value_label_fontsize: float | Literal["auto"] = VALUE_LABEL_FONTSIZE
+    value_label_auto_max_fontsize: float = VALUE_LABEL_AUTO_MAX_FONTSIZE
     value_label_rotation: float = 90.0
     value_label_ha: str = "center"
     value_label_va: str = "bottom"
@@ -165,7 +176,9 @@ class WideBarKnobs:
     stage_x_tick_label_rotations: dict[str, float] = field(default_factory=dict)
     x_group_axis: str | None = X_GROUP_AXIS
     x_group_gap: float = X_GROUP_GAP
+    subplot_x_margin: float = SUBPLOT_X_MARGIN
     x_group_labels_inside: bool = False
+    x_group_label_y: float = 0.98
     y_lim_top_scale: float = 1.25
     y_lim: tuple[float | None, float | None] | None = None
     stage_y_lims: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
@@ -205,14 +218,15 @@ GEMM_ONLY_STACK_GROUPS = (
         columns=("down_proj", "gate_proj", "up_proj"),
     ),
 )
-GEMM_ONLY_GROUP_PALETTE = ("#08306B", "#2171B5", "#6BAED6")
-E2E_KIND_STACK_PALETTE = ("#08306B", "#238B45")
+GEMM_ONLY_GROUP_PALETTE = STACK_PALETTE[:3]
+E2E_KIND_STACK_PALETTE = STACK_PALETTE
 E2E_KIND_STACK_GROUPS = (
     StackGroupKnobs(label="gemm", columns=("gemm",)),
     StackGroupKnobs(label="vector", columns=None),
 )
-E2E_GEMM_LAYOUT_STACK_PALETTE = ("#08306B", "#F28E2B")
-E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE = ("#08306B", "#F28E2B", "#238B45")
+E2E_GEMM_LAYOUT_STACK_PALETTE = STACK_PALETTE
+E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE = STACK_PALETTE
+E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE = STACK_PALETTE
 ENERGY_KIND_STACK_PALETTE = E2E_KIND_STACK_PALETTE
 ENERGY_KIND_STACK_GROUPS = E2E_KIND_STACK_GROUPS
 
@@ -223,12 +237,13 @@ def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
         "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / 4,
         "title": None,
         "subplot_title_template": LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
+        "subplot_title_fontsize": MIN_FONT_SIZE - 0.6,
         "subplot_title_inside": True,
         "subplot_title_replacements": (
-            ("Llama 3.2 1B, ", "L3.2-1B "),
-            ("Llama 3.2 3B, ", "L3.2-3B "),
-            ("Llama 2, ", "L2 "),
-            ("Llama 3, ", "L3 "),
+            ("Llama 3.2 1B, ", "llama3.2-1B "),
+            ("Llama 3.2 3B, ", "llama3.2-3B "),
+            ("Llama 2, ", "llama2 "),
+            ("Llama 3, ", "llama3 "),
         ),
         "x_label": "",
         "y_label": y_label,
@@ -339,6 +354,22 @@ class PlotKnobs:
             stack_groups=GEMM_ONLY_STACK_GROUPS,
         )
     )
+    llama_gemm_only_no_area_norm: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=3,
+            stack_palette=GEMM_ONLY_GROUP_PALETTE,
+            stack_groups=GEMM_ONLY_STACK_GROUPS,
+        )
+    )
+    llama_gemm_only_energy: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=3,
+            stack_palette=GEMM_ONLY_GROUP_PALETTE,
+            stack_groups=GEMM_ONLY_STACK_GROUPS,
+        )
+    )
     llama_energy: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
@@ -351,6 +382,13 @@ class PlotKnobs:
             legend_ncol=2,
             stack_palette=ENERGY_KIND_STACK_PALETTE,
             stack_groups=ENERGY_KIND_STACK_GROUPS,
+        )
+    )
+    llama_energy_gemm_layout_vector_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=4,
+            stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
         )
     )
 
@@ -387,7 +425,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "llama_e2e_no_area_norm, llama_e2e_no_area_norm_stacked, "
             "llama_e2e_gemm_layout_stacked, llama_e2e_gemm_layout_vector_stacked, "
             "llama_e2e_stacked, llama_gemm_only, "
+            "llama_gemm_only_no_area_norm, llama_gemm_only_energy, "
             "llama_energy, llama_energy_stacked, "
+            "llama_energy_gemm_layout_vector_stacked, "
             "latency, or all"
         ),
     )
@@ -542,6 +582,46 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3.2 3B GEMM-only prepared directory or excel_figure_data.csv for --plot llama_gemm_only.",
     )
     parser.add_argument(
+        "--llama2-gemm-no-area-norm-data",
+        default=None,
+        help="Llama 2 GEMM-only data without area normalization for --plot llama_gemm_only_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3-gemm-no-area-norm-data",
+        default=None,
+        help="Llama 3 GEMM-only data without area normalization for --plot llama_gemm_only_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-gemm-no-area-norm-data",
+        default=None,
+        help="Llama 3.2 1B GEMM-only data without area normalization for --plot llama_gemm_only_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-gemm-no-area-norm-data",
+        default=None,
+        help="Llama 3.2 3B GEMM-only data without area normalization for --plot llama_gemm_only_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama2-gemm-energy-data",
+        default=None,
+        help="Llama 2 GEMM-only energy data for --plot llama_gemm_only_energy.",
+    )
+    parser.add_argument(
+        "--llama3-gemm-energy-data",
+        default=None,
+        help="Llama 3 GEMM-only energy data for --plot llama_gemm_only_energy.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-gemm-energy-data",
+        default=None,
+        help="Llama 3.2 1B GEMM-only energy data for --plot llama_gemm_only_energy.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-gemm-energy-data",
+        default=None,
+        help="Llama 3.2 3B GEMM-only energy data for --plot llama_gemm_only_energy.",
+    )
+    parser.add_argument(
         "--llama2-energy-data",
         default=None,
         help="Llama 2 energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
@@ -580,6 +660,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3p2-3b-energy-stacked-data",
         default=None,
         help="Llama 3.2 3B stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
+    )
+    parser.add_argument(
+        "--llama2-energy-gemm-layout-vector-stacked-data",
+        default=None,
+        help="Llama 2 name/backend-stacked energy data for --plot llama_energy_gemm_layout_vector_stacked.",
+    )
+    parser.add_argument(
+        "--llama3-energy-gemm-layout-vector-stacked-data",
+        default=None,
+        help="Llama 3 name/backend-stacked energy data for --plot llama_energy_gemm_layout_vector_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-energy-gemm-layout-vector-stacked-data",
+        default=None,
+        help="Llama 3.2 1B name/backend-stacked energy data for --plot llama_energy_gemm_layout_vector_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-energy-gemm-layout-vector-stacked-data",
+        default=None,
+        help="Llama 3.2 3B name/backend-stacked energy data for --plot llama_energy_gemm_layout_vector_stacked.",
     )
     parser.add_argument(
         "--figure-width",
@@ -704,12 +804,27 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
         return "e2e_gemm_layout_stacked_by_name_backend" in name
     if kind == "e2e_stacked":
         return "e2e_stacked_by_kind" in name
+    if kind == "gemm_only_no_area_norm":
+        return "gemm_only_no_area_norm" in name
+    if kind == "gemm_only_energy":
+        return "gemm_only_energy_per_token_stacked_by_name" in name
     if kind == "gemm_only":
-        return "gemm_only" in name
+        return (
+            "gemm_only" in name
+            and "gemm_only_no_area_norm" not in name
+            and "gemm_only_energy_per_token" not in name
+        )
     if kind == "energy":
-        return "energy_per_token" in name and "stacked_by_kind" not in name
+        return (
+            "energy_per_token" in name
+            and "stacked_by_kind" not in name
+            and "gemm_layout_vector_stacked_by_name_backend" not in name
+            and "gemm_only_energy_per_token" not in name
+        )
     if kind == "energy_stacked":
         return "energy_per_token_stacked_by_kind" in name
+    if kind == "energy_gemm_layout_vector_stacked":
+        return "energy_per_token_gemm_layout_vector_stacked_by_name_backend" in name
     raise ValueError(f"unsupported prepared data kind: {kind}")
 
 
@@ -770,7 +885,11 @@ def _validate_energy_csv_schema(path: Path, kind: str) -> str:
     with path.open(newline="") as handle:
         columns = set(csv.DictReader(handle).fieldnames or ())
     required = {"power_metric", "stage", "batch", "seq"}
-    if kind == "energy_stacked":
+    if kind in {
+        "energy_stacked",
+        "energy_gemm_layout_vector_stacked",
+        "gemm_only_energy",
+    }:
         required.update(("candidate", "total"))
     elif kind == "energy":
         if not columns.intersection(E2E_CANDIDATE_COLUMNS):
@@ -966,6 +1085,22 @@ def _stack_palette(knobs: StackedBarKnobs) -> tuple[str, ...]:
     return GEMM_ONLY_STACK_PALETTE if knobs.stack_palette is None else knobs.stack_palette
 
 
+def _stage_bar_width(
+    knobs: WideBarKnobs,
+    stage: Any,
+    base_width: float,
+    *,
+    max_width: float,
+) -> float:
+    scale = float(knobs.stage_bar_width_scales.get(str(stage), 1.0))
+    if not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError("stage bar width scale must be a positive finite number")
+    width = min(float(base_width) * scale, float(max_width))
+    if not math.isfinite(width) or width <= 0.0:
+        raise ValueError("bar width must be a positive finite number")
+    return width
+
+
 def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
     knobs: PlotKnobs = copy.deepcopy(PLOT_KNOBS)
     plot_knobs: list[WideBarKnobs] = [
@@ -979,8 +1114,11 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
         knobs.llama_e2e_gemm_layout_vector_stacked,
         knobs.llama_e2e_stacked,
         knobs.llama_gemm_only,
+        knobs.llama_gemm_only_no_area_norm,
+        knobs.llama_gemm_only_energy,
         knobs.llama_energy,
         knobs.llama_energy_stacked,
+        knobs.llama_energy_gemm_layout_vector_stacked,
     ]
 
     for item in plot_knobs:
@@ -1281,6 +1419,7 @@ def _read_excel_figure_data(path: Path) -> Any:
 
 def _save_figure(fig: Any, path: Path, knobs: WideBarKnobs) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _fit_auto_value_labels(fig, knobs)
     if knobs.save_png:
         fig.savefig(path, dpi=knobs.dpi, bbox_inches="tight")
         print(f"wrote {path}")
@@ -1340,7 +1479,7 @@ def _set_grouped_x_ticks(
         for position, label in zip(batch_tick_positions, batch_tick_labels):
             ax.text(
                 position,
-                0.96,
+                knobs.x_group_label_y,
                 label,
                 transform=ax.get_xaxis_transform(),
                 ha="center",
@@ -1361,20 +1500,161 @@ def _set_grouped_x_ticks(
     ax.tick_params(axis="x", which="minor", length=0, pad=group_label_pad)
 
 
+def _initial_value_label_fontsize(knobs: WideBarKnobs) -> float:
+    if knobs.value_label_fontsize == "auto":
+        fontsize = float(knobs.value_label_auto_max_fontsize)
+    else:
+        fontsize = float(knobs.value_label_fontsize)
+    if not math.isfinite(fontsize) or fontsize <= 0.0:
+        raise ValueError("value label font size must be a positive finite number or 'auto'")
+    return fontsize
+
+
+def _mark_auto_value_label(artist: Any, bar_width: float) -> None:
+    artist._value_label_bar_width = abs(float(bar_width))
+
+
+def _mark_stacked_value_label(
+    artist: Any,
+    total: float,
+) -> None:
+    artist._stacked_value_label_total = float(total)
+
+
+def _fit_auto_value_labels(fig: Any, knobs: WideBarKnobs) -> None:
+    original_dpi = float(fig.dpi)
+    fit_dpi = max(original_dpi, min(float(knobs.dpi), 300.0))
+    fig.set_dpi(fit_dpi)
+    try:
+        if knobs.value_label_fontsize == "auto":
+            for _pass in range(2):
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+                for ax in fig.axes:
+                    for artist in ax.texts:
+                        bar_width = getattr(artist, "_value_label_bar_width", None)
+                        if bar_width is None or bar_width <= 0.0:
+                            continue
+                        center_x = float(artist.get_position()[0])
+                        left_px = ax.transData.transform(
+                            (center_x - bar_width / 2.0, 0.0)
+                        )[0]
+                        right_px = ax.transData.transform(
+                            (center_x + bar_width / 2.0, 0.0)
+                        )[0]
+                        available_width = (
+                            abs(float(right_px - left_px))
+                            * VALUE_LABEL_AUTO_WIDTH_SCALE
+                        )
+                        label_width = float(
+                            artist.get_window_extent(renderer=renderer).width
+                        )
+                        if available_width <= 0.0 or label_width <= available_width:
+                            continue
+                        fitted_fontsize = (
+                            artist.get_fontsize()
+                            * available_width
+                            / label_width
+                            * 0.98
+                        )
+                        artist.set_fontsize(max(fitted_fontsize, 0.1))
+
+        # This pass is also needed when a fixed label font size is selected.
+        # Keep labels above the bar by default. Move only labels that collide
+        # with the axes boundary or another text into their top segment.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for ax in fig.axes:
+            stacked_artists = [
+                artist
+                for artist in ax.texts
+                if hasattr(artist, "_stacked_value_label_total")
+                and artist.get_visible()
+            ]
+            label_boxes = {
+                artist: artist.get_window_extent(renderer=renderer)
+                for artist in stacked_artists
+            }
+            other_texts = [artist for artist in ax.texts if artist not in stacked_artists]
+            other_boxes = [
+                artist.get_window_extent(renderer=renderer)
+                for artist in other_texts
+                if artist.get_visible()
+            ]
+            if ax.title.get_visible() and ax.title.get_text():
+                other_boxes.append(ax.title.get_window_extent(renderer=renderer))
+
+            for artist in stacked_artists:
+                label_box = label_boxes[artist]
+                collides = label_box.y1 > ax.bbox.y1 - STACKED_LABEL_EDGE_PADDING_PX
+                if not collides:
+                    collides = any(
+                        label_box.overlaps(other_box)
+                        for other_box in other_boxes
+                    )
+                if not collides:
+                    collides = any(
+                        label_box.overlaps(other_box)
+                        for other_artist, other_box in label_boxes.items()
+                        if other_artist is not artist and other_artist.get_visible()
+                    )
+                if not collides:
+                    continue
+
+                total = float(artist._stacked_value_label_total)
+                artist.set_position((artist.get_position()[0], total))
+                artist.set_va("top")
+                artist.set_color("white")
+
+        if knobs.value_label_fontsize != "auto":
+            return
+
+        # Hide labels that still do not fit their bar after auto-sizing.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for ax in fig.axes:
+            for artist in ax.texts:
+                bar_width = getattr(artist, "_value_label_bar_width", None)
+                if bar_width is None or bar_width <= 0.0:
+                    continue
+                if not artist.get_visible():
+                    continue
+                center_x = float(artist.get_position()[0])
+                left_px = ax.transData.transform(
+                    (center_x - bar_width / 2.0, 0.0)
+                )[0]
+                right_px = ax.transData.transform(
+                    (center_x + bar_width / 2.0, 0.0)
+                )[0]
+                available_width = (
+                    abs(float(right_px - left_px))
+                    * VALUE_LABEL_AUTO_WIDTH_SCALE
+                )
+                label_width = float(
+                    artist.get_window_extent(renderer=renderer).width
+                )
+                if label_width > available_width:
+                    artist.set_visible(False)
+    finally:
+        fig.set_dpi(original_dpi)
+
+
 def _add_value_labels(ax: Any, bars: Any, knobs: WideBarKnobs) -> None:
+    fontsize = _initial_value_label_fontsize(knobs)
     for bar in bars:
         height = bar.get_height()
         if not math.isfinite(float(height)) or abs(float(height)) < 1.0e-12:
             continue
-        ax.text(
+        artist = ax.text(
             bar.get_x() + bar.get_width() / 2,
             height + knobs.value_label_dy,
             knobs.value_label_format.format(height),
             ha=knobs.value_label_ha,
             va=knobs.value_label_va,
             rotation=knobs.value_label_rotation,
-            fontsize=knobs.value_label_fontsize,
+            fontsize=fontsize,
         )
+        _mark_auto_value_label(artist, bar.get_width())
 
 
 def _add_stacked_total_labels(
@@ -1382,19 +1662,27 @@ def _add_stacked_total_labels(
     positions: Sequence[float],
     totals: Sequence[float],
     knobs: StackedBarKnobs,
+    *,
+    bar_width: float,
 ) -> None:
-    for position, total in zip(positions, totals):
+    fontsize = _initial_value_label_fontsize(knobs)
+    for position, total in zip(
+        positions,
+        totals,
+    ):
         if not math.isfinite(float(total)) or abs(float(total)) < 1.0e-12:
             continue
-        ax.text(
+        artist = ax.text(
             position,
             total + knobs.value_label_dy,
             knobs.value_label_format.format(total),
             ha=knobs.value_label_ha,
             va=knobs.value_label_va,
             rotation=knobs.value_label_rotation,
-            fontsize=knobs.value_label_fontsize,
+            fontsize=fontsize,
         )
+        _mark_auto_value_label(artist, bar_width)
+        _mark_stacked_value_label(artist, total)
 
 
 def _apply_y_limits(ax: Any, stage: Any, ymax: float, knobs: WideBarKnobs) -> None:
@@ -1409,6 +1697,13 @@ def _apply_y_limits(ax: Any, stage: Any, ymax: float, knobs: WideBarKnobs) -> No
     if top is None:
         top = max(ymax * knobs.y_lim_top_scale, 1.0)
     ax.set_ylim(bottom, top)
+
+
+def _apply_subplot_x_margin(ax: Any, knobs: WideBarKnobs) -> None:
+    margin = float(knobs.subplot_x_margin)
+    if not math.isfinite(margin) or margin < 0.0:
+        raise ValueError("subplot_x_margin must be a non-negative finite number")
+    ax.margins(x=margin)
 
 
 def _add_top_legend(fig: Any, handles: Any, labels: Any, value_count: int, knobs: WideBarKnobs) -> None:
@@ -1476,7 +1771,14 @@ def plot_wide_candidate_bars(
             current += 1.0
             previous_batch = batch
 
-        width = min(knobs.bar_width, 0.78 / max(len(value_columns), 1))
+        value_count = max(len(value_columns), 1)
+        base_width = min(knobs.bar_width, 0.78 / value_count)
+        width = _stage_bar_width(
+            knobs,
+            stage,
+            base_width,
+            max_width=MAX_BAR_FILL_RATIO / value_count,
+        )
         center_shift = width * (len(value_columns) - 1) / 2.0
         for idx, column in enumerate(value_columns):
             values = stage_df[column].fillna(0.0).tolist()
@@ -1509,6 +1811,7 @@ def plot_wide_candidate_bars(
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max((float(value) for column in value_columns for value in stage_df[column].fillna(0.0)), default=1.0)
+        _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
 
     handles, labels = axes_list[0].get_legend_handles_labels()
@@ -1581,8 +1884,9 @@ def _build_gemm_layout_stack(
     df: Any,
     *,
     include_vector: bool = False,
+    include_dequant: bool = False,
 ) -> Any:
-    """Reduce backend stacks to GEMM, C4 layout overhead, and optional vector latency."""
+    """Reduce backend stacks into GEMM, layout, vector, and optional dequant latency."""
     required = {"model", "stage", "batch", "seq", "candidate"}
     missing = required - set(df.columns)
     if missing:
@@ -1598,6 +1902,11 @@ def _build_gemm_layout_stack(
         column
         for column in backend_columns
         if LAYOUT_FUSED_BACKEND_MARKER in _split_name_backend(column)[1]
+    ]
+    dequant_columns = [
+        column
+        for column in backend_columns
+        if any("dequant" in part.lower() for part in _split_name_backend(column) if part)
     ]
     if not gemm_columns:
         raise ValueError("backend-stacked E2E data has no GEMM backend columns")
@@ -1658,14 +1967,27 @@ def _build_gemm_layout_stack(
                 "layout": layout_latency,
             }
             if include_vector:
+                actual_dequant_latency = (
+                    sum(float(row[column]) for column in dequant_columns)
+                    if include_dequant
+                    else 0.0
+                )
                 actual_vector_latency = sum(
                     float(row[column])
                     for column in backend_columns
                     if column not in gemm_columns
+                    and (not include_dequant or column not in dequant_columns)
                 )
                 vector_latency = actual_vector_latency - layout_latency
                 record["vector"] = vector_latency
-                record["total"] = gemm_latency + layout_latency + vector_latency
+                if include_dequant:
+                    record["dequant"] = actual_dequant_latency
+                record["total"] = (
+                    gemm_latency
+                    + layout_latency
+                    + vector_latency
+                    + actual_dequant_latency
+                )
             else:
                 record["total"] = gemm_latency + layout_latency
             records.append(record)
@@ -1676,6 +1998,16 @@ def _build_gemm_layout_stack(
 def _build_gemm_layout_vector_stack(pd: Any, df: Any) -> Any:
     """Preserve E2E totals while separating C4 fused-layout overhead from vector."""
     return _build_gemm_layout_stack(pd, df, include_vector=True)
+
+
+def _build_gemm_layout_vector_dequant_stack(pd: Any, df: Any) -> Any:
+    """Separate energy into GEMM, layout, vector, and dequant components."""
+    return _build_gemm_layout_stack(
+        pd,
+        df,
+        include_vector=True,
+        include_dequant=True,
+    )
 
 
 def _apply_stack_groups(
@@ -1803,6 +2135,12 @@ def plot_gemm_stacked_bars(
             current += 1.0
             previous_group = group
 
+        width = _stage_bar_width(
+            knobs,
+            stage,
+            knobs.bar_width,
+            max_width=MAX_BAR_FILL_RATIO,
+        )
         bottoms = [0.0 for _ in positions]
         for column in stack_columns:
             values = stage_df[column].tolist()
@@ -1810,7 +2148,7 @@ def plot_gemm_stacked_bars(
                 positions,
                 values,
                 bottom=bottoms,
-                width=knobs.bar_width,
+                width=width,
                 color=colors[column],
                 edgecolor=knobs.bar_edgecolor,
                 linewidth=knobs.bar_linewidth,
@@ -1819,7 +2157,13 @@ def plot_gemm_stacked_bars(
             )
             bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
         if knobs.value_labels:
-            _add_stacked_total_labels(ax, positions, bottoms, knobs)
+            _add_stacked_total_labels(
+                ax,
+                positions,
+                bottoms,
+                knobs,
+                bar_width=width,
+            )
 
         ax.set_title(
             _format_template(knobs.subplot_title_template, stage=stage, model=""),
@@ -1836,6 +2180,7 @@ def plot_gemm_stacked_bars(
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max(bottoms, default=1.0)
+        _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
 
     handles, labels = axes_list[-1].get_legend_handles_labels()
@@ -1950,7 +2295,14 @@ def plot_model_wide_candidate_bars(
             current += 1.0
             previous_batch = batch
 
-        width = min(knobs.bar_width, 0.78 / max(len(value_columns), 1))
+        value_count = max(len(value_columns), 1)
+        base_width = min(knobs.bar_width, 0.78 / value_count)
+        width = _stage_bar_width(
+            knobs,
+            stage,
+            base_width,
+            max_width=MAX_BAR_FILL_RATIO / value_count,
+        )
         center_shift = width * (len(value_columns) - 1) / 2.0
         for idx, column in enumerate(value_columns):
             values = stage_df[column].fillna(0.0).tolist()
@@ -1981,6 +2333,7 @@ def plot_model_wide_candidate_bars(
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max((float(value) for column in value_columns for value in stage_df[column].fillna(0.0)), default=1.0)
+        _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
 
     _add_top_legend(fig, legend_handles, legend_labels, len(value_columns), knobs)
@@ -2122,6 +2475,12 @@ def plot_model_stacked_bars(
             current += 1.0
             previous_group = group
 
+        width = _stage_bar_width(
+            knobs,
+            stage,
+            knobs.bar_width,
+            max_width=MAX_BAR_FILL_RATIO,
+        )
         bottoms = [0.0 for _ in positions]
         for column in stack_columns:
             values = stage_df[column].tolist()
@@ -2129,7 +2488,7 @@ def plot_model_stacked_bars(
                 positions,
                 values,
                 bottom=bottoms,
-                width=knobs.bar_width,
+                width=width,
                 color=colors[column],
                 edgecolor=knobs.bar_edgecolor,
                 linewidth=knobs.bar_linewidth,
@@ -2138,7 +2497,13 @@ def plot_model_stacked_bars(
             )
             bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
         if knobs.value_labels:
-            _add_stacked_total_labels(ax, positions, bottoms, knobs)
+            _add_stacked_total_labels(
+                ax,
+                positions,
+                bottoms,
+                knobs,
+                bar_width=width,
+            )
 
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
@@ -2153,6 +2518,7 @@ def plot_model_stacked_bars(
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max(bottoms, default=1.0)
+        _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
 
     _add_top_legend(fig, legend_handles, legend_labels, len(stack_columns), knobs)
@@ -2242,6 +2608,37 @@ def plot_model_gemm_stacked_bars(
         out_dir,
         filename="llama_gemm_only_latency.png",
         data_label="Llama GEMM-only",
+        knobs=knobs,
+    )
+
+
+def plot_model_gemm_no_area_norm_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_gemm_only_latency_no_area_norm.png",
+        data_label="Llama GEMM-only without area normalization",
+        knobs=knobs,
+    )
+
+
+def plot_model_gemm_energy_stacked_bars(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename=f"llama_gemm_only_energy_per_token_{power_metric}.png",
+        data_label=f"Llama GEMM-only energy ({power_metric})",
         knobs=knobs,
     )
 
@@ -2378,6 +2775,34 @@ def run_llama_gemm_only_plot(
     )
 
 
+def run_llama_gemm_only_no_area_norm_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_gemm_no_area_norm_stacked_bars(
+        model_csvs,
+        output_root / "llama_gemm_only_no_area_norm",
+        knobs=knobs,
+    )
+
+
+def run_llama_gemm_only_energy_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_gemm_energy_stacked_bars(
+        power_metric,
+        model_csvs,
+        output_root / "llama_gemm_only_energy",
+        knobs=knobs,
+    )
+
+
 def run_llama_energy_plot(
     power_metric: str,
     model_csvs: Sequence[tuple[str, str, Path]],
@@ -2409,6 +2834,29 @@ def run_llama_energy_stacked_plot(
         filename=f"llama_energy_per_token_{power_metric}_stacked.png",
         data_label=f"Llama stacked energy ({power_metric})",
         knobs=knobs,
+    )
+
+
+def run_llama_energy_gemm_layout_vector_stacked_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        output_root / "llama_energy_gemm_layout_vector_stacked",
+        filename=(
+            f"llama_energy_per_token_{power_metric}"
+            "_gemm_layout_vector_stacked.png"
+        ),
+        data_label=(
+            "Llama GEMM + layout + vector + dequant stacked energy "
+            f"({power_metric})"
+        ),
+        knobs=knobs,
+        stack_transform=_build_gemm_layout_vector_dequant_stack,
     )
 
 
@@ -2738,6 +3186,63 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                 knobs=knobs.llama_gemm_only,
             )
 
+    if plot in {"llama_gemm_only_no_area_norm", "all"}:
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_gemm_only_no_area_norm",
+            explicit_by_model=_provided_model_inputs({
+                "llama2_7b": args.llama2_gemm_no_area_norm_data,
+                "llama3_8b": args.llama3_gemm_no_area_norm_data,
+                "llama3p2_1b": args.llama3p2_1b_gemm_no_area_norm_data,
+                "llama3p2_3b": args.llama3p2_3b_gemm_no_area_norm_data,
+            }),
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="gemm_only_no_area_norm",
+            label="GEMM-only without area normalization",
+            knobs=knobs.llama_gemm_only_no_area_norm,
+            runner=run_llama_gemm_only_no_area_norm_plot,
+        )
+
+    if plot in {"llama_gemm_only_energy", "all"}:
+        required = (
+            plot == "llama_gemm_only_energy"
+            or bool(args.llama2_gemm_energy_data)
+            or bool(args.llama3_gemm_energy_data)
+            or bool(args.llama3p2_1b_gemm_energy_data)
+            or bool(args.llama3p2_3b_gemm_energy_data)
+        )
+        explicit_by_model = {
+            "llama2_7b": args.llama2_gemm_energy_data,
+            "llama3_8b": args.llama3_gemm_energy_data,
+            "llama3p2_1b": args.llama3p2_1b_gemm_energy_data,
+            "llama3p2_3b": args.llama3p2_3b_gemm_energy_data,
+        }
+        missing_error: Exception | None = None
+        try:
+            model_csv_groups = collect_model_energy_csv_groups(
+                explicit_by_model=explicit_by_model,
+                prepared_root=prepared_root,
+                latency_dir=latency_dir,
+                kind="gemm_only_energy",
+            )
+        except FileNotFoundError as exc:
+            missing_error = exc
+
+        if missing_error is not None:
+            if required:
+                raise missing_error
+            print(f"skip llama_gemm_only_energy: {missing_error}")
+        else:
+            for power_metric, model_csvs in model_csv_groups:
+                run_llama_gemm_only_energy_plot(
+                    power_metric,
+                    model_csvs,
+                    output_root,
+                    knobs=knobs.llama_gemm_only_energy,
+                )
+
     if plot in {"llama_energy", "all"}:
         required = (
             plot == "llama_energy"
@@ -2811,6 +3316,51 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     model_csvs,
                     output_root,
                     knobs=knobs.llama_energy_stacked,
+                )
+
+    if plot in {"llama_energy_gemm_layout_vector_stacked", "all"}:
+        required = (
+            plot == "llama_energy_gemm_layout_vector_stacked"
+            or bool(args.llama2_energy_gemm_layout_vector_stacked_data)
+            or bool(args.llama3_energy_gemm_layout_vector_stacked_data)
+            or bool(args.llama3p2_1b_energy_gemm_layout_vector_stacked_data)
+            or bool(args.llama3p2_3b_energy_gemm_layout_vector_stacked_data)
+        )
+        explicit_by_model = {
+            "llama2_7b": args.llama2_energy_gemm_layout_vector_stacked_data,
+            "llama3_8b": args.llama3_energy_gemm_layout_vector_stacked_data,
+            "llama3p2_1b": (
+                args.llama3p2_1b_energy_gemm_layout_vector_stacked_data
+            ),
+            "llama3p2_3b": (
+                args.llama3p2_3b_energy_gemm_layout_vector_stacked_data
+            ),
+        }
+        missing_error: Exception | None = None
+        try:
+            model_csv_groups = collect_model_energy_csv_groups(
+                explicit_by_model=explicit_by_model,
+                prepared_root=prepared_root,
+                latency_dir=latency_dir,
+                kind="energy_gemm_layout_vector_stacked",
+            )
+        except FileNotFoundError as exc:
+            missing_error = exc
+
+        if missing_error is not None:
+            if required:
+                raise missing_error
+            print(
+                "skip llama_energy_gemm_layout_vector_stacked: "
+                f"{missing_error}"
+            )
+        else:
+            for power_metric, model_csvs in model_csv_groups:
+                run_llama_energy_gemm_layout_vector_stacked_plot(
+                    power_metric,
+                    model_csvs,
+                    output_root,
+                    knobs=knobs.llama_energy_gemm_layout_vector_stacked,
                 )
 
 

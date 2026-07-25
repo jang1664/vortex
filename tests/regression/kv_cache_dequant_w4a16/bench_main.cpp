@@ -47,18 +47,33 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 32;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
+  uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
     else if (strcmp(argv[i], "-n") == 0) N = atoi(argv[++i]);
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--quant-mode") == 0) {
+      quant_mode = parse_kv_cache_dequant_mode(argv[++i]);
+    } else if (strncmp(argv[i], "--quant-mode=", 13) == 0) {
+      quant_mode = parse_kv_cache_dequant_mode(argv[i] + 13);
+    }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS]\n", argv[0]);
+             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[--quant-mode legacy_uint4_asymmetric|signed_int4_asymmetric|"
+             "signed_int4_symmetric|spinquant_signed_asymmetric|"
+             "spinquant_signed_symmetric]\n", argv[0]);
       return 0;
     }
+  }
+  if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1
+      || quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    printf("ERROR: require even N, QBLK>0, QDIR in {0,1}, WTRANS in {0,1}, "
+           "and a valid quant mode\n");
+    return 1;
   }
 
   const size_t dst_elems = (size_t)K * N;
@@ -66,7 +81,11 @@ int main(int argc, char *argv[]) {
   const size_t qparam_elems = kv_qparam_count(K, N, QBLK, QDIR);
   std::vector<uint8_t> h_packed(packed_bytes, 0x84);
   std::vector<fp16_t> h_scales(qparam_elems, float_to_fp16(0.125f));
-  std::vector<int16_t> h_zeros(qparam_elems, 3);
+  std::vector<int16_t> h_zeros(
+      qparam_elems,
+      quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+          ? 0
+          : (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 3 : -1));
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -112,6 +131,7 @@ int main(int argc, char *argv[]) {
   arg.QBLK = QBLK;
   arg.QDIR = QDIR;
   arg.WTRANS = WTRANS;
+  arg.quant_mode = quant_mode;
   arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 

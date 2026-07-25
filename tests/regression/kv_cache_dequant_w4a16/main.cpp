@@ -42,11 +42,20 @@ static void init_quantized(std::vector<uint8_t>& packed,
                            uint32_t K,
                            uint32_t N,
                            uint32_t QBLK,
-                           uint32_t QDIR) {
+                           uint32_t QDIR,
+                           uint32_t quant_mode) {
   for (uint32_t k = 0; k < K; ++k) {
     for (uint32_t n = 0; n < N; n += 2) {
-      uint8_t q0 = (uint8_t)((k + n) & 0x0f);
-      uint8_t q1 = (uint8_t)((k + n + 7u) & 0x0f);
+      const int32_t q0_value =
+          quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+              ? (int32_t)((k + n) & 0x0f)
+              : (int32_t)((k + n) & 0x0f) - 8;
+      const int32_t q1_value =
+          quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+              ? (int32_t)((k + n + 7u) & 0x0f)
+              : (int32_t)((k + n + 7u) & 0x0f) - 8;
+      const uint8_t q0 = (uint8_t)q0_value & 0x0fu;
+      const uint8_t q1 = (uint8_t)q1_value & 0x0fu;
       kv_store_npair(packed.data(), N, k, n >> 1, q0, q1);
     }
   }
@@ -54,7 +63,12 @@ static void init_quantized(std::vector<uint8_t>& packed,
     for (uint32_t n = 0; n < N; ++n) {
       uint64_t qidx = kv_qparam_index(k, n, K, N, QBLK, QDIR);
       scales[qidx] = float_to_fp16(0.125f + float((qidx % 7u)) * 0.03125f);
-      zeros[qidx] = (int16_t)(qidx % 5u);
+      zeros[qidx] =
+          quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+              ? 0
+              : (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+                     ? (int16_t)(qidx % 5u)
+                     : (int16_t)((int32_t)(qidx % 5u) - 2));
     }
   }
 }
@@ -66,10 +80,15 @@ static void dequant_cpu(const std::vector<uint8_t>& packed,
                         uint32_t K,
                         uint32_t N,
                         uint32_t QBLK,
-                        uint32_t QDIR) {
+                        uint32_t QDIR,
+                        uint32_t quant_mode) {
   for (uint32_t k = 0; k < K; ++k) {
     for (uint32_t n = 0; n < N; ++n) {
-      uint8_t q = kv_get_nibble(packed.data(), K, N, k, n);
+      const uint8_t q_bits = kv_get_nibble(packed.data(), K, N, k, n);
+      const int32_t q =
+          quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+              ? (int32_t)q_bits
+              : (int32_t)kv_signed_int4(q_bits);
       uint64_t qidx = kv_qparam_index(k, n, K, N, QBLK, QDIR);
       dst[(uint64_t)k * N + n] =
           float_to_fp16(((float)q - (float)zeros[qidx]) * fp16_to_float(scales[qidx]));
@@ -83,19 +102,30 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 16;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
+  uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
     else if (strcmp(argv[i], "-n") == 0) N = atoi(argv[++i]);
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--quant-mode") == 0) {
+      quant_mode = parse_kv_cache_dequant_mode(argv[++i]);
+    } else if (strncmp(argv[i], "--quant-mode=", 13) == 0) {
+      quant_mode = parse_kv_cache_dequant_mode(argv[i] + 13);
+    }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      printf("Usage: %s [-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS]\n", argv[0]);
+      printf("Usage: %s [-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[--quant-mode legacy_uint4_asymmetric|signed_int4_asymmetric|"
+             "signed_int4_symmetric|spinquant_signed_asymmetric|"
+             "spinquant_signed_symmetric]\n", argv[0]);
       return 0;
     }
   }
-  if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1) {
-    printf("ERROR: require even N, QBLK>0, QDIR in {0,1}, WTRANS in {0,1}\n");
+  if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1
+      || quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    printf("ERROR: require even N, QBLK>0, QDIR in {0,1}, WTRANS in {0,1}, "
+           "and a valid quant mode\n");
     return 1;
   }
 
@@ -107,11 +137,14 @@ int main(int argc, char *argv[]) {
   std::vector<int16_t> h_zeros(qparam_elems);
   std::vector<fp16_t> h_ref(dst_elems);
   std::vector<fp16_t> h_out(dst_elems);
-  init_quantized(h_packed, h_scales, h_zeros, K, N, QBLK, QDIR);
-  dequant_cpu(h_packed, h_scales, h_zeros, h_ref, K, N, QBLK, QDIR);
+  init_quantized(h_packed, h_scales, h_zeros, K, N, QBLK, QDIR, quant_mode);
+  dequant_cpu(
+      h_packed, h_scales, h_zeros, h_ref, K, N, QBLK, QDIR, quant_mode);
 
-  printf("kv_cache_dequant_w4a16 K=%u N=%u QBLK=%u QDIR=%u WTRANS=%u\n",
-         K, N, QBLK, QDIR, WTRANS);
+  printf("kv_cache_dequant_w4a16 K=%u N=%u QBLK=%u QDIR=%u WTRANS=%u "
+         "quant_mode=%s\n",
+         K, N, QBLK, QDIR, WTRANS,
+         kv_cache_dequant_mode_name(quant_mode));
   printf("variant=%s\n", kv_cache_dequant_variant_name());
 
   RT_CHECK(vx_dev_open(&device));
@@ -153,6 +186,7 @@ int main(int argc, char *argv[]) {
   arg.QBLK = QBLK;
   arg.QDIR = QDIR;
   arg.WTRANS = WTRANS;
+  arg.quant_mode = quant_mode;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
@@ -161,7 +195,19 @@ int main(int argc, char *argv[]) {
 
   int errors = 0;
   for (size_t i = 0; i < dst_elems; ++i) {
-    if (h_out[i] != h_ref[i]) ++errors;
+    if (h_out[i] != h_ref[i]) {
+      if (errors < 8) {
+        const uint32_t k = (uint32_t)(i / N);
+        const uint32_t n = (uint32_t)(i % N);
+        const uint8_t q_bits =
+            kv_get_nibble(h_packed.data(), K, N, k, n);
+        printf("mismatch[%zu] k=%u n=%u q_bits=0x%x got=0x%04x (%f) "
+               "expected=0x%04x (%f)\n",
+               i, k, n, q_bits, h_out[i], fp16_to_float(h_out[i]),
+               h_ref[i], fp16_to_float(h_ref[i]));
+      }
+      ++errors;
+    }
   }
 
   vx_dump_perf(device, stdout);

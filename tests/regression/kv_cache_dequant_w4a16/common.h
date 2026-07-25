@@ -1,6 +1,7 @@
 #ifndef _KV_CACHE_DEQUANT_W4A16_COMMON_H_
 #define _KV_CACHE_DEQUANT_W4A16_COMMON_H_
 
+#include "../kv_cache_common/kv_cache_w4a16.h"
 #include <stdint.h>
 
 #define KERNEL_KV_CACHE_DEQUANT_W4A16 0
@@ -20,6 +21,7 @@ typedef struct {
   uint32_t QBLK;
   uint32_t QDIR;
   uint32_t WTRANS;      // Accepted for CLI parity; packed source remains n-pair row-major.
+  uint32_t quant_mode;  // legacy uint4 or signed int4 affine/symmetric.
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 #endif // _KV_CACHE_DEQUANT_W4A16_COMMON_H_
