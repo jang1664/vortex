@@ -1,0 +1,2 @@
+design,family,precision,period_ns,sw_uw,int_uw,leak_uw,total_uw,area_um2,comb_area_um2,seq_area_um2,buf_area_um2,wns_ns,crit_ns,rpt_path
+VX_tcu_unit_th32_bhf,tcu,FP16/FP32acc,10.0,15716.0,29362.0,4160.0,49233.0,547111.533916,340369.380103,206742.153813,47975.616547,0.0,0.0,/home/jaeyong.jang/project.local/research/vortex/build/hw/syn/synopsys/top_analysis/Vortex_tcu_th32_c1_rev2_subdesign_partial/blocks/blocks/VX_tcu_unit__d2e8e198f1ee/reports/18_VX_tcu_unit__d2e8e198f1ee.mapped.power.rpt

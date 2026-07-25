@@ -331,7 +331,6 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic                                          acc_rd_fifo_pop_fire;
     logic                                          acc_mem_rd_rsp_can_push;
     logic [1:0][ACC_RD_CREDIT_W-1:0]               acc_rd_credit_count_by_bank;
-    logic [ACC_RD_CREDIT_W:0]                      acc_rd_credit_count;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_out_data;
     logic [1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_rd_fifo_out_data_by_bank;
     logic                                          acc_mem_accum_rd_group;
@@ -412,6 +411,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_mem_accum_rd_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_rd_addr);
     assign acc_mem_accum_rd_addr      = acc_mem_accum_rd_addr_by_bank[acc_mem_accum_rd_sel];
     assign acc_mem_accum_rd_bank      = {acc_mem_accum_rd_group, acc_mem_accum_rd_sel};
+    assign acc_mem_accum_start_bank   = get_acc_mem_idx(gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr);
     assign acc_mem_accum_wr_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_wr_addr);
     assign acc_mem_accum_wr_bank      = get_acc_mem_idx(acc_mem_accum_wr_addr);
     assign acc_mem_out_rd_bank_addr   = get_acc_mem_bank_addr(acc_mem_out_rd_addr);

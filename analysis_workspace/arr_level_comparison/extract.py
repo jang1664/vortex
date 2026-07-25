@@ -1,12 +1,10 @@
-"""Extract power and area metrics from synthesis runs and emit a CSV.
+"""Extract TCU and GEMM-unit power and area metrics from synthesis reports.
 
-Walks the component_database tree, reads each module's
-  - <design>_report_power.report  (PrimePower hierarchical, columns =
-      Switch / Internal / Leakage / Total. Dynamic in mW, leakage in uW.)
-  - 14_<design>.mapped.area.rpt   (DC area report)
-
-and produces `data.csv` plus a small printable summary. All powers in CSV
-are normalized to **microwatts (uW)** and area to **um^2**.
+Scalar FP and INT-unit measurements are kept in ``data_base.csv`` and are not
+regenerated here. This script reads the thread-32 FP TCU report and the WKV/WoQ
+reports under ``build/hw/syn/synopsys`` and writes ``data_tcu.csv`` and
+``data_fpint_mxu.csv``. All powers in the CSV are normalized to microwatts
+(uW), and area is in um^2.
 """
 
 from __future__ import annotations
@@ -18,12 +16,21 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1] / "third_party" / "component_database"
+VORTEX_ROOT = HERE.parents[1]
 # VX_gemm_unit_top syn/sim/pwr artifacts now live under vortex/build/...
 # (the source-side scripts at vortex/hw/syn/synopsys/gemm_unit_breakdown/scripts
 # write here; mirrored from the original location in component_database.)
-VORTEX_BUILD_GEMM = HERE.parents[1] / "build" / "hw" / "syn" / "synopsys" \
+VORTEX_BUILD_GEMM = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" \
     / "gemm_unit_breakdown" / "syn" / "run" / "v0"
+TCU_REPORT_DIR = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" / "tcu" \
+    / "synthesis_th32" / "tcu_unit_bhf" / "syn_topo.lpp" / "reports"
+# The original thread-32 run's power report is currently absent from
+# TCU_REPORT_DIR. This top-analysis block is the same mapped VX_tcu_unit
+# design: its total cell area exactly matches the original 547111.533916 um^2.
+TCU_POWER_FALLBACK = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" \
+    / "top_analysis" / "Vortex_tcu_th32_c1_rev2_subdesign_partial" / "blocks" \
+    / "blocks" / "VX_tcu_unit__d2e8e198f1ee" / "reports" \
+    / "18_VX_tcu_unit__d2e8e198f1ee.mapped.power.rpt"
 
 # PrimePower emits two distinct hierarchical-power formats:
 #   (a) "Report : Averaged Power"  — no units header, all values in Watts,
@@ -57,8 +64,8 @@ TIMING_SLACK_RE = re.compile(
 @dataclass
 class Row:
     design: str
-    family: str           # "fp", "int", "gemm"
-    precision: str        # "FP16", "FP32", "INT8", "mpINT4", etc.
+    family: str           # "gemm"
+    precision: str        # "FP16act/INT4w->FP32acc", etc.
     period_ns: float
     sw_uw: float          # switching power, uW
     int_uw: float         # internal power, uW
@@ -145,184 +152,105 @@ def parse_qor(path: Path, timing_path: Path | None = None):
     return None, None, None
 
 
-def collect_fp_module(design: str, family: str = "fp"):
-    """Iterate over period10.0_precision* dirs for a given fp design."""
-    base = ROOT / "fp_operation" / design
-    if not base.is_dir():
-        return
-    for cfg in sorted(base.glob("period*_precision*_pipeline*")):
-        # Filter: keep only period=10
-        if not cfg.name.startswith("period10.0_"):
-            continue
-        m = re.search(r"precision(\w+?)(?:_|$)", cfg.name)
-        if not m:
-            continue
-        prec = m.group(1)
-        rpt = cfg / "pwr.run1" / "reports" / f"{design}_report_power.report"
-        area = cfg / "syn_topo.run1" / "reports" / f"14_{design}.mapped.area.rpt"
-        qor = cfg / "syn_topo.run1" / "reports" / f"{design}.qor_snapshot.rpt"
-        timing = cfg / "syn_topo.run1" / "reports" / f"12_{design}.mapped.timing.rpt"
-        pw = parse_power_report(rpt, design)
-        if pw is None:
-            continue
-        sw_uW, int_uW, leak_uW, tot_uW = pw
-        ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor, timing)
-        yield Row(
-            design=design,
-            family=family,
-            precision=prec,
-            period_ns=10.0,
-            sw_uw=sw_uW,
-            int_uw=int_uW,
-            leak_uw=leak_uW,
-            total_uw=tot_uW,
-            area_um2=ar["total"] or 0,
-            comb_area_um2=ar["comb"] or 0,
-            seq_area_um2=ar["seq"] or 0,
-            buf_area_um2=ar["buf"] or 0,
-            wns_ns=wns or 0.0,
-            crit_ns=crit or 0.0,
-            rpt_path=str(rpt),
-        )
+def report_design_name(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    match = re.search(r"^Design\s*:\s*(\S+)", path.read_text(errors="ignore"), re.MULTILINE)
+    return match.group(1) if match else None
 
 
-def collect_fp_examples(design: str):
-    """fp_mult / fp_addsub / fp_mac / fp_div / fp_exp at p10 from examples/."""
-    base = ROOT / "fp_operation" / "examples" / design
-    if not base.is_dir():
-        return
-    for cfg in sorted(base.glob("p10_format*_stage*")):
-        m = re.search(r"format(\w+?)_stage", cfg.name)
-        if not m:
-            continue
-        prec = m.group(1)
-        rpt = cfg / "pwr.run1" / "reports" / f"{design}_report_power.report"
-        area = cfg / "syn_topo.run1" / "reports" / f"14_{design}.mapped.area.rpt"
-        qor = cfg / "syn_topo.run1" / "reports" / f"{design}.qor_snapshot.rpt"
-        timing = cfg / "syn_topo.run1" / "reports" / f"12_{design}.mapped.timing.rpt"
-        pw = parse_power_report(rpt, design)
-        if pw is None:
-            continue
-        sw_uW, int_uW, leak_uW, tot_uW = pw
-        ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor, timing)
-        yield Row(
-            design=design,
-            family="fp",
-            precision=prec,
-            period_ns=10.0,
-            sw_uw=sw_uW,
-            int_uw=int_uW,
-            leak_uw=leak_uW,
-            total_uw=tot_uW,
-            area_um2=ar["total"] or 0,
-            comb_area_um2=ar["comb"] or 0,
-            seq_area_um2=ar["seq"] or 0,
-            buf_area_um2=ar["buf"] or 0,
-            wns_ns=wns or 0.0,
-            crit_ns=crit or 0.0,
-            rpt_path=str(rpt),
-        )
+def collect_tcu() -> Row | None:
+    """Collect the synthesized thread-32 BHF FP TCU baseline."""
+    area_candidates = [
+        TCU_REPORT_DIR / "14_VX_tcu_unit.mapped.area.rpt",
+        TCU_REPORT_DIR / "15_VX_tcu_unit.mapped.designware_area.rpt",
+    ]
+    power_candidates = [
+        TCU_REPORT_DIR / "18_VX_tcu_unit.mapped.power.rpt",
+        TCU_POWER_FALLBACK,
+    ]
+    area_path = next((path for path in area_candidates if path.exists()), None)
+    power_path = next((path for path in power_candidates if path.exists()), None)
+    if area_path is None or power_path is None:
+        return None
 
+    top_name = report_design_name(power_path)
+    if top_name is None:
+        return None
+    pw = parse_power_report(power_path, top_name)
+    ar = parse_area_report(area_path)
+    if pw is None or ar is None or ar["total"] is None:
+        return None
 
-def collect_int_mac_pe():
-    base = ROOT / "int_operation" / "int_mac_pe"
-    for cfg in sorted(base.glob("period10.0_precision*")):
-        m = re.search(r"precision(\w+)_pipeline\d+_out_precision(\w+)", cfg.name)
-        if not m:
-            continue
-        prec = f"{m.group(1)}/{m.group(2)}"
-        rpt = cfg / "pwr.run1" / "reports" / "int_mac_pe_report_power.report"
-        area = cfg / "syn_topo.run1" / "reports" / "14_int_mac_pe.mapped.area.rpt"
-        qor = cfg / "syn_topo.run1" / "reports" / "int_mac_pe.qor_snapshot.rpt"
-        timing = cfg / "syn_topo.run1" / "reports" / "12_int_mac_pe.mapped.timing.rpt"
-        pw = parse_power_report(rpt, "int_mac_pe")
-        if pw is None:
-            continue
-        sw_uW, int_uW, leak_uW, tot_uW = pw
-        ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor, timing)
-        yield Row(
-            design="int_mac_pe",
-            family="int",
-            precision=prec,
-            period_ns=10.0,
-            sw_uw=sw_uW,
-            int_uw=int_uW,
-            leak_uw=leak_uW,
-            total_uw=tot_uW,
-            area_um2=ar["total"] or 0,
-            comb_area_um2=ar["comb"] or 0,
-            seq_area_um2=ar["seq"] or 0,
-            buf_area_um2=ar["buf"] or 0,
-            wns_ns=wns or 0.0,
-            crit_ns=crit or 0.0,
-            rpt_path=str(rpt),
-        )
-
-
-def collect_ws_mxu():
-    base = ROOT / "int_operation" / "ws_mxu" / "syn" / "run" / "v0" / "syn_topo.run1"
-    rpt = base / "reports" / "18_mxu.mapped.power.rpt"
-    area = base / "reports" / "14_mxu.mapped.area.rpt"
-    qor = base / "reports" / "mxu.qor_snapshot.rpt"
-    timing = base / "reports" / "12_mxu.mapped.timing.rpt"
-    pw = parse_power_report(rpt, "mxu")
-    if pw is None:
-        return
     sw_uW, int_uW, leak_uW, tot_uW = pw
-    ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-    wns, crit, per = parse_qor(qor, timing)
-    yield Row(
-        design="ws_mxu_4x4_INT4xINT4",
-        family="int",
-        precision="INT4/INT4->INT10",
+    qor = TCU_REPORT_DIR / "11_VX_tcu_unit.mapped.qor.rpt"
+    wns, crit, per = parse_qor(qor)
+    return Row(
+        design="VX_tcu_unit_th32_bhf",
+        family="tcu",
+        precision="FP16/FP32acc",
         period_ns=10.0,
         sw_uw=sw_uW,
         int_uw=int_uW,
         leak_uw=leak_uW,
         total_uw=tot_uW,
-        area_um2=ar["total"] or 0,
+        area_um2=ar["total"],
         comb_area_um2=ar["comb"] or 0,
         seq_area_um2=ar["seq"] or 0,
         buf_area_um2=ar["buf"] or 0,
         wns_ns=wns or 0.0,
         crit_ns=crit or 0.0,
-        rpt_path=str(rpt),
+        rpt_path=str(power_path),
     )
 
 
-def collect_vx_gemm():
-    # Now top is VX_gemm_unit_top (flat-port wrapper) and the canonical
-    # power report is the FSDB-annotated PrimePower one under pwr.run1/.
-    # Falls back to the DC report_power output if pwr.run1 hasn't run.
-    base_v = VORTEX_BUILD_GEMM
-    syn = base_v / "syn_topo.run1"
-    pwr_rpt = base_v / "pwr.run1" / "reports" / "VX_gemm_unit_top_report_power.report"
+def write_rows(path: Path, rows: list[Row]) -> None:
+    fields = list(asdict(rows[0]).keys())
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+
+
+def collect_gemm_unit(
+    *,
+    design: str,
+    top_name: str,
+    precision: str,
+    syn_run: str,
+    pwr_run: str,
+) -> Row | None:
+    """Collect one GEMM top from the gemm_unit_breakdown build tree."""
+    syn = VORTEX_BUILD_GEMM / syn_run
+    pwr_rpt = (
+        VORTEX_BUILD_GEMM / pwr_run / "reports" / f"{top_name}_report_power.report"
+    )
     if pwr_rpt.exists():
         rpt = pwr_rpt
     else:
-        rpt = syn / "reports" / "18_VX_gemm_unit_top.mapped.power.rpt"
-    area = syn / "reports" / "14_VX_gemm_unit_top.mapped.area.rpt"
-    qor = syn / "reports" / "VX_gemm_unit_top.qor_snapshot.rpt"
-    timing = syn / "reports" / "12_VX_gemm_unit_top.mapped.timing.rpt"
-    pw = parse_power_report(rpt, "VX_gemm_unit_top")
+        rpt = syn / "reports" / f"18_{top_name}.mapped.power.rpt"
+    area = syn / "reports" / f"14_{top_name}.mapped.area.rpt"
+    qor = syn / "reports" / f"{top_name}.qor_snapshot.rpt"
+    timing = syn / "reports" / f"12_{top_name}.mapped.timing.rpt"
+    pw = parse_power_report(rpt, top_name)
     if pw is None:
-        return
+        return None
+    ar = parse_area_report(area)
+    if ar is None or ar["total"] is None:
+        return None
     sw_uW, int_uW, leak_uW, tot_uW = pw
-    ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
     wns, crit, per = parse_qor(qor, timing)
-    yield Row(
-        design="VX_gemm_unit_32x32_mpGEMM",
+    return Row(
+        design=design,
         family="gemm",
-        precision="FP16act/INT4w->FP32acc",
+        precision=precision,
         period_ns=10.0,
         sw_uw=sw_uW,
         int_uw=int_uW,
         leak_uw=leak_uW,
         total_uw=tot_uW,
-        area_um2=ar["total"] or 0,
+        area_um2=ar["total"],
         comb_area_um2=ar["comb"] or 0,
         seq_area_um2=ar["seq"] or 0,
         buf_area_um2=ar["buf"] or 0,
@@ -332,54 +260,30 @@ def collect_vx_gemm():
     )
 
 
-def collect_fpint_m32_scaled():
-    """W-only quant 32x32 mpGEMM scaled from m64.tr4.tc8 measurements.
-
-    The fpint MXU at m64.tr4.tc8 is fully unrolled: 128 PE instances * 32 MAC/PE
-    = 4096 MAC/cycle. PE count scales as N^2 with mxu_size, peripherals as N.
-    Scaling rule for 64 -> 32:
-      - mxu (PE array) area/power /= 4
-      - peripherals (prealigner, act_sum, reformatter, int2fp_array,
-        data_setup) area/power /= 2
-    Source: /mnt/digital_nfs/.../fpint/hw/pre_fp16_int4_mul/implementation/
-    """
-    M64 = "/mnt/digital_nfs/jaeyong.jang/Project/research/fpint/hw/pre_fp16_int4_mul/implementation"
-
-    def grab(mod_dir, name):
-        area_rpt = Path(M64) / mod_dir / "syn_topo" / "reports" / f"14_{name}.mapped.area.rpt"
-        pwr_rpt = Path(M64) / mod_dir / "pwr" / "reports" / f"{name}_report_power.report"
-        area = parse_area_report(area_rpt) or {"total": 0}
-        pw = parse_power_report(pwr_rpt, name)
-        tot_uW = pw[3] if pw else 0.0
-        return area["total"] or 0.0, tot_uW
-
-    a_mxu, p_mxu = grab("mxu.m64.f100.tr4.tc8", "mxu")
-    a_pre, p_pre = grab("prealigner.m64.f100", "prealigner")
-    a_act, p_act = grab("act_sum.m64.f100.tr4", "act_sum")
-    a_i2f, p_i2f = grab("int2fp_array.m64.f100.tc8", "int2fp_array")
-    a_ds,  p_ds  = grab("data_setup.m64.f100.tr4", "data_setup")
-    a_ref, p_ref = grab("reformatter.m64.f100.tc8", "reformatter")
-
-    # 64 -> 32 scaling
-    mxu_a   = a_mxu / 4
-    mxu_p   = p_mxu / 4
-    perif_a = (a_pre + a_act + a_i2f + a_ds + a_ref) / 2
-    perif_p = (p_pre + p_act + p_i2f + p_ds + p_ref) / 2
-    total_a = mxu_a + perif_a
-    total_p = mxu_p + perif_p
-
-    yield Row(
-        design="fpint_m32_W_only_quant_scaled",
-        family="gemm",
-        precision="FP16act/INT4w(W-only)",
-        period_ns=10.0,
-        sw_uw=0.0, int_uw=0.0, leak_uw=0.0,
-        total_uw=total_p,
-        area_um2=total_a,
-        comb_area_um2=0, seq_area_um2=0, buf_area_um2=0,
-        wns_ns=0.0, crit_ns=0.0,
-        rpt_path=f"{M64}/* (scaled m64->m32, tr4.tc8 fixed)",
-    )
+def collect_fpint_mxu() -> list[Row]:
+    """Collect WKV and WoQ GEMM rows from gemm_unit_breakdown reports."""
+    configs = [
+        {
+            "design": "VX_gemm_unit_32x32_mpGEMM",
+            "top_name": "VX_gemm_unit_top",
+            "precision": "FP16act/INT4w->FP32acc",
+            "syn_run": "syn_topo.run1",
+            "pwr_run": "pwr.run1",
+        },
+        {
+            "design": "VX_woq_gemm_unit_32x32_mpGEMM",
+            "top_name": "VX_woq_gemm_unit_top",
+            "precision": "FP16act/INT4w(W-only)->FP32acc",
+            "syn_run": "syn_topo_woq.run1",
+            "pwr_run": "pwr_woq.run1",
+        },
+    ]
+    rows = []
+    for config in configs:
+        row = collect_gemm_unit(**config)
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 # Module instances we want to break out for the WKV vs WoQ comparison.
@@ -410,6 +314,14 @@ WKVWOQ_INSTANCES = [
 ]
 WKVWOQ_OUTPUT_INSTANCES = WKVWOQ_INSTANCES + ["u_misc"]
 
+# Generated accumulator read FIFOs use elaborated hierarchy names. Normalize
+# both banks into the single paper-facing u_acc_rd_fifo breakdown row so their
+# area and power are counted as Postprocess rather than falling into u_misc.
+INSTANCE_ALIASES = {
+    f"gen_acc_rd_fifo_{bank}__u_acc_rd_fifo": "u_acc_rd_fifo"
+    for bank in range(2)
+}
+
 
 def parse_module_breakdown(rpt_path: Path):
     """Return dict instance_name -> total_uW for the listed WKVWOQ_INSTANCES.
@@ -437,7 +349,7 @@ def parse_module_breakdown(rpt_path: Path):
         m_inst = re.match(r"^\s*(\w+)\s*\(", raw)
         if not m_inst:
             continue
-        name = m_inst.group(1)
+        name = INSTANCE_ALIASES.get(m_inst.group(1), m_inst.group(1))
         if name not in WKVWOQ_INSTANCES:
             continue
         m = inline_pwr_re.search(raw)
@@ -445,7 +357,7 @@ def parse_module_breakdown(rpt_path: Path):
             m = nextline_pwr_re.match(lines[i + 1])
         if m:
             tot_W = float(m.group(4))
-            out.setdefault(name, tot_W * 1e6)  # W -> uW
+            out[name] = out.get(name, 0.0) + tot_W * 1e6  # W -> uW
     return out
 
 
@@ -460,9 +372,9 @@ def parse_module_area_breakdown(rpt_path: Path):
         m = line_re.match(raw)
         if not m:
             continue
-        name = m.group(1)
+        name = INSTANCE_ALIASES.get(m.group(1), m.group(1))
         if name in wanted:
-            out.setdefault(name, float(m.group(2)))
+            out[name] = out.get(name, 0.0) + float(m.group(2))
     return out
 
 
@@ -500,55 +412,58 @@ def collect_wkv_woq_breakdown():
     return breakdown
 
 
-def collect_all():
-    rows = []
-    # fp_operation main runs (where we generated fresh p10 data)
-    for d in ("fp_mac_pe", "fp_sum3", "fp_sum4", "fp_add", "fp_flt2i", "fp_i2flt"):
-        rows.extend(collect_fp_module(d))
-    # fp_operation pre-existing examples (also p10)
-    for d in ("fp_mult", "fp_addsub", "fp_mac", "fp_div", "fp_exp"):
-        rows.extend(collect_fp_examples(d))
-    rows.extend(collect_int_mac_pe())
-    rows.extend(collect_ws_mxu())
-    rows.extend(collect_vx_gemm())
-    rows.extend(collect_fpint_m32_scaled())
-    return rows
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--breakdown-only",
         action="store_true",
         help="rebuild only wkvwoq_breakdown.csv from GEMM synthesis reports",
     )
+    mode.add_argument(
+        "--tcu-only",
+        action="store_true",
+        help="rebuild only data_tcu.csv from the thread-32 TCU synthesis reports",
+    )
     args = parser.parse_args()
 
     if not args.breakdown_only:
-        rows = collect_all()
+        tcu = collect_tcu()
+        if tcu is None:
+            raise RuntimeError(
+                "TCU reports are incomplete; refusing to overwrite data_tcu.csv"
+            )
+        tcu_out = HERE / "data_tcu.csv"
+        write_rows(tcu_out, [tcu])
+        print(f"wrote TCU baseline -> {tcu_out}")
+        print(
+            f"  power={tcu.total_uw / 1000.0:.3f} mW, "
+            f"area={tcu.area_um2 / 1e6:.6f} mm^2"
+        )
+        if args.tcu_only:
+            return
+
+    if not args.breakdown_only:
+        rows = collect_fpint_mxu()
         available = {(row.design, row.precision) for row in rows}
         required = {
-            ("fp_mult", "FP16"),
-            ("fp_addsub", "FP32"),
-            ("fp_flt2i", "FP16"),
-            ("int_mac_pe", "INT8/INT32"),
             ("VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc"),
+            (
+                "VX_woq_gemm_unit_32x32_mpGEMM",
+                "FP16act/INT4w(W-only)->FP32acc",
+            ),
         }
         missing = sorted(required - available)
         if missing:
             missing_text = ", ".join(f"{design}/{precision}" for design, precision in missing)
             raise RuntimeError(
-                "component reports are incomplete; refusing to overwrite data.csv. "
-                f"Missing: {missing_text}. Use --breakdown-only to extract the GEMM breakdown."
+                "GEMM reports are incomplete; refusing to overwrite "
+                f"data_fpint_mxu.csv. Missing: {missing_text}. "
+                "Use --breakdown-only to extract only the module breakdown."
             )
 
-        out = HERE / "data.csv"
-        fields = list(asdict(rows[0]).keys())
-        with out.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
-            w.writeheader()
-            for row in rows:
-                w.writerow(asdict(row))
+        out = HERE / "data_fpint_mxu.csv"
+        write_rows(out, rows)
         print(f"wrote {len(rows)} rows -> {out}")
         # also dump a quick table to stdout
         print(f"\n{'design':<30} {'prec':<25} {'P_total (uW)':>14} {'area (um^2)':>14} {'WNS':>6}")
