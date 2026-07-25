@@ -111,7 +111,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(
                 prepare,
                 "load_or_export_suite_figure_data",
-                side_effect=(main_result, stacked_result, other_result),
+                side_effect=(main_result, stacked_result, other_result, other_result),
             ) as load_mock,
             patch.object(
                 prepare,
@@ -161,6 +161,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
                     main_result,
                     no_area_norm_result,
                     stacked_result,
+                    other_result,
                     no_area_norm_result,
                     other_result,
                 ),
@@ -178,7 +179,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
             prepare.e2e_no_area_norm_out_name("llama2_7b"),
         )
         self.assertEqual(no_area_norm_call.kwargs["case_latency_scale_rules"], ())
-        no_area_norm_stacked_call = load_mock.call_args_list[3]
+        no_area_norm_stacked_call = load_mock.call_args_list[4]
         self.assertEqual(
             no_area_norm_stacked_call.kwargs["out_name"],
             prepare.e2e_no_area_norm_stacked_out_name("llama2_7b"),

@@ -112,7 +112,11 @@ aliases:
   improve_th32_tcol32_hwexp_dcache: &C4_ # DMA optmized
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/bin
     configs: configs/improve_th32_tcol32_hwexp_dcache.sh
-  
+
+  improve_th32_tcol32_hwexp_dcache_sxbar:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/bin
+    configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar.sh
+
   C4: *C4_
 
   # ------------------------------------ ETC -------------------------------------------------

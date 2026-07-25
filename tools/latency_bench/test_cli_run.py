@@ -214,6 +214,13 @@ aliases:
             self.assertIn("stage=case_end", script)
             self.assertIn("2>&1 | tee -a", script)
             self.assertIn("\"$attempt_log\"", script)
+            self.assertIn('if [[ -n "${NO_COLOR:-}" ]]; then', script)
+            self.assertIn("LATENCY_BENCH_PROGRESS_BLUE=$'\\033[34m'", script)
+            self.assertIn(
+                "printf '%s[1/1]%s %s\\n' "
+                '"$LATENCY_BENCH_PROGRESS_BLUE" "$LATENCY_BENCH_PROGRESS_RESET"',
+                script,
+            )
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertTrue(manifest["measure_latency"])
             self.assertTrue(manifest["measure_power"])

@@ -44,7 +44,7 @@ OUTPUT_FOLDER = "output_figure"
 # Main workload selection. Use a string for one model or a list/tuple for
 # multiple models.
 # TARGET_MODEL = ["llama2_7b", "llama3_8b", "llama3p2_1b", "llama3p2_3b"]
-TARGET_MODEL = [ "llama3_8b"]
+TARGET_MODEL = ["llama2_7b", "llama3_8b"]
 
 
 def target_models() -> tuple[str, ...]:
@@ -64,9 +64,12 @@ TARGET_MODELS = target_models()
 TARGET_PREFILL_BATCHES = (1,)
 # TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
 TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
+# TARGET_PREFILL_SEQ_LENS = (1024,)
 TARGET_GENERATION_BATCHES = (1, 2, 4)
+# TARGET_GENERATION_BATCHES = (1,)
 # TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
 TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
+# TARGET_GENERATION_SEQ_LENS = (1024,)
 
 # Per-output shape selection. Empty tuples mean "all available shapes" for that stage.
 E2E_PREFILL_BATCHES = TARGET_PREFILL_BATCHES
@@ -164,6 +167,10 @@ def e2e_no_area_norm_out_name(model: str) -> str:
 
 def e2e_stacked_out_name(model: str) -> str:
     return f"{model}_e2e_stacked_by_{E2E_STACK_BY}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+
+
+def e2e_gemm_layout_stacked_out_name(model: str) -> str:
+    return f"{model}_e2e_gemm_layout_stacked_by_name_backend_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
 
 
 def e2e_no_area_norm_stacked_out_name(model: str) -> str:
@@ -1222,6 +1229,7 @@ def main() -> int:
         main_name = main_out_name(model)
         no_area_norm_name = e2e_no_area_norm_out_name(model)
         e2e_stacked_name = e2e_stacked_out_name(model)
+        e2e_gemm_layout_stacked_name = e2e_gemm_layout_stacked_out_name(model)
         no_area_norm_stacked_name = e2e_no_area_norm_stacked_out_name(model)
         gemm_name = gemm_only_out_name(model)
 
@@ -1258,6 +1266,19 @@ def main() -> int:
             include_c4_alone=False,
         )
         print(f"{model} E2E stacked figure data source: {e2e_stacked_result.cache_status}")
+
+        e2e_gemm_layout_stacked_result = load_or_export_suite_figure_data(
+            model=model,
+            suite_tag=suite_tag,
+            out_name=e2e_gemm_layout_stacked_name,
+            stacked=True,
+            stack_by="name_backend",
+            include_c4_alone=False,
+        )
+        print(
+            f"{model} E2E GEMM + layout stacked figure data source: "
+            f"{e2e_gemm_layout_stacked_result.cache_status}"
+        )
 
         no_area_norm_stacked_result = load_or_export_no_area_norm_figure_data(
             e2e_stacked_result,
@@ -1313,6 +1334,8 @@ def main() -> int:
                 total_data_path(no_area_norm_name),
                 figure_data_path(e2e_stacked_name),
                 total_data_path(e2e_stacked_name),
+                figure_data_path(e2e_gemm_layout_stacked_name),
+                total_data_path(e2e_gemm_layout_stacked_name),
                 figure_data_path(no_area_norm_stacked_name),
                 total_data_path(no_area_norm_stacked_name),
                 figure_data_path(gemm_name),

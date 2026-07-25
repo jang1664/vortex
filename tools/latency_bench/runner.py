@@ -565,6 +565,13 @@ def write_run_script(
         "LATENCY_BENCH_LAST_RESET_RC=",
         "LATENCY_BENCH_XRT_DEVICE_INDEX=",
         "LATENCY_BENCH_XRT_DEVICE_BDF=",
+        'if [[ -n "${NO_COLOR:-}" ]]; then',
+        "  LATENCY_BENCH_PROGRESS_BLUE=",
+        "  LATENCY_BENCH_PROGRESS_RESET=",
+        "else",
+        "  LATENCY_BENCH_PROGRESS_BLUE=$'\\033[34m'",
+        "  LATENCY_BENCH_PROGRESS_RESET=$'\\033[0m'",
+        "fi",
         "",
         "latency_bench_capture_fpga_identity() {",
         "  local smi index bdf host requested_index requested_bdf env_file json_file",
@@ -946,7 +953,11 @@ def write_run_script(
         lines.extend([
             "",
             f"if [[ \"${{LATENCY_BENCH_SHOULD_RUN[{_q(unit.exec_key)}]:-0}}\" == \"1\" ]]; then",
-            f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
+            (
+                f"printf '%s[{idx}/{len(units)}]%s %s\\n' "
+                f"\"$LATENCY_BENCH_PROGRESS_BLUE\" \"$LATENCY_BENCH_PROGRESS_RESET\" "
+                f"{_q(f'{unit.exec_key} app={unit.app} args={bench_args}')}"
+            ),
             f"if [[ \"$LATENCY_BENCH_RETRY_ROUND\" == \"1\" ]]; then : > {_q(unit.log_file)}; fi",
             (
                 f"printf '[latency-bench] stage=case_begin idx=%d total=%d exec_key=%s app=%s raw_csv=%s power_csv=%s power_summary=%s log=%s\\n' "

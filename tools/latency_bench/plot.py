@@ -21,7 +21,7 @@ from .suite import BenchCase, BenchDefaults, BenchSuite, resolve_case_fpga_bin
 
 BAR_AXIS_COLUMNS = ("stage", "seq_len", "batch", "variant")
 BAR_AXIS_CHOICES = (*BAR_AXIS_COLUMNS, "none")
-STACK_BY_COLUMNS = ("name", "case_id", "kind", "backend", "op", "app")
+STACK_BY_COLUMNS = ("name", "name_backend", "case_id", "kind", "backend", "op", "app")
 DEFAULT_BAR_X = "seq_len"
 DEFAULT_BAR_HUE = "variant"
 DEFAULT_BAR_ROW = "stage"
@@ -370,6 +370,12 @@ def _add_bar_axis_columns(composed: pd.DataFrame, source_suites: dict[str, str])
 def _stack_key(row: pd.Series, stack_by: str) -> str:
     if stack_by not in STACK_BY_COLUMNS:
         raise ValueError(f"unsupported stack-by field: {stack_by}")
+    if stack_by == "name_backend":
+        name = "" if pd.isna(row.get("name")) else str(row.get("name", ""))
+        backend = "" if pd.isna(row.get("backend")) else str(row.get("backend", ""))
+        if name and backend:
+            return f"{name}::{backend}"
+        return name or backend or str(row.get("case_id", "case"))
     value = row.get(stack_by, "")
     text = "" if pd.isna(value) else str(value)
     return text or str(row.get("case_id", "case"))

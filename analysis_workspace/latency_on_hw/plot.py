@@ -20,6 +20,8 @@ PLOT_CHOICES = (
     "llama_e2e",
     "llama_e2e_no_area_norm",
     "llama_e2e_no_area_norm_stacked",
+    "llama_e2e_gemm_layout_stacked",
+    "llama_e2e_gemm_layout_vector_stacked",
     "llama_e2e_stacked",
     "llama_gemm_only",
     "llama_energy",
@@ -79,6 +81,7 @@ STAGE_ORDER = ("Prefill", "Decode")
 #     "llama3p2_3b",
 # ]
 TARGET_MODELS = [
+    "llama2_7b",
     "llama3_8b",
 ]
 LLAMA_MODEL_LABELS = {
@@ -208,6 +211,8 @@ E2E_KIND_STACK_GROUPS = (
     StackGroupKnobs(label="gemm", columns=("gemm",)),
     StackGroupKnobs(label="vector", columns=None),
 )
+E2E_GEMM_LAYOUT_STACK_PALETTE = ("#08306B", "#F28E2B")
+E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE = ("#08306B", "#F28E2B", "#238B45")
 ENERGY_KIND_STACK_PALETTE = E2E_KIND_STACK_PALETTE
 ENERGY_KIND_STACK_GROUPS = E2E_KIND_STACK_GROUPS
 
@@ -250,6 +255,7 @@ class StackedBarKnobs(WideBarKnobs):
     figsize: tuple[float, float] = GEMM_FIGSIZE
     row_height: float | None = 2.1
     bar_width: float = 0.76
+    relative: bool = True
     y_lim_top_scale: float = 1.18
     legend_title: str | None = GEMM_LEGEND_TITLE
     legend_ncol: int | None = 6
@@ -308,6 +314,20 @@ class PlotKnobs:
     llama_e2e_no_area_norm_stacked: StackedBarKnobs = field(
         default_factory=_llama_e2e_stacked_knobs
     )
+    llama_e2e_gemm_layout_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=2,
+            stack_palette=E2E_GEMM_LAYOUT_STACK_PALETTE,
+        )
+    )
+    llama_e2e_gemm_layout_vector_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=3,
+            stack_palette=E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE,
+        )
+    )
     llama_e2e_stacked: StackedBarKnobs = field(
         default_factory=_llama_e2e_stacked_knobs
     )
@@ -365,7 +385,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "plot to generate: main_all, gemm_only, energy, llama_e2e, "
             "llama_e2e_no_area_norm, llama_e2e_no_area_norm_stacked, "
-            "llama_e2e_stacked, llama_gemm_only, llama_energy, llama_energy_stacked, "
+            "llama_e2e_gemm_layout_stacked, llama_e2e_gemm_layout_vector_stacked, "
+            "llama_e2e_stacked, llama_gemm_only, "
+            "llama_energy, llama_energy_stacked, "
             "latency, or all"
         ),
     )
@@ -478,6 +500,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3p2-3b-e2e-stacked-data",
         default=None,
         help="Llama 3.2 3B stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
+    )
+    parser.add_argument(
+        "--llama2-e2e-gemm-layout-stacked-data",
+        default=None,
+        help="Llama 2 name/backend-stacked E2E data for the GEMM/layout stacked plots.",
+    )
+    parser.add_argument(
+        "--llama3-e2e-gemm-layout-stacked-data",
+        default=None,
+        help="Llama 3 name/backend-stacked E2E data for the GEMM/layout stacked plots.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-e2e-gemm-layout-stacked-data",
+        default=None,
+        help="Llama 3.2 1B name/backend-stacked E2E data for the GEMM/layout stacked plots.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-e2e-gemm-layout-stacked-data",
+        default=None,
+        help="Llama 3.2 3B name/backend-stacked E2E data for the GEMM/layout stacked plots.",
     )
     parser.add_argument(
         "--llama2-gemm-data",
@@ -647,6 +689,7 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
             token not in name
             for token in (
                 "e2e_no_area_norm",
+                "e2e_gemm_layout_stacked",
                 "e2e_stacked",
                 "gemm_only",
                 "energy_per_token",
@@ -657,6 +700,8 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
         return "e2e_no_area_norm" in name and "stacked_by_kind" not in name
     if kind == "e2e_no_area_norm_stacked":
         return "e2e_no_area_norm_stacked_by_kind" in name
+    if kind == "e2e_gemm_layout_stacked":
+        return "e2e_gemm_layout_stacked_by_name_backend" in name
     if kind == "e2e_stacked":
         return "e2e_stacked_by_kind" in name
     if kind == "gemm_only":
@@ -930,6 +975,8 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
         knobs.llama_e2e,
         knobs.llama_e2e_no_area_norm,
         knobs.llama_e2e_no_area_norm_stacked,
+        knobs.llama_e2e_gemm_layout_stacked,
+        knobs.llama_e2e_gemm_layout_vector_stacked,
         knobs.llama_e2e_stacked,
         knobs.llama_gemm_only,
         knobs.llama_energy,
@@ -1485,6 +1532,152 @@ def _stack_value_columns(pd: Any, df: Any) -> list[str]:
     return [column for column in columns if column != "total"]
 
 
+LAYOUT_FUSED_BACKEND_MARKER = "_layout_fused"
+NAME_BACKEND_SEPARATOR = "::"
+
+
+def _layout_base_backend(layout_backend: str) -> str:
+    prefix, marker, suffix = layout_backend.partition(LAYOUT_FUSED_BACKEND_MARKER)
+    if not marker or not prefix:
+        raise ValueError(f"not a layout-fused backend: {layout_backend!r}")
+    return f"{prefix}{suffix}"
+
+
+def _split_name_backend(stack_column: str) -> tuple[str | None, str]:
+    if NAME_BACKEND_SEPARATOR not in stack_column:
+        return None, stack_column
+    name, backend = stack_column.split(NAME_BACKEND_SEPARATOR, maxsplit=1)
+    if not name or not backend:
+        raise ValueError(f"invalid name/backend stack column: {stack_column!r}")
+    return name, backend
+
+
+def _corresponding_base_stack_column(
+    layout_column: str,
+    c3: Any,
+    stack_columns: Sequence[str],
+) -> str:
+    name, backend = _split_name_backend(layout_column)
+    if name is None:
+        return _layout_base_backend(backend)
+
+    candidates = [
+        column
+        for column in stack_columns
+        if _split_name_backend(column)[0] == name
+        and LAYOUT_FUSED_BACKEND_MARKER not in _split_name_backend(column)[1]
+        and abs(float(c3[column])) >= 1.0e-15
+    ]
+    if len(candidates) != 1:
+        raise ValueError(
+            f"expected one active C3 stack column corresponding to "
+            f"C4 stack column {layout_column!r}; found {candidates}"
+        )
+    return candidates[0]
+
+
+def _build_gemm_layout_stack(
+    pd: Any,
+    df: Any,
+    *,
+    include_vector: bool = False,
+) -> Any:
+    """Reduce backend stacks to GEMM, C4 layout overhead, and optional vector latency."""
+    required = {"model", "stage", "batch", "seq", "candidate"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"backend-stacked E2E data missing columns: {sorted(missing)}")
+
+    backend_columns = _stack_value_columns(pd, df)
+    gemm_columns = [
+        column
+        for column in backend_columns
+        if "gemm" in _split_name_backend(column)[1].lower()
+    ]
+    layout_columns = [
+        column
+        for column in backend_columns
+        if LAYOUT_FUSED_BACKEND_MARKER in _split_name_backend(column)[1]
+    ]
+    if not gemm_columns:
+        raise ValueError("backend-stacked E2E data has no GEMM backend columns")
+    if not layout_columns:
+        raise ValueError("backend-stacked E2E data has no layout-fused backend columns")
+
+    values = df.copy()
+    for column in backend_columns:
+        values[column] = pd.to_numeric(values[column], errors="coerce").fillna(0.0)
+
+    records: list[dict[str, Any]] = []
+    group_columns = ["model", "stage", "batch", "seq"]
+    for group_key, group in values.groupby(group_columns, sort=False, dropna=False):
+        candidates = group["candidate"].astype(str)
+        if candidates.duplicated().any():
+            duplicates = sorted(candidates[candidates.duplicated(keep=False)].unique())
+            raise ValueError(
+                f"duplicate candidates {duplicates} for model/stage/batch/seq={group_key}"
+            )
+
+        c3_rows = group[candidates.eq("C3")]
+        c4_rows = group[candidates.eq("C4")]
+        if len(c3_rows) != 1 or len(c4_rows) != 1:
+            raise ValueError(
+                f"expected one C3 and one C4 row for model/stage/batch/seq={group_key}"
+            )
+        c3 = c3_rows.iloc[0]
+        c4 = c4_rows.iloc[0]
+
+        layout_overhead = 0.0
+        for layout_column in layout_columns:
+            layout_value = float(c4[layout_column])
+            if abs(layout_value) < 1.0e-15:
+                continue
+            base_column = _corresponding_base_stack_column(
+                layout_column,
+                c3,
+                backend_columns,
+            )
+            if base_column not in backend_columns:
+                raise ValueError(
+                    f"missing C3 stack column {base_column!r} corresponding to "
+                    f"C4 stack column {layout_column!r} for model/stage/batch/seq={group_key}"
+                )
+            layout_overhead += layout_value - float(c3[base_column])
+
+        for _, row in group.iterrows():
+            candidate = str(row["candidate"])
+            gemm_latency = sum(float(row[column]) for column in gemm_columns)
+            layout_latency = layout_overhead if candidate == "C4" else 0.0
+            record = {
+                "model": row["model"],
+                "stage": row["stage"],
+                "batch": row["batch"],
+                "seq": row["seq"],
+                "candidate": candidate,
+                "gemm": gemm_latency,
+                "layout": layout_latency,
+            }
+            if include_vector:
+                actual_vector_latency = sum(
+                    float(row[column])
+                    for column in backend_columns
+                    if column not in gemm_columns
+                )
+                vector_latency = actual_vector_latency - layout_latency
+                record["vector"] = vector_latency
+                record["total"] = gemm_latency + layout_latency + vector_latency
+            else:
+                record["total"] = gemm_latency + layout_latency
+            records.append(record)
+
+    return pd.DataFrame.from_records(records)
+
+
+def _build_gemm_layout_vector_stack(pd: Any, df: Any) -> Any:
+    """Preserve E2E totals while separating C4 fused-layout overhead from vector."""
+    return _build_gemm_layout_stack(pd, df, include_vector=True)
+
+
 def _apply_stack_groups(
     df: Any,
     stack_columns: Sequence[str],
@@ -1517,6 +1710,48 @@ def _apply_stack_groups(
     return grouped, labels
 
 
+def _apply_relative_stack_values(
+    pd: Any,
+    df: Any,
+    stack_columns: Sequence[str],
+) -> Any:
+    """Normalize each stack against the smallest positive total at its x tick."""
+    if not stack_columns:
+        return df
+
+    relative = df.copy()
+    group_columns = [
+        column
+        for column in ("model", "stage", "batch", "seq")
+        if column in relative.columns
+    ]
+    relative["__stack_total"] = relative[list(stack_columns)].sum(axis=1)
+
+    def _positive_min(values: Any) -> float:
+        positive = pd.to_numeric(values, errors="coerce").fillna(0.0)
+        positive = positive[positive > 0.0]
+        return float(positive.min()) if not positive.empty else 1.0
+
+    if group_columns:
+        baselines = relative.groupby(
+            group_columns,
+            sort=False,
+            dropna=False,
+        )["__stack_total"].transform(_positive_min)
+    else:
+        baselines = pd.Series(
+            _positive_min(relative["__stack_total"]),
+            index=relative.index,
+        )
+    baselines = pd.to_numeric(baselines, errors="coerce").fillna(1.0)
+    baselines = baselines.mask(baselines <= 0.0, 1.0)
+
+    for column in stack_columns:
+        relative[column] = relative[column] / baselines
+    relative["total"] = relative[list(stack_columns)].sum(axis=1)
+    return relative.drop(columns=["__stack_total"])
+
+
 def plot_gemm_stacked_bars(
     csv_path: Path,
     out_dir: Path,
@@ -1539,6 +1774,8 @@ def plot_gemm_stacked_bars(
     for column in stack_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
     df, stack_columns = _apply_stack_groups(df, stack_columns, knobs.stack_groups)
+    if knobs.relative:
+        df = _apply_relative_stack_values(pd, df, stack_columns)
 
     stages = sorted(_ordered_unique(df["stage"].tolist()), key=_stage_sort_key)
     fig, axes = plt.subplots(len(stages), 1, figsize=_plot_size(knobs, len(stages)), squeeze=False)
@@ -1795,6 +2032,7 @@ def plot_model_stacked_bars(
     filename: str,
     data_label: str,
     knobs: StackedBarKnobs,
+    stack_transform: Any | None = None,
 ) -> None:
     pd, plt = _import_plot_modules()
     frames = _read_model_excel_frames(model_csvs)
@@ -1808,12 +2046,17 @@ def plot_model_stacked_bars(
     if missing:
         raise ValueError(f"{data_label} data missing columns: {sorted(missing)}")
 
+    if stack_transform is not None:
+        combined = stack_transform(pd, combined)
+
     stack_columns = _stack_value_columns(pd, combined)
     if not stack_columns:
         raise ValueError(f"{data_label} data has no stack value columns")
     for column in stack_columns:
         combined[column] = pd.to_numeric(combined[column], errors="coerce").fillna(0.0)
     combined, stack_columns = _apply_stack_groups(combined, stack_columns, knobs.stack_groups)
+    if knobs.relative:
+        combined = _apply_relative_stack_values(pd, combined, stack_columns)
 
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
@@ -1941,6 +2184,38 @@ def plot_llama_e2e_stacked_bars(
     )
 
 
+def plot_llama_e2e_gemm_layout_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_e2e_gemm_layout_latency_stacked.png",
+        data_label="Llama E2E GEMM + layout stacked",
+        knobs=knobs,
+        stack_transform=_build_gemm_layout_stack,
+    )
+
+
+def plot_llama_e2e_gemm_layout_vector_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_e2e_gemm_layout_vector_latency_stacked.png",
+        data_label="Llama E2E GEMM + layout + vector stacked",
+        knobs=knobs,
+        stack_transform=_build_gemm_layout_vector_stack,
+    )
+
+
 def plot_llama_e2e_no_area_norm_stacked_bars(
     model_csvs: Sequence[tuple[str, str, Path]],
     out_dir: Path,
@@ -2051,6 +2326,32 @@ def run_llama_e2e_stacked_plot(
     )
 
 
+def run_llama_e2e_gemm_layout_stacked_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_llama_e2e_gemm_layout_stacked_bars(
+        model_csvs,
+        output_root / "llama_e2e_gemm_layout_stacked",
+        knobs=knobs,
+    )
+
+
+def run_llama_e2e_gemm_layout_vector_stacked_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_llama_e2e_gemm_layout_vector_stacked_bars(
+        model_csvs,
+        output_root / "llama_e2e_gemm_layout_vector_stacked",
+        knobs=knobs,
+    )
+
+
 def run_llama_e2e_no_area_norm_stacked_plot(
     model_csvs: Sequence[tuple[str, str, Path]],
     output_root: Path,
@@ -2122,7 +2423,7 @@ def collect_model_csvs(
     model_csvs: list[tuple[str, str, Path]] = []
     for model_key, model_label in LLAMA_E2E_MODELS:
         csv_path = model_csv_path(
-            explicit=explicit_by_model[model_key],
+            explicit=explicit_by_model.get(model_key),
             prepared_root=prepared_root,
             latency_dir=latency_dir,
             model_key=model_key,
@@ -2131,6 +2432,16 @@ def collect_model_csvs(
         )
         model_csvs.append((model_key, model_label, csv_path))
     return model_csvs
+
+
+def _provided_model_inputs(
+    explicit_by_model: dict[str, str | None],
+) -> dict[str, str]:
+    return {
+        model_key: path
+        for model_key, path in explicit_by_model.items()
+        if path is not None
+    }
 
 
 def run_optional_llama_model_plot(
@@ -2280,12 +2591,12 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e",
-            explicit_by_model={
+            explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_data,
                 "llama3_8b": args.llama3_data,
                 "llama3p2_1b": args.llama3p2_1b_data,
                 "llama3p2_3b": args.llama3p2_3b_data,
-            },
+            }),
             prepared_root=prepared_root,
             latency_dir=latency_dir,
             output_root=output_root,
@@ -2299,12 +2610,12 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_no_area_norm",
-            explicit_by_model={
+            explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_no_area_norm_data,
                 "llama3_8b": args.llama3_no_area_norm_data,
                 "llama3p2_1b": args.llama3p2_1b_no_area_norm_data,
                 "llama3p2_3b": args.llama3p2_3b_no_area_norm_data,
-            },
+            }),
             prepared_root=prepared_root,
             latency_dir=latency_dir,
             output_root=output_root,
@@ -2318,12 +2629,12 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_no_area_norm_stacked",
-            explicit_by_model={
+            explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_no_area_norm_stacked_data,
                 "llama3_8b": args.llama3_no_area_norm_stacked_data,
                 "llama3p2_1b": args.llama3p2_1b_no_area_norm_stacked_data,
                 "llama3p2_3b": args.llama3p2_3b_no_area_norm_stacked_data,
-            },
+            }),
             prepared_root=prepared_root,
             latency_dir=latency_dir,
             output_root=output_root,
@@ -2333,16 +2644,54 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_no_area_norm_stacked_plot,
         )
 
+    if plot in {"llama_e2e_gemm_layout_stacked", "all"}:
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e_gemm_layout_stacked",
+            explicit_by_model=_provided_model_inputs({
+                "llama2_7b": args.llama2_e2e_gemm_layout_stacked_data,
+                "llama3_8b": args.llama3_e2e_gemm_layout_stacked_data,
+                "llama3p2_1b": args.llama3p2_1b_e2e_gemm_layout_stacked_data,
+                "llama3p2_3b": args.llama3p2_3b_e2e_gemm_layout_stacked_data,
+            }),
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="e2e_gemm_layout_stacked",
+            label="E2E GEMM + layout stacked",
+            knobs=knobs.llama_e2e_gemm_layout_stacked,
+            runner=run_llama_e2e_gemm_layout_stacked_plot,
+        )
+
+    if plot in {"llama_e2e_gemm_layout_vector_stacked", "all"}:
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e_gemm_layout_vector_stacked",
+            explicit_by_model=_provided_model_inputs({
+                "llama2_7b": args.llama2_e2e_gemm_layout_stacked_data,
+                "llama3_8b": args.llama3_e2e_gemm_layout_stacked_data,
+                "llama3p2_1b": args.llama3p2_1b_e2e_gemm_layout_stacked_data,
+                "llama3p2_3b": args.llama3p2_3b_e2e_gemm_layout_stacked_data,
+            }),
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="e2e_gemm_layout_stacked",
+            label="E2E GEMM + layout + vector stacked",
+            knobs=knobs.llama_e2e_gemm_layout_vector_stacked,
+            runner=run_llama_e2e_gemm_layout_vector_stacked_plot,
+        )
+
     if plot in {"llama_e2e_stacked", "all"}:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_stacked",
-            explicit_by_model={
+            explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_e2e_stacked_data,
                 "llama3_8b": args.llama3_e2e_stacked_data,
                 "llama3p2_1b": args.llama3p2_1b_e2e_stacked_data,
                 "llama3p2_3b": args.llama3p2_3b_e2e_stacked_data,
-            },
+            }),
             prepared_root=prepared_root,
             latency_dir=latency_dir,
             output_root=output_root,
