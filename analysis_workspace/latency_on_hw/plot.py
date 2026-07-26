@@ -29,6 +29,7 @@ PLOT_CHOICES = (
     "llama_energy",
     "llama_energy_stacked",
     "llama_energy_gemm_layout_vector_stacked",
+    "kernel_dynamic_power",
     "latency",
     "all",
 )
@@ -39,6 +40,7 @@ TWO_COLUMN_FIGSIZE = (7.16, 9.3)
 GEMM_FIGSIZE = (3.5, 4.0)
 LLAMA_GEMM_FIGSIZE = (3.5, 4.0)
 LLAMA_E2E_STACKED_FIGSIZE = (3.5, 4.0)
+KERNEL_DYNAMIC_POWER_FIGSIZE = (ONE_COLUMN_FIGSIZE[0], 3.0)
 SAVE_DPI = 600
 BAR_EDGECOLOR = "white"
 BAR_LINEWIDTH = 0.25
@@ -70,6 +72,8 @@ LEGEND_FONTSIZE = MIN_FONT_SIZE
 VALUE_LABEL_FONTSIZE: float | Literal["auto"] = "auto"
 VALUE_LABEL_AUTO_MAX_FONTSIZE = MIN_FONT_SIZE
 VALUE_LABEL_AUTO_WIDTH_SCALE = 0.92
+# Small data-unit gap for labels that remain above a bar.
+VALUE_LABEL_DY = 0.03
 STACKED_LABEL_EDGE_PADDING_PX = 1.0
 
 X_GROUP_AXIS = "batch"
@@ -81,6 +85,22 @@ VALUE_LABELS = True
 E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
 STAGE_ORDER = ("Prefill", "Decode")
+RAW_DB_SUBDIRS = ("C1", "C3", "C4")
+RAW_DB_ROOT_NAMES = (
+    "outputs_llama2_main",
+    "outputs_llama3_main",
+    "outputs_llama3p2_1b_main",
+    "outputs_llama3p2_3b_main",
+)
+GEMM_DYNAMIC_POWER_LABELS = {
+    "sgemm_tcu": "FP-FP gemm",
+    "fpint_gemm_ffn_hw_naive": "FP-INT naive gemm",
+    "fpint_gemm_ffn_hw": "FP-INT gemm",
+}
+KERNEL_DYNAMIC_POWER_LABELS = {
+    "quantization": "quant",
+    "dequantization": "dequant",
+}
 
 # Models included in the combined Llama plots, in display order.
 # TARGET_MODELS = [
@@ -171,7 +191,7 @@ class WideBarKnobs:
     value_label_rotation: float = 90.0
     value_label_ha: str = "center"
     value_label_va: str = "bottom"
-    value_label_dy: float = 0.0
+    value_label_dy: float = VALUE_LABEL_DY
     x_tick_label_rotation: float = 0.0
     stage_x_tick_label_rotations: dict[str, float] = field(default_factory=dict)
     x_group_axis: str | None = X_GROUP_AXIS
@@ -292,6 +312,19 @@ def _llama_e2e_stacked_knobs() -> StackedBarKnobs:
 
 @dataclass
 class PlotKnobs:
+    kernel_dynamic_power: WideBarKnobs = field(
+        default_factory=lambda: WideBarKnobs(
+            figsize=KERNEL_DYNAMIC_POWER_FIGSIZE,
+            row_height=KERNEL_DYNAMIC_POWER_FIGSIZE[1],
+            title=None,
+            x_label="kernel kind",
+            y_label="dynamic power (W)",
+            value_labels=False,
+            x_tick_label_rotation=60.0,
+            legend_position="none",
+            tight_layout_rect=(0.0, 0.0, 1.0, 1.0),
+        )
+    )
     main_all: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
             figsize=TWO_COLUMN_FIGSIZE,
@@ -428,6 +461,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "llama_gemm_only_no_area_norm, llama_gemm_only_energy, "
             "llama_energy, llama_energy_stacked, "
             "llama_energy_gemm_layout_vector_stacked, "
+            "kernel_dynamic_power, "
             "latency, or all"
         ),
     )
@@ -1104,6 +1138,7 @@ def _stage_bar_width(
 def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
     knobs: PlotKnobs = copy.deepcopy(PLOT_KNOBS)
     plot_knobs: list[WideBarKnobs] = [
+        knobs.kernel_dynamic_power,
         knobs.main_all,
         knobs.gemm_only,
         knobs.energy,
@@ -2986,6 +3021,155 @@ def collect_model_energy_csv_groups(
     return groups
 
 
+def configured_raw_db_paths(latency_dir: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for root_name in RAW_DB_ROOT_NAMES:
+        for subdir in RAW_DB_SUBDIRS:
+            path = (latency_dir / root_name / subdir / "raw_db.csv").resolve()
+            if not path.exists() or path in seen:
+                continue
+            paths.append(path)
+            seen.add(path)
+    if not paths:
+        raise FileNotFoundError(
+            f"no configured raw_db.csv files found under {latency_dir}"
+        )
+    return tuple(paths)
+
+
+def plot_kernel_dynamic_power_by_kind(
+    raw_db_paths: Sequence[Path],
+    out_dir: Path,
+    *,
+    knobs: WideBarKnobs,
+) -> None:
+    pd, plt = _import_plot_modules()
+    frames = []
+    required = {"kind", "app", "power_dynamic_avg_w", "status"}
+    for path in raw_db_paths:
+        frame = pd.read_csv(path, low_memory=False)
+        missing = required - set(frame.columns)
+        if missing:
+            raise ValueError(f"{path} missing columns: {sorted(missing)}")
+        frame = frame[["kind", "app", "power_dynamic_avg_w", "status"]].copy()
+        frame["source_raw_db"] = str(path)
+        frames.append(frame)
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[combined["status"].astype(str).eq("pass")].copy()
+    combined["kind"] = combined["kind"].fillna("").astype(str).str.strip()
+    combined["power_dynamic_avg_w"] = pd.to_numeric(
+        combined["power_dynamic_avg_w"],
+        errors="coerce",
+    )
+    combined = combined[
+        combined["kind"].ne("")
+        & combined["power_dynamic_avg_w"].map(
+            lambda value: math.isfinite(float(value)) if pd.notna(value) else False
+        )
+    ].copy()
+    combined = combined[combined["kind"].ne("layout")].copy()
+    if combined.empty:
+        raise ValueError("configured raw DBs contain no valid dynamic power rows")
+
+    combined["app"] = combined["app"].fillna("").astype(str).str.strip()
+    combined["kernel_group"] = combined["kind"]
+    combined["tick_label"] = combined["kind"].map(
+        lambda kind: KERNEL_DYNAMIC_POWER_LABELS.get(kind, kind)
+    )
+    gemm_mask = combined["kind"].eq("gemm")
+    unknown_gemm_apps = sorted(
+        set(combined.loc[gemm_mask, "app"]) - set(GEMM_DYNAMIC_POWER_LABELS)
+    )
+    if unknown_gemm_apps:
+        raise ValueError(
+            f"unsupported GEMM apps in raw DBs: {unknown_gemm_apps}"
+        )
+    combined.loc[gemm_mask, "kernel_group"] = combined.loc[
+        gemm_mask, "app"
+    ].map(lambda app: f"gemm::{app}")
+    combined.loc[gemm_mask, "tick_label"] = combined.loc[
+        gemm_mask, "app"
+    ].map(GEMM_DYNAMIC_POWER_LABELS)
+
+    summary = (
+        combined.groupby(
+            ["kernel_group", "kind", "tick_label"],
+            as_index=False,
+            sort=False,
+        )
+        .agg(
+            mean_dynamic_power_w=("power_dynamic_avg_w", "mean"),
+            std_dynamic_power_w=("power_dynamic_avg_w", "std"),
+            measurement_count=("power_dynamic_avg_w", "count"),
+        )
+    )
+    summary["std_dynamic_power_w"] = summary["std_dynamic_power_w"].fillna(0.0)
+    reserved_kinds = {"gemm", "quantization", "dequantization"}
+    vector_kinds = sorted(set(combined["kind"]) - reserved_kinds)
+    group_order = [*vector_kinds]
+    group_order.extend(
+        kind
+        for kind in ("quantization", "dequantization")
+        if bool(combined["kind"].eq(kind).any())
+    )
+    group_order.extend(
+        f"gemm::{app}"
+        for app in GEMM_DYNAMIC_POWER_LABELS
+        if bool((combined["app"].eq(app) & gemm_mask).any())
+    )
+    group_rank = {group: rank for rank, group in enumerate(group_order)}
+    summary["_group_rank"] = summary["kernel_group"].map(group_rank)
+    summary = summary.sort_values("_group_rank").drop(columns="_group_rank")
+    summary = summary.reset_index(drop=True)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(out_dir / "kernel_dynamic_power_by_kind.csv", index=False)
+
+    positions = list(range(len(summary)))
+    means = summary["mean_dynamic_power_w"].tolist()
+    stds = summary["std_dynamic_power_w"].tolist()
+    fig, ax = plt.subplots(figsize=knobs.figsize)
+    ax.bar(
+        positions,
+        means,
+        yerr=stds,
+        width=0.72,
+        color="#2171B5",
+        edgecolor=knobs.bar_edgecolor,
+        linewidth=knobs.bar_linewidth,
+        alpha=knobs.bar_alpha,
+        capsize=2.0,
+        error_kw={"elinewidth": 0.6, "capthick": 0.6, "ecolor": "0.2"},
+    )
+    ax.set_xticks(positions)
+    ax.set_xticklabels(
+        summary["tick_label"].tolist(),
+        rotation=knobs.x_tick_label_rotation,
+        ha="right" if knobs.x_tick_label_rotation else "center",
+        fontsize=knobs.tick_label_fontsize,
+    )
+    ax.set_xlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+    ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
+    ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
+    ax.grid(axis="y", alpha=knobs.grid_alpha)
+    ax.set_axisbelow(True)
+    ymax = max(
+        (float(mean) + float(std) for mean, std in zip(means, stds)),
+        default=1.0,
+    )
+    _apply_y_limits(ax, "", ymax, knobs)
+    if knobs.title is not None:
+        ax.set_title(knobs.title, fontsize=knobs.title_fontsize)
+    fig.tight_layout(
+        rect=knobs.tight_layout_rect,
+        pad=knobs.tight_layout_pad,
+    )
+    _save_figure(fig, out_dir / "kernel_dynamic_power_by_kind.png", knobs)
+    plt.close(fig)
+
+
 def run_selected_plots(args: argparse.Namespace) -> None:
     repo_root = find_repo_root()
     latency_dir = Path(args.latency_dir).expanduser().resolve() if args.latency_dir else repo_root / "analysis_workspace" / "latency_on_hw"
@@ -2995,6 +3179,15 @@ def run_selected_plots(args: argparse.Namespace) -> None:
 
     plot = args.plot
     knobs = _plot_knobs_from_args(args)
+
+    if plot in {"kernel_dynamic_power", "all"}:
+        raw_db_paths = configured_raw_db_paths(latency_dir)
+        print(f"kernel dynamic power raw DBs: {len(raw_db_paths)}")
+        plot_kernel_dynamic_power_by_kind(
+            raw_db_paths,
+            output_root / "kernel_dynamic_power",
+            knobs=knobs.kernel_dynamic_power,
+        )
 
     if plot in {"main_all", "latency", "all"}:
         main_csv = prepared_csv_path(

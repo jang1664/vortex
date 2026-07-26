@@ -99,7 +99,7 @@ static void dequant_cpu(const std::vector<uint8_t>& packed,
 int main(int argc, char *argv[]) {
   uint32_t K = 32;
   uint32_t N = 32;
-  uint32_t QBLK = 16;
+  uint32_t QBLK = 32;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
@@ -122,9 +122,11 @@ int main(int argc, char *argv[]) {
       return 0;
     }
   }
-  if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1
+  if ((N & 1u) != 0 || !kv_cache_dequant_qblk_supported(QBLK)
+      || QDIR > 1 || WTRANS > 1
       || quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    printf("ERROR: require even N, QBLK>0, QDIR in {0,1}, WTRANS in {0,1}, "
+    printf("ERROR: require even N, QBLK in {32,64,128}, QDIR in {0,1}, "
+           "WTRANS in {0,1}, "
            "and a valid quant mode\n");
     return 1;
   }
@@ -163,11 +165,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
-  uint32_t work_items = kv_cache_dequant_work_items(K, N);
-  uint32_t blocks = std::min(
-      (work_items + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+  uint32_t tpb = kv_cache_dequant_threads_per_block(num_warps, num_threads);
+  uint32_t work_items = kv_cache_dequant_work_items(
+      K, N, QBLK, QDIR, (uint32_t)num_threads);
+  uint32_t blocks = kv_cache_dequant_blocks(
+      work_items, tpb, num_cores, num_warps);
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_KV_CACHE_DEQUANT_W4A16;
