@@ -14,10 +14,11 @@ readonly TARGET="$1"
 readonly RESULTS=(
     "figures_prepare"
     "figures_script/llama_e2e_gemm_layout_vector_stacked"
-    "figures_script/llama_energy_gemm_layout_vector_stacked"
+    # "figures_script/llama_energy_gemm_layout_vector_stacked"
     "figures_script/llama_gemm_only"
-    "figures_script/llama_gemm_only_energy"
+    # "figures_script/llama_gemm_only_energy"
     "figures_script/llama_gemm_only_no_area_norm"
+    "figures_script/llama_energy_no_area_norm_gemm_layout_vector_stacked"
 )
 
 # Validate every source before changing the target, so a partial result set is

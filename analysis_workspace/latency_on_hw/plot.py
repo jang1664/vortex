@@ -26,9 +26,13 @@ PLOT_CHOICES = (
     "llama_gemm_only",
     "llama_gemm_only_no_area_norm",
     "llama_gemm_only_energy",
+    "llama_gemm_only_energy_no_area_norm",
     "llama_energy",
+    "llama_energy_no_area_norm",
     "llama_energy_stacked",
+    "llama_energy_no_area_norm_stacked",
     "llama_energy_gemm_layout_vector_stacked",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked",
     "kernel_dynamic_power",
     "latency",
     "all",
@@ -40,7 +44,7 @@ TWO_COLUMN_FIGSIZE = (7.16, 9.3)
 GEMM_FIGSIZE = (3.5, 4.0)
 LLAMA_GEMM_FIGSIZE = (3.5, 4.0)
 LLAMA_E2E_STACKED_FIGSIZE = (3.5, 4.0)
-KERNEL_DYNAMIC_POWER_FIGSIZE = (ONE_COLUMN_FIGSIZE[0], 3.0)
+KERNEL_DYNAMIC_POWER_FIGSIZE = (ONE_COLUMN_FIGSIZE[0], 2.5)
 SAVE_DPI = 600
 BAR_EDGECOLOR = "white"
 BAR_LINEWIDTH = 0.25
@@ -403,6 +407,14 @@ class PlotKnobs:
             stack_groups=GEMM_ONLY_STACK_GROUPS,
         )
     )
+    llama_gemm_only_energy_no_area_norm: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=3,
+            stack_palette=GEMM_ONLY_GROUP_PALETTE,
+            stack_groups=GEMM_ONLY_STACK_GROUPS,
+        )
+    )
     llama_energy: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
@@ -417,7 +429,28 @@ class PlotKnobs:
             stack_groups=ENERGY_KIND_STACK_GROUPS,
         )
     )
+    llama_energy_no_area_norm: WideBarKnobs = field(
+        default_factory=lambda: WideBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=4,
+        )
+    )
+    llama_energy_no_area_norm_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=2,
+            stack_palette=ENERGY_KIND_STACK_PALETTE,
+            stack_groups=ENERGY_KIND_STACK_GROUPS,
+        )
+    )
     llama_energy_gemm_layout_vector_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=4,
+            stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
+        )
+    )
+    llama_energy_no_area_norm_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
             legend_ncol=4,
@@ -459,8 +492,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "llama_e2e_gemm_layout_stacked, llama_e2e_gemm_layout_vector_stacked, "
             "llama_e2e_stacked, llama_gemm_only, "
             "llama_gemm_only_no_area_norm, llama_gemm_only_energy, "
-            "llama_energy, llama_energy_stacked, "
+            "llama_gemm_only_energy_no_area_norm, llama_energy, "
+            "llama_energy_no_area_norm, llama_energy_stacked, "
+            "llama_energy_no_area_norm_stacked, "
             "llama_energy_gemm_layout_vector_stacked, "
+            "llama_energy_no_area_norm_gemm_layout_vector_stacked, "
             "kernel_dynamic_power, "
             "latency, or all"
         ),
@@ -841,7 +877,12 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
     if kind == "gemm_only_no_area_norm":
         return "gemm_only_no_area_norm" in name
     if kind == "gemm_only_energy":
-        return "gemm_only_energy_per_token_stacked_by_name" in name
+        return (
+            "gemm_only_energy_per_token_stacked_by_name" in name
+            and "no_area_norm" not in name
+        )
+    if kind == "gemm_only_energy_no_area_norm":
+        return "gemm_only_energy_per_token_no_area_norm_stacked_by_name" in name
     if kind == "gemm_only":
         return (
             "gemm_only" in name
@@ -851,14 +892,35 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
     if kind == "energy":
         return (
             "energy_per_token" in name
+            and "no_area_norm" not in name
             and "stacked_by_kind" not in name
             and "gemm_layout_vector_stacked_by_name_backend" not in name
             and "gemm_only_energy_per_token" not in name
         )
     if kind == "energy_stacked":
-        return "energy_per_token_stacked_by_kind" in name
+        return (
+            "energy_per_token_stacked_by_kind" in name
+            and "no_area_norm" not in name
+        )
     if kind == "energy_gemm_layout_vector_stacked":
-        return "energy_per_token_gemm_layout_vector_stacked_by_name_backend" in name
+        return (
+            "energy_per_token_gemm_layout_vector_stacked_by_name_backend" in name
+            and "no_area_norm" not in name
+        )
+    if kind == "energy_no_area_norm":
+        return (
+            "energy_per_token_no_area_norm" in name
+            and "stacked_by_kind" not in name
+            and "gemm_layout_vector_stacked_by_name_backend" not in name
+            and "gemm_only_energy_per_token" not in name
+        )
+    if kind == "energy_no_area_norm_stacked":
+        return "energy_per_token_no_area_norm_stacked_by_kind" in name
+    if kind == "energy_no_area_norm_gemm_layout_vector_stacked":
+        return (
+            "energy_per_token_no_area_norm_"
+            "gemm_layout_vector_stacked_by_name_backend"
+        ) in name
     raise ValueError(f"unsupported prepared data kind: {kind}")
 
 
@@ -923,9 +985,12 @@ def _validate_energy_csv_schema(path: Path, kind: str) -> str:
         "energy_stacked",
         "energy_gemm_layout_vector_stacked",
         "gemm_only_energy",
+        "energy_no_area_norm_stacked",
+        "energy_no_area_norm_gemm_layout_vector_stacked",
+        "gemm_only_energy_no_area_norm",
     }:
         required.update(("candidate", "total"))
-    elif kind == "energy":
+    elif kind in {"energy", "energy_no_area_norm"}:
         if not columns.intersection(E2E_CANDIDATE_COLUMNS):
             raise ValueError(f"flat energy data has no candidate columns: {path}")
     else:
@@ -1151,9 +1216,13 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
         knobs.llama_gemm_only,
         knobs.llama_gemm_only_no_area_norm,
         knobs.llama_gemm_only_energy,
+        knobs.llama_gemm_only_energy_no_area_norm,
         knobs.llama_energy,
+        knobs.llama_energy_no_area_norm,
         knobs.llama_energy_stacked,
+        knobs.llama_energy_no_area_norm_stacked,
         knobs.llama_energy_gemm_layout_vector_stacked,
+        knobs.llama_energy_no_area_norm_gemm_layout_vector_stacked,
     ]
 
     for item in plot_knobs:
@@ -2668,12 +2737,15 @@ def plot_model_gemm_energy_stacked_bars(
     out_dir: Path,
     *,
     knobs: StackedBarKnobs,
+    no_area_norm: bool = False,
 ) -> None:
+    suffix = "_no_area_norm" if no_area_norm else ""
+    qualifier = " without area normalization" if no_area_norm else ""
     plot_model_stacked_bars(
         model_csvs,
         out_dir,
-        filename=f"llama_gemm_only_energy_per_token_{power_metric}.png",
-        data_label=f"Llama GEMM-only energy ({power_metric})",
+        filename=f"llama_gemm_only_energy_per_token_{power_metric}{suffix}.png",
+        data_label=f"Llama GEMM-only energy{qualifier} ({power_metric})",
         knobs=knobs,
     )
 
@@ -2838,6 +2910,22 @@ def run_llama_gemm_only_energy_plot(
     )
 
 
+def run_llama_gemm_only_energy_no_area_norm_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_gemm_energy_stacked_bars(
+        power_metric,
+        model_csvs,
+        output_root / "llama_gemm_only_energy_no_area_norm",
+        knobs=knobs,
+        no_area_norm=True,
+    )
+
+
 def run_llama_energy_plot(
     power_metric: str,
     model_csvs: Sequence[tuple[str, str, Path]],
@@ -2856,6 +2944,26 @@ def run_llama_energy_plot(
     )
 
 
+def run_llama_energy_no_area_norm_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: WideBarKnobs,
+) -> None:
+    metric_knobs = copy.deepcopy(knobs)
+    if metric_knobs.title is not None:
+        metric_knobs.title = (
+            f"{metric_knobs.title} without area normalization ({power_metric})"
+        )
+    plot_model_wide_candidate_bars(
+        model_csvs,
+        output_root / "llama_energy_no_area_norm",
+        filename=f"llama_energy_per_token_{power_metric}_no_area_norm.png",
+        knobs=metric_knobs,
+    )
+
+
 def run_llama_energy_stacked_plot(
     power_metric: str,
     model_csvs: Sequence[tuple[str, str, Path]],
@@ -2868,6 +2976,25 @@ def run_llama_energy_stacked_plot(
         output_root / "llama_energy_stacked",
         filename=f"llama_energy_per_token_{power_metric}_stacked.png",
         data_label=f"Llama stacked energy ({power_metric})",
+        knobs=knobs,
+    )
+
+
+def run_llama_energy_no_area_norm_stacked_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        output_root / "llama_energy_no_area_norm_stacked",
+        filename=f"llama_energy_per_token_{power_metric}_no_area_norm_stacked.png",
+        data_label=(
+            "Llama stacked energy without area normalization "
+            f"({power_metric})"
+        ),
         knobs=knobs,
     )
 
@@ -2889,6 +3016,29 @@ def run_llama_energy_gemm_layout_vector_stacked_plot(
         data_label=(
             "Llama GEMM + layout + vector + dequant stacked energy "
             f"({power_metric})"
+        ),
+        knobs=knobs,
+        stack_transform=_build_gemm_layout_vector_dequant_stack,
+    )
+
+
+def run_llama_energy_no_area_norm_gemm_layout_vector_stacked_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        output_root / "llama_energy_no_area_norm_gemm_layout_vector_stacked",
+        filename=(
+            f"llama_energy_per_token_{power_metric}_no_area_norm_"
+            "gemm_layout_vector_stacked.png"
+        ),
+        data_label=(
+            "Llama GEMM + layout + vector + dequant stacked energy "
+            f"without area normalization ({power_metric})"
         ),
         knobs=knobs,
         stack_transform=_build_gemm_layout_vector_dequant_stack,
@@ -3019,6 +3169,43 @@ def collect_model_energy_csv_groups(
     for exc in missing:
         print(f"skip llama_{kind} metric: {exc}")
     return groups
+
+
+def run_auto_discovered_energy_plot(
+    *,
+    selected_plot: str,
+    plot_name: str,
+    kind: str,
+    prepared_root: Path,
+    latency_dir: Path,
+    output_root: Path,
+    knobs: WideBarKnobs,
+    runner: Any,
+) -> None:
+    explicit_by_model = {
+        model_key: None
+        for model_key, _model_label in LLAMA_E2E_MODELS
+    }
+    try:
+        model_csv_groups = collect_model_energy_csv_groups(
+            explicit_by_model=explicit_by_model,
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            kind=kind,
+        )
+    except FileNotFoundError as exc:
+        if selected_plot == plot_name:
+            raise
+        print(f"skip {plot_name}: {exc}")
+        return
+
+    for power_metric, model_csvs in model_csv_groups:
+        runner(
+            power_metric,
+            model_csvs,
+            output_root,
+            knobs=knobs,
+        )
 
 
 def configured_raw_db_paths(latency_dir: Path) -> tuple[Path, ...]:
@@ -3555,6 +3742,59 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     output_root,
                     knobs=knobs.llama_energy_gemm_layout_vector_stacked,
                 )
+
+    if plot in {"llama_gemm_only_energy_no_area_norm", "all"}:
+        run_auto_discovered_energy_plot(
+            selected_plot=plot,
+            plot_name="llama_gemm_only_energy_no_area_norm",
+            kind="gemm_only_energy_no_area_norm",
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            knobs=knobs.llama_gemm_only_energy_no_area_norm,
+            runner=run_llama_gemm_only_energy_no_area_norm_plot,
+        )
+
+    if plot in {"llama_energy_no_area_norm", "all"}:
+        run_auto_discovered_energy_plot(
+            selected_plot=plot,
+            plot_name="llama_energy_no_area_norm",
+            kind="energy_no_area_norm",
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            knobs=knobs.llama_energy_no_area_norm,
+            runner=run_llama_energy_no_area_norm_plot,
+        )
+
+    if plot in {"llama_energy_no_area_norm_stacked", "all"}:
+        run_auto_discovered_energy_plot(
+            selected_plot=plot,
+            plot_name="llama_energy_no_area_norm_stacked",
+            kind="energy_no_area_norm_stacked",
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            knobs=knobs.llama_energy_no_area_norm_stacked,
+            runner=run_llama_energy_no_area_norm_stacked_plot,
+        )
+
+    if plot in {
+        "llama_energy_no_area_norm_gemm_layout_vector_stacked",
+        "all",
+    }:
+        run_auto_discovered_energy_plot(
+            selected_plot=plot,
+            plot_name="llama_energy_no_area_norm_gemm_layout_vector_stacked",
+            kind="energy_no_area_norm_gemm_layout_vector_stacked",
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            knobs=knobs.llama_energy_no_area_norm_gemm_layout_vector_stacked,
+            runner=(
+                run_llama_energy_no_area_norm_gemm_layout_vector_stacked_plot
+            ),
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

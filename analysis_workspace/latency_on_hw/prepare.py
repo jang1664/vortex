@@ -195,6 +195,13 @@ def gemm_only_energy_out_name(model: str, power_metric: str) -> str:
     )
 
 
+def gemm_only_energy_no_area_norm_out_name(model: str, power_metric: str) -> str:
+    return (
+        f"{model}_gemm_only_energy_per_token_no_area_norm_stacked_by_name_"
+        f"{power_metric}_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
+    )
+
+
 def energy_out_name(model: str, power_metric: str) -> str:
     return f"{model}_energy_per_token_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
 
@@ -209,6 +216,31 @@ def energy_gemm_layout_vector_stacked_out_name(
 ) -> str:
     return (
         f"{model}_energy_per_token_gemm_layout_vector_stacked_by_name_backend_"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    )
+
+
+def energy_no_area_norm_out_name(model: str, power_metric: str) -> str:
+    return (
+        f"{model}_energy_per_token_no_area_norm_{power_metric}_"
+        f"{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    )
+
+
+def energy_no_area_norm_stacked_out_name(model: str, power_metric: str) -> str:
+    return (
+        f"{model}_energy_per_token_no_area_norm_stacked_by_{E2E_STACK_BY}_"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    )
+
+
+def energy_no_area_norm_gemm_layout_vector_stacked_out_name(
+    model: str,
+    power_metric: str,
+) -> str:
+    return (
+        f"{model}_energy_per_token_no_area_norm_"
+        "gemm_layout_vector_stacked_by_name_backend_"
         f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
     )
 
@@ -307,10 +339,19 @@ E2E_STACK_BY = "kind"
 RELATIVE = True
 RELATIVE_SCOPE = "x_tick"  # global, subplot, or x_tick
 
-# Dequantization is excluded from the main latency comparison, but retained
-# in energy data so it can be shown as a separate energy component.
-INCLUDE_DEQUANTIZATION_IN_LATENCY = False
-INCLUDE_DEQUANTIZATION_IN_ENERGY = True
+# Dequantization policy is controlled independently by metric, stage, and
+# purpose. Prefill retains weight dequantization but excludes KV-cache
+# dequantization. Latency generation keeps the previous KV exclusion, while
+# energy generation includes both components.
+INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_PREFILL = False
+INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_PREFILL = False
+INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_GENERATION = False
+INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_GENERATION = False
+
+INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_PREFILL = True
+INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_PREFILL = False
+INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_GENERATION = True
+INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_GENERATION = True
 # Whether the C4-alone variant is included in generated plots and totals.
 INCLUDE_C4_ALONE = False
 
@@ -380,19 +421,95 @@ ENERGY_SHAPE_FILTER = _target_shape_filter(
 )
 
 
-def exclude_dequantization_kernels(df: pd.DataFrame) -> pd.Series:
-    return df["kind"].astype(str).ne("dequantization")
+def _dequantization_stage_filter(
+    df: pd.DataFrame,
+    *,
+    include_weight_prefill: bool,
+    include_kv_prefill: bool,
+    include_weight_generation: bool,
+    include_kv_generation: bool,
+) -> pd.Series:
+    kind = df["kind"].astype(str)
+    stage = df["stage"].astype(str)
+    dequantization = kind.eq("dequantization")
+    if "name" not in df.columns:
+        raise ValueError("dequantization filtering requires a name column")
+    name = df["name"].fillna("").astype(str)
+    weight_dequantization = dequantization & name.str.contains(
+        "_weight_",
+        regex=False,
+    )
+    kv_dequantization = dequantization & name.str.startswith("kv_cache_dequant_")
+    unknown_dequantization = dequantization & ~(
+        weight_dequantization | kv_dequantization
+    )
+    if bool(unknown_dequantization.any()):
+        unknown_names = sorted(name[unknown_dequantization].unique())
+        raise ValueError(
+            f"unclassified dequantization kernel names: {unknown_names}"
+        )
+
+    keep = ~dequantization
+    if include_weight_prefill:
+        keep |= weight_dequantization & stage.eq("prefill")
+    if include_kv_prefill:
+        keep |= kv_dequantization & stage.eq("prefill")
+    if include_weight_generation:
+        keep |= weight_dequantization & stage.eq("generation")
+    if include_kv_generation:
+        keep |= kv_dequantization & stage.eq("generation")
+    return keep
+
+
+def filter_latency_dequantization_kernels(df: pd.DataFrame) -> pd.Series:
+    return _dequantization_stage_filter(
+        df,
+        include_weight_prefill=(
+            INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_PREFILL
+        ),
+        include_kv_prefill=INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_PREFILL,
+        include_weight_generation=(
+            INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_GENERATION
+        ),
+        include_kv_generation=INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_GENERATION,
+    )
+
+
+def filter_energy_dequantization_kernels(df: pd.DataFrame) -> pd.Series:
+    return _dequantization_stage_filter(
+        df,
+        include_weight_prefill=INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_PREFILL,
+        include_kv_prefill=INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_PREFILL,
+        include_weight_generation=(
+            INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_GENERATION
+        ),
+        include_kv_generation=INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_GENERATION,
+    )
+
+
+LATENCY_DEQUANTIZATION_POLICY = (
+    INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_PREFILL,
+    INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_PREFILL,
+    INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_GENERATION,
+    INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_GENERATION,
+)
+ENERGY_DEQUANTIZATION_POLICY = (
+    INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_PREFILL,
+    INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_PREFILL,
+    INCLUDE_WEIGHT_DEQUANTIZATION_IN_ENERGY_GENERATION,
+    INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_GENERATION,
+)
 
 
 LATENCY_DEQUANTIZATION_FILTERS = (
     ()
-    if INCLUDE_DEQUANTIZATION_IN_LATENCY
-    else (exclude_dequantization_kernels,)
+    if all(LATENCY_DEQUANTIZATION_POLICY)
+    else (filter_latency_dequantization_kernels,)
 )
 ENERGY_DEQUANTIZATION_FILTERS = (
     ()
-    if INCLUDE_DEQUANTIZATION_IN_ENERGY
-    else (exclude_dequantization_kernels,)
+    if all(ENERGY_DEQUANTIZATION_POLICY)
+    else (filter_energy_dequantization_kernels,)
 )
 PLOT_ROW_FILTERS = (E2E_SHAPE_FILTER, *LATENCY_DEQUANTIZATION_FILTERS)
 
@@ -986,12 +1103,14 @@ def _energy_composed_rows(
     suite_tag: str,
     main_result: PlotRunResult | None,
     out_name: str,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> pd.DataFrame:
     if (
         main_result is not None
         and main_result.composed is not None
         and _shape_selection_matches(E2E_SHAPE_SELECTION, ENERGY_SHAPE_SELECTION)
-        and INCLUDE_DEQUANTIZATION_IN_LATENCY == INCLUDE_DEQUANTIZATION_IN_ENERGY
+        and LATENCY_DEQUANTIZATION_POLICY == ENERGY_DEQUANTIZATION_POLICY
+        and case_latency_scale_rules is None
     ):
         return main_result.composed
 
@@ -1003,6 +1122,7 @@ def _energy_composed_rows(
         include_c4_alone=INCLUDE_C4_ALONE,
         row_filters=(ENERGY_SHAPE_FILTER, *ENERGY_DEQUANTIZATION_FILTERS),
         shape_selection=ENERGY_SHAPE_SELECTION,
+        case_latency_scale_rules=case_latency_scale_rules,
     )
     return rebuilt.composed
 
@@ -1018,6 +1138,7 @@ def export_energy_figure_data_pair(
     power_metric: str,
     fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
     force_rebuild: bool | None = None,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> tuple[str, ...]:
     """Build energy tables from one shared flat/kind/name-backend calculation."""
     force = FORCE_REBUILD_FIGURE_DATA if force_rebuild is None else force_rebuild
@@ -1041,6 +1162,7 @@ def export_energy_figure_data_pair(
         suite_tag=suite_tag,
         main_result=main_result,
         out_name=composition_out_name,
+        case_latency_scale_rules=case_latency_scale_rules,
     )
     records = list(composed.to_dict(orient="records")) if hasattr(composed, "to_dict") else list(composed)
     rows = energy_rows_from_records(
@@ -1115,6 +1237,7 @@ def export_gemm_only_energy_figure_data(
     power_metric: str,
     fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
     force_rebuild: bool | None = None,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> str:
     """Build name-stacked GEMM-only energy-per-token figure data."""
     force = FORCE_REBUILD_FIGURE_DATA if force_rebuild is None else force_rebuild
@@ -1134,6 +1257,7 @@ def export_gemm_only_energy_figure_data(
             include_c4_alone=INCLUDE_C4_ALONE,
             row_filters=GEMM_ONLY_FILTERS,
             shape_selection=GEMM_ONLY_SHAPE_SELECTION,
+            case_latency_scale_rules=case_latency_scale_rules,
         )
         composed = rebuilt.composed
 
@@ -1497,6 +1621,10 @@ def main() -> int:
         energy_stacked_names = []
         energy_gemm_layout_vector_stacked_names = []
         gemm_only_energy_names = []
+        energy_no_area_norm_names = []
+        energy_no_area_norm_stacked_names = []
+        energy_no_area_norm_gemm_layout_vector_stacked_names = []
+        gemm_only_energy_no_area_norm_names = []
         for power_metric in ENERGY_POWER_METRICS:
             energy_name = energy_out_name(model, power_metric)
             energy_stacked_name = energy_stacked_out_name(model, power_metric)
@@ -1548,6 +1676,79 @@ def main() -> int:
             )
             gemm_only_energy_names.append(gemm_only_energy_name)
 
+            energy_no_area_norm_name = energy_no_area_norm_out_name(
+                model,
+                power_metric,
+            )
+            energy_no_area_norm_stacked_name = (
+                energy_no_area_norm_stacked_out_name(model, power_metric)
+            )
+            energy_no_area_norm_gemm_layout_vector_stacked_name = (
+                energy_no_area_norm_gemm_layout_vector_stacked_out_name(
+                    model,
+                    power_metric,
+                )
+            )
+            (
+                energy_no_area_norm_cache_status,
+                energy_no_area_norm_stacked_cache_status,
+                energy_no_area_norm_gemm_layout_vector_stacked_cache_status,
+            ) = export_energy_figure_data_pair(
+                model=model,
+                suite_tag=suite_tag,
+                main_result=None,
+                out_name=energy_no_area_norm_name,
+                stacked_out_name=energy_no_area_norm_stacked_name,
+                gemm_layout_vector_stacked_out_name=(
+                    energy_no_area_norm_gemm_layout_vector_stacked_name
+                ),
+                power_metric=power_metric,
+                case_latency_scale_rules=(),
+            )
+            print(
+                f"{model} {power_metric} energy without area normalization "
+                f"figure data source: {energy_no_area_norm_cache_status}"
+            )
+            print(
+                f"{model} {power_metric} stacked energy without area "
+                "normalization figure data source: "
+                f"{energy_no_area_norm_stacked_cache_status}"
+            )
+            print(
+                f"{model} {power_metric} GEMM + layout + vector stacked "
+                "energy without area normalization figure data source: "
+                f"{energy_no_area_norm_gemm_layout_vector_stacked_cache_status}"
+            )
+            energy_no_area_norm_names.append(energy_no_area_norm_name)
+            energy_no_area_norm_stacked_names.append(
+                energy_no_area_norm_stacked_name
+            )
+            energy_no_area_norm_gemm_layout_vector_stacked_names.append(
+                energy_no_area_norm_gemm_layout_vector_stacked_name
+            )
+
+            gemm_only_energy_no_area_norm_name = (
+                gemm_only_energy_no_area_norm_out_name(model, power_metric)
+            )
+            gemm_only_energy_no_area_norm_cache_status = (
+                export_gemm_only_energy_figure_data(
+                    model=model,
+                    suite_tag=suite_tag,
+                    gemm_only_result=gemm_no_area_norm_result,
+                    out_name=gemm_only_energy_no_area_norm_name,
+                    power_metric=power_metric,
+                    case_latency_scale_rules=(),
+                )
+            )
+            print(
+                f"{model} {power_metric} GEMM-only energy without area "
+                "normalization figure data source: "
+                f"{gemm_only_energy_no_area_norm_cache_status}"
+            )
+            gemm_only_energy_no_area_norm_names.append(
+                gemm_only_energy_no_area_norm_name
+            )
+
         prepared_outputs.extend(
             [
                 figure_data_path(main_name),
@@ -1573,6 +1774,22 @@ def main() -> int:
                 *(
                     figure_data_path(energy_name)
                     for energy_name in gemm_only_energy_names
+                ),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in energy_no_area_norm_names
+                ),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in energy_no_area_norm_stacked_names
+                ),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in energy_no_area_norm_gemm_layout_vector_stacked_names
+                ),
+                *(
+                    figure_data_path(energy_name)
+                    for energy_name in gemm_only_energy_no_area_norm_names
                 ),
             ]
         )
