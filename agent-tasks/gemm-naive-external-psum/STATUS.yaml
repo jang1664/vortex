@@ -1,0 +1,56 @@
+task: gemm-naive-external-psum
+state: COMPLETE
+updated: "2026-07-28 01:33"
+pitfalls:
+  - "A GEMM accumulation cycle can issue one PSUM read and one PSUM write; a single shared external request channel would add back-pressure and violates the agreed GEMM-unit contract."
+  - "The ACC read FIFO previously inferred response-valid one cycle after request acceptance. External LMEM requires FIFO push and bank selection from the actual response valid/tag."
+  - "A forced xrt-vcs rebuild is required; the blackbox wrapper otherwise reuses an existing simv."
+  - "VCS incremental compilation did not rebuild indirectly discovered modules after CONFIGS/source changes. A clean elaboration was obtained by moving csrc, simv.daidir, and simv to timestamped backup paths before rebuilding."
+  - "The sxbar_f16 config initially differed from the baseline in FP ABI flags as well as request routing. EXT_D_DISABLE/EXT_ZFH_ENABLE were removed so LMEM_REQ_OMEGA_ENABLE is the only relevant request-path difference."
+iterations:
+  - timestamp: "2026-07-27 23:15"
+    phase: implementation
+    status: in_progress
+    summary: "Confirmed external-PSUM scope and started U1/U2 implementation."
+    lesson: "The host allocates LMEM addresses; the device kernel only programs them into the job descriptor."
+  - timestamp: "2026-07-27 23:20"
+    phase: implementation
+    status: partial
+    summary: "Removed naive ACC2LMEM command and added the PSUM LMEM descriptor/allocation path."
+    lesson: "The final FP16 output must be emitted by the GEMM unit during final accumulation because the removed command was the only existing ACC-to-output trigger."
+  - timestamp: "2026-07-27 23:27"
+    phase: architecture
+    status: in_progress
+    summary: "Located the existing externalized-ACC-memory GEMM-unit patch and selected it as the timing-preserving basis for the naive LMEM adapter."
+    lesson: "The adapter requires independent PSUM read and write issue paths before their requests enter the priority LMEM arbiter."
+  - timestamp: "2026-07-27 23:31"
+    phase: verification
+    status: pass
+    summary: "VCS elaboration passed after adding final-output base and last-accumulation control fields."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache.sh; make -C build/hw/unittest/gemm_node_improve compile SIM_EXEC=vcs"
+    lesson: "The existing improve-node compile provides structural coverage for the expanded GEMM control struct, but not functional coverage of the naive external-PSUM path."
+  - timestamp: "2026-07-28 00:05"
+    phase: verification
+    status: sim_fail
+    summary: "Naive gemm_node simulation and improve compile passed; forced full xrt-vcs compile passed, but the small M=1 K=32 N=32 blackbox remained AFU-busy until the 300-second timeout."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache.sh; ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 1 -k 32 -n 32'"
+    lesson: "Because K=32 performs no external PSUM read, this first hang is in completion/direct-output sequencing rather than read-response arbitration."
+  - timestamp: "2026-07-28 00:21"
+    phase: verification
+    status: sim_fail
+    summary: "A clean DBG_TRACE_GEMM elaboration showed the direct FP16 LMEM write accepted on ports 24-31, followed by the output DMA LMEM read on ports 0-7 and all eight LMEM responses. The DMA did not emit DMA_DONE and AFU remained busy."
+    verification: "clean xrt-vcs trace run: fpint_gemm_ffn_hw_naive -m 1 -k 32 -n 32"
+    lesson: "The remaining hang is downstream of the LMEM bank response: response/tag delivery into the external DMA completion path must be checked. It is not caused by an unaccepted direct-output or LMEM read request."
+  - timestamp: "2026-07-28 01:22"
+    phase: verification
+    status: sim_fail
+    summary: "A clean build with LMEM request stream xbar and LMEM response OMEGA reproduced the same stale PSUM read-after-write mismatch as the request OMEGA build."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 32 -k 128 -n 256'"
+    evidence: "lane=2 addr=0x3a12 got=0xc4cb4000c3bb8000 expected=0xc4b34000c3b18000"
+    lesson: "The stale ordering problem is not specific to LMEM_REQ_OMEGA_ENABLE; changing only the request crossbar is insufficient. Final m1/m32 K=256 PASS tests remain blocked on a memory-system fix."
+  - timestamp: "2026-07-28 01:33"
+    phase: verification
+    status: pass
+    summary: "Disabling LMEM_RSP_OMEGA_ENABLE as well as LMEM_REQ_OMEGA_ENABLE removed the stale PSUM failure; the diagnostic and both final functional criteria passed."
+    verification: "fpint_gemm_ffn_hw_naive: '-m 32 -k 128 -n 256' PASS; '-m 1 -k 256 -n 256' PASS; '-m 32 -k 256 -n 256' PASS"
+    lesson: "The working configuration requires stream paths on both LMEM request and response sides; request-stream/response-OMEGA mode still exhibits stale response ordering."
