@@ -1,0 +1,131 @@
+task: vortex-zfh-fp16-dsp
+state: COMPLETE
+updated_at: "2026-07-27 21:15"
+goal: "Enable and verify scalar RISC-V Zfh through the Xilinx FPU_DSP backend with EXT_D_DISABLE."
+spec: agent-tasks/vortex-zfh-fp16-dsp/vortex-zfh-fp16-dsp-spec.md
+current_phase: complete
+iterations:
+  - iteration: 1
+    status: COMPILE_ERROR
+    test: "source configs/rv64_zfh_lp64f_dsp_vivado.sh && python tools/verify_rtl.py unittest --path build_zfh_dsp_vivado/hw/unittest/core_top --sim vcs"
+    error_summary: "The core_top Verilator harness could not resolve the generated Xilinx floating-point IP modules."
+    root_cause: "core_top compiles SystemVerilog sources without the xrtsim_vcs VHDL IP library flow, so a VIVADO/FPU_DSP elaboration cannot resolve either existing FP32 or new FP16 Xilinx modules."
+    fix_applied: "Confirmed the target limitation and moved verification to the repository's IP-aware xrt-vcs-sim flow; also corrected the H/S converter wrapper TUSER width from three bits to two."
+    lesson: "The generic core_top verifier is not an appropriate compile target for a Vivado DSP configuration unless it imports the generated Xilinx VHDL libraries."
+  - iteration: 2
+    status: COMPILE_ERROR
+    test: "source ../configs/rv64_zfh_lp64f_dsp_vivado.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "VCS and every Xilinx VHDL wrapper compiled and linked, but applib C++ compilation rejected a generated VX_config.h line containing bare 'elsif'."
+    root_cause: "The Verilog-to-C configuration header conversion handles `ifdef/`ifndef/`else/`endif but did not translate the newly introduced `elsif directives."
+    fix_applied: "Rewrote the backend validation using nested ifdef/ifndef/else/endif directives and statically checked generated C/C++ preprocessing for DSP/Vivado, FPNEW, and default configurations."
+    lesson: "VX_config.vh validation logic must avoid `elsif because the same source is mechanically translated into a host C/C++ header."
+  - iteration: 3
+    status: SIM_FAIL
+    test: "source ../configs/rv64_zfh_lp64f_dsp_vivado.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "RTL execution completed with one mismatch at the +0/-0 input: fmul.h returned +0 instead of -0 and fcvt.w.h returned INT_MAX instead of zero."
+    root_cause: "FMA-backed multiply used a positive-zero addend, changing an exact negative-zero product to positive zero under RNE. Separately, zero mantissas fed an LZC shift into FCVT overflow detection and selected integer saturation."
+    fix_applied: "Gave the multiply FMA zero addend the product sign for FP16 and FP32, clarified integer/FP sign and mantissa signals, and suppressed FCVT overflow when the mantissa is zero."
+    lesson: "Special-value coverage exposed correctness issues that normal finite FP16 arithmetic did not exercise."
+  - iteration: 4
+    status: PASS
+    test: "source ../configs/rv64_zfh_lp64f_dsp_vivado.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "none"
+    root_cause: "n/a"
+    fix_applied: "n/a"
+    lesson: "The IP-aware DSP/Vivado path now passes arithmetic, div/sqrt, FMA, H/S and integer conversions, NCP operations, rounding, and signed-zero cases in one end-to-end regression."
+  - iteration: 5
+    status: SIM_FAIL
+    test: "FPNEW fp16_zfh compatibility plus no-Zfh legacy FP32 DSP/Vivado basic blackbox"
+    error_summary: "Legacy FP32 DSP/Vivado basic passed, but the newly expanded FPNEW fp16_zfh run mismatched negative/zero sqrt, FMA, and min results in two rows."
+    root_cause: "VX_fpu_fpnew instantiated independent per-lane cores but used only lane 0 ready/valid/tag; lane-dependent SQRT special-case latency allowed other lanes to advance and mix responses from later FMA/MIN instructions."
+    fix_applied: "Added one-request-in-flight tracking and all-lane request/response ready-valid barriers so every lane holds and retires the same tagged operation together."
+    lesson: "The earlier FPNEW regression covered add/mul/compare/H-S conversion only; expanding DSP coverage also exposed previously untested FPNEW Zfh operations."
+  - iteration: 6
+    status: SIM_FAIL
+    test: "source ../configs/rv64_zfh_lp64f_fpnew.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "The fresh FPNEW build entered X-state assertion flooding before kernel completion; the FPU tag allocator attempted to release an unknown tag."
+    root_cause: "The all-lane valid reduction exposed idle/reset X values before any request was pending; partial per-lane request acceptance also needed tracking while upstream held one request."
+    fix_applied: "Qualified combined response valid/ready with reset and pending state, and added a per-lane accepted bitmap so each lane accepts the held request exactly once before aggregate upstream ready."
+    lesson: "A reduction across independent lane valid signals must be explicitly qualified by reset/request-pending state under VCS xprop."
+  - iteration: 7
+    status: SIM_FAIL
+    test: "source ../configs/rv64_zfh_lp64f_fpnew.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "The X-valued tag release disappeared, but the first fmv.w.x remained in the scoreboard until timeout and caused assertion flooding."
+    root_cause: "The per-lane fanout consumed request data before the outer ready/valid handshake committed the tag-store transaction. Direct atomic gating is impossible because pinned cvfpu defines ready as valid-dependent."
+    fix_applied: "Inserted a one-entry registered FPNEW request buffer, committing and stabilizing the outer tag/control/operands before per-lane fanout; retained the accepted bitmap only behind that buffer."
+    lesson: "Eliminating idle-X propagation is insufficient; the lane barrier must preserve FPnew's valid/ready contract without partial-accept deadlock."
+  - iteration: 8
+    status: SIM_FAIL
+    test: "source ../configs/rv64_zfh_lp64f_fpnew.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "The registered request buffer preserved the tag transaction, but FP16 ADD deadlocked before request acceptance and eventually caused the same scoreboard timeout."
+    root_cause: "FPNEW ADDMUL PipeRegs assigned latency only to FP32; FP16 had zero pipeline stages. Its combinational output became valid while input ready depended on output ready, but the wrapper withheld output ready until pending was set by input acceptance, forming a cycle."
+    fix_applied: "Assigned LATENCY_FMA to FP16 ADDMUL when Zfh is enabled and to FP64 only when D is enabled; disabled/unsupported formats remain zero-stage."
+    lesson: "Format-indexed fpnew pipeline configuration must explicitly include FP16; a zero-stage unit cannot sit behind pending-gated output readiness."
+  - iteration: 9
+    status: SIM_FAIL
+    test: "source ../configs/rv64_zfh_lp64f_fpnew.sh && ci/run_black.sh xrt-vcs-sim --app fp16_zfh"
+    error_summary: "Adding the FP16 ADDMUL pipeline removed the zero-stage deadlock but the experimental FPNEW barrier again released an unknown tag and flooded assertions before completion."
+    root_cause: "The attempt to retrofit lockstep retirement onto the pre-existing independent FPNEW lane wrapper remains incompatible with its tag/allocator handshake and exceeds the DSP-focused task scope."
+    fix_applied: "Restored the pre-existing FPNEW lane-0 retirement wrapper while retaining Zfh format transport; kept enhanced div/sqrt/FMA/min/class/W-conversion coverage DSP-specific and baseline cross-backend checks common."
+    lesson: "A correct FPNEW multi-lane retirement redesign is a separate architectural task and should not be coupled to enabling the Xilinx DSP backend."
+  - iteration: 10
+    status: PASS
+    test: "Fresh FPNEW and DSP/Vivado fp16_zfh xrt-vcs-sim blackboxes"
+    error_summary: "none"
+    root_cause: "n/a"
+    fix_applied: "n/a"
+    lesson: "The final scoped regression verifies common Zfh behavior on both backends and enhanced scalar half operations on DSP/Vivado without introducing a FPNEW retirement regression."
+  - iteration: 11
+    status: PASS
+    test: "DSP/Vivado fp16_zfh xrt-vcs-sim with NUM_THREADS=32 and 32 result points"
+    error_summary: "none"
+    root_cause: "n/a"
+    fix_applied: "Expanded the regression from four result points to 32, repeating arithmetic edge-case inputs across all lanes and checking lane-index integer-to-FP16 conversion for indices 0 through 31."
+    lesson: "NUM_THREADS=32 alone only proves the configured lane count; using 32 result points ensures every lane in the first warp performs and retires checked FP16 operations."
+log:
+  - timestamp: "2026-07-27 19:03"
+    action: "Reviewed the current DSP backend and confirmed the implementation scope with the user."
+    result: "The change requires full format transport, scalar FP16 IP integration, non-computational operations, conversion support, packaging updates, and DSP/Vivado blackbox verification."
+  - timestamp: "2026-07-27 19:26"
+    action: "Generated every Xilinx floating-point IP in a fresh directory and repeated the identical generation command incrementally."
+    result: "Both corrected Vivado 2025.1 invocations passed and all five new scalar FP16 XCI files exist under /tmp/vortex-zfh-dsp-vivado.1VrhGb/xilinx_ip."
+  - timestamp: "2026-07-27 19:32"
+    action: "Ran the first IP-aware xrt-vcs-sim blackbox compile for fp16_zfh."
+    result: "Xilinx IP/VHDL and VCS simv linking passed; host applib compilation exposed an unsupported `elsif translation in VX_config.h before simulation started."
+  - timestamp: "2026-07-27 19:37"
+    action: "Regenerated configuration/software and ran the DSP/Vivado fp16_zfh simulation to completion."
+    result: "SIM_FAIL with one special-value mismatch; 5494 instructions, 8628 cycles, IPC 0.636764. Incremental IP/VHDL reuse passed."
+  - timestamp: "2026-07-27 19:47"
+    action: "Rebuilt VCS after the signed-zero and zero-conversion fixes and reran fp16_zfh."
+    result: "PASS: 5494 instructions, 8612 cycles, IPC 0.637947; all previous and special-value checks passed."
+  - timestamp: "2026-07-27 19:52"
+    action: "Ran expanded FPNEW Zfh and legacy no-Zfh FP32 DSP/Vivado compatibility blackboxes with fresh elaboration."
+    result: "Legacy basic PASS (24 instructions, 2324 cycles); FPNEW SIM_FAIL in two rows (5494 instructions, 8616 cycles)."
+  - timestamp: "2026-07-27 20:05"
+    action: "Rebuilt FPNEW with the all-lane barrier and reran fp16_zfh."
+    result: "SIM_FAIL before completion: invalid unknown FPU tag release and repeated X-state assertions; run stopped after simv.log reached 3.5 GB."
+  - timestamp: "2026-07-27 20:12"
+    action: "Fresh-rebuilt and reran FPNEW after idle-X qualification and per-lane acceptance tracking."
+    result: "SIM_FAIL: no X-tag release, but fmv.w.x at PC 0x180000134 remained in-use for 100000 cycles; run stopped after timeout flooding."
+  - timestamp: "2026-07-27 20:28"
+    action: "Used targeted FSDB analysis to trace the registered-buffer FPNEW deadlock."
+    result: "Confirmed F2F handshakes cleanly; the following FP16 ADD has lane output valid while input ready remains zero because FP16 ADDMUL PipeRegs is configured to zero."
+  - timestamp: "2026-07-27 20:33"
+    action: "Fresh-rebuilt iteration 9 with a registered FP16 ADDMUL stage."
+    result: "SIM_FAIL at 79.655 us with unknown FPU tag release and assertion flooding; no kernel result was produced."
+  - timestamp: "2026-07-27 20:41"
+    action: "Fresh-elaborated and ran final FPNEW and DSP/Vivado fp16_zfh blackboxes."
+    result: "Both PASS. FPNEW: 5430 instructions, 8503 cycles, IPC 0.638598. DSP/Vivado: 5461 instructions, 8429 cycles, IPC 0.647882."
+  - timestamp: "2026-07-27 21:01"
+    action: "Fresh-elaborated and ran the DSP/Vivado fp16_zfh blackbox with NUM_THREADS=32."
+    result: "PASS: the simulation reported num_threads=32 and num_warps=4; 20101 instructions, 13538 cycles, IPC 1.484784."
+  - timestamp: "2026-07-27 21:15"
+    action: "Expanded fp16_zfh to 32 checked work-items and reran the DSP/Vivado blackbox with NUM_THREADS=32."
+    result: "PASS: all 32 lanes produced checked results; 23855 instructions, 16099 cycles, IPC 1.481769, followed by a clean simulator shutdown."
+pitfalls:
+  - "The current DSP interface receives an overloaded legacy two-bit format and therefore loses the FP16 format."
+  - "Existing xil_f16add/xil_f16mul IPs serve GEMM modules and are not sufficient for the scalar FPU."
+  - "FP16 divide, square root, and H/S conversions have different maximum Vivado latencies from the existing FP32 units."
+  - "Xilinx IP names are manually repeated in VCS, synthesis, and XRT packaging files."
+  - "The core_top verifier does not compile the generated Xilinx VHDL IP libraries and therefore reports unresolved IP modules for any VIVADO/FPU_DSP build."
+next_action: "none"

@@ -1,0 +1,14 @@
+task: Compare FPU_DSP and FPU_NEW operator implementations with OOC synthesis
+status: DONE
+started: 2026-07-27 00:00
+pitfalls: []
+log:
+  - timestamp: 2026-07-27 00:00
+    action: Started repository inspection and synthesis-flow discovery.
+    result: Located FPU RTL, fpnew sources, and Synopsys/Xilinx synthesis flows.
+  - timestamp: 2026-07-27 20:07
+    action: Ran Vivado 2025.1 OOC synthesis for one-lane FP32 DSP FMA and fpnew ADDMUL-only wrappers.
+    result: Both completed on xcu55c-fsvh2892-2L-e at a 5 ns clock constraint; reports are under build/hw/syn/ooc.
+  - timestamp: 2026-07-27 20:07
+    action: Inspected fpnew implementation configuration and synthesized hierarchy.
+    result: ADD and MUL share the fpnew_fma datapath; operation groups can be disabled, but ADD and MUL are not separately feature-masked.
