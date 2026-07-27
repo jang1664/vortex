@@ -13,6 +13,8 @@
 
 #include "vl_simulator.h"
 
+#include <cstdio>
+
 #ifndef TRACE_START_TIME
 #define TRACE_START_TIME 0ull
 #endif
@@ -45,5 +47,6 @@ int main(int argc, char **argv) {
   // Initialize Verilators variables
   Verilated::commandArgs(argc, argv);
 
+  std::puts("CORE ELABORATION TEST PASSED");
   return 0;
 }

@@ -20,7 +20,13 @@ TEST_DIRS := \
 	elscalar \
 	elsub \
 	elunary \
-	fence \
+	fence
+
+ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+TEST_DIRS += fp16_zfh
+endif
+
+TEST_DIRS += \
 	fpint_gemm_ffn_hw \
 	fpint_gemm_ffn_hw_naive \
 	gemm_fpint \

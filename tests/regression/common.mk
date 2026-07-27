@@ -12,9 +12,17 @@ VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
 ifeq ($(XLEN),64)
 		ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
 			ifeq ($(EXT_V_ENABLE),1)
-				VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+				ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+					VX_CFLAGS += -march=rv64imafv_zfh_zve64f -mabi=lp64f # vector and scalar half extensions
+				else
+					VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+				endif
 			else
-				VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+				ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+					VX_CFLAGS += -march=rv64imaf_zfh -mabi=lp64f
+				else
+					VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+				endif
 			endif
 	else
 	ifeq ($(EXT_V_ENABLE),1)

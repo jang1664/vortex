@@ -3,7 +3,11 @@ include $(ROOT_DIR)/config.mk
 
 ifeq ($(XLEN),64)
 ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+CFLAGS += -march=rv64imaf_zfh -mabi=lp64f
+else
 CFLAGS += -march=rv64imaf -mabi=lp64f
+endif
 else
 CFLAGS += -march=rv64imafd -mabi=lp64d
 endif
