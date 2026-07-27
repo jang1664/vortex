@@ -60,5 +60,44 @@
         "gemm": [77, 102, 92, 77]
       }
     }
-  }
+  },
+  "hypothesis_verification": {
+    "lmem_bank_conflict_events": {
+      "improve": 0,
+      "naive": 80,
+      "naive_collision_wall_cycles": 10
+    },
+    "input_request_to_response_cycles": {
+      "improve": {"samples": 128, "min": 1, "median": 1, "average": 1.0, "max": 1},
+      "naive": {"samples": 128, "min": 17, "median": 17, "average": 20.203125, "max": 42}
+    },
+    "improve_axi_read_bursts": {
+      "transactions": 72,
+      "burst_length_distribution": {"1": 40, "4": 32},
+      "read_data_beats": 168,
+      "beats_in_four_beat_bursts": 128
+    }
+  },
+  "scaling_sweep": [
+    {
+      "m": 32, "n": 32, "k": 128,
+      "improve": {"core_cycles": 8850, "total_cycles": 487, "compute_cycles": 216, "overlap_percent": 36.961},
+      "naive": {"core_cycles": 10550, "total_cycles": 1489, "compute_cycles": 340, "overlap_percent": 0.0}
+    },
+    {
+      "m": 64, "n": 32, "k": 128,
+      "improve": {"core_cycles": 9001, "total_cycles": 667, "compute_cycles": 344, "overlap_percent": 46.177},
+      "naive": {"core_cycles": 11150, "total_cycles": 2084, "compute_cycles": 508, "overlap_percent": 0.0}
+    },
+    {
+      "m": 64, "n": 64, "k": 128,
+      "improve": {"core_cycles": 9527, "total_cycles": 1192, "compute_cycles": 689, "overlap_percent": 51.762},
+      "naive": {"core_cycles": 12041, "total_cycles": 2958, "compute_cycles": 1036, "overlap_percent": 0.0}
+    },
+    {
+      "m": 32, "n": 32, "k": 256,
+      "improve": {"core_cycles": 9150, "total_cycles": 795, "compute_cycles": 433, "overlap_percent": 45.535},
+      "naive": {"core_cycles": 11375, "total_cycles": 2306, "compute_cycles": 699, "overlap_percent": 14.484}
+    }
+  ]
 }

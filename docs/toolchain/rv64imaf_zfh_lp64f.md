@@ -330,40 +330,85 @@ export LIBCRT_VORTEX=$LP64F_PROFILE/libcrt64
 The repository variables use `?=`, so environment or command-line overrides
 select this profile without replacing `/opt/vortex` symlinks.
 
-### Build without hardware double precision
+### Build and run native Zfh without hardware double precision
 
-Always source the hardware configuration used for the simulation or build,
-then append `EXT_D_DISABLE`:
-
-```bash
-source ../configs/naive_simd.sh
-export CONFIGS="$CONFIGS -DEXT_D_DISABLE"
-
-make -C kernel \
-  CONFIGS="$CONFIGS" \
-  RISCV_TOOLCHAIN_PATH="$RISCV_TOOLCHAIN_PATH" \
-  LIBC_VORTEX="$LIBC_VORTEX" \
-  LIBCRT_VORTEX="$LIBCRT_VORTEX"
-```
-
-For regression tests, pass the same `CONFIGS` and profile variables from the
-configured build directory. RTL blackbox testing in this repository must use
-the configured `xrt-vcs-sim` flow, for example:
+The repository provides a reusable configuration for the matching hardware
+and software profile:
 
 ```bash
-ci/run_black.sh xrt-vcs-sim --app APP_NAME --args "..."
+source ../configs/rv64_zfh_lp64f_fpnew.sh
 ```
 
-`EXT_D_DISABLE` makes the current kernel and regression Makefiles choose
-`lp64f`, but those files currently spell the ISA as `rv64imaf`. Before an
-FP16 kernel can emit native Zfh instructions, their `EXT_D_DISABLE` branches
-must be changed to `rv64imaf_zfh`. Keep the ISA string identical across kernel
-objects, musl, compiler-rt, and application objects.
+It selects all of the following as one configuration:
 
-The hardware work is separate from this software profile: the decoder must
-accept Zfh opcodes and the selected FPU implementation must enable FP16
-datapaths. The toolchain build succeeding only proves that software can emit
-and link the instructions.
+```text
+RTL:      EXT_D_DISABLE + EXT_ZFH_ENABLE + FPU_FPNEW
+ISA/ABI:  rv64imaf_zfh / lp64f
+GNU:      /opt/vortex_profiles/rv64imaf_zfh_lp64f/riscv64-gnu-toolchain
+musl:     /opt/vortex_profiles/rv64imaf_zfh_lp64f/libc64
+CRT:      /opt/vortex_profiles/rv64imaf_zfh_lp64f/libcrt64
+LLVM:     /opt/vortex/llvm-vortex
+```
+
+`EXT_ZFH_ENABLE` is explicit. A normal `EXT_D_DISABLE` build without that
+define remains `rv64imaf/lp64f`, so existing FP32-only configurations do not
+start emitting half-precision instructions accidentally. `FPU_FPNEW` provides
+the portable Zfh baseline. The Vivado-backed `FPU_DSP` configuration also
+supports Zfh when `VIVADO` is enabled; the generic DSP and DPI configurations
+remain unsupported.
+
+Create a dedicated configured build directory, then run the native FP16
+regression through the repository wrapper:
+
+```bash
+mkdir -p build_zfh_lp64f
+cd build_zfh_lp64f
+../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex
+
+source ../configs/rv64_zfh_lp64f_fpnew.sh
+./ci/run_black.sh xrt-vcs-sim --app fp16_zfh
+```
+
+For both FPNEW and DSP, the test exercises native `flh`, `fsh`, `fadd.h`,
+`fmul.h`, `flt.h`, `fcvt.s.h`, and `fcvt.h.s` instructions. With `FPU_DSP`,
+it additionally covers divide, square root, FMA, minimum, classification,
+integer conversion, and special values. The enhanced portion is DSP-specific;
+multi-lane variable-latency retirement in the existing FPNEW wrapper is a
+separate RTL concern. A successful run ends in `PASSED`.
+
+The main generated outputs are under the configured build directory:
+
+```text
+build_zfh_lp64f/sim/xrtsim_vcs/simv
+build_zfh_lp64f/sim/xrtsim_vcs/compile.log
+build_zfh_lp64f/sim/xrtsim_vcs/simv.log
+build_zfh_lp64f/sim/xrtsim_vcs/libxrtsim_vcs.so
+build_zfh_lp64f/runtime/libvortex-xrt.so
+build_zfh_lp64f/tests/regression/fp16_zfh/fp16_zfh
+build_zfh_lp64f/tests/regression/fp16_zfh/kernel.elf
+build_zfh_lp64f/tests/regression/fp16_zfh/kernel.vxbin
+build_zfh_lp64f/tests/regression/fp16_zfh/kernel.dump
+```
+
+Re-running the command updates these generated files in place. It does not
+overwrite the installed LP64F profile. Unlike the toolchain installer, the
+blackbox flow does not back up build products because they are reproducible;
+use a dedicated build directory if an older simulation binary or log must be
+retained. The toolchain install paths remain protected by the automatic backup
+described above.
+
+For a faster compile-only RTL check, use the configured full-core unittest:
+
+```bash
+source configs/rv64_zfh_lp64f_fpnew.sh
+python tools/verify_rtl.py unittest \
+  --path build_zfh_lp64f/hw/unittest/core_top \
+  --sim vcs
+```
+
+The `core_top` target uses Verilator for elaboration even though the generic
+verification interface passes `--sim vcs`; the xrt-vcs blackbox command above
+is the authoritative functional simulation.
 
 ## Validation
 

@@ -1,5 +1,7 @@
 # fpint GEMM naive/improve latency analysis
 
+논문용 상세 원인 분석, 가설 검증, 크기 sweep은 `paper_analysis_ko.md`에 정리했다.
+
 ## 결론
 
 이 조건에서 `fpint_gemm_ffn_hw_naive`가 느린 주원인은 **연산량이나 외부
@@ -154,6 +156,8 @@ PYTHONPATH=tools python3 analysis_workspace/latency/fpint_gemm/analyze_fpint_gem
 
 - `metrics.json`: PERF 및 주요 FSDB 수치
 - `analyze_fpint_gemm.py`: `fsdb_cli` API 기반 재현 분석기
+- `analyze_hypotheses.py`: bank conflict, AXI burst, local response latency 검증기
+- `paper_analysis_ko.md`: 논문용 상세 해석과 scaling 결과
 - `runs/improve/`: improve compile log, sim log, FSDB와 sidecar
 - `runs/naive/`: naive compile log, sim log, FSDB와 sidecar
 
