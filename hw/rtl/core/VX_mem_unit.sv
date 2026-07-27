@@ -32,6 +32,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_mem_bus_if.slave     dma_global_data_if
 `ifdef GEMM_NAIVE
    ,VX_mem_bus_if.slave     gemm_data_if [`LMEM_NUM_PORTS]
+   ,VX_mem_bus_if.slave     gemm_psum_rd_if [`LMEM_NUM_PORTS]
+   ,VX_mem_bus_if.slave     gemm_psum_wr_if [`LMEM_NUM_PORTS]
 `endif
 );
     VX_lsu_mem_if #(
@@ -130,6 +132,12 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
     ) lmem_membus_arb_out_if[`LMEM_NUM_PORTS]();
+`ifdef GEMM_NAIVE
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+    ) lmem_priority_if[2 * `LMEM_NUM_PORTS]();
+`endif
 
     // Per-lane local-memory arbitration. The naive backend adds the GEMM
     // shared-LMEM client; the improve backend retains the current 2:1 path.
@@ -187,10 +195,52 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[i], lane_arb_out_if[0]);
     end
     
+`ifdef GEMM_NAIVE
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_priority_order
+        VX_mem_bus_if #(
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (PSUM_LMEM_TAG_WIDTH)
+        ) psum_arb_in_if[2]();
+        VX_mem_bus_if #(
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (PSUM_ARB_TAG_WIDTH)
+        ) psum_arb_out_if[1]();
+
+        `ASSIGN_VX_MEM_BUS_IF(psum_arb_in_if[0], gemm_psum_wr_if[i]);
+        `ASSIGN_VX_MEM_BUS_IF(psum_arb_in_if[1], gemm_psum_rd_if[i]);
+
+        VX_mem_arb #(
+            .NUM_INPUTS  (2),
+            .NUM_OUTPUTS (1),
+            .DATA_SIZE   (LSU_WORD_SIZE),
+            .TAG_WIDTH   (PSUM_LMEM_TAG_WIDTH),
+            .TAG_SEL_IDX (PSUM_LMEM_TAG_WIDTH - UUID_WIDTH),
+            .REQ_OUT_BUF (3),
+            .RSP_OUT_BUF (3),
+            .ARBITER     ("P")
+        ) psum_wr_first_arb (
+            .clk        (clk),
+            .reset      (reset),
+            .bus_in_if  (psum_arb_in_if),
+            .bus_out_if (psum_arb_out_if)
+        );
+
+        // VX_local_mem fixed priority selects the PSUM half before normal
+        // traffic. The per-port arbiter above selects write before read.
+        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_priority_if[i], psum_arb_out_if[0],
+            LMEM_LOCAL_TAG_WIDTH, PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
+        `ASSIGN_VX_MEM_BUS_IF(lmem_priority_if[`LMEM_NUM_PORTS + i], lmem_membus_arb_out_if[i]);
+    end
+`endif
+
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
         .SIZE       (1 << `LMEM_LOG_SIZE),
+`ifdef GEMM_NAIVE
+        .NUM_REQS   (2 * `LMEM_NUM_PORTS),
+`else
         .NUM_REQS   (`LMEM_NUM_PORTS),
+`endif
         .NUM_BANKS  (`LMEM_NUM_BANKS),
         .WORD_SIZE  (LSU_WORD_SIZE),
         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
@@ -202,7 +252,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .lmem_perf  (lmem_perf),
     `endif
+`ifdef GEMM_NAIVE
+        .mem_bus_if (lmem_priority_if)
+`else
         .mem_bus_if (lmem_membus_arb_out_if)
+`endif
     );
 
 `else
@@ -218,6 +272,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `ifdef GEMM_NAIVE
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_gemm_data_if
         `UNUSED_VX_MEM_BUS_IF (gemm_data_if[i])
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
     end
 `endif
 

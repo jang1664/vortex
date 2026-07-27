@@ -196,6 +196,7 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, arg->lmem_zpbuf0_base);
   job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf1_base);
   job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf_base);
+  job_write_reg64(eid, REG_LMEM_PSUM_LO,   arg->lmem_psum_base);
 
   // Original problem sizes
   job_write_reg32(eid, REG_M_ORIG, arg->M);

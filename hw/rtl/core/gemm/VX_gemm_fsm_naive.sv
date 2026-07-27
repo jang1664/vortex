@@ -55,6 +55,8 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     [35] K_TARGET (32b)
     [36] M_START (32b)
     [37] N_START (32b)
+    [40] LMEM_PSUM_BASE_LO
+    [41] LMEM_PSUM_BASE_HI
   
   ================================================================================
   VX_gemm_fsm_naive.sv — Bring-up FSM Assumptions / Contract
@@ -136,7 +138,9 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
 
   localparam int CFG_R_WTRANS          = 38;
   localparam int CFG_R_QDIR            = 39;
-  localparam int CFG_R_TOTAL           = CFG_R_QDIR + 1;
+  localparam int CFG_R_LMEM_PSUM_LO    = 40;
+  localparam int CFG_R_LMEM_PSUM_HI    = 41;
+  localparam int CFG_R_TOTAL           = 44;
 
   function automatic logic [63:0] cfg_get_u64(input int lo_idx, input int hi_idx);
     cfg_get_u64 = {cfg_reg_if.regs[hi_idx][31:0], cfg_reg_if.regs[lo_idx][31:0]};
@@ -166,9 +170,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
   // MXU micro tile sizes
   localparam int MXU_KT = `GEMM_FSM_MXU_KT;
   localparam int MXU_NT = `GEMM_FSM_MXU_NT;
-
-  // scratch accum base (global/local independent)
-  localparam logic [63:0] ACCUM_BASE = 64'd0;
 
   localparam int FP32_BYTES  = 4;
   localparam int FP16_BYTES  = 2;
@@ -213,6 +214,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     logic [63:0] lmem_zpbuf0_base;
     logic [63:0] lmem_zpbuf1_base;
     logic [63:0] lmem_obuf_base;
+    logic [63:0] lmem_psum_base;
 
     logic [31:0] target_M, target_N, target_K;
     logic [31:0] orig_M, orig_N, orig_K, orig_qblk;
@@ -275,7 +277,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
   localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
 
   localparam logic [7:0] OP_I_LDMA_ARM    = 8'h22;
-  localparam logic [7:0] OP_O_ACC2LMEM    = 8'h23;
 
   // --------------------------------------------------------------------------
   // Sync register assignment
@@ -553,9 +554,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     S_MXU_ARM_GEMM, S_MXU_ARM_GEMM_NTF, S_MXU_WAIT_GEMM_DONE, // 26
 
     // output stage (only when last-kt tile for this (mt,nt))
-    S_O_WAIT_LMEM2DRAM_DONE, S_O_ACC2LMEM, S_O_ACC2LMEM_NTF, // 29
-    S_O_WAIT_ACC2LMEM_DONE, // 30
-    S_O_LMEM2DRAM, S_O_LMEM2DRAM_NTF, // 32
+    S_O_WAIT_LMEM2DRAM_DONE, S_O_LMEM2DRAM, S_O_LMEM2DRAM_NTF,
 
     // advance + optionally preload next tile
     S_ADVANCE_TILES, S_O_WAIT_LMEM2DRAM_FINAL, // 34
@@ -736,7 +735,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     mm_group_t g0_n;
 
     // output
-    mm_bytecnt_t out_bytes_acc;
     mm_bytecnt_t out_bytes_fp16;
 
     groups_tile = mm_group_t'(ceil_div_log2(KT, job_q.orig_qblk));
@@ -820,7 +818,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     //   WBUF  stores [KT x (NT/2)] bytes row-major, row-stride = (NT/2) bytes
     //   SCBUF stores [groups_tile x NT] fp16 row-major, row-stride = NT*2 bytes
     //   ZPBUF stores [groups_tile x NT] int16 row-major, row-stride = NT*2 bytes
-    //   ACCUM_BASE stores [MT x NT] fp32 row-major, row-stride = NT*4 bytes
+    //   PSUM LMEM stores [MT x NT] fp32 row-major, row-stride = NT*4 bytes
 
     // input microtile starts at K = kt_mxu_q*MXU_KT (within tile)
     k0_in  = mm_tile_sz_t'(kt_mxu_q * MXU_KT);
@@ -844,8 +842,8 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     // Input slice (mt_eff_cur rows, MXU_KT cols)
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
 
-    // Accum/output slice base (mt_eff_cur rows, MXU_NT cols)
-    lmem_out_slice = ACCUM_BASE + 64'(n0_out) * MT * FP32_BYTES;
+    // PSUM slice base (mt_eff_cur rows, MXU_NT cols)
+    lmem_out_slice = job_q.lmem_psum_base + 64'(n0_out) * MT * FP32_BYTES;
 
     // Weight slice base in current tile buffer
     lmem_w_mxu = wbuf_base(buf_cur) + 64'(w_row0) * 64'(w_row_stride_bytes) + 64'(w_col0_bytes);
@@ -887,7 +885,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
 
     gemm_done_target = global_mxu_seq;
 
-    out_bytes_acc  = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
     out_bytes_fp16 = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
 
     gemm_start_o = 1'b0;
@@ -928,6 +925,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           job_d.lmem_zpbuf0_base = cfg_get_u64(CFG_R_LMEM_ZPBUF0_LO, CFG_R_LMEM_ZPBUF0_HI);
           job_d.lmem_zpbuf1_base = cfg_get_u64(CFG_R_LMEM_ZPBUF1_LO, CFG_R_LMEM_ZPBUF1_HI);
           job_d.lmem_obuf_base   = cfg_get_u64(CFG_R_LMEM_OBUF_LO,   CFG_R_LMEM_OBUF_HI);
+          job_d.lmem_psum_base   = cfg_get_u64(CFG_R_LMEM_PSUM_LO,   CFG_R_LMEM_PSUM_HI);
 
           job_d.orig_M    = cfg_reg_if.regs[CFG_R_M_ORIG][31:0];
           job_d.orig_N    = cfg_reg_if.regs[CFG_R_N_ORIG][31:0];
@@ -1463,6 +1461,8 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.instr   = make_instr(OP_I_LDMA_ARM, in_bytes);
           c.rs1_data = lmem_out_slice;
           c.rs2_data = lmem_in_mxu;
+          c.stride   = job_q.lmem_obuf_base + 64'(n0_out) * FP16_BYTES;
+          c.groups_eff = nt_eff_cur;
           c.eff_mt   = mt_eff_cur;
 
           out_cmd_d   = c;
@@ -1506,45 +1506,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       S_O_WAIT_LMEM2DRAM_DONE: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
-          out_start_d = 1'b1;
-          state_d     = S_O_ACC2LMEM;
-        end
-      end
-      
-      S_O_ACC2LMEM: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-
-          c = '0;
-          flags      = {7'd0, buf_cur};
-
-          c.flags    = flags;
-          c.instr    = make_instr(OP_O_ACC2LMEM, out_bytes_acc);
-          c.rs1_data  = job_q.lmem_obuf_base; // dst
-          c.rs2_data  = ACCUM_BASE;           // src
-          // Pass effective tile extents to output path mapper.
-          c.eff_mt    = mt_eff_cur;
-          c.groups_eff = nt_eff_cur;
-
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_O_ACC2LMEM_NTF;
-        end
-      end
-
-      S_O_ACC2LMEM_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_o, 2*o_store_issue_q + 1, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_O_WAIT_ACC2LMEM_DONE;
-        end
-      end
-
-      S_O_WAIT_ACC2LMEM_DONE: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q + 1);
+          out_cmd_d   = make_wait_cmd(rid_o, o_store_issue_q);
           out_start_d = 1'b1;
           state_d     = S_O_LMEM2DRAM;
         end
@@ -1613,7 +1575,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
 
       S_O_WAIT_LMEM2DRAM_FINAL: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
+          out_cmd_d   = make_wait_cmd(rid_o, o_store_issue_q);
           out_start_d = 1'b1;
           state_d     = S_IDLE;
         end
@@ -1905,7 +1867,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
       OP_SC_LDMA_MXU:   return "SC_LDMA_MXU";
       OP_ZP_LDMA_MXU:   return "ZP_LDMA_MXU";
       OP_I_LDMA_ARM:    return "I_LDMA_ARM";
-      OP_O_ACC2LMEM:    return "O_ACC2LMEM";
       default:          return "UNKNOWN";
     endcase
   endfunction
@@ -1952,11 +1913,6 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
         OP_I_LDMA_ARM: begin
           `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_I_ARM | {inst=%s, state=%0d, accum_dst=0x%0h, input_src=0x%0h, qdir=%0d, is_last=%0d, is_accum=%0d, mxu_buf=%0d, tile_buf=%0d, eff_mt=%0d}\n",
                     $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[3], cmd_i.flags[2], cmd_i.flags[1], cmd_i.flags[0], cmd_i.eff_mt))
-        end
-
-        OP_O_ACC2LMEM: begin
-          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_O_ACC2LMEM | {inst=%s, state=%0d, lmem_dst=0x%0h, accum_src=0x%0h, tile_buf=%0d}\n",
-                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0]))
         end
 
         default: begin

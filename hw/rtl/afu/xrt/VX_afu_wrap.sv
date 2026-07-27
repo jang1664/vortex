@@ -168,6 +168,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire ap_done_wait_cache = ap_done_base && USE_APDONE_CACHE_DRAIN && !vx_cache_drain;
 	wire ap_done_raw = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
 
+
 	// Sticky pending bit with Clear-On-Read semantics (HLS AP_CTRL convention).
 	// rdata is registered (sampled in RSTATE_DATA) but ap_ctrl_read pulses live
 	// in RSTATE_RESP — without a sticky bit, the two can disagree across the

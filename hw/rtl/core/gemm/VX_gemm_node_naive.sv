@@ -39,7 +39,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.slave     mmio_if[N_MASTER],
 
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
-    VX_mem_bus_if.master    lmem_bus_if [`LMEM_NUM_PORTS] // physical LMEM ports (i/w/sz/o)
+    VX_mem_bus_if.master    lmem_bus_if [`LMEM_NUM_PORTS], // ordinary physical LMEM ports
+    VX_mem_bus_if.master    psum_rd_lmem_bus_if [`LMEM_NUM_PORTS],
+    VX_mem_bus_if.master    psum_wr_lmem_bus_if [`LMEM_NUM_PORTS]
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t gemm_unit_perf
     ,output gemm_node_perf_t gemm_node_perf
@@ -64,6 +66,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int GEMM_WEIGHT_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int GEMM_PSUM_LANES   = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
     localparam int I_LANE_OFFSET     = 0;
     localparam int W_LANE_OFFSET     = 8;
     localparam int SZ_LANE_OFFSET    = 16;
@@ -102,6 +105,14 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) o_gemm_bus_if ();
+    VX_mem_bus_if #(
+      .DATA_SIZE(`GEMM_PSUM_DATA_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_rd_wide_bus_if (), psum_wr_wide_bus_if (), psum_wr_raw_bus_if ();
+    VX_mem_bus_if #(
+      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) final_wide_bus_if (), final_raw_bus_if ();
 
     // Each 64-byte tensor path has eight logical 64-bit lanes. The physical
     // mapping below applies a tensor-specific offset and wraps at LMEM_NUM_PORTS.
@@ -121,6 +132,18 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) o_lane_mem_if [GEMM_OUTPUT_LANES] ();
+    VX_mem_bus_if #(
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) final_lane_mem_if [GEMM_OUTPUT_LANES] ();
+    VX_mem_bus_if #(
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_rd_lane_mem_if [GEMM_PSUM_LANES] ();
+    VX_mem_bus_if #(
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_wr_lane_mem_if [GEMM_PSUM_LANES] ();
 
     // Internal wide buses between load-path adapters and DMAs.
     VX_mem_bus_if # (
@@ -170,6 +193,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_gemm_dma_ctrl_naive_if gemm_dma_ctrl_if ();
 
     logic        input_notify_pending_r;
+    logic        gemm_done_pending_r;
+    logic [11:0] gemm_wr_lane_pending_r;
     logic [31:0] input_notify_reg_idx_r;
     logic [31:0] input_notify_value_r;
 
@@ -225,11 +250,14 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
     assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.stride;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = gemm_ctrl_if.input_read_ctrl.cmd.groups_eff * 2;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
     assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
     assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+    assign gemm_unit_if.gemm_unit_ctrl.is_last           = gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
@@ -251,7 +279,17 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.reg_idx         = '0;
     assign input_dma_ctrl_if.reg_value       = '0;
     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
-    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;
+    logic [`LMEM_NUM_PORTS-1:0] gemm_wr_lane_fire;
+    for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire
+      assign gemm_wr_lane_fire[p] = psum_wr_lmem_bus_if[p].req_valid
+                                  && psum_wr_lmem_bus_if[p].req_ready;
+    end
+    wire [11:0] gemm_wr_lane_push = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready ? 12'd16 : 12'd0)
+                                       + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready ? 12'd8 : 12'd0);
+    wire [11:0] gemm_wr_lane_pop = 12'($countones(gemm_wr_lane_fire));
+    wire gemm_write_queues_empty = (gemm_wr_lane_pending_r == 0);
+    wire gemm_done_drained = gemm_done_pending_r && gemm_write_queues_empty;
+    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_done_drained;
 
     assign gemm_sync_if[0].valid   = input_notify_pending_r;
     assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
@@ -260,9 +298,18 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     always_ff @(posedge clk) begin
       if (reset) begin
         input_notify_pending_r <= 1'b0;
+        gemm_done_pending_r <= 1'b0;
+        gemm_wr_lane_pending_r <= '0;
         input_notify_reg_idx_r <= '0;
         input_notify_value_r   <= '0;
       end else begin
+        gemm_wr_lane_pending_r <= gemm_wr_lane_pending_r
+                                + gemm_wr_lane_push - gemm_wr_lane_pop;
+        if (gemm_unit_if.done)
+          gemm_done_pending_r <= 1'b1;
+        else if (gemm_done_drained)
+          gemm_done_pending_r <= 1'b0;
+
         if (input_notify_req) begin
           input_notify_pending_r <= 1'b1;
           input_notify_reg_idx_r <= gemm_ctrl_if.input_read_ctrl.cmd.rs1_data[31:0];
@@ -382,27 +429,22 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     wire [31:0] output_nt_eff_raw = (output_nt_eff_cmd != 0) ? output_nt_eff_cmd : NT;
     wire [31:0] output_mt_eff     = (output_mt_eff_raw > MT) ? MT : output_mt_eff_raw;
     wire [31:0] output_nt_eff     = (output_nt_eff_raw > NT) ? NT : output_nt_eff_raw;
-    wire [31:0] output_nt_tiles   = ceil_div_log2(output_nt_eff, `CLOG2(MXU_NT));
-    wire [31:0] output_nt_tiles_s = (output_nt_tiles != 0) ? output_nt_tiles : 32'd1;
-    wire [31:0] output_seg_elems  = (output_nt_tiles_s == 32'd1) ? output_nt_eff : MXU_NT;
-    wire [31:0] output_seg_elems_s = (output_seg_elems != 0) ? output_seg_elems : MXU_NT;
-
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
-    assign output_dma_ctrl_if.src_strides[0] = MXU_NT*32/8;
-    assign output_dma_ctrl_if.src_strides[1] = MT*MXU_NT*32/8;
+    assign output_dma_ctrl_if.src_strides[0] = output_nt_eff * 16/8;
+    assign output_dma_ctrl_if.src_strides[1] = 0;
     assign output_dma_ctrl_if.src_strides[2] = 0;
 
     assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
     assign output_dma_ctrl_if.dst_strides[0] = NT*16/8;
-    assign output_dma_ctrl_if.dst_strides[1] = MXU_NT*16/8;
+    assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
     assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
-    assign output_dma_ctrl_if.bounds[1] = output_nt_tiles_s;
+    assign output_dma_ctrl_if.bounds[1] = 32'd1;
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
-    assign output_dma_ctrl_if.seg_size         = output_seg_elems_s * 16 / 8;
+    assign output_dma_ctrl_if.seg_size         = output_nt_eff * 16 / 8;
     assign output_dma_ctrl_if.reg_idx           = '0;
     assign output_dma_ctrl_if.reg_value         = '0;
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
@@ -488,7 +530,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       VX_mem_bus_if #(
         .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-      ) lane_arb_in_if [4] ();
+      ) lane_arb_in_if [5] ();
       VX_mem_bus_if #(
         .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
@@ -526,8 +568,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         assign lane_arb_in_if[3].rsp_ready = 1'b1;
       end
 
+      assign lane_arb_in_if[4].req_valid = 1'b0;
+      assign lane_arb_in_if[4].req_data  = '0;
+      assign lane_arb_in_if[4].rsp_ready = 1'b1;
+
       VX_mem_arb #(
-        .NUM_INPUTS(4),
+        .NUM_INPUTS(5),
         .NUM_OUTPUTS(1),
         .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
@@ -543,6 +589,72 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       );
 
       `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if[i], lane_arb_out_if[0]);
+    end
+
+
+    // A 128-byte PSUM request contains sixteen 64-bit lanes. Each physical
+    // LMEM port serves lanes i and i+LMEM_NUM_PORTS. Write and read remain on
+    // separate paths so the bank xbar can enforce write > read > normal.
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_psum_lane_arb
+      VX_mem_bus_if #(
+        .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+      ) rd_in_if[2](), wr_in_if[3]();
+      VX_mem_bus_if #(
+        .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(PSUM_LMEM_TAG_WIDTH)
+      ) rd_out_if[1](), wr_out_if[1]();
+
+      if (i < GEMM_PSUM_LANES) begin : g_lower_lane
+        `ASSIGN_VX_MEM_BUS_IF(rd_in_if[0], psum_rd_lane_mem_if[i]);
+        `ASSIGN_VX_MEM_BUS_IF(wr_in_if[0], psum_wr_lane_mem_if[i]);
+      end else begin : g_no_lower_lane
+        assign rd_in_if[0].req_valid = 1'b0;
+        assign rd_in_if[0].req_data  = '0;
+        assign rd_in_if[0].rsp_ready = 1'b1;
+        assign wr_in_if[0].req_valid = 1'b0;
+        assign wr_in_if[0].req_data  = '0;
+        assign wr_in_if[0].rsp_ready = 1'b1;
+      end
+      if ((i + `LMEM_NUM_PORTS) < GEMM_PSUM_LANES) begin : g_upper_lane
+        `ASSIGN_VX_MEM_BUS_IF(rd_in_if[1], psum_rd_lane_mem_if[i + `LMEM_NUM_PORTS]);
+        `ASSIGN_VX_MEM_BUS_IF(wr_in_if[1], psum_wr_lane_mem_if[i + `LMEM_NUM_PORTS]);
+      end else begin : g_no_upper_lane
+        assign rd_in_if[1].req_valid = 1'b0;
+        assign rd_in_if[1].req_data  = '0;
+        assign rd_in_if[1].rsp_ready = 1'b1;
+        assign wr_in_if[1].req_valid = 1'b0;
+        assign wr_in_if[1].req_data  = '0;
+        assign wr_in_if[1].rsp_ready = 1'b1;
+      end
+
+      if (i < GEMM_OUTPUT_LANES) begin : g_final_lane
+        `ASSIGN_VX_MEM_BUS_IF(wr_in_if[2], final_lane_mem_if[i]);
+      end else begin : g_no_final_lane
+        assign wr_in_if[2].req_valid = 1'b0;
+        assign wr_in_if[2].req_data  = '0;
+        assign wr_in_if[2].rsp_ready = 1'b1;
+      end
+
+      VX_mem_arb #(
+        .NUM_INPUTS(2), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+        .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
+        .REQ_OUT_BUF(2), .RSP_OUT_BUF(2), .ARBITER("P")
+      ) psum_rd_arb (
+        .clk(clk), .reset(reset), .bus_in_if(rd_in_if), .bus_out_if(rd_out_if)
+      );
+      VX_mem_arb #(
+        .NUM_INPUTS(3), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+        .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
+        .REQ_OUT_BUF(2), .RSP_OUT_BUF(2), .ARBITER("P")
+      ) psum_wr_arb (
+        .clk(clk), .reset(reset), .bus_in_if(wr_in_if), .bus_out_if(wr_out_if)
+      );
+
+      `ASSIGN_VX_MEM_BUS_IF(psum_rd_lmem_bus_if[i], rd_out_if[0]);
+      `ASSIGN_VX_MEM_BUS_IF(psum_wr_lmem_bus_if[i], wr_out_if[0]);
     end
 
     // -------------------------------------------------------------------------
@@ -587,6 +699,85 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .lane_bus_if (o_lane_mem_if)
     );
 
+    // Capture no-backpressure GEMM result pulses before per-lane scattering.
+    VX_elastic_buffer #(
+      .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(64), .OUT_REG(1)
+    ) psum_wr_queue (
+      .clk(clk), .reset(reset),
+      .valid_in(psum_wr_raw_bus_if.req_valid), .data_in(psum_wr_raw_bus_if.req_data),
+      .ready_in(psum_wr_raw_bus_if.req_ready),
+      .valid_out(psum_wr_wide_bus_if.req_valid), .data_out(psum_wr_wide_bus_if.req_data),
+      .ready_out(psum_wr_wide_bus_if.req_ready)
+    );
+    assign psum_wr_raw_bus_if.rsp_valid = psum_wr_wide_bus_if.rsp_valid;
+    assign psum_wr_raw_bus_if.rsp_data = psum_wr_wide_bus_if.rsp_data;
+    assign psum_wr_wide_bus_if.rsp_ready = psum_wr_raw_bus_if.rsp_ready;
+
+    VX_elastic_buffer #(
+      .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(64), .OUT_REG(1)
+    ) final_wr_queue (
+      .clk(clk), .reset(reset),
+      .valid_in(final_raw_bus_if.req_valid), .data_in(final_raw_bus_if.req_data),
+      .ready_in(final_raw_bus_if.req_ready),
+      .valid_out(final_wide_bus_if.req_valid), .data_out(final_wide_bus_if.req_data),
+      .ready_out(final_wide_bus_if.req_ready)
+    );
+    assign final_raw_bus_if.rsp_valid = final_wide_bus_if.rsp_valid;
+    assign final_raw_bus_if.rsp_data = final_wide_bus_if.rsp_data;
+    assign final_wide_bus_if.rsp_ready = final_raw_bus_if.rsp_ready;
+
+    VX_mem_bus_split #(
+      .NUM_LANES(GEMM_OUTPUT_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) final_lane_split (
+      .clk(clk), .reset(reset), .wide_bus_if(final_wide_bus_if),
+      .lane_bus_if(final_lane_mem_if)
+    );
+
+    VX_mem_bus_split #(
+      .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_rd_lane_split (
+      .clk(clk), .reset(reset), .wide_bus_if(psum_rd_wide_bus_if),
+      .lane_bus_if(psum_rd_lane_mem_if)
+    );
+    VX_mem_bus_split #(
+      .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_wr_lane_split (
+      .clk(clk), .reset(reset), .wide_bus_if(psum_wr_wide_bus_if),
+      .lane_bus_if(psum_wr_lane_mem_if)
+    );
+
+`ifndef SYNTHESIS
+    localparam int PSUM_SHADOW_WORDS = (1 << `LMEM_LOG_SIZE) / LSU_WORD_SIZE;
+    for (genvar l = 0; l < GEMM_PSUM_LANES; ++l) begin : g_psum_shadow_check
+      logic [LSU_WORD_SIZE*8-1:0] psum_shadow [0:PSUM_SHADOW_WORDS-1];
+      logic [$clog2(PSUM_SHADOW_WORDS)-1:0] rd_addr_q[64];
+      integer rd_head, rd_tail;
+      always_ff @(posedge clk) begin
+        if (reset) begin
+          rd_head <= 0;
+          rd_tail <= 0;
+        end else begin
+          if (psum_wr_lane_mem_if[l].req_valid && psum_wr_lane_mem_if[l].req_ready)
+            psum_shadow[psum_wr_lane_mem_if[l].req_data.addr] <= psum_wr_lane_mem_if[l].req_data.data;
+          if (psum_rd_lane_mem_if[l].req_valid && psum_rd_lane_mem_if[l].req_ready) begin
+            rd_addr_q[rd_tail & 63] <= psum_rd_lane_mem_if[l].req_data.addr;
+            rd_tail <= rd_tail + 1;
+          end
+          if (psum_rd_lane_mem_if[l].rsp_valid && psum_rd_lane_mem_if[l].rsp_ready) begin
+            assert (psum_rd_lane_mem_if[l].rsp_data.data === psum_shadow[rd_addr_q[rd_head & 63]])
+              else $fatal(1, "PSUM LMEM mismatch lane=%0d addr=0x%0h got=0x%0h expected=0x%0h",
+                          l, rd_addr_q[rd_head & 63], psum_rd_lane_mem_if[l].rsp_data.data,
+                          psum_shadow[rd_addr_q[rd_head & 63]]);
+            rd_head <= rd_head + 1;
+          end
+        end
+      end
+    end
+`endif
+
     // -------------------------------------------------------------------------
     // GEMM compute/control instances
     // -------------------------------------------------------------------------
@@ -601,6 +792,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .w_lmem_bus_if(w_gemm_bus_if),
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
+      .psum_rd_lmem_bus_if(psum_rd_wide_bus_if),
+      .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
+      .final_lmem_bus_if(final_raw_bus_if),
       .gemm_unit_if(gemm_unit_if)
     `ifdef PERF_ENABLE
       ,.perf(gemm_unit_perf)

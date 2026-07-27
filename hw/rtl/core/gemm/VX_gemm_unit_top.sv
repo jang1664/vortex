@@ -97,11 +97,13 @@ module VX_gemm_unit_top import VX_gpu_pkg::*; #(
     input  wire                                         ctrl_start,
     input  wire                                         ctrl_quant_dir,
     input  wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]          ctrl_acc_mem_base_addr,
+    input  wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]          ctrl_output_mem_base_addr,
     input  wire [`GEMM_ACC_MAX_CNT-1:0]                 ctrl_acc_cnt,
     input  wire                                         ctrl_wreg_use_idx,
     input  wire                                         ctrl_sreg_use_idx,
     input  wire                                         ctrl_zreg_use_idx,
     input  wire                                         ctrl_is_load,
+    input  wire                                         ctrl_is_last,
     output wire                                         ctrl_idle,
     output wire                                         ctrl_done
 );
@@ -211,11 +213,14 @@ module VX_gemm_unit_top import VX_gpu_pkg::*; #(
     assign gemm_unit_if.start                         = ctrl_start;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir      = ctrl_quant_dir;
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = ctrl_acc_mem_base_addr;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = ctrl_output_mem_base_addr;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = `GEMM_OUTPUT_DATA_SIZE;
     assign gemm_unit_if.gemm_unit_ctrl.acc_cnt        = ctrl_acc_cnt;
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx   = ctrl_wreg_use_idx;
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx   = ctrl_sreg_use_idx;
     assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx   = ctrl_zreg_use_idx;
     assign gemm_unit_if.gemm_unit_ctrl.is_load        = ctrl_is_load;
+    assign gemm_unit_if.gemm_unit_ctrl.is_last        = ctrl_is_last;
     assign ctrl_idle                                  = gemm_unit_if.idle;
     assign ctrl_done                                  = gemm_unit_if.done;
 

@@ -929,6 +929,8 @@ package VX_gpu_pkg;
    typedef struct packed {
       logic quant_dir; // 0:col, 1:row
       logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr;
+      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_mem_base_addr;
+      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_mem_stride;
       logic [`GEMM_ACC_MAX_CNT-1:0] acc_cnt;
 
       logic wreg_use_idx;
@@ -936,6 +938,7 @@ package VX_gpu_pkg;
       logic zreg_use_idx;
 
       logic is_load;
+      logic is_last;
    } gemm_unit_ctrl_t;
 
     function automatic int get_pipe_stage_bitmask(input int row_size, input int PIPE_INTERVAL);
@@ -1024,10 +1027,12 @@ package VX_gpu_pkg;
         LMEM_TAG_WIDTH,
         (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
-    // The naive backend merges four GEMM clients before shared LMEM. Improve
+    // The naive backend merges five GEMM clients before shared LMEM. Improve
     // keeps this width for interface consistency even though it uses TMEM.
-    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(4, 1);
+    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(5, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
+    localparam PSUM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + `ARB_SEL_BITS(2, 1));
+    localparam PSUM_ARB_TAG_WIDTH = (PSUM_LMEM_TAG_WIDTH + `ARB_SEL_BITS(2, 1));
 `ifdef GEMM_NAIVE
     // Naive mem-unit LMEM path: LSU + CPU DMA + GEMM.
     localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(3, 1);

@@ -84,7 +84,7 @@ module tb_VX_gemm_node
   // Match GEMM node LMEM-facing tag width (includes GEMM internal arb route bits).
   localparam int DMA_TAG_WIDTH = GEMM_LMEM_TAG_WIDTH;
   localparam int G_ARB_NUM_INPUTS = 2;
-  localparam int L_ARB_NUM_INPUTS = 3;
+  localparam int L_ARB_NUM_INPUTS = 5;
   localparam int G_ARB_SEL_BITS   = `ARB_SEL_BITS(G_ARB_NUM_INPUTS, 1);
   localparam int L_ARB_SEL_BITS   = `ARB_SEL_BITS(L_ARB_NUM_INPUTS, 1);
   localparam int G_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + G_ARB_SEL_BITS;
@@ -154,6 +154,10 @@ module tb_VX_gemm_node
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
   ) lmem_bus_if[`LMEM_NUM_PORTS] ();
+  VX_mem_bus_if #(
+    .DATA_SIZE(LSU_WORD_SIZE),
+    .TAG_WIDTH(PSUM_LMEM_TAG_WIDTH)
+  ) psum_rd_lmem_bus_if[`LMEM_NUM_PORTS] (), psum_wr_lmem_bus_if[`LMEM_NUM_PORTS] ();
 
   // dma_node dcache/lmem ports
   VX_mem_bus_if #(
@@ -211,7 +215,9 @@ module tb_VX_gemm_node
     .reset       (reset),
     .mmio_if     (mmio_if),
     .dma_if      (dma_if[0]),        // to dma_node below
-    .lmem_bus_if (lmem_bus_if)    // DUT direct LMEM access
+    .lmem_bus_if (lmem_bus_if),
+    .psum_rd_lmem_bus_if(psum_rd_lmem_bus_if),
+    .psum_wr_lmem_bus_if(psum_wr_lmem_bus_if)
   );
 
   // =========================================================================
@@ -346,9 +352,13 @@ module tb_VX_gemm_node
       .TAG_WIDTH(L_ARB_TAG_WIDTH)
     ) lane_arb_out_if[1] ();
 
-    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], lmem_bus_if[i]);
-    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[1], lmem_bus_if_dma[i]);
-    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], bg_local_if[i]);
+    `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], psum_wr_lmem_bus_if[i],
+      DMA_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+    `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[1], psum_rd_lmem_bus_if[i],
+      DMA_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], lmem_bus_if[i]);
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[3], lmem_bus_if_dma[i]);
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[4], bg_local_if[i]);
 
     VX_mem_arb #(
       .NUM_INPUTS  (L_ARB_NUM_INPUTS),

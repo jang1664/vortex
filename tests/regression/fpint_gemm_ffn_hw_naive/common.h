@@ -65,6 +65,8 @@
 #define REG_N_START             37
 #define REG_WTRANS              38
 #define REG_QDIR                39
+#define REG_LMEM_PSUM_LO        40
+#define REG_LMEM_PSUM_HI        41
 #define REG_OUTPUT_PROGRESS     43
 
 #define GEMM_JOB_NUM_REGS32     44
@@ -107,6 +109,7 @@ typedef struct {
   uint64_t lmem_zpbuf0_base;
   uint64_t lmem_zpbuf1_base;
   uint64_t lmem_obuf_base;
+  uint64_t lmem_psum_base;
 
   uint32_t status;
   uint32_t job_eid;

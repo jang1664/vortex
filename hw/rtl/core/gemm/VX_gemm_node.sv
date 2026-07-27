@@ -226,11 +226,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify; // start signal로 동기화
     assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4];
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = '0;
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = '0;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[5]; //QDIR
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[2]; //mxu tile double buffering 번호
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
     assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[0]; //mxu tile double buffering 번호
     assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+    assign gemm_unit_if.gemm_unit_ctrl.is_last           = 1'b0;
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;

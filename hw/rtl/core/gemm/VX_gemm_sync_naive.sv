@@ -34,7 +34,6 @@ module VX_gemm_sync_naive import VX_gpu_pkg::*; #(
   localparam logic [7:0] OP_SC_LDMA_MXU   = 8'h21;
   localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
   localparam logic [7:0] OP_I_LDMA_ARM    = 8'h22;
-  localparam logic [7:0] OP_O_ACC2LMEM    = 8'h23;
 
 
   // --------------------------------------------------------------------------
@@ -76,7 +75,6 @@ module VX_gemm_sync_naive import VX_gpu_pkg::*; #(
         OP_W_LDMA_MXU:   cmd_route = 3'd1;
         OP_SC_LDMA_MXU,
         OP_ZP_LDMA_MXU:  cmd_route = 3'd2;
-        OP_O_ACC2LMEM:   cmd_route = 3'd3;
         OP_DMA_LD,
         OP_DMA_ST:       cmd_route = 3'd4;
         default: begin

@@ -112,6 +112,10 @@ module VX_core import VX_gpu_pkg::*; #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
     ) gemm_data_if[`LMEM_NUM_PORTS]();
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (PSUM_LMEM_TAG_WIDTH)
+    ) gemm_psum_rd_if[`LMEM_NUM_PORTS](), gemm_psum_wr_if[`LMEM_NUM_PORTS]();
 `endif
 
 	    VX_mem_bus_if #(
@@ -294,6 +298,8 @@ module VX_core import VX_gpu_pkg::*; #(
         .dma_global_data_if(dma_global_data_if)
 `ifdef GEMM_NAIVE
        ,.gemm_data_if      (gemm_data_if)
+       ,.gemm_psum_rd_if   (gemm_psum_rd_if)
+       ,.gemm_psum_wr_if   (gemm_psum_wr_if)
 `endif
     );
 
@@ -359,6 +365,8 @@ module VX_core import VX_gpu_pkg::*; #(
         .mmio_if     (gemm_ctrl_if),
         .dma_if      (dma_ctrl_if[`NUM_LSU_BLOCKS]),
         .lmem_bus_if (gemm_data_if)
+       ,.psum_rd_lmem_bus_if(gemm_psum_rd_if)
+       ,.psum_wr_lmem_bus_if(gemm_psum_wr_if)
     );
 
     for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_naive_gemm_dma_axi
@@ -470,6 +478,8 @@ module VX_core import VX_gpu_pkg::*; #(
     `INIT_VX_LSU_MEM_IF (dma_ctrl_if[`NUM_LSU_BLOCKS])
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_disabled_gemm_data
         `INIT_VX_MEM_BUS_IF (gemm_data_if[i])
+        `INIT_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
+        `INIT_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
     end
 `endif
 

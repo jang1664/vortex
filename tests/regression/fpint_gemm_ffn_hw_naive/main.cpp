@@ -366,6 +366,7 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
                                 ? (groups_tile * DMA_NT * 2ull)       // int16
                                 : (DMA_KT * ng_tile     * 2ull);      // int16
   uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;                 // fp16
+  uint64_t lmem_psum_bytes  = DMA_MT * DMA_NT * 4ull;                 // fp32
 
   // LMEM address range: [LMEM_BASE_ADDRESS, LMEM_BASE_ADDRESS + local_mem_size)
   const uint64_t lmem_begin = LMEM_BASE_ADDRESS;
@@ -396,6 +397,7 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf1_base)) return false;
 
   if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf_base))  return false;
+  if (!alloc(lmem_psum_bytes,  kargs.lmem_psum_base))  return false;
 
   return true;
 }
