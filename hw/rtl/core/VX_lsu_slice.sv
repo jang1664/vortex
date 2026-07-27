@@ -416,13 +416,11 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
 
     reg [NUM_LANES-1:0][`XLEN-1:0] rsp_data;
 
-`ifdef XLEN_64
 `ifdef EXT_F_ENABLE
-    // apply nan-boxing to flw outputs
+    // Apply NaN-boxing to floating-point loads narrower than XLEN.
     wire rsp_is_float = rsp_rd[5];
 `else
     wire rsp_is_float = 0;
-`endif
 `endif
 
     for (genvar i = 0; i < NUM_LANES; i++) begin : g_rsp_data
@@ -438,7 +436,11 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         always @(*) begin
             case (inst_lsu_fmt(rsp_op_type))
             LSU_FMT_B:  rsp_data[i] = `XLEN'(signed'(rsp_data8));
-            LSU_FMT_H:  rsp_data[i] = `XLEN'(signed'(rsp_data16));
+        `ifdef XLEN_64
+            LSU_FMT_H:  rsp_data[i] = rsp_is_float ? (`XLEN'(rsp_data16) | 64'hffffffffffff0000) : `XLEN'(signed'(rsp_data16));
+        `else
+            LSU_FMT_H:  rsp_data[i] = rsp_is_float ? (`XLEN'(rsp_data16) | 32'hffff0000) : `XLEN'(signed'(rsp_data16));
+        `endif
             LSU_FMT_BU: rsp_data[i] = `XLEN'(unsigned'(rsp_data8));
             LSU_FMT_HU: rsp_data[i] = `XLEN'(unsigned'(rsp_data16));
         `ifdef XLEN_64

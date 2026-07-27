@@ -18,7 +18,9 @@
 module VX_fpu_sqrt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     parameter NUM_LANES = 1,
     parameter NUM_PES   = `UP(NUM_LANES /`FSQRT_PE_RATIO),
-    parameter TAG_WIDTH = 1
+    parameter TAG_WIDTH = 1,
+    parameter FP_FORMAT = 0,
+    parameter LATENCY   = `LATENCY_FSQRT
 ) (
     input wire clk,
     input wire reset,
@@ -56,14 +58,14 @@ module VX_fpu_sqrt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire [NUM_PES-1:0][(`FP_FLAGS_BITS+32)-1:0] pe_data_out;
 
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_data_in
-        assign data_in[i][0  +: 32] = dataa[i];
+        assign data_in[i][0  +: 32] = (FP_FORMAT == 2 && ~&dataa[i][31:16]) ? 32'hffff7e00 : dataa[i];
         assign data_in[i][32 +: INST_FRM_BITS] = frm;
     end
 
     VX_pe_serializer #(
         .NUM_LANES  (NUM_LANES),
         .NUM_PES    (NUM_PES),
-        .LATENCY    (`LATENCY_FSQRT),
+        .LATENCY    (LATENCY),
         .DATA_IN_WIDTH (DATAW),
         .DATA_OUT_WIDTH (`FP_FLAGS_BITS + 32),
         .TAG_WIDTH  (NUM_LANES + TAG_WIDTH),
@@ -115,8 +117,20 @@ module VX_fpu_sqrt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fsqrts
         wire tuser;
-
-        xil_fsqrt fsqrt (
+        if (FP_FORMAT == 2) begin : g_half
+            wire [15:0] result_h;
+            xil_f16_sqrt fsqrt (
+                .aclk                (clk),
+                .aclken              (pe_enable),
+                .s_axis_a_tvalid     (1'b1),
+                .s_axis_a_tdata      (pe_data_in[i][0 +: 16]),
+                `UNUSED_PIN (m_axis_result_tvalid),
+                .m_axis_result_tdata (result_h),
+                .m_axis_result_tuser (tuser)
+            );
+            assign pe_data_out[i][0 +: 32] = {16'hffff, result_h};
+        end else begin : g_single
+            xil_fsqrt fsqrt (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -124,7 +138,8 @@ module VX_fpu_sqrt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             `UNUSED_PIN (m_axis_result_tvalid),
             .m_axis_result_tdata (pe_data_out[i][0 +: 32]),
             .m_axis_result_tuser (tuser)
-        );
+            );
+        end
                                                       // NV, DZ, OF, UF, NX
         assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = {tuser, 1'b0, 1'b0, 1'b0, 1'b0};
     end
@@ -152,7 +167,7 @@ module VX_fpu_sqrt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
         VX_shift_register #(
             .DATAW  (32 + $bits(fflags_t)),
-            .DEPTH  (`LATENCY_FSQRT)
+            .DEPTH  (LATENCY)
         ) shift_req_dpi (
             .clk      (clk),
             `UNUSED_PIN (reset),

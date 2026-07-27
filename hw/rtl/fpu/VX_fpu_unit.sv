@@ -77,7 +77,19 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         wire mdata_full;
 
         wire [INST_FMT_BITS-1:0] fpu_fmt = per_block_execute_if[block_idx].data.op_args.fpu.fmt;
+        wire [INST_FMT_BITS-1:0] fpu_src_fmt = per_block_execute_if[block_idx].data.op_args.fpu.src_fmt;
+        wire fpu_is_sub = per_block_execute_if[block_idx].data.op_args.fpu.is_sub;
+        wire fpu_is_int64 = per_block_execute_if[block_idx].data.op_args.fpu.is_int64;
         wire [INST_FRM_BITS-1:0] fpu_frm = per_block_execute_if[block_idx].data.op_args.fpu.frm;
+
+        // Preserve the operation-dependent legacy encoding for DPI and
+        // non-Zfh DSP configurations.
+        wire fpu_legacy_mod = ((per_block_execute_if[block_idx].data.op_type == INST_FPU_F2I)
+                            || (per_block_execute_if[block_idx].data.op_type == INST_FPU_F2U)
+                            || (per_block_execute_if[block_idx].data.op_type == INST_FPU_I2F)
+                            || (per_block_execute_if[block_idx].data.op_type == INST_FPU_U2F))
+                            ? fpu_is_int64 : fpu_is_sub;
+        wire [INST_FMT_BITS-1:0] fpu_legacy_fmt = {fpu_legacy_mod, fpu_fmt[0]};
 
         wire execute_fire = per_block_execute_if[block_idx].valid && per_block_execute_if[block_idx].ready;
         wire fpu_rsp_fire = fpu_rsp_valid && fpu_rsp_ready;
@@ -135,7 +147,7 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .valid_in   (fpu_req_valid),
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
             .op_type    (per_block_execute_if[block_idx].data.op_type),
-            .fmt        (fpu_fmt),
+            .fmt        (fpu_legacy_fmt),
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),
             .datab      (per_block_execute_if[block_idx].data.rs2_data),
@@ -165,6 +177,9 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
             .op_type    (per_block_execute_if[block_idx].data.op_type),
             .fmt        (fpu_fmt),
+            .src_fmt    (fpu_src_fmt),
+            .is_sub     (fpu_is_sub),
+            .is_int64   (fpu_is_int64),
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),
             .datab      (per_block_execute_if[block_idx].data.rs2_data),
@@ -193,7 +208,17 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .valid_in   (fpu_req_valid),
             .mask_in    (per_block_execute_if[block_idx].data.tmask),
             .op_type    (per_block_execute_if[block_idx].data.op_type),
+        `ifdef EXT_ZFH_ENABLE
             .fmt        (fpu_fmt),
+            .src_fmt    (fpu_src_fmt),
+            .is_sub     (fpu_is_sub),
+            .is_int64   (fpu_is_int64),
+        `else
+            .fmt        (fpu_legacy_fmt),
+            .src_fmt    (fpu_fmt),
+            .is_sub     (fpu_legacy_mod),
+            .is_int64   (fpu_legacy_mod),
+        `endif
             .frm        (fpu_req_frm),
             .dataa      (per_block_execute_if[block_idx].data.rs1_data),
             .datab      (per_block_execute_if[block_idx].data.rs2_data),

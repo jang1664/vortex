@@ -42,6 +42,7 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 );
     // Constants
     localparam EXP_BIAS = 2**(EXP_BITS-1)-1;
+    localparam FP_WIDTH = 1 + EXP_BITS + MAN_BITS;
 
     // The internal mantissa includes normal bit or an entire integer
     localparam S_MAN_WIDTH = `MAX(1+MAN_BITS, INT_WIDTH);
@@ -64,7 +65,7 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         .EXP_BITS (EXP_BITS),
         .MAN_BITS (MAN_BITS)
     ) fp_classifier (
-        .exp_i  (dataa[INT_WIDTH-2:MAN_BITS]),
+        .exp_i  (dataa[MAN_BITS +: EXP_BITS]),
         .man_i  (dataa[MAN_BITS-1:0]),
         .clss_o (fclass)
     );
@@ -73,13 +74,13 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire [S_EXP_WIDTH-1:0] input_exp;
     wire                   input_sign;
 
-    wire i2f_sign = dataa[INT_WIDTH-1];
-    wire f2i_sign = dataa[INT_WIDTH-1] && is_signed;
-    wire [S_MAN_WIDTH-1:0] f2i_mantissa = f2i_sign ? (-dataa) : dataa;
-    wire [S_MAN_WIDTH-1:0] i2f_mantissa = S_MAN_WIDTH'({fclass.is_normal, dataa[MAN_BITS-1:0]});
+    wire int_sign = dataa[INT_WIDTH-1] && is_signed;
+    wire fp_sign = dataa[FP_WIDTH-1];
+    wire [S_MAN_WIDTH-1:0] int_mantissa = int_sign ? (-dataa) : dataa;
+    wire [S_MAN_WIDTH-1:0] fp_mantissa = S_MAN_WIDTH'({fclass.is_normal, dataa[MAN_BITS-1:0]});
     assign input_exp  = {1'b0, dataa[MAN_BITS +: EXP_BITS]} + S_EXP_WIDTH'({1'b0, fclass.is_subnormal});
-    assign input_mant = is_itof ? f2i_mantissa : i2f_mantissa;
-    assign input_sign = is_itof ? f2i_sign : i2f_sign;
+    assign input_mant = is_itof ? int_mantissa : fp_mantissa;
+    assign input_sign = is_itof ? int_sign : fp_sign;
 
     // Pipeline stage0
 
@@ -153,7 +154,10 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     // Perform adjustments to mantissa and exponent
 
     wire [S_EXP_WIDTH-1:0] denorm_shamt = S_EXP_WIDTH'(INT_WIDTH-1) - input_exp_s1;
-    wire overflow = ($signed(denorm_shamt) <= -$signed(S_EXP_WIDTH'(!is_signed_s1)));
+    // A zero mantissa has no meaningful normalized exponent.  Do not let its
+    // arbitrary LZC shift amount turn FCVT.W[U].{H,S}(+/-0) into saturation.
+    wire overflow = ~mant_is_zero_s1
+                 && ($signed(denorm_shamt) <= -$signed(S_EXP_WIDTH'(!is_signed_s1)));
     wire underflow = ($signed(input_exp_s1) < S_EXP_WIDTH'($signed(-1)));
     reg [S_EXP_WIDTH-1:0] denorm_shamt_q;
     always @(*) begin
@@ -299,7 +303,8 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     assign i2f_status_s3 = {4'h0, i2f_round_has_sticky_s3};
     assign f2i_status_s3 = f2i_result_is_special_s3 ? f2i_special_status_s3 : {4'h0, f2i_round_has_sticky_s3};
 
-    wire [INT_WIDTH-1:0] i2f_result_s3 = fmt_result_s3;
+    wire [INT_WIDTH-1:0] i2f_result_s3 = (FP_WIDTH == 16)
+        ? {16'hffff, fmt_result_s3[15:0]} : fmt_result_s3;
     wire [INT_WIDTH-1:0] f2i_result_s3 = f2i_result_is_special_s3 ? f2i_special_result_s3 : rounded_int_res_s3;
 
     wire [INT_WIDTH-1:0] tmp_result_s3 = is_itof_s3 ? i2f_result_s3 : f2i_result_s3;

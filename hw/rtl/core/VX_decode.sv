@@ -74,6 +74,32 @@ module VX_decode import VX_gpu_pkg::*; #(
     wire is_itype_sh = funct3[0] && ~funct3[1];
     wire is_fpu_csr = (u_12 <= `VX_CSR_FCSR);
 
+    function automatic logic is_fp_fmt_enabled(input logic [INST_FMT_BITS-1:0] fmt);
+        case (fmt)
+            2'b00: is_fp_fmt_enabled = 1'b1;
+        `ifdef EXT_D_ENABLE
+            2'b01: is_fp_fmt_enabled = 1'b1;
+        `endif
+        `ifdef EXT_ZFH_ENABLE
+            2'b10: is_fp_fmt_enabled = 1'b1;
+        `endif
+            default: is_fp_fmt_enabled = 1'b0;
+        endcase
+    endfunction
+
+    function automatic logic is_fp_lsu_fmt_enabled(input logic [2:0] fmt);
+        case (fmt)
+        `ifdef EXT_ZFH_ENABLE
+            LSU_FMT_H: is_fp_lsu_fmt_enabled = 1'b1;
+        `endif
+            LSU_FMT_W: is_fp_lsu_fmt_enabled = 1'b1;
+        `ifdef EXT_D_ENABLE
+            LSU_FMT_D: is_fp_lsu_fmt_enabled = 1'b1;
+        `endif
+            default: is_fp_lsu_fmt_enabled = 1'b0;
+        endcase
+    endfunction
+
     wire [19:0] ui_imm  = instr[31:12];
 `ifdef XLEN_64
     wire [11:0] i_imm   = is_itype_sh ? {6'b0, instr[25:20]} : u_12;
@@ -324,33 +350,37 @@ module VX_decode import VX_gpu_pkg::*; #(
             INST_FL,
         `endif
             INST_L: begin
-                ex_type = EX_LSU;
-                op_type = INST_OP_BITS'({1'b0, funct3});
-                op_args.lsu.is_store = 0;
-                op_args.lsu.is_float = opcode[2];
-                op_args.lsu.offset = u_12;
-                `USED_IREG (rs1);
+                if (!opcode[2] || is_fp_lsu_fmt_enabled(funct3)) begin
+                    ex_type = EX_LSU;
+                    op_type = INST_OP_BITS'({1'b0, funct3});
+                    op_args.lsu.is_store = 0;
+                    op_args.lsu.is_float = opcode[2];
+                    op_args.lsu.offset = u_12;
+                    `USED_IREG (rs1);
             `ifdef EXT_F_ENABLE
-                `USED_REG (opcode[2], rd);
+                    `USED_REG (opcode[2], rd);
             `else
-                `USED_IREG (rd);
+                    `USED_IREG (rd);
             `endif
+                end
             end
         `ifdef EXT_F_ENABLE
             INST_FS,
         `endif
             INST_S: begin
-                ex_type = EX_LSU;
-                op_type = INST_OP_BITS'({1'b1, funct3});
-                op_args.lsu.is_store = 1;
-                op_args.lsu.is_float = opcode[2];
-                op_args.lsu.offset = s_imm;
-                `USED_IREG (rs1);
+                if (!opcode[2] || is_fp_lsu_fmt_enabled(funct3)) begin
+                    ex_type = EX_LSU;
+                    op_type = INST_OP_BITS'({1'b1, funct3});
+                    op_args.lsu.is_store = 1;
+                    op_args.lsu.is_float = opcode[2];
+                    op_args.lsu.offset = s_imm;
+                    `USED_IREG (rs1);
             `ifdef EXT_F_ENABLE
-                `USED_REG (opcode[2], rs2);
+                    `USED_REG (opcode[2], rs2);
             `else
-                `USED_IREG (rs2);
+                    `USED_IREG (rs2);
             `endif
+                end
             end
         `ifdef EXT_F_ENABLE
             INST_FMADD,  // 7'b1000011
@@ -358,29 +388,34 @@ module VX_decode import VX_gpu_pkg::*; #(
             INST_FNMSUB, // 7'b1001011
             INST_FNMADD: // 7'b1001111
             begin
-                ex_type = EX_FPU;
-                op_type = INST_OP_BITS'({2'b00, 1'b1, opcode[3]});
-                op_args.fpu.frm = funct3;
-                op_args.fpu.fmt[0] = funct2[0]; // float/double
-                op_args.fpu.fmt[1] = opcode[3] ^ opcode[2]; // SUB
-                `USED_FREG (rd);
-                `USED_FREG (rs1);
-                `USED_FREG (rs2);
-                `USED_FREG (rs3);
+                if (is_fp_fmt_enabled(funct2)) begin
+                    ex_type = EX_FPU;
+                    op_type = INST_OP_BITS'({2'b00, 1'b1, opcode[3]});
+                    op_args.fpu.frm = funct3;
+                    op_args.fpu.fmt = funct2;
+                    op_args.fpu.src_fmt = funct2;
+                    op_args.fpu.is_sub = opcode[3] ^ opcode[2];
+                    `USED_FREG (rd);
+                    `USED_FREG (rs1);
+                    `USED_FREG (rs2);
+                    `USED_FREG (rs3);
+                end
             end
             INST_FCI: begin
-                ex_type = EX_FPU;
-                op_args.fpu.frm = funct3;
-                op_args.fpu.fmt[0] = funct2[0]; // float/double
-                op_args.fpu.fmt[1] = rs2[1]; // CVT W/L
+                if (is_fp_fmt_enabled(funct2)) begin
+                    ex_type = EX_FPU;
+                    op_args.fpu.frm = funct3;
+                    op_args.fpu.fmt = funct2;
+                    op_args.fpu.src_fmt = funct2;
+                    op_args.fpu.is_int64 = rs2[1];
 
-                case (funct5)
+                    case (funct5)
                     5'b00000, // FADD
                     5'b00001, // FSUB
                     5'b00010: // FMUL
                     begin
                         op_type = INST_OP_BITS'({2'b00, 1'b0, funct5[1]});
-                        op_args.fpu.fmt[1] = funct5[0]; // SUB
+                        op_args.fpu.is_sub = funct5[0];
                         `USED_FREG (rd);
                         `USED_FREG (rs1);
                         `USED_FREG (rs2);
@@ -401,14 +436,16 @@ module VX_decode import VX_gpu_pkg::*; #(
                         `USED_FREG (rs1);
                         `USED_FREG (rs2);
                     end
-                `ifdef FLEN_64
                     5'b01000: begin
-                        // FCVT.S.D, FCVT.D.S
-                        op_type = INST_OP_BITS'(INST_FPU_F2F);
-                        `USED_FREG (rd);
-                        `USED_FREG (rs1);
+                        // FCVT between enabled floating-point formats
+                        if ((rs2[4:2] == 0) && (rs2[1:0] != funct2)
+                         && is_fp_fmt_enabled(rs2[1:0])) begin
+                            op_type = INST_OP_BITS'(INST_FPU_F2F);
+                            op_args.fpu.src_fmt = rs2[1:0];
+                            `USED_FREG (rd);
+                            `USED_FREG (rs1);
+                        end
                     end
-                `endif
                     5'b00011: begin
                         // FDIV
                         op_type = INST_OP_BITS'(INST_FPU_DIV);
@@ -461,8 +498,9 @@ module VX_decode import VX_gpu_pkg::*; #(
                         `USED_FREG (rd);
                         `USED_IREG (rs1);
                     end
-                default:;
-                endcase
+                    default:;
+                    endcase
+                end
             end
         `endif
             INST_EXT1: begin
@@ -542,6 +580,7 @@ module VX_decode import VX_gpu_pkg::*; #(
                                 op_type = INST_OP_BITS'(INST_FPU_EXP);
                                 op_args.fpu.frm = INST_FRM_RNE;
                                 op_args.fpu.fmt = '0;
+                                op_args.fpu.src_fmt = '0;
                                 `USED_FREG (rd);
                                 `USED_FREG (rs1);
                             end

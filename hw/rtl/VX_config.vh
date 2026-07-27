@@ -70,6 +70,25 @@
 `endif
 `endif
 
+`ifdef EXT_ZFH_ENABLE
+`ifndef EXT_F_ENABLE
+`error "EXT_ZFH_ENABLE requires EXT_F_ENABLE"
+`endif
+`ifdef FPU_DSP
+`ifndef VIVADO
+`error "EXT_ZFH_ENABLE with FPU_DSP requires VIVADO"
+`endif
+`else
+`ifndef FPU_FPNEW
+`ifdef FPU_DPI
+`error "EXT_ZFH_ENABLE is not supported by FPU_DPI"
+`else
+`error "EXT_ZFH_ENABLE requires FPU_FPNEW or FPU_DSP with VIVADO"
+`endif
+`endif
+`endif
+`endif
+
 `ifdef XLEN_64
 `ifndef FPU_DSP
 `ifndef EXT_D_DISABLE
@@ -585,6 +604,27 @@
 // FCVT Latency
 `ifndef LATENCY_FCVT
 `define LATENCY_FCVT 5
+`endif
+
+// Scalar FP16 DSP latencies
+`ifndef LATENCY_FMA_H
+`define LATENCY_FMA_H 4
+`endif
+
+`ifndef LATENCY_FDIV_H
+`define LATENCY_FDIV_H 15
+`endif
+
+`ifndef LATENCY_FSQRT_H
+`define LATENCY_FSQRT_H 15
+`endif
+
+`ifndef LATENCY_FCVT_H2S
+`define LATENCY_FCVT_H2S 2
+`endif
+
+`ifndef LATENCY_FCVT_S2H
+`define LATENCY_FCVT_S2H 3
 `endif
 
 // FMA Bandwidth ratio

@@ -350,19 +350,19 @@ package VX_gpu_pkg;
 
     ///////////////////////////////////////////////////////////////////////////
 
-    localparam INST_FPU_ADD =    4'b0000; // SUB=fmt[1]
+    localparam INST_FPU_ADD =    4'b0000;
     localparam INST_FPU_MUL =    4'b0001;
-    localparam INST_FPU_MADD =   4'b0010; // SUB=fmt[1]
-    localparam INST_FPU_NMADD =  4'b0011; // SUB=fmt[1]
+    localparam INST_FPU_MADD =   4'b0010;
+    localparam INST_FPU_NMADD =  4'b0011;
     localparam INST_FPU_DIV =    4'b0100;
     localparam INST_FPU_SQRT =   4'b0101;
     localparam INST_FPU_EXP =    4'b0110;
-    localparam INST_FPU_F2I =    4'b1000; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
-    localparam INST_FPU_F2U =    4'b1001; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
-    localparam INST_FPU_I2F =    4'b1010; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
-    localparam INST_FPU_U2F =    4'b1011; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
+    localparam INST_FPU_F2I =    4'b1000;
+    localparam INST_FPU_F2U =    4'b1001;
+    localparam INST_FPU_I2F =    4'b1010;
+    localparam INST_FPU_U2F =    4'b1011;
     localparam INST_FPU_CMP =    4'b1100; // frm: LE=0, LT=1, EQ=2
-    localparam INST_FPU_F2F =    4'b1101; // fmt[0]: F32=0, F64=1
+    localparam INST_FPU_F2F =    4'b1101;
     localparam INST_FPU_MISC =   4'b1110; // frm: SGNJ=0, SGNJN=1, SGNJX=2, CLASS=3, MVXW=4, MVWX=5, FMIN=6, FMAX=7
     localparam INST_FPU_BITS =   4;
 
@@ -532,9 +532,12 @@ package VX_gpu_pkg;
     `PACKAGE_ASSERT($bits(alu_args_t) == INST_ARGS_BITS)
 
     typedef struct packed {
-        logic [(INST_ARGS_BITS-INST_FRM_BITS-INST_FMT_BITS)-1:0] __padding;
+        logic [(INST_ARGS_BITS-INST_FRM_BITS-(2*INST_FMT_BITS)-2)-1:0] __padding;
         logic [INST_FRM_BITS-1:0] frm;
         logic [INST_FMT_BITS-1:0] fmt;
+        logic [INST_FMT_BITS-1:0] src_fmt;
+        logic is_sub;
+        logic is_int64;
     } fpu_args_t;
     `PACKAGE_ASSERT($bits(fpu_args_t) == INST_ARGS_BITS)
 

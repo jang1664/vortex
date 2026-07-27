@@ -38,6 +38,9 @@ module VX_fpu_fpnew
 
     input wire [INST_FPU_BITS-1:0] op_type,
     input wire [INST_FMT_BITS-1:0] fmt,
+    input wire [INST_FMT_BITS-1:0] src_fmt,
+    input wire is_sub,
+    input wire is_int64,
     input wire [INST_FRM_BITS-1:0] frm,
 
     input wire [NUM_LANES-1:0][`XLEN-1:0]  dataa,
@@ -61,10 +64,16 @@ module VX_fpu_fpnew
         EnableVectors: 1'b0,
     `ifdef XLEN_64
         EnableNanBox:  1'b1,
-    `ifdef FLEN_64
+    `ifdef EXT_ZFH_ENABLE
+    `ifdef EXT_D_ENABLE
+        FpFmtMask:     5'b11100,
+    `else
+        FpFmtMask:     5'b10100,
+    `endif
+    `elsif EXT_D_ENABLE
         FpFmtMask:     5'b11000,
     `else
-        FpFmtMask:     5'b11000, // TODO: adding FP64 to fix CVT bug in FpNew
+        FpFmtMask:     5'b10000,
     `endif
         IntFmtMask:    4'b0011
     `else
@@ -108,7 +117,15 @@ module VX_fpu_fpnew
     fpnew_pkg::fp_format_e fpu_src_fmt, fpu_dst_fmt;
     fpnew_pkg::int_format_e fpu_int_fmt;
 
-    `UNUSED_VAR (fmt)
+    function automatic fpnew_pkg::fp_format_e to_fpnew_fmt(
+        input logic [INST_FMT_BITS-1:0] inst_fmt
+    );
+        case (inst_fmt)
+            2'b01: to_fpnew_fmt = fpnew_pkg::FP64;
+            2'b10: to_fpnew_fmt = fpnew_pkg::FP16;
+            default: to_fpnew_fmt = fpnew_pkg::FP32;
+        endcase
+    endfunction
 
     always @(*) begin
         fpu_op          = fpnew_pkg::operation_e'('0);
@@ -118,38 +135,30 @@ module VX_fpu_fpnew
         fpu_operands[0] = dataa;
         fpu_operands[1] = datab;
         fpu_operands[2] = datac;
-        fpu_dst_fmt     = fpnew_pkg::FP32;
+        fpu_dst_fmt     = to_fpnew_fmt(fmt);
         fpu_int_fmt     = fpnew_pkg::INT32;
 
-    `ifdef FLEN_64
-        if (fmt[0]) begin
-            fpu_dst_fmt = fpnew_pkg::FP64;
-        end
-    `endif
-
     `ifdef XLEN_64
-        if (fmt[1]) begin
+        if (is_int64) begin
             fpu_int_fmt = fpnew_pkg::INT64;
         end
     `endif
 
-        fpu_src_fmt = fpu_dst_fmt;
+        fpu_src_fmt = to_fpnew_fmt(src_fmt);
 
         case (op_type)
             INST_FPU_ADD: begin
                 fpu_op = fpnew_pkg::ADD;
                 fpu_operands[1] = dataa;
                 fpu_operands[2] = datab;
-                fpu_op_mod = fmt[1]; // FADD or FSUB
+                fpu_op_mod = is_sub;
             end
             INST_FPU_MUL:   begin fpu_op = fpnew_pkg::MUL; end
-            INST_FPU_MADD:  begin fpu_op = fpnew_pkg::FMADD; fpu_op_mod = fmt[1]; end
-            INST_FPU_NMADD: begin fpu_op = fpnew_pkg::FNMSUB; fpu_op_mod = ~fmt[1]; end
+            INST_FPU_MADD:  begin fpu_op = fpnew_pkg::FMADD; fpu_op_mod = is_sub; end
+            INST_FPU_NMADD: begin fpu_op = fpnew_pkg::FNMSUB; fpu_op_mod = ~is_sub; end
             INST_FPU_DIV:   begin fpu_op = fpnew_pkg::DIV; end
             INST_FPU_SQRT:  begin fpu_op = fpnew_pkg::SQRT; end
-        `ifdef FLEN_64
-            INST_FPU_F2F: begin fpu_op = fpnew_pkg::F2F; fpu_src_fmt = fmt[0] ? fpnew_pkg::FP32 : fpnew_pkg::FP64; end
-        `endif
+            INST_FPU_F2F: begin fpu_op = fpnew_pkg::F2F; end
             INST_FPU_F2I,
             INST_FPU_F2U: begin fpu_op = fpnew_pkg::F2I; fpu_op_mod = op_type[0]; end
             INST_FPU_I2F,

@@ -31,6 +31,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     input wire [TAG_WIDTH-1:0] tag_in,
 
     input wire [INST_FRM_BITS-1:0] frm,
+    input wire [INST_FMT_BITS-1:0] fmt,
 
     input wire  is_madd,
     input wire  is_sub,
@@ -49,7 +50,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     input wire  ready_out,
     output wire valid_out
 );
-    localparam DATAW = 3 * 32 + INST_FRM_BITS;
+    localparam DATAW = 3 * 32 + INST_FRM_BITS + INST_FMT_BITS;
 
     wire [NUM_LANES-1:0][DATAW-1:0] data_in;
 
@@ -63,9 +64,36 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
     reg [NUM_LANES-1:0][31:0] a, b, c;
 
+    function automatic [15:0] unbox_half(input [31:0] value);
+        unbox_half = (&value[31:16]) ? value[15:0] : 16'h7e00;
+    endfunction
+
+    wire [NUM_LANES-1:0][15:0] dataa_h, datab_h, datac_h;
+    for (genvar i = 0; i < NUM_LANES; ++i) begin : g_unbox_half
+        assign dataa_h[i] = unbox_half(dataa[i]);
+        assign datab_h[i] = unbox_half(datab[i]);
+        assign datac_h[i] = unbox_half(datac[i]);
+    end
+
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_select
         always @(*) begin
-            if (is_madd) begin
+            if (fmt == 2'b10) begin
+                if (is_madd) begin
+                    a[i] = {16'hffff, is_neg ^ dataa_h[i][15], dataa_h[i][14:0]};
+                    b[i] = {16'hffff, datab_h[i]};
+                    c[i] = {16'hffff, is_neg ^ is_sub ^ datac_h[i][15], datac_h[i][14:0]};
+                end else if (is_neg) begin
+                    a[i] = {16'hffff, dataa_h[i]};
+                    b[i] = {16'hffff, datab_h[i]};
+                    // Match the addend zero sign to the product.  Using +0
+                    // would turn (-0 * +x) + +0 into +0 under RNE.
+                    c[i] = {16'hffff, dataa_h[i][15] ^ datab_h[i][15], 15'b0};
+                end else begin
+                    a[i] = {16'hffff, dataa_h[i]};
+                    b[i] = 32'hffff3c00;
+                    c[i] = {16'hffff, is_sub ^ datab_h[i][15], datab_h[i][14:0]};
+                end
+            end else if (is_madd) begin
                 // MADD / MSUB / NMADD / NMSUB
                 a[i] = {is_neg ^ dataa[i][31], dataa[i][30:0]};
                 b[i] = datab[i];
@@ -75,7 +103,9 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
                     // MUL
                     a[i] = dataa[i];
                     b[i] = datab[i];
-                    c[i] = '0;
+                    // Preserve the IEEE-754 signed-zero result when multiply
+                    // is implemented through the FMA datapath.
+                    c[i] = {dataa[i][31] ^ datab[i][31], 31'b0};
                 end else begin
                     // ADD / SUB
                     a[i] = dataa[i];
@@ -91,6 +121,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         assign data_in[i][32 +: 32] = b[i];
         assign data_in[i][64 +: 32] = c[i];
         assign data_in[i][96 +: INST_FRM_BITS] = frm;
+        assign data_in[i][96 + INST_FRM_BITS +: INST_FMT_BITS] = fmt;
     end
 
     VX_pe_serializer #(
@@ -148,7 +179,10 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 `elsif VIVADO
 
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fmas
-        wire [2:0] tuser;
+        wire [2:0] tuser_s, tuser_h;
+        wire [31:0] result_s;
+        wire [15:0] result_h;
+        wire fmt_h_out;
 
         xil_fma_lowL fma (
             .aclk                (clk),
@@ -160,11 +194,45 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .s_axis_c_tvalid     (1'b1),
             .s_axis_c_tdata      (pe_data_in[i][64 +: 32]),
             `UNUSED_PIN (m_axis_result_tvalid),
-            .m_axis_result_tdata (pe_data_out[i][0 +: 32]),
-            .m_axis_result_tuser (tuser)
+            .m_axis_result_tdata (result_s),
+            .m_axis_result_tuser (tuser_s)
         );
+
+    `ifdef EXT_ZFH_ENABLE
+        xil_f16_fma fma_h (
+            .aclk                (clk),
+            .aclken              (pe_enable),
+            .s_axis_a_tvalid     (1'b1),
+            .s_axis_a_tdata      (pe_data_in[i][0 +: 16]),
+            .s_axis_b_tvalid     (1'b1),
+            .s_axis_b_tdata      (pe_data_in[i][32 +: 16]),
+            .s_axis_c_tvalid     (1'b1),
+            .s_axis_c_tdata      (pe_data_in[i][64 +: 16]),
+            `UNUSED_PIN (m_axis_result_tvalid),
+            .m_axis_result_tdata (result_h),
+            .m_axis_result_tuser (tuser_h)
+        );
+    `else
+        assign result_h = '0;
+        assign tuser_h = '0;
+    `endif
+
+        VX_shift_register #(
+            .DATAW (1),
+            .DEPTH (`LATENCY_FMA)
+        ) shift_fmt (
+            .clk      (clk),
+            `UNUSED_PIN (reset),
+            .enable   (pe_enable),
+            .data_in  (pe_data_in[i][96 + INST_FRM_BITS +: INST_FMT_BITS] == 2'b10),
+            .data_out (fmt_h_out)
+        );
+
+        assign pe_data_out[i][0 +: 32] = fmt_h_out ? {16'hffff, result_h} : result_s;
                                                       // NV, DZ, OF, UF, NX
-        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = {tuser[2], 1'b0, tuser[1], tuser[0], 1'b0};
+        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = fmt_h_out
+            ? {tuser_h[2], 1'b0, tuser_h[1], tuser_h[0], 1'b0}
+            : {tuser_s[2], 1'b0, tuser_s[1], tuser_s[0], 1'b0};
     end
 
     assign has_fflags = 1;

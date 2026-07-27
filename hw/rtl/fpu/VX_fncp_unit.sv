@@ -38,6 +38,7 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
     output wire [`FP_FLAGS_BITS-1:0] fflags
 );
+    localparam FP_WIDTH = 1 + EXP_BITS + MAN_BITS;
     localparam  NEG_INF     = 32'h00000001,
                 NEG_NORM    = 32'h00000002,
                 NEG_SUBNORM = 32'h00000004,
@@ -56,20 +57,20 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire        a_smaller, ab_equal;
 
     // Setup
-    assign     a_sign = dataa[31];
-    assign a_exponent = dataa[30:23];
-    assign a_mantissa = dataa[22:0];
+    assign     a_sign = dataa[FP_WIDTH-1];
+    assign a_exponent = 8'(dataa[MAN_BITS +: EXP_BITS]);
+    assign a_mantissa = 23'(dataa[0 +: MAN_BITS]);
 
-    assign     b_sign = datab[31];
-    assign b_exponent = datab[30:23];
-    assign b_mantissa = datab[22:0];
+    assign     b_sign = datab[FP_WIDTH-1];
+    assign b_exponent = 8'(datab[MAN_BITS +: EXP_BITS]);
+    assign b_mantissa = 23'(datab[0 +: MAN_BITS]);
 
     VX_fp_classifier #(
         .EXP_BITS (EXP_BITS),
         .MAN_BITS (MAN_BITS)
     ) fp_class_a (
-        .exp_i  (a_exponent),
-        .man_i  (a_mantissa),
+        .exp_i  (a_exponent[0 +: EXP_BITS]),
+        .man_i  (a_mantissa[0 +: MAN_BITS]),
         .clss_o (a_fclass)
     );
 
@@ -77,13 +78,15 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         .EXP_BITS (EXP_BITS),
         .MAN_BITS (MAN_BITS)
     ) fp_class_b (
-        .exp_i  (b_exponent),
-        .man_i  (b_mantissa),
+        .exp_i  (b_exponent[0 +: EXP_BITS]),
+        .man_i  (b_mantissa[0 +: MAN_BITS]),
         .clss_o (b_fclass)
     );
 
-    assign a_smaller = (dataa < datab) ^ (a_sign || b_sign);
-    assign ab_equal  = (dataa == datab)
+    wire [31:0] a_value = 32'(dataa[0 +: FP_WIDTH]);
+    wire [31:0] b_value = 32'(datab[0 +: FP_WIDTH]);
+    assign a_smaller = (a_value < b_value) ^ (a_sign || b_sign);
+    assign ab_equal  = (a_value == b_value)
                     || (a_fclass.is_zero && b_fclass.is_zero); // +0 == -0
 
     // Pipeline stage0
@@ -138,14 +141,17 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     reg [31:0] fminmax_res_s0;
     always @(*) begin
         if (a_fclass_s0.is_nan && b_fclass_s0.is_nan)
-            fminmax_res_s0 = {1'b0, 8'hff, 1'b1, 22'd0}; // canonical qNaN
+            fminmax_res_s0 = (FP_WIDTH == 16) ? 32'hffff7e00
+                                               : {1'b0, 8'hff, 1'b1, 22'd0};
         else if (a_fclass_s0.is_nan)
-            fminmax_res_s0 = datab_s0;
+            fminmax_res_s0 = (FP_WIDTH == 16) ? {16'hffff, datab_s0[15:0]} : datab_s0;
         else if (b_fclass_s0.is_nan)
-            fminmax_res_s0 = dataa_s0;
+            fminmax_res_s0 = (FP_WIDTH == 16) ? {16'hffff, dataa_s0[15:0]} : dataa_s0;
         else begin
             // FMIN, FMAX
-            fminmax_res_s0 = (op_mod_s0[0] ^ a_smaller_s0) ? dataa_s0 : datab_s0;
+            fminmax_res_s0 = (FP_WIDTH == 16)
+                ? {16'hffff, (op_mod_s0[0] ^ a_smaller_s0) ? dataa_s0[15:0] : datab_s0[15:0]}
+                : ((op_mod_s0[0] ^ a_smaller_s0) ? dataa_s0 : datab_s0);
         end
     end
 
@@ -153,9 +159,15 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     reg [31:0] fsgnj_res_s0;    // result of sign injection
     always @(*) begin
         case (op_mod_s0[1:0])
-            0: fsgnj_res_s0 = { b_sign_s0, a_exponent_s0, a_mantissa_s0};
-            1: fsgnj_res_s0 = {~b_sign_s0, a_exponent_s0, a_mantissa_s0};
-        default: fsgnj_res_s0 = { a_sign_s0 ^ b_sign_s0, a_exponent_s0, a_mantissa_s0};
+            0: fsgnj_res_s0 = (FP_WIDTH == 16)
+                ? {16'hffff, b_sign_s0, a_exponent_s0[4:0], a_mantissa_s0[9:0]}
+                : {b_sign_s0, a_exponent_s0, a_mantissa_s0};
+            1: fsgnj_res_s0 = (FP_WIDTH == 16)
+                ? {16'hffff, ~b_sign_s0, a_exponent_s0[4:0], a_mantissa_s0[9:0]}
+                : {~b_sign_s0, a_exponent_s0, a_mantissa_s0};
+        default: fsgnj_res_s0 = (FP_WIDTH == 16)
+                ? {16'hffff, a_sign_s0 ^ b_sign_s0, a_exponent_s0[4:0], a_mantissa_s0[9:0]}
+                : {a_sign_s0 ^ b_sign_s0, a_exponent_s0, a_mantissa_s0};
         endcase
     end
 
@@ -215,7 +227,11 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             end
             4,5: begin
                 // FMV
-                result_s0 = dataa_s0;
+                if (FP_WIDTH == 16)
+                    result_s0 = op_mod_s0[0] ? {16'hffff, dataa_s0[15:0]}
+                                             : 32'($signed(dataa_s0[15:0]));
+                else
+                    result_s0 = dataa_s0;
                 fflags_NV_s0 = 0;
             end
             6,7: begin

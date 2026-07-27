@@ -18,7 +18,8 @@
 module VX_fpu_cvt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     parameter NUM_LANES = 5,
     parameter NUM_PES   = `UP(NUM_LANES / `FCVT_PE_RATIO),
-    parameter TAG_WIDTH = 1
+    parameter TAG_WIDTH = 1,
+    parameter FP_FORMAT = 0
 ) (
     input wire clk,
     input wire reset,
@@ -59,7 +60,8 @@ module VX_fpu_cvt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire [NUM_PES-1:0][(`FP_FLAGS_BITS+32)-1:0] pe_data_out;
 
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_data_in
-        assign data_in[i][0  +: 32] = dataa[i];
+        assign data_in[i][0  +: 32] = (FP_FORMAT == 2 && !is_itof && ~&dataa[i][31:16])
+                                           ? 32'hffff7e00 : dataa[i];
         assign data_in[i][32 +: INST_FRM_BITS] = frm;
         assign data_in[i][32 + INST_FRM_BITS +: 1] = is_itof;
         assign data_in[i][32 + INST_FRM_BITS + 1 +: 1] = is_signed;
@@ -100,6 +102,8 @@ module VX_fpu_cvt import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fcvt_units
         VX_fcvt_unit #(
             .LATENCY (`LATENCY_FCVT),
+            .MAN_BITS(FP_FORMAT == 2 ? 10 : 23),
+            .EXP_BITS(FP_FORMAT == 2 ? 5 : 8),
             .OUT_REG (1)
         ) fcvt_unit (
             .clk        (clk),

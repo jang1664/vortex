@@ -31,6 +31,7 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     input wire [TAG_WIDTH-1:0] tag_in,
 
     input wire [INST_FPU_BITS-1:0] op_type,
+    input wire [INST_FMT_BITS-1:0] fmt,
     input wire [INST_FRM_BITS-1:0] frm,
 
     input wire [NUM_LANES-1:0][31:0]  dataa,
@@ -45,7 +46,7 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     input wire  ready_out,
     output wire valid_out
 );
-    localparam DATAW = 2 * 32 + INST_FRM_BITS + INST_FPU_BITS;
+    localparam DATAW = 2 * 32 + INST_FRM_BITS + INST_FPU_BITS + INST_FMT_BITS;
 
     wire [NUM_LANES-1:0][DATAW-1:0] data_in;
 
@@ -62,6 +63,7 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         assign data_in[i][32 +: 32] = datab[i];
         assign data_in[i][64 +: INST_FRM_BITS] = frm;
         assign data_in[i][64 + INST_FRM_BITS +: INST_FPU_BITS] = op_type;
+        assign data_in[i][64 + INST_FRM_BITS + INST_FPU_BITS +: INST_FMT_BITS] = fmt;
     end
 
     VX_pe_serializer #(
@@ -97,6 +99,9 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     end
 
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fncp_units
+        wire [31:0] result_s, result_h;
+        wire [`FP_FLAGS_BITS-1:0] fflags_s, fflags_h;
+        wire fmt_h_out;
         VX_fncp_unit #(
             .LATENCY (`LATENCY_FNCP),
             .OUT_REG (1)
@@ -108,9 +113,29 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .op_type    (pe_data_in[0][64 + INST_FRM_BITS +: INST_FPU_BITS]),
             .dataa      (pe_data_in[i][0 +: 32]),
             .datab      (pe_data_in[i][32 +: 32]),
-            .result     (pe_data_out[i][0 +: 32]),
-            .fflags     (pe_data_out[i][32 +: `FP_FLAGS_BITS])
+            .result     (result_s),
+            .fflags     (fflags_s)
         );
+        VX_fncp_unit #(
+            .LATENCY (`LATENCY_FNCP), .EXP_BITS(5), .MAN_BITS(10), .OUT_REG(1)
+        ) fncp_unit_h (
+            .clk(clk), .reset(reset), .enable(pe_enable),
+            .frm(pe_data_in[0][64 +: INST_FRM_BITS]),
+            .op_type(pe_data_in[0][64 + INST_FRM_BITS +: INST_FPU_BITS]),
+            .dataa(((pe_data_in[0][64 + INST_FRM_BITS +: INST_FPU_BITS] == INST_FPU_NCP)
+                 && ((pe_data_in[0][64 +: INST_FRM_BITS] == 3'd4)
+                  || (pe_data_in[0][64 +: INST_FRM_BITS] == 3'd5)))
+                    ? pe_data_in[i][0 +: 32]
+                    : ((&pe_data_in[i][31:16]) ? pe_data_in[i][0 +: 32] : 32'hffff7e00)),
+            .datab((&pe_data_in[i][63:48]) ? pe_data_in[i][32 +: 32] : 32'hffff7e00),
+            .result(result_h), .fflags(fflags_h)
+        );
+        VX_shift_register #(.DATAW(1), .DEPTH(`LATENCY_FNCP)) shift_fmt (
+            .clk(clk), `UNUSED_PIN(reset), .enable(pe_enable),
+            .data_in(pe_data_in[i][64 + INST_FRM_BITS + INST_FPU_BITS +: INST_FMT_BITS] == 2'b10),
+            .data_out(fmt_h_out)
+        );
+        assign pe_data_out[i] = fmt_h_out ? {fflags_h, result_h} : {fflags_s, result_s};
     end
 
     assign has_fflags = 1;

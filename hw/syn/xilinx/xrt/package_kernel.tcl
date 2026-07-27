@@ -226,6 +226,11 @@ set ip_files [list \
  [file normalize "${build_dir}/ip/xil_f32add_latency1/xil_f32add_latency1.xci"] \
  [file normalize "${build_dir}/ip/xil_f32mul_latency1/xil_f32mul_latency1.xci"] \
  [file normalize "${build_dir}/ip/xil_f16mul_latency1/xil_f16mul_latency1.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16_fma/xil_f16_fma.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16_div/xil_f16_div.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16_sqrt/xil_f16_sqrt.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16_to_f32/xil_f16_to_f32.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32_to_f16/xil_f32_to_f16.xci"] \
  ]
 add_files -verbose -norecurse -fileset $obj $ip_files
 
