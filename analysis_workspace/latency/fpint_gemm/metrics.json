@@ -1,0 +1,64 @@
+{
+  "workload": {
+    "args": "-m 32 -n 32 -k 128 -q 32 -t 0 -d 0",
+    "clock_period_ns": 10,
+    "improve_app": "fpint_gemm_ffn_hw",
+    "naive_app": "fpint_gemm_ffn_hw_naive"
+  },
+  "simv_perf": {
+    "improve": {
+      "jobs": 4,
+      "total_cycles": 487,
+      "busy_cycles": 8881,
+      "compute_cycles": 216,
+      "stall_cycles": 4,
+      "mac_count": 32768,
+      "dma_mxu_overlap_cycles": 180,
+      "dma_mxu_overlap_percent": 36.961,
+      "instructions": 12969,
+      "core_cycles": 8850,
+      "ipc": 1.465424
+    },
+    "naive": {
+      "jobs": 4,
+      "total_cycles": 1489,
+      "busy_cycles": 10575,
+      "compute_cycles": 340,
+      "stall_cycles": 4,
+      "mac_count": 32768,
+      "dma_mxu_overlap_cycles": 0,
+      "dma_mxu_overlap_percent": 0.0,
+      "instructions": 13113,
+      "core_cycles": 10550,
+      "ipc": 1.242938
+    }
+  },
+  "fsdb_summary": {
+    "improve": {
+      "fsm_window_ns": [76445, 80565],
+      "fsm_window_cycles": 412,
+      "parent_queue_full_cycles": 354,
+      "request_beats": {"input": 128, "weight": 32, "scale_zero": 8},
+      "request_stall_cycles": {"input": 0, "weight": 0, "scale_zero": 0},
+      "command_latency_cycles": {
+        "weight": [22, 22, 22, 22],
+        "quant": [15, 15, 15, 15, 16, 15, 15, 15],
+        "input": [46, 46, 46, 46],
+        "gemm": [56, 56, 56, 56]
+      }
+    },
+    "naive": {
+      "fsm_window_ns": [79365, 91965],
+      "fsm_window_cycles": 1260,
+      "parent_queue_full_cycles": 1205,
+      "request_beats": {"input": 128, "weight": 32, "scale_zero": 8},
+      "request_stall_cycles": {"input": 0, "weight": 0, "scale_zero": 0},
+      "command_latency_cycles": {
+        "weight": [50, 50, 62, 50],
+        "quant": [29, 29, 29, 39, 29, 43, 29, 29],
+        "input": [65, 90, 80, 65],
+        "gemm": [77, 102, 92, 77]
+      }
+    }
+  }
+}

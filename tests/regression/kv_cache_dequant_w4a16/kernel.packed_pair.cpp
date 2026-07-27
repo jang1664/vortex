@@ -44,8 +44,10 @@ void kernel_kv_cache_dequant(kernel_arg_t *__UNIFORM__ arg) {
       zp1 = kv_signed_int16(zeros[qidx1]);
     }
 
-    const fp16_t out0 = float_to_fp16(((float)q0 - (float)zp0) * scale0);
-    const fp16_t out1 = float_to_fp16(((float)q1 - (float)zp1) * scale1);
+    const int32_t q0_minus_zp = q0 - zp0;
+    const int32_t q1_minus_zp = q1 - zp1;
+    const fp16_t out0 = float_to_fp16((float)q0_minus_zp * scale0);
+    const fp16_t out1 = float_to_fp16((float)q1_minus_zp * scale1);
     dst[byte_idx] = (uint32_t)out0 | ((uint32_t)out1 << 16);
   }
 }

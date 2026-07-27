@@ -33,10 +33,12 @@ KV_DEQUANT_INLINE uint32_t dequantize_pair(uint8_t packed,
                                            int32_t zero1) {
   const int32_t q0 = decode_int4<QUANT_MODE>(packed & 0x0fu);
   const int32_t q1 = decode_int4<QUANT_MODE>(packed >> 4);
+  const int32_t q0_minus_zero = q0 - zero0;
+  const int32_t q1_minus_zero = q1 - zero1;
   const fp16_t out0 =
-      float_to_fp16(((float)q0 - (float)zero0) * scale0);
+      float_to_fp16((float)q0_minus_zero * scale0);
   const fp16_t out1 =
-      float_to_fp16(((float)q1 - (float)zero1) * scale1);
+      float_to_fp16((float)q1_minus_zero * scale1);
   return (uint32_t)out0 | ((uint32_t)out1 << 16);
 }
 

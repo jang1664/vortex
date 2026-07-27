@@ -339,10 +339,9 @@ E2E_STACK_BY = "kind"
 RELATIVE = True
 RELATIVE_SCOPE = "x_tick"  # global, subplot, or x_tick
 
-# Dequantization policy is controlled independently by metric, stage, and
-# purpose. Prefill retains weight dequantization but excludes KV-cache
-# dequantization. Latency generation keeps the previous KV exclusion, while
-# energy generation includes both components.
+# Dequantization policy is controlled independently by metric and stage.
+# Latency excludes all dequantization. Energy prefill retains only weight
+# dequantization, while energy generation includes weight and KV components.
 INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_PREFILL = False
 INCLUDE_KV_DEQUANTIZATION_IN_LATENCY_PREFILL = False
 INCLUDE_WEIGHT_DEQUANTIZATION_IN_LATENCY_GENERATION = False
@@ -485,6 +484,20 @@ def filter_energy_dequantization_kernels(df: pd.DataFrame) -> pd.Series:
         ),
         include_kv_generation=INCLUDE_KV_DEQUANTIZATION_IN_ENERGY_GENERATION,
     )
+
+
+def split_energy_dequantization_kinds(rows: list[dict]) -> None:
+    """Split energy-only kind stacks into weight and KV dequantization."""
+    for row in rows:
+        if str(row.get("kind", "")) != "dequantization":
+            continue
+        name = str(row.get("name", ""))
+        if "_weight_" in name:
+            row["kind"] = "W dequant"
+        elif name.startswith("kv_cache_dequant_"):
+            row["kind"] = "KV dequant"
+        else:
+            raise ValueError(f"unclassified dequantization kernel name: {name!r}")
 
 
 LATENCY_DEQUANTIZATION_POLICY = (
@@ -1173,6 +1186,7 @@ def export_energy_figure_data_pair(
         power_metric=power_metric,
         fpga_period_s=fpga_period_s,
     )
+    split_energy_dequantization_kinds(rows)
     totals = summarize_energy_rows(rows)
     label_maps = plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE)
 

@@ -90,8 +90,9 @@ static void dequant_cpu(const std::vector<uint8_t>& packed,
               ? (int32_t)q_bits
               : (int32_t)kv_signed_int4(q_bits);
       uint64_t qidx = kv_qparam_index(k, n, K, N, QBLK, QDIR);
+      const int32_t q_minus_zero = q - (int32_t)zeros[qidx];
       dst[(uint64_t)k * N + n] =
-          float_to_fp16(((float)q - (float)zeros[qidx]) * fp16_to_float(scales[qidx]));
+          float_to_fp16((float)q_minus_zero * fp16_to_float(scales[qidx]));
     }
   }
 }

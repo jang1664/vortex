@@ -29,7 +29,8 @@ void kernel_kv_cache_dequant(kernel_arg_t *__UNIFORM__ arg) {
     const uint64_t qidx = kv_qparam_index(k, n, K, N, QBLK, QDIR);
     const float scale = fp16_to_float(scales[qidx]);
     const int32_t zp = kv_signed_int16(zeros[qidx]);
-    dst[idx] = float_to_fp16(((float)q - (float)zp) * scale);
+    const int32_t q_minus_zp = q - zp;
+    dst[idx] = float_to_fp16((float)q_minus_zp * scale);
   }
 }
 

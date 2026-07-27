@@ -87,6 +87,9 @@ DECODE_BAR_WIDTH_SCALE = 1.20
 MAX_BAR_FILL_RATIO = 0.96
 VALUE_LABELS = True
 E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
+# Candidate used as 1.0 for relative plots. Set to None to retain the previous
+# behavior of normalizing against the smallest positive value at each x tick.
+RELATIVE_BASELINE_CANDIDATE: str | None = "C4"
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
 STAGE_ORDER = ("Prefill", "Decode")
 RAW_DB_SUBDIRS = ("C1", "C3", "C4")
@@ -175,6 +178,9 @@ class WideBarKnobs:
     title_fontsize: float = TITLE_FONTSIZE
     subplot_title_fontsize: float = SUBPLOT_TITLE_FONTSIZE
     subplot_title_inside: bool = False
+    subplot_title_loc: str = "center"
+    subplot_title_pad: float | None = None
+    subplot_title_fontweight: str | None = None
     subplot_title_replacements: tuple[tuple[str, str], ...] = ()
     axis_label_fontsize: float = AXIS_LABEL_FONTSIZE
     tick_label_fontsize: float = TICK_LABEL_FONTSIZE
@@ -188,8 +194,9 @@ class WideBarKnobs:
     bar_linewidth: float = BAR_LINEWIDTH
     bar_alpha: float = BAR_ALPHA
     palette: tuple[str, ...] | None = None
+    relative_baseline_candidate: str | None = RELATIVE_BASELINE_CANDIDATE
     value_labels: bool = VALUE_LABELS
-    value_label_format: str = "{:.2g}"
+    value_label_format: str = "{:.2f}"
     value_label_fontsize: float | Literal["auto"] = VALUE_LABEL_FONTSIZE
     value_label_auto_max_fontsize: float = VALUE_LABEL_AUTO_MAX_FONTSIZE
     value_label_rotation: float = 90.0
@@ -252,7 +259,12 @@ E2E_GEMM_LAYOUT_STACK_PALETTE = STACK_PALETTE
 E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE = STACK_PALETTE
 E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE = STACK_PALETTE
 ENERGY_KIND_STACK_PALETTE = E2E_KIND_STACK_PALETTE
-ENERGY_KIND_STACK_GROUPS = E2E_KIND_STACK_GROUPS
+ENERGY_KIND_STACK_GROUPS = (
+    StackGroupKnobs(label="gemm", columns=("gemm",)),
+    StackGroupKnobs(label="vector", columns=None),
+    StackGroupKnobs(label="W dequant", columns=("W dequant",)),
+    StackGroupKnobs(label="KV dequant", columns=("KV dequant",)),
+)
 
 
 def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
@@ -262,14 +274,17 @@ def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
         "title": None,
         "subplot_title_template": LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
         "subplot_title_fontsize": MIN_FONT_SIZE - 0.6,
-        "subplot_title_inside": True,
+        "subplot_title_inside": False,
+        "subplot_title_loc": "left",
+        "subplot_title_pad": 1.0,
+        "subplot_title_fontweight": "bold",
         "subplot_title_replacements": (
             ("Llama 3.2 1B, ", "llama3.2-1B "),
             ("Llama 3.2 3B, ", "llama3.2-3B "),
             ("Llama 2, ", "llama2 "),
             ("Llama 3, ", "llama3 "),
         ),
-        "x_label": "",
+        "x_label": "context length",
         "y_label": y_label,
         "x_group_labels_inside": True,
         "legend_position": "top",
@@ -424,7 +439,7 @@ class PlotKnobs:
     llama_energy_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
-            legend_ncol=2,
+            legend_ncol=4,
             stack_palette=ENERGY_KIND_STACK_PALETTE,
             stack_groups=ENERGY_KIND_STACK_GROUPS,
         )
@@ -438,7 +453,7 @@ class PlotKnobs:
     llama_energy_no_area_norm_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
-            legend_ncol=2,
+            legend_ncol=4,
             stack_palette=ENERGY_KIND_STACK_PALETTE,
             stack_groups=ENERGY_KIND_STACK_GROUPS,
         )
@@ -446,14 +461,14 @@ class PlotKnobs:
     llama_energy_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
-            legend_ncol=4,
+            legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
         )
     )
     llama_energy_no_area_norm_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
-            legend_ncol=4,
+            legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
         )
     )
@@ -1576,7 +1591,7 @@ def _set_grouped_x_ticks(
         for centers in batch_positions.values()
     ]
     batch_tick_labels = [
-        f"b{_format_batch(batch)}"
+        f"batch={_format_batch(batch)}"
         for batch in batch_positions
     ]
     if knobs.x_group_labels_inside:
@@ -1850,6 +1865,12 @@ def plot_wide_candidate_bars(
         raise ValueError(f"{csv_path} has no candidate value columns")
     for column in value_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = _apply_relative_candidate_values(
+        pd,
+        df,
+        value_columns,
+        knobs.relative_baseline_candidate,
+    )
 
     stages = sorted(_ordered_unique(df["stage"].tolist()), key=_stage_sort_key)
     fig, axes = plt.subplots(len(stages), 1, figsize=_plot_size(knobs, len(stages)), squeeze=False)
@@ -1939,6 +1960,40 @@ def _stack_value_columns(pd: Any, df: Any) -> list[str]:
     return [column for column in columns if column != "total"]
 
 
+def _apply_relative_candidate_values(
+    pd: Any,
+    df: Any,
+    value_columns: Sequence[str],
+    baseline_candidate: str | None,
+) -> Any:
+    """Renormalize wide candidate values so the selected candidate is 1.0."""
+    if baseline_candidate is None:
+        return df
+    if baseline_candidate not in value_columns:
+        raise ValueError(
+            f"relative baseline candidate {baseline_candidate!r} is missing; "
+            f"available candidates: {list(value_columns)}"
+        )
+
+    relative = df.copy()
+    baselines = pd.to_numeric(
+        relative[baseline_candidate],
+        errors="coerce",
+    )
+    invalid = ~baselines.map(math.isfinite) | baselines.le(0.0)
+    if bool(invalid.any()):
+        raise ValueError(
+            f"relative baseline candidate {baseline_candidate!r} has "
+            f"{int(invalid.sum())} missing, non-finite, or non-positive values"
+        )
+    for column in value_columns:
+        relative[column] = pd.to_numeric(
+            relative[column],
+            errors="coerce",
+        ) / baselines
+    return relative
+
+
 LAYOUT_FUSED_BACKEND_MARKER = "_layout_fused"
 NAME_BACKEND_SEPARATOR = "::"
 
@@ -1990,7 +2045,7 @@ def _build_gemm_layout_stack(
     include_vector: bool = False,
     include_dequant: bool = False,
 ) -> Any:
-    """Reduce backend stacks into GEMM, layout, vector, and optional dequant latency."""
+    """Reduce backend stacks into GEMM, layout, vector, and dequant components."""
     required = {"model", "stage", "batch", "seq", "candidate"}
     missing = required - set(df.columns)
     if missing:
@@ -2012,6 +2067,26 @@ def _build_gemm_layout_stack(
         for column in backend_columns
         if any("dequant" in part.lower() for part in _split_name_backend(column) if part)
     ]
+    weight_dequant_columns = [
+        column
+        for column in dequant_columns
+        if (name := _split_name_backend(column)[0]) is not None
+        and "_weight_" in name
+    ]
+    kv_dequant_columns = [
+        column
+        for column in dequant_columns
+        if (name := _split_name_backend(column)[0]) is not None
+        and name.startswith("kv_cache_dequant_")
+    ]
+    unknown_dequant_columns = sorted(
+        set(dequant_columns) - set(weight_dequant_columns) - set(kv_dequant_columns)
+    )
+    if include_dequant and unknown_dequant_columns:
+        raise ValueError(
+            "unclassified dequantization stack columns: "
+            f"{unknown_dequant_columns}"
+        )
     if not gemm_columns:
         raise ValueError("backend-stacked E2E data has no GEMM backend columns")
     if not layout_columns:
@@ -2071,11 +2146,17 @@ def _build_gemm_layout_stack(
                 "layout": layout_latency,
             }
             if include_vector:
-                actual_dequant_latency = (
-                    sum(float(row[column]) for column in dequant_columns)
+                weight_dequant_latency = (
+                    sum(float(row[column]) for column in weight_dequant_columns)
                     if include_dequant
                     else 0.0
                 )
+                kv_dequant_latency = (
+                    sum(float(row[column]) for column in kv_dequant_columns)
+                    if include_dequant
+                    else 0.0
+                )
+                actual_dequant_latency = weight_dequant_latency + kv_dequant_latency
                 actual_vector_latency = sum(
                     float(row[column])
                     for column in backend_columns
@@ -2085,7 +2166,8 @@ def _build_gemm_layout_stack(
                 vector_latency = actual_vector_latency - layout_latency
                 record["vector"] = vector_latency
                 if include_dequant:
-                    record["dequant"] = actual_dequant_latency
+                    record["W dequant"] = weight_dequant_latency
+                    record["KV dequant"] = kv_dequant_latency
                 record["total"] = (
                     gemm_latency
                     + layout_latency
@@ -2105,7 +2187,7 @@ def _build_gemm_layout_vector_stack(pd: Any, df: Any) -> Any:
 
 
 def _build_gemm_layout_vector_dequant_stack(pd: Any, df: Any) -> Any:
-    """Separate energy into GEMM, layout, vector, and dequant components."""
+    """Separate energy into GEMM, layout, vector, W dequant, and KV dequant."""
     return _build_gemm_layout_stack(
         pd,
         df,
@@ -2150,8 +2232,9 @@ def _apply_relative_stack_values(
     pd: Any,
     df: Any,
     stack_columns: Sequence[str],
+    baseline_candidate: str | None,
 ) -> Any:
-    """Normalize each stack against the smallest positive total at its x tick."""
+    """Normalize each stack against a candidate or the minimum at its x tick."""
     if not stack_columns:
         return df
 
@@ -2168,7 +2251,39 @@ def _apply_relative_stack_values(
         positive = positive[positive > 0.0]
         return float(positive.min()) if not positive.empty else 1.0
 
-    if group_columns:
+    if baseline_candidate is not None:
+        if "candidate" not in relative.columns:
+            raise ValueError("candidate-relative stack normalization requires candidate")
+        is_baseline = relative["candidate"].astype(str).eq(baseline_candidate)
+        relative["__candidate_baseline"] = relative["__stack_total"].where(
+            is_baseline
+        )
+        if group_columns:
+            baseline_counts = is_baseline.groupby(
+                [relative[column] for column in group_columns],
+                sort=False,
+                dropna=False,
+            ).transform("sum")
+            if bool(baseline_counts.ne(1).any()):
+                raise ValueError(
+                    f"expected exactly one {baseline_candidate!r} stack for "
+                    "each model/stage/batch/seq group"
+                )
+            baselines = relative.groupby(
+                group_columns,
+                sort=False,
+                dropna=False,
+            )["__candidate_baseline"].transform("first")
+        else:
+            if int(is_baseline.sum()) != 1:
+                raise ValueError(
+                    f"expected exactly one {baseline_candidate!r} stack"
+                )
+            baselines = pd.Series(
+                relative.loc[is_baseline, "__stack_total"].iloc[0],
+                index=relative.index,
+            )
+    elif group_columns:
         baselines = relative.groupby(
             group_columns,
             sort=False,
@@ -2179,13 +2294,18 @@ def _apply_relative_stack_values(
             _positive_min(relative["__stack_total"]),
             index=relative.index,
         )
-    baselines = pd.to_numeric(baselines, errors="coerce").fillna(1.0)
-    baselines = baselines.mask(baselines <= 0.0, 1.0)
+    baselines = pd.to_numeric(baselines, errors="coerce")
+    invalid = ~baselines.map(math.isfinite) | baselines.le(0.0)
+    if bool(invalid.any()):
+        raise ValueError("relative stack baseline is missing, non-finite, or non-positive")
 
     for column in stack_columns:
         relative[column] = relative[column] / baselines
     relative["total"] = relative[list(stack_columns)].sum(axis=1)
-    return relative.drop(columns=["__stack_total"])
+    return relative.drop(
+        columns=["__stack_total", "__candidate_baseline"],
+        errors="ignore",
+    )
 
 
 def plot_gemm_stacked_bars(
@@ -2211,7 +2331,12 @@ def plot_gemm_stacked_bars(
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
     df, stack_columns = _apply_stack_groups(df, stack_columns, knobs.stack_groups)
     if knobs.relative:
-        df = _apply_relative_stack_values(pd, df, stack_columns)
+        df = _apply_relative_stack_values(
+            pd,
+            df,
+            stack_columns,
+            knobs.relative_baseline_candidate,
+        )
 
     stages = sorted(_ordered_unique(df["stage"].tolist()), key=_stage_sort_key)
     fig, axes = plt.subplots(len(stages), 1, figsize=_plot_size(knobs, len(stages)), squeeze=False)
@@ -2336,6 +2461,12 @@ def plot_model_wide_candidate_bars(
         raise ValueError("Llama E2E data has no candidate value columns")
     for column in value_columns:
         combined[column] = pd.to_numeric(combined[column], errors="coerce")
+    combined = _apply_relative_candidate_values(
+        pd,
+        combined,
+        value_columns,
+        knobs.relative_baseline_candidate,
+    )
 
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
@@ -2368,7 +2499,13 @@ def plot_model_wide_candidate_bars(
                 bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
             )
         else:
-            ax.set_title(subplot_title, fontsize=knobs.subplot_title_fontsize)
+            ax.set_title(
+                subplot_title,
+                fontsize=knobs.subplot_title_fontsize,
+                loc=knobs.subplot_title_loc,
+                pad=knobs.subplot_title_pad,
+                fontweight=knobs.subplot_title_fontweight,
+            )
         if stage_df.empty:
             ax.text(
                 0.5,
@@ -2444,7 +2581,11 @@ def plot_model_wide_candidate_bars(
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
     if knobs.x_label:
-        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+        axes_list[-1].set_xlabel(
+            knobs.x_label,
+            fontsize=knobs.axis_label_fontsize,
+            labelpad=1.0,
+        )
     fig.tight_layout(
         rect=knobs.tight_layout_rect,
         pad=knobs.tight_layout_pad,
@@ -2513,7 +2654,12 @@ def plot_model_stacked_bars(
         combined[column] = pd.to_numeric(combined[column], errors="coerce").fillna(0.0)
     combined, stack_columns = _apply_stack_groups(combined, stack_columns, knobs.stack_groups)
     if knobs.relative:
-        combined = _apply_relative_stack_values(pd, combined, stack_columns)
+        combined = _apply_relative_stack_values(
+            pd,
+            combined,
+            stack_columns,
+            knobs.relative_baseline_candidate,
+        )
 
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
@@ -2547,7 +2693,13 @@ def plot_model_stacked_bars(
                 bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
             )
         else:
-            ax.set_title(subplot_title, fontsize=knobs.subplot_title_fontsize)
+            ax.set_title(
+                subplot_title,
+                fontsize=knobs.subplot_title_fontsize,
+                loc=knobs.subplot_title_loc,
+                pad=knobs.subplot_title_pad,
+                fontweight=knobs.subplot_title_fontweight,
+            )
         if stage_df.empty:
             ax.text(
                 0.5,
@@ -2629,7 +2781,11 @@ def plot_model_stacked_bars(
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
     if knobs.x_label:
-        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+        axes_list[-1].set_xlabel(
+            knobs.x_label,
+            fontsize=knobs.axis_label_fontsize,
+            labelpad=1.0,
+        )
     fig.tight_layout(
         rect=knobs.tight_layout_rect,
         pad=knobs.tight_layout_pad,
@@ -3014,7 +3170,7 @@ def run_llama_energy_gemm_layout_vector_stacked_plot(
             "_gemm_layout_vector_stacked.png"
         ),
         data_label=(
-            "Llama GEMM + layout + vector + dequant stacked energy "
+            "Llama GEMM + layout + vector + W/KV dequant stacked energy "
             f"({power_metric})"
         ),
         knobs=knobs,
@@ -3037,7 +3193,7 @@ def run_llama_energy_no_area_norm_gemm_layout_vector_stacked_plot(
             "gemm_layout_vector_stacked.png"
         ),
         data_label=(
-            "Llama GEMM + layout + vector + dequant stacked energy "
+            "Llama GEMM + layout + vector + W/KV dequant stacked energy "
             f"without area normalization ({power_metric})"
         ),
         knobs=knobs,
