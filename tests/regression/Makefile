@@ -2,9 +2,11 @@ ROOT_DIR := $(realpath ../..)
 include $(ROOT_DIR)/config.mk
 
 TEST_DIRS := \
+	addrgen \
 	basic \
 	conv3 \
 	cta \
+	dequantize_pt_int4 \
 	demo \
 	detile_output \
 	diverge \
@@ -20,10 +22,19 @@ TEST_DIRS := \
 	elscalar \
 	elsub \
 	elunary \
+	embedding \
 	fence
 
 ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
 TEST_DIRS += fp16_zfh
+endif
+
+ifneq (,$(findstring -DENABLE_GEMM_ACCEL,$(CONFIGS)))
+ifeq (,$(findstring -DGEMM_NAIVE,$(CONFIGS)))
+TEST_DIRS += \
+	flash_attn \
+	fpint_gemm_eladd_fused_hw
+endif
 endif
 
 TEST_DIRS += \

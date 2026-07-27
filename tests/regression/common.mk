@@ -9,6 +9,28 @@ XRT_INI_PATH ?= $(VORTEX_RT_PATH)/xrt/xrt.ini
 VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
 
+# EXT_D_DISABLE selects the single-float ABI, so its startup objects, libc,
+# compiler-rt, and GCC sysroot must all come from the matching LP64F profile.
+# Preserve explicit environment/command-line overrides (for example those from
+# configs/rv64_zfh_lp64f_dsp_vivado.sh), but replace config.mk's generic
+# $(TOOLDIR) defaults when this configuration is requested directly from make.
+LP64F_ZFH_ENABLED := $(and $(findstring -DEXT_D_DISABLE,$(CONFIGS)),$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+ifneq (,$(LP64F_ZFH_ENABLED))
+VORTEX_LP64F_PROFILE ?= /opt/vortex_profiles/rv64imaf_zfh_lp64f
+ifeq ($(origin RISCV_TOOLCHAIN_PATH),file)
+RISCV_TOOLCHAIN_PATH := $(VORTEX_LP64F_PROFILE)/riscv64-gnu-toolchain
+endif
+ifeq ($(origin RISCV_SYSROOT),file)
+RISCV_SYSROOT := $(RISCV_TOOLCHAIN_PATH)/$(RISCV_PREFIX)
+endif
+ifeq ($(origin LIBC_VORTEX),file)
+LIBC_VORTEX := $(VORTEX_LP64F_PROFILE)/libc64
+endif
+ifeq ($(origin LIBCRT_VORTEX),file)
+LIBCRT_VORTEX := $(VORTEX_LP64F_PROFILE)/libcrt64
+endif
+endif
+
 ifeq ($(XLEN),64)
 		ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
 			ifeq ($(EXT_V_ENABLE),1)
