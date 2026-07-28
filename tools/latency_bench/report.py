@@ -19,7 +19,7 @@ RESULT_COLUMNS = [
     "variant", "stage", "name", "args", "measurement_args",
     "latency_shape_json", "padded_args", "shape_json",
     "calls_per_forward", "decode_step_count", "out_tokens",
-    "decode_sample_weight",
+    "decode_sample_weight", "measurement_kind",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
     "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
     "power_csv", "power_summary", "measure_latency", "measure_power",
@@ -99,6 +99,8 @@ def build_results(
     rows = []
 
     for row in suite_to_rows(suite):
+        if row.get("measurement_kind", "measured") != "measured":
+            continue
         exec_key = row["exec_key"]
         status = status_rows.get(exec_key, {})
         raw_csv = Path(status.get("raw_csv", out_dir / "raw" / f"{exec_key}.csv"))

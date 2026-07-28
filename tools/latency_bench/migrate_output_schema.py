@@ -16,7 +16,7 @@ CASE_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
     "variant", "stage", "name", "args", "measurement_args",
     "latency_shape_json", "padded_args", "shape_json", "calls_per_forward",
-    "decode_step_count", "out_tokens", "decode_sample_weight", "warmup",
+    "decode_step_count", "out_tokens", "decode_sample_weight", "measurement_kind", "warmup",
     "iterations", "source",
 ]
 
@@ -82,6 +82,7 @@ def migrate_cases(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[i
             "decode_step_count": old.get("decode_step_count", "1") or "1",
             "out_tokens": old.get("out_tokens", "1") or "1",
             "decode_sample_weight": old.get("decode_sample_weight", "1") or "1",
+            "measurement_kind": old.get("measurement_kind", "measured") or "measured",
             "exec_key": _exec_key(
                 old.get("app", ""),
                 measurement_args,

@@ -137,7 +137,8 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
                 logical_duplicate_count += 1
                 continue
             seen_logical_cases.add(logical_key)
-            execution_keys.add((fpga_bin, case.exec_key))
+            if case.measurement_kind == "measured":
+                execution_keys.add((fpga_bin, case.exec_key))
             groups.setdefault(fpga_bin, []).append((path, case))
 
     base_name = sanitize_id(options.name or options.out.stem)
@@ -158,7 +159,9 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
             "name": suite.name,
             "fpga_bin": fpga_bin,
             "case_count": len(cases),
-            "execution_count": len({case.exec_key for case in cases}),
+            "execution_count": len({
+                case.exec_key for case in cases if case.measurement_kind == "measured"
+            }),
             "logical_duplicate_count": logical_duplicate_count,
             "dropped_duplicate_count": logical_duplicate_count,
         }
@@ -190,7 +193,9 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
             "kinds": sorted({case.kind for case in cases if case.kind}),
             "backends": sorted({case.backend for case in cases if case.backend}),
             "case_count": len(cases),
-            "execution_count": len({case.exec_key for case in cases}),
+            "execution_count": len({
+                case.exec_key for case in cases if case.measurement_kind == "measured"
+            }),
             "run_command": _run_command(suite_path, out_dir / suite.name),
         })
 

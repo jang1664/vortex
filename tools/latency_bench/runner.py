@@ -76,6 +76,7 @@ CASE_COLUMNS = [
     "decode_step_count",
     "out_tokens",
     "decode_sample_weight",
+    "measurement_kind",
     "warmup",
     "iterations",
     "source",
@@ -201,6 +202,8 @@ def validate_inputs(options: RunOptions) -> None:
 def build_execution_units(suite: BenchSuite, out_dir: Path) -> list[ExecutionUnit]:
     units: dict[str, ExecutionUnit] = {}
     for case in suite.cases:
+        if case.measurement_kind != "measured":
+            continue
         if case.exec_key in units:
             continue
         units[case.exec_key] = ExecutionUnit(

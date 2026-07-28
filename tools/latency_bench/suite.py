@@ -69,6 +69,7 @@ class BenchCase:
     decode_step_count: int = 1
     out_tokens: int = 1
     decode_sample_weight: float = 1.0
+    measurement_kind: str = "measured"
     padded_args: str = ""
     measurement_args: str = ""
     latency_shape: dict[str, Any] = field(default_factory=dict)
@@ -600,6 +601,10 @@ def _case_from_raw(raw: dict[str, Any], defaults: BenchDefaults, index: int) -> 
         decode_step_count=int(raw.get("decode_step_count", 1)),
         out_tokens=int(raw.get("out_tokens", 1)),
         decode_sample_weight=float(raw.get("decode_sample_weight", 1)),
+        measurement_kind=str(raw.get(
+            "measurement_kind",
+            (raw.get("shape") or {}).get("measurement_kind", "measured"),
+        )),
         padded_args=str(raw.get("padded_args", "")),
         shape=dict(raw.get("shape") or {}),
         warmup=int(raw.get("warmup", defaults.warmup)),
@@ -893,6 +898,9 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, payload: 
             decode_sample_weight=float(
                 (kernel.get("shape") or {}).get("decode_sample_weight", 1)
             ),
+            measurement_kind=str(
+                (kernel.get("shape") or {}).get("measurement_kind", "measured")
+            ),
             padded_args=str(kernel.get("padded_args", "")),
             shape=dict(kernel.get("shape") or {}),
             warmup=int(raw.get("warmup", defaults.warmup)),
@@ -1047,12 +1055,13 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
             "args": case.args,
             "measurement_args": case.measurement_args or case.args,
             "latency_shape_json": json.dumps(case.latency_shape, sort_keys=True),
+            "padded_args": case.padded_args,
             "shape_json": json.dumps(case.shape, sort_keys=True),
             "calls_per_forward": case.calls_per_forward,
             "decode_step_count": case.decode_step_count,
             "out_tokens": case.out_tokens,
             "decode_sample_weight": case.decode_sample_weight,
-            "padded_args": case.padded_args,
+            "measurement_kind": case.measurement_kind,
             "warmup": case.warmup,
             "iterations": case.iterations,
             "source": case.source,
@@ -1088,6 +1097,8 @@ def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
             row["out_tokens"] = case.out_tokens
         if case.decode_sample_weight != 1:
             row["decode_sample_weight"] = case.decode_sample_weight
+        if case.measurement_kind != "measured":
+            row["measurement_kind"] = case.measurement_kind
         if case.padded_args:
             row["padded_args"] = case.padded_args
         if case.measurement_args and case.measurement_args != case.args:

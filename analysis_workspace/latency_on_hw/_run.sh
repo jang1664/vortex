@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <llama2|llama3|llama3p2_1b|llama3p2_3b>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "Usage: $0 <llama2|llama3|llama3p2_1b|llama3p2_3b> [prefill|decode|generation|all]" >&2
   exit 1
 fi
 
@@ -19,44 +19,61 @@ mkdir -p logs
 # --------------------------------------------------------------------------------------------------------
 # latency measure examples
 # --------------------------------------------------------------------------------------------------------
-model=$1
-if [[ "$model" == "llama2" ]]; then
-  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama2 \
-  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
-      --input generated_suites/llama2_7b_main \
-      --output outputs_llama2_main \
-      --power-kernel-iterations=auto \
-      --no-power-auto-duration \
-      --retry \
-      | tee -i logs/main_llama2.log
-elif [[ "$model" == "llama3" ]]; then
-  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama3 \
-  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
-      --input generated_suites/llama3_8b_main \
-      --output outputs_llama3_main \
-      --power-kernel-iterations=auto \
-      --no-power-auto-duration \
-      --retry \
-      | tee -i logs/main_llama3.log
-elif [[ "$model" == "llama3p2_1b" ]]; then
-  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama3p2_1b \
-  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
-      --input generated_suites/llama3p2_1b_main \
-      --output outputs_llama3p2_1b_main \
-      --power-kernel-iterations=auto \
-      --no-power-auto-duration \
-      --retry \
-      | tee -i logs/main_llama3p2_1b.log
-elif [[ "$model" == "llama3p2_3b" ]]; then
-  BUILD_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_latency_llama3p2_3b \
-  BLACKBOX_TIMEOUT=24h ./run_hw.sh \
-      --input generated_suites/llama3p2_3b_main \
-      --output outputs_llama3p2_3b_main \
-      --power-kernel-iterations=auto \
-      --no-power-auto-duration \
-      --retry \
-      | tee -i logs/main_llama3p2_3b.log
-else
-  echo "Error: unsupported model: ${model}" >&2
-  exit 1
-fi
+model="$1"
+requested_stage="${2:-all}"
+
+case "${requested_stage}" in
+  prefill)
+    stages="prefill"
+    log_stage="prefill"
+    ;;
+  decode|generation)
+    stages="generation"
+    log_stage="decode"
+    ;;
+  all)
+    stages="prefill generation"
+    log_stage="all"
+    ;;
+  *)
+    echo "Error: unsupported stage: ${requested_stage}; expected prefill, decode, generation, or all" >&2
+    exit 1
+    ;;
+esac
+
+case "${model}" in
+  llama2)
+    build_dir="${SCRIPT_DIR}/../../build_latency_llama2"
+    input_dir="generated_suites/llama2_7b_main"
+    output_dir="outputs_llama2_main"
+    ;;
+  llama3)
+    build_dir="${SCRIPT_DIR}/../../build_latency_llama3"
+    input_dir="generated_suites/llama3_8b_main"
+    output_dir="outputs_llama3_main"
+    ;;
+  llama3p2_1b)
+    build_dir="${SCRIPT_DIR}/../../build_latency_llama3p2_1b"
+    input_dir="generated_suites/llama3p2_1b_main"
+    output_dir="outputs_llama3p2_1b_main"
+    ;;
+  llama3p2_3b)
+    build_dir="${SCRIPT_DIR}/../../build_latency_llama3p2_3b"
+    input_dir="generated_suites/llama3p2_3b_main"
+    output_dir="outputs_llama3p2_3b_main"
+    ;;
+  *)
+    echo "Error: unsupported model: ${model}" >&2
+    exit 1
+    ;;
+esac
+
+STAGES="${stages}" \
+BUILD_DIR="${build_dir}" \
+BLACKBOX_TIMEOUT=24h ./run_hw.sh \
+    --input "${input_dir}" \
+    --output "${output_dir}" \
+    --power-kernel-iterations=auto \
+    --no-power-auto-duration \
+    --retry \
+    | tee -i "logs/main_${model}_${log_stage}.log"

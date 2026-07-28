@@ -460,15 +460,44 @@ def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
         ordered = sorted(sample_indices)
         selected = sorted(_linear_sample_weights(len(kernels), ordered).items())
 
+    selected_weights = dict(selected)
+    selected_indices = sorted(selected_weights)
     out = []
-    for index, weight in selected:
-        kernel = dict(kernels[index])
+    for index, source_kernel in enumerate(kernels):
+        weight = selected_weights.get(index, 0.0)
+        measurement_kind = "measured"
+        if index not in selected_weights:
+            measurement_kind = {
+                "invariant": "invariant_reused",
+                "tile_step": "bucket_reused",
+                "continuous": "interpolated",
+            }[sampling_class]
+
+        kernel = dict(source_kernel)
         shape = dict(kernel.get("shape") or {})
+        if measurement_kind == "interpolated":
+            lower = max(sample for sample in selected_indices if sample < index)
+            upper = min(sample for sample in selected_indices if sample > index)
+            shape.update({
+                "interpolation_lower_step": lower + 1,
+                "interpolation_upper_step": upper + 1,
+                "interpolation_upper_ratio": (index - lower) / (upper - lower),
+            })
+        elif measurement_kind in {"invariant_reused", "bucket_reused"}:
+            if sampling_class == "invariant":
+                representative = selected_indices[0]
+            else:
+                padded = int(shape["padded_cache_length"])
+                representative = next(
+                    sample for sample in selected_indices
+                    if int(kernels[sample]["shape"]["padded_cache_length"]) == padded
+                )
+            shape["reuse_representative_step"] = representative + 1
         shape.update({
             "decode_measurement": "sampled",
             "decode_sampling_class": sampling_class,
             "decode_sample_weight": weight,
-            "measurement_kind": "measured",
+            "measurement_kind": measurement_kind,
         })
         kernel["shape"] = shape
         out.append(kernel)
@@ -494,21 +523,28 @@ def _select_decode_measurements(
 
         out: list[dict] = []
         for group in groups.values():
-            selected = group if _decode_sampling_class(group[0]) != "invariant" else [group[0]]
-            for kernel in selected:
+            sampling_class = _decode_sampling_class(group[0])
+            for index, kernel in enumerate(group):
                 item = dict(kernel)
                 shape = dict(item.get("shape") or {})
-                sample_weight = float(len(group)) if len(selected) == 1 else 1.0
+                measured = sampling_class != "invariant" or index == 0
+                sample_weight = (
+                    float(len(group))
+                    if sampling_class == "invariant" and measured
+                    else (1.0 if measured else 0.0)
+                )
                 shape.update({
                     "decode_measurement": "exact",
-                    "decode_sampling_class": _decode_sampling_class(item),
+                    "decode_sampling_class": sampling_class,
                     "decode_sample_weight": sample_weight,
-                    "measurement_kind": "measured",
+                    "measurement_kind": "measured" if measured else "invariant_reused",
                 })
-                if len(selected) == 1:
+                if sampling_class == "invariant":
                     shape["logical_kv_end"] = int(
                         group[-1]["shape"]["logical_cache_length"]
                     )
+                    if not measured:
+                        shape["reuse_representative_step"] = 1
                 item["shape"] = shape
                 out.append(item)
         return out

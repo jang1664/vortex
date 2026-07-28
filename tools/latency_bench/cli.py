@@ -6,6 +6,7 @@ from pathlib import Path
 from .compose import ComposeOptions, MISSING_POLICIES, METRIC_COLUMNS, SELECT_POLICIES, compose_to_csv
 from .compare import compare_candidates, parse_candidate_spec
 from .generate_suites import GenerateSuitesOptions, generate_suites
+from .interpolation import add_cli_parsers, evaluate_command, refine_command
 from .merge_suites import MergeSuitesOptions, merge_suites
 from .plot import (
     BAR_AXIS_CHOICES,
@@ -75,6 +76,7 @@ def normalize_power_fpga_freq_mhz(value: str | float) -> tuple[float, bool]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run and visualize Vortex FPGA latency benchmarks.")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    add_cli_parsers(sub)
 
     run = sub.add_parser("run", help="Expand a suite, run FPGA bench cases, and write CSV reports.")
     run.add_argument("--build-dir", default="build", help="Configured build directory.")
@@ -883,5 +885,9 @@ def main(argv: list[str] | None = None) -> int:
         if "execution_count" in result:
             print(f"retained {result['execution_count']} unique executions")
         return 0
+    if args.cmd == "evaluate-interpolation":
+        return evaluate_command(args)
+    if args.cmd == "refine-interpolation":
+        return refine_command(args)
     parser.error(f"unknown command: {args.cmd}")
     return 2

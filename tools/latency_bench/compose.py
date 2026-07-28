@@ -11,6 +11,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from .suite import BenchSuite, resolve_case_fpga_bin, suite_to_rows
+from .interpolation import reweight_suite_for_exec_keys
 
 
 METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us", "fpga_cycle")
@@ -259,6 +260,8 @@ def _match_key_columns(match_fpga_bin: bool) -> list[str]:
 def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd.DataFrame:
     rows = []
     for order, (case_obj, case) in enumerate(zip(suite.cases, suite_to_rows(suite))):
+        if case.get("measurement_kind", "measured") != "measured":
+            continue
         row = dict(case)
         row["_case_order"] = order
         row["_normalized_args"] = normalize_args(str(row["args"]))
@@ -458,6 +461,9 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     raw = _read_raw_dbs(options.raw_dbs)
     _require_columns(raw, ["exec_key", "app", "args", "status", options.metric])
     raw = _filter_pass_raw_rows(raw)
+    suite = reweight_suite_for_exec_keys(
+        suite, set(raw["exec_key"].dropna().astype(str))
+    )
 
     if options.match_fpga_bin:
         _require_columns(raw, ["fpga_bin_label"])
