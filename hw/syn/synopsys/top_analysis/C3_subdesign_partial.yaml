@@ -25,3 +25,11 @@ families:
         module_patterns: [VX_mem_bus_split]
         instance_patterns: ["vortex/**/gemm_node_naive/*lane_split*"]
         pnr: false
+      - name: gemm_unit
+        module_patterns: [VX_gemm_unit]
+        instance_patterns: ["vortex/**/gemm_node_naive/u_VX_gemm_unit"]
+        pnr: false
+      - name: psum_lmem_arb
+        module_patterns: [VX_mem_arb]
+        instance_patterns: ["vortex/**/gemm_node_naive/g_psum_lane_arb*psum_*_arb"]
+        pnr: false
