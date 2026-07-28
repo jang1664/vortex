@@ -1,11 +1,28 @@
 #!/usr/bin/env python3
+"""Render prepared latency/energy CSVs.
+
+Examples from the repository root::
+
+    python analysis_workspace/latency_on_hw/plot.py \
+      --plot all --out-tokens 128 --workers 4
+
+    python analysis_workspace/latency_on_hw/plot.py \
+      --plot all --out-tokens 128 --workers 4 --formats png
+
+Matplotlib work is isolated in subprocesses.  ``--formats png`` is useful for
+fast iteration; the default emits PNG, PDF, and SVG for final figures.
+"""
 from __future__ import annotations
 
 import argparse
 import copy
 import csv
 import math
+import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -39,6 +56,7 @@ PLOT_CHOICES = (
 )
 EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
 REQUESTED_OUT_TOKENS: int | None = None
+REQUESTED_POWER_METRIC: str | None = None
 
 ONE_COLUMN_FIGSIZE = (3.5, 9.3)
 TWO_COLUMN_FIGSIZE = (7.16, 9.3)
@@ -550,6 +568,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         type=int,
         help="scalar decode output-token count represented by every prepared CSV.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="parallel figure processes; 0 selects up to four workers",
+    )
+    parser.add_argument(
+        "--formats",
+        default="png,pdf,svg",
+        help="comma-separated output formats: png,pdf,svg",
+    )
+    parser.add_argument(
+        "--power-metric",
+        choices=ENERGY_POWER_METRICS,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--latency-dir",
@@ -1298,6 +1333,19 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
     ]
 
     for item in plot_knobs:
+        formats = {
+            value.strip().lower()
+            for value in str(args.formats).split(",")
+            if value.strip()
+        }
+        invalid_formats = formats - {"png", "pdf", "svg"}
+        if not formats or invalid_formats:
+            raise ValueError(
+                f"invalid --formats={args.formats!r}; expected png,pdf,svg"
+            )
+        item.save_png = "png" in formats
+        item.save_pdf = "pdf" in formats
+        item.save_svg = "svg" in formats
         if args.figure_width is not None:
             item.figsize = (float(args.figure_width), item.figsize[1])
         if args.row_height is not None:
@@ -3381,6 +3429,14 @@ def collect_model_energy_csv_groups(
                 f"explicit {kind} inputs must use one power metric: {sorted(explicit_metrics)}"
             )
         explicit_metric = next(iter(explicit_metrics))
+        if (
+            REQUESTED_POWER_METRIC is not None
+            and explicit_metric != REQUESTED_POWER_METRIC
+        ):
+            raise ValueError(
+                f"explicit {kind} metric {explicit_metric!r} does not match "
+                f"requested metric {REQUESTED_POWER_METRIC!r}"
+            )
         model_csvs = []
         for model_key, model_label in LLAMA_E2E_MODELS:
             csv_path = explicit_paths.get(model_key)
@@ -3398,7 +3454,12 @@ def collect_model_energy_csv_groups(
 
     groups: list[tuple[str, list[tuple[str, str, Path]]]] = []
     missing: list[FileNotFoundError] = []
-    for power_metric in ENERGY_POWER_METRICS:
+    requested_metrics = (
+        (REQUESTED_POWER_METRIC,)
+        if REQUESTED_POWER_METRIC is not None
+        else ENERGY_POWER_METRICS
+    )
+    for power_metric in requested_metrics:
         model_csvs: list[tuple[str, str, Path]] = []
         try:
             for model_key, model_label in LLAMA_E2E_MODELS:
@@ -4060,12 +4121,94 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         )
 
 
+PARALLEL_ENERGY_PLOTS = {
+    "llama_gemm_only_energy",
+    "llama_gemm_only_energy_no_area_norm",
+    "llama_energy",
+    "llama_energy_no_area_norm",
+    "llama_energy_stacked",
+    "llama_energy_no_area_norm_stacked",
+    "llama_energy_gemm_layout_vector_stacked",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked",
+}
+PARALLEL_ALL_PLOTS = tuple(
+    choice for choice in PLOT_CHOICES if choice not in {"all", "latency"}
+)
+
+
+def _replace_parallel_plot_args(
+    raw_args: Sequence[str],
+    *,
+    plot_name: str,
+    power_metric: str | None,
+) -> list[str]:
+    replaced: list[str] = []
+    index = 0
+    replace_options = {"--plot", "--workers", "--power-metric"}
+    while index < len(raw_args):
+        value = str(raw_args[index])
+        option = value.split("=", maxsplit=1)[0]
+        if option in replace_options:
+            index += 1 if "=" in value else 2
+            continue
+        replaced.append(value)
+        index += 1
+    replaced.extend(("--plot", plot_name, "--workers", "1"))
+    if power_metric is not None:
+        replaced.extend(("--power-metric", power_metric))
+    return replaced
+
+
+def _run_plot_process(arguments: list[str]) -> None:
+    subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), *arguments],
+        check=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    global REQUESTED_OUT_TOKENS
-    args = parse_args(argv)
+    global REQUESTED_OUT_TOKENS, REQUESTED_POWER_METRIC
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    args = parse_args(raw_args)
     if args.out_tokens < 1:
         raise ValueError(f"--out-tokens must be >= 1, got {args.out_tokens}")
+    workers = min(os.cpu_count() or 1, 4) if args.workers == 0 else args.workers
+    if workers < 1:
+        raise ValueError(f"--workers must be >= 0, got {args.workers}")
+    parallel_jobs: list[tuple[str, str | None]] = []
+    if args.plot == "all" and workers > 1:
+        for plot_name in PARALLEL_ALL_PLOTS:
+            metrics = (
+                ENERGY_POWER_METRICS
+                if plot_name in PARALLEL_ENERGY_PLOTS
+                else (None,)
+            )
+            parallel_jobs.extend((plot_name, metric) for metric in metrics)
+    elif (
+        args.plot in PARALLEL_ENERGY_PLOTS
+        and args.power_metric is None
+        and workers > 1
+    ):
+        parallel_jobs.extend(
+            (args.plot, power_metric)
+            for power_metric in ENERGY_POWER_METRICS
+        )
+    if parallel_jobs:
+        commands = [
+            _replace_parallel_plot_args(
+                raw_args,
+                plot_name=plot_name,
+                power_metric=power_metric,
+            )
+            for plot_name, power_metric in parallel_jobs
+        ]
+        with ThreadPoolExecutor(max_workers=min(workers, len(commands))) as pool:
+            futures = [pool.submit(_run_plot_process, command) for command in commands]
+            for future in futures:
+                future.result()
+        return 0
     REQUESTED_OUT_TOKENS = args.out_tokens
+    REQUESTED_POWER_METRIC = args.power_metric
     run_selected_plots(args)
     return 0
 

@@ -105,6 +105,55 @@ class ComposedPipelineTest(unittest.TestCase):
         self.assertEqual(8, summary[0]["tokens"])
         self.assertAlmostEqual(25.0, summary[0]["joules_per_token"])
 
+    def test_vectorized_energy_matches_legacy_for_all_power_metrics(self) -> None:
+        frame = _decode_frame()
+        vectorized = prepare._vectorized_energy_rows(frame)
+        for power_metric in prepare.ENERGY_POWER_METRICS:
+            legacy = energy_per_token.energy_rows_from_records(
+                frame.to_dict("records"),
+                (),
+                power_metric=power_metric,
+                fpga_period_s=1.0,
+                allow_generic_power_estimate=False,
+            )
+            legacy_energy = [row["kernel_energy_j"] for row in legacy]
+            vectorized_energy = vectorized.loc[
+                vectorized["power_metric"].eq(power_metric),
+                "kernel_energy_j",
+            ].tolist()
+            self.assertEqual(legacy_energy, vectorized_energy)
+
+    def test_prepare_keeps_multiple_batch_and_sequence_workloads(self) -> None:
+        frames = []
+        for batch, seq_len in ((1, 512), (1, 1024), (2, 512), (2, 1024)):
+            frame = _decode_frame().copy()
+            frame["batch"] = batch
+            frame["gen_kv_len"] = seq_len
+            frame["case_id"] = frame["case_id"].map(
+                lambda case_id: f"{case_id}_b{batch}_s{seq_len}"
+            )
+            frames.append(frame)
+        composed = pd.concat(frames, ignore_index=True)
+        prepare._configure_out_tokens(4)
+        _, options = prepare._make_suite_options(
+            Path("unused"),
+            model="llama2_7b",
+            suite_tag="unused",
+            stacked=True,
+            include_c4_alone=True,
+            row_filters=(),
+            shape_selection=None,
+            case_latency_scale_rules=(),
+        )
+        versions = prepare._prepare_versions_from_composed(composed, options)
+
+        workloads = versions.final.plot_data[["batch", "seq_len"]]
+        self.assertEqual(
+            {(1, 512), (1, 1024), (2, 512), (2, 1024)},
+            set(map(tuple, workloads.to_numpy())),
+        )
+        self.assertTrue(versions.final.plot_data["total_latency_us"].eq(50.0).all())
+
     def test_prepare_rejects_missing_output_step(self) -> None:
         frame = _decode_frame().iloc[:-1].copy()
         with self.assertRaisesRegex(ValueError, "do not cover every output token"):
@@ -128,6 +177,35 @@ class ComposedPipelineTest(unittest.TestCase):
                     plot._read_excel_figure_data(path)
             finally:
                 plot.REQUESTED_OUT_TOKENS = None
+
+    def test_plot_formats_control_every_figure_family(self) -> None:
+        args = plot.parse_args(
+            ["--out-tokens", "4", "--formats", "png", "--workers", "2"]
+        )
+        knobs = plot._plot_knobs_from_args(args)
+        for item in vars(knobs).values():
+            self.assertTrue(item.save_png)
+            self.assertFalse(item.save_pdf)
+            self.assertFalse(item.save_svg)
+
+    def test_parallel_plot_job_replaces_coordinator_options(self) -> None:
+        arguments = plot._replace_parallel_plot_args(
+            [
+                "--plot",
+                "all",
+                "--out-tokens",
+                "128",
+                "--workers=4",
+                "--formats",
+                "png",
+            ],
+            plot_name="llama_energy",
+            power_metric="power_dynamic_avg_W",
+        )
+        self.assertIn("llama_energy", arguments)
+        self.assertIn("power_dynamic_avg_W", arguments)
+        self.assertNotIn("all", arguments)
+        self.assertIn("png", arguments)
 
 
 if __name__ == "__main__":
