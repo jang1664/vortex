@@ -1,0 +1,43 @@
+task: lmem-omega-ordering
+state: COMPLETE
+updated: "2026-07-28 03:01"
+pitfalls:
+  - "A write is complete only at the LMEM bank write handshake; Omega ingress acceptance is insufficient."
+  - "Response data may be correct for a younger request yet look stale when consumed against an implicit in-order address queue."
+  - "Stream-crossbar paths are intentionally out of scope for added ordering hardware."
+iterations:
+  - timestamp: "2026-07-28 02:20"
+    phase: specification
+    status: pass
+    summary: "Confirmed Omega-only request CAM and response read-order queue, both with parameterized capacities, followed by local_mem unittest and xrt-vcs GEMM verification."
+    lesson: "Request visibility and response association are separate ordering contracts and both require explicit completion state."
+  - timestamp: "2026-07-28 02:31"
+    phase: verification
+    status: compile_error
+    summary: "Iteration 1: response-Omega-only passed. Request-only and both-Omega failed Verilator compilation on dynamic mem_bus_if[i/j] indexing. Stream baseline simulated but failed because the new test scoreboard incorrectly required response ordering from the intentionally unchanged stream path."
+    verification: "/usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/local_mem_top --sim vlt; NUM_REQS=32 NUM_BANKS=32 OMEGA_STORE_CAM_SIZE=2 OMEGA_RSP_QUEUE_SIZE=2; four macro combinations"
+    lesson: "Combinational scans must use packed mirrors of interface fields, and Omega-specific assertions must not impose new behavior on the stream baseline."
+  - timestamp: "2026-07-28 02:38"
+    phase: verification
+    status: compile_error
+    summary: "Iteration 2: dynamic interface indexing was fixed, but warnings-as-errors stopped all builds. Non-request configurations exposed conditional unused packed mirrors; request configurations exposed an UNOPTFLAT path through the combined CAM admission/allocation combinational block and Omega ready network."
+    verification: "Same four-case verify_rtl.py vlt matrix with depth-2 CAM and response queues."
+    lesson: "Declare or consume packed mirrors only in macro combinations that need them, and separate admission/slot selection from handshake-dependent allocation bookkeeping to make the ready/valid dependency acyclic to Verilator."
+  - timestamp: "2026-07-28 02:44"
+    phase: verification
+    status: pass
+    summary: "Iteration 3: local_mem_top passed stream baseline, request-Omega-only, response-Omega-only, and both-Omega configurations with NUM_REQS=32, NUM_BANKS=32, and depth-2 CAM/queues."
+    verification: "Four forced-rebuild verify_rtl.py vlt runs with current VORTEX_HOME, system GCC/G++, and MAKEFLAGS=-B."
+    lesson: "Depth-2 resources exercised saturation and wraparound while focused same-requester RAW, cross-requester RAW, partial-write RAW, response ordering, and backpressure checks remained passing."
+  - timestamp: "2026-07-28 02:53"
+    phase: blackbox
+    status: partial
+    summary: "A fresh isolated xrt-vcs compile parsed current VX_local_mem.sv with both Omega macros and completed all 162 RTL modules, but the first wrapper attempt stopped before workload simulation because the new build lacked kernel/libvortex.a."
+    verification: "build_lmem_omega_ordering; oxbar f16 config; fpint_gemm_ffn_hw_naive -m 32 -k 128 -n 256"
+    lesson: "A newly configured isolated build requires `make -C kernel` before the xrt-vcs regression app can link its kernel."
+  - timestamp: "2026-07-28 03:01"
+    phase: blackbox
+    status: pass
+    summary: "After building kernel/libvortex.a with the same config, the stale diagnostic and both final K=256 cases passed with request and response Omega enabled and no PSUM mismatch."
+    verification: "M32 K128 N256 PASS (13459 instructions, 24177 cycles); M1 K256 N256 PASS (12715 instructions, 14803 cycles); M32 K256 N256 PASS (14857 instructions, 41649 cycles)."
+    lesson: "Explicit request commit tracking plus requester-local response ordering removes the GEMM stale-data failure without replacing either Omega fabric."

@@ -1,0 +1,124 @@
+task: gemm-naive-split-psum-reqs
+state: COMPLETE
+updated: "2026-07-28 12:15"
+pitfalls:
+  - "LMEM request-port count and LMEM bank count are distinct; both are 32 only in the target configuration."
+  - "The physical bank-set comparison must use outgoing LMEM address bits, not the GEMM logical accumulator-bank signal."
+  - "Existing unrelated modifications in VX_config.vh and VX_local_mem.sv belong to concurrent work and must be preserved."
+  - "Sharing each of the 32 local-memory request slots requires one extra response-route tag bit; the local-memory tag width must match the second-stage priority arbiter output."
+  - "The upper halves of the 32-entry PSUM read/write interface arrays are inactive in the split topology and must be explicitly terminated."
+  - "The configured gemm_node unittest reaches VCS simulation but its DMA source uses an unsupported 8-byte gearbox width and it does not instantiate VX_mem_unit, so it cannot provide functional coverage for the split topology."
+  - "Passing CONFIGS to the blackbox wrapper does not force VCS to rebuild an existing simv; the VCS incremental artifacts must be moved aside before changing between GEMM_IMPROVE and GEMM_NAIVE configurations."
+  - "Current-cycle GEMM-unit gating alone does not guarantee ordering across the independent read path and the four-entry PSUM write queue."
+  - "The shared build/sim/xrtsim_vcs directory is concurrently used by other blackbox jobs; a dedicated configured build directory is required for authoritative CONFIGS and VCS artifacts."
+  - "A queued write must remain ordering-visible until all sixteen lanes have entered the write lane-split skids; dequeueing from the four-entry queue is the corresponding wide-request handshake."
+  - "Wide splitter acceptance is still too early for ordering: pending state must survive until each marked narrow PSUM lane completes psum_wr_lmem_bus_if valid/ready downstream handshake."
+  - "The stream response xbar does not preserve issue order when one requester alternates between bank i and bank 16+i; VX_mem_bus_split lane assembly therefore requires draining one PSUM read bank set before switching to the other."
+iterations:
+  - timestamp: "2026-07-28 11:23"
+    phase: specification
+    status: confirmed
+    summary: "Confirmed separate 16-lane PSUM write/read request groups, same-bank-set read suppression, and write queue depth four."
+    lesson: "With 128-byte PSUMs and 32 64-bit banks, wide-address bit zero identifies the 16-bank footprint."
+  - timestamp: "2026-07-28 11:28"
+    phase: implementation
+    status: ready_for_verification
+    summary: "Mapped PSUM writes to local-memory request slots 0-15 and reads to slots 16-31, shared ordinary traffic behind the assigned PSUM lane at each slot, kept VX_local_mem NUM_REQS at 32, added GEMM-unit bank-footprint read suppression, and reduced the PSUM write queue to four entries."
+    changed_files:
+      - "hw/rtl/core/VX_mem_unit.sv"
+      - "hw/rtl/core/gemm/VX_gemm_node_naive.sv"
+      - "hw/rtl/core/gemm/VX_gemm_unit.sv"
+      - "configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh"
+    lesson: "Bank-aware concurrency must be exposed before VX_local_mem bank selection, while requester response identity is retained through an additional per-slot arbitration tag."
+  - timestamp: "2026-07-28 11:33"
+    phase: verification
+    status: sim_fail
+    summary: "Iteration 1 VCS compilation reached simulation with the mandated sxbar_f16 config, then the gemm_node testbench stopped at time zero because its DMA source instantiated an unsupported 8-byte-to-8-byte gearbox."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_node --sim vcs --params 'TEST=split_psum_m32n256k128 M=32 N=256 K=128 QBLK=32 WTRANS=0 QDIR=0'"
+    root_cause: "The existing gemm_node testbench's DMA model is incompatible with this full-core config and does not instantiate VX_mem_unit; the failure occurred before PSUM behavior."
+    fix_applied: "No RTL fix applied. Escalated verification to the configured xrt_vcs blackbox flow, which covers VX_mem_unit and the real LMEM routing."
+    lesson: "A passing module elaboration from gemm_node is useful structural evidence, but only the core blackbox path covers the new request-slot and response-tag routing."
+  - timestamp: "2026-07-28 11:36"
+    phase: verification
+    status: sim_fail
+    summary: "Iteration 2 rebuilt the full xrt_vcs image with the mandated 32-port/32-bank GEMM_NAIVE config, then stopped before PSUM execution on the GEMM DMA channel-slot alignment assertion."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; python3 tools/verify_rtl.py blackbox --driver xrt_vcs --app fpint_gemm_ffn_hw_naive --app-args '-m 32 -k 128 -n 256' --cores 1 --threads 32"
+    root_cause: "Under investigation: rs1_data=0x1ffc12000 and rs2_data=0x12100 differed in DMA channel-slot bits [8:6]. VCS logs prove the changed GEMM_NAIVE RTL and 32-port/32-bank defines were rebuilt."
+    fix_applied: "None yet; returned the failure to the RTL implementation step."
+    lesson: "The blackbox now provides authoritative integration coverage, but its first failure occurs in descriptor/address alignment before the split PSUM path is exercised."
+  - timestamp: "2026-07-28 11:39"
+    phase: implementation_fix
+    status: test_configuration_error
+    summary: "Diagnosed iteration 2 as execution of a stale GEMM_IMPROVE simv rather than the mandated GEMM_NAIVE 32-port/32-bank build."
+    evidence: "build/sim/xrtsim_vcs/vlogan.log records +define+GEMM_IMPROVE and +define+LMEM_LOG_SIZE=19, with no +define+GEMM_NAIVE, LMEM_NUM_PORTS=32, or LMEM_NUM_BANKS=32. VX_core instantiates VX_gemm_tmem_dma_ctrl only through VX_gemm_node in the non-GEMM_NAIVE branch, matching the observed assertion site."
+    root_cause: "The blackbox wrapper invokes make on the existing simv target, and VCS incremental artifacts were reused across incompatible CONFIGS. Sourcing the naive config alone did not invalidate the improve simv."
+    fix_applied: "No RTL or config change. The verification request is corrected to move aside csrc, simv.daidir, and simv before invoking the existing naive xrt-vcs wrapper from the configured build directory."
+    lesson: "The compiled vlogan define list, not the caller's intended environment, is the authoritative proof of which GEMM backend was tested."
+  - timestamp: "2026-07-28 11:43"
+    phase: verification
+    status: sim_fail
+    summary: "Iteration 3 moved stale VCS products to a recoverable timestamped backup, rebuilt GEMM_NAIVE with 32 request ports and 32 banks, and reproduced a stale PSUM read."
+    verification: "source configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; python3 tools/verify_rtl.py blackbox --driver xrt_vcs --app fpint_gemm_ffn_hw_naive --app-args '-m 32 -k 128 -n 256' --cores 1 --threads 32"
+    evidence: "vlogan.log contains GEMM_NAIVE, LMEM_NUM_PORTS=32, LMEM_NUM_BANKS=32, and no GEMM_IMPROVE; lane=2 addr=0x3a12 got=0xc4cb4000c3bb8000 expected=0xc4b34000c3b18000."
+    root_cause: "Under investigation: an independent read request can observe stale data while a matching-bank-set write remains queued or buffered upstream of the LMEM bank."
+    fix_applied: "None yet; returned the authoritative failure to RTL implementation."
+    lesson: "Only the forced-clean 32/32 GEMM_NAIVE run provides valid functional evidence for this change."
+  - timestamp: "2026-07-28 11:46"
+    phase: implementation_fix
+    status: ready_for_verification
+    summary: "Added GEMM_NAIVE node-side pending-write bank-set ordering while preserving simultaneous read/write issue to disjoint bank sets and retaining the four-entry write queue."
+    root_cause: "The GEMM-unit conflict gate observes only a write generated in the current cycle. After that write entered the node queue, a later read to the same physical 16-bank footprint saw no conflict and could advance on the independent read request path before the queued write was safely ahead in the lane pipeline."
+    fix_applied: "Inserted a raw read interface in VX_gemm_node_naive and two bank-set pending counters. A counter increments when a write enters the four-entry queue and decrements when the wide write handshake confirms all sixteen lanes entered the lane-split skids. A read is withheld when its wide-address bit zero selects a pending set or a simultaneously presented raw write selects the same set. No downstream ready participates in read-valid generation."
+    evidence: "git diff --check passes. The read FSM still advances only through VX_gemm_unit acc_mem_accum_rd_accept = req_valid && req_ready; opposite bank-set reads are not blocked by the node ordering predicate."
+    lesson: "Current-cycle producer arbitration and downstream bank arbitration do not replace ordering metadata for writes buffered between them."
+  - timestamp: "2026-07-28 11:50"
+    phase: verification
+    status: test_configuration_error
+    summary: "Iteration 4 was invalid because another concurrent blackbox job rebuilt the shared xrt_vcs directory with GEMM_IMPROVE while the split-PSUM test was running."
+    evidence: "The new vlogan.log contains GEMM_IMPROVE and LMEM_LOG_SIZE=19 rather than GEMM_NAIVE/LMEM_NUM_PORTS=32/LMEM_NUM_BANKS=32. Process inspection showed another active xrt_vcs build using the shared build tree."
+    root_cause: "Concurrent configurations race on build/sim/xrtsim_vcs artifacts, so moving only local VCS products cannot isolate the requested test."
+    fix_applied: "Created and configured build_split_psum as a dedicated build directory. Subsequent verification will run its generated ci/run_black.sh and sim/xrtsim_vcs tree."
+    lesson: "Backend define evidence must come from an isolated build whenever multiple blackbox jobs can run concurrently."
+  - timestamp: "2026-07-28 11:58"
+    phase: verification
+    status: compile_error
+    summary: "Iteration 5 isolated VCS compilation and elaboration passed with the mandated GEMM_NAIVE 32-port/32-bank defines, but the new build lacked kernel/libvortex.a."
+    verification: "cd build_split_psum; source ../configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 32 -k 128 -n 256' --cores 1"
+    evidence: "The isolated vlogan.log contains GEMM_NAIVE, LMEM_NUM_PORTS=32, and LMEM_NUM_BANKS=32 with no GEMM_IMPROVE or RTL compile error."
+    root_cause: "The freshly configured isolated build had not yet run its standard kernel target, so the regression kernel could not link build_split_psum/kernel/libvortex.a."
+    fix_applied: "No RTL fix. Build the standard kernel prerequisite in build_split_psum before rerunning the same test."
+    lesson: "A newly configured blackbox build needs its software kernel library in addition to the generated build files."
+  - timestamp: "2026-07-28 11:59"
+    phase: implementation_fix
+    status: ready_for_verification
+    summary: "Moved bank-set pending-write retirement from the wide splitter handshake to the actual narrow psum_wr_lmem_bus_if downstream handshakes."
+    root_cause: "The wide write handshake only proves that all lanes entered splitter skids. Independent read lanes could still pass while matching writes remained in splitter, write-arbiter, or node-output buffering, reproducing the same stale value in the isolated iteration 6 run."
+    fix_applied: "Pending counters now count narrow lanes: add sixteen at raw write-queue ingress and subtract the popcount of marked PSUM write lanes completing downstream request handshakes for each bank set. Narrow address bit four selects the set. A node-internal flags marker distinguishes PSUM writes from final-output writes after their shared write arbiter. Counters are seven bits for the four-entry queue's maximum 64 lanes, combine simultaneous push/pop arithmetically, guard against underflow, and retain the existing same-cycle write gate."
+    evidence: "git diff --check passes. Queue SIZE remains four. Read-valid ordering depends only on registered pending counts and current write valid/address; downstream ready affects only sequential counter retirement. Opposite bank sets remain independently eligible."
+    lesson: "Ordering state must retire at the last acceptance point before independently routed requests can no longer overtake, not merely when a width adapter captures the transaction."
+  - timestamp: "2026-07-28 12:05"
+    phase: implementation_fix
+    status: ready_for_verification
+    summary: "Serialized PSUM read bank-set transitions until all wide responses from the active set have been consumed, while retaining multiple outstanding reads within one set."
+    root_cause: "Iteration 7 retained write pending state through the node-output handshakes yet reproduced the identical mismatch. In the stream-response configuration, each read requester alternates between bank i and bank 16+i, and VX_local_mem response arbitration can return those banks out of issue order. VX_mem_bus_split consumes each lane's response FIFO in issue order without an address sequence tag, so mixed-set outstanding reads can be assembled against the wrong wide request."
+    fix_applied: "Added a seven-bit wide-read outstanding count and active bank-set bit in VX_gemm_node_naive. Wide request handshakes increment the count, consumed wide responses decrement it, and a read selecting the other set is held until the count reaches zero. Requests to the active set may remain multiply outstanding. Overflow and underflow are guarded and asserted."
+    evidence: "git diff --check passes. Set-switch gating uses only registered count/set state and the presented read address. Response/request ready signals affect sequential count updates only, so no ready-to-valid combinational loop is introduced. Existing pending-write gating, disjoint read/write concurrency, and PSUM write queue SIZE=4 remain intact."
+    lesson: "A tag that routes a response back to its requester does not by itself preserve ordering among different banks feeding that requester."
+  - timestamp: "2026-07-28 12:11"
+    phase: verification
+    status: pass
+    summary: "Iteration 8 forced a fresh isolated 32-port/32-bank GEMM_NAIVE build and passed the m32 k128 n256 stale-PSUM diagnostic."
+    verification: "cd build_split_psum; source ../configs/naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16.sh; PATH=/usr/bin:$PATH timeout 600 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 32 -k 128 -n 256' --cores 1"
+    evidence: "vlogan.log contains GEMM_NAIVE, LMEM_NUM_PORTS=32, and LMEM_NUM_BANKS=32 with no GEMM_IMPROVE. Application reported PASSED; no PSUM mismatch or fatal occurred."
+    root_cause: "The prior stale value was caused by cross-bank response reordering within a requester while VX_mem_bus_split assumed ordered per-lane responses."
+    fix_applied: "Keep multiple outstanding reads within one bank set, but drain all wide responses before switching the read bank set."
+    lesson: "The active-bank-set fence restores stream-response ordering without removing read/write concurrency across disjoint bank sets."
+  - timestamp: "2026-07-28 12:15"
+    phase: verification
+    status: pass
+    summary: "Iteration 9 passed both final K=256 cases using the fresh isolated iteration-8 GEMM_NAIVE 32-port/32-bank image with the four-entry PSUM write queue."
+    verification: "build_split_psum xrt-vcs-sim fpint_gemm_ffn_hw_naive: '-m 1 -k 256 -n 256' PASS; '-m 32 -k 256 -n 256' PASS"
+    evidence: "m1 case completed in 11727 cycles; m32 case completed in 37141 cycles. Both returned RC=0 with no Fatal, FAILED, or PSUM mismatch. vlogan contains GEMM_NAIVE/LMEM_NUM_PORTS=32/LMEM_NUM_BANKS=32 and no GEMM_IMPROVE."
+    root_cause: "Resolved: stream-response cross-bank reordering violated VX_mem_bus_split's ordered per-lane response assumption."
+    fix_applied: "Final implementation combines split write/read request slots, current and queued-write bank-set ordering, and a read bank-set transition fence while retaining disjoint-set read/write concurrency and queue depth four."
+    lesson: "Independent bank request concurrency requires explicit response-order control when the gather stage lacks transaction sequence tags."

@@ -1,2 +1,28 @@
+# Task-local logs and waveforms
 *.fsdb
 *.log
+*.vcd
+*.vpd
+*.wdb
+**/logs/
+**/verification-logs/
+**/waves/
+**/waveforms/
+
+# Out-of-context synthesis workspaces
+**/ooc/
+
+# Vivado-generated project state
+**/.Xil/
+**/*.cache/
+**/*.gen/
+**/*.hw/
+**/*.ip_user_files/
+**/*.runs/
+**/*.sim/
+
+# VCS-generated simulation state
+**/csrc/
+**/simv.daidir/
+**/simv.vdb/
+**/xsim.dir/

@@ -1,0 +1,24 @@
+task: kv-cache-fp16-kernels
+state: NEEDS_HW_FOLLOWUP
+updated: "2026-07-28 11:06"
+summary: "Convert KV-cache quantization and dequantization device arithmetic from FP32 to native FP16, then verify on the requested FPGA image."
+log:
+  - timestamp: "2026-07-28 10:34"
+    entry: "Inspected quant, fused quant-layout, and dequant kernels. Confirmed fp16_t is uint16_t storage while arithmetic currently widens to float; the configured FPGA enables Zfh through EXT_ZFH_ENABLE."
+  - timestamp: "2026-07-28 10:42"
+    entry: "Converted all quant/dequant device variants to native _Float16 arithmetic and added explicit FP16 bit-cast/arithmetic helpers. All 16 device variants compile with the requested Zfh/LP64F profile."
+  - timestamp: "2026-07-28 10:47"
+    entry: "HW fp16_zfh regression passed and kv_cache_dequant_w4a16 groupwise passed on improve_th32_tcol32_hwexp_dcache_sxbar_f16."
+  - timestamp: "2026-07-28 10:50"
+    entry: "HW quant and fused-quant tests failed. Scale 0x3377 matches the reference, but the first legacy zero-point is 6 instead of 7 and packed INT4 output diverges. Baseline and groupwise reproduce the same result, excluding warp/layout mapping as the cause."
+  - timestamp: "2026-07-28 10:57"
+    entry: "Added fp16_quant_debug, a single-thread reproducer using the first failing group's exact operands. On HW, range, scale, direct division, reciprocal, multiply, +0.5, and FP16-to-int conversion all matched IEEE FP16 and the final integer was 7. The isolated arithmetic sequence does not reproduce the full-kernel failure."
+  - timestamp: "2026-07-28 11:06"
+    entry: "Extended fp16_quant_debug incrementally: 32 concurrent threads passed; exact 32-lane shuffle min/max reduction passed; the shared rounding helper reproduced the failure. With fadd.h immediately followed by fcvt.w.h, the helper returned 6 instead of 7. Inserting a single dependent nop between them made gap1 through gap4 all return 7."
+pitfalls:
+  - "The repository already contains unrelated modified and untracked files; preserve them."
+  - "Native FP16 arithmetic changes intermediate rounding, so host references must model the same operation order."
+  - "The build must be invoked with the f16 config sourced so kernel objects and libvortex.a use rv64imaf_zfh/lp64f; otherwise LP64D/LP64F objects fail to link."
+  - "The HW FP16 quant zero-point path currently produces 6 for the first group where IEEE FP16 evaluation gives 7; this remains after replacing reciprocal-multiply with direct division."
+  - "The same exact operands and arithmetic sequence pass in a small single-thread kernel, so the defect depends on full-kernel context rather than the standalone FP16 operators."
+  - "Minimal reproducer now points to an FP16 fadd.h -> fcvt.w.h dependency/scoreboard hazard: zero-gap fails, one or more explicit nops pass."

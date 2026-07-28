@@ -1,0 +1,43 @@
+# FPU format switching gating verification log
+
+### FPU Format Switching Gating — Iteration 1
+- **Status**: sim_fail
+- **Error summary**: `verify_rtl.py` could not find the newly added application in its hard-coded configured `build/` tree.
+- **Root cause**: The source regression was added after `build/` was configured, so `build/tests/regression/fpu_format_switch_debug` had not been populated.
+- **Fix applied**: Pending implementation follow-up to refresh the configured build and re-run deterministic verification.
+- **Lesson**: New blackbox application directories require reconfiguration before `verify_rtl.py blackbox` can discover them.
+
+### FPU Format Switching Gating — Iteration 2
+- **Status**: compile_error
+- **Error summary**: VCS incremental database referenced a stale `xil_f16mul_inst` hierarchy and aborted with an internal interface-data error before simulation.
+- **Root cause**: The shared configured build retained an incompatible VCS elaboration database from a different RTL/configuration state.
+- **Fix applied**: Pending implementation follow-up to preserve and replace the stale generated VCS artifacts, forcing a clean elaboration.
+- **Lesson**: A changed RTL hierarchy or FPU configuration requires a fresh VCS elaboration database; rebuilding only the `simv` executable is insufficient.
+
+### FPU Format Switching Gating — Iteration 3
+- **Status**: compile_error
+- **Error summary**: FPnew passed; DSP reached runtime startup but `xrtKernelWriteRegister` returned `-1`, causing device initialization to fail.
+- **Root cause**: Pending implementation investigation; no SystemVerilog compile diagnostic was reported.
+- **Fix applied**: Pending.
+- **Lesson**: `verify_rtl.py` may classify an XRT/VCS startup failure as `compile_error`; the underlying runtime/server log must be inspected.
+
+### FPU Format Switching Gating — Iteration 4
+- **Status**: compile_error
+- **Error summary**: FPnew passed again; DSP VCS sockets connected but the first reset MMIO write returned `-1`, before any RTL assertion or test result.
+- **Root cause**: Pending; preserving the VCS jobserver descriptors did not resolve the DSP simulator's early exit.
+- **Fix applied**: Pending implementation follow-up using the fresh DSP simulator log.
+- **Lesson**: Successful socket connection does not guarantee that the VCS server remains alive through the first control transaction.
+
+### FPU Format Switching Gating — Iteration 5
+- **Status**: pass
+- **Error summary**: None. The mixed FP16-to-FP32 regression passed with both the DSP and FPnew configurations.
+- **Root cause**: The DSP startup failure was caused by immediate gating assertions evaluating reset-time unknown values.
+- **Fix applied**: Gating assertions now run only after reset and after the relevant issue, enable, and in-flight signals are known.
+- **Lesson**: Power-isolation assertions must exclude reset-time X states while continuing to enforce mutual exclusion and idle-unit disable after reset.
+
+### FPU Format Switching Gating — Iteration 6
+- **Status**: sim_fail
+- **Error summary**: FPnew mixed-format gating passed and DSP dequant passed, but FPnew quant still produced 62 packed-output mismatches while its scale and zero point matched.
+- **Root cause**: Pending implementation A/B isolation; restoring auxiliary FPnew metadata wiring did not change the failure.
+- **Fix applied**: Operand-only isolation retained pending comparison against the unpatched upstream opgroup block.
+- **Lesson**: Passing a small mixed-format test proves basic gating but does not cover the sustained, concurrent FP16 instruction stream used by quantization.

@@ -1,0 +1,25 @@
+task: lmem-xbar-perf-resource
+state: COMPLETE
+updated: "2026-07-28 12:10"
+pitfalls:
+  - "The stream and Omega runs must differ only by LMEM_REQ_OMEGA_ENABLE and LMEM_RSP_OMEGA_ENABLE."
+  - "The blackbox wrapper must receive --perf 3; host wall-clock or top-level kernel cycles are not substitutes for GEMM total_cycles."
+  - "Resource comparisons require the same part, synthesis options, local-memory dimensions, and implementation state."
+  - "An existing xrt-vcs simv can silently omit newly requested PERF_ENABLE; verify the compile defines and rebuild before accepting zero counters."
+  - "A broad Vivado source list parses unrelated AXI/DMA files; use the LMEM elaboration dependency set for the OOC comparison."
+iterations:
+  - timestamp: "2026-07-28 10:38"
+    phase: setup
+    status: in_progress
+    summary: "Selected M=32,K=256,N=256 for identical stream/Omega xrt-vcs perf=3 comparison and began planning an out-of-context local-memory resource sweep."
+    lesson: "Measure GEMM total_cycles from the performance CSR output and report whole-design synthesis deltas separately from ordering-only storage costs."
+  - timestamp: "2026-07-28 10:34"
+    phase: performance
+    status: complete
+    summary: "Stream completed in 8,666 GEMM total cycles; Omega completed in 34,537 cycles for M32 K256 N256 with perf level 3."
+    lesson: "Omega took 3.985x the stream cycles; the ordering-safe implementation is not performance competitive on this workload."
+  - timestamp: "2026-07-28 12:10"
+    phase: resource
+    status: complete
+    summary: "U55C OOC synthesis measured stream at 164,088 LUT/108,672 FF, Omega 8/4 at 121,069 LUT/105,565 FF, and Omega 32/8 at 178,083 LUT/108,389 FF; all used 32 URAM."
+    lesson: "Omega crosses above the stream LUT ceiling by CAM 32 / queue 8. The configured 64/16 default is not justified; 8/4 requires occupancy and correctness qualification, otherwise retain stream."

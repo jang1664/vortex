@@ -1,0 +1,14 @@
+task: diagnose-gemm-naive-lmem-omega
+state: COMPLETE
+updated: "2026-07-28 02:15"
+pitfalls:
+  - "Changing only LMEM_REQ_OMEGA_ENABLE cannot fix a response-ordering defect; request-stream/response-Omega already reproduces the mismatch."
+  - "The PSUM scoreboard reports the expected request address, so an out-of-order response appears as stale data even when the SRAM returned the correct data for a younger request."
+  - "Do not interrupt or reuse the current xrt-vcs build while unrelated long-running simv processes are active."
+iterations:
+  - timestamp: "2026-07-28 02:15"
+    phase: diagnosis
+    status: pass
+    summary: "Traced naive GEMM PSUM reads through VX_mem_bus_split, the per-lane arbiters, VX_local_mem, and the response fabric. The requester carries only a two-bit accumulator-bank tag and consumes responses in implicit FIFO order; VX_stream_omega merges responses from independent LMEM banks without an ordering token or reorder buffer."
+    evidence: "Existing clean A/B runs show request-stream/response-Omega fails at lane 2 address 0x3a12, while request-stream/response-stream passes the diagnostic and M=1/M=32 K=256 regressions. RTL inspection shows rsp_xbar can arbitrate independent bank responses to one requester and the GEMM read FIFO has no address/sequence reorder metadata."
+    lesson: "The observed stale value is fundamentally a response association/order violation, not evidence that changing the request fabric alone can repair visibility. The generic fix is requester-order tracking at VX_local_mem response gather; a GEMM-only alternative is sequence-tagged PSUM reads plus a reorder buffer."

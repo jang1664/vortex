@@ -1,0 +1,23 @@
+# Native FP16 Conversion Helpers
+
+status: completed
+scope:
+  - tests/regression/vector_common/fp16.h
+verification:
+  - iteration: 1
+    status: pass
+    summary: >-
+      Zfh and fallback builds pass; disassembly confirms fcvt.s.h/fcvt.h.s
+      with FP32 arithmetic and no FP16 arithmetic contraction.
+  - iteration: 2
+    status: deferred_by_user
+    summary: >-
+      C4 functional checks expose known hardware value mismatches in some
+      kernels; user explicitly approved ignoring these mismatches and
+      continuing latency measurements.
+  - iteration: 3
+    status: pass
+    summary: >-
+      Same-C4-xclbin A/B latency measurements completed for eladd, rmsnorm,
+      rope, and softmax using the unconditional native conversion path versus
+      the forced software fallback.
