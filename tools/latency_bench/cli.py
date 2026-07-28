@@ -536,6 +536,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override generation matrix sequence-length values for existing gen_kv_len, seq_len, or seq keys.",
     )
+    gen.add_argument(
+        "--generation-out-tokens",
+        "--generation-out-token-list",
+        "--gen-out-tokens",
+        default=None,
+        help="Override generation output-token counts, e.g. 1,2,4.",
+    )
+    gen.add_argument(
+        "--generation-max-seq-len",
+        "--gen-max-seq-len",
+        type=int,
+        default=None,
+        help="Fix the generation KV-cache capacity and stride, e.g. 65536.",
+    )
+    gen.add_argument(
+        "--generation-decode-measurement",
+        "--decode-measurement",
+        choices=("exact", "sampled"),
+        default=None,
+        help="Override the generation decode measurement mode.",
+    )
+    gen.add_argument(
+        "--generation-decode-sample-interval",
+        "--decode-sample-interval",
+        type=int,
+        default=None,
+        help="Override the sampled decode interval.",
+    )
 
     merge = sub.add_parser(
         "merge-suites",
@@ -804,6 +832,17 @@ def main(argv: list[str] | None = None) -> int:
                 args.generation_seq_lens,
                 "--generation-seq-lens",
             )
+            generation_out_token_values = parse_positive_int_csv(
+                args.generation_out_tokens,
+                "--generation-out-tokens",
+            )
+            if args.generation_max_seq_len is not None and args.generation_max_seq_len < 1:
+                raise ValueError("--generation-max-seq-len must be > 0")
+            if (
+                args.generation_decode_sample_interval is not None
+                and args.generation_decode_sample_interval < 1
+            ):
+                raise ValueError("--generation-decode-sample-interval must be > 0")
         except ValueError as exc:
             parser.error(str(exc))
         index = generate_suites(GenerateSuitesOptions(
@@ -816,6 +855,10 @@ def main(argv: list[str] | None = None) -> int:
             generation_batch_values=generation_batch_values,
             prefill_seq_len_values=prefill_seq_len_values,
             generation_seq_len_values=generation_seq_len_values,
+            generation_out_token_values=generation_out_token_values,
+            generation_max_seq_len=args.generation_max_seq_len,
+            generation_decode_measurement=args.generation_decode_measurement,
+            generation_decode_sample_interval=args.generation_decode_sample_interval,
             dump_model_structures=args.dump_model_structures,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
@@ -835,8 +878,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"wrote {result['suite']}")
             print(f"merged {result['case_count']} cases")
-        if result["dropped_duplicate_count"]:
-            print(f"dropped {result['dropped_duplicate_count']} duplicate executions")
+        if result["logical_duplicate_count"]:
+            print(f"dropped {result['logical_duplicate_count']} duplicate logical cases")
+        if "execution_count" in result:
+            print(f"retained {result['execution_count']} unique executions")
         return 0
     parser.error(f"unknown command: {args.cmd}")
     return 2

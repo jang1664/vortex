@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,6 +70,15 @@ def _unique_case_id(case_id: str, used: set[str]) -> str:
     return out
 
 
+def _logical_case_key(fpga_bin: str, case: BenchCase) -> tuple[str, str]:
+    payload = {
+        key: value
+        for key, value in case.__dict__.items()
+        if key not in {"source", "fpga_bin"}
+    }
+    return fpga_bin, json.dumps(payload, sort_keys=True, default=str)
+
+
 def _merged_suite(
     *,
     name: str,
@@ -116,16 +126,18 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
         _check_compatible_defaults(base_defaults, suite, path)
 
     groups: dict[str, list[tuple[Path, BenchCase]]] = {}
-    seen_execs: set[tuple[str, str]] = set()
-    dropped_duplicate_count = 0
+    seen_logical_cases: set[tuple[str, str]] = set()
+    logical_duplicate_count = 0
+    execution_keys: set[tuple[str, str]] = set()
     for path, suite in loaded:
         for case in suite.cases:
             fpga_bin = resolve_case_fpga_bin(suite, case)
-            key = (fpga_bin, case.exec_key)
-            if key in seen_execs:
-                dropped_duplicate_count += 1
+            logical_key = _logical_case_key(fpga_bin, case)
+            if logical_key in seen_logical_cases:
+                logical_duplicate_count += 1
                 continue
-            seen_execs.add(key)
+            seen_logical_cases.add(logical_key)
+            execution_keys.add((fpga_bin, case.exec_key))
             groups.setdefault(fpga_bin, []).append((path, case))
 
     base_name = sanitize_id(options.name or options.out.stem)
@@ -146,7 +158,9 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
             "name": suite.name,
             "fpga_bin": fpga_bin,
             "case_count": len(cases),
-            "dropped_duplicate_count": dropped_duplicate_count,
+            "execution_count": len({case.exec_key for case in cases}),
+            "logical_duplicate_count": logical_duplicate_count,
+            "dropped_duplicate_count": logical_duplicate_count,
         }
 
     out_dir = options.out.expanduser().resolve()
@@ -176,13 +190,16 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
             "kinds": sorted({case.kind for case in cases if case.kind}),
             "backends": sorted({case.backend for case in cases if case.backend}),
             "case_count": len(cases),
+            "execution_count": len({case.exec_key for case in cases}),
             "run_command": _run_command(suite_path, out_dir / suite.name),
         })
 
     index: dict[str, Any] = {
         "input_suites": [str(path) for path in suite_paths],
         "output_dir": str(out_dir),
-        "dropped_duplicate_count": dropped_duplicate_count,
+        "logical_duplicate_count": logical_duplicate_count,
+        "dropped_duplicate_count": logical_duplicate_count,
+        "execution_count": len(execution_keys),
         "generated": generated,
     }
     with index_path.open("w") as fp:

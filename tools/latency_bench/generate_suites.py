@@ -33,6 +33,10 @@ class GenerateSuitesOptions:
     generation_batch_values: tuple[int, ...] = ()
     prefill_seq_len_values: tuple[int, ...] = ()
     generation_seq_len_values: tuple[int, ...] = ()
+    generation_out_token_values: tuple[int, ...] = ()
+    generation_max_seq_len: int | None = None
+    generation_decode_measurement: str | None = None
+    generation_decode_sample_interval: int | None = None
     dump_model_structures: bool = False
 
 
@@ -90,6 +94,10 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         generation_batch_values=tuple(options.generation_batch_values),
         prefill_seq_len_values=tuple(options.prefill_seq_len_values),
         generation_seq_len_values=tuple(options.generation_seq_len_values),
+        generation_out_token_values=tuple(options.generation_out_token_values),
+        generation_max_seq_len=options.generation_max_seq_len,
+        generation_decode_measurement=options.generation_decode_measurement,
+        generation_decode_sample_interval=options.generation_decode_sample_interval,
     )
     loaded = load_suite_artifacts(
         options.suite,

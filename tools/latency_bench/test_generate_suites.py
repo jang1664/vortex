@@ -190,6 +190,7 @@ workloads:
     stage: all
     filter_kind: softmax
     implemented_only: true
+    decode_measurement: sampled
     matrix:
       batch: {values: [1]}
       prefill_seq_len: {values: [32]}
@@ -207,23 +208,38 @@ workloads:
                 "--generation-batches", "4",
                 "--prefill-seq-lens", "128",
                 "--generation-seq-lens", "512",
+                "--generation-out-tokens", "2,4",
+                "--generation-max-seq-len", "65536",
+                "--generation-decode-measurement", "exact",
+                "--generation-decode-sample-interval", "3",
             ])
 
             self.assertEqual(0, rc)
             index = yaml.safe_load((out_dir / "index.yaml").read_text())
             generated = yaml.safe_load(Path(index["generated"][0]["suite"]).read_text())
             cases = generated["cases"]
-            self.assertEqual(2, len(cases))
+            self.assertEqual(7, len(cases))
             prefill = [case for case in cases if case["stage"] == "prefill"]
             generation = [case for case in cases if case["stage"] == "generation"]
             self.assertEqual(1, len(prefill))
-            self.assertEqual(1, len(generation))
+            self.assertEqual(6, len(generation))
             self.assertEqual(2, prefill[0]["shape"]["batch"])
             self.assertEqual(128, prefill[0]["shape"]["seqq"])
             self.assertEqual(128, prefill[0]["shape"]["seqk"])
-            self.assertEqual(4, generation[0]["shape"]["batch"])
-            self.assertEqual(1, generation[0]["shape"]["seqq"])
-            self.assertEqual(544, generation[0]["shape"]["seqk"])
+            self.assertEqual({2, 4}, {case["out_tokens"] for case in generation})
+            for case in generation:
+                self.assertEqual(4, case["shape"]["batch"])
+                self.assertEqual(1, case["shape"]["seqq"])
+                self.assertIn("-seqk-stride 65536", case["args"])
+                self.assertEqual("exact", case["shape"]["decode_measurement"])
+            self.assertEqual(
+                {513, 514, 515, 516},
+                {
+                    case["shape"]["seqk"]
+                    for case in generation
+                    if case["out_tokens"] == 4
+                },
+            )
 
     def test_generate_suites_dumps_all_workload_model_structures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

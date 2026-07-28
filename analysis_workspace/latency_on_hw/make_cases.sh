@@ -20,7 +20,7 @@ Examples:
   ./make_cases.sh --input suites/llama2_7b --output generated_suites/llama2_7b
   ./make_cases.sh --input suites/llama3_8b --output generated_suites/llama3_8b
   ./make_cases.sh --input suites/main --output generated_suites/main_b1_s512 --batches 1 --seq-lens 512
-  ./make_cases.sh --input suites/main --output generated_suites/main_custom --prefill-batches 1,2 --generation-batches 8 --prefill-seq-lens 512,1024 --generation-seq-lens 4096
+  ./make_cases.sh --input suites/main --output generated_suites/main_custom --prefill-batches 1,2 --generation-batches 8 --prefill-seq-lens 512,1024 --generation-seq-lens 4096 --generation-out-tokens 1,2,4
   ./make_cases.sh suites/test2 generated_suites/test2
 
 Override options:
@@ -30,6 +30,10 @@ Override options:
   --generation-batches LIST      Override generation batch values.
   --prefill-seq-lens LIST        Override prefill sequence values.
   --generation-seq-lens LIST     Override generation sequence values.
+  --generation-out-tokens LIST   Override generation output-token counts.
+  --generation-max-seq-len N     Fix generation KV-cache capacity/stride.
+  --decode-measurement MODE      Generation mode: exact or sampled.
+  --decode-sample-interval N     Sampling interval for sampled mode.
 
 Defaults:
   GENERATED_SUITE_DIR defaults to generated_suites when omitted.
@@ -48,6 +52,10 @@ PREFILL_BATCHES=""
 GENERATION_BATCHES=""
 PREFILL_SEQ_LENS=""
 GENERATION_SEQ_LENS=""
+GENERATION_OUT_TOKENS=""
+GENERATION_MAX_SEQ_LEN=""
+DECODE_MEASUREMENT=""
+DECODE_SAMPLE_INTERVAL=""
 positional=()
 
 while [[ $# -gt 0 ]]; do
@@ -124,6 +132,42 @@ while [[ $# -gt 0 ]]; do
             GENERATION_SEQ_LENS="$2"
             shift 2
             ;;
+        --generation-out-tokens|--generation-out-token-list|--gen-out-tokens)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            GENERATION_OUT_TOKENS="$2"
+            shift 2
+            ;;
+        --generation-max-seq-len|--gen-max-seq-len)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            GENERATION_MAX_SEQ_LEN="$2"
+            shift 2
+            ;;
+        --decode-measurement|--generation-decode-measurement)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            DECODE_MEASUREMENT="$2"
+            shift 2
+            ;;
+        --decode-sample-interval|--generation-decode-sample-interval)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            DECODE_SAMPLE_INTERVAL="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -198,6 +242,18 @@ fi
 if [[ -n "${GENERATION_SEQ_LENS}" ]]; then
     GENERATE_ARGS+=(--generation-seq-lens "${GENERATION_SEQ_LENS}")
 fi
+if [[ -n "${GENERATION_OUT_TOKENS}" ]]; then
+    GENERATE_ARGS+=(--generation-out-tokens "${GENERATION_OUT_TOKENS}")
+fi
+if [[ -n "${GENERATION_MAX_SEQ_LEN}" ]]; then
+    GENERATE_ARGS+=(--generation-max-seq-len "${GENERATION_MAX_SEQ_LEN}")
+fi
+if [[ -n "${DECODE_MEASUREMENT}" ]]; then
+    GENERATE_ARGS+=(--generation-decode-measurement "${DECODE_MEASUREMENT}")
+fi
+if [[ -n "${DECODE_SAMPLE_INTERVAL}" ]]; then
+    GENERATE_ARGS+=(--generation-decode-sample-interval "${DECODE_SAMPLE_INTERVAL}")
+fi
 
 shopt -s nullglob
 
@@ -255,22 +311,22 @@ generate_suite_by_suffix "generation_C3" "${OUTPUT_DIR}/C3_generation"
 generate_suite_by_suffix "generation_C4_fused" "${OUTPUT_DIR}/C4_fused_generation"
 
 clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
+# C4_alone is intentionally excluded; only the fused C4 suites are merged.
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \
     --suite-glob "${OUTPUT_DIR}/C1_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C2_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C3_prefill/*.yaml" \
-    # --suite-glob "${OUTPUT_DIR}/C4_alone_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C4_fused_prefill/*.yaml" \
     --out "${OUTPUT_DIR}/prefill_merged" \
     --group-by-fpga-bin \
     --overwrite
 
 clean_suite_dir "${OUTPUT_DIR}/generation_merged"
+# C4_alone is intentionally excluded; only the fused C4 suites are merged.
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \
     --suite-glob "${OUTPUT_DIR}/C1_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C2_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C3_generation/*.yaml" \
-    # --suite-glob "${OUTPUT_DIR}/C4_alone_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C4_fused_generation/*.yaml" \
     --out "${OUTPUT_DIR}/generation_merged" \
     --group-by-fpga-bin \

@@ -36,7 +36,7 @@ class MergeSuitesTest(unittest.TestCase):
             )
         )
 
-    def test_merges_single_fpga_suite_and_dedupes_identical_executions(self) -> None:
+    def test_merges_single_fpga_suite_preserving_distinct_logical_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             self._write_suite(
@@ -75,6 +75,13 @@ class MergeSuitesTest(unittest.TestCase):
                         "args": "-m 1 -n 128 -k 128",
                     },
                     {
+                        "id": "q_proj_a",
+                        "app": "sgemm_tcu",
+                        "kind": "gemm",
+                        "backend": "sgemm_tcu",
+                        "args": "-m 1 -n 128 -k 128",
+                    },
+                    {
                         "id": "lm_head",
                         "app": "sgemm_tcu",
                         "kind": "gemm",
@@ -96,17 +103,20 @@ class MergeSuitesTest(unittest.TestCase):
             )
 
             self.assertEqual(out, result["suite"])
-            self.assertEqual(3, result["case_count"])
+            self.assertEqual(4, result["case_count"])
+            self.assertEqual(3, result["execution_count"])
+            self.assertEqual(1, result["logical_duplicate_count"])
             self.assertEqual(1, result["dropped_duplicate_count"])
 
             merged = load_suite(out, repo_root=Path.cwd())
             self.assertEqual("merged_naive_simd", merged.name)
             self.assertEqual("naive_simd", merged.defaults.fpga_bin)
-            self.assertEqual(3, len(merged.cases))
+            self.assertEqual(4, len(merged.cases))
             self.assertEqual(
                 [
                     "-m 1 -n 128 -k 128",
                     "-m 1 -n 64 -k 128",
+                    "-m 1 -n 128 -k 128",
                     "-m 1 -n 32000 -k 4096",
                 ],
                 [case.args for case in merged.cases],

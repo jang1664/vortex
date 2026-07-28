@@ -1,5 +1,15 @@
 #!/bin/bash
-target=$1
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <llama2|llama3|llama3p2_1b|llama3p2_3b>" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+mkdir -p logs
 # ------------------------------------------------
 # options
 # ------------------------------------------------
@@ -46,4 +56,7 @@ elif [[ "$model" == "llama3p2_3b" ]]; then
       --no-power-auto-duration \
       --retry \
       | tee -i logs/main_llama3p2_3b.log
+else
+  echo "Error: unsupported model: ${model}" >&2
+  exit 1
 fi

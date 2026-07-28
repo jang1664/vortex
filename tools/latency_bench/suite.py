@@ -112,6 +112,10 @@ class SuiteMatrixOverrides:
     generation_batch_values: tuple[int, ...] = ()
     prefill_seq_len_values: tuple[int, ...] = ()
     generation_seq_len_values: tuple[int, ...] = ()
+    generation_out_token_values: tuple[int, ...] = ()
+    generation_max_seq_len: int | None = None
+    generation_decode_measurement: str | None = None
+    generation_decode_sample_interval: int | None = None
 
 
 _SEQ_LEN_MATRIX_KEYS = ("prefill_seq_len", "gen_kv_len", "seq_len", "seq")
@@ -132,6 +136,10 @@ def _has_suite_matrix_overrides(overrides: SuiteMatrixOverrides) -> bool:
         overrides.generation_batch_values,
         overrides.prefill_seq_len_values,
         overrides.generation_seq_len_values,
+        overrides.generation_out_token_values,
+        overrides.generation_max_seq_len is not None,
+        overrides.generation_decode_measurement is not None,
+        overrides.generation_decode_sample_interval is not None,
     ))
 
 
@@ -141,6 +149,10 @@ def _has_stage_specific_matrix_overrides(overrides: SuiteMatrixOverrides) -> boo
         overrides.generation_batch_values,
         overrides.prefill_seq_len_values,
         overrides.generation_seq_len_values,
+        overrides.generation_out_token_values,
+        overrides.generation_max_seq_len is not None,
+        overrides.generation_decode_measurement is not None,
+        overrides.generation_decode_sample_interval is not None,
     ))
 
 
@@ -205,6 +217,15 @@ def _apply_matrix_values_for_stage(
         for key in _seq_len_keys_for_stage(stage):
             if key in matrix:
                 matrix[key] = _matrix_values_spec(seq_len_values)
+
+    if stage == "generation" and overrides.generation_out_token_values:
+        matrix["out_tokens"] = _matrix_values_spec(overrides.generation_out_token_values)
+    if stage == "generation" and overrides.generation_max_seq_len is not None:
+        out["max_seq_len"] = int(overrides.generation_max_seq_len)
+    if stage == "generation" and overrides.generation_decode_measurement is not None:
+        out["decode_measurement"] = overrides.generation_decode_measurement
+    if stage == "generation" and overrides.generation_decode_sample_interval is not None:
+        out["decode_sample_interval"] = int(overrides.generation_decode_sample_interval)
 
     return out
 
