@@ -220,7 +220,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
         if (i < GEMM_PSUM_LANES) begin : g_psum_write_slot
             `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_wr_if[i],
-                LMEM_LOCAL_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+                LMEM_LOCAL_TAG_WIDTH, PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
         end else begin : g_psum_read_slot
             `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_rd_if[i - GEMM_PSUM_LANES],
                 LMEM_LOCAL_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);

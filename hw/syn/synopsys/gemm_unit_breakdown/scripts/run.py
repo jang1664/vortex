@@ -290,6 +290,7 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
     print("[run] verified current banked-accumulator GEMM patch")
     patched_fpnew_pkg = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_pkg.sv"
     patched_fpnew_block = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_opgroup_block.sv"
+    patched_fpnew_multifmt = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_opgroup_multifmt_slice.sv"
 
     sources = []
     skipped = []
@@ -299,13 +300,16 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
         if name in SKIP_FILENAMES:
             skipped.append(f)
             continue
-        # Path-substitute the upstream cvfpu fpnew_pkg with Vortex's
-        # patched copy without disturbing analyze order.
+        # Path-substitute upstream CVFPU definitions with Vortex's patched
+        # copies without disturbing analyze order.
         if name == "fpnew_pkg.sv" and patched_fpnew_pkg.exists():
             sources.append(str(patched_fpnew_pkg))
             swapped += 1
         elif name == "fpnew_opgroup_block.sv" and patched_fpnew_block.exists():
             sources.append(str(patched_fpnew_block))
+            swapped += 1
+        elif name == "fpnew_opgroup_multifmt_slice.sv" and patched_fpnew_multifmt.exists():
+            sources.append(str(patched_fpnew_multifmt))
             swapped += 1
         else:
             sources.append(f)
@@ -313,7 +317,7 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
         print(f"[run] skipping {len(skipped)} memory/sim model files: "
               f"{[Path(f).name for f in skipped]}")
     if swapped:
-        print(f"[run] swapped {swapped}x fpnew_pkg.sv -> patched_cvfpu version")
+        print(f"[run] swapped {swapped} CVFPU source(s) -> patched_cvfpu versions")
 
     # Restrict to the closure of files transitively reachable from
     # VX_gemm_unit_top (a flat-port wrapper that instantiates VX_gemm_unit

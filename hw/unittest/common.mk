@@ -29,6 +29,7 @@ RTL_DIRS := $(patsubst -I%,%,$(filter -I%,$(RTL_INCLUDE)))
 
 # Discover RTL source files from source directories
 RTL_SRCS := $(shell find $(RTL_DIRS) -type f \( -name '*.v' -o -name '*.vh' -o -name '*.sv' \))
+RTL_SRCS := $(filter-out $(RTL_SOURCE_EXCLUDES),$(RTL_SRCS))
 
 # Enable Verilator multithreaded simulation
 THREADS ?= $(shell python3 -c 'import multiprocessing as mp; print(mp.cpu_count())')

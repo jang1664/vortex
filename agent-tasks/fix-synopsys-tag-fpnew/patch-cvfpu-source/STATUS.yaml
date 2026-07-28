@@ -1,0 +1,27 @@
+task: fix-synopsys-tag-fpnew/patch-cvfpu-source
+state: DONE
+goal: "Move the FPNEW multiformat slice change out of the CVFPU submodule and select the Vortex-local patched copy in every applicable build flow."
+spec: agent-tasks/fix-synopsys-tag-fpnew/patch-cvfpu-source/patch-cvfpu-source-spec.md
+updated: "2026-07-29 02:19"
+log:
+  - timestamp: "2026-07-29 02:00"
+    entry: "Confirmed the shadow-copy strategy under hw/rtl/fpu/patched_cvfpu; upstream CVFPU must remain pinned and clean."
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-29 02:06"
+    test: "hw/unittest/gemm_unit via tools/verify_rtl.py, VCS"
+    result: COMPILE_ERROR
+    details: "VCS stopped on pre-existing/unrelated unconnected VX_gemm_unit interface ports (psum_rd_lmem_bus_if, psum_wr_lmem_bus_if, final_lmem_bus_if). The generated compile source list selected each local patched FPNEW pkg/block/multifmt source exactly once and did not select the upstream multifmt source. Sent the failure to RTL implementation for causality review."
+  - iteration: 2
+    timestamp: "2026-07-29 02:12"
+    test: "hw/unittest/gemm_unit via tools/verify_rtl.py, VCS, configs/rv64_zfh_lp64f_fpnew.sh"
+    result: PASS
+    details: "Functional simulation passed with FPU_FPNEW and EXT_D_DISABLE. Compile list selected each local patched FPNEW pkg/block/multifmt source exactly once and selected none of the three upstream definitions. Logs: build/hw/unittest/gemm_unit/logs/{compile,sim}.log"
+  - iteration: 3
+    timestamp: "2026-07-29 02:19"
+    test: "Synopsys catalog-only Vortex_axi top elaboration, naive_gemm_th32_tcol32_hwexp_dcache_sxbar_f16"
+    result: PASS
+    details: "Exit 0; catalog and elaborated DDC were produced. The final DC compile list used the three local patched definitions exactly once and no upstream pkg/block/multifmt definitions. No Error, LINK-3, LINK-25, ELAB-298, or unresolved-reference pattern was present. compile_ultra was intentionally skipped in catalog mode."
+pitfalls:
+  - "Adding the patched module without excluding the upstream module causes duplicate module definitions."
+  - "FPNEW source lists exist across Synopsys, Xilinx, VCS/RTL simulation, and focused GEMM unittests."

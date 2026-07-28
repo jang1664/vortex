@@ -1031,8 +1031,10 @@ package VX_gpu_pkg;
     // keeps this width for interface consistency even though it uses TMEM.
     localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(5, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
+    // PSUM reads merge two clients, while writes merge two PSUM lanes and the
+    // final-output client.
     localparam PSUM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + `ARB_SEL_BITS(2, 1));
-    localparam PSUM_ARB_TAG_WIDTH = (PSUM_LMEM_TAG_WIDTH + `ARB_SEL_BITS(2, 1));
+    localparam PSUM_ARB_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + `ARB_SEL_BITS(3, 1));
 `ifdef GEMM_NAIVE
     // Naive mem-unit LMEM path: LSU + CPU DMA + GEMM.
     localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(3, 1);

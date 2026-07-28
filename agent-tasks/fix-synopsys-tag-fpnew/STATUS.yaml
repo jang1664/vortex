@@ -1,0 +1,50 @@
+task: fix-synopsys-tag-fpnew
+state: DONE
+goal: "Fix PSUM write tag width and support FPNEW scalar INT64 conversion elaboration."
+spec: agent-tasks/fix-synopsys-tag-fpnew/fix-synopsys-tag-fpnew-spec.md
+updated: "2026-07-29 01:51"
+log:
+  - timestamp: "2026-07-29 01:24"
+    entry: "Confirmed scope: carry two route bits for the 3-to-1 PSUM write arbiter and size FPNEW scalar CONV lanes for enabled INT64 formats without enabling FP64."
+  - timestamp: "2026-07-29 01:51"
+    entry: "Implemented separate PSUM read/write tag widths and INT64-aware FPNEW CONV lane sizing. Synopsys catalog-only top elaboration completed with exit 0 and no LINK-3, LINK-25, ELAB-298, unresolved-reference, or Error messages."
+iterations:
+  - name: "TAG and FPNEW INT64 width fix — Iteration 1"
+    status: compile_error
+    error_summary: "Verification stopped before compilation because Verilator is not installed."
+    root_cause: "The initial test request selected the unavailable vlt simulator."
+    fix_applied: "Changed the verification simulator to the installed Synopsys VCS backend; RTL was not changed for this environment-only failure."
+    lesson: "Check the requested simulator executable before starting verify_rtl.py; VCS is available on this host while Verilator is not."
+  - name: "TAG and FPNEW INT64 width fix — Iteration 2"
+    status: compile_error
+    error_summary: "core_top invoked Verilator even when verify_rtl.py was given --sim vcs."
+    root_cause: "The existing core_top unittest target is Verilator-only and does not honor the requested VCS backend."
+    fix_applied: "Returned the report to RTL implementation to select a VCS-capable existing test; no RTL change was indicated by this failure."
+    lesson: "verify_rtl.py simulator selection does not guarantee that every unittest Makefile supports that simulator."
+  - name: "TAG and FPNEW INT64 width fix — Iteration 3"
+    status: sim_fail
+    error_summary: "gemm_node SMOKE compiled but stopped at time zero in the DMA gearbox width assertion."
+    root_cause: "The VCS test environment produced an 8-byte to 8-byte gearbox configuration, outside the module's asserted 16-to-512-byte range."
+    fix_applied: "Returned the report to RTL implementation to determine the correct existing test parameters; no TAG or FPNEW failure was reported."
+    lesson: "The gemm_node regression requires DMA gearbox configuration compatible with its time-zero assertions."
+  - name: "TAG and FPNEW INT64 width fix — Iteration 4"
+    status: sim_fail
+    error_summary: "The aligned-DMA test ran until its destination-stride alignment assertion rejected a 64-byte stride."
+    root_cause: "The selected SMOKE dimensions do not meet the aligned DMA backend's 256-byte stride requirement."
+    fix_applied: "Returned the report to RTL implementation to select aligned SMOKE dimensions; no changed RTL was implicated."
+    lesson: "When forcing the aligned DMA backend, test matrix strides must also satisfy its 256-byte alignment contract."
+  - name: "TAG and FPNEW INT64 width fix — Iteration 5"
+    status: compile_error
+    error_summary: "Adding SYNTHESIS removed cf_math_util_pkg members required by fpint_emul.sv."
+    root_cause: "SYNTHESIS is too broad for a simulation regression and disables required verification package APIs."
+    fix_applied: "Rejected the SYNTHESIS-based test workaround and returned the report for a simulation-safe test strategy."
+    lesson: "Do not use the global SYNTHESIS define merely to suppress one simulation-time guard in a VCS unittest."
+  - name: "TAG and FPNEW INT64 width fix — Iteration 6"
+    status: pass
+    error_summary: "None; authoritative Synopsys top analyze/elaborate/link completed successfully in catalog mode."
+    root_cause: "The original failures were caused by a one-bit-short PSUM write interface and a CONV lane width that ignored enabled integer formats."
+    fix_applied: "Carried PSUM_ARB_TAG_WIDTH through the write path and sized FPNEW CONV lanes to max(CONV FP width, CONV INT width)."
+    lesson: "Parameterized arbiter output widths must be derived independently for each fan-in, and scalar conversion datapaths must include the widest enabled integer format even when the corresponding FP format is disabled."
+pitfalls:
+  - "Vivado/FPU_DSP simulation does not elaborate the Synopsys FPU_FPNEW path."
+  - "The PSUM read path needs one route bit while the write path needs two; sharing one width silently truncates the write tag in permissive simulators."
