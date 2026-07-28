@@ -17,9 +17,9 @@ template <uint32_t QUANT_MODE>
 KV_DEQUANT_INLINE void load_qparam(const fp16_t* scales,
                                    const uint16_t* zeros,
                                    uint64_t qidx,
-                                   float* scale,
+                                   _Float16* scale,
                                    int32_t* zero) {
-  *scale = fp16_to_float(scales[qidx]);
+  *scale = kv_fp16_from_bits(scales[qidx]);
   *zero = QUANT_MODE == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
       ? 0
       : kv_signed_int16(zeros[qidx]);
@@ -27,18 +27,18 @@ KV_DEQUANT_INLINE void load_qparam(const fp16_t* scales,
 
 template <uint32_t QUANT_MODE>
 KV_DEQUANT_INLINE uint32_t dequantize_pair(uint8_t packed,
-                                           float scale0,
+                                           _Float16 scale0,
                                            int32_t zero0,
-                                           float scale1,
+                                           _Float16 scale1,
                                            int32_t zero1) {
   const int32_t q0 = decode_int4<QUANT_MODE>(packed & 0x0fu);
   const int32_t q1 = decode_int4<QUANT_MODE>(packed >> 4);
   const int32_t q0_minus_zero = q0 - zero0;
   const int32_t q1_minus_zero = q1 - zero1;
   const fp16_t out0 =
-      float_to_fp16((float)q0_minus_zero * scale0);
+      kv_fp16_to_bits((_Float16)q0_minus_zero * scale0);
   const fp16_t out1 =
-      float_to_fp16((float)q1_minus_zero * scale1);
+      kv_fp16_to_bits((_Float16)q1_minus_zero * scale1);
   return (uint32_t)out0 | ((uint32_t)out1 << 16);
 }
 
@@ -46,14 +46,11 @@ KV_DEQUANT_INLINE uint32_t broadcast_u32(uint32_t value) {
   return (uint32_t)vx_shfl_idx(value, 0, NUM_THREADS - 1, 0);
 }
 
-KV_DEQUANT_INLINE float broadcast_float(float value) {
-  union {
-    float f;
-    uint32_t u;
-  } bits;
-  bits.f = value;
+KV_DEQUANT_INLINE _Float16 broadcast_float(_Float16 value) {
+  union { float f; uint32_t u; } bits;
+  bits.f = (float)value;
   bits.u = broadcast_u32(bits.u);
-  return bits.f;
+  return (_Float16)bits.f;
 }
 
 // QDIR=0 groups along K.  A warp handles adjacent packed N pairs while every
@@ -85,7 +82,7 @@ static void dequantize_qdir0(kernel_arg_t* arg,
 
     const uint32_t n0 = n_pair << 1;
     const uint64_t qparam_base = (uint64_t)k_group * N + n0;
-    float scale0, scale1;
+    _Float16 scale0, scale1;
     int32_t zero0, zero1;
     load_qparam<QUANT_MODE>(
         scales, zeros, qparam_base, &scale0, &zero0);
@@ -130,7 +127,7 @@ static void dequantize_qdir1(kernel_arg_t* arg,
     const uint32_t pair_begin = n_begin >> 1;
     const uint32_t pair_count = (n_end - n_begin) >> 1;
 
-    float scale = 0.0f;
+    _Float16 scale = 0.0f;
     int32_t zero = 0;
     if (lane == 0) {
       const uint64_t qidx = (uint64_t)k * n_groups + n_group;

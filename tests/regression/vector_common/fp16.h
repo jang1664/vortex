@@ -24,6 +24,17 @@ static inline float fp32_from_bits(uint32_t u) {
 }
 
 static inline float fp16_to_float(fp16_t h) {
+#if defined(__riscv_zfh) && !defined(VX_FP16_FORCE_SOFTWARE_CONVERSION)
+  union {
+    fp16_t bits;
+    _Float16 value;
+  } input;
+  input.bits = h;
+
+  float output;
+  __asm__ volatile("fcvt.s.h %0, %1" : "=f"(output) : "f"(input.value));
+  return output;
+#else
   const uint32_t sign = ((uint32_t)h & 0x8000u) << 16;
   uint32_t exp = ((uint32_t)h >> 10) & 0x1fu;
   uint32_t mant = (uint32_t)h & 0x03ffu;
@@ -48,9 +59,18 @@ static inline float fp16_to_float(fp16_t h) {
 
   exp = exp + (127u - 15u);
   return fp32_from_bits(sign | (exp << 23) | (mant << 13));
+#endif
 }
 
 static inline fp16_t float_to_fp16(float f) {
+#if defined(__riscv_zfh) && !defined(VX_FP16_FORCE_SOFTWARE_CONVERSION)
+  union {
+    _Float16 value;
+    fp16_t bits;
+  } output;
+  __asm__ volatile("fcvt.h.s %0, %1" : "=f"(output.value) : "f"(f));
+  return output.bits;
+#else
   const uint32_t bits = fp32_bits(f);
   const uint32_t sign = (bits >> 16) & 0x8000u;
   const uint32_t exp = (bits >> 23) & 0xffu;
@@ -99,6 +119,7 @@ static inline fp16_t float_to_fp16(float f) {
   }
 
   return (fp16_t)(sign | ((uint32_t)exp16 << 10) | mant16);
+#endif
 }
 
 #endif // _VECTOR_COMMON_FP16_H_

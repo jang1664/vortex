@@ -4,6 +4,70 @@
 #include "../vector_common/fp16.h"
 #include <stdint.h>
 
+typedef _Float16 kv_fp16_arith_t;
+
+static inline kv_fp16_arith_t kv_fp16_from_bits(fp16_t bits) {
+  union {
+    fp16_t bits;
+    kv_fp16_arith_t value;
+  } v;
+  v.bits = bits;
+  return v.value;
+}
+
+static inline fp16_t kv_fp16_to_bits(kv_fp16_arith_t value) {
+  union {
+    kv_fp16_arith_t value;
+    fp16_t bits;
+  } v;
+  v.value = value;
+  return v.bits;
+}
+
+static inline kv_fp16_arith_t kv_fp16_add(
+    kv_fp16_arith_t a,
+    kv_fp16_arith_t b) {
+#ifdef __riscv
+  return a + b;
+#else
+  volatile kv_fp16_arith_t result = a + b;
+  return result;
+#endif
+}
+
+static inline kv_fp16_arith_t kv_fp16_sub(
+    kv_fp16_arith_t a,
+    kv_fp16_arith_t b) {
+#ifdef __riscv
+  return a - b;
+#else
+  volatile kv_fp16_arith_t result = a - b;
+  return result;
+#endif
+}
+
+static inline kv_fp16_arith_t kv_fp16_mul(
+    kv_fp16_arith_t a,
+    kv_fp16_arith_t b) {
+#ifdef __riscv
+  return a * b;
+#else
+  volatile kv_fp16_arith_t result = a * b;
+  return result;
+#endif
+}
+
+static inline kv_fp16_arith_t kv_fp16_div(
+    kv_fp16_arith_t a,
+    kv_fp16_arith_t b) {
+#ifdef __riscv
+  return a / b;
+#else
+  volatile kv_fp16_arith_t result = a / b;
+  return result;
+#endif
+}
+
 #ifndef KV_QUANT_LEGACY_UINT4_ASYMMETRIC
 #define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
 #define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
@@ -72,12 +136,48 @@ static inline int32_t kv_round_half_away_from_zero(float x) {
   return (int32_t)(x + ((x >= 0.0f) ? 0.5f : -0.5f));
 }
 
+static inline int32_t kv_round_half_away_from_zero_fp16(kv_fp16_arith_t x) {
+  const kv_fp16_arith_t half =
+      (x >= (kv_fp16_arith_t)0.0f)
+          ? (kv_fp16_arith_t)0.5f
+          : (kv_fp16_arith_t)-0.5f;
+  return (int32_t)kv_fp16_add(x, half);
+}
+
 static inline uint8_t kv_quantize_value_inv_scale(float x, float inv_scale, int16_t zp) {
   if (inv_scale == 0.0f) {
     return 0;
   }
   float qf = x * inv_scale;
   int32_t q = kv_round_half_away_from_zero(qf) + (int32_t)zp;
+  if (q < 0) q = 0;
+  if (q > 15) q = 15;
+  return (uint8_t)q;
+}
+
+static inline uint8_t kv_quantize_value_inv_scale_fp16(
+    kv_fp16_arith_t x,
+    kv_fp16_arith_t inv_scale,
+    int16_t zp) {
+  if (inv_scale == (kv_fp16_arith_t)0.0f) {
+    return 0;
+  }
+  const kv_fp16_arith_t qf = kv_fp16_mul(x, inv_scale);
+  int32_t q = kv_round_half_away_from_zero_fp16(qf) + (int32_t)zp;
+  if (q < 0) q = 0;
+  if (q > 15) q = 15;
+  return (uint8_t)q;
+}
+
+static inline uint8_t kv_quantize_value_scale_fp16(
+    kv_fp16_arith_t x,
+    kv_fp16_arith_t scale,
+    int16_t zp) {
+  if (scale == (kv_fp16_arith_t)0.0f) {
+    return 0;
+  }
+  const kv_fp16_arith_t qf = kv_fp16_div(x, scale);
+  int32_t q = kv_round_half_away_from_zero_fp16(qf) + (int32_t)zp;
   if (q < 0) q = 0;
   if (q > 15) q = 15;
   return (uint8_t)q;

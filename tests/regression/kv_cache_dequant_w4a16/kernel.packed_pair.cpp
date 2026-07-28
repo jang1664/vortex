@@ -35,19 +35,19 @@ void kernel_kv_cache_dequant(kernel_arg_t *__UNIFORM__ arg) {
     const uint64_t qidx0 = kv_qparam_index(k, n0, K, N, arg->QBLK, arg->QDIR);
     const uint64_t qidx1 = kv_qparam_index(k, n1, K, N, arg->QBLK, arg->QDIR);
 
-    const float scale0 = fp16_to_float(scales[qidx0]);
+    const _Float16 scale0 = kv_fp16_from_bits(scales[qidx0]);
     const int32_t zp0 = kv_signed_int16(zeros[qidx0]);
-    float scale1 = scale0;
+    _Float16 scale1 = scale0;
     int32_t zp1 = zp0;
     if (qidx1 != qidx0) {
-      scale1 = fp16_to_float(scales[qidx1]);
+      scale1 = kv_fp16_from_bits(scales[qidx1]);
       zp1 = kv_signed_int16(zeros[qidx1]);
     }
 
     const int32_t q0_minus_zp = q0 - zp0;
     const int32_t q1_minus_zp = q1 - zp1;
-    const fp16_t out0 = float_to_fp16((float)q0_minus_zp * scale0);
-    const fp16_t out1 = float_to_fp16((float)q1_minus_zp * scale1);
+    const fp16_t out0 = kv_fp16_to_bits((_Float16)q0_minus_zp * scale0);
+    const fp16_t out1 = kv_fp16_to_bits((_Float16)q1_minus_zp * scale1);
     dst[byte_idx] = (uint32_t)out0 | ((uint32_t)out1 << 16);
   }
 }

@@ -26,7 +26,9 @@ TEST_DIRS := \
 	fence
 
 ifneq (,$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
-TEST_DIRS += fp16_zfh
+TEST_DIRS += \
+	fp16_quant_debug \
+	fp16_zfh
 endif
 
 ifneq (,$(findstring -DENABLE_GEMM_ACCEL,$(CONFIGS)))
@@ -40,6 +42,7 @@ endif
 TEST_DIRS += \
 	fpint_gemm_ffn_hw \
 	fpint_gemm_ffn_hw_naive \
+	fpu_format_switch_debug \
 	gemm_fpint \
 	hadamard \
 	hadamard_base \

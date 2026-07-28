@@ -39,15 +39,16 @@ static void cleanup() {
 static void init_src(std::vector<fp16_t>& src) {
   for (size_t i = 0; i < src.size(); ++i) {
     int x = int((i * 1103515245u + 12345u) & 0xffu) - 128;
-    src[i] = float_to_fp16(float(x) / 64.0f);
+    src[i] = kv_fp16_to_bits(kv_fp16_arith_t(x) / 64.0f);
   }
 }
 
-static int32_t round_half_even_cpu(float value) {
+static int32_t round_half_even_cpu(kv_fp16_arith_t value) {
   const int32_t truncated = (int32_t)value;
-  const float truncated_f = (float)truncated;
+  const kv_fp16_arith_t truncated_f = (kv_fp16_arith_t)truncated;
   const int32_t floor_value = truncated - (int32_t)(truncated_f > value);
-  const float fraction = value - (float)floor_value;
+  const kv_fp16_arith_t fraction =
+      kv_fp16_sub(value, (kv_fp16_arith_t)floor_value);
   const int32_t round_up = (int32_t)(fraction > 0.5f)
       | ((int32_t)(fraction == 0.5f) & (floor_value & 1));
   return floor_value + round_up;
@@ -63,14 +64,14 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
                                uint32_t n,
                                fp16_t& scale_bits,
                                int16_t& zp,
-                               float* quant_scale_out = nullptr) {
-  float min_v = fp16_to_float(src[(uint64_t)k * N + n]);
-  float max_v = min_v;
+                               kv_fp16_arith_t* quant_scale_out = nullptr) {
+  kv_fp16_arith_t min_v = kv_fp16_from_bits(src[(uint64_t)k * N + n]);
+  kv_fp16_arith_t max_v = min_v;
   if (QDIR == 0) {
     uint32_t k0 = (k / QBLK) * QBLK;
     uint32_t k1 = std::min(K, k0 + QBLK);
     for (uint32_t kk = k0; kk < k1; ++kk) {
-      float v = fp16_to_float(src[(uint64_t)kk * N + n]);
+      kv_fp16_arith_t v = kv_fp16_from_bits(src[(uint64_t)kk * N + n]);
       min_v = std::min(min_v, v);
       max_v = std::max(max_v, v);
     }
@@ -78,61 +79,61 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     uint32_t n0 = (n / QBLK) * QBLK;
     uint32_t n1 = std::min(N, n0 + QBLK);
     for (uint32_t nn = n0; nn < n1; ++nn) {
-      float v = fp16_to_float(src[(uint64_t)k * N + nn]);
+      kv_fp16_arith_t v = kv_fp16_from_bits(src[(uint64_t)k * N + nn]);
       min_v = std::min(min_v, v);
       max_v = std::max(max_v, v);
     }
   }
 
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const float abs_min = min_v < 0.0f ? -min_v : min_v;
-    const float abs_max = max_v < 0.0f ? -max_v : max_v;
-    float absmax = std::max(abs_min, abs_max);
+    const kv_fp16_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
+    const kv_fp16_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
+    kv_fp16_arith_t absmax = std::max(abs_min, abs_max);
     if (absmax < 1e-8f) absmax = 1e-8f;
-    const float scale = absmax / 7.5f;
-    scale_bits = float_to_fp16(scale);
+    const kv_fp16_arith_t scale =
+        kv_fp16_div(absmax, (kv_fp16_arith_t)7.5f);
+    scale_bits = kv_fp16_to_bits(scale);
     zp = 0;
     if (quant_scale_out) *quant_scale_out = scale;
     return;
   }
 
-  const float range = max_v - min_v;
-  float scale =
+  const kv_fp16_arith_t range = kv_fp16_sub(max_v, min_v);
+  kv_fp16_arith_t scale =
       quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-  float inv_for_zp = 1.0f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-          && range / 15.0f > 1e-8f)) {
-    scale = range / 15.0f;
-    inv_for_zp = 15.0f / range;
+          && kv_fp16_div(range, (kv_fp16_arith_t)15.0f) > 1e-8f)) {
+    scale = kv_fp16_div(range, (kv_fp16_arith_t)15.0f);
   }
   int32_t zpi;
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    zpi = round_half_even_cpu(-min_v / scale) - 8;
+    zpi = round_half_even_cpu(kv_fp16_div(-min_v, scale)) - 8;
   } else {
-    zpi = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    zpi = kv_round_half_away_from_zero_fp16(
+        kv_fp16_div(-min_v, scale));
     if (zpi < 0) zpi = 0;
     if (zpi > 15) zpi = 15;
   }
-  scale_bits = float_to_fp16(scale);
+  scale_bits = kv_fp16_to_bits(scale);
   zp = (int16_t)zpi;
   if (quant_scale_out) {
     *quant_scale_out =
         quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-            ? fp16_to_float(scale_bits)
+            ? kv_fp16_from_bits(scale_bits)
             : scale;
   }
 }
 
-static uint8_t quantize_cpu_value(float value,
-                                  float scale,
+static uint8_t quantize_cpu_value(kv_fp16_arith_t value,
+                                  kv_fp16_arith_t scale,
                                   int16_t zero,
                                   uint32_t quant_mode) {
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    const float inv_scale = scale == 0.0f ? 0.0f : 1.0f / scale;
-    return kv_quantize_value_inv_scale(value, inv_scale, zero);
+    return kv_quantize_value_scale_fp16(value, scale, zero);
   }
-  int32_t q = round_half_even_cpu(value / scale) + (int32_t)zero;
+  int32_t q = round_half_even_cpu(kv_fp16_div(value, scale))
+      + (int32_t)zero;
   q = std::max(-8, std::min(7, q));
   return (uint8_t)(q & 0x0f);
 }
@@ -162,17 +163,17 @@ static void quantize_cpu(const std::vector<fp16_t>& src,
       uint64_t qidx1 = kv_qparam_index(k, n + 1, K, N, QBLK, QDIR);
       fp16_t unused_bits;
       int16_t unused_zero;
-      float scale0 = 0.0f;
-      float scale1 = 0.0f;
+      kv_fp16_arith_t scale0 = 0.0f;
+      kv_fp16_arith_t scale1 = 0.0f;
       compute_params_cpu(src, K, N, QBLK, QDIR, quant_mode,
                          k, n, unused_bits, unused_zero, &scale0);
       compute_params_cpu(src, K, N, QBLK, QDIR, quant_mode,
                          k, n + 1, unused_bits, unused_zero, &scale1);
       uint8_t q0 = quantize_cpu_value(
-          fp16_to_float(src[(uint64_t)k * N + n]), scale0,
+          kv_fp16_from_bits(src[(uint64_t)k * N + n]), scale0,
           zeros[qidx0], quant_mode);
       uint8_t q1 = quantize_cpu_value(
-          fp16_to_float(src[(uint64_t)k * N + n + 1]), scale1,
+          kv_fp16_from_bits(src[(uint64_t)k * N + n + 1]), scale1,
           zeros[qidx1], quant_mode);
       kv_store_npair(packed.data(), N, k, n >> 1, q0, q1);
     }
@@ -284,6 +285,28 @@ int main(int argc, char *argv[]) {
       if (errors < 8) {
         printf("Packed mismatch at %zu: got=0x%02x ref=0x%02x\n",
                i, unsigned(h_packed[i]), unsigned(h_ref_packed[i]));
+        if (WTRANS == 0) {
+          const uint32_t k = (uint32_t)(i / (N >> 1));
+          const uint32_t n0 = (uint32_t)((i % (N >> 1)) << 1);
+          for (uint32_t n = n0; n < n0 + 2; ++n) {
+            const uint64_t qidx =
+                kv_qparam_index(k, n, K, N, QBLK, QDIR);
+            const kv_fp16_arith_t value =
+                kv_fp16_from_bits(h_src[(uint64_t)k * N + n]);
+            const kv_fp16_arith_t scale =
+                kv_fp16_from_bits(h_scales[qidx]);
+            const kv_fp16_arith_t ratio = kv_fp16_div(value, scale);
+            printf("  (k=%u,n=%u) src=0x%04x scale=0x%04x zero=%d "
+                   "ratio=0x%04x got_q=%u ref_q=%u\n",
+                   k, n,
+                   unsigned(h_src[(uint64_t)k * N + n]),
+                   unsigned(h_scales[qidx]), int(h_zeros[qidx]),
+                   unsigned(kv_fp16_to_bits(ratio)),
+                   unsigned(kv_get_nibble(h_packed.data(), K, N, k, n)),
+                   unsigned(kv_get_nibble(
+                       h_ref_packed.data(), K, N, k, n)));
+          }
+        }
       }
       ++errors;
     }

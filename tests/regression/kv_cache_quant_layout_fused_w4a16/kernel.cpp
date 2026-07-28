@@ -56,33 +56,33 @@
 #define KV_FUSED_HELPER static
 #endif
 
-KV_FUSED_SMALL_HELPER uint32_t float_to_bits(float value) {
+KV_FUSED_SMALL_HELPER uint32_t float_to_bits(_Float16 value) {
   union { float f; uint32_t u; } v;
-  v.f = value;
+  v.f = (float)value;
   return v.u;
 }
 
-KV_FUSED_SMALL_HELPER float bits_to_float(uint32_t value) {
+KV_FUSED_SMALL_HELPER _Float16 bits_to_float(uint32_t value) {
   union { uint32_t u; float f; } v;
   v.u = value;
-  return v.f;
+  return (_Float16)v.f;
 }
 
-KV_FUSED_SMALL_HELPER float shfl_down_float(float value, uint32_t offset) {
+KV_FUSED_SMALL_HELPER _Float16 shfl_down_float(_Float16 value, uint32_t offset) {
   return bits_to_float((uint32_t)vx_shfl_down(
       float_to_bits(value), offset, NUM_THREADS - 1, 0));
 }
 
-KV_FUSED_SMALL_HELPER float shfl_idx_float(float value, uint32_t index) {
+KV_FUSED_SMALL_HELPER _Float16 shfl_idx_float(_Float16 value, uint32_t index) {
   return bits_to_float((uint32_t)vx_shfl_idx(
       float_to_bits(value), index, NUM_THREADS - 1, 0));
 }
 
-KV_FUSED_SMALL_HELPER int32_t round_half_even(float value) {
+KV_FUSED_SMALL_HELPER int32_t round_half_even(_Float16 value) {
   const int32_t truncated = (int32_t)value;
-  const float truncated_f = (float)truncated;
+  const _Float16 truncated_f = (_Float16)truncated;
   const int32_t floor_value = truncated - (int32_t)(truncated_f > value);
-  const float fraction = value - (float)floor_value;
+  const _Float16 fraction = value - (_Float16)floor_value;
   const int32_t round_up = (int32_t)(fraction > 0.5f)
       | ((int32_t)(fraction == 0.5f) & (floor_value & 1));
   return floor_value + round_up;
@@ -256,8 +256,8 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
     uint32_t log2_mxu_nt,
     uint32_t quant_mode,
     const source_view_t& source_view,
-    float* scale_out,
-    float* zero_out) {
+    _Float16* scale_out,
+    _Float16* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
@@ -269,14 +269,14 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
   source_row_cursor_t cursor = make_source_row_cursor(
       src, K, N, k, n0, src_layout, log2_mt, log2_mxu_nt, source_view);
   bool valid = false;
-  float min_v = fp16_to_float(source_row_cursor_next(&cursor, &valid));
-  float max_v = min_v;
-  float absmax = min_v < 0.0f ? -min_v : min_v;
+  _Float16 min_v = kv_fp16_from_bits(source_row_cursor_next(&cursor, &valid));
+  _Float16 max_v = min_v;
+  _Float16 absmax = min_v < 0.0f ? -min_v : min_v;
   for (uint32_t nn = n0 + 1u; nn < n1; ++nn) {
-    const float v = fp16_to_float(source_row_cursor_next(&cursor, &valid));
+    const _Float16 v = kv_fp16_from_bits(source_row_cursor_next(&cursor, &valid));
     if (v < min_v) min_v = v;
     if (v > max_v) max_v = v;
-    const float abs_v = v < 0.0f ? -v : v;
+    const _Float16 abs_v = v < 0.0f ? -v : v;
     if (abs_v > absmax) absmax = abs_v;
   }
 
@@ -287,24 +287,22 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
     return;
   }
 
-  const float range = max_v - min_v;
-  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-  float inv_for_zp = 1.0f;
+  const _Float16 range = max_v - min_v;
+  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
     scale = range / 15.0f;
-    inv_for_zp = 15.0f / range;
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (float)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (float)zp;
+    *zero_out = (_Float16)zp;
   }
 }
 #endif
@@ -322,41 +320,41 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
                            uint32_t log2_mxu_nt,
                            uint32_t quant_mode,
                            const source_view_t& source_view,
-                           float* scale_out,
-                           float* zero_out) {
+                           _Float16* scale_out,
+                           _Float16* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
     return;
   }
-  float min_v = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
+  _Float16 min_v = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                              log2_mt, log2_mxu_nt,
                                              source_view));
-  float max_v = min_v;
-  float absmax = min_v < 0.0f ? -min_v : min_v;
+  _Float16 max_v = min_v;
+  _Float16 absmax = min_v < 0.0f ? -min_v : min_v;
 
   if (QDIR == 0) {
     const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0; kk < k1; ++kk) {
-      const float v = fp16_to_float(load_src_value(src, K, N, kk, n, src_layout,
+      const _Float16 v = kv_fp16_from_bits(load_src_value(src, K, N, kk, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
-      const float abs_v = v < 0.0f ? -v : v;
+      const _Float16 abs_v = v < 0.0f ? -v : v;
       if (abs_v > absmax) absmax = abs_v;
     }
   } else {
     const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0; nn < n1; ++nn) {
-      const float v = fp16_to_float(load_src_value(src, K, N, k, nn, src_layout,
+      const _Float16 v = kv_fp16_from_bits(load_src_value(src, K, N, k, nn, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
-      const float abs_v = v < 0.0f ? -v : v;
+      const _Float16 abs_v = v < 0.0f ? -v : v;
       if (abs_v > absmax) absmax = abs_v;
     }
   }
@@ -368,24 +366,22 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
     return;
   }
 
-  const float range = max_v - min_v;
-  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-  float inv_for_zp = 1.0f;
+  const _Float16 range = max_v - min_v;
+  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
     scale = range / 15.0f;
-    inv_for_zp = 15.0f / range;
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (float)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (float)zp;
+    *zero_out = (_Float16)zp;
   }
 }
 
@@ -403,20 +399,21 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
                                 uint32_t quant_mode,
                                 const source_view_t& source_view,
                                 uint32_t lane,
-                                float* scale_out,
-                                float* zero_out) {
+                                _Float16* scale_out,
+                                _Float16* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
     return;
   }
-  float min_v = 3.402823466e+38F;
-  float max_v = -3.402823466e+38F;
+  _Float16 min_v = kv_fp16_from_bits(load_src_value(
+      src, K, N, k, n, src_layout, log2_mt, log2_mxu_nt, source_view));
+  _Float16 max_v = min_v;
   if (QDIR == 0) {
     const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0 + lane; kk < k1; kk += NUM_THREADS) {
-      const float v = fp16_to_float(load_src_value(
+      const _Float16 v = kv_fp16_from_bits(load_src_value(
           src, K, N, kk, n, src_layout, log2_mt, log2_mxu_nt,
           source_view));
       if (v < min_v) min_v = v;
@@ -426,7 +423,7 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
     const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0 + lane; nn < n1; nn += NUM_THREADS) {
-      const float v = fp16_to_float(load_src_value(
+      const _Float16 v = kv_fp16_from_bits(load_src_value(
           src, K, N, k, nn, src_layout, log2_mt, log2_mxu_nt,
           source_view));
       if (v < min_v) min_v = v;
@@ -434,8 +431,8 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
     }
   }
   for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const float other_min = shfl_down_float(min_v, offset);
-    const float other_max = shfl_down_float(max_v, offset);
+    const _Float16 other_min = shfl_down_float(min_v, offset);
+    const _Float16 other_max = shfl_down_float(max_v, offset);
     if (lane + offset < NUM_THREADS) {
       if (other_min < min_v) min_v = other_min;
       if (other_max > max_v) max_v = other_max;
@@ -444,32 +441,30 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const float abs_min = min_v < 0.0f ? -min_v : min_v;
-    const float abs_max = max_v < 0.0f ? -max_v : max_v;
-    const float absmax = abs_min > abs_max ? abs_min : abs_max;
-    const float clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
+    const _Float16 abs_min = min_v < 0.0f ? -min_v : min_v;
+    const _Float16 abs_max = max_v < 0.0f ? -max_v : max_v;
+    const _Float16 absmax = abs_min > abs_max ? abs_min : abs_max;
+    const _Float16 clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
     *scale_out = clamped_absmax / 7.5f;
     *zero_out = 0.0f;
     return;
   }
-  const float range = max_v - min_v;
-  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-  float inv_for_zp = 1.0f;
+  const _Float16 range = max_v - min_v;
+  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
     scale = range / 15.0f;
-    inv_for_zp = 15.0f / range;
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (float)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (float)zp;
+    *zero_out = (_Float16)zp;
   }
 }
 
@@ -489,20 +484,20 @@ KV_FUSED_HELPER uint8_t quant_at(const fp16_t* src,
   if (k >= K || n >= N) {
     return 0;
   }
-  float scale = 1.0f;
-  float zero = 0.0f;
+  _Float16 scale = 1.0f;
+  _Float16 zero = 0.0f;
   compute_params(src, K, N, QBLK, QDIR, k, n, src_layout,
                  log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                  source_view, &scale, &zero);
-  const float stored_scale = fp16_to_float(float_to_fp16(scale));
-  const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+  const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
+  const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
       ? stored_scale : scale;
-  const float value = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
+  const _Float16 value = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    const float inv_scale = (quant_scale == 0.0f) ? 0.0f : (1.0f / quant_scale);
-    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+    return kv_quantize_value_scale_fp16(
+        value, quant_scale, (int16_t)zero);
   }
   int32_t q = round_half_even(value / quant_scale) + (int32_t)zero;
   if (q < -8) q = -8;
@@ -518,19 +513,18 @@ KV_FUSED_HELPER uint8_t quant_with_params(const fp16_t* src,
                                  uint32_t src_layout,
                                  uint32_t log2_mt,
                                  uint32_t log2_mxu_nt,
-                                 float scale,
-                                 float zero,
+                                 _Float16 scale,
+                                 _Float16 zero,
                                  uint32_t quant_mode,
                                  const source_view_t& source_view) {
   if (k >= K || n >= N) {
     return 0;
   }
-  const float value = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
+  const _Float16 value = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    const float inv_scale = (scale == 0.0f) ? 0.0f : (1.0f / scale);
-    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+    return kv_quantize_value_scale_fp16(value, scale, (int16_t)zero);
   }
   int32_t q = round_half_even(value / scale) + (int32_t)zero;
   if (q < -8) q = -8;
@@ -539,13 +533,12 @@ KV_FUSED_HELPER uint8_t quant_with_params(const fp16_t* src,
 }
 
 KV_FUSED_HELPER uint8_t quantize_loaded_value(fp16_t value_bits,
-                                             float scale,
-                                             float zero,
+                                             _Float16 scale,
+                                             _Float16 zero,
                                              uint32_t quant_mode) {
-  const float value = fp16_to_float(value_bits);
+  const _Float16 value = kv_fp16_from_bits(value_bits);
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    const float inv_scale = (scale == 0.0f) ? 0.0f : (1.0f / scale);
-    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+    return kv_quantize_value_scale_fp16(value, scale, (int16_t)zero);
   }
   int32_t q = round_half_even(value / scale) + (int32_t)zero;
   if (q < -8) q = -8;
@@ -807,8 +800,8 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
                                       uint32_t quant_mode,
                                       uint32_t source_row,
                                       uint32_t source_col,
-                                      float scale,
-                                      float zero) {
+                                      _Float16 scale,
+                                      _Float16 zero) {
   const uint32_t out_K = padded_qparam_K(
       K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t out_N = padded_qparam_N(
@@ -827,7 +820,7 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
       GEMM_QDIR == 1 && QBLK > TILE_DMA_MXU_NT
           ? QBLK >> log2_mxu_nt
           : 1u;
-  const uint16_t scale_bits = float_to_fp16(scale);
+  const uint16_t scale_bits = kv_fp16_to_bits(scale);
   const uint16_t zero_bits =
       quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
           ? 0u
@@ -916,8 +909,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         cache_K, cache_N, SOURCE_TRANSPOSED);
     const uint32_t weight_N = padded_weight_N(
         cache_K, cache_N, SOURCE_TRANSPOSED);
-    float scale = 1.0f;
-    float zero = 0.0f;
+    _Float16 scale = 1.0f;
+    _Float16 zero = 0.0f;
 #if KV_FUSED_PERSISTENT_WARP
     const bool contiguous_single_row =
         K == 1u && source_view.total_k == 1u
@@ -938,8 +931,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                    source_view, &scale, &zero);
 #endif
-    const float stored_scale = fp16_to_float(float_to_fp16(scale));
-    const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+    const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
+    const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
         ? stored_scale : scale;
 
     for (uint32_t pair = thread_id; pair < (N >> 1); pair += total_threads) {
@@ -981,7 +974,7 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t elem = position & ((1u << log2_nt) - 1u);
         const uint64_t dst_off = scale_slot_base(arg, 0, nt_dma)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
-        store_u16(scales, dst_off, float_to_fp16(scale));
+        store_u16(scales, dst_off, kv_fp16_to_bits(scale));
         store_u16(zeros, dst_off,
                   quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
                       ? 0u : (uint16_t)(int16_t)zero);
@@ -996,7 +989,7 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t elem = nb * cur_k + k_local;
         const uint64_t dst_off = scale_slot_base(arg, kt, 0)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
-        store_u16(scales, dst_off, float_to_fp16(scale));
+        store_u16(scales, dst_off, kv_fp16_to_bits(scale));
         store_u16(zeros, dst_off,
                   quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
                       ? 0u : (uint16_t)(int16_t)zero);
@@ -1005,8 +998,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     if (thread_id == 0
         && arg->logical_scale_addr != 0
         && arg->logical_zero_addr != 0) {
-      logical_scales[position] = float_to_fp16(scale);
-      logical_zeros[position] = float_to_fp16(zero);
+      logical_scales[position] = kv_fp16_to_bits(scale);
+      logical_zeros[position] = kv_fp16_to_bits(zero);
     }
     return;
   }
@@ -1039,8 +1032,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, logical_K);
-      float scale = 1.0f;
-      float zero = 0.0f;
+      _Float16 scale = 1.0f;
+      _Float16 zero = 0.0f;
 #if KV_FUSED_SOURCE_CURSOR
       compute_params_qdir1_cursor(
           src, K, N, QBLK, source_row, source_col_start, src_layout,
@@ -1065,12 +1058,12 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
               (N + QBLK - 1u) >> log2_qblk;
           const uint32_t logical_index =
               source_row * logical_groups + group;
-          logical_scales[logical_index] = float_to_fp16(scale);
-          logical_zeros[logical_index] = float_to_fp16(zero);
+          logical_scales[logical_index] = kv_fp16_to_bits(scale);
+          logical_zeros[logical_index] = kv_fp16_to_bits(zero);
         }
       }
-      const float stored_scale = fp16_to_float(float_to_fp16(scale));
-      const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+      const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
+      const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
 #if KV_FUSED_SOURCE_CURSOR
       source_row_cursor_t source_cursor = make_source_row_cursor(
@@ -1135,8 +1128,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, weight_N);
-      float scale = 1.0f;
-      float zero = 0.0f;
+      _Float16 scale = 1.0f;
+      _Float16 zero = 0.0f;
 #if KV_FUSED_SOURCE_CURSOR
       compute_params_qdir1_cursor(
           src, K, N, QBLK, source_row, source_col_start, src_layout,
@@ -1161,12 +1154,12 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
               (N + QBLK - 1u) >> log2_qblk;
           const uint32_t logical_index =
               source_row * logical_groups + group;
-          logical_scales[logical_index] = float_to_fp16(scale);
-          logical_zeros[logical_index] = float_to_fp16(zero);
+          logical_scales[logical_index] = kv_fp16_to_bits(scale);
+          logical_zeros[logical_index] = kv_fp16_to_bits(zero);
         }
       }
-      const float stored_scale = fp16_to_float(float_to_fp16(scale));
-      const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+      const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
+      const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
 #if KV_FUSED_SOURCE_CURSOR
       source_row_cursor_t source_cursor = make_source_row_cursor(
@@ -1351,8 +1344,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
     const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
-    float scale = 1.0f;
-    float zero = 0.0f;
+    _Float16 scale = 1.0f;
+    _Float16 zero = 0.0f;
 #if KV_FUSED_QPARAM_WARP
     compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
                         source_row, source_col, src_layout,
@@ -1366,7 +1359,7 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                    source_view, &scale, &zero);
 #endif
-    store_u16(scales, dst_off, float_to_fp16(scale));
+    store_u16(scales, dst_off, kv_fp16_to_bits(scale));
     store_u16(zeros, dst_off,
               quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
                   ? 0u : (uint16_t)(int16_t)zero);
@@ -1393,27 +1386,27 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         source_row = group_index / groups_per_row;
         source_col = (group_index % groups_per_row) << log2_qblk;
       }
-      float scale = 1.0f;
-      float zero = 0.0f;
+      _Float16 scale = 1.0f;
+      _Float16 zero = 0.0f;
       compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col,
                      src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
-      logical_scales[group_index] = float_to_fp16(scale);
-      logical_zeros[group_index] = float_to_fp16(zero);
+      logical_scales[group_index] = kv_fp16_to_bits(scale);
+      logical_zeros[group_index] = kv_fp16_to_bits(zero);
     }
   }
 }
 
 #if KV_FUSED_SPLIT_PERSISTENT
 __attribute__((noinline))
-fp16_t persistent_float_to_fp16(float value) {
-  return float_to_fp16(value);
+fp16_t persistent_float_to_fp16(_Float16 value) {
+  return kv_fp16_to_bits(value);
 }
 
 __attribute__((noinline))
 void persistent_store_qparams(kernel_arg_t *__UNIFORM__ arg,
-                              float scale,
-                              float zero,
+                              _Float16 scale,
+                              _Float16 zero,
                               uint32_t lane) {
   if (lane == 0) {
     auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
@@ -1482,16 +1475,16 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   const uint32_t lane = threadIdx.x;
   const fp16_t* token = src + arg->src_col_offset;
 
-  float min_v = 3.402823466e+38F;
-  float max_v = -3.402823466e+38F;
+  _Float16 min_v = kv_fp16_from_bits(token[0]);
+  _Float16 max_v = min_v;
   for (uint32_t n = lane; n < N; n += NUM_THREADS) {
-    const float value = fp16_to_float(token[n]);
+    const _Float16 value = kv_fp16_from_bits(token[n]);
     if (value < min_v) min_v = value;
     if (value > max_v) max_v = value;
   }
   for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const float other_min = shfl_down_float(min_v, offset);
-    const float other_max = shfl_down_float(max_v, offset);
+    const _Float16 other_min = shfl_down_float(min_v, offset);
+    const _Float16 other_max = shfl_down_float(max_v, offset);
     if (lane + offset < NUM_THREADS) {
       if (other_min < min_v) min_v = other_min;
       if (other_max > max_v) max_v = other_max;
@@ -1500,39 +1493,37 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
 
-  float scale;
-  float zero;
+  _Float16 scale;
+  _Float16 zero;
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const float abs_min = min_v < 0.0f ? -min_v : min_v;
-    const float abs_max = max_v < 0.0f ? -max_v : max_v;
-    float absmax = abs_min > abs_max ? abs_min : abs_max;
+    const _Float16 abs_min = min_v < 0.0f ? -min_v : min_v;
+    const _Float16 abs_max = max_v < 0.0f ? -max_v : max_v;
+    _Float16 absmax = abs_min > abs_max ? abs_min : abs_max;
     if (absmax < 1e-8f) absmax = 1e-8f;
     scale = absmax / 7.5f;
     zero = 0.0f;
   } else {
-    const float range = max_v - min_v;
+    const _Float16 range = max_v - min_v;
     scale =
         quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-    float inv_for_zp = 1.0f;
     if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
         || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
             && range / 15.0f > 1e-8f)) {
       scale = range / 15.0f;
-      inv_for_zp = 15.0f / range;
     }
     if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-      zero = (float)round_half_even(-min_v / scale) - 8.0f;
+      zero = (_Float16)round_half_even(-min_v / scale) - 8.0f;
     } else {
-      int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+      int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
       if (zp < 0) zp = 0;
       if (zp > 15) zp = 15;
-      zero = (float)zp;
+      zero = (_Float16)zp;
     }
   }
 
-  float quant_scale = scale;
+  _Float16 quant_scale = scale;
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    quant_scale = fp16_to_float(float_to_fp16(scale));
+    quant_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
   }
   const uint32_t cache_K = arg->cache_capacity;
   const uint32_t position = arg->cache_position;
