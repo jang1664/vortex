@@ -347,8 +347,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [1:0]                                    acc_rd_fifo_alm_full_by_bank;
     logic                                          acc_mem_rd_data_valid;
     logic                                          acc_mem_rd_data_take;
+`ifdef GEMM_NAIVE
     logic [`GEMM_ACC_MAX_CNT:0]                    acc_rd_prefetch_count;
-    logic                                          acc_rd_prefetch_ready;
+`endif
+    logic                                          input_accept_ready;
     logic                                          input_pipe_ready;
     logic                                          acc_rd_fifo_pop_fire;
     logic                                          acc_mem_rd_rsp_can_push;
@@ -361,7 +363,6 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            final_lmem_addr_q;
 `endif
     logic [1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_rd_fifo_out_data_by_bank;
-    logic                                          acc_mem_accum_rd_group;
     logic                                          acc_mem_accum_rd_sel;
     logic                                          acc_mem_accum_rd_rr;
     logic                                          acc_rd_consume_bank;
@@ -481,7 +482,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // =========================================================================
     assign acc_mem_accum_rd_addr      = acc_mem_accum_rd_addr_by_bank[acc_mem_accum_rd_sel];
     assign acc_mem_accum_rd_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_rd_addr);
-    assign acc_mem_accum_rd_bank      = {acc_mem_accum_rd_group, acc_mem_accum_rd_sel};
+    // The scheduler selects an address-stream parity; the physical bank group
+    // must follow that stream's current address across memory boundaries.
+    assign acc_mem_accum_rd_bank      = get_acc_mem_idx(acc_mem_accum_rd_addr);
     assign acc_mem_accum_wr_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_wr_addr);
     assign acc_mem_accum_wr_bank      = get_acc_mem_idx(acc_mem_accum_wr_addr);
     assign acc_mem_out_rd_bank_addr   = get_acc_mem_bank_addr(acc_mem_out_rd_addr);
@@ -588,10 +591,15 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_rd_fifo_push_by_bank[1] = acc_mem_rd_data_take && (acc_mem_rd_rsp_bank[0] == 1'b1);
     assign acc_rd_fifo_push = |acc_rd_fifo_push_by_bank;
 `ifdef GEMM_NAIVE
-    assign acc_rd_prefetch_ready = gemm_unit_if.start
-                                 ? gemm_unit_if.gemm_unit_ctrl.is_load
-                                 : (gemm_unit_ctrl.is_load
-                                 || (acc_rd_prefetch_count >= gemm_unit_ctrl.acc_cnt));
+    // Accumulate commands initialize PSUM read/FIFO state on their start edge.
+    // Wait for all requested PSUMs on short commands, or for the realizable
+    // almost-full window on longer commands. The compute datapath cannot
+    // backpressure its roughly 30-row burst after input has been accepted.
+    assign input_accept_ready = gemm_unit_if.start
+                              ? gemm_unit_if.gemm_unit_ctrl.is_load
+                              : (gemm_unit_ctrl.is_load
+                              || (acc_rd_prefetch_count >= gemm_unit_ctrl.acc_cnt)
+                              || acc_rd_fifo_alm_full);
 
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
@@ -603,8 +611,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
     end
 `else
-    assign acc_rd_prefetch_ready = 1'b1;
-    assign acc_rd_prefetch_count = '0;
+    assign input_accept_ready = 1'b1;
 `endif
 `ifdef GEMM_NAIVE
     assign acc_mem_rd_rsp_bank = psum_rd_lmem_bus_if.rsp_data.tag[1:0];
@@ -668,10 +675,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             acc_mem_accum_rd_addr_by_bank <= '0;
-            acc_mem_accum_rd_group <= 1'b0;
         end else begin
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
-                acc_mem_accum_rd_group <= acc_mem_accum_start_bank[1];
                 acc_mem_accum_rd_addr_by_bank[acc_mem_accum_start_bank[0]]
                     <= gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr;
                 acc_mem_accum_rd_addr_by_bank[~acc_mem_accum_start_bank[0]]
@@ -992,7 +997,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     ) u_in_pipe (
         .clk       (clk),
         .reset     (reset),
-        .valid_in  (i_lmem_bus_if.req_valid && acc_rd_prefetch_ready),
+        .valid_in  (i_lmem_bus_if.req_valid && input_accept_ready),
         .ready_in  (input_pipe_ready),
         .data_in   (i_lmem_bus_if.req_data.data),
         .data_out  (in_pipe_data_out),
@@ -1000,7 +1005,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .valid_out (in_pipe_valid_out)
     );
 
-    assign i_lmem_bus_if.req_ready = input_pipe_ready && acc_rd_prefetch_ready;
+    assign i_lmem_bus_if.req_ready = input_pipe_ready && input_accept_ready;
 
     // -------------------------------------------------------------------------
     // Input Scalers
@@ -1529,10 +1534,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                    acc_rd_credit_count_by_bank[1], acc_rd_credit_count_by_bank[0]);
         end
         if (!reset && in_flight===1 && acc_mem_accum_rd_accept
-            && (get_acc_mem_idx(acc_mem_accum_rd_addr) != acc_mem_accum_rd_bank)) begin
-            $fatal(1, "[%0t] GEMM accumulator read address left scheduled bank: addr=0x%0h decoded_bank=%0d scheduled_bank=%0d",
-                   $time, acc_mem_accum_rd_addr, get_acc_mem_idx(acc_mem_accum_rd_addr),
-                   acc_mem_accum_rd_bank);
+            && (acc_mem_accum_rd_bank[0] != acc_mem_accum_rd_sel)) begin
+            $fatal(1, "[%0t] GEMM accumulator read address left scheduled parity: addr=0x%0h decoded_bank=%0d scheduled_parity=%0d",
+                   $time, acc_mem_accum_rd_addr, acc_mem_accum_rd_bank,
+                   acc_mem_accum_rd_sel);
         end
         if (!reset && in_flight===1 && rd_wr_conflict_event) begin
             $fatal(1, "[%0t] GEMM accumulator dual-bank scheduler issued conflicting read/write: rd_bank=%0d wr_bank=%0d",

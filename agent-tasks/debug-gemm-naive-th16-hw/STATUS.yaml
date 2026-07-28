@@ -1,0 +1,160 @@
+task: debug-gemm-naive-th16-hw
+state: COMPLETE
+updated: "2026-07-28 23:38"
+goal: "Make fpint_gemm_ffn_hw_naive pass the th16/b32 configuration through M256, including M128/M256 K256 N256 and the existing M64 regressions."
+pitfalls:
+  - "The shared xrt-vcs build may contain stale defines; only an isolated build with vlogan define evidence is authoritative."
+  - "The target config previously used L1_MEM_PORTS=4 with only two D-cache core requesters, which can lose scalar bypass responses; the current config uses L1_MEM_PORTS=2."
+  - "Existing unrelated dirty files belong to the user and must be preserved."
+  - "The blackbox wrapper can return before detached VCS child processes finish; authoritative completion evidence is the generated run.log/simv.log plus process termination, not the initial wrapper tool return."
+  - "M128 crosses accumulator address 0x20000; a command-static read-bank group becomes stale at that boundary even though parity scheduling remains valid."
+iterations:
+  - timestamp: "2026-07-28 23:15"
+    iteration: 7
+    phase: verification
+    status: sim_fail
+    test: "Exact-config xrt-vcs fpint_gemm_ffn_hw_naive M128 K256 N256 on the iteration-6 RTL"
+    error_summary: "The simulation terminated at 112.625 us with an accumulator read-bank invariant fatal, not a timeout or FIFO underflow: address 0x20000 decoded to physical bank 2 while the scheduler reported bank 0."
+    root_cause: "The two parity read addresses advance by 256 bytes, but acc_mem_accum_rd_group is captured only at command start. The M128 command started at 0x1d000 and crossed the physical bank-group boundary after reading address 0x1ff80, leaving the static group bit stale for the next request."
+    fix_applied: "None in the verification step. A confirmed follow-up spec requires deriving the physical bank from the selected address while preserving parity FIFO/credit scheduling."
+    verification: "The existing exact th16/b32 iteration-6 build used GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, and MXU_COL_TILE=32. The M128/K256/N256 run exited with wrapper status 2 after the RTL fatal."
+    lesson: "Parity identifies the consumer FIFO, but it is not sufficient to identify the four-bank accumulator SRAM once an address stream crosses a bank-group boundary."
+  - timestamp: "2026-07-28 23:17"
+    iteration: 8
+    phase: implementation
+    status: pending_verification
+    test: "Address-derived accumulator read-bank scheduling for exact-config M128/M256 K256 N256 and M64 regression"
+    error_summary: "M128 crossed from accumulator address 0x1ff80 to 0x20000, where the decoded physical bank changed from group 0 to group 1 but the command-static scheduled group remained zero."
+    root_cause: "The scheduler owns two long-lived parity address streams, but acc_mem_accum_rd_group represented only the command's initial address. A parity stream can cross a physical bank-group boundary while retaining its parity, making the static group stale."
+    fix_applied: "Decode acc_mem_accum_rd_bank directly from the currently selected address with get_acc_mem_idx(), remove acc_mem_accum_rd_group state, and change the simulation invariant to verify that decoded bank parity matches acc_mem_accum_rd_sel. Preserve full physical-bank PSUM tags and parity-based FIFO/credit scheduling."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. Static reference search found no remaining acc_mem_accum_rd_group use and git diff --check passed. Pending fresh exact-config XRT-VCS M128, M256, then M64 K256 N256."
+    lesson: "Physical bank group is an address property that may change within one command; only parity is stable for the two FIFO/credit scheduler streams."
+  - timestamp: "2026-07-28 22:47"
+    iteration: 4
+    phase: implementation
+    status: pending_verification
+    test: "Simplify GEMM_NAIVE PSUM prefetch gating, then exact-config XRT-VCS large and small regressions"
+    error_summary: "The passing almost-full gate still delayed input until both 16-entry PSUM FIFOs held roughly their entire physical window, despite priority arbitration and explicit per-bank flow control."
+    root_cause: "The prefetch counter and occupancy gate duplicated flow control already provided by FIFO readiness, per-bank credits, and LMEM arbitration. Only the accumulate command's start edge requires an explicit input barrier while read/FIFO state initializes."
+    fix_applied: "Removed acc_rd_prefetch_count and all full/almost-full input waiting. Renamed the remaining control to input_accept_ready; GEMM_NAIVE now blocks an accumulate input only while gemm_unit_if.start is asserted, while load commands and all post-start cycles stream normally. Preserved the FIFO almost-full debug signal."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. Static reference search found no remaining prefetch counter/gate references, and git diff --check passed for VX_gemm_unit.sv. Pending exact-config XRT-VCS: M64 K256 N256 first, then M32/M64 K32 N32."
+    lesson: "Separate command initialization ordering from steady-state flow control; occupancy-based startup policy is unnecessary when the streaming path already owns arbitration and tracks per-bank credits."
+  - timestamp: "2026-07-28 22:10"
+    phase: specification
+    status: confirmed
+    summary: "Captured the exact th16/b32 config, the two small correctness gates, and the larger deadlock follow-up."
+    lesson: "Existing th32 PSUM-order fixes and the th16 cache-bypass routing fix must be separated from any remaining FPGA-only failure."
+  - timestamp: "2026-07-28 22:16"
+    iteration: 1
+    phase: verification
+    status: sim_fail
+    test: "Exact-config xrt-vcs and real-FPGA fpint_gemm_ffn_hw_naive for M32/M64 K32 N32"
+    error_summary: "Both backends completed without deadlock but failed identically from output index 32: got 0x5cf0 (316), expected 0x5ec4 (433). M32 reported 960 errors; M64 reported 1952 errors."
+    root_cause: "Not determined by verification. The identical VCS/FPGA mismatch boundary and values prove a reproducible RTL or shared kernel/RTL contract error rather than an FPGA-only transport failure."
+    fix_applied: "None; verification subagent did not modify RTL."
+    verification: "Fresh isolated build_debug_gemm_naive_iter1 vlogan used GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. VCS cycles: M32=7262, M64=7634. FPGA Slurm jobs 3384/3385 on BDF 0000:3d:00.1 used the aliased xclbin whose sources.txt has GEMM_NAIVE and L1_MEM_PORTS=2; hardware cycles: M32=10684, M64=11165."
+    lesson: "Rows beginning at output index 32 are corrupted in exactly the same way for M=32 and M=64 on VCS and FPGA, while row 0 is implicitly correct. Investigate the naive path's output row/PSUM ordering or address progression at the first row boundary. M64 K256 N256 was correctly skipped because the two small-case pass gate failed."
+  - timestamp: "2026-07-28 22:20"
+    iteration: 2
+    phase: implementation
+    status: pending_verification
+    test: "Trace-directed review of the exact-config M32/M64 K32 N32 VCS failure"
+    error_summary: "The final FP32-to-FP16 stream is in correct row order, but the first output-store DMA descriptor used src stride 256B and bound 64 for M32. The GEMM writer had stored successive active rows 64B apart, so DMA destinations received source rows 0,4,8,... and the first mismatch was output index 32."
+    root_cause: "Two command/layout contracts were inconsistent. VX_gemm_node_naive advanced final LMEM writes by active MXU width (groups_eff*2) while VX_gemm_dma_ctrl_naive describes output LMEM rows with padded NT*2 stride. Separately, VX_gemm_fsm_naive did not carry mt_eff_cur in DMA_ST, so the controller fell back to MT=64 when M_target was unavailable."
+    fix_applied: "Use padded NT*2 final-output LMEM stride; carry eff_mt and active N on output DMA_ST; use the command's eff_mt for the output DMA row bound with compatibility fallback."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. git diff --check passed for the three modified RTL files."
+    lesson: "The row-order signature was caused by overlapping compact final writes followed by padded-stride DMA reads, not by the generalized DMA gearbox. Edge-tile dimensions must be propagated explicitly rather than reconstructed from optional target registers."
+  - timestamp: "2026-07-28 22:28"
+    iteration: 2
+    phase: verification
+    status: partial_pass
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M32/M64 K32 N32, followed by M64 K256 N256"
+    error_summary: "M32 and M64 K32 N32 passed. M64 K256 N256 deterministically deadlocked after the second accumulate-mode start; it was terminated after 2m20s once the trace proved no forward progress."
+    root_cause: "The second accumulate-mode PSUM prefetch accepted exactly 32 entries, 16 per bank. GEMM_ACC_MEM_READ_ACCUM emitted 32 events from cnt=64 through cnt=33, leaving the internal remaining count at 32, then stopped. No GEMM FIFO pop or input-valid event followed, so the CPU remained in its completion poll."
+    fix_applied: "No verification-side RTL change. The iteration-2 output stride/bound RTL fix is validated for both required small shapes; the independent multi-K PSUM-prefetch deadlock remains."
+    verification: "New isolated build_debug_gemm_naive_iter2 was configured from scratch. Fresh vlogan used GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. M32 passed at 7262 cycles; output DMA bound was [32,1,1] and LMEM source rows advanced 0x1ffc15000, 0x1ffc15100, 0x1ffc15200. M64 passed at 7635 cycles. The archived 105 MiB large-case simv snapshot ends after the 32nd PSUM read-accum event at 90.355 us."
+    lesson: "The small-shape row-layout fix is correct and distinct from the large-shape deadlock. The next RTL iteration should address the finite PSUM prefetch FIFO/backpressure cycle before re-running the same three-shape gate."
+  - timestamp: "2026-07-28 22:29"
+    iteration: 3
+    phase: implementation
+    status: pending_verification
+    test: "Trace-directed review of the second accumulate-mode GEMM deadlock for M64 K256 N256"
+    error_summary: "The input pipeline remained gated after 32 PSUM responses filled both 16-entry read FIFOs. With no GEMM input, the accumulator could not pop a FIFO entry, and with no free FIFO credit the remaining 32 PSUM reads could not issue."
+    root_cause: "The GEMM_NAIVE prefetch gate required acc_rd_prefetch_count >= acc_cnt before accepting input. For acc_cnt=64 this demanded that a two-bank FIFO system with total capacity 32 buffer all requested rows, creating a closed backpressure cycle."
+    fix_applied: "Permit input once all requested PSUM rows are prefetched or both per-bank FIFOs reach their almost-full prefetch window. The almost-full threshold leaves one physical entry per bank available for already-issued responses while allowing consumption to release read credits."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. git diff --check passed for VX_gemm_unit.sv."
+    lesson: "A startup-prefetch requirement must be bounded by realizable buffering capacity; full-tile row counts can exceed the FIFO window and must transition into streaming producer/consumer operation."
+  - timestamp: "2026-07-28 22:36"
+    iteration: 3
+    phase: verification
+    status: pass
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M64 K256 N256, followed by M32/M64 K32 N32 regression smokes"
+    error_summary: "No errors. The formerly deadlocked large case completed correctly, and both small-shape correctness gates remained green."
+    root_cause: "Confirmed iteration-3 diagnosis: the prior all-rows prefetch gate exceeded the two-bank FIFO capacity and prevented the consumer from starting. Opening the consumer at the realizable almost-full prefetch window breaks that backpressure cycle."
+    fix_applied: "Verified the implementation-side VX_gemm_unit.sv prefetch-window gate change; verification made no RTL changes."
+    verification: "New isolated build_debug_gemm_naive_iter3 was configured from scratch. Fresh vlogan used GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. M64 K256 N256 passed at 53466 cycles. At the previously stalled phase, GEMM_INPUT_VALID resumed at 91.795 us, FIFO bank 0/1 pops followed at 91.915/91.925 us, and the 64-row GEMM_ACC_MEM_READ_ACCUM sequence completed from cnt=64 at 88.145 us through cnt=1 at 95.415 us. No underflow, credit-fatal, fatal, assertion-failed, or Error trace was present. Regression smokes passed: M32 K32 N32 at 7258 cycles and M64 K32 N32 at 7635 cycles."
+    lesson: "The bounded prefetch-window transition supports streaming accumulation for row counts larger than FIFO capacity without regressing the corrected small-shape output layout."
+  - timestamp: "2026-07-28 22:54"
+    iteration: 4
+    phase: verification
+    status: sim_fail
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M64 K256 N256; small-shape regressions gated on the large result"
+    command: "From build_debug_gemm_naive_iter4 after sourcing configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh: PATH=/usr/bin:$PATH timeout 1800 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 64 -k 256 -n 256' --cores 1 --debug 3"
+    error_summary: "The large case terminated at 79.195 us with the GEMM accumulator PSUM FIFO-empty fatal, before kernel completion. The two K32 smoke tests were correctly skipped because the large-first gate failed."
+    root_cause: "Removing all post-start readiness allowed the input/scaler stream to outrun PSUM LMEM responses. In the first accumulate phase, PSUM reads began at 78.815 us and the first two FIFO pushes arrived at 78.985/79.105 us, while input-valid began at 79.045 us. FIFO bank 0 and bank 1 were consumed at 79.165/79.175 us; the next scaler output became valid at 79.195 us before another PSUM entry was available, triggering the explicit empty-FIFO check with rd_cnt=61 and wr_cnt=62."
+    fix_applied: "None; verification did not edit RTL. The immediate post-start input policy needs either a realizable initial PSUM readiness condition or backpressure that prevents scaler output from reaching accumulation when the selected PSUM FIFO is empty."
+    verification: "New isolated build_debug_gemm_naive_iter4 was configured from scratch. Fresh vlogan proved GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. The failure was a deterministic RTL fatal at VX_gemm_unit.sv:1491, not a timeout or credit fatal. Compile, wrapper, run, and a compressed copy of the 46.8 MiB simv trace are archived with the iter4_xrt_vcs prefix."
+    lesson: "Per-bank request credits prevent PSUM FIFO overflow but do not guarantee consumer data availability. Immediate input acceptance also requires empty-aware consumer backpressure or enough startup lead to cover variable LMEM response latency."
+  - timestamp: "2026-07-28 22:55"
+    iteration: 5
+    phase: implementation
+    status: pending_verification
+    test: "One-burst GEMM_NAIVE PSUM startup watermark, then exact-config XRT-VCS large and small regressions"
+    error_summary: "Iteration 4 released input after only the start-cycle boundary and underflowed when the first two PSUM entries were consumed before the third variable-latency LMEM response arrived."
+    root_cause: "Per-bank credits protect FIFO capacity but do not provide a minimum consumer lead. Trace evidence shows GEMM consumes PSUMs in approximately 16-row bursts, so immediate streaming has insufficient latency tolerance while the prior approximately 30-response almost-full window is unnecessarily large."
+    fix_applied: "Restored a total PSUM response counter and release input after min(acc_cnt, ACC_RD_FIFO_DEPTH) arrivals. With ACC_RD_FIFO_DEPTH=16, long commands buffer one compute burst; short commands wait for all requested rows. The accumulate start-cycle barrier, per-bank credits, LMEM arbitration, and debug almost-full signals remain unchanged."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. Updated simplify-psum-prefetch-spec.md and git diff --check passed. Pending exact-config XRT-VCS: M64 K256 N256 first, then M32/M64 K32 N32."
+    lesson: "A small latency-covering watermark can decouple burst consumption from variable memory response gaps without tying startup to total physical FIFO capacity."
+  - timestamp: "2026-07-28 23:01"
+    iteration: 5
+    phase: verification
+    status: sim_fail
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M64 K256 N256; small-shape regressions gated on the large result"
+    command: "From build_debug_gemm_naive_iter5 after sourcing configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh: PATH=/usr/bin:$PATH timeout 1800 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 64 -k 256 -n 256' --cores 1 --debug 3"
+    error_summary: "The large case released input at the intended 16-response watermark but terminated at 83.115 us with the GEMM accumulator PSUM FIFO-empty fatal (rd_cnt=45, wr_cnt=47). The two K32 smoke tests were skipped because the large-first gate failed."
+    root_cause: "A 16-total-response startup lead does not guarantee continued per-bank PSUM availability during the approximately 30-row continuous input burst. The first 16 pushes completed at 82.785 us, balanced 8 per bank, and input-valid began at 82.805 us. Before FIFO consumption began at 82.925 us, one additional bank-0 response arrived at 82.905 us; during consumption only two further responses arrived, both for bank 1 at 83.025/83.045 us. After 18 successful alternating FIFO-pop events through 83.105 us, bank 0 had exhausted its 9 entries while bank 1 retained one, so the next scaler output hit the empty bank at 83.115 us."
+    fix_applied: "None; verification did not edit RTL. A total startup watermark alone cannot replace empty-aware consumer backpressure when response latency and bank distribution vary during a burst."
+    verification: "New isolated build_debug_gemm_naive_iter5 was configured from scratch. Fresh vlogan proved GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. The threshold itself behaved as specified: first input-valid followed the 16th FIFO push by 20 ns. The failure was a deterministic FIFO-empty RTL fatal at VX_gemm_unit.sv:1509, not a timeout, deadlock, or credit fatal. Compile, wrapper, run, and compressed simv trace are archived with the iter5_xrt_vcs prefix."
+    lesson: "Startup buffering covers fixed pipeline latency but cannot absorb an arbitrarily long producer stall or per-bank skew. The consumer must be able to pause on the selected PSUM FIFO's empty condition, or the producer must provide a stronger per-bank service guarantee."
+  - timestamp: "2026-07-28 23:02"
+    iteration: 6
+    phase: implementation
+    status: pending_verification
+    test: "Restore the verified two-bank almost-full PSUM startup window, then exact-config XRT-VCS large and small regressions"
+    error_summary: "Iteration 5's 16-response watermark underflowed during M64 K256 N256. After release, input accepted an approximately 30-row continuous burst while only two additional PSUM responses arrived; the 18th scaler result found its selected FIFO empty at 83.115 us."
+    root_cause: "The current compute path cannot backpressure or reserve PSUM tokens for an accepted input burst. A one-FIFO-depth total watermark covers only 16 responses, but the observed uninterruptible consumer burst needs roughly the original 30-response lead."
+    fix_applied: "Restored the iteration-3 policy exactly: preserve the accumulate start-cycle boundary and release input when all requested PSUMs have arrived or both per-bank FIFOs assert almost-full. Retained the response counter for short commands and preserved all credit, arbitration, debug, and output/DMA fixes."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. Updated simplify-psum-prefetch-spec.md with the experiment conclusion and git diff --check passed. Pending exact-config XRT-VCS: M64 K256 N256 first, then M32/M64 K32 N32."
+    lesson: "Reducing the approximately 30-response lead is not a gating-only optimization; it requires explicit token/reservation backpressure through the input and compute pipeline."
+  - timestamp: "2026-07-28 23:08"
+    iteration: 6
+    phase: verification
+    status: pass
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M64 K256 N256, followed by M32/M64 K32 N32 recovery regressions"
+    command: "From build_debug_gemm_naive_iter6 after sourcing configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh: PATH=/usr/bin:$PATH timeout 1800 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 64 -k 256 -n 256' --cores 1 --debug 3; repeat with '-m 32 -k 32 -n 32' and '-m 64 -k 32 -n 32' after the large case passed"
+    error_summary: "No errors. The restored almost-full policy passed the large multi-K case and both small-shape correctness regressions."
+    root_cause: "Confirmed the recovery rationale: the current uninterruptible consumer burst needs the two-bank almost-full startup lead. The first long accumulate buffered 30 responses, 15 per bank, before releasing input, avoiding the bank-specific starvation seen with the 16-total-response experiment."
+    fix_applied: "Verified the implementation-side restoration of the both-bank almost-full startup policy; verification made no RTL changes."
+    verification: "New isolated build_debug_gemm_naive_iter6 was configured from scratch. Fresh vlogan proved GEMM_NAIVE, L1_MEM_PORTS=2, NUM_THREADS=16, MXU_COL_TILE=32 and all required DBG_TRACE defines. M64 K256 N256 passed at 53466 cycles. Its first accumulate phase completed the 30th FIFO push at 84.245 us with 15 entries per bank, released input at 84.265 us, began FIFO pops at 84.385 us, and completed all 64 PSUM reads from cnt=64 at 80.595 us through cnt=1 at 87.885 us. No FIFO-empty, credit-fatal, fatal, assertion-failed, Error, or deadlock occurred. M32 K32 N32 passed at 7260 cycles; M64 K32 N32 passed at 7633 cycles. Compile, wrapper, run, and compressed simv traces are archived with the iter6_xrt_vcs prefix."
+    lesson: "The restored approximately 30-response, per-bank-balanced lead is the validated safe policy for the current non-backpressurable compute burst; a smaller watermark requires architectural consumer reservation or backpressure."
+  - timestamp: "2026-07-28 23:38"
+    iteration: 8
+    phase: verification
+    status: pass
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M128 K256 N256, M256 K256 N256, then M64 K256 N256"
+    command: "From build_debug_gemm_naive_iter8 after sourcing configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh: PATH=/usr/bin:$PATH timeout 1800 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m M -k 256 -n 256' --cores 1 --debug 3, in M=128,256,64 order"
+    error_summary: "No errors. Both scale-up shapes and the M64 PSUM-streaming regression completed with correct data and no fatal, assertion, FIFO/credit issue, or deadlock."
+    root_cause: "Confirmed the iteration-7 diagnosis and iteration-8 fix: physical accumulator bank group must follow the selected address while scheduler parity remains stable. At the M128 boundary, the trace changed from addr=0x1ff80 bank=1 to addr=0x20000 bank=2; physical bank 2 has parity 0 and correctly follows the parity-0 scheduler stream."
+    fix_applied: "Verified the implementation-side address-derived read-bank decode; verification made no RTL changes."
+    verification: "New isolated build_debug_gemm_naive_iter8 was configured from scratch. Fresh vlogan proved GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, MXU_COL_TILE=32, and all required DBG_TRACE defines. M128 passed at 92540 cycles and repeatedly crossed 0x1ff80 bank 1 to 0x20000 bank 2, including the first crossing at 105.765/105.885 us. M256 passed at 177213 cycles. M64 passed at 53464 cycles. tools/verify_rtl.py was inspected as required but its blackbox mode hardcodes the shared repository build/ci/blackbox.sh, so it was not applicable to the mandated fresh isolated build and run_black.sh flow. Compile, wrapper, run, and compressed simv evidence are archived with the iter8_xrt_vcs prefix; raw traces of approximately 1.25 GB, 2.50 GB, and 632 MB were retained only as compressed 68 MB, 135 MB, and 35 MB artifacts."
+    lesson: "Address-derived physical-bank decode scales across intra-command bank-group boundaries through M256 without disturbing parity-based credits, FIFOs, almost-full startup, or the validated M64 streaming behavior."

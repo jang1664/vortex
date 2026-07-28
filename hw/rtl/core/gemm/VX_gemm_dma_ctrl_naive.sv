@@ -342,7 +342,9 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
       // OUTPUT: fp16, shape [M, N]
       T_OUTPUT: begin
         dram_s0  = N_orig_q * BPE_FP16;
-        dram_b0  = mt_eff;
+        // Output-store commands carry the exact edge-tile row count. Retain
+        // the derived value as a compatibility fallback for older producers.
+        dram_b0  = (cmd_q.eff_mt != 0) ? cmd_q.eff_mt : mt_eff;
 
         if (cmd_op == OP_DMA_LD) begin
           // G->L : LMEM row is padded to NT columns, so write full 256B and pad with zeros

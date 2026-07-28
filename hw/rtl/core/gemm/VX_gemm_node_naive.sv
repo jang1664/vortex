@@ -256,7 +256,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
     assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.stride;
-    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = gemm_ctrl_if.input_read_ctrl.cmd.groups_eff * 2;
+    // The output DMA describes LMEM as NT-wide padded rows. Keep the direct
+    // final-output writer on that same layout even when the active MXU tile is
+    // narrower, otherwise successive rows overlap and the store DMA samples
+    // every NT/MXU_NT-th row.
+    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = NT * 2;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];

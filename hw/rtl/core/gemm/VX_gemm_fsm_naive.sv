@@ -1521,6 +1521,11 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           out_cmd_d.rs1 = mt_cur;
           out_cmd_d.rs2 = nt_cur;
           out_cmd_d.rd  = 4;
+          // The DMA controller cannot reconstruct an edge tile's active row
+          // count from the encoded tile coordinates when target dimensions
+          // are unavailable. Carry the already-computed effective shape.
+          out_cmd_d.eff_mt = mt_eff_cur;
+          out_cmd_d.groups_eff = nt_eff_cur;
           out_start_d = 1'b1;
           state_d     = S_O_LMEM2DRAM_NTF;
         end

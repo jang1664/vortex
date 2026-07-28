@@ -74,6 +74,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin
     configs: configs/naive_gemm_th32_tcol32_hwexp_dcache.sh
 
+  naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16: 
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d/bin
+    configs: configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh
+
   C3: *C3_
   
   # ------------------------------------ C3 -------------------------------------------------
@@ -118,7 +122,7 @@ aliases:
     configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar.sh
 
   improve_th32_tcol32_hwexp_dcache_sxbar_f16: &C4_
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/bin
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90/bin
     configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh
 
   C4: *C4_
