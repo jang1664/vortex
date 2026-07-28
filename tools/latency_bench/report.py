@@ -15,11 +15,12 @@ from .suite import BenchSuite, suite_to_rows
 
 
 RESULT_COLUMNS = [
-    "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
-    "variant", "stage", "name", "args", "measurement_args",
+    "suite", "case_id", "exec_key", "app", "model", "kind", "op", "backend",
+    "variant", "stage", "name", "batch", "prefill_seq_len", "gen_kv_len",
+    "args", "measurement_args",
     "latency_shape_json", "padded_args", "shape_json",
-    "calls_per_forward", "decode_step_count", "out_tokens",
-    "decode_sample_weight", "measurement_kind",
+    "calls_per_forward", "output_token_index", "out_tokens",
+    "measurement_kind",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
     "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
     "power_csv", "power_summary", "measure_latency", "measure_power",
@@ -205,16 +206,11 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
             "weighted_total_p50_us", "weighted_total_p95_us", "case_count",
         ])
     for col in (
-        "calls_per_forward", "decode_step_count", "out_tokens",
-        "decode_sample_weight",
+        "calls_per_forward", "out_tokens",
         "avg_us", "p50_us", "p95_us",
     ):
         ok[col] = pd.to_numeric(ok[col], errors="coerce").fillna(0.0)
-    ok["effective_calls"] = (
-        ok["calls_per_forward"]
-        * ok["decode_step_count"]
-        * ok["decode_sample_weight"]
-    )
+    ok["effective_calls"] = ok["calls_per_forward"]
 
     rows = []
     group_specs = [

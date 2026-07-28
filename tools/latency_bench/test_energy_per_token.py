@@ -290,6 +290,30 @@ class EnergyPerTokenTest(unittest.TestCase):
             self.assertEqual("near", rows[0]["power_source_case_id"])
             self.assertEqual(11.0, rows[0]["effective_power_W"])
 
+    def test_composed_decode_power_precedes_generic_estimator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            _write_raw_db(
+                raw_db,
+                [_raw_row(power_avg_W="99.0", power_samples="5")],
+            )
+            row = _composed_row(
+                power_avg_w="12.0",
+                power_resolution_kind="interpolated",
+                power_interpolation_upper_ratio="0.25",
+            )
+
+            rows = energy_per_token.energy_rows_from_records(
+                [row],
+                [raw_db],
+                power_metric="power_avg_W",
+                allow_generic_power_estimate=False,
+            )
+
+            self.assertEqual("interpolated", rows[0]["power_resolution"])
+            self.assertEqual("composed", rows[0]["power_match_scope"])
+            self.assertEqual(12.0, rows[0]["effective_power_W"])
+
     def test_invalid_power_candidates_are_ignored_and_generation_tokens_use_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"

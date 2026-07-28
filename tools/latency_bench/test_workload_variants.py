@@ -37,10 +37,16 @@ workloads:
             qk = qk_cases[0]
 
             self.assertEqual(32, q_proj.calls_per_forward)
+            self.assertEqual("llama2-7b", q_proj.model)
+            self.assertEqual(1, q_proj.batch)
+            self.assertEqual(0, q_proj.prefill_seq_len)
+            self.assertEqual(33, q_proj.gen_kv_len)
             self.assertEqual(1, len(q_proj_cases))
-            self.assertEqual(3.0, q_proj.decode_sample_weight)
             self.assertEqual(3, q_proj.out_tokens)
             self.assertEqual(3, len(qk_cases))
+            self.assertEqual([1, 2, 3], [
+                case.output_token_index for case in qk_cases
+            ])
             self.assertEqual([34, 35, 36], [case.shape["N"] for case in qk_cases])
             self.assertEqual(64, qk.shape["padded_cache_length"])
 
@@ -81,6 +87,10 @@ workloads:
             self.assertEqual("sgemm_tcu", by_op["attn_pv"].backend)
             self.assertEqual("attn_qkT", by_op["attn_qkT"].name)
             self.assertTrue(all(row["variant"] == "attn_sgemm_tcu_fpint_gemm_naive" for row in rows))
+            self.assertTrue(all(row["model"] == "llama2-7b" for row in rows))
+            self.assertTrue(all(row["batch"] == 1 for row in rows))
+            self.assertTrue(all(row["prefill_seq_len"] == 128 for row in rows))
+            self.assertTrue(all(row["gen_kv_len"] == 0 for row in rows))
             self.assertIn("backend", expanded["cases"][0])
             self.assertIn("op", expanded["cases"][0])
             self.assertIn("variant", expanded["cases"][0])

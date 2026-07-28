@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 import math
 import sys
-import warnings
 
 import pandas as pd
 
@@ -25,7 +24,6 @@ for path in (REPO_ROOT, LATENCY_DIR):
 
 import tools.latency_bench.plot as latency_plot_module
 from tools.latency_bench.compose import LatencyScaleRule
-from tools.latency_bench.estimate import LatencyEstimateOptions
 from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data_versions
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
 from energy_per_token import (
@@ -329,7 +327,7 @@ FORCE_REBUILD_FIGURE_DATA = True
 # With METRIC="fpga_cycle", totals are sum(fpga_cycle * calls_per_forward).
 METRIC = "fpga_cycle"
 SELECT = "latest"
-MISSING = "nan"  # Keep missing data visible while interpolation is enabled.
+MISSING = "nan"  # Keep genuinely unresolved measurements visible.
 X_AXIS = "seq_len"
 HUE_AXIS = "variant"
 ROW_AXIS = "stage"
@@ -579,14 +577,6 @@ def plot_label_maps(*, include_c4_alone: bool) -> dict:
     return label_maps
 
 
-# Interpolation/estimation controls. Prepared data uses measured + estimated rows when enabled.
-LATENCY_ESTIMATE = LatencyEstimateOptions(
-    model="auto_shape",
-    min_train_rows=3,
-    fallback="nearest_scale",
-    warn_extrapolation=True,
-)
-
 # Optional raw DB latency normalization rules. These match raw DB rows before
 # compose maps measurements back to suite cases.
 LATENCY_SCALE_RULES = []
@@ -709,27 +699,6 @@ def _join_unique(values) -> str:
             seen.add(item)
             out.append(item)
     return ";".join(out)
-
-
-def warn_interpolation_estimates(composed: pd.DataFrame | None, *, context: str) -> None:
-    if composed is None or composed.empty or "estimate_mode" not in composed.columns:
-        return
-    modes = composed["estimate_mode"].fillna("").astype(str)
-    if "compose_status" in composed.columns:
-        estimated = composed["compose_status"].astype(str).eq("estimated")
-    else:
-        estimated = modes.ne("")
-    subset = composed[estimated & modes.eq("interpolation")]
-    if subset.empty:
-        return
-    groups = _join_unique(subset.get("estimate_group", pd.Series(dtype=str)))
-    case_ids = _join_unique(subset.get("case_id", pd.Series(dtype=str)))
-    details = [f"{context}: latency interpolation used for {len(subset)} estimated row(s)"]
-    if groups:
-        details.append(f"groups={groups}")
-    if case_ids:
-        details.append(f"case_ids={case_ids}")
-    warnings.warn("; ".join(details), RuntimeWarning, stacklevel=2)
 
 
 def _status_case_ids(frame: pd.DataFrame, statuses: set[str]) -> str:
@@ -919,7 +888,7 @@ def _make_suite_options(
             if case_latency_scale_rules is None
             else case_latency_scale_rules
         ),
-        latency_estimate=LATENCY_ESTIMATE,
+        latency_estimate=None,
         row_filters=plot_row_filters,
     )
     return suites, options
@@ -957,7 +926,6 @@ def export_suite_figure_data(
     )
     versions = prepare_suite_bar_data_versions(suites, options)
     plot_input = versions.final
-    warn_interpolation_estimates(plot_input.composed, context=out_name)
     result = PlotRunResult(
         tag=suite_tag,
         out_dir=out_dir,
@@ -1030,7 +998,7 @@ def export_no_area_norm_figure_data(
     if source.versions is None or source.options is None:
         raise ValueError("source result has no in-memory data versions")
 
-    plot_input = source.versions.estimated or source.versions.base
+    plot_input = source.versions.base
     out_dir = FIGURE_OUTPUT_ROOT / out_name
     options = replace(
         source.options,
@@ -1038,7 +1006,6 @@ def export_no_area_norm_figure_data(
         latency_scale_rules=(),
         case_latency_scale_rules=(),
     )
-    warn_interpolation_estimates(plot_input.composed, context=out_name)
     result = PlotRunResult(
         tag=source.tag,
         out_dir=out_dir,
@@ -1185,6 +1152,7 @@ def export_energy_figure_data_pair(
         include_idle_power=INCLUDE_IDLE_POWER,
         power_metric=power_metric,
         fpga_period_s=fpga_period_s,
+        allow_generic_power_estimate=False,
     )
     split_energy_dequantization_kinds(rows)
     totals = summarize_energy_rows(rows)
@@ -1287,6 +1255,7 @@ def export_gemm_only_energy_figure_data(
         include_idle_power=INCLUDE_IDLE_POWER,
         power_metric=power_metric,
         fpga_period_s=fpga_period_s,
+        allow_generic_power_estimate=False,
     )
     totals = summarize_energy_rows(rows)
     components = summarize_energy_rows(rows, group_by=(STACK_BY,))
@@ -1423,11 +1392,10 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
         value_orders=VALUE_ORDERS,
         latency_scale_rules=tuple(LATENCY_SCALE_RULES),
         case_latency_scale_rules=tuple(CASE_LATENCY_SCALE_RULES),
-        latency_estimate=LATENCY_ESTIMATE,
+        latency_estimate=None,
         row_filters=LATENCY_DEQUANTIZATION_FILTERS,
     )
     versions = prepare_suite_bar_data_versions(suites, options)
-    warn_interpolation_estimates(versions.final.composed, context=f"llama_compare:{model_spec['model']}")
     plot_data = versions.final.plot_data.copy()
     plot_data["batch"] = _numeric_int_column(plot_data, "batch")
     plot_data["seq_len"] = _numeric_int_column(plot_data, "seq_len")

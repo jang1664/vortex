@@ -49,6 +49,7 @@ class InterpolationError:
 _DYNAMIC_SHAPE_KEYS = {
     "K", "N", "seqk", "cache_len", "logical_cache_length",
     "logical_kv_start", "logical_kv_end", "padded_cache_length",
+    "output_token_index", "offset", "cache_position",
     "decode_sample_weight", "measurement_kind",
     "interpolation_lower_step", "interpolation_upper_step",
     "interpolation_upper_ratio", "reuse_representative_step",
@@ -210,7 +211,7 @@ def write_error_outputs(errors: list[InterpolationError], out_dir: Path) -> None
 
 def write_candidate_suite(suite: BenchSuite, cases: list[BenchCase], path: Path) -> None:
     selected = [
-        replace(case, measurement_kind="measured", decode_sample_weight=1.0)
+        replace(case, measurement_kind="measured")
         for case in cases
     ]
     candidate_suite = replace(suite, name=f"{suite.name}_interpolation_probe", cases=selected)
@@ -250,25 +251,17 @@ def reweight_suite_for_exec_keys(
         ]
         if not anchors:
             continue
-        weights = {index: 0.0 for index in anchors}
-        for target in range(len(ordered)):
-            lower = max((index for index in anchors if index <= target), default=anchors[0])
-            upper = min((index for index in anchors if index >= target), default=anchors[-1])
-            if lower == upper:
-                weights[lower] += 1.0
-            else:
-                ratio = (target - lower) / (upper - lower)
-                weights[lower] += 1.0 - ratio
-                weights[upper] += ratio
         for index, case in enumerate(ordered):
-            measured = index in weights
+            measured = index in anchors
             shape = dict(case.shape)
-            shape["measurement_kind"] = "measured" if measured else "interpolated"
-            shape["decode_sample_weight"] = weights.get(index, 0.0)
+            shape["measurement_kind"] = (
+                "promoted"
+                if measured and case.measurement_kind == "interpolated"
+                else case.measurement_kind
+            )
             replacements[case.case_id] = replace(
                 case,
                 measurement_kind=shape["measurement_kind"],
-                decode_sample_weight=shape["decode_sample_weight"],
                 shape=shape,
             )
     return replace(

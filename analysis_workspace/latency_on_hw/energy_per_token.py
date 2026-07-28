@@ -191,6 +191,7 @@ def energy_rows_from_records(
     include_idle_power: bool = False,
     power_metric: str = DEFAULT_POWER_METRIC,
     fpga_period_s: float = DEFAULT_FPGA_PERIOD_S,
+    allow_generic_power_estimate: bool = True,
 ) -> list[dict[str, Any]]:
     canonical_power_metric = _canonical_power_metric(power_metric)
     resolver = build_power_resolver(raw_dbs, power_metric=canonical_power_metric)
@@ -204,6 +205,7 @@ def energy_rows_from_records(
                 include_idle_power=include_idle_power,
                 power_metric=canonical_power_metric,
                 fpga_period_s=fpga_period_s,
+                allow_generic_power_estimate=allow_generic_power_estimate,
             )
         )
     return rows
@@ -217,9 +219,26 @@ def energy_row_from_record(
     include_idle_power: bool = False,
     power_metric: str = DEFAULT_POWER_METRIC,
     fpga_period_s: float = DEFAULT_FPGA_PERIOD_S,
+    allow_generic_power_estimate: bool = True,
 ) -> dict[str, Any]:
     canonical_power_metric = _canonical_power_metric(power_metric)
-    resolution = resolver.resolve(row)
+    composed_power = _power_value(row, canonical_power_metric)
+    if composed_power is not None:
+        resolution = PowerResolution(
+            candidate=None,
+            resolution=_text(row.get("power_resolution_kind")) or "measured",
+            scope="composed",
+            distance=_to_float(row.get("power_interpolation_upper_ratio")),
+        )
+    elif allow_generic_power_estimate:
+        resolution = resolver.resolve(row)
+    else:
+        resolution = PowerResolution(
+            candidate=None,
+            resolution="missing",
+            scope="none",
+            distance=None,
+        )
     candidate = resolution.candidate
     exact_candidate = candidate if resolution.scope == "exact" else None
     weighted_fpga_cycles = _weighted_fpga_cycles(row, exact_candidate)
@@ -228,7 +247,10 @@ def energy_row_from_record(
 
     raw_power_W: float | None = None
     effective_power_W: float | None = None
-    if candidate is not None:
+    if composed_power is not None:
+        raw_power_W = composed_power
+        effective_power_W = composed_power
+    elif candidate is not None:
         raw_power_W = candidate.power_values_W.get(canonical_power_metric)
         effective_power_W = raw_power_W
 

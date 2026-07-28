@@ -29,9 +29,12 @@ class ComposeTest(unittest.TestCase):
                     case_id="gemm_a",
                     app="fpint_gemm_ffn_hw",
                     args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    model="llama2-7b",
                     kind="fpint_gemm",
                     stage="prefill",
                     name="gemm_a",
+                    batch=2,
+                    prefill_seq_len=128,
                     calls_per_forward=2,
                     warmup=1,
                     iterations=1,
@@ -66,6 +69,7 @@ class ComposeTest(unittest.TestCase):
                 "min_us": "13",
                 "max_us": "17",
                 "fpga_cycle": "140",
+                "power_avg_w": "10",
             },
             {
                 "run_id": "run_b",
@@ -81,6 +85,7 @@ class ComposeTest(unittest.TestCase):
                 "min_us": "19",
                 "max_us": "23",
                 "fpga_cycle": "200",
+                "power_avg_w": "20",
             },
             {
                 "run_id": "wrong_bin",
@@ -136,6 +141,10 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual("run_new", composed.loc[0, "source_run_ids"])
             self.assertEqual("improve_tcol1", composed.loc[0, "expected_fpga_bin_label"])
             self.assertEqual("improve_tcol1", composed.loc[0, "source_fpga_bin_labels"])
+            self.assertEqual("llama2-7b", composed.loc[0, "model"])
+            self.assertEqual(2, int(composed.loc[0, "batch"]))
+            self.assertEqual(128, int(composed.loc[0, "prefill_seq_len"]))
+            self.assertEqual(0, int(composed.loc[0, "gen_kv_len"]))
 
     def test_compose_accepts_fpga_cycle_metric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,7 +165,7 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual(280.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(600.0, float(composed.loc[1, "weighted_latency_us"]))
 
-    def test_decode_step_count_weights_suite_without_using_raw_calls(self) -> None:
+    def test_fully_expanded_decode_uses_one_logical_row_per_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
             self._write_raw_db(raw_db)
@@ -172,7 +181,6 @@ class ComposeTest(unittest.TestCase):
                         args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
                         stage="generation",
                         calls_per_forward=2,
-                        decode_step_count=3,
                         out_tokens=3,
                         warmup=1,
                         iterations=1,
@@ -186,11 +194,10 @@ class ComposeTest(unittest.TestCase):
             )
 
             self.assertEqual(2.0, float(composed.loc[0, "calls_per_forward"]))
-            self.assertEqual(3, int(composed.loc[0, "decode_step_count"]))
-            self.assertEqual(6.0, float(composed.loc[0, "effective_calls"]))
-            self.assertEqual(84.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(2.0, float(composed.loc[0, "effective_calls"]))
+            self.assertEqual(28.0, float(composed.loc[0, "weighted_latency_us"]))
 
-    def test_decode_sample_weight_scales_interpolated_contribution(self) -> None:
+    def test_fully_expanded_decode_interpolates_each_logical_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
             self._write_raw_db(raw_db)
@@ -201,13 +208,51 @@ class ComposeTest(unittest.TestCase):
                 ),
                 cases=[
                     BenchCase(
-                        case_id="decode_sample",
+                        case_id="decode_first",
                         app="fpint_gemm_ffn_hw",
                         args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
                         stage="generation",
+                        name="decode_kernel",
                         calls_per_forward=2,
-                        decode_sample_weight=2.5,
-                        out_tokens=4,
+                        output_token_index=1,
+                        out_tokens=3,
+                        shape={
+                            "decode_sampling_class": "continuous",
+                            "logical_cache_length": 101,
+                        },
+                        warmup=1,
+                        iterations=1,
+                    ),
+                    BenchCase(
+                        case_id="decode_middle",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 3 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        name="decode_kernel",
+                        calls_per_forward=2,
+                        output_token_index=2,
+                        out_tokens=3,
+                        measurement_kind="interpolated",
+                        shape={
+                            "decode_sampling_class": "continuous",
+                            "logical_cache_length": 102,
+                        },
+                        warmup=1,
+                        iterations=1,
+                    ),
+                    BenchCase(
+                        case_id="decode_last",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 2 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        name="decode_kernel",
+                        calls_per_forward=2,
+                        output_token_index=3,
+                        out_tokens=3,
+                        shape={
+                            "decode_sampling_class": "continuous",
+                            "logical_cache_length": 103,
+                        },
                         warmup=1,
                         iterations=1,
                     ),
@@ -217,8 +262,83 @@ class ComposeTest(unittest.TestCase):
                 suite,
                 ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"),
             )
-            self.assertEqual(5.0, float(composed.loc[0, "effective_calls"]))
-            self.assertEqual(70.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(3, len(composed))
+            middle = composed.loc[composed["case_id"] == "decode_middle"].iloc[0]
+            self.assertEqual(17.0, float(middle["latency_us"]))
+            self.assertEqual(2.0, float(middle["effective_calls"]))
+            self.assertEqual(34.0, float(middle["weighted_latency_us"]))
+            self.assertEqual("interpolated", middle["latency_resolution_kind"])
+            self.assertEqual("estimated", middle["compose_status"])
+            self.assertEqual(15.0, float(middle["power_avg_w"]))
+            self.assertEqual("interpolated", middle["power_resolution_kind"])
+
+    def test_decode_reuse_resolves_varying_logical_args_from_representative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            suite = BenchSuite(
+                name="sampled_invariant_decode",
+                defaults=BenchDefaults(
+                    warmup=1, iterations=1, fpga_bin="improve_tcol1",
+                ),
+                cases=[
+                    BenchCase(
+                        case_id="rope_first",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        name="rope_q",
+                        calls_per_forward=2,
+                        output_token_index=1,
+                        out_tokens=2,
+                        shape={
+                            "decode_sampling_class": "invariant",
+                            "logical_cache_length": 101,
+                            "offset": 100,
+                        },
+                        warmup=1,
+                        iterations=1,
+                    ),
+                    BenchCase(
+                        case_id="rope_second",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 9 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        name="rope_q",
+                        calls_per_forward=2,
+                        output_token_index=2,
+                        out_tokens=2,
+                        measurement_kind="invariant_reused",
+                        shape={
+                            "decode_sampling_class": "invariant",
+                            "logical_cache_length": 102,
+                            "offset": 101,
+                            "reuse_representative_step": 1,
+                        },
+                        warmup=1,
+                        iterations=1,
+                    ),
+                ],
+            )
+
+            composed = compose_latency(
+                suite,
+                ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"),
+            )
+
+            reused = composed.loc[composed["case_id"] == "rope_second"].iloc[0]
+            self.assertEqual("pass", reused["compose_status"])
+            self.assertEqual(14.0, float(reused["latency_us"]))
+            self.assertEqual(28.0, float(reused["weighted_latency_us"]))
+            self.assertEqual("invariant_reused", reused["latency_resolution_kind"])
+            self.assertEqual(
+                "rope_first", reused["latency_reuse_representative_case_id"]
+            )
+            self.assertEqual(10.0, float(reused["power_avg_w"]))
+            self.assertEqual("invariant_reused", reused["power_resolution_kind"])
+            self.assertEqual(
+                "rope_first", reused["power_reuse_representative_case_id"]
+            )
 
     def test_compose_filters_non_pass_and_dedupes_latest_with_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

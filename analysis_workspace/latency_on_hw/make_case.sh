@@ -20,7 +20,7 @@ if [[ "$target" == "full" ]]; then
     --prefill-seq-lens 1024,2048,4096,8192,16384,32768 \
     --generation-batches 1,2,4 \
     --generation-seq-lens 1024,2048,4096,8192,16384,32768 \
-    --generation-out-tokens 1,2 \
+    --generation-out-tokens 128 \
     --generation-max-seq-len 65536 \
     --decode-measurement "${decode_measurement}" \
     --decode-sample-interval "${decode_sample_interval}"
@@ -32,7 +32,7 @@ if [[ "$target" == "full" ]]; then
     --prefill-seq-lens 1024,2048,4096,8192,16384,32768 \
     --generation-batches 1,2,4 \
     --generation-seq-lens 1024,2048,4096,8192,16384,32768 \
-    --generation-out-tokens 1,2 \
+    --generation-out-tokens 128 \
     --generation-max-seq-len 65536 \
     --decode-measurement "${decode_measurement}" \
     --decode-sample-interval "${decode_sample_interval}"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 import re
@@ -15,6 +16,7 @@ import pandas as pd
 import yaml
 
 from .fpga_bins import FpgaBinConfig, resolve_fpga_bin, resolve_fpga_bin_config
+from .interpolation import write_current_cases
 from .progress import PROGRESS_COLUMNS
 from .raw_db import (
     RAW_DB_COLUMNS,
@@ -61,21 +63,24 @@ CASE_COLUMNS = [
     "case_id",
     "exec_key",
     "app",
+    "model",
     "kind",
     "op",
     "backend",
     "variant",
     "stage",
     "name",
+    "batch",
+    "prefill_seq_len",
+    "gen_kv_len",
     "args",
     "measurement_args",
     "latency_shape_json",
     "padded_args",
     "shape_json",
     "calls_per_forward",
-    "decode_step_count",
+    "output_token_index",
     "out_tokens",
-    "decode_sample_weight",
     "measurement_kind",
     "warmup",
     "iterations",
@@ -495,6 +500,48 @@ def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> None:
     expanded = suite_to_expanded_yaml(suite)
     with (out_dir / "suite.expanded.yaml").open("w") as fp:
         yaml.safe_dump(expanded, fp, sort_keys=False)
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    shutil.copy2(source, temporary)
+    temporary.replace(destination)
+
+
+def publish_run_latest(
+    run_dir: Path,
+    out_root: Path,
+    filenames: tuple[str, ...],
+    *,
+    run_id: str,
+    status: str,
+) -> None:
+    latest = out_root / "latest"
+    latest.mkdir(parents=True, exist_ok=True)
+    for filename in filenames:
+        source = run_dir / filename
+        if source.exists():
+            _atomic_copy(source, latest / filename)
+    state_path = latest / "run_state.json"
+    temporary = state_path.with_name(f".{state_path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps({
+        "run_id": run_id,
+        "run_dir": str(run_dir.resolve()),
+        "status": status,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, indent=2) + "\n")
+    temporary.replace(state_path)
+
+
+def publish_current_cases(
+    suite: BenchSuite,
+    run_dir: Path,
+    out_root: Path,
+) -> None:
+    current_cases = run_dir / "cases.current.csv"
+    write_current_cases(suite, out_root / "raw_db.csv", current_cases)
+    _atomic_copy(current_cases, out_root / "latest" / "cases.csv")
 
 
 def write_run_script(
@@ -1304,6 +1351,20 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "dry_run": options.dry_run,
         "append_raw_csv": str(options.append_raw_csv) if options.append_raw_csv else "",
     })
+    publish_run_latest(
+        run_dir,
+        out_root,
+        (
+            "cases.csv",
+            "suite.yaml",
+            "suite.expanded.yaml",
+            "manifest.json",
+            "run_fpga_bench.sh",
+        ),
+        run_id=run_id,
+        status="dry_run" if options.dry_run else "running",
+    )
+    publish_current_cases(suite, run_dir, out_root)
 
     if options.dry_run:
         print(f"dry-run: wrote {script}")
@@ -1325,13 +1386,51 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
 
     cmd = run_script_command(script, options)
     print("+ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
-    rc = subprocess.call(cmd, env=os.environ.copy())
+    try:
+        rc = subprocess.call(cmd, env=os.environ.copy())
+    except KeyboardInterrupt:
+        publish_run_latest(
+            run_dir,
+            out_root,
+            (
+                "cases.csv",
+                "manifest.json",
+                "run_status.csv",
+                "progress.csv",
+                "attempt_status.csv",
+            ),
+            run_id=run_id,
+            status="interrupted",
+        )
+        publish_current_cases(suite, run_dir, out_root)
+        raise
 
     results = build_results(suite, run_dir, options.fpga_bin_dir, power_min_samples=run_options.power_min_samples)
     results = add_git_metadata(results, git)
     summary = build_summary(results)
     results.to_csv(run_dir / "results.csv", index=False)
     summary.to_csv(run_dir / "summary.csv", index=False)
+    publish_run_latest(
+        run_dir,
+        out_root,
+        (
+            "cases.csv",
+            "suite.yaml",
+            "suite.expanded.yaml",
+            "manifest.json",
+            "run_fpga_bench.sh",
+            "run_status.csv",
+            "progress.csv",
+            "attempt_status.csv",
+            "results.csv",
+            "summary.csv",
+            "fpga_identity.env",
+            "fpga_identity.json",
+        ),
+        run_id=run_id,
+        status="completed" if rc == 0 else "failed",
+    )
+    publish_current_cases(suite, run_dir, out_root)
     append_results = results
     if options.skip_existing:
         executed_keys = {unit.exec_key for unit in units_to_run}

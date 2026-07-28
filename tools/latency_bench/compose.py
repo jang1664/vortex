@@ -10,11 +10,17 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from .suite import BenchSuite, resolve_case_fpga_bin, suite_to_rows
-from .interpolation import reweight_suite_for_exec_keys
+from .suite import BenchCase, BenchSuite, resolve_case_fpga_bin, suite_to_rows
+from .interpolation import interpolation_group_key
 
 
 METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us", "fpga_cycle")
+POWER_METRIC_COLUMNS = (
+    "power_avg_w",
+    "power_vcc_avg_w",
+    "power_pcie_avg_w",
+    "power_dynamic_avg_w",
+)
 SELECT_POLICIES = ("median", "latest", "mean", "min", "strict")
 MISSING_POLICIES = ("error", "nan", "skip")
 
@@ -260,8 +266,6 @@ def _match_key_columns(match_fpga_bin: bool) -> list[str]:
 def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd.DataFrame:
     rows = []
     for order, (case_obj, case) in enumerate(zip(suite.cases, suite_to_rows(suite))):
-        if case.get("measurement_kind", "measured") != "measured":
-            continue
         row = dict(case)
         row["_case_order"] = order
         row["_normalized_args"] = normalize_args(str(row["args"]))
@@ -306,6 +310,9 @@ def _raw_selection_row(
             "source_xclbin_sha256s": _unique_join(matches["xclbin_sha256"]) if "xclbin_sha256" in matches.columns else "",
         }
     )
+    for power_metric in POWER_METRIC_COLUMNS:
+        if power_metric in matches.columns:
+            row[power_metric], _ = _select_value(matches, power_metric, select)
     if "_latency_scale_rules" in matches.columns:
         row["source_latency_scale_rules"] = _unique_join(matches["_latency_scale_rules"])
         row["source_latency_scales"] = _unique_join(matches["_latency_scale_factor"])
@@ -406,8 +413,20 @@ def _compose_rows_from_merge(
                         "source_xclbin_sha256s": "",
                         "selected_run_id": "",
                         "selected_timestamp_utc": "",
+                        "latency_resolution_kind": "missing",
+                        "latency_interpolation_lower_case_id": "",
+                        "latency_interpolation_upper_case_id": "",
+                        "latency_interpolation_upper_ratio": math.nan,
+                        "latency_reuse_representative_case_id": "",
+                        "power_resolution_kind": "missing",
+                        "power_interpolation_lower_case_id": "",
+                        "power_interpolation_upper_case_id": "",
+                        "power_interpolation_upper_ratio": math.nan,
+                        "power_reuse_representative_case_id": "",
                     }
                 )
+                for power_metric in POWER_METRIC_COLUMNS:
+                    case[power_metric] = math.nan
                 if include_scale_columns:
                     case["source_latency_scale_rules"] = ""
                     case["source_latency_scales"] = ""
@@ -415,10 +434,17 @@ def _compose_rows_from_merge(
             continue
 
         calls = float(row["calls_per_forward"])
-        decode_steps = int(row.get("decode_step_count", 1))
-        sample_weight = float(row.get("decode_sample_weight", 1))
-        effective_calls = calls * decode_steps * sample_weight
+        effective_calls = calls
         latency = float(row["latency_us"]) if not pd.isna(row["latency_us"]) else math.nan
+        measurement_kind = str(row.get("measurement_kind", "measured"))
+        resolution_kind = (
+            "promoted" if measurement_kind == "interpolated"
+            else measurement_kind
+        )
+        has_power = any(
+            not pd.isna(row.get(power_metric))
+            for power_metric in POWER_METRIC_COLUMNS
+        )
         case.update(
             {
                 "metric": metric,
@@ -436,8 +462,22 @@ def _compose_rows_from_merge(
                 "source_xclbin_sha256s": _safe_str(row.get("source_xclbin_sha256s")),
                 "selected_run_id": _safe_str(row.get("selected_run_id")),
                 "selected_timestamp_utc": _safe_str(row.get("selected_timestamp_utc")),
+                "latency_resolution_kind": resolution_kind,
+                "latency_interpolation_lower_case_id": "",
+                "latency_interpolation_upper_case_id": "",
+                "latency_interpolation_upper_ratio": math.nan,
+                "latency_reuse_representative_case_id": "",
+                "power_resolution_kind": resolution_kind if has_power else "missing",
+                "power_interpolation_lower_case_id": "",
+                "power_interpolation_upper_case_id": "",
+                "power_interpolation_upper_ratio": math.nan,
+                "power_reuse_representative_case_id": "",
             }
         )
+        for power_metric in POWER_METRIC_COLUMNS:
+            case[power_metric] = pd.to_numeric(
+                row.get(power_metric), errors="coerce"
+            )
         if include_scale_columns:
             case["source_latency_scale_rules"] = _safe_str(row.get("source_latency_scale_rules"))
             case["source_latency_scales"] = _safe_str(row.get("source_latency_scales"))
@@ -448,6 +488,267 @@ def _compose_rows_from_merge(
         suffix = "" if len(missing_cases) <= 10 else f", ... ({len(missing_cases)} total)"
         raise ValueError(f"raw DB is missing measurements for cases: {preview}{suffix}")
     return pd.DataFrame(rows)
+
+
+def _resolve_decode_reuse(
+    composed: pd.DataFrame,
+    suite: BenchSuite,
+) -> pd.DataFrame:
+    out = composed.reset_index(drop=True).copy()
+    if out.empty:
+        return out
+
+    positions = {
+        str(case_id): index
+        for index, case_id in enumerate(out["case_id"].astype(str))
+    }
+    groups: dict[str, list[tuple[BenchCase, int]]] = {}
+    for case in suite.cases:
+        position = positions.get(case.case_id)
+        if position is not None:
+            groups.setdefault(interpolation_group_key(case), []).append((case, position))
+
+    source_columns = (
+        "match_count",
+        "source_raw_dbs",
+        "source_run_ids",
+        "source_fpga_bin_labels",
+        "source_xclbin_sha256s",
+        "selected_run_id",
+        "selected_timestamp_utc",
+        "source_latency_scale_rules",
+        "source_latency_scales",
+    )
+    for group in groups.values():
+        by_step: dict[int, tuple[BenchCase, int]] = {
+            int(case.output_token_index): (case, position)
+            for case, position in group
+            if int(case.output_token_index) > 0
+        }
+        for case, position in group:
+            resolution_kind = str(case.measurement_kind)
+            if resolution_kind not in {"invariant_reused", "bucket_reused"}:
+                continue
+            representative_step = int(case.shape.get("reuse_representative_step", 0))
+            representative = by_step.get(representative_step)
+            if representative is None:
+                raise ValueError(
+                    f"{case.case_id}: {resolution_kind} references missing "
+                    f"output-token step {representative_step}"
+                )
+            representative_case, representative_position = representative
+
+            representative_has_latency = not pd.isna(
+                out.at[representative_position, "latency_us"]
+            )
+            if representative_has_latency:
+                out.at[
+                    position, "latency_reuse_representative_case_id"
+                ] = representative_case.case_id
+            if pd.isna(out.at[position, "latency_us"]) and representative_has_latency:
+                latency = float(out.at[representative_position, "latency_us"])
+                effective_calls = float(out.at[position, "calls_per_forward"])
+                out.at[position, "latency_us"] = latency
+                out.at[position, "effective_calls"] = effective_calls
+                out.at[position, "weighted_latency_us"] = latency * effective_calls
+                out.at[position, "compose_status"] = "pass"
+                out.at[position, "latency_resolution_kind"] = resolution_kind
+                for column in source_columns:
+                    if column in out.columns:
+                        out.at[position, column] = out.at[representative_position, column]
+
+            copied_power = False
+            for power_metric in POWER_METRIC_COLUMNS:
+                if pd.isna(out.at[position, power_metric]) and not pd.isna(
+                    out.at[representative_position, power_metric]
+                ):
+                    out.at[position, power_metric] = out.at[
+                        representative_position, power_metric
+                    ]
+                    copied_power = True
+            representative_has_power = any(
+                not pd.isna(out.at[representative_position, power_metric])
+                for power_metric in POWER_METRIC_COLUMNS
+            )
+            if copied_power:
+                out.at[position, "power_resolution_kind"] = resolution_kind
+            if representative_has_power:
+                out.at[
+                    position, "power_reuse_representative_case_id"
+                ] = representative_case.case_id
+    return out
+
+
+def _resolve_decode_interpolation(
+    composed: pd.DataFrame,
+    suite: BenchSuite,
+) -> pd.DataFrame:
+    out = composed.reset_index(drop=True).copy()
+    if out.empty:
+        return out
+
+    positions = {
+        str(case_id): index
+        for index, case_id in enumerate(out["case_id"].astype(str))
+    }
+    groups: dict[str, list[tuple[BenchCase, int]]] = {}
+    for case in suite.cases:
+        position = positions.get(case.case_id)
+        if position is None:
+            continue
+        groups.setdefault(interpolation_group_key(case), []).append((case, position))
+
+    for group in groups.values():
+        if not any(
+            case.shape.get("decode_sampling_class") == "continuous"
+            for case, _ in group
+        ):
+            continue
+        ordered = sorted(
+            group,
+            key=lambda item: int(
+                item[0].output_token_index
+                or item[0].shape.get("logical_cache_length", 0)
+            ),
+        )
+        anchors = [
+            (case, position)
+            for case, position in ordered
+            if not pd.isna(out.at[position, "latency_us"])
+        ]
+        if not anchors:
+            continue
+        for case, position in ordered:
+            if str(case.measurement_kind) != "interpolated":
+                continue
+            if not pd.isna(out.at[position, "latency_us"]):
+                out.at[position, "latency_resolution_kind"] = "promoted"
+                continue
+            target = int(
+                case.output_token_index
+                or case.shape.get("logical_cache_length", 0)
+            )
+            lower = [
+                item for item in anchors
+                if int(item[0].output_token_index or item[0].shape.get("logical_cache_length", 0))
+                <= target
+            ]
+            upper = [
+                item for item in anchors
+                if int(item[0].output_token_index or item[0].shape.get("logical_cache_length", 0))
+                >= target
+            ]
+            lo_case, lo_pos = lower[-1] if lower else anchors[0]
+            hi_case, hi_pos = upper[0] if upper else anchors[-1]
+            lo_x = int(
+                lo_case.output_token_index
+                or lo_case.shape.get("logical_cache_length", 0)
+            )
+            hi_x = int(
+                hi_case.output_token_index
+                or hi_case.shape.get("logical_cache_length", 0)
+            )
+            ratio = 0.0 if lo_x == hi_x else (target - lo_x) / (hi_x - lo_x)
+            lo_value = float(out.at[lo_pos, "latency_us"])
+            hi_value = float(out.at[hi_pos, "latency_us"])
+            latency = lo_value * (1.0 - ratio) + hi_value * ratio
+            effective_calls = float(out.at[position, "calls_per_forward"])
+            out.at[position, "latency_us"] = latency
+            out.at[position, "effective_calls"] = effective_calls
+            out.at[position, "weighted_latency_us"] = latency * effective_calls
+            out.at[position, "compose_status"] = "estimated"
+            out.at[position, "latency_resolution_kind"] = "interpolated"
+            out.at[position, "latency_interpolation_lower_case_id"] = lo_case.case_id
+            out.at[position, "latency_interpolation_upper_case_id"] = hi_case.case_id
+            out.at[position, "latency_interpolation_upper_ratio"] = ratio
+            out.at[position, "source_raw_dbs"] = _unique_join(pd.Series([
+                out.at[lo_pos, "source_raw_dbs"],
+                out.at[hi_pos, "source_raw_dbs"],
+            ]))
+            out.at[position, "source_run_ids"] = _unique_join(pd.Series([
+                out.at[lo_pos, "source_run_ids"],
+                out.at[hi_pos, "source_run_ids"],
+            ]))
+
+        for power_metric in POWER_METRIC_COLUMNS:
+            power_anchors = [
+                (case, position)
+                for case, position in ordered
+                if not pd.isna(out.at[position, power_metric])
+            ]
+            if not power_anchors:
+                continue
+            for case, position in ordered:
+                if str(case.measurement_kind) != "interpolated":
+                    continue
+                if not pd.isna(out.at[position, power_metric]):
+                    out.at[position, "power_resolution_kind"] = "promoted"
+                    continue
+                target = int(
+                    case.output_token_index
+                    or case.shape.get("logical_cache_length", 0)
+                )
+                lower = [
+                    item for item in power_anchors
+                    if int(
+                        item[0].output_token_index
+                        or item[0].shape.get("logical_cache_length", 0)
+                    ) <= target
+                ]
+                upper = [
+                    item for item in power_anchors
+                    if int(
+                        item[0].output_token_index
+                        or item[0].shape.get("logical_cache_length", 0)
+                    ) >= target
+                ]
+                lo_case, lo_pos = lower[-1] if lower else power_anchors[0]
+                hi_case, hi_pos = upper[0] if upper else power_anchors[-1]
+                lo_x = int(
+                    lo_case.output_token_index
+                    or lo_case.shape.get("logical_cache_length", 0)
+                )
+                hi_x = int(
+                    hi_case.output_token_index
+                    or hi_case.shape.get("logical_cache_length", 0)
+                )
+                ratio = 0.0 if lo_x == hi_x else (target - lo_x) / (hi_x - lo_x)
+                lo_value = float(out.at[lo_pos, power_metric])
+                hi_value = float(out.at[hi_pos, power_metric])
+                out.at[position, power_metric] = (
+                    lo_value * (1.0 - ratio) + hi_value * ratio
+                )
+                out.at[position, "power_resolution_kind"] = "interpolated"
+                if not out.at[position, "power_interpolation_lower_case_id"]:
+                    out.at[
+                        position, "power_interpolation_lower_case_id"
+                    ] = lo_case.case_id
+                    out.at[
+                        position, "power_interpolation_upper_case_id"
+                    ] = hi_case.case_id
+                    out.at[
+                        position, "power_interpolation_upper_ratio"
+                    ] = ratio
+    return out
+
+
+def _apply_missing_policy(
+    composed: pd.DataFrame,
+    missing: str,
+) -> pd.DataFrame:
+    missing_mask = pd.to_numeric(
+        composed.get("latency_us"), errors="coerce"
+    ).isna()
+    if not bool(missing_mask.any()):
+        return composed
+    missing_ids = composed.loc[missing_mask, "case_id"].astype(str).tolist()
+    if missing == "error":
+        preview = ", ".join(missing_ids[:10])
+        suffix = "" if len(missing_ids) <= 10 else f", ... ({len(missing_ids)} total)"
+        raise ValueError(f"raw DB is missing measurements for cases: {preview}{suffix}")
+    if missing == "skip":
+        return composed.loc[~missing_mask].reset_index(drop=True)
+    return composed
 
 
 def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
@@ -461,10 +762,6 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     raw = _read_raw_dbs(options.raw_dbs)
     _require_columns(raw, ["exec_key", "app", "args", "status", options.metric])
     raw = _filter_pass_raw_rows(raw)
-    suite = reweight_suite_for_exec_keys(
-        suite, set(raw["exec_key"].dropna().astype(str))
-    )
-
     if options.match_fpga_bin:
         _require_columns(raw, ["fpga_bin_label"])
     if options.fpga_bin_label:
@@ -488,13 +785,16 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
         select=options.select,
     )
     merged = cases.merge(selected_raw, on=key_columns, how="left", suffixes=("", "_raw"))
-    return _compose_rows_from_merge(
+    composed = _compose_rows_from_merge(
         merged,
         metric=options.metric,
         select=options.select,
-        missing=options.missing,
+        missing="nan",
         include_scale_columns=bool(options.latency_scale_rules),
     )
+    composed = _resolve_decode_reuse(composed, suite)
+    composed = _resolve_decode_interpolation(composed, suite)
+    return _apply_missing_policy(composed, options.missing)
 
 
 def write_compose_outputs(composed: pd.DataFrame, out: Path) -> tuple[Path, Path | None]:
@@ -507,7 +807,9 @@ def write_compose_outputs(composed: pd.DataFrame, out: Path) -> tuple[Path, Path
     composed_csv = out / "composed.csv"
     composed.to_csv(composed_csv, index=False)
 
-    ok = composed[composed["compose_status"] == "pass"].copy()
+    ok = composed[
+        composed["compose_status"].isin({"pass", "estimated"})
+    ].copy()
     summary_csv = out / "summary.csv"
     if ok.empty:
         pd.DataFrame(columns=[

@@ -96,7 +96,9 @@ keep their own `case_id`, `kind`, `stage`, `name`, `shape_json`, and
 `calls_per_forward` metadata. Workload-generated cases also record `op`,
 `backend`, and `variant`: `op` is the model operation, `kind` is the logical
 compute family, `backend` is the implementation/argument convention, and `app`
-is the benchmark executable passed to blackbox. `summary.csv` is derived from
+is the benchmark executable passed to blackbox. They also retain explicit
+`model`, `batch`, `prefill_seq_len`, and `gen_kv_len` columns so workload rows
+can be selected without parsing `case_id` or `shape_json`. `summary.csv` is derived from
 `results.csv`; it groups successful rows by stage, kind, backend, op, kernel
 name, and total suite latency.
 
@@ -286,20 +288,22 @@ fixed cache allocation capacity must be larger than the final logical length.
 Decode kernel `args` always retain the logical attention length. The optional
 `padded_args` field records the corresponding execution-granularity-rounded
 arguments for inspection only and is also written to `raw_db.csv`.
+Generation cases expose a 1-based `output_token_index`; prefill cases use `0`.
+For example, `gen_kv_len: 1024` produces output-token indices `1`, `2`, ... at
+logical cache lengths `1025`, `1026`, ....
 `decode_measurement: exact` (the default) emits every output-token step for
-sequence-dependent kernels; sequence-invariant kernels are represented once
-with `decode_sample_weight: out_tokens`.
+sequence-dependent kernels; sequence-invariant kernels execute once and the
+remaining logical output-token rows reuse that measurement.
 `decode_measurement: sampled` measures sequence-invariant kernels once,
 continuous kernels at boundary-aware regular samples, and tile-dominated
 kernels once per execution bucket. `decode_sample_interval` controls the
-regular spacing (default 32). Compose applies each measured case's
-`decode_sample_weight`; continuous-kernel weights are the summed linear
-interpolation coefficients. The base `calls_per_forward` remains the
-single-token decoder-pass count, so shared prefill rows are not multiplied by
-decode output length.
+regular spacing (default 32). Compose retains every logical output-token row,
+reuses invariant/bucket measurements, and linearly interpolates continuous
+kernels between neighboring measured or promoted rows. The base
+`calls_per_forward` remains the single-token decoder-pass count.
 
 `cases.csv` and `results.csv` are case-level workload artifacts and retain
-call counts, decode ranges, sampling weights, and shape metadata. The top-level
+call counts, decode ranges, measurement kinds, and shape metadata. The top-level
 `raw_db.csv` is a unique-measurement store: it contains one row per `exec_key`
 and run, with executable arguments, FPGA identity, status, and measured
 latency/cycle/power data. Existing raw DB schemas are not migrated
@@ -447,9 +451,8 @@ Each `runs/<run_id>/` directory contains:
   or the `visualize` subcommand.
 
 In `summary.csv`, `weighted_total_avg_us` means
-`sum(avg_us * calls_per_forward * decode_step_count)` for the group, not an
-arithmetic mean. `decode_step_count` defaults to `1`, so existing prefill and
-single-step cases retain their prior meaning.
+`sum(avg_us * calls_per_forward)` for the logical rows in the group, not an
+arithmetic mean.
 
 ## Append-Only Raw DB
 
@@ -604,7 +607,13 @@ when intentionally producing a partial composition.
 When `--out` is a directory, `compose` writes:
 
 - `composed.csv`: one row per expanded case with selected latency,
-  `weighted_latency_us`, `match_count`, and source run metadata.
+  `weighted_latency_us`, `match_count`, source run metadata, and the explicit
+  workload dimensions `model`, `stage`, `batch`, `prefill_seq_len`,
+  `gen_kv_len`, `out_tokens`, and `output_token_index`.
+  Decode reuse rows expose `latency_reuse_representative_case_id` and
+  `power_reuse_representative_case_id`; their latency and power come from that
+  measured representative rather than requiring an exact raw DB row for the
+  logical token's position-dependent arguments.
 - `summary.csv`: total composed latency for the selected metric.
 
 When `--out` ends in `.csv`, only that composed case CSV is written.

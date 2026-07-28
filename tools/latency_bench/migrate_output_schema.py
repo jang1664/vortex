@@ -13,10 +13,11 @@ from .suite import stable_hash
 
 
 CASE_COLUMNS = [
-    "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
-    "variant", "stage", "name", "args", "measurement_args",
+    "suite", "case_id", "exec_key", "app", "model", "kind", "op", "backend",
+    "variant", "stage", "name", "batch", "prefill_seq_len", "gen_kv_len",
+    "args", "measurement_args",
     "latency_shape_json", "padded_args", "shape_json", "calls_per_forward",
-    "decode_step_count", "out_tokens", "decode_sample_weight", "measurement_kind", "warmup",
+    "output_token_index", "out_tokens", "measurement_kind", "warmup",
     "iterations", "source",
 ]
 
@@ -72,6 +73,25 @@ def migrate_cases(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[i
         if measurement_args != old.get("args", ""):
             changed_args += 1
         row: dict[str, object] = dict(old)
+        output_token_index = old.get("output_token_index", "")
+        if not output_token_index:
+            try:
+                shape = json.loads(old.get("shape_json", "") or "{}")
+                output_token_index = int(shape.get(
+                    "output_token_index",
+                    (
+                        int(shape["logical_cache_length"])
+                        - int(shape["input_kv_length"])
+                    )
+                    if (
+                        old.get("stage") == "generation"
+                        and "logical_cache_length" in shape
+                        and "input_kv_length" in shape
+                    )
+                    else 0,
+                ))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                output_token_index = 0
         row.update({
             "measurement_args": measurement_args,
             "latency_shape_json": json.dumps(latency_shape, sort_keys=True),
@@ -79,9 +99,8 @@ def migrate_cases(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[i
                 old.get("padded_args", "")
                 or (measurement_args if measurement_args != old.get("args", "") else "")
             ),
-            "decode_step_count": old.get("decode_step_count", "1") or "1",
+            "output_token_index": output_token_index,
             "out_tokens": old.get("out_tokens", "1") or "1",
-            "decode_sample_weight": old.get("decode_sample_weight", "1") or "1",
             "measurement_kind": old.get("measurement_kind", "measured") or "measured",
             "exec_key": _exec_key(
                 old.get("app", ""),

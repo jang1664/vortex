@@ -59,16 +59,19 @@ class BenchCase:
     case_id: str
     app: str
     args: str
+    model: str = ""
     kind: str = ""
     op: str = ""
     backend: str = ""
     variant: str = ""
     stage: str = ""
     name: str = ""
+    batch: int = 0
+    prefill_seq_len: int = 0
+    gen_kv_len: int = 0
     calls_per_forward: float = 1.0
-    decode_step_count: int = 1
+    output_token_index: int = 0
     out_tokens: int = 1
-    decode_sample_weight: float = 1.0
     measurement_kind: str = "measured"
     padded_args: str = ""
     measurement_args: str = ""
@@ -581,32 +584,83 @@ def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:
     )
 
 
+def _output_token_index(raw: dict[str, Any], shape: dict[str, Any]) -> int:
+    explicit = raw.get("output_token_index", shape.get("output_token_index"))
+    if explicit is not None and str(explicit) != "":
+        return int(explicit)
+    if (
+        str(raw.get("stage", "")) == "generation"
+        and "logical_cache_length" in shape
+        and "input_kv_length" in shape
+    ):
+        return int(shape["logical_cache_length"]) - int(shape["input_kv_length"])
+    return 0
+
+
+def _workload_int(
+    raw: dict[str, Any],
+    shape: dict[str, Any],
+    key: str,
+    *,
+    stage: str,
+) -> int:
+    if key == "prefill_seq_len" and stage != "prefill":
+        return 0
+    if key == "gen_kv_len" and stage != "generation":
+        return 0
+    value = raw.get(key, shape.get(key))
+    if value is None and key == "prefill_seq_len" and stage == "prefill":
+        value = raw.get("seq_len", raw.get("seq", shape.get("seq_len")))
+    if value is None and key == "gen_kv_len" and stage == "generation":
+        value = raw.get(
+            "seq_len",
+            raw.get("seq", shape.get("input_kv_length", shape.get("gen_kv_len"))),
+        )
+    if value is None:
+        case_id = str(raw.get("id", raw.get("case_id", "")))
+        patterns = {
+            "batch": r"(?:^|_)batch(\d+)(?:_|$)",
+            "prefill_seq_len": r"(?:^|_)prefill_seq_len(\d+)(?:_|$)",
+            "gen_kv_len": r"(?:^|_)gen_kv_len(\d+)(?:_|$)",
+        }
+        match = re.search(patterns[key], case_id) if key in patterns else None
+        if match:
+            value = match.group(1)
+    return int(value) if value is not None and str(value) != "" else 0
+
+
 def _case_from_raw(raw: dict[str, Any], defaults: BenchDefaults, index: int) -> BenchCase:
     args = str(raw.get("args", "")).strip()
     if not args:
         raise ValueError(f"case #{index} is missing non-empty args")
     name = str(raw.get("name", raw.get("id", f"case_{index}")))
     case_id = sanitize_id(str(raw.get("id", name)))
+    shape = dict(raw.get("shape") or {})
+    shape.pop("decode_sample_weight", None)
+    stage = str(raw.get("stage", ""))
     return BenchCase(
         case_id=case_id,
         app=str(raw.get("app", defaults.app)),
         args=args,
+        model=str(raw.get("model", "")),
         kind=str(raw.get("kind", "")),
         op=str(raw.get("op", "")),
         backend=str(raw.get("backend", "")),
         variant=str(raw.get("variant", "")),
-        stage=str(raw.get("stage", "")),
+        stage=stage,
         name=name,
+        batch=_workload_int(raw, shape, "batch", stage=stage),
+        prefill_seq_len=_workload_int(raw, shape, "prefill_seq_len", stage=stage),
+        gen_kv_len=_workload_int(raw, shape, "gen_kv_len", stage=stage),
         calls_per_forward=float(raw.get("calls_per_forward", 1)),
-        decode_step_count=int(raw.get("decode_step_count", 1)),
+        output_token_index=_output_token_index(raw, shape),
         out_tokens=int(raw.get("out_tokens", 1)),
-        decode_sample_weight=float(raw.get("decode_sample_weight", 1)),
         measurement_kind=str(raw.get(
             "measurement_kind",
             (raw.get("shape") or {}).get("measurement_kind", "measured"),
         )),
         padded_args=str(raw.get("padded_args", "")),
-        shape=dict(raw.get("shape") or {}),
+        shape=shape,
         warmup=int(raw.get("warmup", defaults.warmup)),
         iterations=int(raw.get("iterations", defaults.iterations)),
         source="explicit",
@@ -744,21 +798,39 @@ def _expand_case_matrix(raw: dict[str, Any], defaults: BenchDefaults, index: int
         shape = _format_value(raw.get("shape", {}), params)
         if not isinstance(shape, dict):
             raise ValueError(f"case_matrix #{index} shape must expand to a mapping")
+        shape.pop("decode_sample_weight", None)
+        formatted_index_raw = dict(raw)
+        if "output_token_index" in raw:
+            formatted_index_raw["output_token_index"] = _format_value(
+                raw["output_token_index"], params
+            )
 
+        stage = str(_format_value(raw.get("stage", ""), params))
+        workload_values = dict(params)
+        for workload_key in ("batch", "prefill_seq_len", "gen_kv_len", "seq_len", "seq"):
+            if workload_key in raw:
+                workload_values[workload_key] = _format_value(raw[workload_key], params)
         cases.append(BenchCase(
             case_id=case_id,
             app=str(_format_value(raw.get("app", defaults.app), params)),
             args=str(_format_value(args_template, params)),
+            model=str(_format_value(raw.get("model", ""), params)),
             kind=str(_format_value(raw.get("kind", ""), params)),
             op=str(_format_value(raw.get("op", ""), params)),
             backend=str(_format_value(raw.get("backend", ""), params)),
             variant=str(_format_value(raw.get("variant", ""), params)),
-            stage=str(_format_value(raw.get("stage", ""), params)),
+            stage=stage,
             name=name,
+            batch=_workload_int(workload_values, shape, "batch", stage=stage),
+            prefill_seq_len=_workload_int(
+                workload_values, shape, "prefill_seq_len", stage=stage
+            ),
+            gen_kv_len=_workload_int(
+                workload_values, shape, "gen_kv_len", stage=stage
+            ),
             calls_per_forward=float(_format_value(raw.get("calls_per_forward", 1), params)),
-            decode_step_count=int(_format_value(raw.get("decode_step_count", 1), params)),
+            output_token_index=_output_token_index(formatted_index_raw, shape),
             out_tokens=int(_format_value(raw.get("out_tokens", 1), params)),
-            decode_sample_weight=float(_format_value(raw.get("decode_sample_weight", 1), params)),
             padded_args=str(_format_value(raw.get("padded_args", ""), params)),
             shape=shape,
             warmup=int(_format_value(raw.get("warmup", defaults.warmup), params)),
@@ -869,6 +941,7 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, payload: 
     )))
     cases: list[BenchCase] = []
     seen_ids: set[str] = set()
+    workload_config = payload.get("config") or {}
 
     for i, kernel in enumerate(payload["kernels"], start=1):
         app = kernel.get("app")
@@ -882,22 +955,32 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, payload: 
             case_id = f"{base_id}_{suffix}"
             suffix += 1
         seen_ids.add(case_id)
+        stage = str(kernel.get("stage", ""))
         cases.append(BenchCase(
             case_id=case_id,
             app=str(app),
             args=args,
+            model=str(payload.get("model", "")),
             kind=str(kernel.get("kind", "")),
             op=str(kernel.get("op", "")),
             backend=str(kernel.get("backend", "")),
             variant=str(kernel.get("variant", "")),
-            stage=str(kernel.get("stage", "")),
+            stage=stage,
             name=str(kernel.get("name", case_id)),
-            calls_per_forward=float(kernel.get("calls_per_forward", 1)),
-            decode_step_count=int((kernel.get("shape") or {}).get("decode_step_count", 1)),
-            out_tokens=int((payload.get("config") or {}).get("out_tokens", 1)),
-            decode_sample_weight=float(
-                (kernel.get("shape") or {}).get("decode_sample_weight", 1)
+            batch=int(workload_config.get("batch", 0)),
+            prefill_seq_len=(
+                int(workload_config.get("prefill_seq_len", 0))
+                if stage == "prefill" else 0
             ),
+            gen_kv_len=(
+                int(workload_config.get("gen_kv_len", 0))
+                if stage == "generation" else 0
+            ),
+            calls_per_forward=float(kernel.get("calls_per_forward", 1)),
+            output_token_index=int(
+                (kernel.get("shape") or {}).get("output_token_index", 0)
+            ),
+            out_tokens=int(workload_config.get("out_tokens", 1)),
             measurement_kind=str(
                 (kernel.get("shape") or {}).get("measurement_kind", "measured")
             ),
@@ -1046,21 +1129,24 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
             "case_id": case.case_id,
             "exec_key": case.exec_key,
             "app": case.app,
+            "model": case.model,
             "kind": case.kind,
             "op": case.op,
             "backend": case.backend,
             "variant": case.variant,
             "stage": case.stage,
             "name": case.name,
+            "batch": case.batch,
+            "prefill_seq_len": case.prefill_seq_len,
+            "gen_kv_len": case.gen_kv_len,
             "args": case.args,
             "measurement_args": case.measurement_args or case.args,
             "latency_shape_json": json.dumps(case.latency_shape, sort_keys=True),
             "padded_args": case.padded_args,
             "shape_json": json.dumps(case.shape, sort_keys=True),
             "calls_per_forward": case.calls_per_forward,
-            "decode_step_count": case.decode_step_count,
+            "output_token_index": case.output_token_index,
             "out_tokens": case.out_tokens,
-            "decode_sample_weight": case.decode_sample_weight,
             "measurement_kind": case.measurement_kind,
             "warmup": case.warmup,
             "iterations": case.iterations,
@@ -1083,20 +1169,22 @@ def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
         row: dict[str, Any] = {
             "id": case.case_id,
             "app": case.app,
+            "model": case.model,
             "kind": case.kind,
             "stage": case.stage,
             "name": case.name,
+            "batch": case.batch,
+            "prefill_seq_len": case.prefill_seq_len,
+            "gen_kv_len": case.gen_kv_len,
             "args": case.args,
             "calls_per_forward": case.calls_per_forward,
             "warmup": case.warmup,
             "iterations": case.iterations,
         }
-        if case.decode_step_count != 1:
-            row["decode_step_count"] = case.decode_step_count
         if case.out_tokens != 1:
             row["out_tokens"] = case.out_tokens
-        if case.decode_sample_weight != 1:
-            row["decode_sample_weight"] = case.decode_sample_weight
+        if case.output_token_index:
+            row["output_token_index"] = case.output_token_index
         if case.measurement_kind != "measured":
             row["measurement_kind"] = case.measurement_kind
         if case.padded_args:

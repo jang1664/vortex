@@ -424,30 +424,16 @@ def _decode_sampling_class(kernel: dict) -> str:
     return "tile_step"
 
 
-def _linear_sample_weights(length: int, sample_indices: list[int]) -> dict[int, float]:
-    weights = {index: 0.0 for index in sample_indices}
-    for target in range(length):
-        lower = max(index for index in sample_indices if index <= target)
-        upper = min(index for index in sample_indices if index >= target)
-        if lower == upper:
-            weights[lower] += 1.0
-            continue
-        upper_weight = (target - lower) / (upper - lower)
-        weights[lower] += 1.0 - upper_weight
-        weights[upper] += upper_weight
-    return weights
-
-
 def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
     sampling_class = _decode_sampling_class(kernels[0])
     if sampling_class == "invariant":
-        selected = [(0, float(len(kernels)))]
+        selected_indices = [0]
     elif sampling_class == "tile_step":
         buckets: dict[int, list[int]] = {}
         for index, kernel in enumerate(kernels):
             padded = int(kernel["shape"]["padded_cache_length"])
             buckets.setdefault(padded, []).append(index)
-        selected = [(indices[0], float(len(indices))) for indices in buckets.values()]
+        selected_indices = [indices[0] for indices in buckets.values()]
     else:
         sample_indices = {0, len(kernels) - 1}
         sample_indices.update(range(0, len(kernels), interval))
@@ -457,16 +443,13 @@ def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
                 logical = int(kernel["shape"]["logical_cache_length"])
                 if logical % alignment in {0, 1, alignment - 1}:
                     sample_indices.add(index)
-        ordered = sorted(sample_indices)
-        selected = sorted(_linear_sample_weights(len(kernels), ordered).items())
+        selected_indices = sorted(sample_indices)
 
-    selected_weights = dict(selected)
-    selected_indices = sorted(selected_weights)
+    selected_indices = sorted(selected_indices)
     out = []
     for index, source_kernel in enumerate(kernels):
-        weight = selected_weights.get(index, 0.0)
         measurement_kind = "measured"
-        if index not in selected_weights:
+        if index not in selected_indices:
             measurement_kind = {
                 "invariant": "invariant_reused",
                 "tile_step": "bucket_reused",
@@ -496,7 +479,6 @@ def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
         shape.update({
             "decode_measurement": "sampled",
             "decode_sampling_class": sampling_class,
-            "decode_sample_weight": weight,
             "measurement_kind": measurement_kind,
         })
         kernel["shape"] = shape
@@ -528,15 +510,9 @@ def _select_decode_measurements(
                 item = dict(kernel)
                 shape = dict(item.get("shape") or {})
                 measured = sampling_class != "invariant" or index == 0
-                sample_weight = (
-                    float(len(group))
-                    if sampling_class == "invariant" and measured
-                    else (1.0 if measured else 0.0)
-                )
                 shape.update({
                     "decode_measurement": "exact",
                     "decode_sampling_class": sampling_class,
-                    "decode_sample_weight": sample_weight,
                     "measurement_kind": "measured" if measured else "invariant_reused",
                 })
                 if sampling_class == "invariant":
@@ -2374,10 +2350,10 @@ def build_llm_kernels(model_name: str,
                         "query_length": 1,
                         "input_kv_length": gen_kv_len,
                         "out_tokens": out_tokens,
+                        "output_token_index": decode_step + 1,
                         "logical_cache_length": logical_seq_kv,
                         "logical_kv_start": logical_seq_kv,
                         "logical_kv_end": logical_seq_kv,
-                        "decode_step_count": 1,
                         "cache_capacity": cache_capacity,
                     })
                     kernel["shape"] = shape

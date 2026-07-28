@@ -52,15 +52,10 @@ class KernelVariantTest(unittest.TestCase):
         ]
 
         self.assertEqual(3, len(q_proj_cases))
-        self.assertEqual(3.0, q_proj_cases[0]["shape"]["decode_sample_weight"])
         self.assertEqual(129, q_proj_cases[0]["shape"]["logical_kv_end"])
         self.assertEqual(
             ["measured", "invariant_reused", "invariant_reused"],
             [kernel["shape"]["measurement_kind"] for kernel in q_proj_cases],
-        )
-        self.assertEqual(
-            [3.0, 0.0, 0.0],
-            [kernel["shape"]["decode_sample_weight"] for kernel in q_proj_cases],
         )
         self.assertEqual(3, len(qk_cases))
         self.assertEqual([127, 128, 129],
@@ -91,18 +86,15 @@ class KernelVariantTest(unittest.TestCase):
         qk = [k for k in payload["kernels"] if k["name"] == "attn_qkT"]
         softmax = [k for k in payload["kernels"] if k["name"] == "attn_softmax"]
         self.assertEqual(6, len(q_proj))
-        self.assertEqual(6.0, q_proj[0]["shape"]["decode_sample_weight"])
         self.assertEqual(2, sum(
             k["shape"]["measurement_kind"] == "measured" for k in qk
         ))
-        self.assertEqual(6.0, sum(k["shape"]["decode_sample_weight"] for k in qk))
         self.assertEqual(6, len(qk))
         self.assertEqual(6, len(softmax))
         self.assertIn(
             "interpolated",
             {k["shape"]["measurement_kind"] for k in softmax},
         )
-        self.assertEqual(6.0, sum(k["shape"]["decode_sample_weight"] for k in softmax))
 
     def test_prefill_kernels_ignore_out_tokens(self) -> None:
         common = dict(
