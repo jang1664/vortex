@@ -285,11 +285,18 @@ endif
 all: simv applib
 
 # ---- simv (VCS executable) ----
+SIMV_CONFIG_FILE := $(DESTDIR)/.simv_config.stamp
+
+$(SIMV_CONFIG_FILE): force
+	@mkdir -p $(@D)
+	@printf '%s\n' "$(VCS_FLAGS) $(VLOGAN_FLAGS) $(VCS_P2_FLAGS) $(RTL_PKGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; fi
+
 simv: $(DESTDIR)/simv
 
 ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)
-$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(SIMV_CONFIG_FILE)
 	@mkdir -p $(DESTDIR)
 	@if [ ! -f "$(SIMLIB_SETUP)" ]; then \
 		echo "INFO: Xilinx VCS simlib not found at $(SIMLIB_DIR), compiling..."; \
@@ -315,7 +322,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \
 		$(VCS_SRCS_POST) \
 		-l $(DESTDIR)/vlogan.log
-		cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
+	+cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
 			$(VCS_SDF_PARAM) \
 			$(VCS_FSDB_OPTS) \
 			-CFLAGS "$(VCS_CPPFLAGS)" \
@@ -326,7 +333,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		-o $(DESTDIR)/simv
 else
 # RTL sim: compile RTL + TB + DPI
-$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(if $(USE_XILINX_FPU_IP),$(XILINX_IP_VHDLAN_STAMP))
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(SIMV_CONFIG_FILE) $(if $(USE_XILINX_FPU_IP),$(XILINX_IP_VHDLAN_STAMP))
 	@mkdir -p $(DESTDIR)
 	$(if $(USE_XILINX_FPU_IP),$(VCS_SETUP_CMD))
 ifdef USE_XILINX_FPU_IP
@@ -334,7 +341,7 @@ ifdef USE_XILINX_FPU_IP
 		$(RTL_PKGS) \
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \
 		-l vlogan.log
-	cd $(DESTDIR) && vcs $(VCS_P2_FLAGS) -full64 -timescale=1ns/1ps +lint=TFIPC-L \
+	+cd $(DESTDIR) && vcs $(VCS_P2_FLAGS) -full64 -timescale=1ns/1ps +lint=TFIPC-L \
 		-CFLAGS "$(VCS_CPPFLAGS)" \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
 		$(DPI_SRCS) \
@@ -342,7 +349,7 @@ ifdef USE_XILINX_FPU_IP
 		-l compile.log \
 		-o $(DESTDIR)/simv
 else
-	cd $(DESTDIR) && vcs $(VCS_FLAGS) \
+	+cd $(DESTDIR) && vcs $(VCS_FLAGS) \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
 		$(RTL_PKGS) \
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \

@@ -283,6 +283,17 @@
 `define LMEM_XBAR_MAX_FANOUT `MAX_FANOUT
 `endif
 
+// Ordering resources used only by the corresponding Omega local-memory
+// fabric. The store CAM is shared by all requesters; the response queue depth
+// is per requester.
+`ifndef LMEM_OMEGA_STORE_CAM_SIZE
+`define LMEM_OMEGA_STORE_CAM_SIZE 64
+`endif
+
+`ifndef LMEM_OMEGA_RSP_QUEUE_SIZE
+`define LMEM_OMEGA_RSP_QUEUE_SIZE 16
+`endif
+
 `ifndef LMEM_DMA_RD_PREFETCH_DEPTH
 `define LMEM_DMA_RD_PREFETCH_DEPTH 4
 `endif

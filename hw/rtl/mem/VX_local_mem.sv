@@ -32,6 +32,10 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     // Request tag size
     parameter TAG_WIDTH         = 16,
 
+    // Omega ordering resources
+    parameter OMEGA_STORE_CAM_SIZE = `LMEM_OMEGA_STORE_CAM_SIZE,
+    parameter OMEGA_RSP_QUEUE_SIZE = `LMEM_OMEGA_RSP_QUEUE_SIZE,
+
     // Response buffer
     parameter OUT_BUF           = 0
  ) (
@@ -55,7 +59,13 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     localparam BANK_ADDR_WIDTH = `CLOG2(WORDS_PER_BANK);
     localparam BANK_SEL_BITS   = `CLOG2(NUM_BANKS);
     localparam BANK_SEL_WIDTH  = `UP(BANK_SEL_BITS);
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    localparam STORE_CAM_SLOT_WIDTH = `UP(`CLOG2(OMEGA_STORE_CAM_SIZE));
+    localparam REQ_DATAW       = 1 + BANK_ADDR_WIDTH + WORD_SIZE + WORD_WIDTH + TAG_WIDTH
+                              + STORE_CAM_SLOT_WIDTH;
+`else
     localparam REQ_DATAW       = 1 + BANK_ADDR_WIDTH + WORD_SIZE + WORD_WIDTH + TAG_WIDTH;
+`endif
     localparam RSP_DATAW       = WORD_WIDTH + TAG_WIDTH;
     localparam LMEM_XBAR_FANOUT_VALID = (`LMEM_XBAR_MAX_FANOUT == 0)
                                      || ((`LMEM_XBAR_MAX_FANOUT >= 2)
@@ -71,6 +81,16 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 
 `ifndef LMEM_REQ_OMEGA_ENABLE
     `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
+`endif
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(OMEGA_STORE_CAM_SIZE > 0, ("invalid OMEGA_STORE_CAM_SIZE"))
+`else
+    `UNUSED_PARAM (OMEGA_STORE_CAM_SIZE)
+`endif
+`ifdef LMEM_RSP_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(OMEGA_RSP_QUEUE_SIZE > 0, ("invalid OMEGA_RSP_QUEUE_SIZE"))
+`else
+    `UNUSED_PARAM (OMEGA_RSP_QUEUE_SIZE)
 `endif
 `ifndef LMEM_RSP_OMEGA_ENABLE
     `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
@@ -104,16 +124,134 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_BANKS-1:0][WORD_WIDTH-1:0]    per_bank_req_data;
     wire [NUM_BANKS-1:0][TAG_WIDTH-1:0]     per_bank_req_tag;
     wire [NUM_BANKS-1:0][REQ_SEL_WIDTH-1:0] per_bank_req_idx;
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    wire [NUM_BANKS-1:0][STORE_CAM_SLOT_WIDTH-1:0] per_bank_req_store_slot;
+`endif
     wire [NUM_BANKS-1:0]                    per_bank_req_ready;
 
     wire [NUM_BANKS-1:0][REQ_DATAW-1:0]     per_bank_req_data_aos;
 
     wire [NUM_REQS-1:0]                 req_valid_in;
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    wire [NUM_REQS-1:0]                 req_rw_in;
+    wire [NUM_REQS-1:0][ADDR_WIDTH-1:0] req_addr_in;
+`elsif LMEM_RSP_OMEGA_ENABLE
+    wire [NUM_REQS-1:0]                 req_rw_in;
+`endif
     wire [NUM_REQS-1:0][REQ_DATAW-1:0]  req_data_in;
     wire [NUM_REQS-1:0]                 req_ready_in;
 
+`ifdef LMEM_RSP_OMEGA_ENABLE
+    localparam RSP_QUEUE_PTR_WIDTH = `UP(`CLOG2(OMEGA_RSP_QUEUE_SIZE));
+    localparam RSP_QUEUE_COUNT_WIDTH = `CLOG2(OMEGA_RSP_QUEUE_SIZE + 1);
+
+    reg [NUM_REQS-1:0][OMEGA_RSP_QUEUE_SIZE-1:0][BANK_SEL_WIDTH-1:0] rsp_order_bank;
+    reg [NUM_REQS-1:0][RSP_QUEUE_PTR_WIDTH-1:0] rsp_order_head;
+    reg [NUM_REQS-1:0][RSP_QUEUE_PTR_WIDTH-1:0] rsp_order_tail;
+    reg [NUM_REQS-1:0][RSP_QUEUE_COUNT_WIDTH-1:0] rsp_order_count;
+    reg [NUM_REQS-1:0] rsp_order_issued;
+`endif
+
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_valid;
+    reg [OMEGA_STORE_CAM_SIZE-1:0][ADDR_WIDTH-1:0] store_cam_addr;
+
+    reg [NUM_REQS-1:0] req_order_enable;
+    reg [NUM_REQS-1:0][STORE_CAM_SLOT_WIDTH-1:0] req_store_slot;
+    reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_claim;
+    reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_alloc;
+    reg [OMEGA_STORE_CAM_SIZE-1:0][ADDR_WIDTH-1:0] store_cam_alloc_addr;
+
+    wire [NUM_REQS-1:0] req_xbar_valid;
+    wire [NUM_REQS-1:0] req_xbar_ready;
+
+    // Select distinct free CAM slots for the writes presented in this cycle.
+    // Reads are held behind every accepted, not-yet-committed write to the
+    // same word. A presented write also blocks a same-cycle read, making the
+    // cross-requester ordering conservative and deterministic.
+    always @(*) begin
+        req_order_enable = '0;
+        req_store_slot = '0;
+        store_cam_claim = '0;
+        for (integer i = 0; i < NUM_REQS; ++i) begin
+            if (req_rw_in[i]) begin
+                for (integer j = 0; j < OMEGA_STORE_CAM_SIZE; ++j) begin
+                    if (~store_cam_valid[j] && ~store_cam_claim[j]
+                     && ~req_order_enable[i]) begin
+                        req_order_enable[i] = 1'b1;
+                        req_store_slot[i] = STORE_CAM_SLOT_WIDTH'(j);
+                        store_cam_claim[j] = req_valid_in[i];
+                    end
+                end
+            end else begin
+                req_order_enable[i] = 1'b1;
+`ifdef LMEM_RSP_OMEGA_ENABLE
+                req_order_enable[i] &= (rsp_order_count[i]
+                                      < RSP_QUEUE_COUNT_WIDTH'(OMEGA_RSP_QUEUE_SIZE));
+`endif
+                for (integer j = 0; j < OMEGA_STORE_CAM_SIZE; ++j) begin
+                    req_order_enable[i] &= ~(store_cam_valid[j]
+                                          && (store_cam_addr[j]
+                                           == req_addr_in[i]));
+                end
+                for (integer j = 0; j < NUM_REQS; ++j) begin
+                    req_order_enable[i] &= ~(req_valid_in[j]
+                                          && req_rw_in[j]
+                                          && (req_addr_in[j]
+                                           == req_addr_in[i]));
+                end
+            end
+        end
+    end
+
+    // Allocation is derived from the completed ingress handshake after
+    // admission and slot selection are fully determined. Keeping it separate
+    // prevents fabric ready from feeding the valid/admission calculation.
+    always @(*) begin
+        store_cam_alloc = '0;
+        store_cam_alloc_addr = '0;
+        for (integer i = 0; i < NUM_REQS; ++i) begin
+            if (req_valid_in[i] && req_rw_in[i]
+             && req_order_enable[i] && req_xbar_ready[i]) begin
+                store_cam_alloc[req_store_slot[i]] = 1'b1;
+                store_cam_alloc_addr[req_store_slot[i]]
+                    = req_addr_in[i];
+            end
+        end
+    end
+
+    assign req_xbar_valid = req_valid_in & req_order_enable;
+    assign req_ready_in = req_xbar_ready & req_order_enable;
+`elsif LMEM_RSP_OMEGA_ENABLE
+    wire [NUM_REQS-1:0] req_xbar_valid;
+    wire [NUM_REQS-1:0] req_xbar_ready;
+    for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_rsp_queue_ready
+        wire order_queue_ready = req_rw_in[i]
+                              || (rsp_order_count[i]
+                                < RSP_QUEUE_COUNT_WIDTH'(OMEGA_RSP_QUEUE_SIZE));
+        assign req_xbar_valid[i] = req_valid_in[i] && order_queue_ready;
+        assign req_ready_in[i] = req_xbar_ready[i] && order_queue_ready;
+    end
+`endif
+
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_data_in
         assign req_valid_in[i] = mem_bus_if[i].req_valid;
+`ifdef LMEM_REQ_OMEGA_ENABLE
+        assign req_rw_in[i] = mem_bus_if[i].req_data.rw;
+        assign req_addr_in[i] = mem_bus_if[i].req_data.addr;
+`elsif LMEM_RSP_OMEGA_ENABLE
+        assign req_rw_in[i] = mem_bus_if[i].req_data.rw;
+`endif
+`ifdef LMEM_REQ_OMEGA_ENABLE
+        assign req_data_in[i] = {
+            mem_bus_if[i].req_data.rw,
+            req_bank_addr[i],
+            mem_bus_if[i].req_data.data,
+            mem_bus_if[i].req_data.byteen,
+            mem_bus_if[i].req_data.tag,
+            req_store_slot[i]
+        };
+`else
         assign req_data_in[i] = {
             mem_bus_if[i].req_data.rw,
             req_bank_addr[i],
@@ -121,6 +259,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             mem_bus_if[i].req_data.byteen,
             mem_bus_if[i].req_data.tag
         };
+`endif
         assign mem_bus_if[i].req_ready = req_ready_in[i];
     end
 
@@ -137,10 +276,10 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         .clk       (clk),
         .reset     (reset),
         `UNUSED_PIN (collisions),
-        .valid_in  (req_valid_in),
+        .valid_in  (req_xbar_valid),
         .data_in   (req_data_in),
         .sel_in    (req_bank_idx),
-        .ready_in  (req_ready_in),
+        .ready_in  (req_xbar_ready),
         .valid_out (per_bank_req_valid),
         .data_out  (per_bank_req_data_aos),
         .sel_out   (per_bank_req_idx),
@@ -160,10 +299,18 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             .clk       (clk),
             .reset     (reset),
             `UNUSED_PIN (collisions),
+`ifdef LMEM_RSP_OMEGA_ENABLE
+            .valid_in  (req_xbar_valid),
+`else
             .valid_in  (req_valid_in),
+`endif
             .data_in   (req_data_in),
             .sel_in    (req_bank_idx),
+`ifdef LMEM_RSP_OMEGA_ENABLE
+            .ready_in  (req_xbar_ready),
+`else
             .ready_in  (req_ready_in),
+`endif
             .valid_out (per_bank_req_valid),
             .data_out  (per_bank_req_data_aos),
             .sel_out   (per_bank_req_idx),
@@ -182,6 +329,16 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 `endif
 
     for (genvar i = 0; i < NUM_BANKS; ++i) begin : g_per_bank_req_data_soa
+`ifdef LMEM_REQ_OMEGA_ENABLE
+        assign {
+            per_bank_req_rw[i],
+            per_bank_req_addr[i],
+            per_bank_req_data[i],
+            per_bank_req_byteen[i],
+            per_bank_req_tag[i],
+            per_bank_req_store_slot[i]
+        } = per_bank_req_data_aos[i];
+`else
         assign {
             per_bank_req_rw[i],
             per_bank_req_addr[i],
@@ -189,7 +346,37 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             per_bank_req_byteen[i],
             per_bank_req_tag[i]
         } = per_bank_req_data_aos[i];
+`endif
     end
+
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    wire [OMEGA_STORE_CAM_SIZE-1:0] store_cam_retire;
+    reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_retire_r;
+
+    always @(*) begin
+        store_cam_retire_r = '0;
+        for (integer i = 0; i < NUM_BANKS; ++i) begin
+            if (per_bank_req_valid[i] && per_bank_req_ready[i]
+             && per_bank_req_rw[i]) begin
+                store_cam_retire_r[per_bank_req_store_slot[i]] = 1'b1;
+            end
+        end
+    end
+    assign store_cam_retire = store_cam_retire_r;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            store_cam_valid <= '0;
+        end else begin
+            store_cam_valid <= (store_cam_valid | store_cam_alloc)
+                             & ~store_cam_retire;
+            for (integer i = 0; i < OMEGA_STORE_CAM_SIZE; ++i) begin
+                if (store_cam_alloc[i])
+                    store_cam_addr[i] <= store_cam_alloc_addr[i];
+            end
+        end
+    end
+`endif
 
     // banks access
 
@@ -265,6 +452,64 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_REQS-1:0]                 rsp_ready_out;
 
 `ifdef LMEM_RSP_OMEGA_ENABLE
+    wire [NUM_REQS-1:0] rsp_order_push;
+    wire [NUM_REQS-1:0] rsp_order_pop = rsp_valid_out & rsp_ready_out;
+    wire [NUM_BANKS-1:0] rsp_omega_valid_in;
+    wire [NUM_BANKS-1:0] rsp_omega_ready_in;
+
+    for (genvar i = 0; i < NUM_REQS; ++i) begin : g_rsp_order_push
+        assign rsp_order_push[i] = req_valid_in[i] && req_ready_in[i]
+                                 && ~mem_bus_if[i].req_data.rw;
+    end
+
+    for (genvar i = 0; i < NUM_BANKS; ++i) begin : g_rsp_order_admit
+        wire [REQ_SEL_WIDTH-1:0] requester = per_bank_rsp_idx[i];
+        wire head_matches = (rsp_order_count[requester] != 0)
+                         && ~rsp_order_issued[requester]
+                         && (rsp_order_bank[requester][rsp_order_head[requester]]
+                          == BANK_SEL_WIDTH'(i));
+        assign rsp_omega_valid_in[i] = per_bank_rsp_valid[i] && head_matches;
+        assign per_bank_rsp_ready[i] = rsp_omega_ready_in[i] && head_matches;
+    end
+
+    always @(posedge clk) begin
+        if (reset) begin
+            rsp_order_head <= '0;
+            rsp_order_tail <= '0;
+            rsp_order_count <= '0;
+            rsp_order_issued <= '0;
+        end else begin
+            for (integer i = 0; i < NUM_REQS; ++i) begin
+                if (rsp_order_push[i]) begin
+                    rsp_order_bank[i][rsp_order_tail[i]] <= req_bank_idx[i];
+                    if (rsp_order_tail[i] == RSP_QUEUE_PTR_WIDTH'(OMEGA_RSP_QUEUE_SIZE-1))
+                        rsp_order_tail[i] <= '0;
+                    else
+                        rsp_order_tail[i] <= rsp_order_tail[i] + 1'b1;
+                end
+                if (rsp_order_pop[i]) begin
+                    if (rsp_order_head[i] == RSP_QUEUE_PTR_WIDTH'(OMEGA_RSP_QUEUE_SIZE-1))
+                        rsp_order_head[i] <= '0;
+                    else
+                        rsp_order_head[i] <= rsp_order_head[i] + 1'b1;
+                end
+                case ({rsp_order_push[i], rsp_order_pop[i]})
+                    2'b10: rsp_order_count[i] <= rsp_order_count[i] + 1'b1;
+                    2'b01: rsp_order_count[i] <= rsp_order_count[i] - 1'b1;
+                    default: rsp_order_count[i] <= rsp_order_count[i];
+                endcase
+            end
+            for (integer i = 0; i < NUM_REQS; ++i) begin
+                if (rsp_order_pop[i])
+                    rsp_order_issued[i] <= 1'b0;
+            end
+            for (integer i = 0; i < NUM_BANKS; ++i) begin
+                if (rsp_omega_valid_in[i] && rsp_omega_ready_in[i])
+                    rsp_order_issued[per_bank_rsp_idx[i]] <= 1'b1;
+            end
+        end
+    end
+
     VX_stream_omega #(
         .NUM_INPUTS    (NUM_BANKS),
         .NUM_OUTPUTS   (NUM_REQS),
@@ -278,9 +523,9 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         .reset     (reset),
         `UNUSED_PIN (collisions),
         .sel_in    (per_bank_rsp_idx),
-        .valid_in  (per_bank_rsp_valid),
+        .valid_in  (rsp_omega_valid_in),
         .data_in   (per_bank_rsp_data_aos),
-        .ready_in  (per_bank_rsp_ready),
+        .ready_in  (rsp_omega_ready_in),
         .valid_out (rsp_valid_out),
         .data_out  (rsp_data_out),
         .ready_out (rsp_ready_out),

@@ -30,6 +30,10 @@ module VX_local_mem_top import VX_gpu_pkg::*; #(
     // Request tag size
     parameter TAG_WIDTH         = 16,
 
+    // Omega ordering resources
+    parameter OMEGA_STORE_CAM_SIZE = `LMEM_OMEGA_STORE_CAM_SIZE,
+    parameter OMEGA_RSP_QUEUE_SIZE = `LMEM_OMEGA_RSP_QUEUE_SIZE,
+
     // Address width
     parameter NUM_WORDS         = SIZE / WORD_SIZE,
     parameter WORDS_PER_BANK    = NUM_WORDS / NUM_BANKS,
@@ -98,6 +102,8 @@ module VX_local_mem_top import VX_gpu_pkg::*; #(
         .WORD_SIZE  (WORD_SIZE),
         .ADDR_WIDTH (ADDR_WIDTH),
         .TAG_WIDTH  (TAG_WIDTH),
+        .OMEGA_STORE_CAM_SIZE (OMEGA_STORE_CAM_SIZE),
+        .OMEGA_RSP_QUEUE_SIZE (OMEGA_RSP_QUEUE_SIZE),
         .OUT_BUF    (3)
     ) local_mem (
         .clk        (clk),

@@ -154,11 +154,32 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     // Perform adjustments to mantissa and exponent
 
     wire [S_EXP_WIDTH-1:0] denorm_shamt = S_EXP_WIDTH'(INT_WIDTH-1) - input_exp_s1;
+    wire signed [S_EXP_WIDTH:0] input_exp_ext =
+        {input_exp_s1[S_EXP_WIDTH-1], input_exp_s1};
+    wire signed [S_EXP_WIDTH:0] overflow_exp_limit =
+        (INT_WIDTH - (is_signed_s1 && !input_sign_s1));
     // A zero mantissa has no meaningful normalized exponent.  Do not let its
     // arbitrary LZC shift amount turn FCVT.W[U].{H,S}(+/-0) into saturation.
+    // Compare exponents directly: denorm_shamt may legitimately be 32 or
+    // larger for |x| <= 0.5, which has its sign bit set in this 6-bit field
+    // and must not be mistaken for a negative shift (integer overflow).
     wire overflow = ~mant_is_zero_s1
-                 && ($signed(denorm_shamt) <= -$signed(S_EXP_WIDTH'(!is_signed_s1)));
-    wire underflow = ($signed(input_exp_s1) < S_EXP_WIDTH'($signed(-1)));
+                 && (input_exp_ext >= overflow_exp_limit);
+    wire underflow = (input_exp_ext < -1);
+
+`ifdef SIMULATION
+    always @(negedge clk) begin
+        if (enable && !is_itof_s1
+            && !fclass_s1.is_nan && !fclass_s1.is_inf) begin
+            assert (!(overflow && ($signed(input_exp_s1) < 0)))
+                else $fatal(1,
+                    "FCVT finite fraction misclassified as overflow: input_exp=%0d denorm_shamt=0x%0h sign=%b signed=%b",
+                    $signed(input_exp_s1), denorm_shamt,
+                    input_sign_s1, is_signed_s1);
+        end
+    end
+`endif
+
     reg [S_EXP_WIDTH-1:0] denorm_shamt_q;
     always @(*) begin
         if (overflow) begin

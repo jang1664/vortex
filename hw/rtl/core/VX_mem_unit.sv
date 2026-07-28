@@ -50,11 +50,23 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
     localparam CPU_LMEM_ARB_SEL_BITS = `ARB_SEL_BITS(`NUM_LSU_BLOCKS, 1);
     localparam CPU_LMEM_TAG_WIDTH = LSU_TAG_WIDTH + CPU_LMEM_ARB_SEL_BITS;
+`ifdef GEMM_NAIVE
+    localparam GEMM_PSUM_LANES = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
+    localparam LMEM_PRIORITY_TAG_WIDTH = LMEM_LOCAL_TAG_WIDTH + `ARB_SEL_BITS(2, 1);
+`endif
     localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd1024;
     localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd1024;
 
     `VX_STATIC_ASSERT(CPU_LMEM_TAG_WIDTH <= GEMM_LMEM_TAG_WIDTH,
         ("invalid CPU LMEM tag width: CPU=%0d, shared=%0d", CPU_LMEM_TAG_WIDTH, GEMM_LMEM_TAG_WIDTH))
+`ifdef GEMM_NAIVE
+    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
+        ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
+         2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
+    `VX_STATIC_ASSERT(`LMEM_NUM_BANKS == `LMEM_NUM_PORTS,
+        ("GEMM naive split PSUM path requires one bank per request port: ports=%0d banks=%0d",
+         `LMEM_NUM_PORTS, `LMEM_NUM_BANKS))
+`endif
 
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -135,8 +147,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `ifdef GEMM_NAIVE
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
-    ) lmem_priority_if[2 * `LMEM_NUM_PORTS]();
+        .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
+    ) lmem_priority_if[`LMEM_NUM_PORTS]();
 `endif
 
     // Per-lane local-memory arbitration. The naive backend adds the GEMM
@@ -199,37 +211,46 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_priority_order
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
-            .TAG_WIDTH (PSUM_LMEM_TAG_WIDTH)
-        ) psum_arb_in_if[2]();
+            .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+        ) priority_arb_in_if[2]();
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
-            .TAG_WIDTH (PSUM_ARB_TAG_WIDTH)
-        ) psum_arb_out_if[1]();
+            .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
+        ) priority_arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF(psum_arb_in_if[0], gemm_psum_wr_if[i]);
-        `ASSIGN_VX_MEM_BUS_IF(psum_arb_in_if[1], gemm_psum_rd_if[i]);
+        if (i < GEMM_PSUM_LANES) begin : g_psum_write_slot
+            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_wr_if[i],
+                LMEM_LOCAL_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+        end else begin : g_psum_read_slot
+            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_rd_if[i - GEMM_PSUM_LANES],
+                LMEM_LOCAL_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+        end
+        `ASSIGN_VX_MEM_BUS_IF(priority_arb_in_if[1], lmem_membus_arb_out_if[i]);
 
         VX_mem_arb #(
             .NUM_INPUTS  (2),
             .NUM_OUTPUTS (1),
             .DATA_SIZE   (LSU_WORD_SIZE),
-            .TAG_WIDTH   (PSUM_LMEM_TAG_WIDTH),
-            .TAG_SEL_IDX (PSUM_LMEM_TAG_WIDTH - UUID_WIDTH),
+            .TAG_WIDTH   (LMEM_LOCAL_TAG_WIDTH),
+            .TAG_SEL_IDX (LMEM_LOCAL_TAG_WIDTH - UUID_WIDTH),
             .REQ_OUT_BUF (3),
             .RSP_OUT_BUF (3),
             .ARBITER     ("P")
-        ) psum_wr_first_arb (
+        ) lmem_priority_arb (
             .clk        (clk),
             .reset      (reset),
-            .bus_in_if  (psum_arb_in_if),
-            .bus_out_if (psum_arb_out_if)
+            .bus_in_if  (priority_arb_in_if),
+            .bus_out_if (priority_arb_out_if)
         );
 
-        // VX_local_mem fixed priority selects the PSUM half before normal
-        // traffic. The per-port arbiter above selects write before read.
-        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_priority_if[i], psum_arb_out_if[0],
-            LMEM_LOCAL_TAG_WIDTH, PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
-        `ASSIGN_VX_MEM_BUS_IF(lmem_priority_if[`LMEM_NUM_PORTS + i], lmem_membus_arb_out_if[i]);
+        // Slots 0..15 carry PSUM writes and slots 16..31 carry PSUM reads.
+        // Ordinary LMEM traffic shares each slot behind its assigned PSUM lane.
+        `ASSIGN_VX_MEM_BUS_IF(lmem_priority_if[i], priority_arb_out_if[0]);
+    end
+
+    for (genvar i = GEMM_PSUM_LANES; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_psum_ports
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
     end
 `endif
 
@@ -237,14 +258,18 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
         .SIZE       (1 << `LMEM_LOG_SIZE),
 `ifdef GEMM_NAIVE
-        .NUM_REQS   (2 * `LMEM_NUM_PORTS),
+        .NUM_REQS   (`LMEM_NUM_PORTS),
 `else
         .NUM_REQS   (`LMEM_NUM_PORTS),
 `endif
         .NUM_BANKS  (`LMEM_NUM_BANKS),
         .WORD_SIZE  (LSU_WORD_SIZE),
         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
+`ifdef GEMM_NAIVE
+        .TAG_WIDTH  (LMEM_PRIORITY_TAG_WIDTH),
+`else
         .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
+`endif
         .OUT_BUF    (3)
     ) local_mem (
         .clk        (clk),

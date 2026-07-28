@@ -462,7 +462,10 @@ package fpnew_pkg;
                                                        int unsigned lane_no);
     automatic ifmt_logic_t res;
     automatic fmt_logic_t lanefmts;
-    res = '0;
+    // The conversion result packer uses this general lane mask rather than
+    // the conversion-specific one. Preserve all configured scalar integer
+    // widths in lane 0 so an INT64 result is not muted when FP64 is disabled.
+    res = (lane_no == 0) ? icfg : '0;
     lanefmts = get_lane_formats(width, cfg, lane_no);
 
     for (int unsigned ifmt = 0; ifmt < NUM_INT_FORMATS; ifmt++)
@@ -492,7 +495,11 @@ package fpnew_pkg;
                                                             int unsigned lane_no);
     automatic ifmt_logic_t res;
     automatic fmt_logic_t lanefmts;
-    res = '0;
+    // Scalar conversions can freely cross widths (for example FCVT.L.H).
+    // Keep every configured integer format available in the scalar lane even
+    // when the same-width FP format is disabled (EXT_D_DISABLE must not
+    // implicitly disable INT64 conversion from FP16/FP32).
+    res = (lane_no == 0) ? icfg : '0;
     lanefmts = get_conv_lane_formats(width, cfg, lane_no);
 
     for (int unsigned ifmt = 0; ifmt < NUM_INT_FORMATS; ifmt++)

@@ -271,6 +271,15 @@ private:
                     << ", req_rw 0x" << uint32_t(dut_.mem_req_rw) << ")";
                 fail(oss.str());
             }
+#ifdef LMEM_RSP_OMEGA_ENABLE
+            if (expected_order_[lane].empty()
+             || expected_order_[lane].front() != tag) {
+                std::ostringstream oss;
+                oss << "out-of-order response tag 0x" << std::hex << tag
+                    << " on lane " << std::dec << lane;
+                fail(oss.str());
+            }
+#endif
             if (it->second.lane != lane || it->second.data != data) {
                 std::ostringstream oss;
                 oss << "response mismatch for tag 0x" << std::hex << tag
@@ -280,6 +289,9 @@ private:
                     << " data 0x" << std::hex << data;
                 fail(oss.str());
             }
+#ifdef LMEM_RSP_OMEGA_ENABLE
+            expected_order_[lane].pop_front();
+#endif
             expected_.erase(it);
         }
     }
@@ -321,6 +333,9 @@ private:
                     op.tag, ExpectedResponse{lane, memory_[op.addr]});
                 if (!inserted.second)
                     fail("duplicate outstanding tag");
+#ifdef LMEM_RSP_OMEGA_ENABLE
+                expected_order_[lane].push_back(op.tag);
+#endif
             }
         }
     }
@@ -343,6 +358,9 @@ private:
     VVX_local_mem_top dut_;
     std::array<uint64_t, kNumWords> memory_;
     std::unordered_map<uint16_t, ExpectedResponse> expected_;
+#ifdef LMEM_RSP_OMEGA_ENABLE
+    std::array<std::deque<uint16_t>, kNumReqs> expected_order_;
+#endif
     uint64_t expected_bank_stalls_ = 0;
     uint16_t next_tag_ = 1;
     const char* current_phase_ = "reset";
@@ -409,6 +427,20 @@ int main(int argc, char** argv) {
     read_after_write[7].push_back(write_op(hazard_addr, 0xff, 0xdecafbad12345678ull));
     read_after_write[7].push_back(read_op(test, hazard_addr));
     test.run_phase("read-after-write hazard", read_after_write, false);
+
+    LaneQueues cross_requester_raw;
+    const uint16_t cross_hazard_addr = make_addr(19, 4);
+    cross_requester_raw[2].push_back(
+        write_op(cross_hazard_addr, 0xff, 0x3141592653589793ull));
+    cross_requester_raw[29].push_back(read_op(test, cross_hazard_addr));
+    test.run_phase("cross-requester read-after-write hazard",
+                   cross_requester_raw, false);
+
+    LaneQueues partial_raw;
+    partial_raw[11].push_back(
+        write_op(cross_hazard_addr, 0x3c, 0xfedcba9876543210ull));
+    partial_raw[11].push_back(read_op(test, cross_hazard_addr));
+    test.run_phase("partial-write read-after-write hazard", partial_raw, false);
 
     LaneQueues contended_writes;
     // A bank has 16 rows in this focused configuration. Use one writer per

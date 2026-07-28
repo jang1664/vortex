@@ -43,6 +43,7 @@ def main(design_name: str = "VX_gemm_unit_top",
     pre = preprocess()
     vortex = _vortex_home()
     patched_fpnew_pkg = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_pkg.sv"
+    patched_fpnew_block = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_opgroup_block.sv"
 
     tb_top = f"tb_{design_name}"
     tb_filename = f"{tb_top}.sv"
@@ -56,6 +57,9 @@ def main(design_name: str = "VX_gemm_unit_top",
             continue
         if name == "fpnew_pkg.sv" and patched_fpnew_pkg.exists():
             sources.append(str(patched_fpnew_pkg))
+            swapped += 1
+        elif name == "fpnew_opgroup_block.sv" and patched_fpnew_block.exists():
+            sources.append(str(patched_fpnew_block))
             swapped += 1
         else:
             sources.append(f)

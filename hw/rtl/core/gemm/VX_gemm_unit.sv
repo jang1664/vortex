@@ -1545,18 +1545,27 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Accumulator Memory Banks
     // -------------------------------------------------------------------------
 `ifdef GEMM_NAIVE
-    assign psum_rd_lmem_bus_if.req_valid       = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load;
+    wire psum_rd_req_valid = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load;
+    wire psum_wr_req_valid = acc_mem_accum_wr_fire && !gemm_unit_ctrl.is_last;
+    wire [$bits(psum_rd_lmem_bus_if.req_data.addr)-1:0] psum_rd_word_addr
+        = acc_mem_accum_rd_addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+    wire [$bits(psum_wr_lmem_bus_if.req_data.addr)-1:0] psum_wr_word_addr
+        = acc_mem_accum_wr_addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+    wire psum_bank_set_conflict = psum_wr_req_valid
+                               && (psum_rd_word_addr[0] == psum_wr_word_addr[0]);
+
+    assign psum_rd_lmem_bus_if.req_valid       = psum_rd_req_valid && ~psum_bank_set_conflict;
     assign psum_rd_lmem_bus_if.req_data.rw     = 1'b0;
-    assign psum_rd_lmem_bus_if.req_data.addr   = acc_mem_accum_rd_addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+    assign psum_rd_lmem_bus_if.req_data.addr   = psum_rd_word_addr;
     assign psum_rd_lmem_bus_if.req_data.data   = '0;
     assign psum_rd_lmem_bus_if.req_data.byteen = '1;
     assign psum_rd_lmem_bus_if.req_data.flags  = '0;
     assign psum_rd_lmem_bus_if.req_data.tag    = GEMM_BASE_TAG_WIDTH'(acc_mem_accum_rd_bank);
     assign psum_rd_lmem_bus_if.rsp_ready       = acc_mem_rd_rsp_can_push;
 
-    assign psum_wr_lmem_bus_if.req_valid       = acc_mem_accum_wr_fire && !gemm_unit_ctrl.is_last;
+    assign psum_wr_lmem_bus_if.req_valid       = psum_wr_req_valid;
     assign psum_wr_lmem_bus_if.req_data.rw     = 1'b1;
-    assign psum_wr_lmem_bus_if.req_data.addr   = acc_mem_accum_wr_addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+    assign psum_wr_lmem_bus_if.req_data.addr   = psum_wr_word_addr;
     assign psum_wr_lmem_bus_if.req_data.data   = gemm_unit_ctrl.is_load ? scaled_fp32_out_data : acc_output_data;
     assign psum_wr_lmem_bus_if.req_data.byteen = '1;
     assign psum_wr_lmem_bus_if.req_data.flags  = '0;

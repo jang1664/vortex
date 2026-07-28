@@ -61,6 +61,12 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire pe_enable;
     wire [NUM_PES-1:0][DATAW-1:0] pe_data_in;
     wire [NUM_PES-1:0][(`FP_FLAGS_BITS+32)-1:0] pe_data_out;
+    wire pe_issue_h;
+    wire pe_issue_s;
+    wire pe_enable_h;
+    wire pe_enable_s;
+    reg [`LATENCY_FMA-2:0] pe_inflight_h;
+    reg [`LATENCY_FMA-2:0] pe_inflight_s;
 
     reg [NUM_LANES-1:0][31:0] a, b, c;
 
@@ -151,6 +157,46 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
     `UNUSED_VAR (pe_data_in)
 
+    assign pe_issue_h = pe_enable
+                     && (pe_data_in[0][96 + INST_FRM_BITS +: INST_FMT_BITS] == 2'b10);
+    assign pe_issue_s = pe_enable && !pe_issue_h;
+    assign pe_enable_h = pe_enable && (pe_issue_h || (|pe_inflight_h));
+    assign pe_enable_s = pe_enable && (pe_issue_s || (|pe_inflight_s));
+
+    always @(posedge clk) begin
+        if (reset) begin
+            pe_inflight_h <= '0;
+            pe_inflight_s <= '0;
+        end else if (pe_enable) begin
+            pe_inflight_h[0] <= pe_issue_h;
+            pe_inflight_s[0] <= pe_issue_s;
+            for (integer j = 1; j < `LATENCY_FMA-1; ++j) begin
+                pe_inflight_h[j] <= pe_inflight_h[j-1];
+                pe_inflight_s[j] <= pe_inflight_s[j-1];
+            end
+        end
+    end
+
+`ifdef SIMULATION
+    always @(negedge clk) begin
+        if (!reset && !$isunknown({
+            pe_issue_h, pe_issue_s, pe_enable_h, pe_enable_s,
+            pe_inflight_h, pe_inflight_s
+        })) begin
+            assert (!(pe_issue_h && pe_issue_s))
+                else $fatal(1, "FMA FP16 and FP32 accepted the same request");
+            if (pe_issue_h && !(|pe_inflight_s)) begin
+                assert (!pe_enable_s)
+                    else $fatal(1, "FP16 FMA request activated idle FP32 unit");
+            end
+            if (pe_issue_s && !(|pe_inflight_h)) begin
+                assert (!pe_enable_h)
+                    else $fatal(1, "FP32 FMA request activated idle FP16 unit");
+            end
+        end
+    end
+`endif
+
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_result
         assign result[i] = data_out[i][0 +: 32];
         assign fflags_out[i] = data_out[i][32 +: `FP_FLAGS_BITS];
@@ -164,10 +210,10 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         acl_fmadd fmadd (
             .clk (clk),
             .areset (1'b0),
-            .en (pe_enable),
-            .a  (pe_data_in[i][0 +: 32]),
-            .b  (pe_data_in[i][32 +: 32]),
-            .c  (pe_data_in[i][64 +: 32]),
+            .en (pe_enable_s),
+            .a  (pe_issue_s ? pe_data_in[i][0 +: 32] : 32'b0),
+            .b  (pe_issue_s ? pe_data_in[i][32 +: 32] : 32'b0),
+            .c  (pe_issue_s ? pe_data_in[i][64 +: 32] : 32'b0),
             .q  (pe_data_out[i][0 +: 32])
         );
         assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = '0;
@@ -183,16 +229,17 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         wire [31:0] result_s;
         wire [15:0] result_h;
         wire fmt_h_out;
+        wire result_valid_h;
 
         xil_fma_lowL fma (
             .aclk                (clk),
-            .aclken              (pe_enable),
-            .s_axis_a_tvalid     (1'b1),
-            .s_axis_a_tdata      (pe_data_in[i][0 +: 32]),
-            .s_axis_b_tvalid     (1'b1),
-            .s_axis_b_tdata      (pe_data_in[i][32 +: 32]),
-            .s_axis_c_tvalid     (1'b1),
-            .s_axis_c_tdata      (pe_data_in[i][64 +: 32]),
+            .aclken              (pe_enable_s),
+            .s_axis_a_tvalid     (pe_issue_s),
+            .s_axis_a_tdata      (pe_issue_s ? pe_data_in[i][0 +: 32] : 32'b0),
+            .s_axis_b_tvalid     (pe_issue_s),
+            .s_axis_b_tdata      (pe_issue_s ? pe_data_in[i][32 +: 32] : 32'b0),
+            .s_axis_c_tvalid     (pe_issue_s),
+            .s_axis_c_tdata      (pe_issue_s ? pe_data_in[i][64 +: 32] : 32'b0),
             `UNUSED_PIN (m_axis_result_tvalid),
             .m_axis_result_tdata (result_s),
             .m_axis_result_tuser (tuser_s)
@@ -201,20 +248,49 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     `ifdef EXT_ZFH_ENABLE
         xil_f16_fma fma_h (
             .aclk                (clk),
-            .aclken              (pe_enable),
-            .s_axis_a_tvalid     (1'b1),
-            .s_axis_a_tdata      (pe_data_in[i][0 +: 16]),
-            .s_axis_b_tvalid     (1'b1),
-            .s_axis_b_tdata      (pe_data_in[i][32 +: 16]),
-            .s_axis_c_tvalid     (1'b1),
-            .s_axis_c_tdata      (pe_data_in[i][64 +: 16]),
-            `UNUSED_PIN (m_axis_result_tvalid),
+            .aclken              (pe_enable_h),
+            .s_axis_a_tvalid     (pe_issue_h),
+            .s_axis_a_tdata      (pe_issue_h ? pe_data_in[i][0 +: 16] : 16'b0),
+            .s_axis_b_tvalid     (pe_issue_h),
+            .s_axis_b_tdata      (pe_issue_h ? pe_data_in[i][32 +: 16] : 16'b0),
+            .s_axis_c_tvalid     (pe_issue_h),
+            .s_axis_c_tdata      (pe_issue_h ? pe_data_in[i][64 +: 16] : 16'b0),
+            .m_axis_result_tvalid(result_valid_h),
             .m_axis_result_tdata (result_h),
             .m_axis_result_tuser (tuser_h)
         );
+
+    `ifdef SIMULATION
+        reg [`LATENCY_FMA-1:0] expected_valid_pipe_h;
+        wire expected_valid_h = expected_valid_pipe_h[`LATENCY_FMA-1];
+
+        // The Xilinx IP has no reset port. Start this reference at time zero
+        // and count enabled cycles even while the surrounding core is reset.
+        initial expected_valid_pipe_h = '0;
+        always @(posedge clk) begin
+            if (pe_enable_h) begin
+                expected_valid_pipe_h <= {
+                    expected_valid_pipe_h[`LATENCY_FMA-2:0], pe_issue_h
+                };
+            end
+        end
+
+        // The serializer consumes the FP16 FMA output after LATENCY_FMA
+        // enabled cycles. Check the generated Xilinx IP follows that exact
+        // contract instead of silently trusting its configured latency.
+        always @(negedge clk) begin
+            if (!$isunknown(result_valid_h)) begin
+                assert (result_valid_h == expected_valid_h)
+                    else $fatal(1,
+                        "FP16 FMA latency mismatch: expected_valid=%b, ip_valid=%b, latency=%0d",
+                        expected_valid_h, result_valid_h, `LATENCY_FMA);
+            end
+        end
+    `endif
     `else
         assign result_h = '0;
         assign tuser_h = '0;
+        assign result_valid_h = '0;
     `endif
 
         VX_shift_register #(

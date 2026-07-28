@@ -72,6 +72,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int SZ_LANE_OFFSET    = 16;
     localparam int O_LANE_OFFSET     = 24;
 
+    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
+        ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
+         2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
+
     // DMA tile sizes
     localparam int MT = `GEMM_FSM_MT;
     localparam int NT = `GEMM_FSM_NT;
@@ -108,7 +112,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
       .DATA_SIZE(`GEMM_PSUM_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) psum_rd_wide_bus_if (), psum_wr_wide_bus_if (), psum_wr_raw_bus_if ();
+    ) psum_rd_wide_bus_if (), psum_rd_raw_bus_if (),
+      psum_wr_wide_bus_if (), psum_wr_marked_bus_if (), psum_wr_raw_bus_if ();
     VX_mem_bus_if #(
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -280,10 +285,24 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.reg_value       = '0;
     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
     logic [`LMEM_NUM_PORTS-1:0] gemm_wr_lane_fire;
+    logic [`LMEM_NUM_PORTS-1:0] psum_wr_lane_fire;
     for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire
       assign gemm_wr_lane_fire[p] = psum_wr_lmem_bus_if[p].req_valid
                                   && psum_wr_lmem_bus_if[p].req_ready;
+      assign psum_wr_lane_fire[p] = gemm_wr_lane_fire[p]
+                                  && psum_wr_lmem_bus_if[p].req_data.flags[0];
     end
+    localparam int PSUM_LANE_BANK_SET_BIT = `CLOG2(GEMM_PSUM_LANES);
+    logic [`LMEM_NUM_PORTS-1:0] psum_wr_lane_fire_by_set [2];
+    for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire_by_set
+      assign psum_wr_lane_fire_by_set[0][p] = psum_wr_lane_fire[p]
+          && ~psum_wr_lmem_bus_if[p].req_data.addr[PSUM_LANE_BANK_SET_BIT];
+      assign psum_wr_lane_fire_by_set[1][p] = psum_wr_lane_fire[p]
+          && psum_wr_lmem_bus_if[p].req_data.addr[PSUM_LANE_BANK_SET_BIT];
+    end
+    wire [6:0] psum_wr_lane_pop_by_set [2];
+    assign psum_wr_lane_pop_by_set[0] = 7'($countones(psum_wr_lane_fire_by_set[0]));
+    assign psum_wr_lane_pop_by_set[1] = 7'($countones(psum_wr_lane_fire_by_set[1]));
     wire [11:0] gemm_wr_lane_push = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready ? 12'd16 : 12'd0)
                                        + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready ? 12'd8 : 12'd0);
     wire [11:0] gemm_wr_lane_pop = 12'($countones(gemm_wr_lane_fire));
@@ -701,7 +720,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
 
     // Capture no-backpressure GEMM result pulses before per-lane scattering.
     VX_elastic_buffer #(
-      .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(64), .OUT_REG(1)
+      .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
     ) psum_wr_queue (
       .clk(clk), .reset(reset),
       .valid_in(psum_wr_raw_bus_if.req_valid), .data_in(psum_wr_raw_bus_if.req_data),
@@ -712,6 +731,120 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign psum_wr_raw_bus_if.rsp_valid = psum_wr_wide_bus_if.rsp_valid;
     assign psum_wr_raw_bus_if.rsp_data = psum_wr_wide_bus_if.rsp_data;
     assign psum_wr_wide_bus_if.rsp_ready = psum_wr_raw_bus_if.rsp_ready;
+
+    // Mark PSUM writes so their downstream handshakes can be distinguished
+    // from final-output writes after the per-lane write arbiter.
+    assign psum_wr_marked_bus_if.req_valid = psum_wr_wide_bus_if.req_valid;
+    assign psum_wr_marked_bus_if.req_data.rw = psum_wr_wide_bus_if.req_data.rw;
+    assign psum_wr_marked_bus_if.req_data.addr = psum_wr_wide_bus_if.req_data.addr;
+    assign psum_wr_marked_bus_if.req_data.data = psum_wr_wide_bus_if.req_data.data;
+    assign psum_wr_marked_bus_if.req_data.byteen = psum_wr_wide_bus_if.req_data.byteen;
+    assign psum_wr_marked_bus_if.req_data.flags
+        = psum_wr_wide_bus_if.req_data.flags | MEM_FLAGS_WIDTH'(1);
+    assign psum_wr_marked_bus_if.req_data.tag = psum_wr_wide_bus_if.req_data.tag;
+    assign psum_wr_wide_bus_if.req_ready = psum_wr_marked_bus_if.req_ready;
+    assign psum_wr_wide_bus_if.rsp_valid = psum_wr_marked_bus_if.rsp_valid;
+    assign psum_wr_wide_bus_if.rsp_data = psum_wr_marked_bus_if.rsp_data;
+    assign psum_wr_marked_bus_if.rsp_ready = psum_wr_wide_bus_if.rsp_ready;
+
+    // Keep reads behind every queued write that targets the same physical
+    // 16-bank set. The GEMM-unit gate covers only a write generated in the
+    // current cycle; these counters extend ordering across the write queue.
+    // Each write remains pending until all sixteen marked narrow lanes complete
+    // their downstream PSUM request handshakes.
+    logic [6:0] psum_wr_pending_by_set [2];
+    wire psum_wr_pending_push = psum_wr_raw_bus_if.req_valid
+                              && psum_wr_raw_bus_if.req_ready;
+    wire [6:0] psum_wr_lane_push_by_set [2];
+    assign psum_wr_lane_push_by_set[0] = (psum_wr_pending_push
+        && ~psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+    assign psum_wr_lane_push_by_set[1] = (psum_wr_pending_push
+        && psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+    wire psum_rd_pending_conflict
+        = psum_rd_raw_bus_if.req_valid
+       && (psum_wr_pending_by_set[psum_rd_raw_bus_if.req_data.addr[0]] != 0);
+    wire psum_rd_current_conflict
+        = psum_rd_raw_bus_if.req_valid
+       && psum_wr_raw_bus_if.req_valid
+       && (psum_wr_raw_bus_if.req_data.addr[0]
+        == psum_rd_raw_bus_if.req_data.addr[0]);
+    logic [6:0] psum_rd_outstanding_r;
+    logic psum_rd_active_set_r;
+    wire psum_rd_set_switch_block
+        = psum_rd_raw_bus_if.req_valid
+       && (psum_rd_outstanding_r != 0)
+       && (psum_rd_raw_bus_if.req_data.addr[0] != psum_rd_active_set_r);
+    wire psum_rd_order_block = psum_rd_pending_conflict
+                             || psum_rd_current_conflict
+                             || psum_rd_set_switch_block;
+
+    assign psum_rd_wide_bus_if.req_valid = psum_rd_raw_bus_if.req_valid
+                                         && ~psum_rd_order_block;
+    assign psum_rd_wide_bus_if.req_data = psum_rd_raw_bus_if.req_data;
+    assign psum_rd_raw_bus_if.req_ready = psum_rd_wide_bus_if.req_ready
+                                        && ~psum_rd_order_block;
+    assign psum_rd_raw_bus_if.rsp_valid = psum_rd_wide_bus_if.rsp_valid;
+    assign psum_rd_raw_bus_if.rsp_data = psum_rd_wide_bus_if.rsp_data;
+    assign psum_rd_wide_bus_if.rsp_ready = psum_rd_raw_bus_if.rsp_ready;
+
+    wire psum_rd_wide_req_fire = psum_rd_wide_bus_if.req_valid
+                               && psum_rd_wide_bus_if.req_ready;
+    wire psum_rd_wide_rsp_fire = psum_rd_wide_bus_if.rsp_valid
+                               && psum_rd_wide_bus_if.rsp_ready;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        psum_wr_pending_by_set[0] <= '0;
+        psum_wr_pending_by_set[1] <= '0;
+        psum_rd_outstanding_r <= '0;
+        psum_rd_active_set_r <= 1'b0;
+      end else begin
+        if (psum_rd_wide_req_fire && (psum_rd_outstanding_r == 0))
+          psum_rd_active_set_r <= psum_rd_wide_bus_if.req_data.addr[0];
+
+        case ({psum_rd_wide_req_fire, psum_rd_wide_rsp_fire})
+          2'b10: begin
+            if (~&psum_rd_outstanding_r)
+              psum_rd_outstanding_r <= psum_rd_outstanding_r + 1'b1;
+          end
+          2'b01: begin
+            if (psum_rd_outstanding_r != 0)
+              psum_rd_outstanding_r <= psum_rd_outstanding_r - 1'b1;
+            else
+              psum_rd_outstanding_r <= '0;
+          end
+          default: psum_rd_outstanding_r <= psum_rd_outstanding_r;
+        endcase
+
+`ifndef SYNTHESIS
+        assert (!(psum_rd_wide_req_fire && ~psum_rd_wide_rsp_fire
+               && (&psum_rd_outstanding_r)))
+          else $fatal(1, "PSUM read outstanding overflow: count=%0d",
+                      psum_rd_outstanding_r);
+        assert (!(psum_rd_wide_rsp_fire && ~psum_rd_wide_req_fire
+               && (psum_rd_outstanding_r == 0)))
+          else $fatal(1, "PSUM read outstanding underflow");
+`endif
+
+        for (integer s = 0; s < 2; ++s) begin
+          if (psum_wr_lane_pop_by_set[s]
+              <= (psum_wr_pending_by_set[s] + psum_wr_lane_push_by_set[s])) begin
+            psum_wr_pending_by_set[s] <= psum_wr_pending_by_set[s]
+                                         + psum_wr_lane_push_by_set[s]
+                                         - psum_wr_lane_pop_by_set[s];
+          end else begin
+            psum_wr_pending_by_set[s] <= '0;
+          end
+`ifndef SYNTHESIS
+          assert (psum_wr_lane_pop_by_set[s]
+                  <= (psum_wr_pending_by_set[s] + psum_wr_lane_push_by_set[s]))
+            else $fatal(1, "PSUM pending-write underflow: set=%0d pending=%0d push=%0d pop=%0d",
+                        s, psum_wr_pending_by_set[s],
+                        psum_wr_lane_push_by_set[s], psum_wr_lane_pop_by_set[s]);
+`endif
+        end
+      end
+    end
 
     VX_elastic_buffer #(
       .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(64), .OUT_REG(1)
@@ -745,7 +878,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) psum_wr_lane_split (
-      .clk(clk), .reset(reset), .wide_bus_if(psum_wr_wide_bus_if),
+      .clk(clk), .reset(reset), .wide_bus_if(psum_wr_marked_bus_if),
       .lane_bus_if(psum_wr_lane_mem_if)
     );
 
@@ -792,7 +925,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .w_lmem_bus_if(w_gemm_bus_if),
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
-      .psum_rd_lmem_bus_if(psum_rd_wide_bus_if),
+      .psum_rd_lmem_bus_if(psum_rd_raw_bus_if),
       .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
       .final_lmem_bus_if(final_raw_bus_if),
       .gemm_unit_if(gemm_unit_if)

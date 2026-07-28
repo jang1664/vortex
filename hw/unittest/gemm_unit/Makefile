@@ -83,7 +83,7 @@ CVFPU_RTLS := $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_classifier.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_fma.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_opgroup_fmt_slice.sv \
-              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_opgroup_block.sv \
+              $(RTL_DIR)/fpu/patched_cvfpu/fpnew_opgroup_block.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_top.sv
 
 # Keep packages/modules order deterministic for VCS package imports.

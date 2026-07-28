@@ -289,6 +289,7 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
         )
     print("[run] verified current banked-accumulator GEMM patch")
     patched_fpnew_pkg = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_pkg.sv"
+    patched_fpnew_block = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_opgroup_block.sv"
 
     sources = []
     skipped = []
@@ -302,6 +303,9 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
         # patched copy without disturbing analyze order.
         if name == "fpnew_pkg.sv" and patched_fpnew_pkg.exists():
             sources.append(str(patched_fpnew_pkg))
+            swapped += 1
+        elif name == "fpnew_opgroup_block.sv" and patched_fpnew_block.exists():
+            sources.append(str(patched_fpnew_block))
             swapped += 1
         else:
             sources.append(f)

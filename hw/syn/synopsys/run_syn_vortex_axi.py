@@ -272,6 +272,7 @@ _VERIF       = f"{RTL}/verification"
 SOURCE_BLACKLIST = {
     # cvfpu copies of files we pull in explicitly from AXI common_cells.
     f"{THIRD_PARTY}/cvfpu/src/fpnew_pkg.sv",
+    f"{THIRD_PARTY}/cvfpu/src/fpnew_opgroup_block.sv",
     f"{_CVFPU_COMMON}/fifo_v3.sv",
     f"{_CVFPU_COMMON}/spill_register.sv",
     f"{_CVFPU_COMMON}/counter.sv",
@@ -391,6 +392,7 @@ def _enumerate_sources(defines, run_name, result_root=RESULT_ROOT):
         f"{THIRD_PARTY}/cvfpu/src/common_cells/src/cf_math_pkg.sv",
         f"{THIRD_PARTY}/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv",
         f"{RTL}/fpu/patched_cvfpu/fpnew_pkg.sv",
+        f"{RTL}/fpu/patched_cvfpu/fpnew_opgroup_block.sv",
         f"{RTL}/verification/cf_math_util_pkg.sv",
         f"{RTL}/verification/VX_utils_pkg.sv",
         f"{RTL}/verification/VX_mem_pkg.sv",
