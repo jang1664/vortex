@@ -851,7 +851,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     end
 
     VX_elastic_buffer #(
-      .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(64), .OUT_REG(1)
+      .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
     ) final_wr_queue (
       .clk(clk), .reset(reset),
       .valid_in(final_raw_bus_if.req_valid), .data_in(final_raw_bus_if.req_data),
