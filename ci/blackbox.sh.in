@@ -246,6 +246,20 @@ build_driver() {
     fi
 }
 
+ensure_kernel_abi() {
+    local cmd_opts=""
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+    cmd_opts=$(add_option "$cmd_opts" "make -C \"$ROOT_DIR/kernel\"")
+
+    echo "Running (kernel ABI consistency check): $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error checking kernel library ABI: $ROOT_DIR/kernel"
+        exit $status
+    fi
+}
+
 build_app() {
     if [ -n "$PYTEST" ]; then
         echo "Error: --build-only does not support --pytest"
@@ -462,6 +476,7 @@ main() {
     if [ $RUN_ONLY -ne 1 ]; then
         make -C "$ROOT_DIR/hw" config > /dev/null
         make -C "$ROOT_DIR/runtime/stub" > /dev/null
+        ensure_kernel_abi
     fi
 
     if [ $TEMPBUILD -eq 1 ] && [ $RUN_ONLY -ne 1 ]; then

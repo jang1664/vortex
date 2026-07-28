@@ -45,16 +45,27 @@ PROJECT := libvortex
 SRCS = $(SRC_DIR)/vx_start.S $(SRC_DIR)/vx_syscalls.c $(SRC_DIR)/vx_print.S $(SRC_DIR)/tinyprintf.c $(SRC_DIR)/vx_print.c $(SRC_DIR)/vx_spawn.c $(SRC_DIR)/vx_serial.S $(SRC_DIR)/vx_perf.c
 
 OBJS = $(addsuffix .o, $(notdir $(SRCS)))
+KERNEL_CONFIG_FILE := .kernel.flags.stamp
 
 all: $(PROJECT).a $(PROJECT).dump
+
+force:
+
+$(KERNEL_CONFIG_FILE): force
+	@printf '%s\n' "$(CC) $(CFLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then \
+	  mv $@.tmp $@; \
+	else \
+	  rm $@.tmp; \
+	fi
 
 $(PROJECT).dump: $(PROJECT).a
 	$(DP) -D $(PROJECT).a > $(PROJECT).dump
 
-%.S.o: $(SRC_DIR)/%.S
+%.S.o: $(SRC_DIR)/%.S $(KERNEL_CONFIG_FILE)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%.c.o: $(SRC_DIR)/%.c
+%.c.o: $(SRC_DIR)/%.c $(KERNEL_CONFIG_FILE)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(PROJECT).a: $(OBJS)
@@ -64,4 +75,6 @@ $(PROJECT).a: $(OBJS)
 	$(CC) $(CFLAGS) -MM $^ > .depend;
 
 clean:
-	rm -rf *.a *.o *.dump .depend
+	rm -rf *.a *.o *.dump .depend $(KERNEL_CONFIG_FILE) $(KERNEL_CONFIG_FILE).tmp
+
+.PHONY: all clean force
