@@ -52,6 +52,7 @@ SUPPORTED_SKIP_EXISTING_COLUMNS = frozenset((
     "exec_key",
     "app",
     "args",
+    "padded_args",
     "warmup",
     "iterations",
 ))
@@ -67,8 +68,14 @@ CASE_COLUMNS = [
     "stage",
     "name",
     "args",
+    "measurement_args",
+    "latency_shape_json",
+    "padded_args",
     "shape_json",
     "calls_per_forward",
+    "decode_step_count",
+    "out_tokens",
+    "decode_sample_weight",
     "warmup",
     "iterations",
     "source",
@@ -199,7 +206,7 @@ def build_execution_units(suite: BenchSuite, out_dir: Path) -> list[ExecutionUni
         units[case.exec_key] = ExecutionUnit(
             exec_key=case.exec_key,
             app=case.app,
-            args=case.args,
+            args=case.measurement_args or case.args,
             warmup=case.warmup,
             iterations=case.iterations,
             raw_csv=out_dir / "raw" / f"{case.exec_key}.csv",
@@ -358,14 +365,30 @@ def seed_raw_db_cases(
         return 0
 
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    rows: list[dict[str, object]] = []
+    cases_by_exec: dict[str, list[dict[str, object]]] = {}
     for case in suite_to_rows(suite):
-        unit = unit_by_exec_key.get(str(case.get("exec_key", "")))
-        if unit is None:
+        cases_by_exec.setdefault(str(case.get("exec_key", "")), []).append(case)
+
+    rows: list[dict[str, object]] = []
+    for exec_key, unit in unit_by_exec_key.items():
+        cases = cases_by_exec.get(exec_key, [])
+        if not cases:
             continue
+        padded_values = {
+            _normalize_args(str(case.get("padded_args", "")))
+            for case in cases if str(case.get("padded_args", "")).strip()
+        }
+        if len(padded_values) > 1:
+            raise ValueError(
+                f"exec_key={exec_key!r} has conflicting padded_args: "
+                f"{sorted(padded_values)}"
+            )
         row = {column: "" for column in RAW_DB_COLUMNS}
-        row.update({column: case.get(column, "") for column in RAW_DB_COLUMNS})
         row.update({
+            "exec_key": exec_key,
+            "app": unit.app,
+            "args": unit.args,
+            "padded_args": next(iter(padded_values), ""),
             "run_id": options.run_id or "",
             "timestamp_utc": timestamp,
             "fpga_bin_label": options.fpga_bin_label,
@@ -374,6 +397,8 @@ def seed_raw_db_cases(
             "git_dirty": git.dirty,
             "fpga_bin_dir": str(options.fpga_bin_dir),
             "xclbin_sha256": xclbin_sha256,
+            "warmup": unit.warmup,
+            "iterations": unit.iterations,
             "raw_csv": str(unit.raw_csv),
             "power_csv": str(unit.power_csv) if options.measure_power else "",
             "power_summary": str(unit.power_summary) if options.measure_power else "",
@@ -1313,7 +1338,8 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     if append_results.empty:
         print(f"no new rows written to {out_root / 'raw_db.csv'}")
     elif options.skip_existing:
-        print(f"live-updated {out_root / 'raw_db.csv'} with {len(append_results)} executed row(s)")
+        unique_count = int(append_results["exec_key"].nunique())
+        print(f"live-updated {out_root / 'raw_db.csv'} with {unique_count} executed row(s)")
     else:
         print(f"live-updated {out_root / 'raw_db.csv'}")
     return rc

@@ -66,6 +66,12 @@ class BenchCase:
     stage: str = ""
     name: str = ""
     calls_per_forward: float = 1.0
+    decode_step_count: int = 1
+    out_tokens: int = 1
+    decode_sample_weight: float = 1.0
+    padded_args: str = ""
+    measurement_args: str = ""
+    latency_shape: dict[str, Any] = field(default_factory=dict)
     shape: dict[str, Any] = field(default_factory=dict)
     warmup: int = 3
     iterations: int = 10
@@ -76,7 +82,7 @@ class BenchCase:
     def exec_key(self) -> str:
         payload = {
             "app": self.app,
-            "args": " ".join(self.args.split()),
+            "args": " ".join((self.measurement_args or self.args).split()),
             "warmup": self.warmup,
             "iterations": self.iterations,
         }
@@ -314,6 +320,30 @@ def resolve_case_fpga_bin(suite: BenchSuite, case: BenchCase) -> str:
     )
 
 
+def _canonicalize_suite_cases(suite: BenchSuite) -> BenchSuite:
+    from .canonicalization import canonicalize_args, load_canonicalization_policies
+
+    policies = load_canonicalization_policies()
+    cases = []
+    for case in suite.cases:
+        try:
+            fpga_bin_label = resolve_case_fpga_bin(suite, case)
+        except ValueError:
+            fpga_bin_label = ""
+        canonical = canonicalize_args(
+            app=case.app,
+            args=case.args,
+            fpga_bin_label=fpga_bin_label,
+            policies=policies,
+        )
+        cases.append(replace(
+            case,
+            measurement_args=canonical.measurement_args,
+            latency_shape=canonical.latency_shape,
+        ))
+    return replace(suite, cases=cases)
+
+
 _FILTER_FIELDS = {
     "case_id",
     "app",
@@ -546,6 +576,10 @@ def _case_from_raw(raw: dict[str, Any], defaults: BenchDefaults, index: int) -> 
         stage=str(raw.get("stage", "")),
         name=name,
         calls_per_forward=float(raw.get("calls_per_forward", 1)),
+        decode_step_count=int(raw.get("decode_step_count", 1)),
+        out_tokens=int(raw.get("out_tokens", 1)),
+        decode_sample_weight=float(raw.get("decode_sample_weight", 1)),
+        padded_args=str(raw.get("padded_args", "")),
         shape=dict(raw.get("shape") or {}),
         warmup=int(raw.get("warmup", defaults.warmup)),
         iterations=int(raw.get("iterations", defaults.iterations)),
@@ -696,6 +730,10 @@ def _expand_case_matrix(raw: dict[str, Any], defaults: BenchDefaults, index: int
             stage=str(_format_value(raw.get("stage", ""), params)),
             name=name,
             calls_per_forward=float(_format_value(raw.get("calls_per_forward", 1), params)),
+            decode_step_count=int(_format_value(raw.get("decode_step_count", 1), params)),
+            out_tokens=int(_format_value(raw.get("out_tokens", 1), params)),
+            decode_sample_weight=float(_format_value(raw.get("decode_sample_weight", 1), params)),
+            padded_args=str(_format_value(raw.get("padded_args", ""), params)),
             shape=shape,
             warmup=int(_format_value(raw.get("warmup", defaults.warmup), params)),
             iterations=int(_format_value(raw.get("iterations", defaults.iterations), params)),
@@ -735,6 +773,9 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
     from tools.workload.gen_kernel_cfgs import (
         DEFAULT_LLM_BATCH,
         DEFAULT_LLM_GEN_KV,
+        DEFAULT_LLM_OUT_TOKENS,
+        DEFAULT_DECODE_MEASUREMENT,
+        DEFAULT_DECODE_SAMPLE_INTERVAL,
         DEFAULT_LLM_PREFILL_SEQ,
         DEFAULT_LLM_QBLK,
         DEFAULT_HADAMARD_VARIANT,
@@ -747,6 +788,15 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
     stage_raw = raw.get("stage", "all")
     stages = list(LLM_STAGES) if stage_raw == "all" else [s.strip() for s in str(stage_raw).split(",") if s.strip()]
     max_seq_len_raw = raw.get("max_seq_len", raw.get("max-seq-len"))
+    out_tokens = int(raw.get("out_tokens", raw.get("out-tokens", DEFAULT_LLM_OUT_TOKENS)))
+    decode_measurement = str(raw.get(
+        "decode_measurement",
+        raw.get("decode-measurement", DEFAULT_DECODE_MEASUREMENT),
+    ))
+    decode_sample_interval = int(raw.get(
+        "decode_sample_interval",
+        raw.get("decode-sample-interval", DEFAULT_DECODE_SAMPLE_INTERVAL),
+    ))
     payload = build_llm_kernels(
         model_name=model,
         stages=stages,
@@ -760,6 +810,9 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
             "hadamard_variant",
             raw.get("hadamard-variant", DEFAULT_HADAMARD_VARIANT),
         )),
+        out_tokens=out_tokens,
+        decode_measurement=decode_measurement,
+        decode_sample_interval=decode_sample_interval,
     )
 
     implemented_only = bool(raw.get("implemented_only", True))
@@ -814,6 +867,12 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, payload: 
             stage=str(kernel.get("stage", "")),
             name=str(kernel.get("name", case_id)),
             calls_per_forward=float(kernel.get("calls_per_forward", 1)),
+            decode_step_count=int((kernel.get("shape") or {}).get("decode_step_count", 1)),
+            out_tokens=int((payload.get("config") or {}).get("out_tokens", 1)),
+            decode_sample_weight=float(
+                (kernel.get("shape") or {}).get("decode_sample_weight", 1)
+            ),
+            padded_args=str(kernel.get("padded_args", "")),
             shape=dict(kernel.get("shape") or {}),
             warmup=int(raw.get("warmup", defaults.warmup)),
             iterations=int(raw.get("iterations", defaults.iterations)),
@@ -910,14 +969,15 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
     if not cases:
         raise ValueError(f"suite has no runnable cases: {path}")
 
-    return LoadedSuiteArtifacts(
-        suite=BenchSuite(
+    suite = BenchSuite(
             name=sanitize_id(str(raw.get("name", path.stem))),
             defaults=defaults,
             cases=cases,
             fpga_bins=dict(fpga_bins_raw),
             source_path=path,
-        ),
+        )
+    return LoadedSuiteArtifacts(
+        suite=_canonicalize_suite_cases(suite),
         workload_structures=workload_structures,
     )
 
@@ -964,8 +1024,14 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
             "stage": case.stage,
             "name": case.name,
             "args": case.args,
+            "measurement_args": case.measurement_args or case.args,
+            "latency_shape_json": json.dumps(case.latency_shape, sort_keys=True),
             "shape_json": json.dumps(case.shape, sort_keys=True),
             "calls_per_forward": case.calls_per_forward,
+            "decode_step_count": case.decode_step_count,
+            "out_tokens": case.out_tokens,
+            "decode_sample_weight": case.decode_sample_weight,
+            "padded_args": case.padded_args,
             "warmup": case.warmup,
             "iterations": case.iterations,
             "source": case.source,
@@ -995,6 +1061,18 @@ def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
             "warmup": case.warmup,
             "iterations": case.iterations,
         }
+        if case.decode_step_count != 1:
+            row["decode_step_count"] = case.decode_step_count
+        if case.out_tokens != 1:
+            row["out_tokens"] = case.out_tokens
+        if case.decode_sample_weight != 1:
+            row["decode_sample_weight"] = case.decode_sample_weight
+        if case.padded_args:
+            row["padded_args"] = case.padded_args
+        if case.measurement_args and case.measurement_args != case.args:
+            row["measurement_args"] = case.measurement_args
+        if case.latency_shape:
+            row["latency_shape"] = case.latency_shape
         if case.op:
             row["op"] = case.op
         if case.backend:

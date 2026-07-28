@@ -334,6 +334,16 @@ class EnergyPerTokenTest(unittest.TestCase):
             self.assertEqual(0.00018, rows[0]["kernel_energy_j"])
             self.assertAlmostEqual(0.00018 / 8.0, rows[0]["joules_per_token_component"])
 
+    def test_generation_energy_tokens_include_output_length(self) -> None:
+        row = {
+            "stage": "generation",
+            "batch": "8",
+            "out_tokens": "3",
+            "shape_json": '{"batch": 8, "out_tokens": 3}',
+        }
+
+        self.assertEqual(24, energy_per_token._token_count(row))
+
     def test_summary_marks_missing_power_group_incomplete(self) -> None:
         summary = energy_per_token.summarize_energy_rows(
             [

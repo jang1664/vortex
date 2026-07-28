@@ -276,14 +276,44 @@ SpinQuant workloads use `hadamard_variant: zero_padding` by default. Set
 standalone row-major workloads, the factorized path emits a butterfly case
 followed by a base-transform case; fused-layout workloads select the
 factorized mode inside `hadamard_layout_fused`.
-For generation workloads, `gen_kv_len` is the logical KV length after the
-current token is appended. Set `max_seq_len` when the fixed cache allocation
-capacity must be larger than that logical length; the latency adapter forwards
-both `max_seq_len` and `max-seq-len` to the generator. Generated softmax cases
-pass the logical length as `-seqk` and the physical capacity as
-`-seqk-stride`. Standalone softmax maps the latter to `row_pitch_bytes`; the
-layout-fused app rounds it up to the GEMM tile width and passes the resulting
-input/output padded widths through its existing kernel ABI.
+For generation workloads, `gen_kv_len` is the number of tokens already stored
+in the KV cache. `out_tokens` defaults to `1`; therefore
+`gen_kv_len: 1024` measures the token whose logical attention length is `1025`.
+For multiple output tokens, logical attention lengths cover
+`gen_kv_len + 1` through `gen_kv_len + out_tokens`. Set `max_seq_len` when the
+fixed cache allocation capacity must be larger than the final logical length.
+
+Decode kernel `args` always retain the logical attention length. The optional
+`padded_args` field records the corresponding execution-granularity-rounded
+arguments for inspection only and is also written to `raw_db.csv`.
+`decode_measurement: exact` (the default) emits every output-token step for
+sequence-dependent kernels; sequence-invariant kernels are represented once
+with `decode_sample_weight: out_tokens`.
+`decode_measurement: sampled` measures sequence-invariant kernels once,
+continuous kernels at boundary-aware regular samples, and tile-dominated
+kernels once per execution bucket. `decode_sample_interval` controls the
+regular spacing (default 32). Compose applies each measured case's
+`decode_sample_weight`; continuous-kernel weights are the summed linear
+interpolation coefficients. The base `calls_per_forward` remains the
+single-token decoder-pass count, so shared prefill rows are not multiplied by
+decode output length.
+
+`cases.csv` and `results.csv` are case-level workload artifacts and retain
+call counts, decode ranges, sampling weights, and shape metadata. The top-level
+`raw_db.csv` is a unique-measurement store: it contains one row per `exec_key`
+and run, with executable arguments, FPGA identity, status, and measured
+latency/cycle/power data. Existing raw DB schemas are not migrated
+automatically; use a new output directory or convert the old file explicitly.
+
+Kernel latency canonicalization is defined outside suites in
+`tools/latency_bench/kernel_latency_canonicalization.yaml`. A case keeps its
+logical `args`, while `measurement_args` is used to build `exec_key` and launch
+the benchmark. For C1-C4, FPINT GEMM uses M/N/K alignments 8/32/32,
+`sgemm_tcu` uses 8/8/16, and `tile_input_a` uses M/K alignments 8/32.
+The remaining vector kernels are explicitly marked `exact` because their valid
+loop bounds or edge handling can affect latency. Cases such as FPINT K=33 and
+K=34 therefore share the same K=64 measurement. Unknown FPGA labels and apps
+fall back to exact logical arguments.
 The supported workload variants are `all_fpint_gemm_naive`,
 `attn_sgemm_tcu_fpint_gemm_naive`, `all_fpint_gemm_improve`,
 `attn_sgemm_tcu_fpint_gemm_improve`, `all_sgemm_tcu`,
@@ -412,12 +442,14 @@ Each `runs/<run_id>/` directory contains:
 - `raw/*.csv`: raw benchmark rows from `bench_util.h`.
 - `logs/*.log`: per-execution blackbox logs.
 - `results.csv`: one row per logical case with latency and metadata.
-- `summary.csv`: calls-per-forward weighted total latency estimates.
+- `summary.csv`: effective-call weighted total latency estimates.
 - `figures/*.png` and `figures/*.pdf`: optional output created by `run --visualize`
   or the `visualize` subcommand.
 
 In `summary.csv`, `weighted_total_avg_us` means
-`sum(avg_us * calls_per_forward)` for the group, not an arithmetic mean.
+`sum(avg_us * calls_per_forward * decode_step_count)` for the group, not an
+arithmetic mean. `decode_step_count` defaults to `1`, so existing prefill and
+single-step cases retain their prior meaning.
 
 ## Append-Only Raw DB
 

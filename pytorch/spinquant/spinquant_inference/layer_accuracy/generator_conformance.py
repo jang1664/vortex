@@ -169,39 +169,39 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
             "kv_cache_quant_rope_k_to_attn_qkT": {
                 "K": 1,
                 "cache_update": "append",
-                "cache_position": 32,
-                "logical_cache_length": 33,
+                "cache_position": 33,
+                "logical_cache_length": 34,
                 "cache_capacity": 64,
                 "persistent_layout": "gemm_w_tiled_transposed",
             },
             "kv_cache_quant_v_cache_to_attn_pv": {
                 "K": 1,
                 "cache_update": "append",
-                "cache_position": 32,
-                "logical_cache_length": 33,
+                "cache_position": 33,
+                "logical_cache_length": 34,
                 "cache_capacity": 64,
                 "persistent_layout": "gemm_w_tiled",
             },
             "attn_qkT": {
                 "M": 1,
-                "N": 33,
+                "N": 128,
                 "K": 128,
                 "cache_capacity": 64,
             },
             "attn_softmax": {
                 "seqq": 1,
-                "seqk": 33,
+                "seqk": 64,
                 "mask": 0,
                 "capacity_stride": 64,
             },
             "attn_pv": {
                 "M": 1,
                 "N": 128,
-                "K": 33,
+                "K": 128,
                 "cache_capacity": 64,
             },
-            "rope_q": {"seq": 1, "offset": 32},
-            "rope_k": {"seq": 1, "offset": 32},
+            "rope_q": {"seq": 1, "offset": 33},
+            "rope_k": {"seq": 1, "offset": 33},
         }
         local_mismatches = []
         for name, expected in generation_checks.items():

@@ -167,7 +167,7 @@ workloads:
                 {case["shape"]["seqq"] for case in cases if case["stage"] == "prefill"},
             )
             self.assertEqual(
-                {128, 256},
+                {160, 288},
                 {case["shape"]["seqk"] for case in cases if case["stage"] == "generation"},
             )
 
@@ -223,7 +223,7 @@ workloads:
             self.assertEqual(128, prefill[0]["shape"]["seqk"])
             self.assertEqual(4, generation[0]["shape"]["batch"])
             self.assertEqual(1, generation[0]["shape"]["seqq"])
-            self.assertEqual(512, generation[0]["shape"]["seqk"])
+            self.assertEqual(544, generation[0]["shape"]["seqk"])
 
     def test_generate_suites_dumps_all_workload_model_structures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

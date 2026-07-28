@@ -18,24 +18,14 @@ RAW_DB_COLUMNS = [
     "git_commit",
     "git_branch",
     "git_dirty",
-    "suite",
-    "case_id",
     "exec_key",
     "app",
-    "kind",
-    "op",
-    "backend",
-    "variant",
-    "stage",
-    "name",
     "args",
-    "shape_json",
-    "calls_per_forward",
+    "padded_args",
     "fpga_bin_dir",
     "xclbin_sha256",
     "warmup",
     "iterations",
-    "source",
     "status",
     "returncode",
     "failure_phase",
@@ -165,21 +155,45 @@ def _ensure_raw_db_schema(raw_db: Path) -> None:
         header = next(reader, [])
     if header == RAW_DB_COLUMNS:
         return
+    raise ValueError(
+        f"raw DB schema mismatch: {raw_db}. Existing raw DB migration is not "
+        "automatic; convert it to the current unique-measurement schema or "
+        "write to a new output directory."
+    )
 
-    with raw_db.open(newline="") as fp:
-        existing_rows = list(csv.DictReader(fp))
 
-    tmp = raw_db.with_suffix(raw_db.suffix + ".tmp")
-    with tmp.open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=RAW_DB_COLUMNS)
-        writer.writeheader()
-        for row in existing_rows:
-            writer.writerow({column: _clean_raw_value(row.get(column, "")) for column in RAW_DB_COLUMNS})
-    tmp.replace(raw_db)
+def _unique_execution_rows(rows: Any) -> Any:
+    """Collapse case-level results to one row per measured execution."""
+    if rows.empty:
+        return rows.copy()
+    missing = {"exec_key", "app", "args"}.difference(rows.columns)
+    if missing:
+        raise ValueError(
+            "measurement rows are missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    selected = []
+    for exec_key, group in rows.groupby("exec_key", sort=False, dropna=False):
+        padded_values = {
+            _normalize_args(_clean_raw_value(value))
+            for value in group.get("padded_args", [])
+            if _clean_raw_value(value).strip()
+        }
+        if len(padded_values) > 1:
+            raise ValueError(
+                f"exec_key={exec_key!r} has conflicting padded_args: "
+                f"{sorted(padded_values)}"
+            )
+        row = group.iloc[0].copy()
+        if padded_values:
+            row["padded_args"] = next(iter(padded_values))
+        selected.append(row)
+    return rows.__class__(selected).reset_index(drop=True)
 
 
 def _raw_db_rows(results: Any, *, run_id: str, fpga_bin_label: str) -> Any:
-    rows = results.copy()
+    rows = _unique_execution_rows(results)
     rows.insert(0, "timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     rows.insert(0, "run_id", run_id)
     rows.insert(2, "fpga_bin_label", fpga_bin_label)
@@ -363,11 +377,22 @@ def append_raw_execution(
     )
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    rows: list[dict[str, object]] = []
-    for case in cases:
-        row = {column: "" for column in RAW_DB_COLUMNS}
-        row.update({column: case.get(column, "") for column in RAW_DB_COLUMNS})
-        row.update({
+    padded_values = {
+        _normalize_args(case.get("padded_args", ""))
+        for case in cases if case.get("padded_args", "").strip()
+    }
+    if len(padded_values) > 1:
+        raise ValueError(
+            f"exec_key={exec_key!r} has conflicting padded_args: "
+            f"{sorted(padded_values)}"
+        )
+    case = cases[0]
+    row: dict[str, object] = {column: "" for column in RAW_DB_COLUMNS}
+    row.update({
+            "exec_key": exec_key,
+            "app": case.get("app", ""),
+            "args": case.get("measurement_args") or case.get("args", ""),
+            "padded_args": next(iter(padded_values), ""),
             "run_id": run_id,
             "timestamp_utc": timestamp,
             "fpga_bin_label": fpga_bin_label,
@@ -376,6 +401,8 @@ def append_raw_execution(
             "git_dirty": git_dirty,
             "fpga_bin_dir": str(fpga_bin_dir),
             "xclbin_sha256": xclbin_sha256,
+            "warmup": case.get("warmup", ""),
+            "iterations": case.get("iterations", ""),
             "status": status,
             "returncode": returncode,
             "failure_phase": failure_phase,
@@ -425,10 +452,9 @@ def append_raw_execution(
             "p50_us": bench.get("p50_us", ""),
             "p95_us": bench.get("p95_us", ""),
             **cycle,
-        })
-        rows.append(row)
+    })
 
-    return _write_raw_rows(rows, output, mode=mode, run_id=run_id)
+    return _write_raw_rows([row], output, mode=mode, run_id=run_id)
 
 
 def _parse_bool_arg(value: str) -> bool:

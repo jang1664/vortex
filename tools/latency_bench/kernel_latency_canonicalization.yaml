@@ -1,0 +1,76 @@
+version: 1
+default:
+  mode: exact
+
+# A policy is enabled only for the FPGA aliases listed below. "exact" means
+# that logical arguments remain part of the latency identity. "aligned" means
+# that the listed integer CLI arguments are rounded before measurement.
+app_policies: &app_policies
+  # GEMM kernels whose host harness executes the padded shape.
+  sgemm_tcu:
+    mode: aligned
+    align:
+      -m: 8
+      -n: 8
+      -k: 16
+  fpint_gemm_ffn_hw:
+    mode: aligned
+    align:
+      -m: 8
+      -n: 32
+      -k: 32
+  fpint_gemm_ffn_hw_naive:
+    mode: aligned
+    align:
+      -m: 8
+      -n: 32
+      -k: 32
+
+  # This layout kernel materializes the complete padded destination.
+  tile_input_a:
+    mode: aligned
+    align:
+      -m: 8
+      -k: 32
+
+  # Valid loop bounds or edge handling affect work; keep logical arguments.
+  detile_output: {mode: exact}
+  softmax: {mode: exact}
+  softmax_layout_fused: {mode: exact}
+  rmsnorm: {mode: exact}
+  rms_norm_layout_fused: {mode: exact}
+  rope: {mode: exact}
+  rope_layout_fused: {mode: exact}
+  silu: {mode: exact}
+  silu_layout_fused: {mode: exact}
+  eladd: {mode: exact}
+  eladd_layout_fused: {mode: exact}
+  eldiv: {mode: exact}
+  elmul: {mode: exact}
+  elmul_layout_fused: {mode: exact}
+  elreduce: {mode: exact}
+  elscalar: {mode: exact}
+  elsub: {mode: exact}
+  elunary: {mode: exact}
+  dropout: {mode: exact}
+  vecadd: {mode: exact}
+  head_concat: {mode: exact}
+  head_concat_layout_fused: {mode: exact}
+  hadamard: {mode: exact}
+  hadamard_base: {mode: exact}
+  hadamard_layout_fused: {mode: exact}
+  kv_cache_quant_w4a16: {mode: exact}
+  kv_cache_dequant_w4a16: {mode: exact}
+  kv_cache_quant_layout_fused_w4a16: {mode: exact}
+  tile_weight_w4a16: {mode: exact}
+  tile_scale_zp_w4a16: {mode: exact}
+
+fpga_bins:
+  C1:
+    apps: *app_policies
+  C2:
+    apps: *app_policies
+  C3:
+    apps: *app_policies
+  C4:
+    apps: *app_policies

@@ -246,12 +246,12 @@ generate_suite_by_suffix() {
 generate_suite_by_suffix "prefill_C1" "${OUTPUT_DIR}/C1_prefill"
 generate_suite_by_suffix "prefill_C2" "${OUTPUT_DIR}/C2_prefill"
 generate_suite_by_suffix "prefill_C3" "${OUTPUT_DIR}/C3_prefill"
-generate_suite_by_suffix "prefill_C4_alone" "${OUTPUT_DIR}/C4_alone_prefill"
+# generate_suite_by_suffix "prefill_C4_alone" "${OUTPUT_DIR}/C4_alone_prefill"
 generate_suite_by_suffix "prefill_C4_fused" "${OUTPUT_DIR}/C4_fused_prefill"
 generate_suite_by_suffix "generation_C1" "${OUTPUT_DIR}/C1_generation"
 generate_suite_by_suffix "generation_C2" "${OUTPUT_DIR}/C2_generation"
 generate_suite_by_suffix "generation_C3" "${OUTPUT_DIR}/C3_generation"
-generate_suite_by_suffix "generation_C4_alone" "${OUTPUT_DIR}/C4_alone_generation"
+# generate_suite_by_suffix "generation_C4_alone" "${OUTPUT_DIR}/C4_alone_generation"
 generate_suite_by_suffix "generation_C4_fused" "${OUTPUT_DIR}/C4_fused_generation"
 
 clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
@@ -259,7 +259,7 @@ clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
     --suite-glob "${OUTPUT_DIR}/C1_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C2_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C3_prefill/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C4_alone_prefill/*.yaml" \
+    # --suite-glob "${OUTPUT_DIR}/C4_alone_prefill/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C4_fused_prefill/*.yaml" \
     --out "${OUTPUT_DIR}/prefill_merged" \
     --group-by-fpga-bin \
@@ -270,7 +270,7 @@ clean_suite_dir "${OUTPUT_DIR}/generation_merged"
     --suite-glob "${OUTPUT_DIR}/C1_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C2_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C3_generation/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C4_alone_generation/*.yaml" \
+    # --suite-glob "${OUTPUT_DIR}/C4_alone_generation/*.yaml" \
     --suite-glob "${OUTPUT_DIR}/C4_fused_generation/*.yaml" \
     --out "${OUTPUT_DIR}/generation_merged" \
     --group-by-fpga-bin \

@@ -80,6 +80,10 @@ MODELS: dict[str, dict[str, int]] = {
 DEFAULT_LLM_BATCH = 1
 DEFAULT_LLM_PREFILL_SEQ = 128
 DEFAULT_LLM_GEN_KV = 128
+DEFAULT_LLM_OUT_TOKENS = 1
+DEFAULT_DECODE_MEASUREMENT = "exact"
+DEFAULT_DECODE_SAMPLE_INTERVAL = 32
+DECODE_MEASUREMENTS = ("exact", "sampled")
 DEFAULT_LLM_QBLK = 32
 DEFAULT_HADAMARD_VARIANT = "factorized"
 HADAMARD_VARIANTS = ("zero_padding", "factorized")
@@ -333,6 +337,196 @@ def _attention_gemm_shape_update(stage: str,
 
 def _align_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
+
+
+_DECODE_LENGTH_ARG_BY_NAME = {
+    "attn_qkT": ("-n", "N"),
+    "attn_pv": ("-k", "K"),
+    "attn_softmax": ("-seqk", "seqk"),
+    "layout_attn_qkT_to_softmax_detile": ("-n", "N"),
+    "layout_attn_softmax_to_attn_pv": ("-k", "K"),
+    "kv_cache_dequant_k_to_attn_qkT": ("-k", "K"),
+    "kv_cache_dequant_v_to_attn_pv": ("-k", "K"),
+}
+
+
+def _decode_length_alignment(kernel: dict) -> int | None:
+    """Return the execution granularity of a decode-length-dependent kernel."""
+    name = str(kernel.get("name", ""))
+    if name not in _DECODE_LENGTH_ARG_BY_NAME:
+        return None
+
+    backend = str(kernel.get("backend", ""))
+    if backend in FPINT_GEMM_BACKENDS:
+        return 32
+    if backend == "sgemm_tcu":
+        # The latency workload maps sgemm_tcu to the baseline FP16 TCU shape.
+        # QK grows in N (tileN=8); PV grows in K (tileK=16).
+        return 8 if name == "attn_qkT" else 16
+    if backend in {"softmax", "softmax_layout_fused"}:
+        return 32
+    if backend == "kv_cache_dequant_w4a16":
+        return 128
+    if backend in {"detile_output", "tile_input_a"}:
+        return 32
+    return None
+
+
+def _replace_integer_arg(args: str, option: str, value: int) -> str:
+    parts = args.split()
+    for index, part in enumerate(parts):
+        if part == option and index + 1 < len(parts):
+            parts[index + 1] = str(value)
+            return " ".join(parts)
+        if part.startswith(f"{option}="):
+            parts[index] = f"{option}={value}"
+            return " ".join(parts)
+    raise ValueError(f"missing {option} in kernel args: {args!r}")
+
+
+def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dict:
+    """Record a padded reference without changing the executable arguments."""
+    alignment = _decode_length_alignment(kernel)
+    if alignment is None:
+        return kernel
+
+    name = str(kernel["name"])
+    option, shape_key = _DECODE_LENGTH_ARG_BY_NAME[name]
+    padded_seq_kv = _align_up(logical_seq_kv, alignment)
+    out = dict(kernel)
+    padded_args = _replace_integer_arg(str(out["args"]), option, padded_seq_kv)
+    shape = dict(out.get("shape") or {})
+    shape.update({
+        "logical_cache_length": logical_seq_kv,
+        "padded_cache_length": padded_seq_kv,
+        "decode_length_alignment": alignment,
+        "padded_shape_argument": shape_key,
+    })
+
+    if name == "attn_softmax":
+        stride = max(int(shape.get("capacity_stride", logical_seq_kv)), padded_seq_kv)
+        stride = _align_up(stride, alignment)
+        padded_args = _replace_integer_arg(padded_args, "-seqk-stride", stride)
+        shape["padded_capacity_stride"] = stride
+
+    out["padded_args"] = padded_args
+    out["shape"] = shape
+    return out
+
+
+def _decode_sampling_class(kernel: dict) -> str:
+    if _decode_length_alignment(kernel) is None:
+        return "invariant"
+    if str(kernel.get("backend", "")) in {
+        "softmax", "softmax_layout_fused", "kv_cache_dequant_w4a16",
+    }:
+        return "continuous"
+    return "tile_step"
+
+
+def _linear_sample_weights(length: int, sample_indices: list[int]) -> dict[int, float]:
+    weights = {index: 0.0 for index in sample_indices}
+    for target in range(length):
+        lower = max(index for index in sample_indices if index <= target)
+        upper = min(index for index in sample_indices if index >= target)
+        if lower == upper:
+            weights[lower] += 1.0
+            continue
+        upper_weight = (target - lower) / (upper - lower)
+        weights[lower] += 1.0 - upper_weight
+        weights[upper] += upper_weight
+    return weights
+
+
+def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
+    sampling_class = _decode_sampling_class(kernels[0])
+    if sampling_class == "invariant":
+        selected = [(0, float(len(kernels)))]
+    elif sampling_class == "tile_step":
+        buckets: dict[int, list[int]] = {}
+        for index, kernel in enumerate(kernels):
+            padded = int(kernel["shape"]["padded_cache_length"])
+            buckets.setdefault(padded, []).append(index)
+        selected = [(indices[0], float(len(indices))) for indices in buckets.values()]
+    else:
+        sample_indices = {0, len(kernels) - 1}
+        sample_indices.update(range(0, len(kernels), interval))
+        alignment = _decode_length_alignment(kernels[0])
+        if alignment:
+            for index, kernel in enumerate(kernels):
+                logical = int(kernel["shape"]["logical_cache_length"])
+                if logical % alignment in {0, 1, alignment - 1}:
+                    sample_indices.add(index)
+        ordered = sorted(sample_indices)
+        selected = sorted(_linear_sample_weights(len(kernels), ordered).items())
+
+    out = []
+    for index, weight in selected:
+        kernel = dict(kernels[index])
+        shape = dict(kernel.get("shape") or {})
+        shape.update({
+            "decode_measurement": "sampled",
+            "decode_sampling_class": sampling_class,
+            "decode_sample_weight": weight,
+            "measurement_kind": "measured",
+        })
+        kernel["shape"] = shape
+        out.append(kernel)
+    return out
+
+
+def _select_decode_measurements(
+    kernels: list[dict],
+    *,
+    mode: str,
+    interval: int,
+) -> list[dict]:
+    if mode == "exact":
+        groups: dict[tuple[str, str, str, str], list[dict]] = {}
+        for kernel in kernels:
+            identity = (
+                str(kernel["name"]),
+                str(kernel.get("backend", "")),
+                str(kernel.get("variant", "")),
+                str(kernel.get("app", "")),
+            )
+            groups.setdefault(identity, []).append(kernel)
+
+        out: list[dict] = []
+        for group in groups.values():
+            selected = group if _decode_sampling_class(group[0]) != "invariant" else [group[0]]
+            for kernel in selected:
+                item = dict(kernel)
+                shape = dict(item.get("shape") or {})
+                sample_weight = float(len(group)) if len(selected) == 1 else 1.0
+                shape.update({
+                    "decode_measurement": "exact",
+                    "decode_sampling_class": _decode_sampling_class(item),
+                    "decode_sample_weight": sample_weight,
+                    "measurement_kind": "measured",
+                })
+                if len(selected) == 1:
+                    shape["logical_kv_end"] = int(
+                        group[-1]["shape"]["logical_cache_length"]
+                    )
+                item["shape"] = shape
+                out.append(item)
+        return out
+
+    groups: dict[tuple[str, str, str, str], list[dict]] = {}
+    for kernel in kernels:
+        identity = (
+            str(kernel["name"]),
+            str(kernel.get("backend", "")),
+            str(kernel.get("variant", "")),
+            str(kernel.get("app", "")),
+        )
+        groups.setdefault(identity, []).append(kernel)
+    return [
+        sampled
+        for group in groups.values()
+        for sampled in _sample_decode_group(group, interval)
+    ]
 
 
 def _layout_kernel(name: str,
@@ -2057,7 +2251,10 @@ def build_llm_kernels(model_name: str,
                       qblk: int,
                       variant: str = DEFAULT_WORKLOAD_VARIANT,
                       max_seq_len: int | None = None,
-                      hadamard_variant: str = DEFAULT_HADAMARD_VARIANT) -> dict:
+                      hadamard_variant: str = DEFAULT_HADAMARD_VARIANT,
+                      out_tokens: int = DEFAULT_LLM_OUT_TOKENS,
+                      decode_measurement: str = DEFAULT_DECODE_MEASUREMENT,
+                      decode_sample_interval: int = DEFAULT_DECODE_SAMPLE_INTERVAL) -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -2074,13 +2271,36 @@ def build_llm_kernels(model_name: str,
             f"unknown Hadamard variant: {hadamard_variant!r}. "
             f"Expected one of {HADAMARD_VARIANTS}"
         )
+    if gen_kv_len < 0:
+        raise ValueError(f"gen-kv-len must be >= 0, got {gen_kv_len}")
+    if out_tokens < 1:
+        raise ValueError(f"out-tokens must be >= 1, got {out_tokens}")
+    if decode_measurement not in DECODE_MEASUREMENTS:
+        raise ValueError(
+            f"decode-measurement must be one of {DECODE_MEASUREMENTS}, "
+            f"got {decode_measurement!r}"
+        )
+    if decode_sample_interval < 1:
+        raise ValueError(
+            f"decode-sample-interval must be >= 1, got {decode_sample_interval}"
+        )
+
+    generation_enabled = "generation" in stages
+    final_gen_kv_len = gen_kv_len + out_tokens if generation_enabled else gen_kv_len
+    required_lengths = []
+    if "prefill" in stages:
+        required_lengths.append(prefill_seq_len)
+    if generation_enabled:
+        required_lengths.append(final_gen_kv_len)
+    required_capacity = max(required_lengths or [prefill_seq_len, gen_kv_len])
     cache_capacity = (
-        max(prefill_seq_len, gen_kv_len)
+        required_capacity
         if max_seq_len is None else max_seq_len
     )
-    if cache_capacity < max(prefill_seq_len, gen_kv_len):
+    if cache_capacity < required_capacity:
         raise ValueError(
-            "max-seq-len must cover prefill-seq-len and gen-kv-len"
+            "max-seq-len must cover prefill-seq-len and "
+            "gen-kv-len + out-tokens"
         )
 
     kernels: list[dict] = []
@@ -2097,65 +2317,82 @@ def build_llm_kernels(model_name: str,
                 hadamard_variant=hadamard_variant,
             ))
         elif stage == "generation":
-            if gen_kv_len < 1:
-                raise ValueError(
-                    f"gen-kv-len must be >= 1, got {gen_kv_len}"
+            decode_kernels: list[dict] = []
+
+            for decode_step in range(out_tokens):
+                logical_seq_kv = gen_kv_len + decode_step + 1
+                step_kernels = build_decoder_pass_kernels(
+                    config, "generation",
+                    batch=batch,
+                    seq_q=1,
+                    seq_kv=logical_seq_kv,
+                    qblk=qblk,
+                    softmax_k_stride=cache_capacity,
+                    variant=variant,
+                    hadamard_variant=hadamard_variant,
                 )
-            kernels.extend(build_decoder_pass_kernels(
-                config, "generation",
-                batch=batch,
-                seq_q=1,
-                seq_kv=gen_kv_len,
-                qblk=qblk,
-                softmax_k_stride=cache_capacity,
-                variant=variant,
-                hadamard_variant=hadamard_variant,
+
+                for kernel in step_kernels:
+                    shape = dict(kernel.get("shape") or {})
+                    shape.update({
+                        "query_length": 1,
+                        "input_kv_length": gen_kv_len,
+                        "out_tokens": out_tokens,
+                        "logical_cache_length": logical_seq_kv,
+                        "logical_kv_start": logical_seq_kv,
+                        "logical_kv_end": logical_seq_kv,
+                        "decode_step_count": 1,
+                        "cache_capacity": cache_capacity,
+                    })
+                    kernel["shape"] = shape
+
+                    name = str(kernel["name"])
+                    if name == "kv_cache_quant_rope_k_to_attn_qkT":
+                        shape.update({
+                            "cache_position": logical_seq_kv - 1,
+                            "cache_allocation": "fixed",
+                            "persistent_layout": "gemm_w_tiled_transposed",
+                            "source_token_count": 1,
+                        })
+                        if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+                            kernel["args"] += (
+                                f" --cache-update append"
+                                f" --cache-capacity {cache_capacity}"
+                                f" --cache-position {logical_seq_kv - 1}"
+                            )
+                    elif name == "kv_cache_quant_v_cache_to_attn_pv":
+                        shape.update({
+                            "cache_position": logical_seq_kv - 1,
+                            "cache_allocation": "fixed",
+                            "persistent_layout": "gemm_w_tiled",
+                            "source_token_count": 1,
+                        })
+                        if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+                            kernel["args"] += (
+                                f" --cache-update append"
+                                f" --cache-capacity {cache_capacity}"
+                                f" --cache-position {logical_seq_kv - 1}"
+                            )
+                    elif name == "attn_qkT":
+                        shape["persistent_weight_layout"] = "gemm_w_tiled_transposed"
+                    elif name == "attn_pv":
+                        shape["persistent_weight_layout"] = "gemm_w_tiled"
+                    elif name == "attn_softmax":
+                        shape["capacity_stride"] = cache_capacity
+
+                    decode_kernels.append(
+                        _annotate_decode_padding_reference(kernel, logical_seq_kv)
+                    )
+
+            kernels.extend(_select_decode_measurements(
+                decode_kernels,
+                mode=decode_measurement,
+                interval=decode_sample_interval,
             ))
         else:
             raise ValueError(
                 f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}"
             )
-
-    for kernel in kernels:
-        if kernel.get("stage") != "generation":
-            continue
-        shape = kernel["shape"]
-        shape["query_length"] = 1
-        shape["logical_cache_length"] = gen_kv_len
-        shape["cache_capacity"] = cache_capacity
-        name = kernel["name"]
-        if name == "kv_cache_quant_rope_k_to_attn_qkT":
-            shape.update({
-                "cache_position": gen_kv_len - 1,
-                "cache_allocation": "fixed",
-                "persistent_layout": "gemm_w_tiled_transposed",
-                "source_token_count": 1,
-            })
-            if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
-                kernel["args"] += (
-                    f" --cache-update append"
-                    f" --cache-capacity {cache_capacity}"
-                    f" --cache-position {gen_kv_len - 1}"
-                )
-        elif name == "kv_cache_quant_v_cache_to_attn_pv":
-            shape.update({
-                "cache_position": gen_kv_len - 1,
-                "cache_allocation": "fixed",
-                "persistent_layout": "gemm_w_tiled",
-                "source_token_count": 1,
-            })
-            if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
-                kernel["args"] += (
-                    f" --cache-update append"
-                    f" --cache-capacity {cache_capacity}"
-                    f" --cache-position {gen_kv_len - 1}"
-                )
-        elif name == "attn_qkT":
-            shape["persistent_weight_layout"] = "gemm_w_tiled_transposed"
-        elif name == "attn_pv":
-            shape["persistent_weight_layout"] = "gemm_w_tiled"
-        elif name == "attn_softmax":
-            shape["capacity_stride"] = cache_capacity
 
     payload = {
         "model": model_name,
@@ -2165,6 +2402,9 @@ def build_llm_kernels(model_name: str,
             "batch": batch,
             "prefill_seq_len": prefill_seq_len,
             "gen_kv_len": gen_kv_len,
+            "out_tokens": out_tokens,
+            "decode_measurement": decode_measurement,
+            "decode_sample_interval": decode_sample_interval,
             "max_seq_len": cache_capacity,
             "qblk": qblk,
             "variant": variant,
@@ -3209,7 +3449,8 @@ def format_layout_view(payload: dict) -> str:
         (
             f"# model={payload.get('model')} variant={cfg.get('variant')} "
             f"batch={cfg.get('batch')} prefill_seq_len={cfg.get('prefill_seq_len')} "
-            f"gen_kv_len={cfg.get('gen_kv_len')} qblk={cfg.get('qblk')}"
+            f"gen_kv_len={cfg.get('gen_kv_len')} out_tokens={cfg.get('out_tokens', 1)} "
+            f"qblk={cfg.get('qblk')}"
         )
     ]
 
@@ -3295,12 +3536,29 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gen-kv-len", type=int, default=DEFAULT_LLM_GEN_KV, metavar="K",
-        help="KV cache length used during generation (S_q = 1, "
-             f"S_kv = K). Default: {DEFAULT_LLM_GEN_KV}.",
+        help="Number of tokens already present in the generation KV cache. "
+             f"Default: {DEFAULT_LLM_GEN_KV}.",
+    )
+    parser.add_argument(
+        "--out-tokens", type=int, default=DEFAULT_LLM_OUT_TOKENS, metavar="T",
+        help="Number of output tokens to include in the decode workload. "
+             f"Default: {DEFAULT_LLM_OUT_TOKENS}.",
+    )
+    parser.add_argument(
+        "--decode-measurement", choices=DECODE_MEASUREMENTS,
+        default=DEFAULT_DECODE_MEASUREMENT,
+        help="Decode measurement policy: every step (exact) or classified "
+             "sampling with interpolation weights (sampled).",
+    )
+    parser.add_argument(
+        "--decode-sample-interval", type=int,
+        default=DEFAULT_DECODE_SAMPLE_INTERVAL, metavar="N",
+        help="Maximum regular sample spacing for continuous decode kernels.",
     )
     parser.add_argument(
         "--max-seq-len", type=int, default=None, metavar="C",
-        help="Fixed KV-cache allocation capacity. Defaults to max(prompt, K).",
+        help="Fixed KV-cache allocation capacity. Defaults to "
+             "max(prompt, K + out-tokens).",
     )
     parser.add_argument(
         "--qblk", type=int, default=DEFAULT_LLM_QBLK,
@@ -3367,6 +3625,9 @@ def main(argv: list[str] | None = None) -> int:
             variant=args.variant,
             max_seq_len=args.max_seq_len,
             hadamard_variant=args.hadamard_variant,
+            out_tokens=args.out_tokens,
+            decode_measurement=args.decode_measurement,
+            decode_sample_interval=args.decode_sample_interval,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

@@ -16,7 +16,10 @@ from .suite import BenchSuite, suite_to_rows
 
 RESULT_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
-    "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
+    "variant", "stage", "name", "args", "measurement_args",
+    "latency_shape_json", "padded_args", "shape_json",
+    "calls_per_forward", "decode_step_count", "out_tokens",
+    "decode_sample_weight",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
     "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
     "power_csv", "power_summary", "measure_latency", "measure_power",
@@ -195,11 +198,21 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
     ok = results[results["status"] == "pass"].copy()
     if ok.empty:
         return pd.DataFrame(columns=[
-            "suite", "stage", "group", "calls_per_forward", "weighted_total_avg_us",
+            "suite", "stage", "group", "calls_per_forward", "effective_calls",
+            "out_tokens", "avg_per_output_token_us", "weighted_total_avg_us",
             "weighted_total_p50_us", "weighted_total_p95_us", "case_count",
         ])
-    for col in ("calls_per_forward", "avg_us", "p50_us", "p95_us"):
+    for col in (
+        "calls_per_forward", "decode_step_count", "out_tokens",
+        "decode_sample_weight",
+        "avg_us", "p50_us", "p95_us",
+    ):
         ok[col] = pd.to_numeric(ok[col], errors="coerce").fillna(0.0)
+    ok["effective_calls"] = (
+        ok["calls_per_forward"]
+        * ok["decode_step_count"]
+        * ok["decode_sample_weight"]
+    )
 
     rows = []
     group_specs = [
@@ -233,11 +246,24 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
                 row["stage"] = keys[1]
                 row["group"] = f"kernel:{keys[2]}"
             total_calls = sub["calls_per_forward"].sum()
+            effective_calls = sub["effective_calls"].sum()
+            weighted_avg = (sub["avg_us"] * sub["effective_calls"]).sum()
+            only_generation = set(sub["stage"].astype(str)) == {"generation"}
+            output_counts = (
+                {int(value) for value in sub["out_tokens"] if value > 0}
+                if only_generation else set()
+            )
+            output_tokens = next(iter(output_counts)) if len(output_counts) == 1 else 0
             row.update({
                 "calls_per_forward": total_calls,
-                "weighted_total_avg_us": (sub["avg_us"] * sub["calls_per_forward"]).sum(),
-                "weighted_total_p50_us": (sub["p50_us"] * sub["calls_per_forward"]).sum(),
-                "weighted_total_p95_us": (sub["p95_us"] * sub["calls_per_forward"]).sum(),
+                "effective_calls": effective_calls,
+                "out_tokens": output_tokens,
+                "avg_per_output_token_us": (
+                    weighted_avg / output_tokens if output_tokens > 0 else float("nan")
+                ),
+                "weighted_total_avg_us": weighted_avg,
+                "weighted_total_p50_us": (sub["p50_us"] * sub["effective_calls"]).sum(),
+                "weighted_total_p95_us": (sub["p95_us"] * sub["effective_calls"]).sum(),
                 "case_count": len(sub),
             })
             rows.append(row)

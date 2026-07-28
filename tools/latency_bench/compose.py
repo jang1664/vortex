@@ -250,7 +250,7 @@ def _select_value(matches: pd.DataFrame, metric: str, policy: str) -> tuple[floa
 
 
 def _match_key_columns(match_fpga_bin: bool) -> list[str]:
-    columns = ["app", "_normalized_args"]
+    columns = ["exec_key"]
     if match_fpga_bin:
         columns.append("expected_fpga_bin_label")
     return columns
@@ -263,6 +263,7 @@ def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd
         row["_case_order"] = order
         row["_normalized_args"] = normalize_args(str(row["args"]))
         row["app"] = str(row["app"])
+        row["exec_key"] = str(row["exec_key"])
         row["expected_fpga_bin_label"] = resolve_case_fpga_bin(suite, case_obj) if match_fpga_bin else ""
         rows.append(row)
     if not rows:
@@ -273,6 +274,7 @@ def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd
 def _raw_with_match_keys(raw: pd.DataFrame, *, match_fpga_bin: bool) -> pd.DataFrame:
     out = raw.copy()
     out["app"] = out["app"].astype(str)
+    out["exec_key"] = out["exec_key"].astype(str)
     out["_normalized_args"] = out["args"].astype(str).map(normalize_args)
     if match_fpga_bin:
         out["expected_fpga_bin_label"] = out["fpga_bin_label"].astype(str)
@@ -410,12 +412,18 @@ def _compose_rows_from_merge(
             continue
 
         calls = float(row["calls_per_forward"])
+        decode_steps = int(row.get("decode_step_count", 1))
+        sample_weight = float(row.get("decode_sample_weight", 1))
+        effective_calls = calls * decode_steps * sample_weight
         latency = float(row["latency_us"]) if not pd.isna(row["latency_us"]) else math.nan
         case.update(
             {
                 "metric": metric,
                 "latency_us": latency,
-                "weighted_latency_us": latency * calls if not math.isnan(latency) else math.nan,
+                "effective_calls": effective_calls,
+                "weighted_latency_us": (
+                    latency * effective_calls if not math.isnan(latency) else math.nan
+                ),
                 "match_count": int(row["match_count"]),
                 "select_policy": select,
                 "compose_status": "pass",
@@ -448,7 +456,7 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
         raise ValueError(f"missing must be one of {', '.join(MISSING_POLICIES)}")
 
     raw = _read_raw_dbs(options.raw_dbs)
-    _require_columns(raw, ["app", "args", "status", options.metric])
+    _require_columns(raw, ["exec_key", "app", "args", "status", options.metric])
     raw = _filter_pass_raw_rows(raw)
 
     if options.match_fpga_bin:
@@ -496,13 +504,36 @@ def write_compose_outputs(composed: pd.DataFrame, out: Path) -> tuple[Path, Path
     ok = composed[composed["compose_status"] == "pass"].copy()
     summary_csv = out / "summary.csv"
     if ok.empty:
-        pd.DataFrame(columns=["suite", "metric", "total_latency_us", "case_count"]).to_csv(summary_csv, index=False)
+        pd.DataFrame(columns=[
+            "suite", "metric", "total_latency_us",
+            "out_tokens", "avg_per_output_token_us", "case_count",
+        ]).to_csv(summary_csv, index=False)
     else:
         ok["weighted_latency_us"] = pd.to_numeric(ok["weighted_latency_us"], errors="coerce").fillna(0.0)
         summary = (
             ok.groupby(["suite", "metric"], as_index=False, sort=True)
             .agg(total_latency_us=("weighted_latency_us", "sum"), case_count=("case_id", "count"))
         )
+        output_meta: dict[tuple[str, str], tuple[int, float]] = {}
+        for keys, sub in ok.groupby(["suite", "metric"], sort=True):
+            only_generation = set(sub["stage"].astype(str)) == {"generation"}
+            counts = {
+                int(value)
+                for value in pd.to_numeric(sub["out_tokens"], errors="coerce").dropna()
+                if int(value) > 0
+            } if only_generation else set()
+            output_tokens = next(iter(counts)) if len(counts) == 1 else 0
+            total = float(pd.to_numeric(sub["weighted_latency_us"], errors="coerce").fillna(0.0).sum())
+            output_meta[keys] = (
+                output_tokens,
+                total / output_tokens if output_tokens > 0 else float("nan"),
+            )
+        summary["out_tokens"] = [
+            output_meta[(row.suite, row.metric)][0] for row in summary.itertuples()
+        ]
+        summary["avg_per_output_token_us"] = [
+            output_meta[(row.suite, row.metric)][1] for row in summary.itertuples()
+        ]
         summary.to_csv(summary_csv, index=False)
     return composed_csv, summary_csv
 

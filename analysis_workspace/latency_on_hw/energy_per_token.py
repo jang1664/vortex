@@ -1461,10 +1461,20 @@ def _token_count(row: Mapping[str, Any]) -> float | None:
     if batch is None:
         return None
     if stage == GENERATION_STAGE:
-        return batch
+        out_tokens = _out_tokens(row)
+        return batch * out_tokens
     if seq_len is None:
         return None
     return batch * seq_len
+
+
+def _out_tokens(row: Mapping[str, Any]) -> int:
+    value = _to_int(row.get("out_tokens"))
+    if value is not None and value > 0:
+        return value
+    shape = _shape_for_row(row)
+    value = _to_int(shape.get("out_tokens"))
+    return value if value is not None and value > 0 else 1
 
 
 def _batch(row: Mapping[str, Any]) -> int | None:

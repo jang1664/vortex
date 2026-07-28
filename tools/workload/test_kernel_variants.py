@@ -29,6 +29,128 @@ def _repo_root() -> Path:
 
 
 class KernelVariantTest(unittest.TestCase):
+    def test_generation_exact_preserves_logical_decode_arguments(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=126,
+            out_tokens=3,
+            max_seq_len=256,
+            qblk=32,
+            variant="all_fpint_gemm_improve",
+        )
+
+        q_proj_cases = [
+            kernel for kernel in payload["kernels"]
+            if kernel["name"] == "q_proj"
+        ]
+        qk_cases = [
+            kernel for kernel in payload["kernels"]
+            if kernel["name"] == "attn_qkT"
+        ]
+
+        self.assertEqual(1, len(q_proj_cases))
+        self.assertEqual(3.0, q_proj_cases[0]["shape"]["decode_sample_weight"])
+        self.assertEqual(129, q_proj_cases[0]["shape"]["logical_kv_end"])
+        self.assertEqual(3, len(qk_cases))
+        self.assertEqual([127, 128, 129],
+                         [kernel["shape"]["N"] for kernel in qk_cases])
+        self.assertEqual([128, 128, 160], [
+            kernel["shape"]["padded_cache_length"] for kernel in qk_cases
+        ])
+        self.assertEqual([128, 128, 160], [
+            int(kernel["padded_args"].split("-n ", 1)[1].split()[0])
+            for kernel in qk_cases
+        ])
+
+    def test_generation_sampled_classifies_and_weights_decode_kernels(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=126,
+            out_tokens=6,
+            max_seq_len=256,
+            qblk=32,
+            variant="all_fpint_gemm_improve",
+            decode_measurement="sampled",
+            decode_sample_interval=4,
+        )
+        q_proj = [k for k in payload["kernels"] if k["name"] == "q_proj"]
+        qk = [k for k in payload["kernels"] if k["name"] == "attn_qkT"]
+        softmax = [k for k in payload["kernels"] if k["name"] == "attn_softmax"]
+        self.assertEqual(1, len(q_proj))
+        self.assertEqual(6.0, q_proj[0]["shape"]["decode_sample_weight"])
+        self.assertEqual(2, len(qk))
+        self.assertEqual(6.0, sum(k["shape"]["decode_sample_weight"] for k in qk))
+        self.assertGreater(len(softmax), 1)
+        self.assertEqual(6.0, sum(k["shape"]["decode_sample_weight"] for k in softmax))
+
+    def test_prefill_kernels_ignore_out_tokens(self) -> None:
+        common = dict(
+            model_name="llama2-7b",
+            stages=["prefill"],
+            batch=1,
+            prefill_seq_len=32,
+            gen_kv_len=32,
+            qblk=32,
+            variant="all_fpint_gemm_improve",
+        )
+        baseline = build_llm_kernels(**common, out_tokens=1)
+        expanded = build_llm_kernels(**common, out_tokens=17)
+
+        def kernel_view(payload: dict) -> list[tuple]:
+            return [
+                (
+                    kernel["name"],
+                    kernel["args"],
+                    kernel["calls_per_forward"],
+                    kernel["shape"],
+                )
+                for kernel in payload["kernels"]
+            ]
+
+        self.assertEqual(kernel_view(baseline), kernel_view(expanded))
+
+    def test_generation_defaults_to_one_output_token(self) -> None:
+        common = dict(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=33,
+            max_seq_len=64,
+            qblk=32,
+            variant="all_fpint_gemm_improve",
+        )
+        implicit = build_llm_kernels(**common)
+        explicit = build_llm_kernels(**common, out_tokens=1)
+
+        self.assertEqual(implicit, explicit)
+        self.assertEqual(34, implicit["config"]["gen_kv_len"] + 1)
+        self.assertEqual(
+            34,
+            _kernel_by_name(implicit, "attn_qkT")["shape"]["logical_cache_length"],
+        )
+
+    def test_generation_length_validation_uses_final_output_position(self) -> None:
+        with self.assertRaisesRegex(ValueError, "out-tokens must be >= 1"):
+            build_llm_kernels(
+                "llama2-7b", ["generation"], 1, 8, 8, 32, out_tokens=0,
+            )
+        with self.assertRaisesRegex(ValueError, "gen-kv-len must be >= 0"):
+            build_llm_kernels(
+                "llama2-7b", ["generation"], 1, 8, -1, 32,
+            )
+        with self.assertRaisesRegex(ValueError, "gen-kv-len \\+ out-tokens"):
+            build_llm_kernels(
+                "llama2-7b", ["generation"], 1, 8, 8, 32,
+                out_tokens=2, max_seq_len=9,
+            )
+
     def test_generation_records_fixed_capacity_tile_major_append_contract(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
@@ -49,26 +171,26 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(payload["config"]["max_seq_len"], 64)
         for kernel in (key, value, qk, softmax, pv):
             self.assertEqual(kernel["shape"]["query_length"], 1)
-            self.assertEqual(kernel["shape"]["logical_cache_length"], 33)
+            self.assertEqual(kernel["shape"]["logical_cache_length"], 34)
             self.assertEqual(kernel["shape"]["cache_capacity"], 64)
         self.assertEqual(key["shape"]["cache_update"], "append")
-        self.assertEqual(key["shape"]["cache_position"], 32)
+        self.assertEqual(key["shape"]["cache_position"], 33)
         self.assertEqual(key["shape"]["persistent_layout"], "gemm_w_tiled_transposed")
         self.assertEqual(value["shape"]["persistent_layout"], "gemm_w_tiled")
         self.assertIn(
-            "--cache-update append --cache-capacity 64 --cache-position 32",
+            "--cache-update append --cache-capacity 64 --cache-position 33",
             key["args"],
         )
         self.assertIn(
-            "--cache-update append --cache-capacity 64 --cache-position 32",
+            "--cache-update append --cache-capacity 64 --cache-position 33",
             value["args"],
         )
-        self.assertEqual(qk["shape"]["N"], 33)
+        self.assertEqual(qk["shape"]["N"], 34)
         self.assertEqual(qk["shape"]["persistent_weight_layout"], "gemm_w_tiled_transposed")
         self.assertEqual(softmax["shape"]["mask"], 0)
         self.assertEqual(softmax["shape"]["capacity_stride"], 64)
-        self.assertIn("-seqk 33 -seqk-stride 64", softmax["args"])
-        self.assertEqual(pv["shape"]["K"], 33)
+        self.assertIn("-seqk 34 -seqk-stride 64", softmax["args"])
+        self.assertEqual(pv["shape"]["K"], 34)
         self.assertEqual(pv["shape"]["persistent_weight_layout"], "gemm_w_tiled")
 
     def test_default_variant_emits_improve_fpint_gemm_metadata(self) -> None:
@@ -230,7 +352,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(128, k_quant["shape"]["N"])
         self.assertNotIn("effective_K", k_quant["shape"])
         self.assertNotIn("effective_N", k_quant["shape"])
-        self.assertEqual(512, k_quant["shape"]["cache_len"])
+        self.assertEqual(513, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
         self.assertIn(
             {
@@ -246,7 +368,7 @@ class KernelVariantTest(unittest.TestCase):
         )
         self.assertEqual("kv_cache_dequant_w4a16", k_dequant["backend"])
         self.assertEqual(
-            "-k 512 -n 128 -q 128 -d 1 -t 1 "
+            "-k 513 -n 128 -q 128 -d 1 -t 1 "
             "--quant-mode legacy_uint4_asymmetric",
             k_dequant["args"],
         )
@@ -265,7 +387,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(128, v_quant["shape"]["N"])
         self.assertNotIn("effective_K", v_quant["shape"])
         self.assertNotIn("effective_N", v_quant["shape"])
-        self.assertEqual(512, v_quant["shape"]["cache_len"])
+        self.assertEqual(513, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
         self.assertIn(
             {
@@ -285,7 +407,7 @@ class KernelVariantTest(unittest.TestCase):
         )
         self.assertEqual("kv_cache_dequant_w4a16", v_dequant["backend"])
         self.assertEqual(
-            "-k 512 -n 128 -q 128 -d 1 -t 0 "
+            "-k 513 -n 128 -q 128 -d 1 -t 0 "
             "--quant-mode legacy_uint4_asymmetric",
             v_dequant["args"],
         )
@@ -562,8 +684,8 @@ class KernelVariantTest(unittest.TestCase):
         attn_qk = _kernel_by_name(payload, "attn_qkT")
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
-        self.assertEqual("-m 4 -n 128 -k 128 -q 128 -t 1 -d 0", attn_qk["args"])
-        self.assertEqual("-m 4 -n 128 -k 128 -q 128 -t 0 -d 1", attn_pv["args"])
+        self.assertEqual("-m 4 -n 129 -k 128 -q 128 -t 1 -d 0", attn_qk["args"])
+        self.assertEqual("-m 4 -n 128 -k 129 -q 128 -t 0 -d 1", attn_pv["args"])
         self.assertEqual(32 * 1 * 8, attn_qk["calls_per_forward"])
         self.assertEqual(32 * 1 * 8, attn_pv["calls_per_forward"])
         self.assertEqual(4, attn_qk["shape"]["M"])
@@ -947,12 +1069,12 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-k 1 -n 128 -t 1 --source-transposed", k_cache["args"])
         self.assertNotIn("effective_K", k_cache["shape"])
         self.assertNotIn("effective_N", k_cache["shape"])
-        self.assertEqual(512, k_cache["shape"]["cache_len"])
+        self.assertEqual(513, k_cache["shape"]["cache_len"])
         self.assertEqual("append", k_cache["shape"]["cache_update"])
         self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
         self.assertNotIn("effective_K", k_quant["shape"])
         self.assertNotIn("effective_N", k_quant["shape"])
-        self.assertEqual(512, k_quant["shape"]["cache_len"])
+        self.assertEqual(513, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
         self.assertEqual("-k 1 -n 128 -q 128 -d 1 --gemm-qdir 0 --source-transposed", k_qparams["args"])
         self.assertNotIn("effective_K", k_qparams["shape"])
@@ -960,11 +1082,11 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("append", k_qparams["shape"]["cache_update"])
         self.assertEqual("-k 1 -n 128 -t 0", v_cache["args"])
         self.assertNotIn("effective_K", v_cache["shape"])
-        self.assertEqual(512, v_cache["shape"]["cache_len"])
+        self.assertEqual(513, v_cache["shape"]["cache_len"])
         self.assertEqual("append", v_cache["shape"]["cache_update"])
         self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
         self.assertNotIn("effective_K", v_quant["shape"])
-        self.assertEqual(512, v_quant["shape"]["cache_len"])
+        self.assertEqual(513, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
         self.assertEqual("-k 1 -n 128 -q 128 -d 1 --gemm-qdir 1", v_qparams["args"])
         self.assertNotIn("effective_K", v_qparams["shape"])

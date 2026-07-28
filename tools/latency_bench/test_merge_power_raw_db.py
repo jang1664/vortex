@@ -63,8 +63,6 @@ def _base_row(**overrides: str) -> dict[str, str]:
     row.update({
         "run_id": "run_main",
         "fpga_bin_label": "naive_simd",
-        "suite": "suite_main",
-        "case_id": "case",
         "exec_key": "main_key",
         "app": "sgemm_tcu",
         "args": "-m 512 -n 128 -k 512",
@@ -105,9 +103,9 @@ class MergePowerRawDbTest(unittest.TestCase):
                 main_csv,
                 LEGACY_COLUMNS,
                 [
-                    _base_row(case_id="valid", exec_key="main_valid", app="sgemm_tcu", args="-m 512 -n 128 -k 512"),
-                    _base_row(case_id="low", exec_key="main_low", app="tile_weight_w4a16", args="-k 512 -n 128 -t 0"),
-                    _base_row(case_id="missing", exec_key="main_missing", app="eladd", args="-n 4194304", status="timeout", returncode="124", failure_reason="timeout"),
+                    _base_row(exec_key="main_valid", app="sgemm_tcu", args="-m 512 -n 128 -k 512"),
+                    _base_row(exec_key="main_low", app="tile_weight_w4a16", args="-k 512 -n 128 -t 0"),
+                    _base_row(exec_key="main_missing", app="eladd", args="-n 4194304", status="timeout", returncode="124", failure_reason="timeout"),
                 ],
             )
             _write_csv(
@@ -115,8 +113,7 @@ class MergePowerRawDbTest(unittest.TestCase):
                 merge_power_raw_db.RAW_DB_COLUMNS,
                 [
                     _base_row(
-                        case_id="valid_power",
-                        exec_key="different_power_key",
+                        exec_key="main_valid",
                         app="sgemm_tcu",
                         args="-m 512 -n 128 -k 512",
                         power_csv="/power/valid.csv",
@@ -130,8 +127,7 @@ class MergePowerRawDbTest(unittest.TestCase):
                         power_max_w="13.0",
                     ),
                     _base_row(
-                        case_id="low_power",
-                        exec_key="different_low_key",
+                        exec_key="main_low",
                         app="tile_weight_w4a16",
                         args="-k 512 -n 128 -t 0",
                         status="fail",
@@ -164,25 +160,24 @@ class MergePowerRawDbTest(unittest.TestCase):
             self.assertTrue(main_csv.with_name("raw_db.csv.bak.test").exists())
 
             header, rows = _read_csv(main_csv)
-            by_case = {row["case_id"]: row for row in rows}
+            by_case = {row["exec_key"]: row for row in rows}
             self.assertEqual(merge_power_raw_db.RAW_DB_COLUMNS, header)
-            self.assertEqual("main_valid", by_case["valid"]["exec_key"])
-            self.assertEqual("77", by_case["valid"]["power_samples"])
-            self.assertEqual("12.0", by_case["valid"]["power_avg_w"])
-            self.assertEqual("1", by_case["valid"]["measure_latency"])
-            self.assertEqual("1", by_case["valid"]["measure_power"])
+            self.assertEqual("77", by_case["main_valid"]["power_samples"])
+            self.assertEqual("12.0", by_case["main_valid"]["power_avg_w"])
+            self.assertEqual("1", by_case["main_valid"]["measure_latency"])
+            self.assertEqual("1", by_case["main_valid"]["measure_power"])
 
-            self.assertEqual("pass", by_case["low"]["status"])
-            self.assertEqual("0", by_case["low"]["returncode"])
-            self.assertEqual("", by_case["low"]["failure_reason"])
-            self.assertEqual("0", by_case["low"]["power_samples"])
-            self.assertEqual("", by_case["low"]["power_avg_w"])
-            self.assertEqual("/power/low.csv", by_case["low"]["power_csv"])
+            self.assertEqual("pass", by_case["main_low"]["status"])
+            self.assertEqual("0", by_case["main_low"]["returncode"])
+            self.assertEqual("", by_case["main_low"]["failure_reason"])
+            self.assertEqual("0", by_case["main_low"]["power_samples"])
+            self.assertEqual("", by_case["main_low"]["power_avg_w"])
+            self.assertEqual("/power/low.csv", by_case["main_low"]["power_csv"])
 
-            self.assertEqual("timeout", by_case["missing"]["status"])
-            self.assertEqual("timeout", by_case["missing"]["failure_reason"])
-            self.assertEqual("0", by_case["missing"]["measure_power"])
-            self.assertEqual("", by_case["missing"]["power_samples"])
+            self.assertEqual("timeout", by_case["main_missing"]["status"])
+            self.assertEqual("timeout", by_case["main_missing"]["failure_reason"])
+            self.assertEqual("0", by_case["main_missing"]["measure_power"])
+            self.assertEqual("", by_case["main_missing"]["power_samples"])
 
     def test_duplicate_power_match_keys_fail_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -70,7 +70,7 @@ def _write_csv(path: Path, rows: Iterable[dict[str, str]]) -> None:
 
 
 def _match_key(row: dict[str, str]) -> tuple[str, str]:
-    return row.get("app", ""), row.get("args", "")
+    return row.get("exec_key", ""), row.get("fpga_bin_label", "")
 
 
 def _power_index(rows: list[dict[str, str]], *, power_csv: Path) -> dict[tuple[str, str], dict[str, str]]:
@@ -83,7 +83,10 @@ def _power_index(rows: list[dict[str, str]], *, power_csv: Path) -> dict[tuple[s
         else:
             out[key] = row
     if duplicates:
-        sample = ", ".join(f"app={app!r} args={args!r}" for app, args in duplicates[:5])
+        sample = ", ".join(
+            f"exec_key={exec_key!r} fpga_bin_label={fpga_bin!r}"
+            for exec_key, fpga_bin in duplicates[:5]
+        )
         raise ValueError(f"{power_csv} has duplicate power match keys: {sample}")
     return out
 

@@ -358,7 +358,10 @@ esac
             "max_us": "4.0",
             "p50_us": "2.0",
             "p95_us": "3.0",
-            **overrides,
+        })
+        row.update({
+            key: value for key, value in overrides.items()
+            if key in RAW_DB_COLUMNS
         })
         raw_db.parent.mkdir(parents=True, exist_ok=True)
         write_header = not raw_db.exists()
@@ -422,7 +425,7 @@ esac
             self.assertEqual(2, len(rows))
             self.assertEqual(["run_a", "run_b"], [row["run_id"] for row in rows])
             self.assertEqual("improve_tcol1", rows[0]["fpga_bin_label"])
-            self.assertEqual("gemm_m1_n128_k128", rows[0]["case_id"])
+            self.assertEqual("fpint_gemm_ffn_hw", rows[0]["app"])
             self.assertEqual("pass", rows[0]["status"])
             self.assertIn("elapsed_wall_s", rows[0])
             self.assertGreaterEqual(float(rows[0]["elapsed_wall_s"]), 0.0)
@@ -609,7 +612,7 @@ esac
             self.assertFalse(reset_log.exists())
             self.assertFalse(srun_log.exists())
 
-    def test_live_raw_db_keeps_all_logical_cases_for_shared_execution(self) -> None:
+    def test_live_raw_db_keeps_one_row_for_shared_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir = tmp_path / "build"
@@ -648,9 +651,9 @@ esac
             self.assertEqual(1, len(invocation_log.read_text().splitlines()))
             with (out_root / "raw_db.csv").open(newline="") as fp:
                 rows = list(csv.DictReader(fp))
-            self.assertEqual(2, len(rows))
-            self.assertEqual(["case_a", "case_b"], [row["case_id"] for row in rows])
-            self.assertEqual(["pass", "pass"], [row["status"] for row in rows])
+            self.assertEqual(1, len(rows))
+            self.assertEqual("pass", rows[0]["status"])
+            self.assertEqual(suite.cases[0].exec_key, rows[0]["exec_key"])
 
     def test_programs_fpga_before_bench_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1625,7 +1628,7 @@ exit 2
             self.assertEqual(1, manifest["skipped_existing_count"])
             self.assertEqual(0, manifest["run_execution_count"])
 
-    def test_append_migrates_raw_db_header_when_elapsed_column_is_missing(self) -> None:
+    def test_append_rejects_legacy_raw_db_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir = tmp_path / "build"
@@ -1658,31 +1661,22 @@ exit 2
                 writer.writeheader()
                 writer.writerow({column: "" for column in old_columns})
 
-            rc = run_suite(
-                suite,
-                RunOptions(
-                    build_dir=build_dir,
-                    fpga_bin_dir=fpga_bin_dir,
-                    fpga_bin_label="improve_tcol1",
-                    out_dir=out_root,
-                    platform=suite.defaults.platform,
-                    xrt_device_index=suite.defaults.xrt_device_index,
-                    blackbox_args=(),
-                    srun=False,
-                    program_fpga=False,
-                    run_id="schema_run",
-                ),
-            )
-
-            self.assertEqual(0, rc)
-            with raw_db.open(newline="") as fp:
-                reader = csv.DictReader(fp)
-                rows = list(reader)
-            self.assertEqual(RAW_DB_COLUMNS, reader.fieldnames)
-            self.assertEqual(2, len(rows))
-            self.assertEqual("", rows[0]["elapsed_wall_s"])
-            self.assertEqual("", rows[0]["failure_reason"])
-            self.assertGreaterEqual(float(rows[1]["elapsed_wall_s"]), 0.0)
+            with self.assertRaisesRegex(ValueError, "schema mismatch"):
+                run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="improve_tcol1",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=suite.defaults.xrt_device_index,
+                        blackbox_args=(),
+                        srun=False,
+                        program_fpga=False,
+                        run_id="schema_run",
+                    ),
+                )
 
 
 if __name__ == "__main__":

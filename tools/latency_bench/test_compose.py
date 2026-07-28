@@ -101,6 +101,15 @@ class ComposeTest(unittest.TestCase):
         self._write_rows(path, rows)
 
     def _write_rows(self, path: Path, rows: list[dict[str, str]]) -> None:
+        for index, row in enumerate(rows):
+            if not row.get("exec_key") and row.get("app") and row.get("args"):
+                row["exec_key"] = BenchCase(
+                    case_id=f"raw_{index}",
+                    app=row["app"],
+                    args=row["args"],
+                    warmup=int(row.get("warmup", 1)),
+                    iterations=int(row.get("iterations", 1)),
+                ).exec_key
         with path.open("w", newline="") as fp:
             writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
             writer.writeheader()
@@ -147,6 +156,70 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual(280.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(600.0, float(composed.loc[1, "weighted_latency_us"]))
 
+    def test_decode_step_count_weights_suite_without_using_raw_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            suite = BenchSuite(
+                name="decode_suite",
+                defaults=BenchDefaults(
+                    warmup=1, iterations=1, fpga_bin="improve_tcol1",
+                ),
+                cases=[
+                    BenchCase(
+                        case_id="decode_gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        calls_per_forward=2,
+                        decode_step_count=3,
+                        out_tokens=3,
+                        warmup=1,
+                        iterations=1,
+                    ),
+                ],
+            )
+
+            composed = compose_latency(
+                suite,
+                ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"),
+            )
+
+            self.assertEqual(2.0, float(composed.loc[0, "calls_per_forward"]))
+            self.assertEqual(3, int(composed.loc[0, "decode_step_count"]))
+            self.assertEqual(6.0, float(composed.loc[0, "effective_calls"]))
+            self.assertEqual(84.0, float(composed.loc[0, "weighted_latency_us"]))
+
+    def test_decode_sample_weight_scales_interpolated_contribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            suite = BenchSuite(
+                name="sampled_decode",
+                defaults=BenchDefaults(
+                    warmup=1, iterations=1, fpga_bin="improve_tcol1",
+                ),
+                cases=[
+                    BenchCase(
+                        case_id="decode_sample",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        stage="generation",
+                        calls_per_forward=2,
+                        decode_sample_weight=2.5,
+                        out_tokens=4,
+                        warmup=1,
+                        iterations=1,
+                    ),
+                ],
+            )
+            composed = compose_latency(
+                suite,
+                ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"),
+            )
+            self.assertEqual(5.0, float(composed.loc[0, "effective_calls"]))
+            self.assertEqual(70.0, float(composed.loc[0, "weighted_latency_us"]))
+
     def test_compose_filters_non_pass_and_dedupes_latest_with_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
@@ -158,6 +231,7 @@ class ComposeTest(unittest.TestCase):
                     "xclbin_sha256": "abc",
                     "app": "fpint_gemm_ffn_hw",
                     "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "exec_key": self._suite().cases[0].exec_key,
                     "status": "pass",
                     "avg_us": "11",
                     "p50_us": "10",
@@ -385,6 +459,7 @@ class ComposeTest(unittest.TestCase):
                     "timestamp_utc": "2026-01-01T00:00:00+00:00",
                     "app": "fpint_gemm_ffn_hw",
                     "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "exec_key": self._suite().cases[0].exec_key,
                     "status": "pass",
                     "p50_us": "10",
                     "avg_us": "10",
@@ -401,7 +476,7 @@ class ComposeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "fpga_bin_label"):
                 compose_latency(self._suite(), ComposeOptions(raw_dbs=(raw_db,), out=tmp_path / "out.csv"))
 
-    def test_match_fpga_bin_can_be_disabled_for_legacy_raw_db(self) -> None:
+    def test_match_fpga_bin_can_be_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             raw_db = tmp_path / "raw_db.csv"
@@ -411,6 +486,7 @@ class ComposeTest(unittest.TestCase):
                     "timestamp_utc": "2026-01-01T00:00:00+00:00",
                     "app": "fpint_gemm_ffn_hw",
                     "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "exec_key": self._suite().cases[0].exec_key,
                     "status": "pass",
                     "p50_us": "10",
                     "avg_us": "10",

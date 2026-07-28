@@ -8,6 +8,42 @@ from tools.latency_bench.suite import load_suite, suite_to_expanded_yaml, suite_
 
 
 class WorkloadVariantExpansionTest(unittest.TestCase):
+    def test_generation_workload_preserves_base_calls_and_exposes_decode_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            suite_path = Path(tmp) / "suite.yaml"
+            suite_path.write_text(
+                """
+name: decode_sequence
+defaults:
+  warmup: 1
+  iterations: 2
+workloads:
+  - id: llama2_decode
+    model: llama2-7b
+    stage: generation
+    batch: 1
+    gen_kv_len: 33
+    out_tokens: 3
+    max_seq_len: 64
+    qblk: 32
+    variant: all_fpint_gemm_improve
+""".lstrip()
+            )
+
+            suite = load_suite(suite_path, repo_root=Path.cwd())
+            q_proj_cases = [case for case in suite.cases if case.name == "q_proj"]
+            qk_cases = [case for case in suite.cases if case.name == "attn_qkT"]
+            q_proj = q_proj_cases[0]
+            qk = qk_cases[0]
+
+            self.assertEqual(32, q_proj.calls_per_forward)
+            self.assertEqual(1, len(q_proj_cases))
+            self.assertEqual(3.0, q_proj.decode_sample_weight)
+            self.assertEqual(3, q_proj.out_tokens)
+            self.assertEqual(3, len(qk_cases))
+            self.assertEqual([34, 35, 36], [case.shape["N"] for case in qk_cases])
+            self.assertEqual(64, qk.shape["padded_cache_length"])
+
     def test_workload_variant_propagates_backend_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             suite_path = Path(tmp) / "suite.yaml"
@@ -173,10 +209,11 @@ workloads:
                 self.assertEqual(1, len(suite.cases))
                 softmax = suite.cases[0]
                 self.assertEqual("attn_softmax", softmax.op)
-                self.assertEqual(33, softmax.shape["logical_cache_length"])
+                self.assertEqual(34, softmax.shape["logical_cache_length"])
                 self.assertEqual(64, softmax.shape["cache_capacity"])
                 self.assertEqual(64, softmax.shape["capacity_stride"])
-                self.assertIn("-seqk 33 -seqk-stride 64", softmax.args)
+                self.assertIn("-seqk 34 -seqk-stride 64", softmax.args)
+                self.assertIn("-seqk 64 -seqk-stride 64", softmax.padded_args)
 
     def test_standard_variant_expands_kv_cache_quant_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,12 +281,12 @@ workloads:
                 by_op["dequant_q_proj_weight_to_fp16"].args,
             )
             self.assertEqual(
-                "-k 512 -n 128 -q 128 -d 1 -t 1 "
+                "-k 513 -n 128 -q 128 -d 1 -t 1 "
                 "--quant-mode spinquant_signed_asymmetric",
                 by_op["kv_cache_dequant_k_to_attn_qkT"].args,
             )
             self.assertEqual(
-                "-k 512 -n 128 -q 128 -d 1 -t 0 "
+                "-k 513 -n 128 -q 128 -d 1 -t 0 "
                 "--quant-mode spinquant_signed_symmetric",
                 by_op["kv_cache_dequant_v_to_attn_pv"].args,
             )
