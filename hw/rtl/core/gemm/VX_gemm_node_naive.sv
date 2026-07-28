@@ -626,7 +626,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       VX_mem_bus_if #(
         .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(PSUM_LMEM_TAG_WIDTH)
-      ) rd_out_if[1](), wr_out_if[1]();
+      ) rd_out_if[1]();
+      VX_mem_bus_if #(
+        .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(PSUM_ARB_TAG_WIDTH)
+      ) wr_out_if[1]();
 
       if (i < GEMM_PSUM_LANES) begin : g_lower_lane
         `ASSIGN_VX_MEM_BUS_IF(rd_in_if[0], psum_rd_lane_mem_if[i]);

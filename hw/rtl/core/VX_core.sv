@@ -115,7 +115,11 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (PSUM_LMEM_TAG_WIDTH)
-    ) gemm_psum_rd_if[`LMEM_NUM_PORTS](), gemm_psum_wr_if[`LMEM_NUM_PORTS]();
+    ) gemm_psum_rd_if[`LMEM_NUM_PORTS]();
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (PSUM_ARB_TAG_WIDTH)
+    ) gemm_psum_wr_if[`LMEM_NUM_PORTS]();
 `endif
 
 	    VX_mem_bus_if #(

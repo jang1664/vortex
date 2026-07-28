@@ -140,11 +140,9 @@ def preprocess(workdir: Path = DEFAULT_WORK, *, clean: bool = True) -> PreprocRe
     # `-I` paths get their .sv/.vh files copied into copy_folder. Last-wins
     # ordering means PATCH_DIR must be last so our patched VX_gemm_unit.sv
     # overwrites the vortex copy. Mirrors gemm_unit_32x32/Makefile RTL_INCLUDE.
-    # NOTE: `rtl/fpu/patched_cvfpu` is intentionally NOT in this list — its
-    # only file (fpnew_pkg.sv) collides with cvfpu's upstream copy and would
-    # break analyze ordering (extern pkgs are emitted before extern non-pkg
-    # consumers). We instead post-substitute the path in run.py so the patched
-    # version takes the upstream's slot in the source list.
+    # NOTE: `rtl/fpu/patched_cvfpu` is intentionally NOT in this list. Its
+    # files collide with CVFPU's upstream definitions and would break analyze
+    # ordering. run.py substitutes each patched path into the upstream slot.
     include_dirs = [
         rtl,
         rtl / "libs",

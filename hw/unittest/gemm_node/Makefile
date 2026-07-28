@@ -149,7 +149,7 @@ INCDIRS_ += $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include \
             $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src \
             $(THIRD_PARTY_DIR)/cvfpu/src
 
-CVFPU_RTLS := $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv \
+CVFPU_RTLS := $(RTL_DIR)/fpu/patched_cvfpu/fpnew_pkg.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/lzc.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/rr_arb_tree.sv \
@@ -158,6 +158,7 @@ CVFPU_RTLS := $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_fma.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_opgroup_fmt_slice.sv \
               $(RTL_DIR)/fpu/patched_cvfpu/fpnew_opgroup_block.sv \
+              $(RTL_DIR)/fpu/patched_cvfpu/fpnew_opgroup_multifmt_slice.sv \
               $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_top.sv
 
 # Keep packages/modules order deterministic for VCS package imports.

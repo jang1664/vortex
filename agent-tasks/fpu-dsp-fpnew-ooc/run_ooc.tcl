@@ -31,8 +31,12 @@ if {$mode eq "dsp"} {
   if {$ip_dir eq ""} { error "Generated Xilinx IP directory not found" }
   add_files -norecurse [file join $ip_dir xil_fma_lowL/xil_fma_lowL.xci]
 } else {
+  lappend files [file join $repo hw/rtl/fpu/patched_cvfpu/fpnew_opgroup_block.sv]
+  lappend files [file join $repo hw/rtl/fpu/patched_cvfpu/fpnew_opgroup_multifmt_slice.sv]
   foreach f [glob -nocomplain [file join $repo third_party/cvfpu/src/*.sv]] {
-    if {[file tail $f] ne "fpnew_pkg.sv"} { lappend files $f }
+    if {[lsearch -exact {fpnew_pkg.sv fpnew_opgroup_block.sv fpnew_opgroup_multifmt_slice.sv} [file tail $f]] < 0} {
+      lappend files $f
+    }
   }
   foreach f [glob -nocomplain [file join $repo third_party/cvfpu/src/common_cells/src/*.sv]] { lappend files $f }
   foreach f [glob -nocomplain [file join $repo third_party/cvfpu/src/fpu_div_sqrt_mvp/hdl/*.sv]] { lappend files $f }
