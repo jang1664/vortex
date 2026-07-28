@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .generate_suites import resolve_case_fpga_bin
 from .suite import BenchCase, BenchDefaults, BenchSuite, find_repo_root, load_suite, sanitize_id, suite_to_expanded_yaml
+from .yaml_io import safe_dump
 
 
 @dataclass(frozen=True)
@@ -111,7 +110,7 @@ def _write_suite(path: Path, suite: BenchSuite, *, overwrite: bool) -> None:
         raise FileExistsError(f"merged suite output already exists; use --overwrite: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as fp:
-        yaml.safe_dump(suite_to_expanded_yaml(suite), fp, sort_keys=False)
+        safe_dump(suite_to_expanded_yaml(suite), fp, sort_keys=False)
 
 
 def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
@@ -208,5 +207,5 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
         "generated": generated,
     }
     with index_path.open("w") as fp:
-        yaml.safe_dump(index, fp, sort_keys=False)
+        safe_dump(index, fp, sort_keys=False)
     return {"index": index_path, **index}

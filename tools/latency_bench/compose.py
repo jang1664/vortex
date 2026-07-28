@@ -538,13 +538,19 @@ def _resolve_decode_reuse(
                 )
             representative_case, representative_position = representative
 
+            # Record the logical dependency even when the representative itself
+            # has no raw measurement.  Otherwise a reused row looks like an
+            # unrelated missing case and the actual missing anchor is hidden.
+            out.at[
+                position, "latency_reuse_representative_case_id"
+            ] = representative_case.case_id
+            out.at[
+                position, "power_reuse_representative_case_id"
+            ] = representative_case.case_id
+
             representative_has_latency = not pd.isna(
                 out.at[representative_position, "latency_us"]
             )
-            if representative_has_latency:
-                out.at[
-                    position, "latency_reuse_representative_case_id"
-                ] = representative_case.case_id
             if pd.isna(out.at[position, "latency_us"]) and representative_has_latency:
                 latency = float(out.at[representative_position, "latency_us"])
                 effective_calls = float(out.at[position, "calls_per_forward"])
@@ -566,16 +572,8 @@ def _resolve_decode_reuse(
                         representative_position, power_metric
                     ]
                     copied_power = True
-            representative_has_power = any(
-                not pd.isna(out.at[representative_position, power_metric])
-                for power_metric in POWER_METRIC_COLUMNS
-            )
             if copied_power:
                 out.at[position, "power_resolution_kind"] = resolution_kind
-            if representative_has_power:
-                out.at[
-                    position, "power_reuse_representative_case_id"
-                ] = representative_case.case_id
     return out
 
 

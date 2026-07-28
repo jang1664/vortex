@@ -1,7 +1,7 @@
 task: debug-gemm-naive-th16-hw
 state: COMPLETE
-updated: "2026-07-28 23:38"
-goal: "Make fpint_gemm_ffn_hw_naive pass the th16/b32 configuration through M256, including M128/M256 K256 N256 and the existing M64 regressions."
+updated: "2026-07-29 00:26"
+goal: "Evaluate whether GEMM_NAIVE final_wr_queue depth 4 preserves M256 K256 N256 correctness in exact-config XRT-VCS."
 pitfalls:
   - "The shared xrt-vcs build may contain stale defines; only an isolated build with vlogan define evidence is authoritative."
   - "The target config previously used L1_MEM_PORTS=4 with only two D-cache core requesters, which can lose scalar bypass responses; the current config uses L1_MEM_PORTS=2."
@@ -158,3 +158,24 @@ iterations:
     fix_applied: "Verified the implementation-side address-derived read-bank decode; verification made no RTL changes."
     verification: "New isolated build_debug_gemm_naive_iter8 was configured from scratch. Fresh vlogan proved GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, MXU_COL_TILE=32, and all required DBG_TRACE defines. M128 passed at 92540 cycles and repeatedly crossed 0x1ff80 bank 1 to 0x20000 bank 2, including the first crossing at 105.765/105.885 us. M256 passed at 177213 cycles. M64 passed at 53464 cycles. tools/verify_rtl.py was inspected as required but its blackbox mode hardcodes the shared repository build/ci/blackbox.sh, so it was not applicable to the mandated fresh isolated build and run_black.sh flow. Compile, wrapper, run, and compressed simv evidence are archived with the iter8_xrt_vcs prefix; raw traces of approximately 1.25 GB, 2.50 GB, and 632 MB were retained only as compressed 68 MB, 135 MB, and 35 MB artifacts."
     lesson: "Address-derived physical-bank decode scales across intra-command bank-group boundaries through M256 without disturbing parity-based credits, FIFOs, almost-full startup, or the validated M64 streaming behavior."
+  - timestamp: "2026-07-29 00:14"
+    iteration: 9
+    phase: implementation
+    status: pending_verification
+    test: "Final-output write queue depth-4 experiment with fresh exact-config M256 K256 N256 XRT-VCS"
+    error_summary: "No prior functional failure motivates this change; this iteration explicitly tests whether the final FP16 write queue can be reduced from 64 entries to 4 without losing output pulses."
+    root_cause: "The existing final_wr_queue reserves 64 entries even though the required buffering depth for the verified M256 workload has not been measured. The producer does not honor ready, so correctness must be established experimentally."
+    fix_applied: "Changed only final_wr_queue's VX_elastic_buffer SIZE parameter from 64 to exactly 4 in VX_gemm_node_naive.sv. Added no backpressure, assertions, or compensating behavior and preserved all other RTL changes."
+    verification: "RTL implementation only; no blackbox run by rtl-impl. Targeted search confirms final_wr_queue SIZE=4 and git diff --check passed. Pending fresh exact th16/b32 XRT-VCS M256 K256 N256."
+    lesson: "Pending verification; the experiment will determine whether four entries absorb the observed final-write arbitration latency for M256."
+  - timestamp: "2026-07-29 00:26"
+    iteration: 9
+    phase: verification
+    status: pass
+    test: "Fresh exact-config xrt-vcs fpint_gemm_ffn_hw_naive M256 K256 N256 with final_wr_queue SIZE=4"
+    command: "From build_debug_gemm_naive_iter9_depth4 after sourcing configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh: PATH=/usr/bin:$PATH timeout 1800 ../ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 256 -k 256 -n 256' --cores 1 --debug 3"
+    error_summary: "No errors. The depth-4 experiment completed with correct output and no mismatch, fatal, assertion, FIFO/credit issue, timeout, or deadlock."
+    root_cause: "For the exact M256 K256 N256 workload, four final-output queue entries are sufficient to absorb the observed final-write arbitration latency even though the producer does not honor ready. This result establishes correctness for the tested workload, not a general minimum depth proof."
+    fix_applied: "Verified the implementation-side final_wr_queue SIZE reduction from 64 to 4; verification made no RTL changes."
+    verification: "New isolated build_debug_gemm_naive_iter9_depth4 was configured from scratch, and the source instance at VX_gemm_node_naive.sv uses SIZE(4). Fresh vlogan proved GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, MXU_COL_TILE=32, and all required DBG_TRACE defines. M256 K256 N256 passed at 177213 cycles, identical to the iteration-8 depth-64 baseline. tools/verify_rtl.py was inspected as required but its blackbox mode hardcodes the shared repository build/ci/blackbox.sh, so it was not applicable to the mandated fresh isolated build and run_black.sh flow. Compile, wrapper, run, concise summary, and a compressed copy of the approximately 2.50 GB simv trace are archived with the iter9_depth4 prefix."
+    lesson: "A four-entry final-write queue preserves exact-config M256 correctness and cycle count in this experiment; broader traffic or arbitration patterns would require separate coverage before treating depth 4 as universally sufficient."

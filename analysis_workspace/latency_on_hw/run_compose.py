@@ -15,9 +15,11 @@ The target workloads come from the suites most recently written by
 
 The result roots must contain ``C1/raw_db.csv``, ``C3/raw_db.csv``, and
 ``C4/raw_db.csv``. By default the script composes ``fpga_cycle`` using the
-latest passing measurement, keeps unresolved cases as NaN, and infers warmup
-and iteration values from the input raw DBs. Use ``--metric``, ``--select``,
-``--missing``, ``--warmup``, or ``--iterations`` to override those defaults.
+latest passing measurement, rejects unresolved latency or power, and infers
+warmup and iteration values from the input raw DBs. Use ``--metric``,
+``--select``, ``--missing``, ``--warmup``, or ``--iterations`` to override
+the compose selection defaults; the final complete-output validation always
+remains enabled.
 
 Outputs are written under ``OUT/llama2_7b``, ``OUT/llama3_8b``, and
 ``OUT/combined``. Each model directory contains ``composed.csv``,
@@ -63,6 +65,11 @@ from tools.latency_bench.suite import load_suite  # noqa: E402
 LATENCY_DIR = REPO_ROOT / "analysis_workspace" / "latency_on_hw"
 DEFAULT_RAW_DB_SUBDIRS = ("C1", "C3", "C4")
 GENERATED_SUITE_STAGES = ("prefill", "generation")
+REQUIRED_POWER_COLUMNS = (
+    "power_avg_w",
+    "power_vcc_avg_w",
+    "power_dynamic_avg_w",
+)
 
 
 @dataclass(frozen=True)
@@ -156,6 +163,79 @@ def _measurement_overrides(
     )
 
 
+def _positive_int_values(frame: pd.DataFrame, column: str) -> list[int]:
+    if column not in frame.columns:
+        return []
+    values = pd.to_numeric(frame[column], errors="coerce").dropna().astype(int)
+    return sorted({int(value) for value in values if int(value) > 0})
+
+
+def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str, object]:
+    required = {
+        "model",
+        "case_id",
+        "stage",
+        "batch",
+        "prefill_seq_len",
+        "gen_kv_len",
+        "out_tokens",
+        "output_token_index",
+        "calls_per_forward",
+        "latency_us",
+        "compose_status",
+        "latency_resolution_kind",
+        "power_resolution_kind",
+        *REQUIRED_POWER_COLUMNS,
+    }
+    missing_columns = sorted(required - set(frame.columns))
+    if missing_columns:
+        raise ValueError(
+            f"{label} composed output is missing required columns: "
+            f"{', '.join(missing_columns)}"
+        )
+
+    duplicated = frame.duplicated(["model", "case_id"], keep=False)
+    if bool(duplicated.any()):
+        duplicate_ids = (
+            frame.loc[duplicated, ["model", "case_id"]]
+            .astype(str)
+            .agg(":".join, axis=1)
+            .drop_duplicates()
+            .tolist()
+        )
+        preview = ", ".join(duplicate_ids[:10])
+        suffix = "" if len(duplicate_ids) <= 10 else f", ... ({len(duplicate_ids)} total)"
+        raise ValueError(f"{label} composed output has duplicate logical cases: {preview}{suffix}")
+
+    valid_status = frame["compose_status"].astype(str).isin({"pass", "estimated"})
+    latency = pd.to_numeric(frame["latency_us"], errors="coerce")
+    missing_latency = ~valid_status | latency.isna()
+    missing_power = pd.Series(False, index=frame.index)
+    for column in REQUIRED_POWER_COLUMNS:
+        missing_power |= pd.to_numeric(frame[column], errors="coerce").isna()
+
+    if bool(missing_latency.any()) or bool(missing_power.any()):
+        bad = frame.loc[missing_latency | missing_power, ["model", "case_id"]].copy()
+        bad["missing_latency"] = missing_latency.loc[bad.index]
+        bad["missing_power"] = missing_power.loc[bad.index]
+        preview = ", ".join(
+            f"{row.model}:{row.case_id}"
+            f"(latency={bool(row.missing_latency)},power={bool(row.missing_power)})"
+            for row in bad.head(10).itertuples()
+        )
+        suffix = "" if len(bad) <= 10 else f", ... ({len(bad)} total)"
+        raise ValueError(f"{label} composed output is incomplete: {preview}{suffix}")
+
+    generation = frame[frame["stage"].astype(str).eq("generation")]
+    return {
+        "complete": True,
+        "duplicate_case_count": 0,
+        "missing_latency_count": 0,
+        "missing_power_count": 0,
+        "generation_out_tokens": _positive_int_values(generation, "out_tokens"),
+    }
+
+
 def compose_model(
     model: ModelInput,
     *,
@@ -203,6 +283,7 @@ def compose_model(
         frames.append(composed)
 
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    completeness = _validate_complete_composed(combined, label=model.key)
     model_out = out_root / model.key
     composed_path, summary_path = write_compose_outputs(combined, model_out)
     manifest = {
@@ -229,6 +310,7 @@ def compose_model(
             combined["power_resolution_kind"].value_counts(dropna=False).to_dict()
             if "power_resolution_kind" in combined else {}
         ),
+        "completeness": completeness,
         "composed_csv": str(composed_path.resolve()),
         "summary_csv": str(summary_path.resolve()) if summary_path else "",
     }
@@ -279,7 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--metric", choices=METRIC_COLUMNS, default="fpga_cycle")
     parser.add_argument("--select", choices=SELECT_POLICIES, default="latest")
-    parser.add_argument("--missing", choices=MISSING_POLICIES, default="nan")
+    parser.add_argument("--missing", choices=MISSING_POLICIES, default="error")
     parser.add_argument(
         "--warmup",
         type=int,
@@ -332,6 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     combined = pd.concat(frames, ignore_index=True)
+    combined_completeness = _validate_complete_composed(combined, label="combined")
     composed_path, summary_path = write_compose_outputs(combined, args.out / "combined")
     top_manifest = {
         "models": manifests,
@@ -339,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         "select": args.select,
         "missing": args.missing,
         "row_count": len(combined),
+        "completeness": combined_completeness,
         "composed_csv": str(composed_path.resolve()),
         "summary_csv": str(summary_path.resolve()) if summary_path else "",
     }

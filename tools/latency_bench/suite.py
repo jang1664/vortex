@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-import yaml
+from .yaml_io import safe_load
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -1037,7 +1037,7 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
                           matrix_overrides: SuiteMatrixOverrides | None = None,
                           collect_workload_structures: bool = False) -> LoadedSuiteArtifacts:
     repo_root = find_repo_root() if repo_root is None else repo_root
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = safe_load(path.read_text()) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"suite must be a YAML mapping: {path}")
     raw = _apply_suite_matrix_overrides(raw, matrix_overrides)

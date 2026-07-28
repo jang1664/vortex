@@ -326,11 +326,25 @@ def _derive_seq_len(row: pd.Series, shape: dict[str, object]) -> int | str:
     stage = str(row.get("stage", ""))
     case_id = row.get("case_id", "")
     if stage == "generation":
+        # ``gen_kv_len`` identifies the decode workload.  Per-kernel cache
+        # lengths advance for every output token and must not split one decode
+        # workload into a separate plot group per step.
+        found = _int_or_none(row.get("gen_kv_len"))
+        if found is not None:
+            return found
+        found = _int_or_none(shape.get("input_kv_length"))
+        if found is not None:
+            return found
+        found = _regex_int(case_id, (r"(?:^|_)gen_kv_len(\d+)(?:_|$)",))
+        if found is not None:
+            return found
         for key in ("seq_len", "gen_kv_len", "cache_len", "seqk"):
             found = _int_or_none(shape.get(key))
             if found is not None:
                 return found
-        found = _regex_int(case_id, (r"(?:^|_)gen_kv_len(\d+)(?:_|$)",))
+
+    if stage == "prefill":
+        found = _int_or_none(row.get("prefill_seq_len"))
         if found is not None:
             return found
 

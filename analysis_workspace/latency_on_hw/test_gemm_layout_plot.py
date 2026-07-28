@@ -66,10 +66,55 @@ class GemmLayoutPlotTests(unittest.TestCase):
         self.assertEqual(indexed.loc["C4", "vector"], 3.0 + 5.0 + 9.0 - layout_overhead)
         self.assertEqual(indexed.loc["C4", "total"], 21.0)
 
+    def test_out_tokens_is_not_counted_as_latency_or_vector(self) -> None:
+        rows = self._backend_rows(stage="Generation").assign(out_tokens=128)
+
+        self.assertNotIn("out_tokens", plot._stack_value_columns(pd, rows))
+        result = plot._build_gemm_layout_vector_stack(pd, rows).set_index(
+            "candidate"
+        )
+
+        self.assertEqual(result.loc["C3", "vector"], 1.0 + 2.0 + 7.0)
+        self.assertEqual(result.loc["C3", "total"], 20.0)
+        self.assertEqual(result.loc["C4", "total"], 21.0)
+
+    def test_out_tokens_is_not_counted_as_energy_with_dequant(self) -> None:
+        rows = self._backend_rows(stage="Generation").assign(
+            out_tokens=128,
+            **{
+                "dequant_q_proj_weight_to_fp16::kv_cache_dequant_w4a16": 2.0,
+                "kv_cache_dequant_k::kv_cache_dequant_w4a16": 3.0,
+            },
+        )
+
+        result = plot._build_gemm_layout_vector_dequant_stack(
+            pd,
+            rows,
+        ).set_index("candidate")
+
+        self.assertEqual(result.loc["C3", "vector"], 1.0 + 2.0 + 7.0)
+        self.assertEqual(result.loc["C3", "W dequant"], 2.0)
+        self.assertEqual(result.loc["C3", "KV dequant"], 3.0)
+        self.assertEqual(result.loc["C3", "total"], 25.0)
+
+    def test_name_backend_stack_rejects_unknown_numeric_metadata(self) -> None:
+        rows = self._backend_rows().assign(decode_token_index=7)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "numeric non-kernel columns:.*decode_token_index",
+        ):
+            plot._build_gemm_layout_vector_stack(pd, rows)
+
     def test_relative_stack_uses_smallest_positive_total_per_x_tick(self) -> None:
         absolute = plot._build_gemm_layout_stack(pd, self._backend_rows())
         stack_columns = plot._stack_value_columns(pd, absolute)
-        relative = plot._apply_relative_stack_values(pd, absolute, stack_columns)
+        relative = plot._apply_relative_stack_values(
+            pd,
+            absolute,
+            stack_columns,
+            baseline_candidate=None,
+        )
         indexed = relative.set_index("candidate")
 
         baseline = 9.0
@@ -241,6 +286,8 @@ class GemmLayoutPlotTests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_gemm_layout_stacked",
+                "--out-tokens",
+                "128",
                 "--llama3-e2e-gemm-layout-stacked-data",
                 "llama3.csv",
             ]
@@ -257,6 +304,8 @@ class GemmLayoutPlotTests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_gemm_layout_vector_stacked",
+                "--out-tokens",
+                "128",
                 "--llama3-e2e-gemm-layout-stacked-data",
                 "llama3.csv",
             ]

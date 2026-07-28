@@ -13,7 +13,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
-import yaml
 
 from .fpga_bins import FpgaBinConfig, resolve_fpga_bin, resolve_fpga_bin_config
 from .interpolation import write_current_cases
@@ -28,6 +27,7 @@ from .raw_db import (
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
 from .suite import BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
+from .yaml_io import safe_dump
 
 
 DEFAULT_SRUN_ARGS = (
@@ -499,7 +499,7 @@ def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> None:
         shutil.copy2(suite.source_path, out_dir / "suite.yaml")
     expanded = suite_to_expanded_yaml(suite)
     with (out_dir / "suite.expanded.yaml").open("w") as fp:
-        yaml.safe_dump(expanded, fp, sort_keys=False)
+        safe_dump(expanded, fp, sort_keys=False)
 
 
 def _atomic_copy(source: Path, destination: Path) -> None:

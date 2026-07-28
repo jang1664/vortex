@@ -6,6 +6,7 @@ import math
 import re
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -1134,6 +1135,7 @@ def _fpga_bin_labels(row: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(labels))
 
 
+@lru_cache(maxsize=None)
 def _resolve_fpga_bin_dir(label: str) -> Path | None:
     try:
         return resolve_fpga_bin_config(label).path
@@ -1154,6 +1156,7 @@ def _existing_unique_paths(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
+@lru_cache(maxsize=None)
 def _data_clk_period_s_from_xclbin_info(path: Path) -> float | None:
     in_data_clk = False
     try:
@@ -1513,6 +1516,14 @@ def _batch(row: Mapping[str, Any]) -> int | None:
 
 
 def _seq_len(row: Mapping[str, Any]) -> int | None:
+    if _stage(row) == GENERATION_STAGE:
+        value = _to_int(row.get("gen_kv_len"))
+        if value is not None:
+            return value
+        shape = _shape_for_row(row)
+        value = _to_int(shape.get("input_kv_length"))
+        if value is not None:
+            return value
     for key in ("seq_len", "energy_seq_len"):
         value = _to_int(row.get(key))
         if value is not None:

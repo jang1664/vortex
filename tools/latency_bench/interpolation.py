@@ -10,13 +10,12 @@ import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import yaml
 
 from .raw_db import RAW_DB_COLUMNS, _write_raw_rows
 from .suite import (
@@ -27,6 +26,7 @@ from .suite import (
     suite_to_expanded_yaml,
     suite_to_rows,
 )
+from .yaml_io import safe_dump
 
 
 @dataclass(frozen=True)
@@ -211,13 +211,17 @@ def write_error_outputs(errors: list[InterpolationError], out_dir: Path) -> None
 
 def write_candidate_suite(suite: BenchSuite, cases: list[BenchCase], path: Path) -> None:
     selected = [
-        replace(case, measurement_kind="measured")
+        replace(
+            case,
+            measurement_kind="measured",
+            shape={**case.shape, "measurement_kind": "measured"},
+        )
         for case in cases
     ]
     candidate_suite = replace(suite, name=f"{suite.name}_interpolation_probe", cases=selected)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as fp:
-        yaml.safe_dump(suite_to_expanded_yaml(candidate_suite), fp, sort_keys=False)
+        safe_dump(suite_to_expanded_yaml(candidate_suite), fp, sort_keys=False)
 
 
 def run_measurement_command(template: str, suite_path: Path, out_dir: Path) -> Path:
@@ -337,6 +341,33 @@ def _main_raw_db(args: argparse.Namespace, output_root: Path) -> Path:
     return Path(args.raw_db) if args.raw_db else output_root / "raw_db.csv"
 
 
+def _raw_measurement_overrides(raw_db: Path) -> tuple[int | None, int | None]:
+    if not raw_db.exists():
+        return None, None
+    counts: Counter[tuple[int, int]] = Counter()
+    with raw_db.open(newline="") as fp:
+        for row in csv.DictReader(fp):
+            if row.get("status") != "pass":
+                continue
+            try:
+                counts[(int(row["warmup"]), int(row["iterations"]))] += 1
+            except (KeyError, TypeError, ValueError):
+                continue
+    if not counts:
+        return None, None
+    return counts.most_common(1)[0][0]
+
+
+def _load_suite_for_raw(suite_path: Path, raw_db: Path) -> BenchSuite:
+    warmup, iterations = _raw_measurement_overrides(raw_db)
+    return load_suite(
+        suite_path,
+        repo_root=find_repo_root(),
+        warmup_override=warmup,
+        iterations_override=iterations,
+    )
+
+
 def promote_probe_rows(main_raw_db: Path, probe_raw_db: Path, exec_keys: set[str]) -> int:
     _, probe_rows = _raw_metric(probe_raw_db, "p50_us")
     existing_values, _ = _raw_metric(main_raw_db, "p50_us")
@@ -415,11 +446,11 @@ def write_refinement_progress(
 
 
 def evaluate_command(args: argparse.Namespace) -> int:
-    suite = load_suite(Path(args.suite), repo_root=find_repo_root())
     output_root, out = _artifact_dir(
         args, "evaluations", args.evaluation_id
     )
     raw_db = _main_raw_db(args, output_root)
+    suite = _load_suite_for_raw(Path(args.suite), raw_db)
     candidates = unresolved_interpolation_candidates(suite, raw_db, args.metric)
     selected = sample_candidates(
         suite, args.samples_per_kernel, args.seed, candidates=candidates
@@ -523,11 +554,11 @@ def evaluate_command(args: argparse.Namespace) -> int:
 
 
 def refine_command(args: argparse.Namespace) -> int:
-    suite = load_suite(Path(args.suite), repo_root=find_repo_root())
     output_root, out = _artifact_dir(
         args, "refinements", args.refinement_id
     )
     main_raw = _main_raw_db(args, output_root)
+    suite = _load_suite_for_raw(Path(args.suite), main_raw)
     probe_raw = Path(args.probe_raw_db) if args.probe_raw_db else None
     out.mkdir(parents=True, exist_ok=True)
     grouped: dict[str, list[BenchCase]] = defaultdict(list)

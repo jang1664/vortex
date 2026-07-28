@@ -38,6 +38,7 @@ PLOT_CHOICES = (
     "all",
 )
 EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
+REQUESTED_OUT_TOKENS: int | None = None
 
 ONE_COLUMN_FIGSIZE = (3.5, 9.3)
 TWO_COLUMN_FIGSIZE = (7.16, 9.3)
@@ -107,6 +108,34 @@ GEMM_DYNAMIC_POWER_LABELS = {
 KERNEL_DYNAMIC_POWER_LABELS = {
     "quantization": "quant",
     "dequantization": "dequant",
+}
+KERNEL_KIND_BY_APP = {
+    "detile_output": "layout",
+    "eladd": "eladd",
+    "eladd_layout_fused": "eladd",
+    "elmul": "elmul",
+    "elmul_layout_fused": "elmul",
+    "fpint_gemm_ffn_hw": "gemm",
+    "fpint_gemm_ffn_hw_naive": "gemm",
+    "hadamard": "hadamard",
+    "hadamard_layout_fused": "hadamard",
+    "head_concat": "concat",
+    "head_concat_layout_fused": "concat",
+    "kv_cache_dequant_w4a16": "dequantization",
+    "kv_cache_quant_layout_fused_w4a16": "quantization",
+    "kv_cache_quant_w4a16": "quantization",
+    "rms_norm_layout_fused": "rmsnorm",
+    "rmsnorm": "rmsnorm",
+    "rope": "rope",
+    "rope_layout_fused": "rope",
+    "sgemm_tcu": "gemm",
+    "silu": "silu",
+    "silu_layout_fused": "silu",
+    "softmax": "softmax",
+    "softmax_layout_fused": "softmax",
+    "tile_input_a": "layout",
+    "tile_scale_zp_w4a16": "layout",
+    "tile_weight_w4a16": "layout",
 }
 
 # Models included in the combined Llama plots, in display order.
@@ -515,6 +544,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "kernel_dynamic_power, "
             "latency, or all"
         ),
+    )
+    parser.add_argument(
+        "--out-tokens",
+        required=True,
+        type=int,
+        help="scalar decode output-token count represented by every prepared CSV.",
     )
     parser.add_argument(
         "--latency-dir",
@@ -939,13 +974,31 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
     raise ValueError(f"unsupported prepared data kind: {kind}")
 
 
+def _csv_matches_out_tokens(path: Path) -> bool:
+    if REQUESTED_OUT_TOKENS is None:
+        return False
+    try:
+        with path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            if "out_tokens" not in (reader.fieldnames or ()):
+                return False
+            values = {
+                int(str(row.get("out_tokens", "")).strip())
+                for row in reader
+                if str(row.get("out_tokens", "")).strip()
+            }
+    except (OSError, ValueError):
+        return False
+    return values == {REQUESTED_OUT_TOKENS}
+
+
 def _discover_prepared_csv(prepared_root: Path, kind: str) -> Path:
     if not prepared_root.exists():
         raise FileNotFoundError(f"prepared root does not exist: {prepared_root}")
     candidates = [
         path
         for path in prepared_root.glob(f"*/{EXCEL_FIGURE_DATA_CSV}")
-        if _candidate_matches_kind(path, kind)
+        if _candidate_matches_kind(path, kind) and _csv_matches_out_tokens(path)
     ]
     if not candidates:
         raise FileNotFoundError(f"no {kind} {EXCEL_FIGURE_DATA_CSV} found under {prepared_root}")
@@ -964,6 +1017,8 @@ def _discover_model_csv(prepared_root: Path, model_key: str, kind: str, label: s
         if model_key not in name:
             continue
         if not _candidate_matches_kind(path, kind):
+            continue
+        if not _csv_matches_out_tokens(path):
             continue
         candidates.append(path)
     if not candidates:
@@ -1036,6 +1091,8 @@ def _discover_model_energy_csv(
         if not _candidate_matches_kind(path, kind):
             continue
         if _energy_csv_power_metric(path) != power_metric:
+            continue
+        if not _csv_matches_out_tokens(path):
             continue
         candidates.append(path)
     if not candidates:
@@ -1526,6 +1583,18 @@ def write_energy_stacked_figure_data_csv(
 def _read_excel_figure_data(path: Path) -> Any:
     pd, _ = _import_plot_modules()
     df = pd.read_csv(path)
+    if "out_tokens" not in df.columns:
+        if REQUESTED_OUT_TOKENS is not None:
+            raise ValueError(f"prepared CSV has no scalar out_tokens column: {path}")
+    else:
+        values = pd.to_numeric(df["out_tokens"], errors="coerce").dropna().astype(int).unique()
+        if len(values) != 1:
+            raise ValueError(f"prepared CSV must contain exactly one out_tokens value: {path}")
+        if REQUESTED_OUT_TOKENS is not None and int(values[0]) != REQUESTED_OUT_TOKENS:
+            raise ValueError(
+                f"prepared CSV out_tokens={int(values[0])} does not match "
+                f"--out-tokens={REQUESTED_OUT_TOKENS}: {path}"
+            )
     if "stage" in df.columns:
         for column in ("stage", "batch", "seq"):
             if column in df.columns:
@@ -1954,8 +2023,24 @@ def plot_wide_candidate_bars(
     plt.close(fig)
 
 
+STACK_METADATA_COLUMNS = {
+    "model",
+    "stage",
+    "batch",
+    "seq",
+    "candidate",
+    "total",
+    "out_tokens",
+    "power_metric",
+}
+
+
 def _stack_value_columns(pd: Any, df: Any) -> list[str]:
-    excluded = {"stage", "batch", "seq", "candidate", "total"}
+    # Prepared figure tables contain numeric workload metadata alongside the
+    # numeric stack values.  Keep that metadata out of both latency and energy
+    # stacks; otherwise, for example, out_tokens=128 is plotted as 128 units of
+    # vector latency/energy by the name/backend stack transform.
+    excluded = STACK_METADATA_COLUMNS
     columns = _numeric_columns(pd, df, excluded)
     return [column for column in columns if column != "total"]
 
@@ -2052,6 +2137,16 @@ def _build_gemm_layout_stack(
         raise ValueError(f"backend-stacked E2E data missing columns: {sorted(missing)}")
 
     backend_columns = _stack_value_columns(pd, df)
+    non_name_backend_columns = [
+        column
+        for column in backend_columns
+        if NAME_BACKEND_SEPARATOR not in column
+    ]
+    if non_name_backend_columns:
+        raise ValueError(
+            "name/backend-stacked E2E data has numeric non-kernel columns: "
+            f"{sorted(non_name_backend_columns)}"
+        )
     gemm_columns = [
         column
         for column in backend_columns
@@ -3389,12 +3484,24 @@ def plot_kernel_dynamic_power_by_kind(
 ) -> None:
     pd, plt = _import_plot_modules()
     frames = []
-    required = {"kind", "app", "power_dynamic_avg_w", "status"}
+    required = {"app", "power_dynamic_avg_w", "status"}
     for path in raw_db_paths:
         frame = pd.read_csv(path, low_memory=False)
         missing = required - set(frame.columns)
         if missing:
             raise ValueError(f"{path} missing columns: {sorted(missing)}")
+        app = frame["app"].fillna("").astype(str).str.strip()
+        inferred_kind = app.map(KERNEL_KIND_BY_APP)
+        if "kind" not in frame.columns:
+            frame["kind"] = inferred_kind
+        else:
+            kind = frame["kind"].fillna("").astype(str).str.strip()
+            frame["kind"] = kind.where(kind.ne(""), inferred_kind)
+        unknown_apps = sorted(app[frame["kind"].isna()].unique())
+        if unknown_apps:
+            raise ValueError(
+                f"{path} has apps without a kernel-kind mapping: {unknown_apps}"
+            )
         frame = frame[["kind", "app", "power_dynamic_avg_w", "status"]].copy()
         frame["source_raw_db"] = str(path)
         frames.append(frame)
@@ -3954,7 +4061,11 @@ def run_selected_plots(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    global REQUESTED_OUT_TOKENS
     args = parse_args(argv)
+    if args.out_tokens < 1:
+        raise ValueError(f"--out-tokens must be >= 1, got {args.out_tokens}")
+    REQUESTED_OUT_TOKENS = args.out_tokens
     run_selected_plots(args)
     return 0
 

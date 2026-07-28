@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
+"""Prepare plot-ready CSVs from a complete compose result.
+
+Example from the repository root::
+
+    conda run -n vortex python analysis_workspace/latency_on_hw/prepare.py \
+      --composed-csv analysis_workspace/latency_on_hw/composed_results/combined/composed.csv \
+      --out-tokens 128
+
+The input may contain several decode output lengths.  One invocation selects
+exactly one scalar ``out_tokens`` workload, reports decode latency as average
+TPOT, and reports energy per generated token.  Measurement reuse and
+interpolation must already be resolved by ``run_compose.py``.
+"""
+
+import argparse
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 import math
+import os
 import sys
 
 import pandas as pd
@@ -60,14 +77,14 @@ TARGET_MODELS = target_models()
 # Match make_case.sh / make_cases.sh stage-specific shape controls:
 # --prefill-batches, --prefill-seq-lens, --generation-batches, --generation-seq-lens.
 TARGET_PREFILL_BATCHES = (1,)
-# TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
-TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
-# TARGET_PREFILL_SEQ_LENS = (1024,)
-TARGET_GENERATION_BATCHES = (1, 2, 4)
-# TARGET_GENERATION_BATCHES = (1,)
-# TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
-TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
-# TARGET_GENERATION_SEQ_LENS = (1024,)
+TARGET_PREFILL_SEQ_LENS = (1024,)
+TARGET_GENERATION_BATCHES = (1,)
+TARGET_GENERATION_SEQ_LENS = (1024,)
+# make_case.sh quick generates decode steps 1..128 from gen_kv_len=1024.
+TARGET_GENERATION_OUT_TOKENS = 128
+TARGET_GENERATION_MAX_SEQ_LEN = 65536
+TARGET_GENERATION_DECODE_MEASUREMENT = "sampled"
+TARGET_GENERATION_DECODE_SAMPLE_INTERVAL = 32
 
 # Per-output shape selection. Empty tuples mean "all available shapes" for that stage.
 E2E_PREFILL_BATCHES = TARGET_PREFILL_BATCHES
@@ -84,6 +101,9 @@ ENERGY_PREFILL_BATCHES = TARGET_PREFILL_BATCHES
 ENERGY_PREFILL_SEQ_LENS = TARGET_PREFILL_SEQ_LENS
 ENERGY_GENERATION_BATCHES = TARGET_GENERATION_BATCHES
 ENERGY_GENERATION_SEQ_LENS = TARGET_GENERATION_SEQ_LENS
+E2E_GENERATION_OUT_TOKENS = TARGET_GENERATION_OUT_TOKENS
+GEMM_ONLY_GENERATION_OUT_TOKENS = TARGET_GENERATION_OUT_TOKENS
+ENERGY_GENERATION_OUT_TOKENS = TARGET_GENERATION_OUT_TOKENS
 
 # SUITE_SOURCE selects which suite directory is loaded. E2E composition must use
 # the original model suites. generated_merged suites are execution shards from
@@ -102,6 +122,7 @@ def _stage_shape_name(
     prefill_seq_lens: tuple[int, ...],
     generation_batches: tuple[int, ...],
     generation_seq_lens: tuple[int, ...],
+    generation_out_tokens: int,
 ) -> str:
     def _shape_name(batches: tuple[int, ...], seq_lens: tuple[int, ...]) -> str:
         batch_text = "all" if not batches else "-".join(str(value) for value in batches)
@@ -110,10 +131,17 @@ def _stage_shape_name(
 
     prefill = _shape_name(prefill_batches, prefill_seq_lens)
     generation = _shape_name(generation_batches, generation_seq_lens)
+    generation = f"{generation}_o{generation_out_tokens}"
     return f"prefill_{prefill}__generation_{generation}"
 
 
-ShapeSelection = tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...]]
+ShapeSelection = tuple[
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+    int,
+]
 
 
 def _selection_tuple(
@@ -122,17 +150,31 @@ def _selection_tuple(
     prefill_seq_lens: tuple[int, ...],
     generation_batches: tuple[int, ...],
     generation_seq_lens: tuple[int, ...],
+    generation_out_tokens: int,
 ) -> ShapeSelection:
-    return (prefill_batches, prefill_seq_lens, generation_batches, generation_seq_lens)
+    return (
+        prefill_batches,
+        prefill_seq_lens,
+        generation_batches,
+        generation_seq_lens,
+        generation_out_tokens,
+    )
 
 
 def _stage_shape_name_for_selection(selection: ShapeSelection) -> str:
-    prefill_batches, prefill_seq_lens, generation_batches, generation_seq_lens = selection
+    (
+        prefill_batches,
+        prefill_seq_lens,
+        generation_batches,
+        generation_seq_lens,
+        generation_out_tokens,
+    ) = selection
     return _stage_shape_name(
         prefill_batches=prefill_batches,
         prefill_seq_lens=prefill_seq_lens,
         generation_batches=generation_batches,
         generation_seq_lens=generation_seq_lens,
+        generation_out_tokens=generation_out_tokens,
     )
 
 
@@ -141,18 +183,21 @@ E2E_SHAPE_SELECTION = _selection_tuple(
     prefill_seq_lens=E2E_PREFILL_SEQ_LENS,
     generation_batches=E2E_GENERATION_BATCHES,
     generation_seq_lens=E2E_GENERATION_SEQ_LENS,
+    generation_out_tokens=E2E_GENERATION_OUT_TOKENS,
 )
 GEMM_ONLY_SHAPE_SELECTION = _selection_tuple(
     prefill_batches=GEMM_ONLY_PREFILL_BATCHES,
     prefill_seq_lens=GEMM_ONLY_PREFILL_SEQ_LENS,
     generation_batches=GEMM_ONLY_GENERATION_BATCHES,
     generation_seq_lens=GEMM_ONLY_GENERATION_SEQ_LENS,
+    generation_out_tokens=GEMM_ONLY_GENERATION_OUT_TOKENS,
 )
 ENERGY_SHAPE_SELECTION = _selection_tuple(
     prefill_batches=ENERGY_PREFILL_BATCHES,
     prefill_seq_lens=ENERGY_PREFILL_SEQ_LENS,
     generation_batches=ENERGY_GENERATION_BATCHES,
     generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
+    generation_out_tokens=ENERGY_GENERATION_OUT_TOKENS,
 )
 
 def main_out_name(model: str) -> str:
@@ -262,6 +307,27 @@ def raw_dbs_for_model(model: str) -> tuple[Path, ...]:
         raise ValueError(f"no raw DB root configured for model: {model}") from exc
     return tuple(root / subdir / "raw_db.csv" for subdir in RAW_DB_SUBDIRS)
 
+
+@lru_cache(maxsize=None)
+def raw_measurement_settings(model: str) -> tuple[int, int]:
+    frames = []
+    for path in raw_dbs_for_model(model):
+        frame = pd.read_csv(
+            path,
+            usecols=lambda column: column in {"status", "warmup", "iterations"},
+        )
+        if "status" in frame:
+            frame = frame[frame["status"].astype(str).eq("pass")]
+        frames.append(frame[["warmup", "iterations"]])
+    settings = pd.concat(frames, ignore_index=True).apply(
+        pd.to_numeric, errors="coerce"
+    ).dropna()
+    if settings.empty:
+        raise ValueError(f"no passing raw measurement settings found for {model}")
+    counts = settings.value_counts(sort=True)
+    warmup, iterations = counts.index[0]
+    return int(warmup), int(iterations)
+
 SUITE_CASE_SUFFIXES = (
     "prefill_C1",
     "prefill_C2",
@@ -299,19 +365,36 @@ def suite_paths(tag: str, model: str) -> list[Path]:
 def matrix_overrides_for_selection(selection: ShapeSelection | None) -> SuiteMatrixOverrides | None:
     if selection is None:
         return None
-    prefill_batches, prefill_seq_lens, generation_batches, generation_seq_lens = selection
+    (
+        prefill_batches,
+        prefill_seq_lens,
+        generation_batches,
+        generation_seq_lens,
+        generation_out_tokens,
+    ) = selection
     return SuiteMatrixOverrides(
         prefill_batch_values=prefill_batches,
         prefill_seq_len_values=prefill_seq_lens,
         generation_batch_values=generation_batches,
         generation_seq_len_values=generation_seq_lens,
+        generation_out_token_values=(generation_out_tokens,),
+        generation_max_seq_len=TARGET_GENERATION_MAX_SEQ_LEN,
+        generation_decode_measurement=TARGET_GENERATION_DECODE_MEASUREMENT,
+        generation_decode_sample_interval=TARGET_GENERATION_DECODE_SAMPLE_INTERVAL,
     )
 
 
 def load_suites(tag: str, *, model: str, shape_selection: ShapeSelection | None = None) -> list:
     matrix_overrides = matrix_overrides_for_selection(shape_selection)
+    warmup, iterations = raw_measurement_settings(model)
     return [
-        load_suite(path, repo_root=REPO_ROOT, matrix_overrides=matrix_overrides)
+        load_suite(
+            path,
+            repo_root=REPO_ROOT,
+            warmup_override=warmup,
+            iterations_override=iterations,
+            matrix_overrides=matrix_overrides,
+        )
         for path in suite_paths(tag, model)
     ]
 
@@ -320,6 +403,7 @@ def load_suites(tag: str, *, model: str, shape_selection: ShapeSelection | None 
 FIGURE_OUTPUT_ROOT = LATENCY_DIR / OUTPUT_FOLDER / "figures_prepare"
 FIGURE_DATA_CSV_NAME = "excel_figure_data.csv"
 TOTAL_CSV_NAME = "total.csv"
+COMPOSED_INPUT: pd.DataFrame | None = None
 USE_FIGURE_DATA_CACHE = True
 FORCE_REBUILD_FIGURE_DATA = True
 
@@ -366,12 +450,15 @@ def _stage_shape_mask(
     stage: str,
     batches: tuple[int, ...],
     seq_lens: tuple[int, ...],
+    out_tokens: int | None = None,
 ) -> pd.Series:
     mask = df["stage"].astype(str).eq(stage)
     if batches:
         mask &= pd.to_numeric(df["batch"], errors="coerce").isin(batches)
     if seq_lens:
         mask &= pd.to_numeric(df["seq_len"], errors="coerce").isin(seq_lens)
+    if out_tokens is not None:
+        mask &= pd.to_numeric(df["out_tokens"], errors="coerce").eq(out_tokens)
     return mask
 
 
@@ -381,6 +468,7 @@ def _target_shape_filter(
     prefill_seq_lens: tuple[int, ...],
     generation_batches: tuple[int, ...],
     generation_seq_lens: tuple[int, ...],
+    generation_out_tokens: int,
 ):
     def _filter(df: pd.DataFrame) -> pd.Series:
         return _stage_shape_mask(
@@ -393,6 +481,7 @@ def _target_shape_filter(
             stage="generation",
             batches=generation_batches,
             seq_lens=generation_seq_lens,
+            out_tokens=generation_out_tokens,
         )
 
     return _filter
@@ -403,18 +492,21 @@ E2E_SHAPE_FILTER = _target_shape_filter(
     prefill_seq_lens=E2E_PREFILL_SEQ_LENS,
     generation_batches=E2E_GENERATION_BATCHES,
     generation_seq_lens=E2E_GENERATION_SEQ_LENS,
+    generation_out_tokens=E2E_GENERATION_OUT_TOKENS,
 )
 GEMM_ONLY_SHAPE_FILTER = _target_shape_filter(
     prefill_batches=GEMM_ONLY_PREFILL_BATCHES,
     prefill_seq_lens=GEMM_ONLY_PREFILL_SEQ_LENS,
     generation_batches=GEMM_ONLY_GENERATION_BATCHES,
     generation_seq_lens=GEMM_ONLY_GENERATION_SEQ_LENS,
+    generation_out_tokens=GEMM_ONLY_GENERATION_OUT_TOKENS,
 )
 ENERGY_SHAPE_FILTER = _target_shape_filter(
     prefill_batches=ENERGY_PREFILL_BATCHES,
     prefill_seq_lens=ENERGY_PREFILL_SEQ_LENS,
     generation_batches=ENERGY_GENERATION_BATCHES,
     generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
+    generation_out_tokens=ENERGY_GENERATION_OUT_TOKENS,
 )
 
 
@@ -680,7 +772,18 @@ def _read_figure_data(path: Path) -> pd.DataFrame:
 
 def _write_latency_figure_data(result: PlotRunResult) -> Path:
     deps = SimpleNamespace(latency_plot_module=latency_plot_module)
-    return plot_script.write_latency_figure_data_csv(deps, result)
+    path = plot_script.write_latency_figure_data_csv(deps, result)
+    _annotate_prepared_csv(path)
+    return path
+
+
+def _annotate_prepared_csv(path: Path) -> None:
+    frame = pd.read_csv(path)
+    if "out_tokens" in frame.columns:
+        frame["out_tokens"] = TARGET_GENERATION_OUT_TOKENS
+    else:
+        frame.insert(0, "out_tokens", TARGET_GENERATION_OUT_TOKENS)
+    frame.to_csv(path, index=False)
 
 
 def _join_unique(values) -> str:
@@ -782,6 +885,10 @@ def _build_total_csv_frame(result: PlotRunResult) -> pd.DataFrame:
     if result.plot_data is None:
         return pd.DataFrame()
     total = result.plot_data.copy()
+    total["out_tokens"] = TARGET_GENERATION_OUT_TOKENS
+    total["aggregation_kind"] = total["stage"].astype(str).map(
+        lambda stage: "average_tpot" if stage == "generation" else "total"
+    )
     final_total = pd.to_numeric(total.get("total_latency_us"), errors="coerce")
     total["final_total_metric_value"] = final_total
     if METRIC == "fpga_cycle":
@@ -818,7 +925,7 @@ def _build_total_csv_frame(result: PlotRunResult) -> pd.DataFrame:
             total = left.merge(right, on=temp_keys, how="left").drop(columns=temp_keys)
 
     preferred = [
-        "metric", "stage", "batch", "seq_len", "variant",
+        "metric", "stage", "batch", "seq_len", "out_tokens", "aggregation_kind", "variant",
         "final_total_metric_value", "final_total_fpga_cycles", "final_total_latency_us", "final_total_latency_s", "final_result_source",
         "estimate_applied", "interpolation_applied", "extrapolation_applied",
         "case_count", "pass_case_count", "estimated_case_count", "missing_case_count",
@@ -849,6 +956,76 @@ def _write_total_csv(result: PlotRunResult) -> Path | None:
     return path
 
 
+def _require_composed_input() -> pd.DataFrame:
+    if COMPOSED_INPUT is None:
+        raise RuntimeError("prepare composed input has not been loaded")
+    return COMPOSED_INPUT
+
+
+def _composed_for_model(model: str) -> pd.DataFrame:
+    composed = _require_composed_input()
+    selected = composed[composed["model"].astype(str).eq(model)].copy()
+    if selected.empty:
+        available = sorted(composed["model"].dropna().astype(str).unique())
+        raise ValueError(
+            f"composed CSV has no rows for model {model!r}; available models: {available}"
+        )
+    return selected
+
+
+def _source_suite_map(composed: pd.DataFrame) -> dict[str, str]:
+    source_column = "suite_file" if "suite_file" in composed.columns else "suite"
+    return dict(
+        zip(
+            composed["case_id"].astype(str),
+            composed[source_column].fillna("").astype(str),
+        )
+    )
+
+
+def _normalize_generation_latency(data):
+    for frame in (data.plot_data, data.stack_data):
+        generation = frame["stage"].astype(str).eq("generation")
+        frame.loc[generation, "total_latency_us"] = (
+            pd.to_numeric(
+                frame.loc[generation, "total_latency_us"], errors="coerce"
+            )
+            / TARGET_GENERATION_OUT_TOKENS
+        )
+    return data
+
+
+def _prepare_versions_from_composed(
+    composed: pd.DataFrame,
+    options: SuiteBarPlotOptions,
+):
+    source_suites = _source_suite_map(composed)
+    base_options = replace(
+        options,
+        latency_scale_rules=(),
+        case_latency_scale_rules=(),
+        latency_estimate=None,
+    )
+    base = latency_plot_module.SuiteBarData(
+        *latency_plot_module._prepare_suite_bar_data_from_composed(
+            composed.copy(), source_suites, base_options
+        )
+    )
+    base = _normalize_generation_latency(base)
+
+    scaled = None
+    if options.case_latency_scale_rules:
+        scaled_options = replace(options, latency_scale_rules=(), latency_estimate=None)
+        scaled = latency_plot_module.SuiteBarData(
+            *latency_plot_module._prepare_suite_bar_data_from_composed(
+                composed.copy(), source_suites, scaled_options
+            )
+        )
+        scaled = _normalize_generation_latency(scaled)
+
+    return latency_plot_module.SuiteBarDataVersions(base=base, scaled=scaled)
+
+
 def _make_suite_options(
     out_dir: Path,
     *,
@@ -864,10 +1041,8 @@ def _make_suite_options(
     plot_row_filters = _apply_global_row_filters(row_filters)
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
         plot_row_filters = (*plot_row_filters, exclude_c4_alone)
-    suites = load_suites(suite_tag, model=model, shape_selection=shape_selection)
-    raw_dbs = raw_dbs_for_model(model)
     options = SuiteBarPlotOptions(
-        raw_dbs=raw_dbs,
+        raw_dbs=(),
         out_dir=out_dir,
         metric=METRIC,
         select=SELECT,
@@ -882,7 +1057,7 @@ def _make_suite_options(
         relative_scope=RELATIVE_SCOPE,
         label_maps=plot_label_maps(include_c4_alone=include_c4_alone),
         value_orders=VALUE_ORDERS,
-        latency_scale_rules=tuple(LATENCY_SCALE_RULES),
+        latency_scale_rules=(),
         case_latency_scale_rules=tuple(
             CASE_LATENCY_SCALE_RULES
             if case_latency_scale_rules is None
@@ -891,7 +1066,7 @@ def _make_suite_options(
         latency_estimate=None,
         row_filters=plot_row_filters,
     )
-    return suites, options
+    return [], options
 
 
 def export_suite_figure_data(
@@ -907,13 +1082,7 @@ def export_suite_figure_data(
     case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> PlotRunResult:
     out_dir = FIGURE_OUTPUT_ROOT / out_name
-    suites_in = suite_paths(suite_tag, model)
-    if not suites_in:
-        raise FileNotFoundError(f"no suite YAMLs found for SUITE_SOURCE={SUITE_SOURCE!r}, suite_tag={suite_tag!r}")
-    missing_inputs = [path for path in [*suites_in, *raw_dbs_for_model(model)] if not path.exists()]
-    if missing_inputs:
-        raise FileNotFoundError("missing plot inputs:\n" + "\n".join(str(path) for path in missing_inputs))
-    suites, options = _make_suite_options(
+    _, options = _make_suite_options(
         out_dir,
         model=model,
         suite_tag=suite_tag,
@@ -924,12 +1093,13 @@ def export_suite_figure_data(
         shape_selection=shape_selection,
         case_latency_scale_rules=case_latency_scale_rules,
     )
-    versions = prepare_suite_bar_data_versions(suites, options)
+    composed = _composed_for_model(model)
+    versions = _prepare_versions_from_composed(composed, options)
     plot_input = versions.final
     result = PlotRunResult(
         tag=suite_tag,
         out_dir=out_dir,
-        suites=suites,
+        suites=[],
         options=options,
         versions=versions,
         composed=plot_input.composed,
@@ -1067,6 +1237,11 @@ main_all_result: PlotRunResult | None = None
 ENERGY_IDLE_POWER_W = FPGA_IDLE_POWER
 INCLUDE_IDLE_POWER = False
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
+PREPARE_ENERGY = os.environ.get("LATENCY_PREPARE_ENERGY", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 ENERGY_FPGA_PERIOD_S = DEFAULT_FPGA_PERIOD_S
 
 
@@ -1147,7 +1322,7 @@ def export_energy_figure_data_pair(
     records = list(composed.to_dict(orient="records")) if hasattr(composed, "to_dict") else list(composed)
     rows = energy_rows_from_records(
         records,
-        raw_dbs_for_model(model),
+        (),
         idle_power_w=ENERGY_IDLE_POWER_W,
         include_idle_power=INCLUDE_IDLE_POWER,
         power_metric=power_metric,
@@ -1163,7 +1338,8 @@ def export_energy_figure_data_pair(
         summary=pd.DataFrame(summary),
         figure_path=FIGURE_OUTPUT_ROOT / out_name / "energy_per_token.png",
     )
-    plot_script.write_energy_figure_data_csv(result, label_maps=label_maps)
+    energy_path = plot_script.write_energy_figure_data_csv(result, label_maps=label_maps)
+    _annotate_prepared_csv(energy_path)
 
     components = summarize_energy_rows(rows, group_by=(E2E_STACK_BY,))
     summary = add_relative_energy_component_values(
@@ -1175,11 +1351,12 @@ def export_energy_figure_data_pair(
         summary=pd.DataFrame(summary),
         figure_path=FIGURE_OUTPUT_ROOT / stacked_out_name / "energy_per_token_stacked.png",
     )
-    plot_script.write_energy_stacked_figure_data_csv(
+    energy_stacked_path = plot_script.write_energy_stacked_figure_data_csv(
         result,
         label_maps=label_maps,
         stack_by=E2E_STACK_BY,
     )
+    _annotate_prepared_csv(energy_stacked_path)
 
     if gemm_layout_vector_stacked_out_name is not None:
         for row in rows:
@@ -1201,11 +1378,12 @@ def export_energy_figure_data_pair(
                 / "energy_per_token_gemm_layout_vector_stacked.png"
             ),
         )
-        plot_script.write_energy_stacked_figure_data_csv(
+        name_backend_path = plot_script.write_energy_stacked_figure_data_csv(
             result,
             label_maps=label_maps,
             stack_by="name_backend",
         )
+        _annotate_prepared_csv(name_backend_path)
 
     return tuple("rebuilt" for _name in output_names)
 
@@ -1250,7 +1428,7 @@ def export_gemm_only_energy_figure_data(
     )
     rows = energy_rows_from_records(
         records,
-        raw_dbs_for_model(model),
+        (),
         idle_power_w=ENERGY_IDLE_POWER_W,
         include_idle_power=INCLUDE_IDLE_POWER,
         power_metric=power_metric,
@@ -1272,11 +1450,12 @@ def export_gemm_only_energy_figure_data(
             / "gemm_only_energy_per_token_stacked.png"
         ),
     )
-    plot_script.write_energy_stacked_figure_data_csv(
+    gemm_energy_path = plot_script.write_energy_stacked_figure_data_csv(
         result,
         label_maps=plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE),
         stack_by=STACK_BY,
     )
+    _annotate_prepared_csv(gemm_energy_path)
     return "rebuilt"
 
 
@@ -1493,14 +1672,163 @@ def load_or_build_llama_compare_speedup() -> pd.DataFrame:
     return build_llama_compare_speedup()
 
 
-def main() -> int:
-    global main_all_result
+def _configure_out_tokens(out_tokens: int) -> None:
+    global TARGET_GENERATION_OUT_TOKENS
+    global E2E_GENERATION_OUT_TOKENS, GEMM_ONLY_GENERATION_OUT_TOKENS
+    global ENERGY_GENERATION_OUT_TOKENS
+    global E2E_SHAPE_SELECTION, GEMM_ONLY_SHAPE_SELECTION, ENERGY_SHAPE_SELECTION
+    global E2E_SHAPE_FILTER, GEMM_ONLY_SHAPE_FILTER, ENERGY_SHAPE_FILTER
+    global PLOT_ROW_FILTERS, GEMM_ONLY_FILTERS
+
+    TARGET_GENERATION_OUT_TOKENS = out_tokens
+    E2E_GENERATION_OUT_TOKENS = out_tokens
+    GEMM_ONLY_GENERATION_OUT_TOKENS = out_tokens
+    ENERGY_GENERATION_OUT_TOKENS = out_tokens
+    E2E_SHAPE_SELECTION = _selection_tuple(
+        prefill_batches=E2E_PREFILL_BATCHES,
+        prefill_seq_lens=E2E_PREFILL_SEQ_LENS,
+        generation_batches=E2E_GENERATION_BATCHES,
+        generation_seq_lens=E2E_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    GEMM_ONLY_SHAPE_SELECTION = _selection_tuple(
+        prefill_batches=GEMM_ONLY_PREFILL_BATCHES,
+        prefill_seq_lens=GEMM_ONLY_PREFILL_SEQ_LENS,
+        generation_batches=GEMM_ONLY_GENERATION_BATCHES,
+        generation_seq_lens=GEMM_ONLY_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    ENERGY_SHAPE_SELECTION = _selection_tuple(
+        prefill_batches=ENERGY_PREFILL_BATCHES,
+        prefill_seq_lens=ENERGY_PREFILL_SEQ_LENS,
+        generation_batches=ENERGY_GENERATION_BATCHES,
+        generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    E2E_SHAPE_FILTER = _target_shape_filter(
+        prefill_batches=E2E_PREFILL_BATCHES,
+        prefill_seq_lens=E2E_PREFILL_SEQ_LENS,
+        generation_batches=E2E_GENERATION_BATCHES,
+        generation_seq_lens=E2E_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    GEMM_ONLY_SHAPE_FILTER = _target_shape_filter(
+        prefill_batches=GEMM_ONLY_PREFILL_BATCHES,
+        prefill_seq_lens=GEMM_ONLY_PREFILL_SEQ_LENS,
+        generation_batches=GEMM_ONLY_GENERATION_BATCHES,
+        generation_seq_lens=GEMM_ONLY_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    ENERGY_SHAPE_FILTER = _target_shape_filter(
+        prefill_batches=ENERGY_PREFILL_BATCHES,
+        prefill_seq_lens=ENERGY_PREFILL_SEQ_LENS,
+        generation_batches=ENERGY_GENERATION_BATCHES,
+        generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
+        generation_out_tokens=out_tokens,
+    )
+    PLOT_ROW_FILTERS = (E2E_SHAPE_FILTER, *LATENCY_DEQUANTIZATION_FILTERS)
+    GEMM_ONLY_FILTERS = (
+        GEMM_ONLY_SHAPE_FILTER,
+        *LATENCY_DEQUANTIZATION_FILTERS,
+        lambda df: df["kind"].eq("gemm"),
+        *C4_ALONE_FILTERS,
+    )
+
+
+def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
+    required = {
+        "model", "case_id", "stage", "variant", "kind", "name", "backend",
+        "batch", "prefill_seq_len", "gen_kv_len", "out_tokens",
+        "output_token_index", "calls_per_forward", "latency_us",
+        "compose_status", "power_avg_w", "power_vcc_avg_w",
+        "power_dynamic_avg_w",
+    }
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"composed CSV is missing required columns: {', '.join(missing)}")
+    duplicated = frame.duplicated(["model", "case_id"], keep=False)
+    if bool(duplicated.any()):
+        ids = frame.loc[duplicated, "case_id"].astype(str).drop_duplicates().tolist()
+        raise ValueError(f"composed CSV has duplicate logical cases: {ids[:10]}")
+    status = frame["compose_status"].astype(str)
+    incomplete = ~status.isin({"pass", "estimated"})
+    for column in ("latency_us", "power_avg_w", "power_vcc_avg_w", "power_dynamic_avg_w"):
+        incomplete |= pd.to_numeric(frame[column], errors="coerce").isna()
+    if bool(incomplete.any()):
+        ids = frame.loc[incomplete, "case_id"].astype(str).tolist()
+        raise ValueError(f"composed CSV is incomplete: {ids[:10]} ({len(ids)} total)")
+
+    generation = frame[frame["stage"].astype(str).eq("generation")].copy()
+    available = sorted(
+        pd.to_numeric(generation["out_tokens"], errors="coerce")
+        .dropna().astype(int).unique().tolist()
+    )
+    if out_tokens not in available:
+        raise ValueError(
+            f"composed CSV has no generation workload for out_tokens={out_tokens}; "
+            f"available values: {available}"
+        )
+    selected = generation[
+        pd.to_numeric(generation["out_tokens"], errors="coerce").eq(out_tokens)
+    ].copy()
+    selected["output_token_index"] = pd.to_numeric(
+        selected["output_token_index"], errors="coerce"
+    )
+    expected = set(range(1, out_tokens + 1))
+    group_columns = [
+        "model", "variant", "batch", "gen_kv_len", "name", "backend", "op"
+    ]
+    if "op" not in selected.columns:
+        group_columns.remove("op")
+    incomplete_groups = []
+    for keys, group in selected.groupby(group_columns, dropna=False, sort=False):
+        actual = set(group["output_token_index"].dropna().astype(int))
+        if actual != expected:
+            incomplete_groups.append((keys, sorted(expected - actual)))
+    if incomplete_groups:
+        raise ValueError(
+            "generation composed rows do not cover every output token: "
+            f"{incomplete_groups[:5]} ({len(incomplete_groups)} groups)"
+        )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Prepare plot CSVs from a complete combined composed.csv."
+    )
+    parser.add_argument("--composed-csv", required=True, type=Path)
+    parser.add_argument("--out-tokens", required=True, type=int)
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=None,
+        help="Prepared figure-data root; defaults to output_figure/figures_prepare.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    global main_all_result, COMPOSED_INPUT, FIGURE_OUTPUT_ROOT
+    args = build_parser().parse_args(argv)
+    if args.out_tokens < 1:
+        raise ValueError(f"--out-tokens must be >= 1, got {args.out_tokens}")
+    if not args.composed_csv.is_file():
+        raise FileNotFoundError(args.composed_csv)
+    if args.output_root is not None:
+        FIGURE_OUTPUT_ROOT = args.output_root
+    _configure_out_tokens(args.out_tokens)
+    COMPOSED_INPUT = pd.read_csv(args.composed_csv)
+    _validate_prepare_composed(COMPOSED_INPUT, args.out_tokens)
 
     print(f"target model: {TARGET_MODEL}")
     print(f"target models: {TARGET_MODELS}")
-    print(f"suite source: {SUITE_SOURCE}")
+    print(f"composed source: {args.composed_csv}")
     print(f"prefill batches: {E2E_PREFILL_BATCHES}, prefill seq_lens: {E2E_PREFILL_SEQ_LENS}")
-    print(f"generation batches: {E2E_GENERATION_BATCHES}, generation seq_lens: {E2E_GENERATION_SEQ_LENS}")
+    print(
+        f"generation batches: {E2E_GENERATION_BATCHES}, "
+        f"generation seq_lens: {E2E_GENERATION_SEQ_LENS}, "
+        f"generation out_tokens: {E2E_GENERATION_OUT_TOKENS}"
+    )
 
     prepared_outputs = []
     for model in TARGET_MODELS:
@@ -1607,7 +1935,7 @@ def main() -> int:
         energy_no_area_norm_stacked_names = []
         energy_no_area_norm_gemm_layout_vector_stacked_names = []
         gemm_only_energy_no_area_norm_names = []
-        for power_metric in ENERGY_POWER_METRICS:
+        for power_metric in ENERGY_POWER_METRICS if PREPARE_ENERGY else ():
             energy_name = energy_out_name(model, power_metric)
             energy_stacked_name = energy_stacked_out_name(model, power_metric)
             energy_gemm_layout_vector_stacked_name = (

@@ -44,12 +44,14 @@ esac
 case "${model}" in
   llama2)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama2"
-    input_dir="generated_suites/llama2_7b_main"
+    # input_dir="generated_suites/llama2_7b_main"
+    input_dir="generated_suites/llama2_7b_main_full"
     output_dir="outputs_llama2_main"
     ;;
   llama3)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama3"
-    input_dir="generated_suites/llama3_8b_main"
+    # input_dir="generated_suites/llama3_8b_main"
+    input_dir="generated_suites/llama3_8b_main_full"
     output_dir="outputs_llama3_main"
     ;;
   llama3p2_1b)
@@ -68,6 +70,7 @@ case "${model}" in
     ;;
 esac
 
+FPGA_BINS="C1 C4" \
 STAGES="${stages}" \
 BUILD_DIR="${build_dir}" \
 BLACKBOX_TIMEOUT=24h ./run_hw.sh \

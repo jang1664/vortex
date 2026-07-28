@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+from .yaml_io import safe_load
 
 
 DEFAULT_CANONICALIZATION_PATH = (
@@ -27,7 +27,7 @@ def load_canonicalization_policies(
     path: Path = DEFAULT_CANONICALIZATION_PATH,
 ) -> dict[str, Any]:
     with path.open() as fp:
-        raw = yaml.safe_load(fp) or {}
+        raw = safe_load(fp) or {}
     if raw.get("version") != 1:
         raise ValueError(f"unsupported canonicalization policy version: {path}")
     fpga_bins = raw.get("fpga_bins")
