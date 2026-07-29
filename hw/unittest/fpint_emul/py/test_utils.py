@@ -1574,7 +1574,7 @@ class FpintTestVector:
         """Matrix dimension constraints"""
         self.M >= 1
         self.M <= 64
-        self.K.inside(vsc.rangelist(16, 32, 64, 128))  # Multiple of MXU_K (16)
+        self.K.inside(vsc.rangelist(32, 64, 128, 256))  # Multiple of MXU_K (32)
         self.N.inside(vsc.rangelist(16, 32, 48, 64))   # Multiple of MXU_N (16)
 
     @vsc.constraint

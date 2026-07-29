@@ -1,0 +1,52 @@
+{
+  "status": "complete",
+  "created_at": "2026-07-29T07:13:35.319349+00:00",
+  "command": "hw/unittest/fpint_emul/py/fan_in_sweep.py --k-values 32,64 --trials 2 --verify-tensor-core --output analysis_workspace/numerical_acc/results/fpint_real_2scomp/20260729T070912Z --resume",
+  "config": {
+    "k_values": [
+      32,
+      64
+    ],
+    "m": 16,
+    "n": 16,
+    "qblock": 16,
+    "trials": 2,
+    "base_seed": 20260729,
+    "quant": "signed-asymmetric",
+    "weight_range": [
+      -8,
+      7
+    ],
+    "zero_range": [
+      -4,
+      3
+    ],
+    "scale_range": [
+      0.1,
+      1.0
+    ],
+    "input_distribution": "standard-normal-rounded-to-fp16"
+  },
+  "system": {
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "compute_capability": "8.6",
+    "gpu_memory_bytes": 25306529792,
+    "driver_version": "570.211.01",
+    "torch_version": "2.11.0+cu126",
+    "torch_cuda_version": "12.6",
+    "numpy_version": "2.2.5",
+    "python_version": "3.10.0 (default, Mar  3 2022, 09:58:08) [GCC 7.5.0]",
+    "git_commit": "bfb1e5a8cc2b2b793b1f33bb89e06fa10f51267a"
+  },
+  "tensor_core_kernels": {
+    "32": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8::Params)"
+    ],
+    "64": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x1_nn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_128x1_nn_align8::Params)"
+    ]
+  },
+  "completed_at": "2026-07-29T07:13:36.443741+00:00",
+  "raw_row_count": 24,
+  "summary_row_count": 12
+}

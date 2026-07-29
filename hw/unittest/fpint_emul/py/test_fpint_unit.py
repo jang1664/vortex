@@ -153,7 +153,7 @@ def test_gemm_ref():
     print("Test: Reference GEMM (qcol)")
     print("=" * 60)
     
-    M, K, N = 2, 16, 16
+    M, K, N = 2, 32, 16
     KG = K // QBLOCK
     
     # Generate test data
@@ -187,7 +187,7 @@ def test_visualization():
     print("Test: Visualization")
     print("=" * 60)
     
-    M, K, N = 8, 16, 8
+    M, K, N = 8, 32, 16
     KG = K // QBLOCK
     
     # Generate test data
