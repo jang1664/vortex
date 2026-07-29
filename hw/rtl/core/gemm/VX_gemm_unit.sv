@@ -79,8 +79,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // the internal accumulator SRAM. Keep enough PSUM reads in flight to
     // preserve the no-backpressure GEMM datapath when writes win a bank clash.
     localparam int ACC_RD_FIFO_DEPTH = 16;
+    localparam int ACC_RD_FIFO_ALM_FULL_TH = 8;
+    // Match the bounded same-set burst to the per-lane response skid depth.
+    localparam int PSUM_RD_BURST_SIZE = 8;
+    localparam int PSUM_RD_BURST_COUNT_W = `CLOG2(PSUM_RD_BURST_SIZE);
+    localparam int PSUM_RD_OUTSTANDING_W = `CLOG2(PSUM_RD_BURST_SIZE + 1);
 `else
     localparam int ACC_RD_FIFO_DEPTH = 4;
+    localparam int ACC_RD_FIFO_ALM_FULL_TH = ACC_RD_FIFO_DEPTH - 1;
 `endif
     localparam int ACC_RD_CREDIT_MAX = ACC_RD_FIFO_DEPTH;
     localparam int ACC_RD_CREDIT_W = `CLOG2(ACC_RD_CREDIT_MAX + 1);
@@ -349,6 +355,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic                                          acc_mem_rd_data_take;
 `ifdef GEMM_NAIVE
     logic [`GEMM_ACC_MAX_CNT:0]                    acc_rd_prefetch_count;
+    logic [PSUM_RD_BURST_COUNT_W-1:0]              acc_mem_accum_rd_burst_count;
+    logic [PSUM_RD_OUTSTANDING_W-1:0]              acc_mem_accum_rd_outstanding;
+    logic                                          acc_mem_accum_rd_burst_wait;
 `endif
     logic                                          input_accept_ready;
     logic                                          input_pipe_ready;
@@ -493,6 +502,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                       && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
 `ifdef GEMM_NAIVE
     assign acc_mem_accum_rd_accept    = psum_rd_lmem_bus_if.req_valid && psum_rd_lmem_bus_if.req_ready;
+    wire acc_mem_accum_rd_rsp_fire    = psum_rd_lmem_bus_if.rsp_valid && psum_rd_lmem_bus_if.rsp_ready;
 `else
     assign acc_mem_accum_rd_accept    = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load;
 `endif
@@ -592,9 +602,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_rd_fifo_push = |acc_rd_fifo_push_by_bank;
 `ifdef GEMM_NAIVE
     // Accumulate commands initialize PSUM read/FIFO state on their start edge.
-    // Wait for all requested PSUMs on short commands, or for the realizable
-    // almost-full window on longer commands. The compute datapath cannot
-    // backpressure its roughly 30-row burst after input has been accepted.
+    // Wait for all requested PSUMs on short commands, or until each parity
+    // FIFO reaches the eight-entry prefetch threshold on longer commands. The
+    // compute datapath cannot backpressure its roughly 30-row burst after input
+    // has been accepted.
     assign input_accept_ready = gemm_unit_if.start
                               ? gemm_unit_if.gemm_unit_ctrl.is_load
                               : (gemm_unit_ctrl.is_load
@@ -692,13 +703,67 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         if (reset) begin
             acc_mem_accum_rd_rr <= 1'b0;
             acc_rd_consume_bank <= 1'b0;
+`ifdef GEMM_NAIVE
+            acc_mem_accum_rd_burst_count <= '0;
+            acc_mem_accum_rd_outstanding <= '0;
+            acc_mem_accum_rd_burst_wait <= 1'b0;
+`endif
         end else begin
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
                 acc_mem_accum_rd_rr <= acc_mem_accum_start_bank[0];
                 acc_rd_consume_bank <= acc_mem_accum_start_bank[0];
+`ifdef GEMM_NAIVE
+                acc_mem_accum_rd_burst_count <= '0;
+                acc_mem_accum_rd_outstanding <= '0;
+                acc_mem_accum_rd_burst_wait <= 1'b0;
+`endif
             end else begin
+`ifdef GEMM_NAIVE
+                case ({acc_mem_accum_rd_accept, acc_mem_accum_rd_rsp_fire})
+                    2'b10: acc_mem_accum_rd_outstanding <= acc_mem_accum_rd_outstanding + 1'b1;
+                    2'b01: begin
+                        if (acc_mem_accum_rd_outstanding != 0)
+                            acc_mem_accum_rd_outstanding <= acc_mem_accum_rd_outstanding - 1'b1;
+                        else
+                            acc_mem_accum_rd_outstanding <= '0;
+                    end
+                    default: acc_mem_accum_rd_outstanding <= acc_mem_accum_rd_outstanding;
+                endcase
+
+                if (acc_mem_accum_rd_burst_wait) begin
+                    if (acc_mem_accum_rd_rsp_fire
+                     && (acc_mem_accum_rd_outstanding == 1)) begin
+                        acc_mem_accum_rd_rr <= ~acc_mem_accum_rd_rr;
+                        acc_mem_accum_rd_burst_count <= '0;
+                        acc_mem_accum_rd_burst_wait <= 1'b0;
+                    end
+                end else if (acc_mem_accum_rd_accept) begin
+                    if (acc_mem_accum_rd_sel != acc_mem_accum_rd_rr) begin
+                        acc_mem_accum_rd_rr <= acc_mem_accum_rd_sel;
+                        acc_mem_accum_rd_burst_count
+                            <= PSUM_RD_BURST_COUNT_W'(1);
+                    end else if (acc_mem_accum_rd_burst_count
+                              == PSUM_RD_BURST_COUNT_W'(PSUM_RD_BURST_SIZE - 1)) begin
+                        acc_mem_accum_rd_burst_count <= '0;
+                        acc_mem_accum_rd_burst_wait <= 1'b1;
+                    end else begin
+                        acc_mem_accum_rd_burst_count
+                            <= acc_mem_accum_rd_burst_count + 1'b1;
+                    end
+                end
+`ifndef SYNTHESIS
+                assert (!(acc_mem_accum_rd_rsp_fire
+                       && !acc_mem_accum_rd_accept
+                       && (acc_mem_accum_rd_outstanding == 0)))
+                    else $fatal(1, "PSUM burst outstanding underflow");
+                assert (acc_mem_accum_rd_outstanding <= PSUM_RD_BURST_SIZE)
+                    else $fatal(1, "PSUM burst exceeded bound: outstanding=%0d",
+                                acc_mem_accum_rd_outstanding);
+`endif
+`else
                 if (acc_mem_accum_rd_accept)
                     acc_mem_accum_rd_rr <= ~acc_mem_accum_rd_sel;
+`endif
                 if (acc_rd_fifo_pop)
                     acc_rd_consume_bank <= ~acc_rd_consume_bank;
             end
@@ -729,6 +794,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             ACCUM_RD_READ: begin
                 if (acc_mem_accum_rd_cnt > 0) begin
+`ifdef GEMM_NAIVE
+                    if (!acc_mem_accum_rd_burst_wait) begin
+`endif
                     if (acc_mem_accum_wr_fire) begin
                         acc_mem_accum_rd_sel = ~acc_mem_accum_wr_bank[0];
                         acc_mem_accum_rd_req = acc_mem_accum_rd_eligible[~acc_mem_accum_wr_bank[0]];
@@ -743,10 +811,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                 acc_mem_accum_rd_req = 1'b1;
                             end
                             2'b11: begin
+`ifdef GEMM_NAIVE
+                                // Hold the selected parity for a bounded burst;
+                                // switching is performed only after it drains.
+                                acc_mem_accum_rd_sel = acc_mem_accum_rd_rr;
+`else
                                 if (acc_rd_credit_count_by_bank[0] > acc_rd_credit_count_by_bank[1])
                                     acc_mem_accum_rd_sel = 1'b0;
                                 else if (acc_rd_credit_count_by_bank[1] > acc_rd_credit_count_by_bank[0])
                                     acc_mem_accum_rd_sel = 1'b1;
+`endif
                                 acc_mem_accum_rd_req = 1'b1;
                             end
                             default: begin
@@ -756,11 +830,18 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                     end
                     acc_mem_accum_rd_req = acc_mem_accum_rd_req
                                          && (~acc_mem_rd_data_valid || acc_mem_rd_data_take);
+`ifdef GEMM_NAIVE
+                    end
+`endif
                     if (acc_mem_accum_rd_accept) begin
                         acc_mem_accum_rd_cnt_by_bank_next[acc_mem_accum_rd_sel]
                             = acc_mem_accum_rd_cnt_by_bank[acc_mem_accum_rd_sel] - 1;
                     end
-                end else if (~acc_mem_rd_data_valid) begin
+                end else if (~acc_mem_rd_data_valid
+`ifdef GEMM_NAIVE
+                          && (acc_mem_accum_rd_outstanding == 0)
+`endif
+                ) begin
                     acc_mem_accum_rd_state_next = ACCUM_RD_IDLE;
                 end
             end
@@ -1483,7 +1564,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .FALL_THROUGH (0),
                 .DATA_WIDTH   (`MXU_COL * FP32_WIDTH),
                 .DEPTH        (ACC_RD_FIFO_DEPTH),
-                .ALM_FULL_TH  (ACC_RD_FIFO_DEPTH - 1)
+                .ALM_FULL_TH  (ACC_RD_FIFO_ALM_FULL_TH)
             ) u_acc_rd_fifo (
                 .clk_i       (clk),
                 .rst_ni      (~reset),

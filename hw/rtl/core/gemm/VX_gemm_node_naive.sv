@@ -776,6 +776,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
        && psum_wr_raw_bus_if.req_valid
        && (psum_wr_raw_bus_if.req_data.addr[0]
         == psum_rd_raw_bus_if.req_data.addr[0]);
+    // Same-set reads may be outstanding concurrently, but drain them before
+    // switching physical bank sets. Different LMEM banks can return in a
+    // different order across lanes, which cannot form one coherent wide rsp.
     logic [6:0] psum_rd_outstanding_r;
     logic psum_rd_active_set_r;
     wire psum_rd_set_switch_block
