@@ -16,7 +16,13 @@
 
 static inline const char* kv_cache_dequant_variant_name() {
 #if KV_CACHE_DEQUANT_VARIANT == KV_CACHE_DEQUANT_VARIANT_GROUPWISE
+#if defined(KV_CACHE_DEQUANT_ARITH_FP16)
+  return "groupwise_fp16";
+#elif defined(KV_CACHE_DEQUANT_ARITH_FP32)
+  return "groupwise_fp32";
+#else
   return "groupwise";
+#endif
 #elif KV_CACHE_DEQUANT_VARIANT == KV_CACHE_DEQUANT_VARIANT_PACKED_PAIR
   return "packed_pair";
 #else

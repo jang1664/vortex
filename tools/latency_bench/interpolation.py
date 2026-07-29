@@ -9,24 +9,28 @@ import random
 import shlex
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import yaml
 
 from .raw_db import RAW_DB_COLUMNS, _write_raw_rows
 from .suite import (
     BenchCase,
     BenchSuite,
+    bind_suite_xclbin_sha256,
     find_repo_root,
     load_suite,
+    make_exec_key,
+    stable_hash,
     suite_to_expanded_yaml,
     suite_to_rows,
 )
+from .yaml_io import safe_dump
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,36 @@ class InterpolationError:
         return self.absolute_error / max(abs(self.actual), 1e-9)
 
 
+@dataclass(frozen=True)
+class BracketedInterval:
+    group_key: str
+    stable_group_id: str
+    lower_anchor: int
+    upper_anchor: int
+    candidates: tuple[BenchCase, ...]
+
+    @property
+    def width(self) -> int:
+        return self.upper_anchor - self.lower_anchor
+
+    @property
+    def unique_exec_keys(self) -> int:
+        return len({case.exec_key for case in self.candidates})
+
+
+@dataclass(frozen=True)
+class MidpointSelection:
+    case: BenchCase
+    interval: BracketedInterval
+    rank: int
+    reason: str
+
+    @property
+    def midpoint_relative_position(self) -> float:
+        x = int(self.case.shape["logical_cache_length"])
+        return (x - self.interval.lower_anchor) / self.interval.width
+
+
 _DYNAMIC_SHAPE_KEYS = {
     "K", "N", "seqk", "cache_len", "logical_cache_length",
     "logical_kv_start", "logical_kv_end", "padded_cache_length",
@@ -57,7 +91,8 @@ _DYNAMIC_SHAPE_KEYS = {
 
 
 def kernel_type(case: BenchCase) -> str:
-    return "|".join((case.app, case.backend, case.variant, case.name))
+    """Identify the physical kernel implementation used for interpolation."""
+    return "|".join((case.app, case.backend))
 
 
 def interpolation_group_key(case: BenchCase) -> str:
@@ -83,10 +118,18 @@ def _raw_metric(path: Path, metric: str) -> tuple[dict[str, float], dict[str, di
                 continue
             try:
                 value = float(row.get(metric, ""))
-            except ValueError:
+            except (TypeError, ValueError):
                 continue
-            values[row["exec_key"]] = value
-            rows[row["exec_key"]] = row
+            if not math.isfinite(value):
+                continue
+            exec_key = make_exec_key(
+                row.get("xclbin_sha256", ""),
+                row.get("app", ""),
+                row.get("args", ""),
+            )
+            row["exec_key"] = exec_key
+            values[exec_key] = value
+            rows[exec_key] = row
     return values, rows
 
 
@@ -128,6 +171,182 @@ def unresolved_interpolation_candidates(
     ]
 
 
+def _case_cache_length(case: BenchCase) -> int:
+    return int(case.shape["logical_cache_length"])
+
+
+def _representatives_nearest_midpoint(
+    cases: list[BenchCase] | tuple[BenchCase, ...],
+    lower: int,
+    upper: int,
+) -> list[BenchCase]:
+    midpoint = (lower + upper) / 2
+    by_exec_key: dict[str, list[BenchCase]] = defaultdict(list)
+    for case in cases:
+        by_exec_key[case.exec_key].append(case)
+    return [
+        min(
+            matching,
+            key=lambda case: (
+                abs(_case_cache_length(case) - midpoint),
+                _case_cache_length(case),
+                case.case_id,
+            ),
+        )
+        for _, matching in sorted(by_exec_key.items())
+    ]
+
+
+def bracketed_intervals(
+    suite: BenchSuite,
+    raw_values: dict[str, float],
+    *,
+    physical_kernel: str,
+) -> tuple[list[BracketedInterval], list[BenchCase]]:
+    """Return measured-anchor intervals and extrapolation-only candidates."""
+    groups: dict[str, list[BenchCase]] = defaultdict(list)
+    for case in suite.cases:
+        if kernel_type(case) == physical_kernel:
+            groups[interpolation_group_key(case)].append(case)
+
+    intervals: list[BracketedInterval] = []
+    unbracketed: list[BenchCase] = []
+    for group_key in sorted(groups):
+        group = groups[group_key]
+        anchors = sorted({
+            _case_cache_length(case)
+            for case in group
+            if case.exec_key in raw_values
+            and "logical_cache_length" in case.shape
+        })
+        candidates = [
+            case for case in group
+            if case.measurement_kind == "interpolated"
+            and case.exec_key not in raw_values
+            and "logical_cache_length" in case.shape
+        ]
+        bracketed_case_ids: set[str] = set()
+        for lower, upper in zip(anchors, anchors[1:]):
+            matching = tuple(
+                case for case in candidates
+                if lower < _case_cache_length(case) < upper
+            )
+            if not matching:
+                continue
+            intervals.append(BracketedInterval(
+                group_key=group_key,
+                stable_group_id=stable_hash(group_key),
+                lower_anchor=lower,
+                upper_anchor=upper,
+                candidates=matching,
+            ))
+            bracketed_case_ids.update(case.case_id for case in matching)
+        unbracketed.extend(
+            case for case in candidates if case.case_id not in bracketed_case_ids
+        )
+    intervals.sort(key=lambda interval: (
+        -interval.unique_exec_keys,
+        -interval.width,
+        interval.stable_group_id,
+        interval.lower_anchor,
+        interval.upper_anchor,
+    ))
+    return intervals, unbracketed
+
+
+def _choose_segment_midpoint(
+    interval: BracketedInterval,
+    cases: list[BenchCase],
+    lower: int,
+    upper: int,
+    used_exec_keys: set[str],
+) -> BenchCase | None:
+    available = [
+        case for case in cases
+        if case.exec_key not in used_exec_keys
+        and lower < _case_cache_length(case) < upper
+    ]
+    representatives = _representatives_nearest_midpoint(available, lower, upper)
+    if not representatives:
+        return None
+    midpoint = (lower + upper) / 2
+    return min(representatives, key=lambda case: (
+        abs(_case_cache_length(case) - midpoint),
+        _case_cache_length(case),
+        case.exec_key,
+        case.case_id,
+    ))
+
+
+def select_midpoint_candidates(
+    intervals: list[BracketedInterval],
+    sample_count: int,
+) -> list[MidpointSelection]:
+    """Spread across base intervals, then bisect their largest remaining spans."""
+    if sample_count <= 0:
+        return []
+    selected: list[MidpointSelection] = []
+    used_exec_keys: set[str] = set()
+    segments: list[tuple[BracketedInterval, int, int, list[BenchCase]]] = []
+
+    def select_from_segment(
+        interval: BracketedInterval,
+        lower: int,
+        upper: int,
+        cases: list[BenchCase],
+        reason: str,
+    ) -> None:
+        case = _choose_segment_midpoint(
+            interval, cases, lower, upper, used_exec_keys
+        )
+        if case is None:
+            return
+        used_exec_keys.add(case.exec_key)
+        selected.append(MidpointSelection(
+            case=case,
+            interval=interval,
+            rank=len(selected) + 1,
+            reason=reason,
+        ))
+        x = _case_cache_length(case)
+        for sub_lower, sub_upper in ((lower, x), (x, upper)):
+            sub_cases = [
+                item for item in cases
+                if item.exec_key not in used_exec_keys
+                and sub_lower < _case_cache_length(item) < sub_upper
+            ]
+            if sub_cases:
+                segments.append((interval, sub_lower, sub_upper, sub_cases))
+
+    for interval in intervals:
+        if len(selected) >= sample_count:
+            break
+        select_from_segment(
+            interval,
+            interval.lower_anchor,
+            interval.upper_anchor,
+            list(interval.candidates),
+            "distinct_interval_midpoint",
+        )
+
+    while len(selected) < sample_count and segments:
+        segments.sort(key=lambda item: (
+            -len({
+                case.exec_key for case in item[3]
+                if case.exec_key not in used_exec_keys
+            }),
+            -(item[2] - item[1]),
+            item[0].stable_group_id,
+            item[1],
+            item[2],
+        ))
+        interval, lower, upper, cases = segments.pop(0)
+        select_from_segment(
+            interval, lower, upper, cases, "virtual_bisection_midpoint"
+        )
+    return selected
+
+
 def sample_candidates(
     suite: BenchSuite,
     samples_per_kernel: int,
@@ -155,6 +374,15 @@ def evaluate_cases(
 ) -> list[InterpolationError]:
     baseline, _ = _raw_metric(baseline_raw_db, metric)
     actual, _ = _raw_metric(probe_raw_db, metric)
+    return evaluate_cases_from_values(suite, candidates, baseline, actual)
+
+
+def evaluate_cases_from_values(
+    suite: BenchSuite,
+    candidates: list[BenchCase],
+    baseline: dict[str, float],
+    actual: dict[str, float],
+) -> list[InterpolationError]:
     groups: dict[str, list[BenchCase]] = defaultdict(list)
     for case in suite.cases:
         groups[interpolation_group_key(case)].append(case)
@@ -211,13 +439,17 @@ def write_error_outputs(errors: list[InterpolationError], out_dir: Path) -> None
 
 def write_candidate_suite(suite: BenchSuite, cases: list[BenchCase], path: Path) -> None:
     selected = [
-        replace(case, measurement_kind="measured")
+        replace(
+            case,
+            measurement_kind="measured",
+            shape={**case.shape, "measurement_kind": "measured"},
+        )
         for case in cases
     ]
     candidate_suite = replace(suite, name=f"{suite.name}_interpolation_probe", cases=selected)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as fp:
-        yaml.safe_dump(suite_to_expanded_yaml(candidate_suite), fp, sort_keys=False)
+        safe_dump(suite_to_expanded_yaml(candidate_suite), fp, sort_keys=False)
 
 
 def run_measurement_command(template: str, suite_path: Path, out_dir: Path) -> Path:
@@ -280,8 +512,15 @@ def write_current_cases(
     raw_db: Path,
     path: Path,
     metric: str = "p50_us",
+    *,
+    raw_values: dict[str, float] | None = None,
 ) -> None:
-    rows = suite_to_rows(refined_suite(suite, raw_db, metric))
+    current_suite = (
+        reweight_suite_for_exec_keys(suite, set(raw_values))
+        if raw_values is not None
+        else refined_suite(suite, raw_db, metric)
+    )
+    rows = suite_to_rows(current_suite)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fp:
         writer = csv.DictWriter(
@@ -337,10 +576,57 @@ def _main_raw_db(args: argparse.Namespace, output_root: Path) -> Path:
     return Path(args.raw_db) if args.raw_db else output_root / "raw_db.csv"
 
 
-def promote_probe_rows(main_raw_db: Path, probe_raw_db: Path, exec_keys: set[str]) -> int:
-    _, probe_rows = _raw_metric(probe_raw_db, "p50_us")
-    existing_values, _ = _raw_metric(main_raw_db, "p50_us")
+def _raw_measurement_overrides(raw_db: Path) -> tuple[int | None, int | None]:
+    if not raw_db.exists():
+        return None, None
+    counts: Counter[tuple[int, int]] = Counter()
+    with raw_db.open(newline="") as fp:
+        for row in csv.DictReader(fp):
+            if row.get("status") != "pass":
+                continue
+            try:
+                counts[(int(row["warmup"]), int(row["iterations"]))] += 1
+            except (KeyError, TypeError, ValueError):
+                continue
+    if not counts:
+        return None, None
+    return counts.most_common(1)[0][0]
+
+
+def _load_suite_for_raw(suite_path: Path, raw_db: Path) -> BenchSuite:
+    warmup, iterations = _raw_measurement_overrides(raw_db)
+    suite = load_suite(
+        suite_path,
+        repo_root=find_repo_root(),
+        warmup_override=warmup,
+        iterations_override=iterations,
+    )
+    xclbin_counts: Counter[str] = Counter()
+    if raw_db.exists():
+        with raw_db.open(newline="") as fp:
+            for row in csv.DictReader(fp):
+                sha = str(row.get("xclbin_sha256", "")).strip()
+                if row.get("status") == "pass" and sha:
+                    xclbin_counts[sha] += 1
+    if xclbin_counts:
+        suite = bind_suite_xclbin_sha256(suite, xclbin_counts.most_common(1)[0][0])
+    return suite
+
+
+def promote_probe_rows(
+    main_raw_db: Path,
+    probe_raw_db: Path,
+    exec_keys: set[str],
+    metric: str = "p50_us",
+    *,
+    existing_values: dict[str, float] | None = None,
+    existing_rows: dict[str, dict[str, str]] | None = None,
+) -> int:
+    probe_values, probe_rows = _raw_metric(probe_raw_db, metric)
+    if existing_values is None:
+        existing_values, _ = _raw_metric(main_raw_db, metric)
     rows = []
+    added_keys: list[str] = []
     added = 0
     for key in sorted(exec_keys):
         if key in existing_values or key not in probe_rows:
@@ -348,10 +634,15 @@ def promote_probe_rows(main_raw_db: Path, probe_raw_db: Path, exec_keys: set[str
         row = {column: probe_rows[key].get(column, "") for column in RAW_DB_COLUMNS}
         row["run_id"] = "interpolation_refine"
         rows.append(row)
+        added_keys.append(key)
         added += 1
     _write_raw_rows(
         rows, main_raw_db, mode="upsert", run_id="interpolation_refine"
     )
+    for key in added_keys:
+        existing_values[key] = probe_values[key]
+        if existing_rows is not None:
+            existing_rows[key] = probe_rows[key]
     return added
 
 
@@ -360,6 +651,27 @@ def p95(errors: list[InterpolationError]) -> float:
         return math.inf
     values = sorted(error.relative_error for error in errors)
     return values[min(len(values) - 1, math.ceil(0.95 * len(values)) - 1)]
+
+
+def _midpoint_counts(
+    suite: BenchSuite,
+    raw_values: dict[str, float],
+    kernel_types: list[str],
+) -> tuple[int, int, int]:
+    interval_count = 0
+    bracketed_keys: set[tuple[str, str]] = set()
+    unbracketed_keys: set[tuple[str, str]] = set()
+    for key in kernel_types:
+        intervals, unbracketed = bracketed_intervals(
+            suite, raw_values, physical_kernel=key
+        )
+        interval_count += len(intervals)
+        bracketed_keys.update(
+            (key, case.exec_key)
+            for interval in intervals for case in interval.candidates
+        )
+        unbracketed_keys.update((key, case.exec_key) for case in unbracketed)
+    return interval_count, len(bracketed_keys), len(unbracketed_keys)
 
 
 def write_refinement_progress(
@@ -372,12 +684,18 @@ def write_refinement_progress(
     args: argparse.Namespace,
     grouped: dict[str, list[BenchCase]],
     unresolved: list[BenchCase],
+    raw_values: dict[str, float],
     history: list[dict[str, Any]],
+    selections: list[dict[str, Any]],
     status: str,
 ) -> None:
     iteration_columns = [
         "kernel_type",
         "iteration",
+        "sampling_strategy",
+        "bracketed_intervals",
+        "bracketed_candidates",
+        "unbracketed_candidates",
         "validation_samples",
         "p95_relative_error",
         "target_error",
@@ -387,7 +705,21 @@ def write_refinement_progress(
     pd.DataFrame(history, columns=iteration_columns).to_csv(
         out / "iterations.csv", index=False
     )
-    write_current_cases(suite, main_raw, out / "cases.csv", args.metric)
+    selection_columns = [
+        "kernel_type", "iteration", "stable_group_id", "case_id", "exec_key",
+        "logical_cache_length", "lower_anchor", "upper_anchor",
+        "interval_width", "interval_candidate_count",
+        "midpoint_relative_position", "selection_rank", "selection_reason",
+    ]
+    pd.DataFrame(selections, columns=selection_columns).to_csv(
+        out / "selections.csv", index=False
+    )
+    write_current_cases(
+        suite, main_raw, out / "cases.csv", args.metric, raw_values=raw_values
+    )
+    interval_count, bracketed_count, unbracketed_count = _midpoint_counts(
+        suite, raw_values, sorted(grouped)
+    )
     (out / "state.json").write_text(json.dumps({
         "suite": str(Path(args.suite).resolve()),
         "output_root": str(output_root.resolve()),
@@ -396,10 +728,14 @@ def write_refinement_progress(
         "target_error": args.target_error,
         "max_iterations": args.max_iterations,
         "seed": args.seed,
+        "sampling_strategy": args.sampling_strategy,
         "kernel_types": len(grouped),
+        "bracketed_intervals": interval_count,
+        "bracketed_candidates": bracketed_count,
+        "unbracketed_candidates": unbracketed_count,
         "initial_unresolved_cases": len(unresolved),
-        "remaining_unresolved_cases": len(
-            unresolved_interpolation_candidates(suite, main_raw, args.metric)
+        "remaining_unresolved_cases": sum(
+            case.exec_key not in raw_values for case in interpolation_candidates(suite)
         ),
         "promoted_measurements": sum(
             int(item.get("promoted_measurements", 0)) for item in history
@@ -410,16 +746,16 @@ def write_refinement_progress(
         out,
         output_root,
         "refinement",
-        ["iterations.csv", "state.json"],
+        ["iterations.csv", "selections.csv", "state.json"],
     )
 
 
 def evaluate_command(args: argparse.Namespace) -> int:
-    suite = load_suite(Path(args.suite), repo_root=find_repo_root())
     output_root, out = _artifact_dir(
         args, "evaluations", args.evaluation_id
     )
     raw_db = _main_raw_db(args, output_root)
+    suite = _load_suite_for_raw(Path(args.suite), raw_db)
     candidates = unresolved_interpolation_candidates(suite, raw_db, args.metric)
     selected = sample_candidates(
         suite, args.samples_per_kernel, args.seed, candidates=candidates
@@ -464,7 +800,10 @@ def evaluate_command(args: argparse.Namespace) -> int:
             write_error_outputs(errors, out)
             promoted = (
                 promote_probe_rows(
-                    raw_db, partial_raw, {case.exec_key for case in selected}
+                    raw_db,
+                    partial_raw,
+                    {case.exec_key for case in selected},
+                    args.metric,
                 )
                 if partial_raw.exists() else 0
             )
@@ -489,7 +828,10 @@ def evaluate_command(args: argparse.Namespace) -> int:
         )
         write_error_outputs(errors, out)
         promoted = promote_probe_rows(
-            raw_db, probe_raw_db, {case.exec_key for case in selected}
+            raw_db,
+            probe_raw_db,
+            {case.exec_key for case in selected},
+            args.metric,
         )
         manifest.update({
             "probe_raw_db": str(probe_raw_db.resolve()),
@@ -523,21 +865,64 @@ def evaluate_command(args: argparse.Namespace) -> int:
 
 
 def refine_command(args: argparse.Namespace) -> int:
-    suite = load_suite(Path(args.suite), repo_root=find_repo_root())
+    started = time.monotonic()
     output_root, out = _artifact_dir(
         args, "refinements", args.refinement_id
     )
     main_raw = _main_raw_db(args, output_root)
+    print(
+        f"[refine] start metric={args.metric} target_p95={args.target_error:.2%} "
+        f"max_iterations={args.max_iterations} validation_samples={args.validation_samples} "
+        f"sampling_strategy={args.sampling_strategy}",
+        flush=True,
+    )
+    print(f"[refine] artifacts={out.resolve()}", flush=True)
+    if args.measure_command:
+        print(
+            f"[refine] case_logs={out.resolve()}/validation_run/runs/<run_id>/logs",
+            flush=True,
+        )
+    elif args.probe_raw_db:
+        print(
+            f"[refine] probe_raw_db={Path(args.probe_raw_db).resolve()}",
+            flush=True,
+        )
+    load_started = time.monotonic()
+    print(
+        f"[refine] loading suite={Path(args.suite).resolve()} "
+        f"raw_db={main_raw.resolve()}",
+        flush=True,
+    )
+    suite = _load_suite_for_raw(Path(args.suite), main_raw)
+    raw_values, raw_rows = _raw_metric(main_raw, args.metric)
+    print(
+        f"[refine] loaded cases={len(suite.cases)} "
+        f"elapsed={time.monotonic() - load_started:.1f}s",
+        flush=True,
+    )
     probe_raw = Path(args.probe_raw_db) if args.probe_raw_db else None
     out.mkdir(parents=True, exist_ok=True)
     grouped: dict[str, list[BenchCase]] = defaultdict(list)
-    unresolved = unresolved_interpolation_candidates(suite, main_raw, args.metric)
+    scan_started = time.monotonic()
+    print("[refine] scanning unresolved interpolation cases", flush=True)
+    unresolved = [
+        case for case in interpolation_candidates(suite)
+        if case.exec_key not in raw_values
+    ]
     for case in unresolved:
         grouped[kernel_type(case)].append(case)
+    print(
+        f"[refine] scan complete unresolved={len(unresolved)} "
+        f"kernel_types={len(grouped)} elapsed={time.monotonic() - scan_started:.1f}s",
+        flush=True,
+    )
     if grouped and not args.probe_raw_db and not args.measure_command:
         raise ValueError("refine requires --probe-raw-db or --measure-command")
     rng = random.Random(args.seed)
-    history = []
+    history: list[dict[str, Any]] = []
+    selections: list[dict[str, Any]] = []
+    snapshot_started = time.monotonic()
+    print(f"[refine] writing initial snapshot to {out}", flush=True)
     write_refinement_progress(
         suite=suite,
         main_raw=main_raw,
@@ -547,17 +932,120 @@ def refine_command(args: argparse.Namespace) -> int:
         args=args,
         grouped=grouped,
         unresolved=unresolved,
+        raw_values=raw_values,
         history=history,
+        selections=selections,
         status="no_candidates" if not unresolved else "running",
     )
-    for key in sorted(grouped):
-        remaining = list(grouped[key])
-        rng.shuffle(remaining)
+    print(
+        f"[refine] initial snapshot ready "
+        f"elapsed={time.monotonic() - snapshot_started:.1f}s",
+        flush=True,
+    )
+    ordered_groups = sorted(grouped)
+    for kernel_index, key in enumerate(ordered_groups, start=1):
+        random_remaining = list(grouped[key])
+        rng.shuffle(random_remaining)
+        print(
+            f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+            f"type={key} candidates={len(random_remaining)}",
+            flush=True,
+        )
         for iteration in range(args.max_iterations):
-            validation = remaining[:args.validation_samples]
-            remaining = remaining[args.validation_samples:]
+            intervals, unbracketed = bracketed_intervals(
+                suite, raw_values, physical_kernel=key
+            )
+            bracketed_count = len({
+                case.exec_key
+                for interval in intervals for case in interval.candidates
+            })
+            unbracketed_count = len({case.exec_key for case in unbracketed})
+            if args.sampling_strategy == "midpoint":
+                midpoint_selections = select_midpoint_candidates(
+                    intervals, args.validation_samples
+                )
+                validation = [item.case for item in midpoint_selections]
+                for item in midpoint_selections:
+                    selections.append({
+                        "kernel_type": key,
+                        "iteration": iteration,
+                        "stable_group_id": item.interval.stable_group_id,
+                        "case_id": item.case.case_id,
+                        "exec_key": item.case.exec_key,
+                        "logical_cache_length": _case_cache_length(item.case),
+                        "lower_anchor": item.interval.lower_anchor,
+                        "upper_anchor": item.interval.upper_anchor,
+                        "interval_width": item.interval.width,
+                        "interval_candidate_count": item.interval.unique_exec_keys,
+                        "midpoint_relative_position": item.midpoint_relative_position,
+                        "selection_rank": item.rank,
+                        "selection_reason": item.reason,
+                    })
+            else:
+                validation = random_remaining[:args.validation_samples]
+                random_remaining = random_remaining[args.validation_samples:]
+                for rank, case in enumerate(validation, start=1):
+                    selections.append({
+                        "kernel_type": key,
+                        "iteration": iteration,
+                        "stable_group_id": stable_hash(interpolation_group_key(case)),
+                        "case_id": case.case_id,
+                        "exec_key": case.exec_key,
+                        "logical_cache_length": _case_cache_length(case),
+                        "lower_anchor": "",
+                        "upper_anchor": "",
+                        "interval_width": "",
+                        "interval_candidate_count": "",
+                        "midpoint_relative_position": "",
+                        "selection_rank": rank,
+                        "selection_reason": "random_seed",
+                    })
             if not validation:
+                if args.sampling_strategy == "midpoint" and any(
+                    case.exec_key not in raw_values for case in grouped[key]
+                ):
+                    history.append({
+                        "kernel_type": key,
+                        "iteration": iteration,
+                        "sampling_strategy": args.sampling_strategy,
+                        "bracketed_intervals": len(intervals),
+                        "bracketed_candidates": bracketed_count,
+                        "unbracketed_candidates": unbracketed_count,
+                        "validation_samples": 0,
+                        "p95_relative_error": math.inf,
+                        "target_error": args.target_error,
+                        "status": "no_bracketed_candidates",
+                        "promoted_measurements": 0,
+                    })
+                print(
+                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                    f"bracketed_intervals={len(intervals)} "
+                    f"bracketed_candidates={bracketed_count} "
+                    f"unbracketed_candidates={unbracketed_count} "
+                    + (
+                        "status=no_bracketed_candidates"
+                        if args.sampling_strategy == "midpoint" and unbracketed_count
+                        else "exhausted candidates"
+                    ),
+                    flush=True,
+                )
                 break
+            iteration_started = time.monotonic()
+            ranges = ",".join(
+                f"{item.interval.lower_anchor}-{item.interval.upper_anchor}"
+                f"@{_case_cache_length(item.case)}"
+                for item in midpoint_selections
+            ) if args.sampling_strategy == "midpoint" else "random"
+            print(
+                f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                f"iteration {iteration + 1}/{args.max_iterations} "
+                f"bracketed_intervals={len(intervals)} "
+                f"bracketed_candidates={bracketed_count} "
+                f"unbracketed_candidates={unbracketed_count} "
+                f"selected_ranges={ranges} measuring={len(validation)}",
+                flush=True,
+            )
+            baseline_values = dict(raw_values)
             if args.measure_command:
                 validation_suite = out / f"validate_{len(history):04d}.yaml"
                 write_candidate_suite(suite, validation, validation_suite)
@@ -568,23 +1056,31 @@ def refine_command(args: argparse.Namespace) -> int:
                     )
                 except (KeyboardInterrupt, subprocess.CalledProcessError):
                     partial_raw = validation_run / "raw_db.csv"
-                    partial_errors = (
-                        evaluate_cases(
-                            suite, validation, main_raw, partial_raw, args.metric
-                        )
-                        if partial_raw.exists() else []
+                    partial_values, _ = (
+                        _raw_metric(partial_raw, args.metric)
+                        if partial_raw.exists() else ({}, {})
+                    )
+                    partial_errors = evaluate_cases_from_values(
+                        suite, validation, baseline_values, partial_values
                     )
                     added = (
                         promote_probe_rows(
                             main_raw,
                             partial_raw,
                             {case.exec_key for case in validation},
+                            args.metric,
+                            existing_values=raw_values,
+                            existing_rows=raw_rows,
                         )
                         if partial_raw.exists() else 0
                     )
                     history.append({
                         "kernel_type": key,
                         "iteration": iteration,
+                        "sampling_strategy": args.sampling_strategy,
+                        "bracketed_intervals": len(intervals),
+                        "bracketed_candidates": bracketed_count,
+                        "unbracketed_candidates": unbracketed_count,
                         "validation_samples": len(partial_errors),
                         "p95_relative_error": p95(partial_errors),
                         "target_error": args.target_error,
@@ -600,25 +1096,62 @@ def refine_command(args: argparse.Namespace) -> int:
                         args=args,
                         grouped=grouped,
                         unresolved=unresolved,
+                        raw_values=raw_values,
                         history=history,
+                        selections=selections,
                         status="interrupted",
                     )
                     raise
             assert probe_raw is not None
-            errors = evaluate_cases(suite, validation, main_raw, probe_raw, args.metric)
-            current_p95 = p95(errors)
-            added = promote_probe_rows(
-                main_raw, probe_raw, {case.exec_key for case in validation}
+            actual_values, _ = _raw_metric(probe_raw, args.metric)
+            errors = evaluate_cases_from_values(
+                suite, validation, baseline_values, actual_values
             )
+            current_p95 = p95(errors)
+            selected_exec_keys = {case.exec_key for case in validation}
+            all_succeeded = (
+                selected_exec_keys <= set(actual_values)
+                and len(errors) == len(validation)
+            )
+            added = promote_probe_rows(
+                main_raw,
+                probe_raw,
+                selected_exec_keys,
+                args.metric,
+                existing_values=raw_values,
+                existing_rows=raw_rows,
+            )
+            converged = all_succeeded and current_p95 <= args.target_error
             history.append({
                 "kernel_type": key,
                 "iteration": iteration,
+                "sampling_strategy": args.sampling_strategy,
+                "bracketed_intervals": len(intervals),
+                "bracketed_candidates": bracketed_count,
+                "unbracketed_candidates": unbracketed_count,
                 "validation_samples": len(errors),
                 "p95_relative_error": current_p95,
                 "target_error": args.target_error,
-                "status": "converged" if current_p95 <= args.target_error else "refining",
+                "status": "converged" if converged else "refining",
                 "promoted_measurements": added,
             })
+            error_text = "unavailable" if not errors else f"{current_p95:.2%}"
+            iteration_status = (
+                "unavailable"
+                if not errors
+                else "converged"
+                if converged
+                else "refining"
+            )
+            print(
+                f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                f"iteration {iteration + 1}/{args.max_iterations} "
+                f"validation_p95_error={error_text} "
+                f"target={args.target_error:.2%} status={iteration_status} "
+                f"promoted={added} "
+                f"elapsed={time.monotonic() - iteration_started:.1f}s",
+                flush=True,
+            )
             write_refinement_progress(
                 suite=suite,
                 main_raw=main_raw,
@@ -628,14 +1161,19 @@ def refine_command(args: argparse.Namespace) -> int:
                 args=args,
                 grouped=grouped,
                 unresolved=unresolved,
+                raw_values=raw_values,
                 history=history,
+                selections=selections,
                 status="running",
             )
-            if current_p95 <= args.target_error:
+            if converged:
+                print(
+                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                    f"converged target={args.target_error:.2%}",
+                    flush=True,
+                )
                 break
-            if not errors:
-                history[-1]["status"] = "exhausted"
-                break
+    print("[refine] writing final snapshot", flush=True)
     write_refinement_progress(
         suite=suite,
         main_raw=main_raw,
@@ -645,13 +1183,24 @@ def refine_command(args: argparse.Namespace) -> int:
         args=args,
         grouped=grouped,
         unresolved=unresolved,
+        raw_values=raw_values,
         history=history,
+        selections=selections,
         status="no_candidates" if not unresolved else "completed",
     )
     if unresolved:
-        print(f"refined {len(grouped)} kernel types; wrote {out / 'iterations.csv'}")
+        print(
+            f"[refine] complete kernel_types={len(grouped)} "
+            f"elapsed={time.monotonic() - started:.1f}s "
+            f"iterations={out / 'iterations.csv'}",
+            flush=True,
+        )
     else:
-        print("no unresolved interpolation cases; nothing to refine")
+        print(
+            f"[refine] complete no unresolved interpolation cases "
+            f"elapsed={time.monotonic() - started:.1f}s",
+            flush=True,
+        )
     return 0
 
 
@@ -694,5 +1243,11 @@ def add_cli_parsers(sub: argparse._SubParsersAction) -> None:
     )
     refine.add_argument("--validation-samples", type=int, default=3)
     refine.add_argument("--max-iterations", type=int, default=10)
+    refine.add_argument(
+        "--sampling-strategy",
+        choices=("midpoint", "random"),
+        default="midpoint",
+        help="Choose bracketed adaptive midpoint sampling or the legacy seeded shuffle.",
+    )
     refine.add_argument("--seed", type=int, default=0)
     refine.add_argument("--metric", default="p50_us")

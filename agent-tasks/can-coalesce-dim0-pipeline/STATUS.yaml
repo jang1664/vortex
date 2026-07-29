@@ -1,0 +1,42 @@
+name: can_coalesce_dim0_pipeline
+goal: |
+  Register the decoded naive GEMM DMA descriptor so the coalescing multiplier
+  and predicate no longer form a same-cycle path into job-frontend req_data.
+state: complete
+created: "2026-07-29"
+children: []
+log:
+  - ts: "2026-07-29"
+    note: "Scope confirmed: modify only VX_gemm_dma_ctrl_naive, preserve descriptor and protocol behavior, and verify the registered snapshot path."
+  - iteration: 1
+    status: sim_fail
+    error_summary: "gemm_node started with the default four LMEM ports and rejected the GEMM_NAIVE configuration."
+    root_cause: "The verification command did not source the exact hardware configuration used by the failing U55C build."
+    fix_applied: "None to RTL; rerun with configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh."
+    lesson: "Focused GEMM_NAIVE unittests must source the target config so LMEM_NUM_PORTS and related topology defines match synthesis."
+  - iteration: 2
+    status: sim_fail
+    error_summary: "The configured rerun reused the iteration-1 VCS executable and repeated the four-port assertion."
+    root_cause: "The unittest compile stamp does not depend on CONFIGS, so make considered the stale executable current."
+    fix_applied: "None to RTL; force a recoverable clean rebuild by moving stale VCS artifacts aside before iteration 3."
+    lesson: "Changing CONFIGS does not invalidate hw/unittest/gemm_node's compile target automatically."
+  - iteration: 3
+    status: sim_fail
+    error_summary: "Configured rebuild reached a DMA gearbox assertion because platform memory width elaborated as 8 bytes."
+    root_cause: "The named config file omits PLATFORM_MEMORY_DATA_SIZE=64 and PLATFORM_MEMORY_ID_WIDTH=32 that were appended in the actual synthesis fingerprint."
+    fix_applied: "None to RTL; append the two synthesis fingerprint defines and force rebuild for iteration 4."
+    lesson: "The config script alone may not contain wrapper-appended platform defines; compare against the artifact fingerprint."
+  - iteration: 4
+    status: sim_fail
+    error_summary: "The exact-config build compiled, then the existing gemm_node testbench hit an 8-byte misalignment-gearbox time-zero assertion."
+    root_cause: "The testbench hardcodes DCACHE_NUM_LANES_P=1 with ENABLE_MISALIGN=1, while VX_dma_gearbox requires at least 16-byte input/output widths."
+    fix_applied: "None to RTL; reassess the focused test request because this pre-existing topology cannot start simulation."
+    lesson: "The existing gemm_node regression is not directly runnable with the target 32-port naive config until its one-lane DMA-node topology is corrected or bypassed."
+  - iteration: 5
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "Added a controller-only focused testbench with mocked allocation, descriptor MMIO, kick, and poll responses."
+    lesson: "A controller-level test isolates descriptor snapshot correctness from unrelated DMA gearbox topology constraints."
+  - ts: "2026-07-29"
+    note: "Implementation complete: S_PROG_W consumes a coherent registered descriptor snapshot, and the focused VCS test passed coalesced, non-coalesced, delayed-response, and backpressure cases."

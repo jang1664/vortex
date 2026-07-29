@@ -49,9 +49,9 @@ class NoAreaNormE2ETests(unittest.TestCase):
                 out_name="llama2_7b_e2e_no_area_norm",
             )
 
-        self.assertIs(result.composed, estimated.composed)
-        self.assertIs(result.plot_data, estimated.plot_data)
-        self.assertIs(result.stack_data, estimated.stack_data)
+        self.assertIs(result.composed, base.composed)
+        self.assertIs(result.plot_data, base.plot_data)
+        self.assertIs(result.stack_data, base.stack_data)
         self.assertEqual(result.options.case_latency_scale_rules, ())
         self.assertEqual(result.cache_status, "derived")
 
@@ -112,6 +112,9 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(prepare, "LATENCY_SCALE_RULES", []),
             patch.object(prepare, "ENERGY_POWER_METRICS", ()),
             patch.object(prepare, "BUILD_LLAMA_COMPARE", False),
+            patch.object(Path, "is_file", return_value=True),
+            patch.object(prepare.pd, "read_csv", return_value=pd.DataFrame()),
+            patch.object(prepare, "_validate_prepare_composed"),
             patch.object(
                 prepare,
                 "load_or_export_suite_figure_data",
@@ -125,7 +128,10 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(prepare, "figure_data_path", return_value=Path("/tmp")),
             patch.object(prepare, "total_data_path", return_value=Path("/tmp")),
         ):
-            self.assertEqual(prepare.main(), 0)
+            self.assertEqual(
+                prepare.main(["--composed-csv", "input.csv", "--out-tokens", "128"]),
+                0,
+            )
 
         self.assertEqual(
             derive_mock.call_args_list,
@@ -162,6 +168,9 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(prepare, "LATENCY_SCALE_RULES", []),
             patch.object(prepare, "ENERGY_POWER_METRICS", ()),
             patch.object(prepare, "BUILD_LLAMA_COMPARE", False),
+            patch.object(Path, "is_file", return_value=True),
+            patch.object(prepare.pd, "read_csv", return_value=pd.DataFrame()),
+            patch.object(prepare, "_validate_prepare_composed"),
             patch.object(
                 prepare,
                 "load_or_export_suite_figure_data",
@@ -179,7 +188,10 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(prepare, "figure_data_path", return_value=Path("/tmp")),
             patch.object(prepare, "total_data_path", return_value=Path("/tmp")),
         ):
-            self.assertEqual(prepare.main(), 0)
+            self.assertEqual(
+                prepare.main(["--composed-csv", "input.csv", "--out-tokens", "128"]),
+                0,
+            )
 
         derive_mock.assert_not_called()
         no_area_norm_call = load_mock.call_args_list[1]
@@ -316,6 +328,8 @@ class NoAreaNormE2ETests(unittest.TestCase):
             [
                 "--plot",
                 "llama_gemm_only_no_area_norm",
+                "--out-tokens",
+                "128",
                 "--llama3-gemm-no-area-norm-data",
                 "llama3.csv",
             ]
@@ -410,6 +424,8 @@ class NoAreaNormE2ETests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_no_area_norm",
+                "--out-tokens",
+                "128",
                 "--llama2-no-area-norm-data",
                 "llama2.csv",
                 "--llama3-no-area-norm-data",
@@ -426,6 +442,8 @@ class NoAreaNormE2ETests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_no_area_norm_stacked",
+                "--out-tokens",
+                "128",
                 "--llama2-no-area-norm-stacked-data",
                 "llama2.csv",
                 "--llama3-no-area-norm-stacked-data",
@@ -517,6 +535,8 @@ class NoAreaNormE2ETests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_no_area_norm",
+                "--out-tokens",
+                "128",
                 "--latency-dir",
                 "/latency",
                 "--llama2-no-area-norm-data",
@@ -546,6 +566,8 @@ class NoAreaNormE2ETests(unittest.TestCase):
             [
                 "--plot",
                 "llama_e2e_no_area_norm_stacked",
+                "--out-tokens",
+                "128",
                 "--latency-dir",
                 "/latency",
                 "--llama2-no-area-norm-stacked-data",

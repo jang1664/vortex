@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .canonicalization import canonicalize_args, load_canonicalization_policies
 from .raw_db import RAW_DB_COLUMNS
-from .suite import stable_hash
+from .suite import make_exec_key
 
 
 CASE_COLUMNS = [
@@ -37,16 +37,6 @@ def _write_rows(path: Path, columns: list[str], rows: list[dict[str, object]]) -
     tmp.replace(path)
 
 
-def _exec_key(app: str, args: str, warmup: object, iterations: object) -> str:
-    payload = {
-        "app": app,
-        "args": " ".join(args.split()),
-        "warmup": int(warmup),
-        "iterations": int(iterations),
-    }
-    return stable_hash(json.dumps(payload, sort_keys=True))
-
-
 def _canonicalize_row(
     row: dict[str, str],
     *,
@@ -62,7 +52,13 @@ def _canonicalize_row(
     return canonical.measurement_args, canonical.latency_shape
 
 
-def migrate_cases(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[int, int]:
+def migrate_cases(
+    path: Path,
+    *,
+    fpga_bin_label: str,
+    xclbin_sha256: str,
+    policies: dict,
+) -> tuple[int, int]:
     old_rows = _read_rows(path)
     rows: list[dict[str, object]] = []
     changed_args = 0
@@ -102,11 +98,10 @@ def migrate_cases(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[i
             "output_token_index": output_token_index,
             "out_tokens": old.get("out_tokens", "1") or "1",
             "measurement_kind": old.get("measurement_kind", "measured") or "measured",
-            "exec_key": _exec_key(
+            "exec_key": make_exec_key(
+                xclbin_sha256,
                 old.get("app", ""),
                 measurement_args,
-                old.get("warmup", 3),
-                old.get("iterations", 10),
             ),
         })
         rows.append(row)
@@ -124,11 +119,10 @@ def migrate_raw_db(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[
         )
         if measurement_args != old.get("args", ""):
             changed_args += 1
-        exec_key = _exec_key(
+        exec_key = make_exec_key(
+            old.get("xclbin_sha256", ""),
             old.get("app", ""),
             measurement_args,
-            old.get("warmup", 3),
-            old.get("iterations", 10),
         )
         row: dict[str, object] = {
             column: old.get(column, "") for column in RAW_DB_COLUMNS
@@ -145,10 +139,8 @@ def migrate_raw_db(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[
             old.get("run_id", ""),
             old.get("fpga_bin_label", fpga_bin_label),
             old.get("xclbin_sha256", ""),
-            exec_key,
             old.get("app", ""),
-            str(old.get("warmup", "")),
-            str(old.get("iterations", "")),
+            measurement_args,
         )
         previous = unique.get(key)
         if previous is None or (
@@ -191,8 +183,23 @@ def migrate_roots(roots: list[Path], backup_root: Path) -> None:
             raw_before += before
             raw_after += after
         for path in sorted(root.glob("*/runs/*/cases.csv")):
+            raw_db = path.parents[2] / "raw_db.csv"
+            raw_rows = _read_rows(raw_db)
+            xclbin_shas = {
+                str(row.get("xclbin_sha256", "")).strip()
+                for row in raw_rows
+                if str(row.get("xclbin_sha256", "")).strip()
+            }
+            if len(xclbin_shas) != 1:
+                raise ValueError(
+                    f"expected exactly one xclbin_sha256 in {raw_db}, "
+                    f"found {sorted(xclbin_shas)}"
+                )
             rows, changed = migrate_cases(
-                path, fpga_bin_label=path.parents[2].name, policies=policies
+                path,
+                fpga_bin_label=path.parents[2].name,
+                xclbin_sha256=next(iter(xclbin_shas)),
+                policies=policies,
             )
             case_rows += rows
             canonical_cases += changed

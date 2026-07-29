@@ -8,12 +8,12 @@ import re
 import shutil
 import shlex
 import subprocess
+import time
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
-import yaml
 
 from .fpga_bins import FpgaBinConfig, resolve_fpga_bin, resolve_fpga_bin_config
 from .interpolation import write_current_cases
@@ -22,12 +22,19 @@ from .raw_db import (
     RAW_DB_COLUMNS,
     _normalize_args,
     _parse_bool_cell,
-    _parse_int,
     _write_raw_rows,
 )
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
-from .suite import BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
+from .suite import (
+    BenchCase,
+    BenchSuite,
+    bind_suite_xclbin_sha256,
+    iter_suite_rows,
+    suite_to_expanded_yaml,
+    suite_to_rows,
+)
+from .yaml_io import safe_dump
 
 
 DEFAULT_SRUN_ARGS = (
@@ -51,12 +58,9 @@ SUPPORTED_SKIP_EXISTING_COLUMNS = frozenset((
     "measure_latency",
     "measure_power",
     "power_samples",
-    "exec_key",
     "app",
     "args",
     "padded_args",
-    "warmup",
-    "iterations",
 ))
 CASE_COLUMNS = [
     "suite",
@@ -114,6 +118,9 @@ class RunOptions:
     configs_extra: str = ""
     blackbox_args: tuple[str, ...] = ()
     blackbox_timeout: str = ""
+    stream_case_logs: bool = False
+    case_progress: bool = True
+    case_progress_interval: int = 10
     srun: bool = True
     srun_args: tuple[str, ...] = DEFAULT_SRUN_ARGS
     dry_run: bool = False
@@ -177,6 +184,10 @@ def validate_inputs(options: RunOptions) -> None:
             raise ValueError("--retry-timeout-growth must be > 1.0")
         if not shlex.split(options.retry_reset_cmd):
             raise ValueError("--retry-reset-cmd must not be empty")
+    if options.blackbox_timeout:
+        _parse_timeout_seconds(options.blackbox_timeout)
+    if options.case_progress_interval < 1:
+        raise ValueError("--case-progress-interval must be >= 1")
     if options.power_min_samples < 0:
         raise ValueError("--power-min-samples must be >= 0")
     if options.power_kernel_iterations < 1:
@@ -282,16 +293,10 @@ def _skip_existing_column_matches(
         return _parse_bool_cell(row.get("measure_power", ""), default=False) == measure_power
     if column == "power_samples":
         return not measure_power or not power_samples_below_threshold(row, power_min_samples)
-    if column == "exec_key":
-        return row.get("exec_key", "") == unit.exec_key
     if column == "app":
         return row.get("app") == unit.app
     if column == "args":
         return _normalize_args(row.get("args", "")) == _normalize_args(unit.args)
-    if column == "warmup":
-        return _parse_int(row.get("warmup")) == unit.warmup
-    if column == "iterations":
-        return _parse_int(row.get("iterations")) == unit.iterations
     raise AssertionError(f"unhandled skip-existing column: {column}")
 
 
@@ -443,10 +448,10 @@ _TIMEOUT_UNIT_SECONDS = {
 def _parse_timeout_seconds(value: str) -> int:
     match = _TIMEOUT_RE.match(value)
     if not match:
-        raise ValueError(f"unsupported timeout duration for retry: {value!r}")
+        raise ValueError(f"unsupported timeout duration: {value!r}")
     seconds = float(match.group("value")) * _TIMEOUT_UNIT_SECONDS[match.group("unit").lower()]
     if seconds <= 0:
-        raise ValueError(f"timeout duration must be positive for retry: {value!r}")
+        raise ValueError(f"timeout duration must be positive: {value!r}")
     return max(1, math.ceil(seconds))
 
 
@@ -487,19 +492,39 @@ def collect_git_metadata(cwd: Path | None = None) -> GitMetadata:
 
 
 def write_cases_csv(suite: BenchSuite, out_dir: Path) -> None:
-    rows = suite_to_rows(suite)
     with (out_dir / "cases.csv").open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()) if rows else CASE_COLUMNS)
+        writer = csv.DictWriter(fp, fieldnames=CASE_COLUMNS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(iter_suite_rows(suite))
 
 
-def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> None:
+def _copy_explicit_suite_snapshot(suite: BenchSuite, destination: Path) -> str:
+    assert suite.source_path is not None
+    warmup = suite.source_warmup_override
+    iterations = suite.source_iterations_override
+    if warmup is None and iterations is None:
+        shutil.copyfile(suite.source_path, destination)
+        return "explicit_copy"
+
+    with suite.source_path.open() as src, destination.open("w") as dst:
+        for line in src:
+            if warmup is not None and line.startswith("  warmup:"):
+                line = f"  warmup: {warmup}\n"
+            elif iterations is not None and line.startswith("  iterations:"):
+                line = f"  iterations: {iterations}\n"
+            dst.write(line)
+    return "explicit_stream_rewrite"
+
+
+def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> str:
     if suite.source_path:
         shutil.copy2(suite.source_path, out_dir / "suite.yaml")
+    if suite.source_path and suite.source_expanded_snapshot_reusable:
+        return _copy_explicit_suite_snapshot(suite, out_dir / "suite.expanded.yaml")
     expanded = suite_to_expanded_yaml(suite)
     with (out_dir / "suite.expanded.yaml").open("w") as fp:
-        yaml.safe_dump(expanded, fp, sort_keys=False)
+        safe_dump(expanded, fp, sort_keys=False)
+    return "serialized"
 
 
 def _atomic_copy(source: Path, destination: Path) -> None:
@@ -539,9 +564,12 @@ def publish_current_cases(
     run_dir: Path,
     out_root: Path,
 ) -> None:
+    started = time.monotonic()
+    print("[prepare] publishing latest/cases.csv...", flush=True)
     current_cases = run_dir / "cases.current.csv"
     write_current_cases(suite, out_root / "raw_db.csv", current_cases)
     _atomic_copy(current_cases, out_root / "latest" / "cases.csv")
+    print(f"[prepare] published latest/cases.csv in {time.monotonic() - started:.1f}s", flush=True)
 
 
 def write_run_script(
@@ -567,7 +595,8 @@ def write_run_script(
     # The raw DB is seeded before this script starts. Normal runs replace only
     # their seed rows; retry/resume paths replace stale matching measurements.
     raw_db_mode = raw_db_update_mode(options)
-    retry_initial_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.retry else 0
+    configured_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.blackbox_timeout else 0
+    retry_initial_timeout_s = configured_timeout_s if options.retry else 0
     retry_max_rounds = options.retry_max_rounds if options.retry else 1
     retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
     retry_reset_add_device = 1 if retry_reset_cmd == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)) else 0
@@ -634,6 +663,12 @@ def write_run_script(
         f"LATENCY_BENCH_RETRY_MAX_ROUNDS={retry_max_rounds}",
         f"LATENCY_BENCH_RETRY_TIMEOUT_GROWTH={_q(str(options.retry_timeout_growth))}",
         f"LATENCY_BENCH_CURRENT_TIMEOUT_S={retry_initial_timeout_s}",
+        f"LATENCY_BENCH_CONFIGURED_TIMEOUT_S={configured_timeout_s}",
+        f"LATENCY_BENCH_STREAM_CASE_LOGS={1 if options.stream_case_logs else 0}",
+        f"LATENCY_BENCH_CASE_PROGRESS={1 if options.case_progress else 0}",
+        f"LATENCY_BENCH_CASE_PROGRESS_INTERVAL={options.case_progress_interval}",
+        "LATENCY_BENCH_CASE_PROGRESS_PID=",
+        "LATENCY_BENCH_CASE_PROGRESS_TTY=0",
         f"LATENCY_BENCH_RETRY_RESET_WAIT={_q(options.retry_reset_wait)}",
         f"LATENCY_BENCH_RESET_CMD={_bash_array(retry_reset_cmd)}",
         f"LATENCY_BENCH_RESET_ADD_DEVICE={retry_reset_add_device}",
@@ -647,6 +682,69 @@ def write_run_script(
         "  LATENCY_BENCH_PROGRESS_BLUE=$'\\033[34m'",
         "  LATENCY_BENCH_PROGRESS_RESET=$'\\033[0m'",
         "fi",
+        "",
+        "latency_bench_format_duration() {",
+        "  local total=\"$1\"",
+        "  printf '%02d:%02d:%02d' $((total / 3600)) $(((total % 3600) / 60)) $((total % 60))",
+        "}",
+        "",
+        "latency_bench_case_progress_loop() {",
+        "  local idx=\"$1\" total=\"$2\" timeout_s=\"$3\" interval=\"$LATENCY_BENCH_CASE_PROGRESS_INTERVAL\"",
+        "  local start_s now_s elapsed_s percent filled empty filled_bar empty_bar elapsed_label timeout_label",
+        "  if [[ -t 1 ]]; then interval=1; fi",
+        "  start_s=$(date +%s)",
+        "  while true; do",
+        "    now_s=$(date +%s)",
+        "    elapsed_s=$((now_s - start_s))",
+        "    elapsed_label=$(latency_bench_format_duration \"$elapsed_s\")",
+        "    if [[ \"$timeout_s\" -gt 0 ]]; then",
+        "      percent=$((elapsed_s * 100 / timeout_s))",
+        "      if [[ \"$percent\" -gt 100 ]]; then percent=100; fi",
+        "      filled=$((percent * 20 / 100))",
+        "      empty=$((20 - filled))",
+        "      printf -v filled_bar '%*s' \"$filled\" ''",
+        "      printf -v empty_bar '%*s' \"$empty\" ''",
+        "      filled_bar=${filled_bar// /=}",
+        "      empty_bar=${empty_bar// /.}",
+        "      timeout_label=$(latency_bench_format_duration \"$timeout_s\")",
+        "      if [[ -t 1 ]]; then",
+        "        printf '\\r[case %d/%d] [%s%s] %3d%% %s / %s' \"$idx\" \"$total\" \"$filled_bar\" \"$empty_bar\" \"$percent\" \"$elapsed_label\" \"$timeout_label\"",
+        "      else",
+        "        printf '[case %d/%d] running progress=%d%% elapsed=%s timeout=%s\\n' \"$idx\" \"$total\" \"$percent\" \"$elapsed_label\" \"$timeout_label\"",
+        "      fi",
+        "    else",
+        "      if [[ -t 1 ]]; then",
+        "        printf '\\r[case %d/%d] running elapsed=%s' \"$idx\" \"$total\" \"$elapsed_label\"",
+        "      else",
+        "        printf '[case %d/%d] running elapsed=%s\\n' \"$idx\" \"$total\" \"$elapsed_label\"",
+        "      fi",
+        "    fi",
+        "    sleep \"$interval\"",
+        "  done",
+        "}",
+        "",
+        "latency_bench_stop_case_progress() {",
+        "  if [[ -n \"${LATENCY_BENCH_CASE_PROGRESS_PID:-}\" ]]; then",
+        "    kill \"$LATENCY_BENCH_CASE_PROGRESS_PID\" 2>/dev/null || true",
+        "    wait \"$LATENCY_BENCH_CASE_PROGRESS_PID\" 2>/dev/null || true",
+        "    LATENCY_BENCH_CASE_PROGRESS_PID=",
+        "  fi",
+        "  if [[ \"${LATENCY_BENCH_CASE_PROGRESS_TTY:-0}\" == \"1\" ]]; then printf '\\r\\033[K'; fi",
+        "  LATENCY_BENCH_CASE_PROGRESS_TTY=0",
+        "}",
+        "",
+        "latency_bench_start_case_progress() {",
+        "  local idx=\"$1\" total=\"$2\" app=\"$3\" attempt=\"$4\" max_attempts=\"$5\" timeout_s=\"$6\" timeout_label=off",
+        "  latency_bench_stop_case_progress",
+        "  if [[ \"$timeout_s\" -gt 0 ]]; then timeout_label=$(latency_bench_format_duration \"$timeout_s\"); fi",
+        "  printf '[case %d/%d] app=%s attempt=%d/%d timeout=%s\\n' \"$idx\" \"$total\" \"$app\" \"$attempt\" \"$max_attempts\" \"$timeout_label\"",
+        "  if [[ \"$LATENCY_BENCH_CASE_PROGRESS\" != \"1\" || \"$LATENCY_BENCH_STREAM_CASE_LOGS\" == \"1\" ]]; then return 0; fi",
+        "  if [[ -t 1 ]]; then LATENCY_BENCH_CASE_PROGRESS_TTY=1; fi",
+        "  latency_bench_case_progress_loop \"$idx\" \"$total\" \"$timeout_s\" &",
+        "  LATENCY_BENCH_CASE_PROGRESS_PID=$!",
+        "}",
+        "",
+        "trap latency_bench_stop_case_progress EXIT",
         "",
         "latency_bench_capture_fpga_identity() {",
         "  local smi index bdf host requested_index requested_bdf env_file json_file",
@@ -913,6 +1011,7 @@ def write_run_script(
         "fi",
     ])
 
+    quiet_redirect = "" if options.stream_case_logs else " >/dev/null"
     blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
     blackbox_args = f"{blackbox_args} " if blackbox_args else ""
     lines.extend([
@@ -932,12 +1031,13 @@ def write_run_script(
                 f"echo '[build {idx}/{len(apps)}] app={app}'",
                 f"LATENCY_BENCH_BUILD_LOG[{_q(app)}]={_q(build_log)}",
                 f": > {_q(build_log)}",
-                f"printf '[latency-bench] stage=build_begin app=%s log=%s\\n' {_q(app)} {_q(build_log)} | tee -a {_q(build_log)}",
+                f"printf '[latency-bench] stage=build_begin app=%s log=%s\\n' {_q(app)} {_q(build_log)} | tee -a {_q(build_log)}{quiet_redirect}",
                 "set +e",
-                f"{build_cmd} 2>&1 | tee -a {_q(build_log)}",
+                f"{build_cmd} 2>&1 | tee -a {_q(build_log)}{quiet_redirect}",
                 "rc=\"${PIPESTATUS[0]}\"",
                 "set -u",
-                f"printf '[latency-bench] stage=build_end app=%s rc=%s log=%s\\n' {_q(app)} \"$rc\" {_q(build_log)} | tee -a {_q(build_log)}",
+                f"printf '[latency-bench] stage=build_end app=%s rc=%s log=%s\\n' {_q(app)} \"$rc\" {_q(build_log)} | tee -a {_q(build_log)}{quiet_redirect}",
+                f"if [[ \"$rc\" == \"0\" ]]; then printf '[build {idx}/{len(apps)}] passed app=%s\\n' {_q(app)}; else printf '[build {idx}/{len(apps)}] failed app=%s rc=%s log=%s\\n' {_q(app)} \"$rc\" {_q(build_log)}; fi",
                 f"LATENCY_BENCH_BUILD_RC[{_q(app)}]=\"$rc\"",
             ])
 
@@ -1028,20 +1128,15 @@ def write_run_script(
         lines.extend([
             "",
             f"if [[ \"${{LATENCY_BENCH_SHOULD_RUN[{_q(unit.exec_key)}]:-0}}\" == \"1\" ]]; then",
-            (
-                f"printf '%s[{idx}/{len(units)}]%s %s\\n' "
-                f"\"$LATENCY_BENCH_PROGRESS_BLUE\" \"$LATENCY_BENCH_PROGRESS_RESET\" "
-                f"{_q(f'{unit.exec_key} app={unit.app} args={bench_args}')}"
-            ),
             f"if [[ \"$LATENCY_BENCH_RETRY_ROUND\" == \"1\" ]]; then : > {_q(unit.log_file)}; fi",
             (
                 f"printf '[latency-bench] stage=case_begin idx=%d total=%d exec_key=%s app=%s raw_csv=%s power_csv=%s power_summary=%s log=%s\\n' "
                 f"{idx} {len(units)} {_q(unit.exec_key)} {_q(unit.app)} {_q(unit.raw_csv)} {_q(status_power_csv)} {_q(status_power_summary)} {_q(unit.log_file)} "
-                f"| tee -a {_q(unit.log_file)}"
+                f"| tee -a {_q(unit.log_file)}{quiet_redirect}"
             ),
             (
                 f"printf '[latency-bench] stage=case_args exec_key=%s args=%s\\n' "
-                f"{_q(unit.exec_key)} {_q(bench_args)} | tee -a {_q(unit.log_file)}"
+                f"{_q(unit.exec_key)} {_q(bench_args)} | tee -a {_q(unit.log_file)}{quiet_redirect}"
             ),
             f"build_rc=\"${{LATENCY_BENCH_BUILD_RC[{_q(unit.app)}]:-0}}\"",
             f"build_log=\"${{LATENCY_BENCH_BUILD_LOG[{_q(unit.app)}]:-}}\"",
@@ -1049,9 +1144,11 @@ def write_run_script(
             "failure_reason=\"\"",
             "final_attempt_log=\"\"",
             "blackbox_timeout_label=\"\"",
+            "attempt_timeout_s=\"$LATENCY_BENCH_CONFIGURED_TIMEOUT_S\"",
             "reset_ran=\"0\"",
             "reset_rc=\"\"",
-            "if [[ \"$LATENCY_BENCH_CURRENT_TIMEOUT_S\" != \"0\" ]]; then blackbox_timeout_label=\"${LATENCY_BENCH_CURRENT_TIMEOUT_S}s\"; fi",
+            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" ]]; then attempt_timeout_s=\"$LATENCY_BENCH_CURRENT_TIMEOUT_S\"; fi",
+            "if [[ \"$attempt_timeout_s\" != \"0\" ]]; then blackbox_timeout_label=\"${attempt_timeout_s}s\"; fi",
             "if [[ \"$build_rc\" != \"0\" ]]; then",
             "  rc=\"$build_rc\"",
             "  failure_phase=\"build\"",
@@ -1073,14 +1170,16 @@ def write_run_script(
             (
                 f"    printf '[latency-bench] stage=run_attempt_begin exec_key=%s retry_round=%d attempt=%d/%d timeout=%s attempt_log=%s\\n' "
                 f"{_q(unit.exec_key)} \"$LATENCY_BENCH_RETRY_ROUND\" \"$attempt\" \"$max_attempts\" \"$blackbox_timeout_label\" \"$attempt_log\" "
-                f"| tee -a {_q(unit.log_file)} \"$attempt_log\""
+                f"| tee -a {_q(unit.log_file)} \"$attempt_log\"{quiet_redirect}"
             ),
-            f"    {blackbox_cmd} 2>&1 | tee -a {_q(unit.log_file)} \"$attempt_log\"",
+            f"    latency_bench_start_case_progress {idx} {len(units)} {_q(unit.app)} \"$attempt\" \"$max_attempts\" \"$attempt_timeout_s\"",
+            f"    {blackbox_cmd} 2>&1 | tee -a {_q(unit.log_file)} \"$attempt_log\"{quiet_redirect}",
             "    rc=\"${PIPESTATUS[0]}\"",
+            "    latency_bench_stop_case_progress",
             (
                 f"    printf '[latency-bench] stage=run_attempt_end exec_key=%s retry_round=%d attempt=%d/%d rc=%s attempt_log=%s\\n' "
                 f"{_q(unit.exec_key)} \"$LATENCY_BENCH_RETRY_ROUND\" \"$attempt\" \"$max_attempts\" \"$rc\" \"$attempt_log\" "
-                f"| tee -a {_q(unit.log_file)} \"$attempt_log\""
+                f"| tee -a {_q(unit.log_file)} \"$attempt_log\"{quiet_redirect}"
             ),
             f"    if [[ \"$rc\" == \"124\" || \"$rc\" == \"137\" ]]; then latency_bench_cleanup_timeout {_q(unit.raw_csv)} {_q(unit.log_file)}; fi",
             "    xrt_open_failure=\"\"",
@@ -1120,8 +1219,9 @@ def write_run_script(
             (
                 f"printf '[latency-bench] stage=case_end exec_key=%s rc=%s failure_phase=%s failure_reason=%s elapsed_wall_s=%s reset_ran=%s reset_rc=%s\\n' "
                 f"{_q(unit.exec_key)} \"$rc\" \"$failure_phase\" \"$failure_reason\" \"$elapsed_wall_s\" \"$reset_ran\" \"$reset_rc\" "
-                f"| tee -a {_q(unit.log_file)}"
+                f"| tee -a {_q(unit.log_file)}{quiet_redirect}"
             ),
+            f"if [[ \"$rc\" == \"0\" && -z \"$failure_reason\" ]]; then printf '[case {idx}/{len(units)}] passed app=%s elapsed=%ss\\n' {_q(unit.app)} \"$elapsed_wall_s\"; else printf '[case {idx}/{len(units)}] failed app=%s reason=%s rc=%s elapsed=%ss log=%s\\n' {_q(unit.app)} \"${{failure_reason:-unknown}}\" \"$rc\" \"$elapsed_wall_s\" {_q(unit.log_file)}; fi",
             (
                 f"printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\\n' "
                 f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" "
@@ -1257,10 +1357,16 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
 
     validate_inputs(run_options)
     xclbin_sha256 = _current_xclbin_sha(run_options.fpga_bin_dir)
+    suite = bind_suite_xclbin_sha256(suite, xclbin_sha256)
+    print(f"[prepare] building execution map for {len(suite.cases)} cases...", flush=True)
+    phase_started = time.monotonic()
     units = build_execution_units(suite, run_dir)
+    print(f"[prepare] built {len(units)} unique executions in {time.monotonic() - phase_started:.1f}s", flush=True)
     skipped_existing_exec_keys: tuple[str, ...] = ()
     units_to_run = units
     if options.skip_existing:
+        print("[prepare] resolving skip-existing...", flush=True)
+        phase_started = time.monotonic()
         skipped_existing_exec_keys = find_existing_pass_exec_keys(
             out_root / "raw_db.csv",
             units,
@@ -1273,8 +1379,23 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
+        print(
+            f"[prepare] skip-existing reused {len(skipped_existing_exec_keys)} executions; "
+            f"{len(units_to_run)} remain ({time.monotonic() - phase_started:.1f}s)",
+            flush=True,
+        )
+    print(f"[prepare] writing cases.csv ({len(suite.cases)} rows)...", flush=True)
+    phase_started = time.monotonic()
     write_cases_csv(suite, run_dir)
-    write_suite_snapshots(suite, run_dir)
+    print(f"[prepare] wrote cases.csv in {time.monotonic() - phase_started:.1f}s", flush=True)
+    print("[prepare] writing suite snapshots...", flush=True)
+    phase_started = time.monotonic()
+    suite_snapshot_mode = write_suite_snapshots(suite, run_dir)
+    print(
+        f"[prepare] wrote suite snapshots using {suite_snapshot_mode} in "
+        f"{time.monotonic() - phase_started:.1f}s",
+        flush=True,
+    )
     script = write_run_script(
         suite,
         run_options,
@@ -1331,6 +1452,10 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "xrt_smi": os.environ.get("XRT_SMI", "/opt/xilinx/xrt/bin/xrt-smi"),
         "blackbox_args": list(options.blackbox_args),
         "blackbox_timeout": options.blackbox_timeout,
+        "stream_case_logs": options.stream_case_logs,
+        "case_progress": options.case_progress,
+        "case_progress_interval": options.case_progress_interval,
+        "suite_expanded_snapshot_mode": suite_snapshot_mode,
         "configs": str(options.configs) if options.configs else "",
         "configs_extra": options.configs_extra,
         "execution_count": len(units),

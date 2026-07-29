@@ -40,13 +40,16 @@ The main `run` flow is:
 3. Expand explicit `cases` directly into `BenchCase` objects.
 4. Expand `workloads` through `tools/workload/gen_kernel_cfgs.py`; each
    implemented kernel with an app and args becomes a `BenchCase`.
-5. Compute an `exec_key` for each unique `(app, args, warmup, iterations)` tuple.
+5. Once the actual FPGA binary is resolved, compute an `exec_key` for each
+   unique `(xclbin_sha256, app, canonical measurement args)` tuple.
    Multiple logical cases can share one physical FPGA execution when their
    benchmark command is identical.
 6. Create a per-run directory under `<out>/runs/<run_id>`.
 7. Write `cases.csv`, which records every logical case after expansion.
 8. Copy the original suite to `suite.yaml` and write the expanded suite to
-   `suite.expanded.yaml`.
+   `suite.expanded.yaml`. Suites that already contain only explicit,
+   canonicalized cases use a streaming copy/rewrite path instead of rebuilding
+   and serializing the full YAML object graph.
 9. Generate `run_fpga_bench.sh` in the per-run directory.
 10. Run that script directly or through `srun`.
 11. Build each unique benchmark app once with `blackbox.sh --build-only --bench`.
@@ -104,7 +107,7 @@ name, and total suite latency.
 
 The top-level `raw_db.csv` is updated as each execution completes. Reusing the
 same `--out` across multiple days preserves every measurement row, including
-repeated measurements of the same `(FPGA bin, app, args, warmup, iterations)`
+repeated measurements of the same `(xclbin SHA, app, canonical measurement args)`
 tuple. Aggregate or interpolate from this DB in a later analysis step instead
 of overwriting older measurements.
 
@@ -304,9 +307,10 @@ kernels between neighboring measured or promoted rows. The base
 
 `cases.csv` and `results.csv` are case-level workload artifacts and retain
 call counts, decode ranges, measurement kinds, and shape metadata. The top-level
-`raw_db.csv` is a unique-measurement store: it contains one row per `exec_key`
-and run, with executable arguments, FPGA identity, status, and measured
-latency/cycle/power data. Existing raw DB schemas are not migrated
+`raw_db.csv` is a unique-measurement store: it contains one row per `exec_key`,
+where the key excludes warmup, iteration count, sampling interval, and other
+measurement-environment settings. Each row retains executable arguments, FPGA
+identity, status, and measured latency/cycle/power data. Existing raw DB schemas are not migrated
 automatically; use a new output directory or convert the old file explicitly.
 
 Kernel latency canonicalization is defined outside suites in
@@ -438,7 +442,9 @@ Each `runs/<run_id>/` directory contains:
 
 - `cases.csv`: expanded cases and deduplicated execution keys.
 - `suite.yaml`: copy of the original suite YAML used for the run.
-- `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as explicit `cases`.
+- `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as
+  explicit `cases`. `manifest.json:suite_expanded_snapshot_mode` records whether
+  it was serialized or produced by the explicit-suite fast path.
 - `run_fpga_bench.sh`: generated shell script used for the run.
 - `run_status.csv`: one row per unique execution, including `failure_phase` and
   `failure_reason`.
@@ -496,8 +502,10 @@ resume match. The default is:
 `vortex_afu.xclbin`; `args` is compared after whitespace normalization. If the
 custom column list omits `status`, non-pass rows can match too.
 Supported columns are `status`, `fpga_bin_label`, `xclbin_sha256`,
-`measure_latency`, `measure_power`, `power_samples`, `exec_key`, `app`, `args`,
-`warmup`, and `iterations`.
+`measure_latency`, `measure_power`, `power_samples`, `app`, `args`, and
+`padded_args`. Measurement-environment settings such as
+warmup/iteration counts, power sampling intervals, and power measurement
+duration are deliberately excluded from resume identity.
 When a retried execution writes a new row, any older `raw_db.csv` rows with the
 same strict match key are replaced by the new result. Skipped `pass` executions
 are not appended back into `raw_db.csv`.

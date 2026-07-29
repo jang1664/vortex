@@ -9,8 +9,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.latency_bench.runner import RAW_DB_COLUMNS, RunOptions, run_suite
-from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
+from tools.latency_bench.runner import (
+    RAW_DB_COLUMNS,
+    RunOptions,
+    normalize_skip_existing_columns,
+    run_suite,
+)
+from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite, make_exec_key
 
 
 class RawDbTest(unittest.TestCase):
@@ -341,8 +346,6 @@ esac
             "run_id": "existing_run",
             "timestamp_utc": "2026-05-30T00:00:00+00:00",
             "fpga_bin_label": "improve_tcol1",
-            "suite": "mini_suite",
-            "case_id": "existing_case",
             "exec_key": "existing_exec",
             "app": "fpint_gemm_ffn_hw",
             "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
@@ -653,7 +656,10 @@ esac
                 rows = list(csv.DictReader(fp))
             self.assertEqual(1, len(rows))
             self.assertEqual("pass", rows[0]["status"])
-            self.assertEqual(suite.cases[0].exec_key, rows[0]["exec_key"])
+            self.assertEqual(
+                make_exec_key(rows[0]["xclbin_sha256"], rows[0]["app"], rows[0]["args"]),
+                rows[0]["exec_key"],
+            )
 
     def test_programs_fpga_before_bench_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1363,12 +1369,18 @@ exit 2
                 rows = list(csv.DictReader(fp))
             self.assertEqual(2, len(rows))
             self.assertEqual(["pass", "pass"], [row["status"] for row in rows])
-            self.assertEqual(failed_case.exec_key, rows[-1]["exec_key"])
+            self.assertEqual(
+                make_exec_key(xclbin_sha, failed_case.app, failed_case.args),
+                rows[-1]["exec_key"],
+            )
 
             manifest = json.loads((out_root / "runs" / "resume_run" / "manifest.json").read_text())
             self.assertEqual(2, manifest["execution_count"])
             self.assertEqual(1, manifest["skipped_existing_count"])
-            self.assertEqual([passed_case.exec_key], manifest["skipped_existing_exec_keys"])
+            self.assertEqual(
+                [make_exec_key(xclbin_sha, passed_case.app, passed_case.args)],
+                manifest["skipped_existing_exec_keys"],
+            )
 
     def test_skip_existing_default_columns_do_not_require_exec_key_or_iteration_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1427,8 +1439,22 @@ exit 2
             manifest = json.loads((out_root / "runs" / "resume_run" / "manifest.json").read_text())
             self.assertEqual(["status", "xclbin_sha256", "app", "args"], manifest["skip_existing_columns"])
             self.assertEqual(1, manifest["skipped_existing_count"])
-            self.assertEqual([case.exec_key], manifest["skipped_existing_exec_keys"])
+            self.assertEqual(
+                [make_exec_key(xclbin_sha, case.app, case.args)],
+                manifest["skipped_existing_exec_keys"],
+            )
             self.assertEqual(0, manifest["run_execution_count"])
+
+    def test_skip_existing_rejects_measurement_environment_columns(self) -> None:
+        for column in (
+            "exec_key",
+            "warmup",
+            "iterations",
+            "power_interval",
+        ):
+            with self.subTest(column=column):
+                with self.assertRaisesRegex(ValueError, "unsupported skip-existing column"):
+                    normalize_skip_existing_columns(("status", "app", "args", column))
 
     def test_skip_existing_does_not_skip_when_xclbin_sha_mismatches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1496,7 +1522,7 @@ exit 2
             build_dir = tmp_path / "build"
             self._write_fake_blackbox(build_dir)
             fpga_bin_dir = tmp_path / "fpga_bin"
-            self._write_fake_fpga_bin(fpga_bin_dir, content="current bitstream")
+            current_sha = self._write_fake_fpga_bin(fpga_bin_dir, content="current bitstream")
 
             case = BenchCase(
                 case_id="same_command",
@@ -1548,7 +1574,10 @@ exit 2
             manifest = json.loads((out_root / "runs" / "relaxed_run" / "manifest.json").read_text())
             self.assertEqual(["status", "app", "args"], manifest["skip_existing_columns"])
             self.assertEqual(1, manifest["skipped_existing_count"])
-            self.assertEqual([case.exec_key], manifest["skipped_existing_exec_keys"])
+            self.assertEqual(
+                [make_exec_key(current_sha, case.app, case.args)],
+                manifest["skipped_existing_exec_keys"],
+            )
             self.assertEqual(0, manifest["run_execution_count"])
 
     def test_generated_script_updates_raw_db_before_post_processing(self) -> None:
@@ -1603,7 +1632,10 @@ exit 2
                 rows = list(csv.DictReader(fp))
             self.assertEqual(1, len(rows))
             self.assertEqual("pass", rows[0]["status"])
-            self.assertEqual(case.exec_key, rows[0]["exec_key"])
+            self.assertEqual(
+                make_exec_key(rows[0]["xclbin_sha256"], rows[0]["app"], rows[0]["args"]),
+                rows[0]["exec_key"],
+            )
             self.assertFalse((run_dir / "results.csv").exists())
 
             rc = run_suite(

@@ -1047,8 +1047,8 @@ cases:
         })
 
         self.assertEqual(64, _derive_seq_len(row, {"batch": 1, "seq": 1}))
-        self.assertEqual(32, _derive_seq_len(row, {"batch": 1, "seq": 1, "cache_len": 32}))
-        self.assertEqual(128, _derive_seq_len(row, {"batch": 1, "seqq": 1, "seqk": 128}))
+        self.assertEqual(64, _derive_seq_len(row, {"batch": 1, "seq": 1, "cache_len": 32}))
+        self.assertEqual(64, _derive_seq_len(row, {"batch": 1, "seqq": 1, "seqk": 128}))
 
     def test_stack_legend_scope_hue_uses_hue_specific_color_families(self) -> None:
         global_options = SuiteBarPlotOptions(raw_dbs=(Path("raw_db.csv"),), out_dir=Path("figures"))

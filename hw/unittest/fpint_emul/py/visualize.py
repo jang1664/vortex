@@ -134,6 +134,34 @@ def ulp_diff_fp16(ref: np.ndarray, eval: np.ndarray) -> np.ndarray:
     return fp32_ulp / (1 << FP16_TO_FP32_MANTISSA_SHIFT)
 
 
+def _fp16_bits_to_ordered(bits: np.ndarray) -> np.ndarray:
+    """Map finite FP16 bit patterns to monotonically ordered integers."""
+    bits = np.asarray(bits, dtype=np.uint16)
+    exponent = bits & np.uint16(0x7C00)
+    mantissa = bits & np.uint16(0x03FF)
+    if np.any((exponent == 0x7C00) & (mantissa != 0)):
+        raise ValueError("FP16 ULP distance is undefined for NaN")
+
+    magnitude = (bits & np.uint16(0x7FFF)).astype(np.int32)
+    negative = (bits & np.uint16(0x8000)) != 0
+    # Collapse -0 and +0 to the same point while preserving FP16 ordering.
+    return np.where(negative, 0x8000 - magnitude, 0x8000 + magnitude)
+
+
+def ulp_diff_fp16_bits(ref_bits: np.ndarray, eval_bits: np.ndarray) -> np.ndarray:
+    """Return exact FP16 representable-value distance from uint16 bit patterns."""
+    ref_bits = np.asarray(ref_bits, dtype=np.uint16)
+    eval_bits = np.asarray(eval_bits, dtype=np.uint16)
+    if ref_bits.shape != eval_bits.shape:
+        raise ValueError(
+            f"FP16 ULP inputs must have the same shape: "
+            f"{ref_bits.shape} != {eval_bits.shape}"
+        )
+    ref_ordered = _fp16_bits_to_ordered(ref_bits)
+    eval_ordered = _fp16_bits_to_ordered(eval_bits)
+    return np.abs(ref_ordered - eval_ordered).astype(np.int32)
+
+
 def plot_heatmap_comparison(
     ref_value: np.ndarray,
     eval_val: Union[np.ndarray, Dict[str, np.ndarray]],

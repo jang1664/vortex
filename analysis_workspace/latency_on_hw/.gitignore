@@ -22,3 +22,5 @@ outputs_sample/**
 !outputs_sample/raw_db.csv
 power_measure_suites_generated/
 power_measure_suites_outputs/
+
+composed_results/

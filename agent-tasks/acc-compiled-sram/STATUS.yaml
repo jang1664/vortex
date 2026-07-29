@@ -1,0 +1,25 @@
+task: acc-compiled-sram
+status: completed
+updated: "2026-07-30 02:12"
+summary: "Mapped the depth-512 GEMM ACC memory to 32 compiled 512x128 HS SRAM macros and verified both GEMM functionality and the compiled macro path."
+attempts:
+  - timestamp: "2026-07-30 02:00"
+    action: "Confirmed the implementation scope and recorded the ACC macro organization."
+    result: "The target is four logical 512x1024 banks, each width-tiled with eight 512x128 HS macros, without interface or behavior changes."
+  - timestamp: "2026-07-30 02:08"
+    action: "RTL improve iteration 1 implemented the new compiled-SRAM arm and ran the gemm_unit VCS regression through tools/verify_rtl.py."
+    result: "PASS. SIZE=512, DATAW=1024, WRENW=1 selects eight 512x128 HS macro tiles per bank; the gemm_unit regression completed successfully. Log: hw/unittest/gemm_unit/logs/sim.log."
+  - timestamp: "2026-07-30 02:12"
+    action: "Ran a direct compiled-path VCS test with the real cmos28lpp_ra1w_hs_512x128m8 behavioral model."
+    result: "PASS. Elaboration confirmed eight macro instances per logical ACC bank, and exact 1024-bit write/read checks passed at two distinct addresses."
+iterations:
+  - feature: "ACC compiled SRAM"
+    iteration: 1
+    status: pass
+    error_summary: "None; compilation and simulation passed."
+    root_cause: "The prior ACC shape had no compiled macro arm and selected g_unsupported."
+    fix_applied: "Added a 512x1024 full-word-write arm tiled across eight 512x128 HS macros."
+    lesson: "The g_compiled wrapper must be checked for a matching parameter arm; wrapper selection alone does not prove macro mapping."
+pitfalls:
+  - "The g_compiled/u_compiled hierarchy does not prove that a macro was selected; the g_unsupported child indicates a standard-cell register fallback."
+  - "The existing reports were generated with GEMM_ACC_MEM_DEPTH=512, while the previously registered ACC macro arm covers a different depth."

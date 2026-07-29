@@ -6,6 +6,7 @@ import math
 import re
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -1075,7 +1076,7 @@ def _fpga_period_s(
         if freq_mhz is not None and freq_mhz > 0.0:
             return 1.0 / (freq_mhz * 1_000_000.0)
         for info_path in _xclbin_info_paths(context):
-            period_s = _data_clk_period_s_from_xclbin_info(info_path)
+            period_s = _kernel_clock_period_s_from_xclbin_info(info_path)
             if period_s is not None:
                 return period_s
     return default if default > 0.0 else None
@@ -1134,6 +1135,7 @@ def _fpga_bin_labels(row: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(labels))
 
 
+@lru_cache(maxsize=None)
 def _resolve_fpga_bin_dir(label: str) -> Path | None:
     try:
         return resolve_fpga_bin_config(label).path
@@ -1154,22 +1156,19 @@ def _existing_unique_paths(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
-def _data_clk_period_s_from_xclbin_info(path: Path) -> float | None:
-    in_data_clk = False
+@lru_cache(maxsize=None)
+def _kernel_clock_period_s_from_xclbin_info(path: Path) -> float | None:
+    in_kernel_clock = False
     try:
         with path.open(errors="ignore") as handle:
             for line in handle:
-                if "DATA_CLK" in line:
-                    period_s = _period_s_from_info_line(line)
-                    if period_s is not None:
-                        return period_s
                 if "Name:" in line:
-                    in_data_clk = "DATA_CLK" in line
-                if not in_data_clk:
+                    in_kernel_clock = "ulp_ucs_aclk_kernel_00" in line
+                if not in_kernel_clock or "Achieved Freq:" not in line:
                     continue
-                period_s = _period_s_from_info_line(line)
-                if period_s is not None:
-                    return period_s
+                freq_mhz = _parse_frequency_mhz_line(line)
+                if freq_mhz is not None and freq_mhz > 0.0:
+                    return 1.0 / (freq_mhz * 1_000_000.0)
     except OSError:
         return None
     return None
@@ -1513,6 +1512,14 @@ def _batch(row: Mapping[str, Any]) -> int | None:
 
 
 def _seq_len(row: Mapping[str, Any]) -> int | None:
+    if _stage(row) == GENERATION_STAGE:
+        value = _to_int(row.get("gen_kv_len"))
+        if value is not None:
+            return value
+        shape = _shape_for_row(row)
+        value = _to_int(shape.get("input_kv_length"))
+        if value is not None:
+            return value
     for key in ("seq_len", "energy_seq_len"):
         value = _to_int(row.get(key))
         if value is not None:

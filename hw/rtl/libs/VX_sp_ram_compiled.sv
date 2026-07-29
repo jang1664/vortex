@@ -240,6 +240,19 @@ module VX_sp_ram_compiled #(
                 .CENY(), .WENY(), .AY(), .GWENY(), .SO()
             );
         end
+    end else if (SIZE == 512 && DATAW == 1024 && WRENW == 1) begin : g_512x1024
+        // GEMM accumulator — 8 × cmos28lpp_ra1w_hs_512x128m8 (bit-WE tied to write)
+        `UNUSED_VAR (wren)
+        for (genvar t = 0; t < 8; t++) begin : g_tile
+            cmos28lpp_ra1w_hs_512x128m8 u_macro (
+                .CLK(clk), .CEN(ce_n), .WEN({128{gwen_n}}), .GWEN(gwen_n),
+                .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
+                .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(9'h0), .TD(128'h0), .TGWEN(1'b1),
+                .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+            );
+        end
     end else begin : g_unsupported
         // No 28LPP macro registered for this shape — fall back to a sync flop array
         // so non-target builds still elaborate. Production builds should add the

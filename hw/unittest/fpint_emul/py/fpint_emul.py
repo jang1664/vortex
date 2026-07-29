@@ -5,14 +5,16 @@ This module provides Python implementations of FPINT GEMM operations
 for verification and testing purposes.
 
 Dependencies:
-    - numpy: Array operations
-    - sfpy: SoftFloat-based FP16 arithmetic (bit-exact IEEE 754)
-    - fxpmath: Fixed-point arithmetic
+    - numpy: Array operations and IEEE-754 FP16 arithmetic
+    - fxpmath: Optional FixedPointArray.to_fxp() helper
 """
 
 import numpy as np
-from sfpy import Float16
-from fxpmath import Fxp
+
+try:
+    from fxpmath import Fxp
+except ImportError:  # Optional helper; the FPINT emulators do not require it.
+    Fxp = None
 from typing import Tuple, Optional
 from enum import Enum
 
@@ -24,13 +26,13 @@ MAX_W_WIDTH = 5
 O_WIDTH = 16
 S_WIDTH = 16
 Z_WIDTH = 16
-QBLOCK = 16
+QBLOCK = 32
 MAX_M = 32
 MAX_N = 512
 MAX_K = 512
 MAX_KG = (MAX_K + QBLOCK - 1) // QBLOCK
 MAX_NG = (MAX_N + QBLOCK - 1) // QBLOCK
-MXU_K = 16
+MXU_K = 32
 MXU_N = 16
 MAX_ALIGN_WIDTH = 64
 MAX_EXP_WIDTH = 8
@@ -96,6 +98,8 @@ class FixedPointArray:
     
     def to_fxp(self, value):
         """Convert single value to Fxp object"""
+        if Fxp is None:
+            raise RuntimeError("fxpmath is required only for FixedPointArray.to_fxp()")
         return Fxp(value, signed=self.signed, n_word=self.n_word, n_frac=self.n_frac)
     
     def to_float(self) -> np.ndarray:
@@ -130,21 +134,19 @@ def fp16_to_components(fp16_val: np.uint16) -> Tuple[int, int, int]:
 
 def fp16_bit_to_float(fp16_val: np.uint16) -> float:
     """Convert FP16 bit representation to float"""
-    # Use sfpy Float16 for bit-exact IEEE 754 conversion
-    fp16_obj = Float16.from_bits(int(fp16_val))
-    return float(fp16_obj)
+    bits = np.asarray(fp16_val, dtype=np.uint16)
+    return float(bits.view(np.float16))
 
 
 def float_to_fp16_bit(val: float) -> np.uint16:
     """Convert float to FP16 bit representation"""
-    # Use sfpy Float16 for bit-exact IEEE 754 conversion
-    fp16_obj = Float16(val)
-    return np.uint16(fp16_obj.bits)
+    value = np.asarray(val, dtype=np.float16)
+    return np.uint16(value.view(np.uint16))
 
 
 def fp16_multiply(a_bits: np.uint16, b_bits: np.uint16) -> np.uint16:
     """
-    Perform bit-exact FP16 multiplication using SoftFloat
+    Perform IEEE-754 FP16 multiplication using NumPy
     
     Args:
         a_bits: FP16 value as 16-bit unsigned integer
@@ -153,10 +155,11 @@ def fp16_multiply(a_bits: np.uint16, b_bits: np.uint16) -> np.uint16:
     Returns:
         FP16 result as 16-bit unsigned integer
     """
-    a = Float16.from_bits(int(a_bits))
-    b = Float16.from_bits(int(b_bits))
-    result = a * b
-    return np.uint16(result.bits)
+    a = np.asarray(a_bits, dtype=np.uint16).view(np.float16)
+    b = np.asarray(b_bits, dtype=np.uint16).view(np.float16)
+    with np.errstate(over="ignore", invalid="ignore"):
+        result = np.asarray(a * b, dtype=np.float16)
+    return np.uint16(result.view(np.uint16))
 
 
 def prealign(
@@ -268,16 +271,12 @@ def fpint_gemm_gpu(
     debug: bool = False
 ) -> np.ndarray:
     """
-    Reference GEMM implementation
+    GPU arithmetic model.
 
-    Version 1: Bit-exact FP16 arithmetic (via SoftFloat)
-        - Multiplication: FP16 * FP16 -> FP16 (using sfpy for bit-exact IEEE 754)
+    Bit-exact FP16 arithmetic:
+        - Multiplication: FP16 * FP16 -> FP16 (NumPy IEEE-754 FP16)
         - Accumulation: FP32
         - Output: FP32 -> FP16 conversion
-
-    Version 2: High-precision FP64 arithmetic
-        - All computations in FP64
-        - Only final output converted to FP16
 
     Args:
         input_data: FP16 input activations, shape (M, K)
@@ -286,7 +285,6 @@ def fpint_gemm_gpu(
         zero_data: Zero points (signed int16)
         M, N, K: Matrix dimensions
         qdir: Quantization direction (QCOL or QROW)
-        version: 1 for bit-exact FP16, 2 for high-precision FP64
         debug: Enable debug printing
 
     Returns:

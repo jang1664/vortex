@@ -64,7 +64,8 @@ struct Args {
     PowerMode   power_mode    = PowerMode::Off;
     std::string power_csv     = "fpga_power.csv";
     std::string power_summary;
-    double      power_interval   = 0.1;
+    // double      power_interval   = 0.1;
+    double      power_interval   = 0.05;
     int         power_fpga_id    = 0;
     int         power_iterations = -1;
     double      power_idle_sec   = 2.0;
@@ -135,18 +136,18 @@ inline bool parse_frequency_mhz_line(const char* line, double* freq_mhz) {
     return true;
 }
 
-inline bool parse_data_clk_mhz_from_xclbin_info(const std::string& path, double* freq_mhz) {
+inline bool parse_kernel_clock_achieved_mhz_from_xclbin_info(const std::string& path, double* freq_mhz) {
     FILE* f = std::fopen(path.c_str(), "r");
     if (!f)
         return false;
 
-    bool in_data_clk = false;
+    bool in_kernel_clock = false;
     char line[1024];
     while (std::fgets(line, sizeof(line), f)) {
         if (std::strstr(line, "Name:") != nullptr) {
-            in_data_clk = (std::strstr(line, "DATA_CLK") != nullptr);
+            in_kernel_clock = (std::strstr(line, "ulp_ucs_aclk_kernel_00") != nullptr);
         }
-        if (in_data_clk && std::strstr(line, "Frequency:") != nullptr) {
+        if (in_kernel_clock && std::strstr(line, "Achieved Freq:") != nullptr) {
             double parsed_mhz = 0.0;
             if (parse_frequency_mhz_line(line, &parsed_mhz)) {
                 std::fclose(f);
@@ -188,16 +189,16 @@ inline double resolve_power_fpga_freq_mhz(const Args& args, FILE* msg = stderr) 
 
     std::string info = args.power_xclbin_info.empty() ? default_xclbin_info_path() : args.power_xclbin_info;
     double parsed_mhz = 0.0;
-    if (!info.empty() && parse_data_clk_mhz_from_xclbin_info(info, &parsed_mhz)) {
+    if (!info.empty() && parse_kernel_clock_achieved_mhz_from_xclbin_info(info, &parsed_mhz)) {
         if (msg) {
-            std::fprintf(msg, "[power] stage=fpga_freq_resolve source=xclbin_info path=%s data_clk_mhz=%.6f\n",
+            std::fprintf(msg, "[power] stage=fpga_freq_resolve source=xclbin_info path=%s kernel_clock_achieved_mhz=%.6f\n",
                          info.c_str(), parsed_mhz);
         }
         return parsed_mhz;
     }
 
     if (msg) {
-        std::fprintf(msg, "[power] stage=fpga_freq_resolve source=fallback data_clk_mhz=%.6f",
+        std::fprintf(msg, "[power] stage=fpga_freq_resolve source=fallback kernel_clock_achieved_mhz=%.6f",
                      args.power_fpga_freq_mhz);
         if (!info.empty())
             std::fprintf(msg, " xclbin_info=%s", info.c_str());

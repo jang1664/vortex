@@ -51,6 +51,8 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     output wire valid_out
 );
     localparam DATAW = 3 * 32 + INST_FRM_BITS + INST_FMT_BITS;
+    localparam [INST_FMT_BITS-1:0] FMT_S = 2'b00;
+    localparam [INST_FMT_BITS-1:0] FMT_H = 2'b10;
 
     wire [NUM_LANES-1:0][DATAW-1:0] data_in;
 
@@ -65,6 +67,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     wire pe_issue_s;
     wire pe_enable_h;
     wire pe_enable_s;
+    wire [INST_FMT_BITS-1:0] pe_fmt;
     reg [`LATENCY_FMA-2:0] pe_inflight_h;
     reg [`LATENCY_FMA-2:0] pe_inflight_s;
 
@@ -157,9 +160,9 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
     `UNUSED_VAR (pe_data_in)
 
-    assign pe_issue_h = pe_enable
-                     && (pe_data_in[0][96 + INST_FRM_BITS +: INST_FMT_BITS] == 2'b10);
-    assign pe_issue_s = pe_enable && !pe_issue_h;
+    assign pe_fmt = pe_data_in[0][96 + INST_FRM_BITS +: INST_FMT_BITS];
+    assign pe_issue_h = pe_enable && valid_in && (pe_fmt == FMT_H);
+    assign pe_issue_s = pe_enable && valid_in && (pe_fmt == FMT_S);
     assign pe_enable_h = pe_enable && (pe_issue_h || (|pe_inflight_h));
     assign pe_enable_s = pe_enable && (pe_issue_s || (|pe_inflight_s));
 

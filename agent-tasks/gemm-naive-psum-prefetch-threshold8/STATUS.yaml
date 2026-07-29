@@ -1,0 +1,32 @@
+task: gemm-naive-psum-prefetch-threshold8
+state: COMPLETE
+updated: "2026-07-29 13:28"
+goal: "Start GEMM_NAIVE accumulation after each PSUM FIFO has eight entries and verify M256/K256/N256 correctness and performance."
+iterations:
+  - iteration: 1
+    phase: specification
+    status: confirmed
+    test: "Fresh exact-config xrt-vcs-sim M256/K256/N256"
+    error_summary: "Current startup policy waits for both depth-16 FIFOs to become almost full."
+    root_cause: "The threshold is intentionally conservative because the compute burst cannot backpressure, but may delay every accumulate command unnecessarily."
+    fix_applied: "Pending RTL implementation of a per-bank threshold of eight."
+    verification: "Baseline PASS at 86543 cycles."
+    lesson: "Correctness must be judged by underflow and output checks, not only by completion."
+  - iteration: 1
+    phase: implementation
+    status: pending_verification
+    test: "Fresh isolated exact-config xrt-vcs-sim M256/K256/N256; require PASS with no PSUM underflow, mismatch, assertion, timeout, or deadlock and compare kernel cycles against the 86543-cycle baseline."
+    error_summary: "The GEMM_NAIVE startup gate used the FIFO almost-full threshold of 15 entries per parity, delaying input after sufficient buffering was already available."
+    root_cause: "VX_fifo_v2 exposes no numeric occupancy port, but its existing alm_full_o is directly derived from internal occupancy and was configured to ACC_RD_FIFO_DEPTH-1."
+    fix_applied: "Added GEMM_NAIVE ACC_RD_FIFO_ALM_FULL_TH=8 and connected the existing per-bank alm_full outputs to that threshold. The existing AND requires both parity FIFOs to reach eight. The response-count completion clause remains, so commands with fewer than 16 total PSUMs still wait for every requested response. Non-GEMM_NAIVE retains depth-minus-one behavior. Added no counters, payload storage, or other control state."
+    verification: "Targeted static inspection confirms FIFO depth 16, burst size 8, both-bank threshold AND, response-count short-command clause, set-switch/conflict logic, and queue sizes remain intact. Targeted git diff --check passes. No simulation run by RTL implementation agent."
+    lesson: "The FIFO's configurable almost-full output provides an exact occupancy threshold without duplicating its internal count."
+  - iteration: 1
+    phase: verification
+    status: pass
+    test: "Fresh isolated exact-config XRT-VCS M256/K256/N256 with DEBUG=3 threshold trace."
+    error_summary: "No PSUM FIFO underflow, shadow/output mismatch, assertion/fatal, timeout, or deadlock; the test passed."
+    root_cause: "The previous threshold of 15 entries per FIFO delayed every accumulate command beyond the buffering required by the eight-read burst policy. With threshold 8, both FIFOs first reached exactly (8,8), and input/pop began safely 140000 ps later."
+    fix_applied: "Verification made no RTL changes. The tested implementation sets GEMM_NAIVE per-bank ALM_FULL_TH to 8 while preserving the both-bank AND and short-command completion clause."
+    verification: "Fresh build_debug_gemm_naive_psum_prefetch8_iter1 vlogan defines confirmed GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, and MXU_COL_TILE=32. M256 passed at 73268 cycles versus baseline 86543: 13275 cycles or 15.339% lower, a 1.181x speedup. Trace reconstruction across all 112 accumulate commands showed both FIFOs reached at least eight before every first GEMM_ACCUM_INPUT/pop; threshold arrival was exactly (8,8), pre-pop occupancy was FIFO0 9-10 and FIFO1 8, occupancy never went negative, and final occupancy was (0,0). Evidence and compressed trace are archived under logs/iter1_*. tools/verify_rtl.py blackbox was inspected but is inapplicable because it hardcodes the shared build directory; the mandated ci/run_black.sh wrapper was used."
+    lesson: "The existing FIFO almost-full output can safely launch computation at eight entries per parity and removes another 15.3% of M256 cycles without adding occupancy state."
