@@ -190,12 +190,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--power-fpga-freq-mhz",
         default="auto",
-        help="FPGA DATA_CLK frequency in MHz for cycle-based power kernel iteration planning, or 'auto' to parse xclbin.info.",
+        help="FPGA kernel clock frequency in MHz for cycle-based power kernel iteration planning, or 'auto' to parse ulp_ucs_aclk_kernel_00 Achieved Freq from xclbin.info.",
     )
     run.add_argument(
         "--power-xclbin-info",
         default="",
-        help="Optional vortex_afu.xclbin.info path used to parse DATA_CLK for power kernel iteration planning.",
+        help="Optional vortex_afu.xclbin.info path used to parse ulp_ucs_aclk_kernel_00 Achieved Freq for power kernel iteration planning.",
     )
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
@@ -267,7 +267,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Comma-separated raw_db.csv columns used by --skip-existing "
-            f"(default: {','.join(DEFAULT_SKIP_EXISTING_COLUMNS)})."
+            f"(default: {','.join(DEFAULT_SKIP_EXISTING_COLUMNS)}). "
+            "Measurement-environment columns such as iterations and power intervals are not supported."
         ),
     )
     run.add_argument(

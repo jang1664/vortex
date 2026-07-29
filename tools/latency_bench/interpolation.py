@@ -21,8 +21,10 @@ from .raw_db import RAW_DB_COLUMNS, _write_raw_rows
 from .suite import (
     BenchCase,
     BenchSuite,
+    bind_suite_xclbin_sha256,
     find_repo_root,
     load_suite,
+    make_exec_key,
     suite_to_expanded_yaml,
     suite_to_rows,
 )
@@ -85,8 +87,14 @@ def _raw_metric(path: Path, metric: str) -> tuple[dict[str, float], dict[str, di
                 value = float(row.get(metric, ""))
             except ValueError:
                 continue
-            values[row["exec_key"]] = value
-            rows[row["exec_key"]] = row
+            exec_key = make_exec_key(
+                row.get("xclbin_sha256", ""),
+                row.get("app", ""),
+                row.get("args", ""),
+            )
+            row["exec_key"] = exec_key
+            values[exec_key] = value
+            rows[exec_key] = row
     return values, rows
 
 
@@ -360,12 +368,22 @@ def _raw_measurement_overrides(raw_db: Path) -> tuple[int | None, int | None]:
 
 def _load_suite_for_raw(suite_path: Path, raw_db: Path) -> BenchSuite:
     warmup, iterations = _raw_measurement_overrides(raw_db)
-    return load_suite(
+    suite = load_suite(
         suite_path,
         repo_root=find_repo_root(),
         warmup_override=warmup,
         iterations_override=iterations,
     )
+    xclbin_counts: Counter[str] = Counter()
+    if raw_db.exists():
+        with raw_db.open(newline="") as fp:
+            for row in csv.DictReader(fp):
+                sha = str(row.get("xclbin_sha256", "")).strip()
+                if row.get("status") == "pass" and sha:
+                    xclbin_counts[sha] += 1
+    if xclbin_counts:
+        suite = bind_suite_xclbin_sha256(suite, xclbin_counts.most_common(1)[0][0])
+    return suite
 
 
 def promote_probe_rows(main_raw_db: Path, probe_raw_db: Path, exec_keys: set[str]) -> int:

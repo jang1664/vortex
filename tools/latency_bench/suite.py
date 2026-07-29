@@ -54,6 +54,16 @@ class BenchDefaults:
     fpga_bin: str = ""
 
 
+def make_exec_key(xclbin_sha256: object, app: object, args: object) -> str:
+    """Return execution identity without measurement-environment settings."""
+    payload = {
+        "xclbin_sha256": str(xclbin_sha256 or ""),
+        "app": str(app),
+        "args": " ".join(str(args).split()),
+    }
+    return stable_hash(json.dumps(payload, sort_keys=True))
+
+
 @dataclass(frozen=True)
 class BenchCase:
     case_id: str
@@ -81,16 +91,15 @@ class BenchCase:
     iterations: int = 10
     source: str = "explicit"
     fpga_bin: str = ""
+    xclbin_sha256: str = ""
 
     @property
     def exec_key(self) -> str:
-        payload = {
-            "app": self.app,
-            "args": " ".join((self.measurement_args or self.args).split()),
-            "warmup": self.warmup,
-            "iterations": self.iterations,
-        }
-        return stable_hash(json.dumps(payload, sort_keys=True))
+        return make_exec_key(
+            self.xclbin_sha256,
+            self.app,
+            self.measurement_args or self.args,
+        )
 
 
 @dataclass(frozen=True)
@@ -100,6 +109,13 @@ class BenchSuite:
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
+
+
+def bind_suite_xclbin_sha256(suite: BenchSuite, xclbin_sha256: str) -> BenchSuite:
+    return replace(
+        suite,
+        cases=[replace(case, xclbin_sha256=xclbin_sha256) for case in suite.cases],
+    )
 
 
 @dataclass(frozen=True)

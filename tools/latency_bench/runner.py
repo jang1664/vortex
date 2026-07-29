@@ -21,12 +21,17 @@ from .raw_db import (
     RAW_DB_COLUMNS,
     _normalize_args,
     _parse_bool_cell,
-    _parse_int,
     _write_raw_rows,
 )
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
-from .suite import BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
+from .suite import (
+    BenchCase,
+    BenchSuite,
+    bind_suite_xclbin_sha256,
+    suite_to_expanded_yaml,
+    suite_to_rows,
+)
 from .yaml_io import safe_dump
 
 
@@ -51,12 +56,9 @@ SUPPORTED_SKIP_EXISTING_COLUMNS = frozenset((
     "measure_latency",
     "measure_power",
     "power_samples",
-    "exec_key",
     "app",
     "args",
     "padded_args",
-    "warmup",
-    "iterations",
 ))
 CASE_COLUMNS = [
     "suite",
@@ -282,16 +284,10 @@ def _skip_existing_column_matches(
         return _parse_bool_cell(row.get("measure_power", ""), default=False) == measure_power
     if column == "power_samples":
         return not measure_power or not power_samples_below_threshold(row, power_min_samples)
-    if column == "exec_key":
-        return row.get("exec_key", "") == unit.exec_key
     if column == "app":
         return row.get("app") == unit.app
     if column == "args":
         return _normalize_args(row.get("args", "")) == _normalize_args(unit.args)
-    if column == "warmup":
-        return _parse_int(row.get("warmup")) == unit.warmup
-    if column == "iterations":
-        return _parse_int(row.get("iterations")) == unit.iterations
     raise AssertionError(f"unhandled skip-existing column: {column}")
 
 
@@ -1257,6 +1253,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
 
     validate_inputs(run_options)
     xclbin_sha256 = _current_xclbin_sha(run_options.fpga_bin_dir)
+    suite = bind_suite_xclbin_sha256(suite, xclbin_sha256)
     units = build_execution_units(suite, run_dir)
     skipped_existing_exec_keys: tuple[str, ...] = ()
     units_to_run = units

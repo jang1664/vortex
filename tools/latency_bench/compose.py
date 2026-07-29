@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from .suite import BenchCase, BenchSuite, resolve_case_fpga_bin, suite_to_rows
+from .suite import BenchCase, BenchSuite, make_exec_key, resolve_case_fpga_bin, suite_to_rows
 from .interpolation import interpolation_group_key
 
 
@@ -257,7 +257,7 @@ def _select_value(matches: pd.DataFrame, metric: str, policy: str) -> tuple[floa
 
 
 def _match_key_columns(match_fpga_bin: bool) -> list[str]:
-    columns = ["exec_key"]
+    columns = ["app", "_normalized_args"]
     if match_fpga_bin:
         columns.append("expected_fpga_bin_label")
     return columns
@@ -268,7 +268,9 @@ def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd
     for order, (case_obj, case) in enumerate(zip(suite.cases, suite_to_rows(suite))):
         row = dict(case)
         row["_case_order"] = order
-        row["_normalized_args"] = normalize_args(str(row["args"]))
+        row["_normalized_args"] = normalize_args(
+            str(row.get("measurement_args") or row["args"])
+        )
         row["app"] = str(row["app"])
         row["exec_key"] = str(row["exec_key"])
         row["expected_fpga_bin_label"] = resolve_case_fpga_bin(suite, case_obj) if match_fpga_bin else ""
@@ -281,8 +283,14 @@ def _case_rows_with_match_keys(suite: BenchSuite, *, match_fpga_bin: bool) -> pd
 def _raw_with_match_keys(raw: pd.DataFrame, *, match_fpga_bin: bool) -> pd.DataFrame:
     out = raw.copy()
     out["app"] = out["app"].astype(str)
-    out["exec_key"] = out["exec_key"].astype(str)
     out["_normalized_args"] = out["args"].astype(str).map(normalize_args)
+    shas = out["xclbin_sha256"] if "xclbin_sha256" in out.columns else ""
+    if isinstance(shas, str):
+        shas = pd.Series(shas, index=out.index)
+    out["exec_key"] = [
+        make_exec_key("" if pd.isna(sha) else sha, app, args)
+        for sha, app, args in zip(shas, out["app"], out["_normalized_args"])
+    ]
     if match_fpga_bin:
         out["expected_fpga_bin_label"] = out["fpga_bin_label"].astype(str)
     return out
@@ -319,9 +327,12 @@ def _raw_selection_row(
     if selected is not None:
         row["selected_run_id"] = str(selected.get("run_id", ""))
         row["selected_timestamp_utc"] = str(selected.get("timestamp_utc", ""))
+        row["selected_exec_key"] = str(selected.get("exec_key", ""))
     else:
         row["selected_run_id"] = ""
         row["selected_timestamp_utc"] = ""
+        exec_keys = matches["exec_key"].dropna().astype(str).unique().tolist()
+        row["selected_exec_key"] = exec_keys[0] if len(exec_keys) == 1 else ""
     return row
 
 
@@ -394,6 +405,9 @@ def _compose_rows_from_merge(
             for key, value in row.items()
             if key not in {"_case_order", "_normalized_args"}
         }
+        selected_exec_key = _safe_str(row.get("selected_exec_key"))
+        if selected_exec_key:
+            case["exec_key"] = selected_exec_key
         if not matched:
             missing_cases.append(str(row.get("case_id", "")))
             if missing == "skip":
