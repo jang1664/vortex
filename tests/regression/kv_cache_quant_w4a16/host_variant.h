@@ -14,7 +14,13 @@
 
 static inline const char* kv_cache_quant_variant_name() {
 #if KV_CACHE_QUANT_VARIANT == KV_CACHE_QUANT_VARIANT_GROUPWISE
+#if defined(KV_CACHE_QUANT_ARITH_FP16)
+  return "groupwise_fp16";
+#elif defined(KV_CACHE_QUANT_ARITH_FP32)
+  return "groupwise_fp32";
+#else
   return "groupwise";
+#endif
 #else
   return "baseline";
 #endif
