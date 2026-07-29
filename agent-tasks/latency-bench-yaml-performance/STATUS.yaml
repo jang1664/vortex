@@ -1,0 +1,23 @@
+task: latency-bench-yaml-performance
+state: DONE
+created: "2026-07-29 00:48"
+updated: "2026-07-29 00:57"
+summary: Optimize latency-bench suite YAML loading and writing, then verify correctness and measured performance.
+log:
+  - time: "2026-07-29 00:48"
+    entry: "Started implementation after profiling showed pure-Python PyYAML loading and dumping dominate generate-suites, merge-suites, compose, and interpolation startup. Existing uncommitted compose/interpolation changes will be preserved."
+  - time: "2026-07-29 00:50"
+    entry: "Added a centralized yaml_io helper selecting CSafeLoader/CSafeDumper with safe pure-Python fallbacks, and migrated all production latency-bench YAML readers and writers. Added tests for implementation selection, semantic round trips, and unsafe object-tag rejection."
+  - time: "2026-07-29 00:53"
+    entry: "Focused impacted tests passed 64/64 after excluding two existing generate-suite expectation failures. Both excluded failures reproduce when forcing the old pure-Python SafeLoader/SafeDumper, so they are independent of this optimization."
+  - time: "2026-07-29 00:54"
+    entry: "The full 196-test latency-bench discovery run completed with 8 failures and 22 errors from existing workload/schema/device-test drift. Representative failures include missing exec_key fixtures in plot tests and RAW_DB_COLUMNS mismatch; the two failures in directly affected generate-suite tests were separately verified with the pure-Python fallback."
+  - time: "2026-07-29 00:54"
+    entry: "Post-implementation benchmarks: generate-suites 2.033s for 4,224 cases/5,023,534 bytes; merge-suites 15.822s for 43 inputs/13,696 cases; compose 6.907s load + 2.479s compute + 0.232s write = 9.618s for 10,240 cases."
+  - time: "2026-07-29 00:54"
+    entry: "Final validation passed: focused impacted tests 64/64, pure-Python safe fallback round trip and unsafe-tag rejection, Python compilation, and git diff --check. Updated the performance analysis with implemented benchmark results."
+  - time: "2026-07-29 00:57"
+    entry: "Per user direction, removed the pure-Python fallback. yaml_io now directly imports CSafeLoader and CSafeDumper, so an environment without the PyYAML LibYAML extension fails immediately with ImportError. Confirmed vortex has pyyaml 6.0.3, yaml 0.2.5, and yaml.__with_libyaml__=True."
+pitfalls:
+  - "Large expanded generation suites can exceed 300 MB in aggregate, so process parallelism before reducing YAML cost would substantially increase peak memory."
+  - "The current branch has unrelated latency-bench test drift: two generate-suite tests fail identically with C and pure-Python YAML implementations, and the full suite includes stale raw DB/plot fixtures plus a host-dependent multi-XRT-device failure."

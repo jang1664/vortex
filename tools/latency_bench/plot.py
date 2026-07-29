@@ -326,11 +326,25 @@ def _derive_seq_len(row: pd.Series, shape: dict[str, object]) -> int | str:
     stage = str(row.get("stage", ""))
     case_id = row.get("case_id", "")
     if stage == "generation":
+        # ``gen_kv_len`` identifies the decode workload.  Per-kernel cache
+        # lengths advance for every output token and must not split one decode
+        # workload into a separate plot group per step.
+        found = _int_or_none(row.get("gen_kv_len"))
+        if found is not None:
+            return found
+        found = _int_or_none(shape.get("input_kv_length"))
+        if found is not None:
+            return found
+        found = _regex_int(case_id, (r"(?:^|_)gen_kv_len(\d+)(?:_|$)",))
+        if found is not None:
+            return found
         for key in ("seq_len", "gen_kv_len", "cache_len", "seqk"):
             found = _int_or_none(shape.get(key))
             if found is not None:
                 return found
-        found = _regex_int(case_id, (r"(?:^|_)gen_kv_len(\d+)(?:_|$)",))
+
+    if stage == "prefill":
+        found = _int_or_none(row.get("prefill_seq_len"))
         if found is not None:
             return found
 
@@ -355,12 +369,37 @@ def _derive_seq_len(row: pd.Series, shape: dict[str, object]) -> int | str:
 
 def _add_bar_axis_columns(composed: pd.DataFrame, source_suites: dict[str, str]) -> pd.DataFrame:
     rows = composed.copy()
-    batches: list[int | str] = []
-    seq_lens: list[int | str] = []
-    for _, row in rows.iterrows():
-        shape = _shape_from_row(row)
-        batches.append(_derive_batch(row, shape))
-        seq_lens.append(_derive_seq_len(row, shape))
+    # Composed latency-bench rows normally carry explicit workload columns.
+    # Use those columns directly and reserve the legacy JSON/case-id parser for
+    # the uncommon rows where the explicit schema is incomplete.  The former
+    # iterrows implementation was repeated for every prepared view and became
+    # the dominant cost as batch/sequence matrices grew.
+    if "batch" in rows.columns:
+        batches = rows["batch"].copy()
+    else:
+        batches = pd.Series(pd.NA, index=rows.index, dtype="object")
+
+    if "seq_len" in rows.columns:
+        seq_lens = rows["seq_len"].copy()
+    else:
+        seq_lens = pd.Series(pd.NA, index=rows.index, dtype="object")
+        stage = rows.get("stage", pd.Series("", index=rows.index)).astype(str)
+        prefill = stage.eq("prefill")
+        generation = stage.eq("generation")
+        if "prefill_seq_len" in rows.columns:
+            seq_lens.loc[prefill] = rows.loc[prefill, "prefill_seq_len"]
+        if "gen_kv_len" in rows.columns:
+            seq_lens.loc[generation] = rows.loc[generation, "gen_kv_len"]
+
+    unresolved = batches.isna() | seq_lens.isna()
+    if bool(unresolved.any()):
+        for index, row in rows.loc[unresolved].iterrows():
+            shape = _shape_from_row(row)
+            if pd.isna(batches.loc[index]):
+                batches.loc[index] = _derive_batch(row, shape)
+            if pd.isna(seq_lens.loc[index]):
+                seq_lens.loc[index] = _derive_seq_len(row, shape)
+
     rows["batch"] = batches
     rows["seq_len"] = seq_lens
     rows["source_suites"] = rows["case_id"].astype(str).map(source_suites).fillna("")
@@ -379,6 +418,35 @@ def _stack_key(row: pd.Series, stack_by: str) -> str:
     value = row.get(stack_by, "")
     text = "" if pd.isna(value) else str(value)
     return text or str(row.get("case_id", "case"))
+
+
+def _stack_keys(rows: pd.DataFrame, stack_by: str) -> pd.Series:
+    """Vectorized stack keys for prepared latency/energy tables."""
+    if stack_by not in STACK_BY_COLUMNS:
+        raise ValueError(f"unsupported stack-by field: {stack_by}")
+    case_ids = rows.get(
+        "case_id",
+        pd.Series("case", index=rows.index, dtype="object"),
+    ).fillna("case").astype(str)
+    if stack_by == "name_backend":
+        names = rows.get(
+            "name",
+            pd.Series("", index=rows.index, dtype="object"),
+        ).fillna("").astype(str)
+        backends = rows.get(
+            "backend",
+            pd.Series("", index=rows.index, dtype="object"),
+        ).fillna("").astype(str)
+        both = names.ne("") & backends.ne("")
+        keys = names.where(names.ne(""), backends)
+        keys = keys.where(~both, names + "::" + backends)
+        return keys.where(keys.ne(""), case_ids)
+
+    values = rows.get(
+        stack_by,
+        pd.Series("", index=rows.index, dtype="object"),
+    ).fillna("").astype(str)
+    return values.where(values.ne(""), case_ids)
 
 
 def _count_status(values: pd.Series, expected: str) -> int:
@@ -483,17 +551,40 @@ def _prepare_suite_bar_data_from_composed(
     source_suites: dict[str, str],
     options: SuiteBarPlotOptions,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    composed = _prepare_suite_bar_rows_from_composed(
+        composed,
+        source_suites,
+        options,
+    )
+    return _aggregate_suite_bar_rows(composed, options)
+
+
+def _prepare_suite_bar_rows_from_composed(
+    composed: pd.DataFrame,
+    source_suites: dict[str, str],
+    options: SuiteBarPlotOptions,
+) -> pd.DataFrame:
+    """Apply row-level preparation once before producing multiple stack views."""
     composed = estimate_composed_latency(composed, options.latency_estimate)
     composed = _apply_case_latency_scale_rules(composed, options)
     composed = _add_bar_axis_columns(composed, source_suites)
     composed = _apply_row_filters(composed, options.row_filters)
     composed["weighted_latency_us"] = pd.to_numeric(composed["weighted_latency_us"], errors="coerce")
-    composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
-    composed["stack_key"] = composed.apply(lambda row: _stack_key(row, options.stack_by), axis=1)
     status = composed["compose_status"].astype(str)
     composed["_pass_count"] = status.eq("pass").astype(int)
     composed["_estimated_count"] = status.eq("estimated").astype(int)
     composed["_missing_count"] = (~status.isin({"pass", "estimated"})).astype(int)
+    return composed
+
+
+def _aggregate_suite_bar_rows(
+    prepared_rows: pd.DataFrame,
+    options: SuiteBarPlotOptions,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Aggregate one prepared row set into total and requested stack views."""
+    composed = prepared_rows.copy()
+    composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
+    composed["stack_key"] = _stack_keys(composed, options.stack_by)
 
     plot_aggs = dict(
         total_latency_us=("_weighted_latency_filled", "sum"),

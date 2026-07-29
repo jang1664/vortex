@@ -8,10 +8,28 @@ from tools.latency_bench.canonicalization import (
     canonicalize_args,
     load_canonicalization_policies,
 )
-from tools.latency_bench.suite import load_suite
+from tools.latency_bench.suite import BenchCase, load_suite
 
 
 class CanonicalizationTest(unittest.TestCase):
+    def test_exec_key_uses_only_xclbin_app_and_measurement_args(self) -> None:
+        base = {
+            "case_id": "same_kernel",
+            "app": "softmax",
+            "args": "-batch 1 -heads 32 -seqq 1 -seqk 33",
+            "xclbin_sha256": "abc123",
+        }
+        first = BenchCase(**base, warmup=0, iterations=1)
+        different_environment = BenchCase(**base, warmup=7, iterations=99)
+        different_xclbin = BenchCase(
+            **{**base, "xclbin_sha256": "def456"},
+            warmup=0,
+            iterations=1,
+        )
+
+        self.assertEqual(first.exec_key, different_environment.exec_key)
+        self.assertNotEqual(first.exec_key, different_xclbin.exec_key)
+
     def test_fpint_gemm_aligns_m_n_k_for_c1_through_c4(self) -> None:
         policies = load_canonicalization_policies()
         for fpga_bin in ("C1", "C2", "C3", "C4"):

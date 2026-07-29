@@ -77,8 +77,10 @@ class BenchPowerOptionsTest(unittest.TestCase):
             "--power-xclbin-info": "missing xclbin.info CLI option",
             "\"auto\"": "missing --power-kernel-iterations=auto parser",
             "latency_enabled = true": "auto mode must force latency measurement on",
-            "parse_data_clk_mhz_from_xclbin_info": "missing DATA_CLK parser",
-            "resolve_power_fpga_freq_mhz": "missing DATA_CLK resolver",
+            "parse_kernel_clock_achieved_mhz_from_xclbin_info": "missing achieved kernel-clock parser",
+            "ulp_ucs_aclk_kernel_00": "missing kernel clock selector",
+            "Achieved Freq:": "missing achieved-frequency selector",
+            "resolve_power_fpga_freq_mhz": "missing FPGA frequency resolver",
             "fpga_cycle": "auto iterations must use FPGA cycle snapshot",
             "PR_SET_PDEATHSIG": "sampler must terminate when the benchmark parent dies",
         }

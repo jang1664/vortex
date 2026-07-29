@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .suite import (
     BenchCase,
     BenchDefaults,
@@ -19,6 +17,7 @@ from .suite import (
     sanitize_id,
     suite_to_expanded_yaml,
 )
+from .yaml_io import safe_dump
 
 
 @dataclass(frozen=True)
@@ -149,7 +148,7 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         )
     for suite_path, generated_suite, app, fpga_bin in generated_specs:
         with suite_path.open("w") as fp:
-            yaml.safe_dump(suite_to_expanded_yaml(generated_suite), fp, sort_keys=False)
+            safe_dump(suite_to_expanded_yaml(generated_suite), fp, sort_keys=False)
         kinds = sorted({case.kind for case in generated_suite.cases if case.kind})
         backends = sorted({case.backend for case in generated_suite.cases if case.backend})
         index["generated"].append({
@@ -164,5 +163,5 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         })
 
     with index_path.open("w") as fp:
-        yaml.safe_dump(index, fp, sort_keys=False)
+        safe_dump(index, fp, sort_keys=False)
     return index

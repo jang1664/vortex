@@ -1,0 +1,60 @@
+task: gemm-naive-psum-multi-outstanding
+state: COMPLETE
+updated: "2026-07-29 13:03"
+goal: "Allow bounded same-set PSUM reads to remain outstanding, drain before switching LMEM bank sets, and reduce exact-config GEMM_NAIVE M256 cycles without correctness regressions."
+pitfalls:
+  - "The original alternating selector plus set-switch block makes the PSUM stream effectively one-wide-request-at-a-time."
+  - "Mixed physical bank-set overlap is unsafe because lanes can observe different cross-set response order; requests must be batched within one set and drained before switching."
+  - "The M256 baseline is 177213 kernel cycles; DEBUG=3 VCS wall time is not a hardware performance metric."
+  - "Existing unrelated dirty files belong to the user and must be preserved."
+iterations:
+  - timestamp: "2026-07-29 12:25"
+    iteration: 1
+    phase: specification
+    status: confirmed
+    test: "Fresh exact-config XRT-VCS M256/K256/N256, then M64/M128 regressions"
+    error_summary: "The alternating PSUM address stream is serialized whenever the next request selects a different 16-bank LMEM set while any prior response is outstanding."
+    root_cause: "psum_rd_set_switch_block retains only one active bank set. Since scheduled PSUM rows normally alternate parity, effective wide-read outstanding depth is approximately one despite existing lane skid storage and response tags."
+    fix_applied: "Confirmed a minimal first experiment that removes mixed-set drain-before-switch serialization while preserving write-conflict ordering."
+    verification: "Baseline M256 passed at 177213 cycles. Trace analysis found 112 accumulate commands, 41354 cumulative first-read-to-input delay cycles, and 1335 average cycles to issue all 128 PSUM reads."
+    lesson: "The startup watermark is costly, but its fill rate is dominated by serialized wide PSUM round trips; increasing concurrency targets both startup and steady-state read time."
+  - timestamp: "2026-07-29 12:27"
+    iteration: 1
+    phase: implementation
+    status: pending_verification
+    test: "Request fresh isolated exact-config XRT-VCS M256/K256/N256 first; compare kernel cycles against 177213, then run M64/M128 K256/N256 only if M256 passes."
+    error_summary: "Mixed set0/set1 PSUM reads were blocked until all reads from the active set completed."
+    root_cause: "The read outstanding counter and active-set register existed only to implement psum_rd_set_switch_block, serializing the normally alternating bank-set stream."
+    fix_applied: "Removed psum_rd_set_switch_block and its now-obsolete active-set/outstanding bookkeeping. Retained psum_rd_pending_conflict and psum_rd_current_conflict ordering, existing VX_mem_bus_split lane response skids/tags, PSUM FIFO/credit logic, accumulator fixes, and final write queue SIZE=4."
+    verification: "Static inspection confirms no obsolete set-switch signals remain and both write-conflict terms still gate read request valid/ready. git diff --check reports only pre-existing trailing whitespace in unrelated ci/fpga_bin_alias_map.yaml. No simulation run by RTL implementation agent."
+    lesson: "The minimal concurrency experiment requires no payload FIFO because the existing lane response skids retain ordered data/tag entries for concurrent wide reads."
+  - timestamp: "2026-07-29 12:33"
+    iteration: 1
+    phase: verification
+    status: sim_fail
+    test: "Fresh isolated exact-config XRT-VCS M256/K256/N256 primary gate; M64/M128 regressions skipped because M256 failed."
+    error_summary: "At 105215000 ps, g_psum_shadow_check[2] failed for lane 2 address 0x3a12: got 0xc4cb4000c3bb8000, expected 0xc4b34000c3b18000."
+    root_cause: "Observed failure mode: alternating bank0/bank1 PSUM reads issued every 10 ns, but the existing response path did not preserve the lane checker's expected address/data association. The got word appeared on bank-rd-rsp[25] at 105205000 ps, while core-rd-rsp[18] at the fatal cycle carried the expected word with tag 0x1."
+    fix_applied: "None. Verification made no RTL changes."
+    verification: "Configured fresh build_debug_gemm_naive_psum_out_iter1 and confirmed fresh vlogan defines GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, and MXU_COL_TILE=32. M256 aborted before completion, so no valid cycle count or comparison against the 177213-cycle baseline is available; PERF cycles=0 is abort fallout. tools/verify_rtl.py blackbox mode was inspected but is inapplicable because it hardcodes the shared build directory, so the mandated ci/run_black.sh wrapper was used. Evidence and compressed trace are archived under logs/iter1_* and logs/iter1_evidence.txt."
+    lesson: "The removed set-switch block unlocks real mixed-set overlap, but existing response tags/skids alone are insufficient to maintain the required PSUM address/data association under that overlap."
+  - timestamp: "2026-07-29 12:38"
+    iteration: 2
+    phase: implementation
+    status: pending_verification
+    test: "Request fresh isolated exact-config XRT-VCS M256/K256/N256 first; require correctness and compare kernel cycles against 177213, then run M64/M128 K256/N256 only if M256 passes."
+    error_summary: "Iteration 1 mixed physical bank sets concurrently and failed the lane-2 PSUM shadow association check at 105215000 ps."
+    root_cause: "Different physical bank sets can return in a different order across lanes, so per-lane tags/skids cannot guarantee that one assembled wide response belongs to one request when sets overlap."
+    fix_applied: "Restored node active-set/outstanding drain-before-switch gating. Added an eight-request same-parity burst scheduler in VX_gemm_unit: accepted-minus-returned tracking blocks after each bounded batch until it drains, then reuses the existing selector to change parity. Eight matches response-skid depth 8 and uses half of each parity FIFO's depth-16 credits. Preserved pending/current write conflicts, per-parity credits/FIFOs and alternating consumption, address-derived bank decode, and final queue SIZE=4. Added no payload storage. Resource delta versus iteration 1: 16 control FFs (node 7-bit outstanding + 1-bit active set; unit 3-bit burst count + 4-bit outstanding + 1-bit wait)."
+    verification: "Static inspection confirms same-set burst size 8, restored set-switch guard, bounded outstanding assertion, both write-conflict guards, FIFO depth/almost-full behavior, and final queue SIZE=4. No simulation run by RTL implementation agent."
+    lesson: "Same-set batching can amortize drain latency without exposing the wide response assembler to cross-set lane reordering."
+  - timestamp: "2026-07-29 13:03"
+    iteration: 2
+    phase: verification
+    status: pass
+    test: "Fresh isolated exact-config XRT-VCS M256/K256/N256 primary gate followed by M64/K256/N256 and M128/K256/N256 regressions."
+    error_summary: "No correctness error, PSUM shadow mismatch, assertion, timeout, or deadlock. All three tests passed."
+    root_cause: "Iteration 2 preserves cross-set drain ordering while amortizing response latency with bounded groups of eight same-parity requests. Trace analysis found exactly 1792 eight-request runs, maximum outstanding depth 8, and zero non-drained switches across 1680 parity changes."
+    fix_applied: "Verification made no RTL changes. The tested implementation restores node active-set/outstanding gating and adds the unit-side eight-request burst/drain scheduler."
+    verification: "Fresh build_debug_gemm_naive_psum_out_iter2 vlogan defines confirmed GEMM_NAIVE, NUM_THREADS=16, L1_MEM_PORTS=2, and MXU_COL_TILE=32. M256 passed at 86543 cycles versus baseline 177213: 90670 cycles or 51.164% lower, a 2.048x speedup. M64 passed at 28418 cycles and M128 at 47172 cycles. Across all 112 M256 accumulate commands, both depth-16 PSUM FIFOs reached occupancy 16 before the first pop, exceeding the almost-full threshold 15. Wrapper/run logs and compressed traces are archived under logs/iter2_*; concise statistics are in logs/iter2_evidence.txt. tools/verify_rtl.py blackbox mode was inspected but is inapplicable because it hardcodes the shared build directory; ci/run_black.sh was used from the isolated build. Targeted git diff --check passed."
+    lesson: "An eight-read same-set batch fully uses the existing response-skid capacity, drains safely before every set switch, fills both PSUM FIFOs to their startup watermark, and more than halves M256 kernel cycles without the tested size regressions."

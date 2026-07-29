@@ -1,3 +1,7 @@
+#if defined(KV_CACHE_QUANT_REFERENCE_FP32)
+#include "main.fp32.cpp"
+#else
+
 #include "common.h"
 #include "host_variant.h"
 #include "../kv_cache_common/kv_cache_w4a16.h"
@@ -337,3 +341,5 @@ int main(int argc, char *argv[]) {
   printf("FAILED! errors=%d\n", errors);
   return 1;
 }
+
+#endif  // KV_CACHE_QUANT_REFERENCE_FP32

@@ -7,6 +7,19 @@
 
 using data_t = fp16_t;
 
+// This variant launches one warp per block, so all resident warps can own a
+// local-memory partition concurrently.  Keep each partition within LMEM and
+// align it to a full warp access.  Elements beyond the partition are
+// recomputed from input instead of spilling through the LMEM address window.
+static constexpr uint32_t kLocalScoreCapacity =
+    (((1u << LMEM_LOG_SIZE) / NUM_WARPS / (uint32_t)sizeof(float))
+      / NUM_THREADS) * NUM_THREADS;
+static constexpr uint32_t kLocalScoreBytes =
+    kLocalScoreCapacity * (uint32_t)sizeof(float);
+
+static_assert(kLocalScoreCapacity != 0,
+              "LMEM is too small for one warp of softmax scores");
+
 static inline uint32_t float_to_bits(float value) {
   union {
     float f;
@@ -66,14 +79,15 @@ static inline void softmax_row_shuffle_grouped(
       ? q + 1u
       : seq_len_k;
   auto scores = reinterpret_cast<float *>(
-      __local_mem(seq_len_k * (uint32_t)sizeof(float)));
+      __local_mem(kLocalScoreBytes));
 
   float local_max = VX_NEG_INF;
   if (lane < k_end) {
     data_t *load = input + lane;
     for (uint32_t k = lane; k < k_end; k += NUM_THREADS) {
       const float value = fp16_to_float(*load) * scale;
-      scores[k] = value;
+      if (k < kLocalScoreCapacity)
+        scores[k] = value;
       if (value > local_max)
         local_max = value;
       load += NUM_THREADS;
@@ -83,8 +97,12 @@ static inline void softmax_row_shuffle_grouped(
 
   float local_sum = 0.0f;
   for (uint32_t k = lane; k < k_end; k += NUM_THREADS) {
-    const float exp_value = vx_expf(scores[k] - global_max);
-    scores[k] = exp_value;
+    const float value = k < kLocalScoreCapacity
+        ? scores[k]
+        : fp16_to_float(input[k]) * scale;
+    const float exp_value = vx_expf(value - global_max);
+    if (k < kLocalScoreCapacity)
+      scores[k] = exp_value;
     local_sum += exp_value;
   }
   const float inv_sum = 1.0f / warp_reduce_sum(local_sum, lane);
@@ -92,7 +110,10 @@ static inline void softmax_row_shuffle_grouped(
   if (lane < k_end) {
     data_t *store = output + lane;
     for (uint32_t k = lane; k < k_end; k += NUM_THREADS) {
-      *store = float_to_fp16(scores[k] * inv_sum);
+      const float exp_value = k < kLocalScoreCapacity
+          ? scores[k]
+          : vx_expf(fp16_to_float(input[k]) * scale - global_max);
+      *store = float_to_fp16(exp_value * inv_sum);
       store += NUM_THREADS;
     }
   }

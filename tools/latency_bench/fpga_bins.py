@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+from .yaml_io import safe_load
 
 
 CompileConfigs = tuple[str, ...]
@@ -62,7 +62,7 @@ def _config_path_from_yaml(value: Any, *, alias: str, alias_map: Path) -> str:
 def load_fpga_bin_aliases(path: str | Path | None = None) -> dict[str, FpgaBinAlias]:
     path = alias_map_path(path)
     with path.open() as fp:
-        data = yaml.safe_load(fp) or {}
+        data = safe_load(fp) or {}
 
     aliases = data.get("aliases", data)
     if not isinstance(aliases, dict):

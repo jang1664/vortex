@@ -44,12 +44,14 @@ esac
 case "${model}" in
   llama2)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama2"
-    input_dir="generated_suites/llama2_7b_main"
+    # input_dir="generated_suites/llama2_7b_main"
+    input_dir="generated_suites/llama2_7b_main_full"
     output_dir="outputs_llama2_main"
     ;;
   llama3)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama3"
-    input_dir="generated_suites/llama3_8b_main"
+    # input_dir="generated_suites/llama3_8b_main"
+    input_dir="generated_suites/llama3_8b_main_full"
     output_dir="outputs_llama3_main"
     ;;
   llama3p2_1b)
@@ -68,12 +70,30 @@ case "${model}" in
     ;;
 esac
 
+FPGA_BINS="C1 C3 C4" \
 STAGES="${stages}" \
 BUILD_DIR="${build_dir}" \
-BLACKBOX_TIMEOUT=24h ./run_hw.sh \
+BLACKBOX_TIMEOUT=5m ./run_hw.sh \
     --input "${input_dir}" \
     --output "${output_dir}" \
     --power-kernel-iterations=auto \
+    --power-target-sec=10 \
+    --power-latency-interval=0.1 \
     --no-power-auto-duration \
     --retry \
     | tee -i "logs/main_${model}_${log_stage}.log"
+
+# 정확히 하나의 kernel app                                                                                                                                                                                                             
+#--filter 'app=softmax_layout_fused'                                                                                                                                                                                                    
+                                                                                                                                                                                                                                      
+# 여러 kernel 중 하나                                                                                                                                                                                                                  
+#--filter 'app=softmax_layout_fused | app=softmax'                                                                                                                                                                                      
+                                                                                                                                                                                                                                      
+# glob 패턴                                                                                                                                                                                                                            
+#--filter 'app=~softmax*'                                                                                                                                                                                                               
+                                                                                                                                                                                                                                      
+# kernel과 stage를 동시에 제한                                                                                                                                                                                                         
+#--filter 'app=softmax_layout_fused & stage=generation'
+
+# 여러 --filter는 AND로 결합
+#--filter 'app=softmax_layout_fused' --filter 'stage=generation'

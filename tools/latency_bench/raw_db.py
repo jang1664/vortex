@@ -82,13 +82,6 @@ def _normalize_args(value: str) -> str:
     return " ".join(str(value).split())
 
 
-def _parse_int(value: object) -> int | None:
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
 def _clean_raw_value(value: object) -> str:
     if value is None:
         return ""
@@ -117,32 +110,23 @@ def _measurement_key(
     *,
     fpga_bin_label: object,
     xclbin_sha256: object,
-    exec_key: object,
     app: object,
     args: object,
-    warmup: object,
-    iterations: object,
-) -> tuple[str, str, str, str, str, int | None, int | None]:
+) -> tuple[str, str, str, str]:
     return (
         _clean_raw_value(fpga_bin_label),
         _clean_raw_value(xclbin_sha256),
-        _clean_raw_value(exec_key),
         _clean_raw_value(app),
         _normalize_args(_clean_raw_value(args)),
-        _parse_int(warmup),
-        _parse_int(iterations),
     )
 
 
-def _measurement_key_from_row(row: dict[str, object]) -> tuple[str, str, str, str, str, int | None, int | None]:
+def _measurement_key_from_row(row: dict[str, object]) -> tuple[str, str, str, str]:
     return _measurement_key(
         fpga_bin_label=row.get("fpga_bin_label", ""),
         xclbin_sha256=row.get("xclbin_sha256", ""),
-        exec_key=row.get("exec_key", ""),
         app=row.get("app", ""),
         args=row.get("args", ""),
-        warmup=row.get("warmup", ""),
-        iterations=row.get("iterations", ""),
     )
 
 

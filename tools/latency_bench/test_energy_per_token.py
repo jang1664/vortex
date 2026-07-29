@@ -183,7 +183,11 @@ class EnergyPerTokenTest(unittest.TestCase):
                 "  Name: KERNEL_CLK\n"
                 "  Frequency: 100.000000 MHz\n"
                 "  Name: DATA_CLK\n"
-                "  Period: 4.000 ns\n",
+                "  Frequency: 250 MHz\n"
+                "System Clocks\n"
+                "  Name: ulp_ucs_aclk_kernel_00\n"
+                "  Requested Freq: 100 MHz\n"
+                "  Achieved Freq: 92.1 MHz\n",
                 encoding="utf-8",
             )
             alias_map = root / "fpga_bin_alias_map.yaml"
@@ -220,8 +224,8 @@ class EnergyPerTokenTest(unittest.TestCase):
                     fpga_period_s=10e-9,
                 )
 
-            self.assertAlmostEqual(4e-9, rows[0]["fpga_period_s"])
-            self.assertAlmostEqual(0.000005, rows[0]["kernel_energy_j"])
+            self.assertAlmostEqual(1.0 / 92.1e6, rows[0]["fpga_period_s"])
+            self.assertAlmostEqual(250.0 / 92.1e6 * 5.0, rows[0]["kernel_energy_j"])
 
     def test_fpga_bin_dir_name_does_not_set_cycle_period_without_xclbin_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

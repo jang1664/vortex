@@ -417,6 +417,27 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
   wire [31:0] desc_seg_size = can_coalesce_dim0
                             ? coalesced_seg_size[31:0] : seg_size;
 
+  // Keep descriptor programming isolated from the live decode/coalescing
+  // cone, and ensure every programmed field belongs to the same command.
+  typedef struct packed {
+    logic [63:0] dst_base;
+    logic [63:0] src_base;
+    logic [31:0] src_s0;
+    logic [31:0] dst_s0;
+    logic [31:0] src_s1;
+    logic [31:0] dst_s1;
+    logic [31:0] src_s2;
+    logic [31:0] dst_s2;
+    logic [31:0] bnd0;
+    logic [31:0] bnd1;
+    logic [31:0] bnd2;
+    logic [31:0] seg_size;
+    logic [31:0] padding;
+    logic        dir_is_st;
+  } dma_desc_t;
+
+  dma_desc_t desc_q;
+
   // ============================================================
   // NOTIFY
   // ============================================================
@@ -431,24 +452,24 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
       v32 = 32'd0;
       unique case (idx)
         DMA_R_CONTROL:     v32 = 32'd0;
-        DMA_R_DST_BASE_LO: v32 = dst_base[31:0];
-        DMA_R_DST_BASE_HI: v32 = dst_base[63:32];
-        DMA_R_SRC_BASE_LO: v32 = src_base[31:0];
-        DMA_R_SRC_BASE_HI: v32 = src_base[63:32];
+        DMA_R_DST_BASE_LO: v32 = desc_q.dst_base[31:0];
+        DMA_R_DST_BASE_HI: v32 = desc_q.dst_base[63:32];
+        DMA_R_SRC_BASE_LO: v32 = desc_q.src_base[31:0];
+        DMA_R_SRC_BASE_HI: v32 = desc_q.src_base[63:32];
 
-        DMA_R_SRC_ST0:     v32 = src_s0;
-        DMA_R_DST_ST0:     v32 = dst_s0;
-        DMA_R_SRC_ST1:     v32 = src_s1;
-        DMA_R_DST_ST1:     v32 = dst_s1;
-        DMA_R_SRC_ST2:     v32 = src_s2;
-        DMA_R_DST_ST2:     v32 = dst_s2;
+        DMA_R_SRC_ST0:     v32 = desc_q.src_s0;
+        DMA_R_DST_ST0:     v32 = desc_q.dst_s0;
+        DMA_R_SRC_ST1:     v32 = desc_q.src_s1;
+        DMA_R_DST_ST1:     v32 = desc_q.dst_s1;
+        DMA_R_SRC_ST2:     v32 = desc_q.src_s2;
+        DMA_R_DST_ST2:     v32 = desc_q.dst_s2;
 
-        DMA_R_BND0:        v32 = desc_bnd0;
-        DMA_R_BND1:        v32 = bnd1;
-        DMA_R_BND2:        v32 = bnd2;
-        DMA_R_SEG_SIZE:    v32 = desc_seg_size;
-        DMA_R_PAD:         v32 = padding;
-        DMA_R_DIR:         v32 = {31'd0, dir_is_st};
+        DMA_R_BND0:        v32 = desc_q.bnd0;
+        DMA_R_BND1:        v32 = desc_q.bnd1;
+        DMA_R_BND2:        v32 = desc_q.bnd2;
+        DMA_R_SEG_SIZE:    v32 = desc_q.seg_size;
+        DMA_R_PAD:         v32 = desc_q.padding;
+        DMA_R_DIR:         v32 = {31'd0, desc_q.dir_is_st};
         DMA_R_RSVD:        v32 = 32'd0;
 
         default:           v32 = 32'd0;
@@ -761,6 +782,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
       poll_gap_q   <= 0;
       alloc_gap_q  <= 0;
       cmd_q        <= '0;
+      desc_q       <= '0;
       entry_id_q   <= '0;
       alloc_owner_q <= '0;
       alloc_gen_q   <= '0;
@@ -792,6 +814,23 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
       K_target_q    <= K_target_d;
       wtrans_tot_q  <= wtrans_tot_d;
       qdir_tot_q    <= qdir_tot_d;
+
+      if (state_q == S_DECODE) begin
+        desc_q.dst_base  <= dst_base;
+        desc_q.src_base  <= src_base;
+        desc_q.src_s0    <= src_s0;
+        desc_q.dst_s0    <= dst_s0;
+        desc_q.src_s1    <= src_s1;
+        desc_q.dst_s1    <= dst_s1;
+        desc_q.src_s2    <= src_s2;
+        desc_q.dst_s2    <= dst_s2;
+        desc_q.bnd0      <= desc_bnd0;
+        desc_q.bnd1      <= bnd1;
+        desc_q.bnd2      <= bnd2;
+        desc_q.seg_size  <= desc_seg_size;
+        desc_q.padding   <= padding;
+        desc_q.dir_is_st <= dir_is_st;
+      end
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         /*

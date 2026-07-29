@@ -240,6 +240,8 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
             [
                 "--plot",
                 "llama_gemm_only_energy",
+                "--out-tokens",
+                "128",
                 "--llama3-gemm-energy-data",
                 "llama3.csv",
             ]
@@ -274,6 +276,8 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
             [
                 "--plot",
                 "llama_energy_gemm_layout_vector_stacked",
+                "--out-tokens",
+                "128",
                 "--llama3-energy-gemm-layout-vector-stacked-data",
                 "llama3.csv",
             ]
@@ -345,11 +349,11 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
             stack_columns,
             ENERGY_KIND_STACK_GROUPS,
         )
-        self.assertEqual(labels, ["gemm", "vector"])
+        self.assertEqual(labels, ["gemm", "vector", "W dequant", "KV dequant"])
 
         grouped = grouped.set_index("candidate")
-        self.assertEqual(grouped.loc["C1", labels].tolist(), [2.0, 1.0])
-        self.assertEqual(grouped.loc["C4", labels].tolist(), [0.5, 0.5])
+        self.assertEqual(grouped.loc["C1", labels].tolist(), [2.0, 1.0, 0.0, 0.0])
+        self.assertEqual(grouped.loc["C4", labels].tolist(), [0.5, 0.5, 0.0, 0.0])
         for candidate in ("C1", "C4"):
             self.assertAlmostEqual(
                 float(grouped.loc[candidate, labels].sum()),

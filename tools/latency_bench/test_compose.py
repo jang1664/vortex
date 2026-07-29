@@ -340,6 +340,65 @@ class ComposeTest(unittest.TestCase):
                 "rope_first", reused["power_reuse_representative_case_id"]
             )
 
+    def test_decode_reuse_identifies_missing_representative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            suite = BenchSuite(
+                name="missing_invariant_representative",
+                defaults=BenchDefaults(
+                    warmup=1, iterations=1, fpga_bin="improve_tcol1",
+                ),
+                cases=[
+                    BenchCase(
+                        case_id="missing_anchor",
+                        app="unmeasured_kernel",
+                        args="-n 1",
+                        stage="generation",
+                        name="invariant_kernel",
+                        output_token_index=1,
+                        out_tokens=2,
+                        shape={"decode_sampling_class": "invariant"},
+                        warmup=1,
+                        iterations=1,
+                    ),
+                    BenchCase(
+                        case_id="missing_reuse",
+                        app="unmeasured_kernel",
+                        args="-n 2",
+                        stage="generation",
+                        name="invariant_kernel",
+                        output_token_index=2,
+                        out_tokens=2,
+                        measurement_kind="invariant_reused",
+                        shape={
+                            "decode_sampling_class": "invariant",
+                            "reuse_representative_step": 1,
+                        },
+                        warmup=1,
+                        iterations=1,
+                    ),
+                ],
+            )
+
+            composed = compose_latency(
+                suite,
+                ComposeOptions(
+                    raw_dbs=(raw_db,),
+                    out=Path(tmp) / "out.csv",
+                    missing="nan",
+                ),
+            )
+
+            reused = composed.loc[composed["case_id"] == "missing_reuse"].iloc[0]
+            self.assertEqual("missing", reused["compose_status"])
+            self.assertEqual(
+                "missing_anchor", reused["latency_reuse_representative_case_id"]
+            )
+            self.assertEqual(
+                "missing_anchor", reused["power_reuse_representative_case_id"]
+            )
+
     def test_compose_filters_non_pass_and_dedupes_latest_with_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
