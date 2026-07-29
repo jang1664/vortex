@@ -109,6 +109,9 @@ class BenchSuite:
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
+    source_expanded_snapshot_reusable: bool = field(default=False, repr=False, compare=False)
+    source_warmup_override: int | None = field(default=None, repr=False, compare=False)
+    source_iterations_override: int | None = field(default=None, repr=False, compare=False)
 
 
 def bind_suite_xclbin_sha256(suite: BenchSuite, xclbin_sha256: str) -> BenchSuite:
@@ -577,7 +580,7 @@ def apply_case_filters(suite: BenchSuite, filters: tuple[str, ...]) -> BenchSuit
         return suite
     predicates = [compile_case_filter(expr) for expr in filters]
     cases = [case for case in suite.cases if all(predicate(case) for predicate in predicates)]
-    return replace(suite, cases=cases)
+    return replace(suite, cases=cases, source_expanded_snapshot_reusable=False)
 
 
 def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:
@@ -1053,7 +1056,8 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
                           matrix_overrides: SuiteMatrixOverrides | None = None,
                           collect_workload_structures: bool = False) -> LoadedSuiteArtifacts:
     repo_root = find_repo_root() if repo_root is None else repo_root
-    raw = safe_load(path.read_text()) or {}
+    with path.open() as fp:
+        raw = safe_load(fp) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"suite must be a YAML mapping: {path}")
     raw = _apply_suite_matrix_overrides(raw, matrix_overrides)
@@ -1104,8 +1108,34 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
             fpga_bins=dict(fpga_bins_raw),
             source_path=path,
         )
+    suite = _canonicalize_suite_cases(suite)
+    raw_cases = raw.get("cases") or []
+    source_expanded_snapshot_reusable = (
+        isinstance(raw_cases, list)
+        and not (raw.get("case_matrices") or [])
+        and not (raw.get("workloads") or [])
+        and len(raw_cases) == len(suite.cases)
+        and isinstance(raw.get("defaults"), dict)
+        and "warmup" in raw["defaults"]
+        and "iterations" in raw["defaults"]
+        and all(
+            isinstance(raw_case, dict)
+            and "warmup" in raw_case
+            and "iterations" in raw_case
+            and str(raw_case.get("measurement_args") or raw_case.get("args") or "")
+                == str(case.measurement_args or case.args)
+            and dict(raw_case.get("latency_shape") or {}) == case.latency_shape
+            for raw_case, case in zip(raw_cases, suite.cases)
+        )
+    )
+    suite = replace(
+        suite,
+        source_expanded_snapshot_reusable=source_expanded_snapshot_reusable,
+        source_warmup_override=warmup_override,
+        source_iterations_override=iterations_override,
+    )
     return LoadedSuiteArtifacts(
-        suite=_canonicalize_suite_cases(suite),
+        suite=suite,
         workload_structures=workload_structures,
     )
 
@@ -1137,10 +1167,9 @@ def load_suite(path: Path, repo_root: Path | None = None,
     ).suite
 
 
-def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
-    rows = []
+def iter_suite_rows(suite: BenchSuite) -> Iterator[dict[str, Any]]:
     for case in suite.cases:
-        rows.append({
+        yield {
             "suite": suite.name,
             "case_id": case.case_id,
             "exec_key": case.exec_key,
@@ -1167,8 +1196,11 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
             "warmup": case.warmup,
             "iterations": case.iterations,
             "source": case.source,
-        })
-    return rows
+        }
+
+
+def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
+    return list(iter_suite_rows(suite))
 
 
 def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from .compose import ComposeOptions, MISSING_POLICIES, METRIC_COLUMNS, SELECT_POLICIES, compose_to_csv
@@ -210,6 +211,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--blackbox-timeout",
         default=None,
         help="GNU timeout duration per blackbox.sh execution, e.g. 30m or 2h; 0 disables.",
+    )
+    run.add_argument(
+        "--stream-case-logs",
+        action="store_true",
+        help="Stream verbose build and kernel output to stdout in addition to saving it in per-case log files.",
+    )
+    run.add_argument(
+        "--no-case-progress",
+        action="store_true",
+        help="Disable timeout-relative progress reporting while each kernel case runs.",
+    )
+    run.add_argument(
+        "--case-progress-interval",
+        type=int,
+        default=10,
+        help="Progress update interval in seconds for non-interactive stdout (default: 10; interactive terminals update every second).",
     )
     run.add_argument(
         "--retry",
@@ -657,13 +674,18 @@ def parse_positive_int_csv(raw: str | None, option_name: str) -> tuple[int, ...]
 
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
+    print(f"[prepare] loading suite {args.suite}...", flush=True)
+    phase_started = time.monotonic()
     suite = load_suite(
         Path(args.suite),
         repo_root=repo_root,
         warmup_override=args.warmup,
         iterations_override=args.iterations,
     )
+    print(f"[prepare] loaded {len(suite.cases)} cases in {time.monotonic() - phase_started:.1f}s", flush=True)
     suite = apply_case_filters(suite, tuple(args.filter))
+    if args.filter:
+        print(f"[prepare] filters selected {len(suite.cases)} cases", flush=True)
     fpga_bin_label = args.fpga_bin or suite.defaults.fpga_bin
     if not fpga_bin_label:
         raise ValueError("run requires --fpga-bin unless the suite sets defaults.fpga_bin")
@@ -694,6 +716,9 @@ def run_cmd(args: argparse.Namespace) -> int:
         configs_extra=configs_extra,
         blackbox_args=blackbox_args,
         blackbox_timeout=blackbox_timeout,
+        stream_case_logs=args.stream_case_logs,
+        case_progress=not args.no_case_progress,
+        case_progress_interval=args.case_progress_interval,
         srun=not args.no_srun,
         srun_args=srun_args,
         dry_run=args.dry_run,

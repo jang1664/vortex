@@ -9,6 +9,7 @@ import random
 import shlex
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
@@ -59,7 +60,8 @@ _DYNAMIC_SHAPE_KEYS = {
 
 
 def kernel_type(case: BenchCase) -> str:
-    return "|".join((case.app, case.backend, case.variant, case.name))
+    """Identify the physical kernel implementation used for interpolation."""
+    return "|".join((case.app, case.backend))
 
 
 def interpolation_group_key(case: BenchCase) -> str:
@@ -572,21 +574,58 @@ def evaluate_command(args: argparse.Namespace) -> int:
 
 
 def refine_command(args: argparse.Namespace) -> int:
+    started = time.monotonic()
     output_root, out = _artifact_dir(
         args, "refinements", args.refinement_id
     )
     main_raw = _main_raw_db(args, output_root)
+    print(
+        f"[refine] start metric={args.metric} target_p95={args.target_error:.2%} "
+        f"max_iterations={args.max_iterations} validation_samples={args.validation_samples}",
+        flush=True,
+    )
+    print(f"[refine] artifacts={out.resolve()}", flush=True)
+    if args.measure_command:
+        print(
+            f"[refine] case_logs={out.resolve()}/validation_run/runs/<run_id>/logs",
+            flush=True,
+        )
+    elif args.probe_raw_db:
+        print(
+            f"[refine] probe_raw_db={Path(args.probe_raw_db).resolve()}",
+            flush=True,
+        )
+    load_started = time.monotonic()
+    print(
+        f"[refine] loading suite={Path(args.suite).resolve()} "
+        f"raw_db={main_raw.resolve()}",
+        flush=True,
+    )
     suite = _load_suite_for_raw(Path(args.suite), main_raw)
+    print(
+        f"[refine] loaded cases={len(suite.cases)} "
+        f"elapsed={time.monotonic() - load_started:.1f}s",
+        flush=True,
+    )
     probe_raw = Path(args.probe_raw_db) if args.probe_raw_db else None
     out.mkdir(parents=True, exist_ok=True)
     grouped: dict[str, list[BenchCase]] = defaultdict(list)
+    scan_started = time.monotonic()
+    print("[refine] scanning unresolved interpolation cases", flush=True)
     unresolved = unresolved_interpolation_candidates(suite, main_raw, args.metric)
     for case in unresolved:
         grouped[kernel_type(case)].append(case)
+    print(
+        f"[refine] scan complete unresolved={len(unresolved)} "
+        f"kernel_types={len(grouped)} elapsed={time.monotonic() - scan_started:.1f}s",
+        flush=True,
+    )
     if grouped and not args.probe_raw_db and not args.measure_command:
         raise ValueError("refine requires --probe-raw-db or --measure-command")
     rng = random.Random(args.seed)
     history = []
+    snapshot_started = time.monotonic()
+    print(f"[refine] writing initial snapshot to {out}", flush=True)
     write_refinement_progress(
         suite=suite,
         main_raw=main_raw,
@@ -599,14 +638,37 @@ def refine_command(args: argparse.Namespace) -> int:
         history=history,
         status="no_candidates" if not unresolved else "running",
     )
-    for key in sorted(grouped):
+    print(
+        f"[refine] initial snapshot ready "
+        f"elapsed={time.monotonic() - snapshot_started:.1f}s",
+        flush=True,
+    )
+    ordered_groups = sorted(grouped)
+    for kernel_index, key in enumerate(ordered_groups, start=1):
         remaining = list(grouped[key])
         rng.shuffle(remaining)
+        print(
+            f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+            f"type={key} candidates={len(remaining)}",
+            flush=True,
+        )
         for iteration in range(args.max_iterations):
             validation = remaining[:args.validation_samples]
             remaining = remaining[args.validation_samples:]
             if not validation:
+                print(
+                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                    "exhausted candidates",
+                    flush=True,
+                )
                 break
+            iteration_started = time.monotonic()
+            print(
+                f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                f"iteration {iteration + 1}/{args.max_iterations} "
+                f"measuring={len(validation)} remaining={len(remaining)}",
+                flush=True,
+            )
             if args.measure_command:
                 validation_suite = out / f"validate_{len(history):04d}.yaml"
                 write_candidate_suite(suite, validation, validation_suite)
@@ -668,6 +730,23 @@ def refine_command(args: argparse.Namespace) -> int:
                 "status": "converged" if current_p95 <= args.target_error else "refining",
                 "promoted_measurements": added,
             })
+            error_text = "unavailable" if not errors else f"{current_p95:.2%}"
+            iteration_status = (
+                "unavailable"
+                if not errors
+                else "converged"
+                if current_p95 <= args.target_error
+                else "refining"
+            )
+            print(
+                f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                f"iteration {iteration + 1}/{args.max_iterations} "
+                f"validation_p95_error={error_text} "
+                f"target={args.target_error:.2%} status={iteration_status} "
+                f"promoted={added} "
+                f"elapsed={time.monotonic() - iteration_started:.1f}s",
+                flush=True,
+            )
             write_refinement_progress(
                 suite=suite,
                 main_raw=main_raw,
@@ -681,10 +760,16 @@ def refine_command(args: argparse.Namespace) -> int:
                 status="running",
             )
             if current_p95 <= args.target_error:
+                print(
+                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
+                    f"converged target={args.target_error:.2%}",
+                    flush=True,
+                )
                 break
             if not errors:
                 history[-1]["status"] = "exhausted"
                 break
+    print("[refine] writing final snapshot", flush=True)
     write_refinement_progress(
         suite=suite,
         main_raw=main_raw,
@@ -698,9 +783,18 @@ def refine_command(args: argparse.Namespace) -> int:
         status="no_candidates" if not unresolved else "completed",
     )
     if unresolved:
-        print(f"refined {len(grouped)} kernel types; wrote {out / 'iterations.csv'}")
+        print(
+            f"[refine] complete kernel_types={len(grouped)} "
+            f"elapsed={time.monotonic() - started:.1f}s "
+            f"iterations={out / 'iterations.csv'}",
+            flush=True,
+        )
     else:
-        print("no unresolved interpolation cases; nothing to refine")
+        print(
+            f"[refine] complete no unresolved interpolation cases "
+            f"elapsed={time.monotonic() - started:.1f}s",
+            flush=True,
+        )
     return 0
 
 

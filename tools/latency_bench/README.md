@@ -47,7 +47,9 @@ The main `run` flow is:
 6. Create a per-run directory under `<out>/runs/<run_id>`.
 7. Write `cases.csv`, which records every logical case after expansion.
 8. Copy the original suite to `suite.yaml` and write the expanded suite to
-   `suite.expanded.yaml`.
+   `suite.expanded.yaml`. Suites that already contain only explicit,
+   canonicalized cases use a streaming copy/rewrite path instead of rebuilding
+   and serializing the full YAML object graph.
 9. Generate `run_fpga_bench.sh` in the per-run directory.
 10. Run that script directly or through `srun`.
 11. Build each unique benchmark app once with `blackbox.sh --build-only --bench`.
@@ -440,7 +442,9 @@ Each `runs/<run_id>/` directory contains:
 
 - `cases.csv`: expanded cases and deduplicated execution keys.
 - `suite.yaml`: copy of the original suite YAML used for the run.
-- `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as explicit `cases`.
+- `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as
+  explicit `cases`. `manifest.json:suite_expanded_snapshot_mode` records whether
+  it was serialized or produced by the explicit-suite fast path.
 - `run_fpga_bench.sh`: generated shell script used for the run.
 - `run_status.csv`: one row per unique execution, including `failure_phase` and
   `failure_reason`.
