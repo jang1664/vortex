@@ -1076,7 +1076,7 @@ def _fpga_period_s(
         if freq_mhz is not None and freq_mhz > 0.0:
             return 1.0 / (freq_mhz * 1_000_000.0)
         for info_path in _xclbin_info_paths(context):
-            period_s = _data_clk_period_s_from_xclbin_info(info_path)
+            period_s = _kernel_clock_period_s_from_xclbin_info(info_path)
             if period_s is not None:
                 return period_s
     return default if default > 0.0 else None
@@ -1157,22 +1157,18 @@ def _existing_unique_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 @lru_cache(maxsize=None)
-def _data_clk_period_s_from_xclbin_info(path: Path) -> float | None:
-    in_data_clk = False
+def _kernel_clock_period_s_from_xclbin_info(path: Path) -> float | None:
+    in_kernel_clock = False
     try:
         with path.open(errors="ignore") as handle:
             for line in handle:
-                if "DATA_CLK" in line:
-                    period_s = _period_s_from_info_line(line)
-                    if period_s is not None:
-                        return period_s
                 if "Name:" in line:
-                    in_data_clk = "DATA_CLK" in line
-                if not in_data_clk:
+                    in_kernel_clock = "ulp_ucs_aclk_kernel_00" in line
+                if not in_kernel_clock or "Achieved Freq:" not in line:
                     continue
-                period_s = _period_s_from_info_line(line)
-                if period_s is not None:
-                    return period_s
+                freq_mhz = _parse_frequency_mhz_line(line)
+                if freq_mhz is not None and freq_mhz > 0.0:
+                    return 1.0 / (freq_mhz * 1_000_000.0)
     except OSError:
         return None
     return None
