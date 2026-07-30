@@ -46,10 +46,12 @@ def _decode_frame(*, out_tokens: int = 4) -> pd.DataFrame:
                     f'"output_token_index": {index}}}'
                 ),
                 "calls_per_forward": 2.0,
-                "metric": "fpga_cycle",
+                "metric": "fpga_cycle_latency",
                 "output_token_index": index,
                 "out_tokens": out_tokens,
                 "measurement_kind": "invariant_reused" if index > 1 else "measured",
+                "fpga_cycle": latency,
+                "fpga_cycle_latency": latency,
                 "latency_us": latency,
                 "weighted_latency_us": latency * 2.0,
                 "compose_status": "pass",
@@ -58,7 +60,7 @@ def _decode_frame(*, out_tokens: int = 4) -> pd.DataFrame:
                 "power_avg_w": 1.0,
                 "power_vcc_avg_w": 1.0,
                 "power_dynamic_avg_w": 1.0,
-                "fpga_period_s": 1.0,
+                "fpga_period_s": 1e-6,
                 "source_raw_dbs": "raw.csv",
                 "expected_fpga_bin_label": "C1",
                 "source_fpga_bin_labels": "C1",
@@ -68,6 +70,20 @@ def _decode_frame(*, out_tokens: int = 4) -> pd.DataFrame:
 
 
 class ComposedPipelineTest(unittest.TestCase):
+    def setUp(self) -> None:
+        prepare._PREPARED_ROW_CACHE.clear()
+
+    def test_compose_count_summary_is_concise_and_stable(self) -> None:
+        frame = pd.DataFrame(
+            {"compose_status": ["pass", "estimated", "pass", "missing"]}
+        )
+
+        self.assertEqual(
+            "pass:2,estimated:1,missing:1",
+            run_compose._count_summary(frame, "compose_status"),
+        )
+        self.assertEqual("n/a", run_compose._count_summary(frame, "absent"))
+
     def test_decode_latency_is_grouped_by_input_kv_and_averaged_per_token(self) -> None:
         frame = _decode_frame()
         prepare._configure_out_tokens(4)
@@ -103,7 +119,7 @@ class ComposedPipelineTest(unittest.TestCase):
         self.assertEqual(1, len(summary))
         self.assertEqual(1024, summary[0]["seq_len"])
         self.assertEqual(8, summary[0]["tokens"])
-        self.assertAlmostEqual(25.0, summary[0]["joules_per_token"])
+        self.assertAlmostEqual(25e-6, summary[0]["joules_per_token"])
 
     def test_vectorized_energy_matches_legacy_for_all_power_metrics(self) -> None:
         frame = _decode_frame()
@@ -164,6 +180,18 @@ class ComposedPipelineTest(unittest.TestCase):
         frame.loc[0, "power_dynamic_avg_w"] = float("nan")
         with self.assertRaisesRegex(ValueError, "incomplete"):
             run_compose._validate_complete_composed(frame, label="test")
+
+    def test_compose_rejects_inconsistent_cycle_latency(self) -> None:
+        frame = _decode_frame()
+        frame.loc[0, "fpga_cycle_latency"] = 999.0
+        with self.assertRaisesRegex(ValueError, "inconsistent cycle latency"):
+            run_compose._validate_complete_composed(frame, label="test")
+
+    def test_prepare_requires_cycle_derived_latency_metric(self) -> None:
+        frame = _decode_frame()
+        frame["metric"] = "fpga_cycle"
+        with self.assertRaisesRegex(ValueError, "fpga_cycle_latency"):
+            prepare._validate_prepare_composed(frame, 4)
 
     def test_plot_requires_matching_scalar_out_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

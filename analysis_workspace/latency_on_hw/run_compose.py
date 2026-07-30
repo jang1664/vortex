@@ -14,7 +14,9 @@ The target workloads come from the suites most recently written by
 ``--llama3-suites`` when those generated directories live elsewhere.
 
 The result roots must contain ``C1/raw_db.csv``, ``C3/raw_db.csv``, and
-``C4/raw_db.csv``. By default the script composes ``fpga_cycle`` using the
+``C4/raw_db.csv``. By default the script composes cycle-derived latency using
+the ``fpga_cycle_latency`` metric (microseconds) while preserving the original
+``fpga_cycle`` count and resolved ``fpga_period_s`` in the composed output.
 latest passing measurement, rejects unresolved latency or power, and infers
 warmup and iteration values from the input raw DBs. Use ``--metric``,
 ``--select``, ``--missing``, ``--warmup``, or ``--iterations`` to override
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -170,6 +173,13 @@ def _positive_int_values(frame: pd.DataFrame, column: str) -> list[int]:
     return sorted({int(value) for value in values if int(value) > 0})
 
 
+def _count_summary(frame: pd.DataFrame, column: str) -> str:
+    if column not in frame.columns:
+        return "n/a"
+    counts = frame[column].astype(str).value_counts(dropna=False, sort=False)
+    return ",".join(f"{value}:{int(count)}" for value, count in counts.items())
+
+
 def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str, object]:
     required = {
         "model",
@@ -181,6 +191,9 @@ def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str,
         "out_tokens",
         "output_token_index",
         "calls_per_forward",
+        "fpga_cycle",
+        "fpga_cycle_latency",
+        "fpga_period_s",
         "latency_us",
         "compose_status",
         "latency_resolution_kind",
@@ -210,6 +223,27 @@ def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str,
     valid_status = frame["compose_status"].astype(str).isin({"pass", "estimated"})
     latency = pd.to_numeric(frame["latency_us"], errors="coerce")
     missing_latency = ~valid_status | latency.isna()
+    for column in ("fpga_cycle", "fpga_cycle_latency", "fpga_period_s"):
+        missing_latency |= pd.to_numeric(frame[column], errors="coerce").isna()
+    cycle_rows = frame["metric"].astype(str).eq("fpga_cycle_latency")
+    if bool(cycle_rows.any()):
+        cycles = pd.to_numeric(frame["fpga_cycle"], errors="coerce")
+        periods = pd.to_numeric(frame["fpga_period_s"], errors="coerce")
+        cycle_latency = pd.to_numeric(
+            frame["fpga_cycle_latency"], errors="coerce"
+        )
+        expected_latency = cycles * periods * 1_000_000.0
+        tolerance = expected_latency.abs().clip(lower=1.0) * 1e-9
+        inconsistent = cycle_rows & (
+            (cycle_latency - expected_latency).abs() > tolerance
+        )
+        inconsistent |= cycle_rows & ((latency - cycle_latency).abs() > tolerance)
+        if bool(inconsistent.any()):
+            ids = frame.loc[inconsistent, "case_id"].astype(str).tolist()
+            raise ValueError(
+                f"{label} composed output has inconsistent cycle latency: "
+                f"{ids[:10]} ({len(ids)} total)"
+            )
     missing_power = pd.Series(False, index=frame.index)
     for column in REQUIRED_POWER_COLUMNS:
         missing_power |= pd.to_numeric(frame[column], errors="coerce").isna()
@@ -247,24 +281,41 @@ def compose_model(
     warmup: int | None,
     iterations: int | None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
+    model_started = time.monotonic()
     suite_paths = _suite_paths(model)
     raw_dbs = _raw_db_paths(model, raw_db_subdirs)
     _require_files(suite_paths, f"{model.key} suite")
     _require_files(raw_dbs, f"{model.key} raw DB")
+    print(
+        f"[compose] {model.key}: suites={len(suite_paths)} raw_dbs={len(raw_dbs)} "
+        "resolving measurement settings",
+        flush=True,
+    )
     warmup_override, iterations_override = _measurement_overrides(
         raw_dbs,
         warmup=warmup,
         iterations=iterations,
     )
+    print(
+        f"[compose] {model.key}: metric={metric} select={select} "
+        f"warmup={warmup_override} iterations={iterations_override}",
+        flush=True,
+    )
 
     frames: list[pd.DataFrame] = []
     repo_root = find_suite_repo_root(REPO_ROOT)
-    for suite_path in suite_paths:
+    for suite_index, suite_path in enumerate(suite_paths, start=1):
+        suite_started = time.monotonic()
         suite = load_suite(
             suite_path,
             repo_root=repo_root,
             warmup_override=warmup_override,
             iterations_override=iterations_override,
+        )
+        print(
+            f"[compose] {model.key} {suite_index}/{len(suite_paths)} "
+            f"{suite.name}: cases={len(suite.cases)}",
+            flush=True,
         )
         composed = compose_latency(
             suite,
@@ -281,6 +332,12 @@ def compose_model(
         composed.insert(0, "model", model_column)
         composed.insert(1, "suite_file", str(suite_path))
         frames.append(composed)
+        print(
+            f"[compose] {model.key} {suite_index}/{len(suite_paths)} done: "
+            f"rows={len(composed)} status={_count_summary(composed, 'compose_status')} "
+            f"elapsed={time.monotonic() - suite_started:.1f}s",
+            flush=True,
+        )
 
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     completeness = _validate_complete_composed(combined, label=model.key)
@@ -316,6 +373,11 @@ def compose_model(
     }
     (model_out / "manifest.json").write_text(
         json.dumps(manifest, indent=2, default=str) + "\n"
+    )
+    print(
+        f"[compose] {model.key}: complete rows={len(combined)} "
+        f"elapsed={time.monotonic() - model_started:.1f}s",
+        flush=True,
     )
     return combined, manifest
 
@@ -359,7 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RAW_DB_SUBDIRS,
         help="Comma-separated result subdirectories containing raw_db.csv.",
     )
-    parser.add_argument("--metric", choices=METRIC_COLUMNS, default="fpga_cycle")
+    parser.add_argument(
+        "--metric", choices=METRIC_COLUMNS, default="fpga_cycle_latency"
+    )
     parser.add_argument("--select", choices=SELECT_POLICIES, default="latest")
     parser.add_argument("--missing", choices=MISSING_POLICIES, default="error")
     parser.add_argument(
@@ -378,6 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
     models = (
         ModelInput(
@@ -410,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
         manifests.append(manifest)
         print(
             f"{model.key}: wrote {args.out / model.key / 'composed.csv'} "
-            f"({len(composed)} rows)"
+            f"({len(composed)} rows)",
+            flush=True,
         )
 
     combined = pd.concat(frames, ignore_index=True)
@@ -429,7 +495,11 @@ def main(argv: list[str] | None = None) -> int:
     (args.out / "manifest.json").write_text(
         json.dumps(top_manifest, indent=2, default=str) + "\n"
     )
-    print(f"combined: wrote {composed_path} ({len(combined)} rows)")
+    print(
+        f"combined: wrote {composed_path} ({len(combined)} rows, "
+        f"{time.monotonic() - started:.1f}s total)",
+        flush=True,
+    )
     return 0
 
 

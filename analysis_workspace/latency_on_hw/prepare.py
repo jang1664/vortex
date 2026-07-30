@@ -81,9 +81,12 @@ TARGET_MODELS = target_models()
 # Match make_case.sh / make_cases.sh stage-specific shape controls:
 # --prefill-batches, --prefill-seq-lens, --generation-batches, --generation-seq-lens.
 TARGET_PREFILL_BATCHES = (1,)
-TARGET_PREFILL_SEQ_LENS = (1024,)
-TARGET_GENERATION_BATCHES = (1,)
-TARGET_GENERATION_SEQ_LENS = (1024,)
+# TARGET_PREFILL_SEQ_LENS = (1024,)
+TARGET_PREFILL_SEQ_LENS = (1024, 2048, 4096, 8192, 16384, 32768)
+# TARGET_GENERATION_BATCHES = (1,)
+TARGET_GENERATION_BATCHES = (1,2,4)
+# TARGET_GENERATION_SEQ_LENS = (1024,)
+TARGET_GENERATION_SEQ_LENS = (1024, 2048, 4096, 8192, 16384, 32768)
 # make_case.sh quick generates decode steps 1..128 from gen_kv_len=1024.
 TARGET_GENERATION_OUT_TOKENS = 128
 TARGET_GENERATION_MAX_SEQ_LEN = 65536
@@ -413,8 +416,8 @@ USE_FIGURE_DATA_CACHE = True
 FORCE_REBUILD_FIGURE_DATA = True
 
 # Measurement and aggregation controls.
-# With METRIC="fpga_cycle", totals are sum(fpga_cycle * calls_per_forward).
-METRIC = "fpga_cycle"
+# Cycle-derived latency is recorded in microseconds by compose.py.
+METRIC = "fpga_cycle_latency"
 SELECT = "latest"
 MISSING = "nan"  # Keep genuinely unresolved measurements visible.
 X_AXIS = "seq_len"
@@ -705,6 +708,21 @@ C4_CELL_AREA = {
     "arbiters":3196.3230+4162.9771+4162.9771+4162.9771+4162.9771,
     "mxu" : FPINT_MXU_CELL_AREA
 }
+
+# naive with ACC MEM version
+C1_CELL_AREA = {
+    "top": 9.2347,
+}
+C2_CELL_AREA = {
+  "top":11.1987,
+}
+C3_CELL_AREA = {
+  "top":10.6516
+}
+C4_CELL_AREA = {
+  "top":10.6989
+}
+
 AREA_RATIO=FPINT_MXU_CELL_AREA / TH32_FP_TCU_CELL_AREA
 # CASE_LATENCY_SCALE_RULES = [
 #     # C1 GEMM scale is 1.0, so no rule is needed.
@@ -896,11 +914,8 @@ def _build_total_csv_frame(result: PlotRunResult) -> pd.DataFrame:
     )
     final_total = pd.to_numeric(total.get("total_latency_us"), errors="coerce")
     total["final_total_metric_value"] = final_total
-    if METRIC == "fpga_cycle":
-        total["final_total_fpga_cycles"] = final_total
-    else:
-        total["final_total_latency_us"] = final_total
-        total["final_total_latency_s"] = total["final_total_latency_us"] / 1_000_000.0
+    total["final_total_latency_us"] = final_total
+    total["final_total_latency_s"] = total["final_total_latency_us"] / 1_000_000.0
     total["final_result_source"] = total.apply(_final_result_source, axis=1)
 
     if "estimate_mode" in total.columns:
@@ -931,7 +946,7 @@ def _build_total_csv_frame(result: PlotRunResult) -> pd.DataFrame:
 
     preferred = [
         "metric", "stage", "batch", "seq_len", "out_tokens", "aggregation_kind", "variant",
-        "final_total_metric_value", "final_total_fpga_cycles", "final_total_latency_us", "final_total_latency_s", "final_result_source",
+        "final_total_metric_value", "final_total_latency_us", "final_total_latency_s", "final_result_source",
         "estimate_applied", "interpolation_applied", "extrapolation_applied",
         "case_count", "pass_case_count", "estimated_case_count", "missing_case_count",
         "original_case_ids", "measured_case_ids", "estimated_case_ids", "missing_case_ids",
@@ -1778,7 +1793,7 @@ def export_gemm_only_energy_all_metrics(
 BUILD_LLAMA_COMPARE = False
 LLAMA_COMPARE_OUT_DIR = FIGURE_OUTPUT_ROOT / "llama_compare"
 LLAMA_COMPARE_CSV = LLAMA_COMPARE_OUT_DIR / "c1_vs_c4_speedup_batch1.csv"
-LLAMA_COMPARE_CACHE_VERSION = "raw_roots_v3_fpga_cycle_forward_calls"
+LLAMA_COMPARE_CACHE_VERSION = "raw_roots_v4_fpga_cycle_latency_forward_calls"
 LLAMA_COMPARE_BATCH = 1
 LLAMA_COMPARE_SEQ_ORDER = [512, 1024, 2048, 4096, 8192, 16384, 32768]
 LLAMA_COMPARE_SEQ_LABELS = {
@@ -1894,7 +1909,9 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
     plot_data = versions.final.plot_data.copy()
     plot_data["batch"] = _numeric_int_column(plot_data, "batch")
     plot_data["seq_len"] = _numeric_int_column(plot_data, "seq_len")
-    plot_data["total_fpga_cycles"] = pd.to_numeric(plot_data["total_latency_us"], errors="coerce")
+    plot_data["total_latency_us"] = pd.to_numeric(
+        plot_data["total_latency_us"], errors="coerce"
+    )
 
     variants = {LLAMA_COMPARE_C1_VARIANT, LLAMA_COMPARE_C4_VARIANT}
     filtered = plot_data[
@@ -1912,7 +1929,7 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
     grouped = (
         filtered.groupby(["stage", "batch", "seq_len", "variant"], dropna=False, as_index=False)
         .agg(
-            total_fpga_cycles=("total_fpga_cycles", "sum"),
+            total_latency_us=("total_latency_us", "sum"),
             **{column: (column, "sum") for column in count_columns if column in filtered.columns},
         )
     )
@@ -1929,12 +1946,12 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
                 raise ValueError(f"missing C4 row for {model_spec['model']} {stage} seq_len={seq_len}")
             c1 = indexed.loc[c1_key]
             c4 = indexed.loc[c4_key]
-            c1_total_fpga_cycles = float(c1["total_fpga_cycles"])
-            c4_total_fpga_cycles = float(c4["total_fpga_cycles"])
-            if not math.isfinite(c1_total_fpga_cycles) or c1_total_fpga_cycles <= 0.0:
-                raise ValueError(f"invalid C1 total fpga cycles for {model_spec['model']} {stage} seq_len={seq_len}: {c1_total_fpga_cycles}")
-            if not math.isfinite(c4_total_fpga_cycles) or c4_total_fpga_cycles <= 0.0:
-                raise ValueError(f"invalid C4 total fpga cycles for {model_spec['model']} {stage} seq_len={seq_len}: {c4_total_fpga_cycles}")
+            c1_total_latency_us = float(c1["total_latency_us"])
+            c4_total_latency_us = float(c4["total_latency_us"])
+            if not math.isfinite(c1_total_latency_us) or c1_total_latency_us <= 0.0:
+                raise ValueError(f"invalid C1 total latency for {model_spec['model']} {stage} seq_len={seq_len}: {c1_total_latency_us}")
+            if not math.isfinite(c4_total_latency_us) or c4_total_latency_us <= 0.0:
+                raise ValueError(f"invalid C4 total latency for {model_spec['model']} {stage} seq_len={seq_len}: {c4_total_latency_us}")
             record = {
                 "model": model_spec["model"],
                 "display_model": model_spec["display_model"],
@@ -1944,9 +1961,9 @@ def _compose_llama_compare_model(model_spec: dict) -> pd.DataFrame:
                 "seq_len": seq_len,
                 "seq_label": LLAMA_COMPARE_SEQ_LABELS[seq_len],
                 "seq_rank": LLAMA_COMPARE_SEQ_ORDER.index(seq_len),
-                "c1_total_fpga_cycles": c1_total_fpga_cycles,
-                "c4_total_fpga_cycles": c4_total_fpga_cycles,
-                "c1_over_c4_speedup": c1_total_fpga_cycles / c4_total_fpga_cycles,
+                "c1_total_latency_us": c1_total_latency_us,
+                "c4_total_latency_us": c4_total_latency_us,
+                "c1_over_c4_speedup": c1_total_latency_us / c4_total_latency_us,
                 "cache_version": LLAMA_COMPARE_CACHE_VERSION,
             }
             for column in count_columns:
@@ -2055,20 +2072,29 @@ def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
     required = {
         "model", "case_id", "stage", "variant", "kind", "name", "backend",
         "batch", "prefill_seq_len", "gen_kv_len", "out_tokens",
-        "output_token_index", "calls_per_forward", "latency_us",
+        "output_token_index", "calls_per_forward", "fpga_cycle",
+        "fpga_cycle_latency", "fpga_period_s", "latency_us",
         "compose_status", "power_avg_w", "power_vcc_avg_w",
         "power_dynamic_avg_w",
     }
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError(f"composed CSV is missing required columns: {', '.join(missing)}")
+    metrics = set(frame["metric"].dropna().astype(str))
+    if metrics != {METRIC}:
+        raise ValueError(
+            f"composed CSV metric must be {METRIC!r}, got {sorted(metrics)}"
+        )
     duplicated = frame.duplicated(["model", "case_id"], keep=False)
     if bool(duplicated.any()):
         ids = frame.loc[duplicated, "case_id"].astype(str).drop_duplicates().tolist()
         raise ValueError(f"composed CSV has duplicate logical cases: {ids[:10]}")
     status = frame["compose_status"].astype(str)
     incomplete = ~status.isin({"pass", "estimated"})
-    for column in ("latency_us", "power_avg_w", "power_vcc_avg_w", "power_dynamic_avg_w"):
+    for column in (
+        "fpga_cycle", "fpga_cycle_latency", "fpga_period_s", "latency_us",
+        "power_avg_w", "power_vcc_avg_w", "power_dynamic_avg_w",
+    ):
         incomplete |= pd.to_numeric(frame[column], errors="coerce").isna()
     if bool(incomplete.any()):
         ids = frame.loc[incomplete, "case_id"].astype(str).tolist()

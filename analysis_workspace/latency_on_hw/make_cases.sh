@@ -34,6 +34,11 @@ Override options:
   --generation-max-seq-len N     Fix generation KV-cache capacity/stride.
   --decode-measurement MODE      Generation mode: exact or sampled.
   --decode-sample-interval N     Sampling interval for sampled mode.
+  --fpga-bin-remap OLD=NEW       Remap a resolved FPGA bin; repeat as needed.
+  --fpga-bin-default BIN         Override fpga_bins.default.
+  --fpga-bin-by-app APP=BIN      Override one fpga_bins.by_app entry; repeat as needed.
+  --fpga-bin-by-backend B=BIN    Override one fpga_bins.by_backend entry; repeat as needed.
+  --fpga-bin-by-kind KIND=BIN    Override one fpga_bins.by_kind entry; repeat as needed.
 
 Defaults:
   GENERATED_SUITE_DIR defaults to generated_suites when omitted.
@@ -56,6 +61,11 @@ GENERATION_OUT_TOKENS=""
 GENERATION_MAX_SEQ_LEN=""
 DECODE_MEASUREMENT=""
 DECODE_SAMPLE_INTERVAL=""
+FPGA_BIN_REMAPS=()
+FPGA_BIN_DEFAULT=""
+FPGA_BIN_BY_APP=()
+FPGA_BIN_BY_BACKEND=()
+FPGA_BIN_BY_KIND=()
 positional=()
 
 while [[ $# -gt 0 ]]; do
@@ -168,6 +178,51 @@ while [[ $# -gt 0 ]]; do
             DECODE_SAMPLE_INTERVAL="$2"
             shift 2
             ;;
+        --fpga-bin-remap)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            FPGA_BIN_REMAPS+=("$2")
+            shift 2
+            ;;
+        --fpga-bin-default)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            FPGA_BIN_DEFAULT="$2"
+            shift 2
+            ;;
+        --fpga-bin-by-app)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            FPGA_BIN_BY_APP+=("$2")
+            shift 2
+            ;;
+        --fpga-bin-by-backend)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            FPGA_BIN_BY_BACKEND+=("$2")
+            shift 2
+            ;;
+        --fpga-bin-by-kind|--fpga-bin-by-kernel)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            FPGA_BIN_BY_KIND+=("$2")
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -254,6 +309,21 @@ fi
 if [[ -n "${DECODE_SAMPLE_INTERVAL}" ]]; then
     GENERATE_ARGS+=(--generation-decode-sample-interval "${DECODE_SAMPLE_INTERVAL}")
 fi
+for remap in "${FPGA_BIN_REMAPS[@]}"; do
+    GENERATE_ARGS+=(--fpga-bin-remap "${remap}")
+done
+if [[ -n "${FPGA_BIN_DEFAULT}" ]]; then
+    GENERATE_ARGS+=(--fpga-bin-default "${FPGA_BIN_DEFAULT}")
+fi
+for mapping in "${FPGA_BIN_BY_APP[@]}"; do
+    GENERATE_ARGS+=(--fpga-bin-by-app "${mapping}")
+done
+for mapping in "${FPGA_BIN_BY_BACKEND[@]}"; do
+    GENERATE_ARGS+=(--fpga-bin-by-backend "${mapping}")
+done
+for mapping in "${FPGA_BIN_BY_KIND[@]}"; do
+    GENERATE_ARGS+=(--fpga-bin-by-kind "${mapping}")
+done
 
 shopt -s nullglob
 

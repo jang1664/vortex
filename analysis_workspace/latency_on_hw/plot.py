@@ -54,6 +54,14 @@ PLOT_CHOICES = (
     "latency",
     "all",
 )
+ALL_PLOTS = (
+    "kernel_dynamic_power",
+    "llama_e2e_gemm_layout_vector_stacked",
+    "llama_e2e_no_area_norm_stacked",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked",
+    "llama_gemm_only",
+    "llama_gemm_only_no_area_norm",
+)
 EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
 REQUESTED_OUT_TOKENS: int | None = None
 REQUESTED_POWER_METRIC: str | None = None
@@ -284,15 +292,15 @@ class StackGroupKnobs:
 
 GEMM_ONLY_STACK_GROUPS = (
     StackGroupKnobs(
-        label="linear-qkvo",
+        label="Q/K/V/O projection",
         columns=("q_proj", "k_proj", "v_proj", "o_proj"),
     ),
     StackGroupKnobs(
-        label="attn",
+        label="attention (QK^T,PV)",
         columns=("attn_qkT", "attn_pv"),
     ),
     StackGroupKnobs(
-        label="linear-ffn",
+        label="FFN (up/gate/down projection)",
         columns=("down_proj", "gate_proj", "up_proj"),
     ),
 )
@@ -365,6 +373,7 @@ class StackedBarKnobs(WideBarKnobs):
     tight_layout_rect: tuple[float, float, float, float] = (0.0, 0.08, 1.0, 0.96)
     stack_palette: tuple[str, ...] | None = None
     stack_groups: tuple[StackGroupKnobs, ...] = ()
+    legend_order: tuple[str, ...] = ()
 
 
 def _llama_e2e_stacked_knobs() -> StackedBarKnobs:
@@ -440,6 +449,7 @@ class PlotKnobs:
             **_llama_compact_kwargs(Y_LABEL),
             legend_ncol=3,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE,
+            legend_order=("gemm", "vector", "layout"),
         )
     )
     llama_e2e_stacked: StackedBarKnobs = field(
@@ -2920,6 +2930,12 @@ def plot_model_stacked_bars(
         _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
 
+    if knobs.legend_order and legend_handles is not None and legend_labels is not None:
+        legend_by_label = dict(zip(legend_labels, legend_handles))
+        legend_labels = [
+            label for label in knobs.legend_order if label in legend_by_label
+        ]
+        legend_handles = [legend_by_label[label] for label in legend_labels]
     _add_top_legend(fig, legend_handles, legend_labels, len(stack_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
@@ -3689,9 +3705,10 @@ def run_selected_plots(args: argparse.Namespace) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     plot = args.plot
+    selected_plots = ALL_PLOTS if plot == "all" else (plot,)
     knobs = _plot_knobs_from_args(args)
 
-    if plot in {"kernel_dynamic_power", "all"}:
+    if "kernel_dynamic_power" in selected_plots:
         raw_db_paths = configured_raw_db_paths(latency_dir)
         print(f"kernel dynamic power raw DBs: {len(raw_db_paths)}")
         plot_kernel_dynamic_power_by_kind(
@@ -3700,7 +3717,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             knobs=knobs.kernel_dynamic_power,
         )
 
-    if plot in {"main_all", "latency", "all"}:
+    if "main_all" in selected_plots or "latency" in selected_plots:
         main_csv = prepared_csv_path(
             explicit=args.main_data,
             prepared_root=prepared_root,
@@ -3713,7 +3730,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             knobs=knobs.main_all,
         )
 
-    if plot in {"gemm_only", "latency", "all"}:
+    if "gemm_only" in selected_plots or "latency" in selected_plots:
         gemm_csv = prepared_csv_path(
             explicit=args.gemm_data,
             prepared_root=prepared_root,
@@ -3726,7 +3743,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             knobs=knobs.gemm_only,
         )
 
-    if plot in {"energy", "all"}:
+    if "energy" in selected_plots:
         energy_csv = prepared_csv_path(
             explicit=args.energy_data,
             prepared_root=prepared_root,
@@ -3739,7 +3756,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             knobs=knobs.energy,
         )
 
-    if plot in {"llama_e2e", "all"}:
+    if "llama_e2e" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e",
@@ -3758,7 +3775,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_plot,
         )
 
-    if plot in {"llama_e2e_no_area_norm", "all"}:
+    if "llama_e2e_no_area_norm" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_no_area_norm",
@@ -3777,7 +3794,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_no_area_norm_plot,
         )
 
-    if plot in {"llama_e2e_no_area_norm_stacked", "all"}:
+    if "llama_e2e_no_area_norm_stacked" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_no_area_norm_stacked",
@@ -3796,7 +3813,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_no_area_norm_stacked_plot,
         )
 
-    if plot in {"llama_e2e_gemm_layout_stacked", "all"}:
+    if "llama_e2e_gemm_layout_stacked" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_gemm_layout_stacked",
@@ -3815,7 +3832,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_gemm_layout_stacked_plot,
         )
 
-    if plot in {"llama_e2e_gemm_layout_vector_stacked", "all"}:
+    if "llama_e2e_gemm_layout_vector_stacked" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_gemm_layout_vector_stacked",
@@ -3834,7 +3851,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_gemm_layout_vector_stacked_plot,
         )
 
-    if plot in {"llama_e2e_stacked", "all"}:
+    if "llama_e2e_stacked" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_e2e_stacked",
@@ -3853,7 +3870,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_stacked_plot,
         )
 
-    if plot in {"llama_gemm_only", "all"}:
+    if "llama_gemm_only" in selected_plots:
         required = (
             plot == "llama_gemm_only"
             or bool(args.llama2_gemm_data)
@@ -3890,7 +3907,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                 knobs=knobs.llama_gemm_only,
             )
 
-    if plot in {"llama_gemm_only_no_area_norm", "all"}:
+    if "llama_gemm_only_no_area_norm" in selected_plots:
         run_optional_llama_model_plot(
             selected_plot=plot,
             plot_name="llama_gemm_only_no_area_norm",
@@ -3909,7 +3926,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_gemm_only_no_area_norm_plot,
         )
 
-    if plot in {"llama_gemm_only_energy", "all"}:
+    if "llama_gemm_only_energy" in selected_plots:
         required = (
             plot == "llama_gemm_only_energy"
             or bool(args.llama2_gemm_energy_data)
@@ -3947,7 +3964,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     knobs=knobs.llama_gemm_only_energy,
                 )
 
-    if plot in {"llama_energy", "all"}:
+    if "llama_energy" in selected_plots:
         required = (
             plot == "llama_energy"
             or bool(args.llama2_energy_data)
@@ -3984,7 +4001,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     knobs=knobs.llama_energy,
                 )
 
-    if plot in {"llama_energy_stacked", "all"}:
+    if "llama_energy_stacked" in selected_plots:
         required = (
             plot == "llama_energy_stacked"
             or bool(args.llama2_energy_stacked_data)
@@ -4022,7 +4039,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     knobs=knobs.llama_energy_stacked,
                 )
 
-    if plot in {"llama_energy_gemm_layout_vector_stacked", "all"}:
+    if "llama_energy_gemm_layout_vector_stacked" in selected_plots:
         required = (
             plot == "llama_energy_gemm_layout_vector_stacked"
             or bool(args.llama2_energy_gemm_layout_vector_stacked_data)
@@ -4067,7 +4084,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     knobs=knobs.llama_energy_gemm_layout_vector_stacked,
                 )
 
-    if plot in {"llama_gemm_only_energy_no_area_norm", "all"}:
+    if "llama_gemm_only_energy_no_area_norm" in selected_plots:
         run_auto_discovered_energy_plot(
             selected_plot=plot,
             plot_name="llama_gemm_only_energy_no_area_norm",
@@ -4079,7 +4096,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_gemm_only_energy_no_area_norm_plot,
         )
 
-    if plot in {"llama_energy_no_area_norm", "all"}:
+    if "llama_energy_no_area_norm" in selected_plots:
         run_auto_discovered_energy_plot(
             selected_plot=plot,
             plot_name="llama_energy_no_area_norm",
@@ -4091,7 +4108,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_energy_no_area_norm_plot,
         )
 
-    if plot in {"llama_energy_no_area_norm_stacked", "all"}:
+    if "llama_energy_no_area_norm_stacked" in selected_plots:
         run_auto_discovered_energy_plot(
             selected_plot=plot,
             plot_name="llama_energy_no_area_norm_stacked",
@@ -4103,10 +4120,10 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_energy_no_area_norm_stacked_plot,
         )
 
-    if plot in {
-        "llama_energy_no_area_norm_gemm_layout_vector_stacked",
-        "all",
-    }:
+    if (
+        "llama_energy_no_area_norm_gemm_layout_vector_stacked"
+        in selected_plots
+    ):
         run_auto_discovered_energy_plot(
             selected_plot=plot,
             plot_name="llama_energy_no_area_norm_gemm_layout_vector_stacked",
@@ -4131,11 +4148,6 @@ PARALLEL_ENERGY_PLOTS = {
     "llama_energy_gemm_layout_vector_stacked",
     "llama_energy_no_area_norm_gemm_layout_vector_stacked",
 }
-PARALLEL_ALL_PLOTS = tuple(
-    choice for choice in PLOT_CHOICES if choice not in {"all", "latency"}
-)
-
-
 def _replace_parallel_plot_args(
     raw_args: Sequence[str],
     *,
@@ -4177,7 +4189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError(f"--workers must be >= 0, got {args.workers}")
     parallel_jobs: list[tuple[str, str | None]] = []
     if args.plot == "all" and workers > 1:
-        for plot_name in PARALLEL_ALL_PLOTS:
+        for plot_name in ALL_PLOTS:
             metrics = (
                 ENERGY_POWER_METRICS
                 if plot_name in PARALLEL_ENERGY_PLOTS

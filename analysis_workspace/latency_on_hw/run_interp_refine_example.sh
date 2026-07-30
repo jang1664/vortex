@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Reference command: refine Llama2 or Llama3 C4 decode interpolation one
-# kernel type at a time until p95 relative error reaches 3% or three iterations
-# are exhausted. Every successfully measured validation case is promoted into
-# the main raw DB.
+# Reference command: refine Llama2 or Llama3 decode interpolation for all
+# kernel types on C1, C3, and C4_2 until the target error is reached or three
+# iterations are exhausted. Every successfully measured validation case is
+# promoted into the main raw DB.
 #
 # Usage:
 #   ./run_interp_refine_example.sh llama2
@@ -24,32 +24,56 @@ fi
 
 MODEL="$1"
 
+LLAMA2_SUITE_NAME=llama2_7b_main_full.new_c4
+LLAMA2_OUT_NAME=outputs_llama2_main.new_c4
+LLAMA2_KERNEL_TYPE_FILTER=""
+
+LLAMA3_SUITE_NAME=llama3_8b_main_full.new_c4
+LLAMA3_OUT_NAME=outputs_llama3_main.new_c4
+LLAMA3_KERNEL_TYPE_FILTER=""
+
+FPGA_BINS=(C1 C3 C4_2)
+
 if [[ "${MODEL}" == "llama2" ]]; then
-  SUITE="${SCRIPT_DIR}/generated_suites/llama2_7b_main_full/generation_merged/generation_merged_C4.yaml"
-  OUTPUT_ROOT="${SCRIPT_DIR}/outputs_llama2_main/C4"
+  SUITE_NAME="${LLAMA2_SUITE_NAME}"
+  OUT_NAME="${LLAMA2_OUT_NAME}"
   BUILD_DIR="${REPO_ROOT}/build_latency_llama2"
+  KERNEL_TYPE_FILTER="${LLAMA2_KERNEL_TYPE_FILTER}"
 elif [[ "${MODEL}" == "llama3" ]]; then
-  SUITE="${SCRIPT_DIR}/generated_suites/llama3_8b_main_full/generation_merged/generation_merged_C4.yaml"
-  OUTPUT_ROOT="${SCRIPT_DIR}/outputs_llama3_main/C4"
+  SUITE_NAME="${LLAMA3_SUITE_NAME}"
+  OUT_NAME="${LLAMA3_OUT_NAME}"
   BUILD_DIR="${REPO_ROOT}/build_latency_llama3"
+  KERNEL_TYPE_FILTER="${LLAMA3_KERNEL_TYPE_FILTER}"
 else
   echo "Error: unsupported model: ${MODEL}; expected llama2 or llama3" >&2
   exit 1
 fi
 
-MEASURE_COMMAND="env STAGE=generation SUITE={suite} OUT_DIR={out} BUILD_DIR=${BUILD_DIR} SKIP_EXISTING=0 BLACKBOX_TIMEOUT=24h ${SCRIPT_DIR}/run_fpga_bin.sh C4 --no-power --retry"
+for FPGA_BIN in "${FPGA_BINS[@]}"; do
+  SUITE="${SCRIPT_DIR}/generated_suites/${SUITE_NAME}/generation_merged/generation_merged_${FPGA_BIN}.yaml"
+  OUTPUT_ROOT="${SCRIPT_DIR}/${OUT_NAME}/${FPGA_BIN}"
+  MEASURE_COMMAND="env STAGE=generation SUITE={suite} OUT_DIR={out} BUILD_DIR=${BUILD_DIR} SKIP_EXISTING=0 BLACKBOX_TIMEOUT=24h ${SCRIPT_DIR}/run_fpga_bin.sh ${FPGA_BIN} --no-power --retry"
 
-echo "[refine] model=${MODEL} stage=generation fpga_bin=C4"
-echo "[refine] suite=${SUITE}"
-echo "[refine] output_root=${OUTPUT_ROOT}"
+  REFINE_ARGS=(
+    --suite "${SUITE}"
+    --output-root "${OUTPUT_ROOT}"
+    --measure-command "${MEASURE_COMMAND}"
+    --metric fpga_cycle
+    --target-error 0.05
+    --validation-samples 3
+    --max-iterations 3
+    --sampling-strategy midpoint
+    --seed 0
+  )
+  if [[ -n "${KERNEL_TYPE_FILTER}" ]]; then
+    REFINE_ARGS+=(--kernel-type "${KERNEL_TYPE_FILTER}")
+  fi
 
-"${PYTHON_BIN}" -m tools.latency_bench refine-interpolation \
-  --suite "${SUITE}" \
-  --output-root "${OUTPUT_ROOT}" \
-  --measure-command "${MEASURE_COMMAND}" \
-  --metric fpga_cycle \
-  --target-error 0.03 \
-  --validation-samples 3 \
-  --max-iterations 3 \
-  --seed 0 \
-  --refinement-id "${MODEL}_decode_c4_fpga_cycle_3pct"
+  echo "[refine] model=${MODEL} stage=generation fpga_bin=${FPGA_BIN}"
+  echo "[refine] suite=${SUITE}"
+  echo "[refine] output_root=${OUTPUT_ROOT}"
+  echo "[refine] kernel_type_filter=${KERNEL_TYPE_FILTER:-<all>}"
+
+  "${PYTHON_BIN}" -m tools.latency_bench refine-interpolation \
+    "${REFINE_ARGS[@]}"
+done
