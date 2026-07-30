@@ -6,6 +6,7 @@ TEST_DIRS := \
 	basic \
 	conv3 \
 	cta \
+	dequant_hbm_energy \
 	dequantize_pt_int4 \
 	demo \
 	detile_output \

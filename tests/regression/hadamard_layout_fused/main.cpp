@@ -2,6 +2,7 @@
 #include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -201,17 +202,30 @@ static bool run_case(const char* name,
   uint64_t threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &threads));
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG >= 1
+  uint64_t cores = 0;
   uint64_t warps = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &warps));
-#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2 \
+    || HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
   const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
   const uint32_t factor_width =
       factorized ? dim / base_k : next_power_of_two(dim);
   const bool use_multiwarp =
       static_cast<uint64_t>(matrix_count) * launched_rows < warps
       && (!factorized || factor_width > threads);
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  const bool use_r3_shuffle =
+      factorized && base_k == 1u && dim == 128u && !tiled_input;
+  const bool use_r3_persistent =
+      use_r3_shuffle && !padded_row_launch;
+  const uint32_t launch_threads = use_r3_shuffle
+      ? static_cast<uint32_t>(threads)
+      : static_cast<uint32_t>(threads * (use_multiwarp ? warps : 1u));
+#else
   const uint32_t launch_threads = static_cast<uint32_t>(
       threads * (use_multiwarp ? warps : 1u));
+#endif
 #else
   const uint32_t launch_threads =
       static_cast<uint32_t>(threads * warps);
@@ -249,9 +263,17 @@ static bool run_case(const char* name,
       buffers.output, zero_output.data(), 0, output_bytes));
   kernel_arg_t arg{};
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  arg.grid_dim[0] = use_r3_persistent
+      ? std::min(rows, static_cast<uint32_t>(cores * warps))
+      : (padded_row_launch ? m_pad : rows);
+  arg.grid_dim[1] = matrix_count;
+  arg.grid_dim[2] = 1;
+#else
   arg.grid_dim[0] =
       matrix_count * (padded_row_launch ? m_pad : rows);
   arg.grid_dim[1] = arg.grid_dim[2] = 1;
+#endif
   arg.block_dim[0] = launch_threads;
   arg.block_dim[1] = arg.block_dim[2] = 1;
   RT_CHECK(vx_mem_address(buffers.input, &arg.input_addr));

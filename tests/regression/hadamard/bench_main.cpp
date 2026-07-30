@@ -170,7 +170,8 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
 
-  uint64_t num_warps, num_threads, local_mem_size;
+  uint64_t num_cores, num_warps, num_threads, local_mem_size;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
@@ -179,8 +180,16 @@ int main(int argc, char *argv[]) {
       base_k == 0 ? padded_dim : dim / base_k;
   const bool use_multiwarp =
       rows < num_warps && (base_k == 0 || factor_width > num_threads);
+#if HADAMARD_VARIANT_TAG == 2
+  const bool use_r3_shuffle = base_k == 1u && dim == 128u;
+  const uint32_t threads_per_block = use_r3_shuffle
+      ? static_cast<uint32_t>(num_threads)
+      : static_cast<uint32_t>(
+          num_threads * (use_multiwarp ? num_warps : 1u));
+#else
   const uint32_t threads_per_block = static_cast<uint32_t>(
       num_threads * (use_multiwarp ? num_warps : 1u));
+#endif
   uint32_t max_localmem = 0;
   RT_CHECK(vx_check_occupancy(device, threads_per_block, &max_localmem));
   const uint32_t scratch_bytes = padded_dim * sizeof(float);
@@ -203,7 +212,13 @@ int main(int argc, char *argv[]) {
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_HADAMARD;
+#if HADAMARD_VARIANT_TAG == 2
+  kernel_arg.grid_dim[0] = use_r3_shuffle
+      ? std::min(rows, static_cast<uint32_t>(num_cores * num_warps))
+      : rows;
+#else
   kernel_arg.grid_dim[0] = rows;
+#endif
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
   kernel_arg.block_dim[0] = threads_per_block;

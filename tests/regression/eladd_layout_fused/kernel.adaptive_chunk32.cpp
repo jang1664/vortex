@@ -5,29 +5,51 @@
 #include <vx_intrinsics.h>
 #include <VX_config.h>
 
-static __attribute__((noinline)) void run_tile_chunk32(
+static __attribute__((noinline)) void run_warp_coalesced_chunk32(
+    kernel_arg_t *__UNIFORM__ arg);
+
+static __attribute__((noinline)) void run_row_coalesced_cursor(
     kernel_arg_t *__UNIFORM__ arg) {
+#if NUM_THREADS == TILE_DMA_MXU_NT
   auto input_a = reinterpret_cast<fp16_t *>(arg->input_a_addr);
   auto input_b = reinterpret_cast<fp16_t *>(arg->input_b_addr);
   auto output = reinterpret_cast<fp16_t *>(arg->output_addr);
-  const uint32_t chunks_k = (arg->K + 31u) >> 5;
-  const uint32_t total_tasks = arg->M_real * chunks_k;
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t lane = thread_id & (NUM_THREADS - 1u);
+  const uint32_t warp_id = thread_id / NUM_THREADS;
+  const uint32_t total_warps = total_threads / NUM_THREADS;
+  const uint32_t mt = 1u << arg->log2_mt;
+  const uint32_t mxu_nt = 1u << arg->log2_mxu_nt;
+  const uint32_t mt_mask = mt - 1u;
 
-  for (uint32_t task = thread_id; task < total_tasks; task += total_threads) {
-    const uint32_t m = task / chunks_k;
-    const uint32_t chunk = task - m * chunks_k;
-    const uint32_t k = chunk << 5;
-    const uint64_t tiled_off = gemm_c_tiled_elem_offset(
-        m, k, arg->M_pad, arg->K, arg->log2_mt, arg->log2_mxu_nt);
-    const uint64_t row_off = (uint64_t)m * arg->K + k;
-    for (uint32_t i = 0; i < 32u; ++i) {
-      const float a = fp16_to_float(input_a[tiled_off + i]);
-      const float b = fp16_to_float(input_b[row_off + i]);
-      output[row_off + i] = float_to_fp16(a + b);
+  // A warp owns a logical row. Lanes process one complete GEMM-C microtile
+  // at a time, so all three memory streams are contiguous across the warp.
+  // Decode the row once, then advance physical and logical cursors instead of
+  // repeating task division and GEMM-C offset calculation for every chunk.
+  for (uint32_t m = warp_id; m < arg->M_real; m += total_warps) {
+    const uint32_t mt_idx = m >> arg->log2_mt;
+    const uint32_t m0 = m & mt_mask;
+    const uint32_t mt_base = mt_idx << arg->log2_mt;
+    const uint32_t cm = min_u32(arg->M_pad - mt_base, mt);
+    uint64_t tiled_off = (uint64_t)mt_idx * mt * arg->K
+                       + (uint64_t)m0 * mxu_nt + lane;
+    uint64_t row_off = (uint64_t)m * arg->K + lane;
+    const uint64_t tiled_step = (uint64_t)cm * mxu_nt;
+
+    for (uint32_t k = lane; k < arg->K; k += NUM_THREADS) {
+      const float a = fp16_to_float(input_a[tiled_off]);
+      const float b = fp16_to_float(input_b[row_off]);
+      output[row_off] = float_to_fp16(a + b);
+      tiled_off += tiled_step;
+      row_off += NUM_THREADS;
     }
   }
+#else
+  // The cursor step assumes one hardware warp exactly spans a GEMM-C
+  // microtile. Preserve the generic coalesced implementation otherwise.
+  run_warp_coalesced_chunk32(arg);
+#endif
 }
 
 static __attribute__((noinline)) void run_warp_coalesced_chunk32(
@@ -63,7 +85,7 @@ void kernel_eladd_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   if (arg->M_real < 8u)
     run_warp_coalesced_chunk32(arg);
   else
-    run_tile_chunk32(arg);
+    run_row_coalesced_cursor(arg);
 }
 
 static inline uint32_t effective_power_kernel_iterations(

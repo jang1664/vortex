@@ -207,7 +207,9 @@ int main(int argc, char *argv[]) {
   printf("  Padded Dim: %u\n", padded_dim);
   printf("  Base K:     %u\n", base_k);
   printf("  Seed:       %u\n", seed);
-#if HADAMARD_VARIANT_TAG == 1
+#if HADAMARD_VARIANT_TAG == 2
+  printf("  Variant:    r3_shuffle\n");
+#elif HADAMARD_VARIANT_TAG == 1
   printf("  Variant:    adaptive_row\n");
 #else
   printf("  Variant:    multiwarp_row\n");
@@ -237,11 +239,19 @@ int main(int argc, char *argv[]) {
 
   const uint32_t max_threads_per_block =
       std::min(256u, static_cast<uint32_t>(num_warps * num_threads));
-#if HADAMARD_VARIANT_TAG == 1
+#if HADAMARD_VARIANT_TAG >= 1
   const bool use_multiwarp =
       rows < num_warps && (base_k == 0 || width > num_threads);
+#if HADAMARD_VARIANT_TAG == 2
+  const bool use_r3_shuffle = base_k == 1u && dim == 128u;
+  const uint32_t threads_per_block = use_r3_shuffle
+      ? static_cast<uint32_t>(num_threads)
+      : (use_multiwarp
+          ? max_threads_per_block : static_cast<uint32_t>(num_threads));
+#else
   const uint32_t threads_per_block = use_multiwarp
       ? max_threads_per_block : static_cast<uint32_t>(num_threads);
+#endif
 #else
   const uint32_t threads_per_block = max_threads_per_block;
 #endif
@@ -268,7 +278,13 @@ int main(int argc, char *argv[]) {
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_HADAMARD;
+#if HADAMARD_VARIANT_TAG == 2
+  kernel_arg.grid_dim[0] = use_r3_shuffle
+      ? std::min(rows, static_cast<uint32_t>(num_cores * num_warps))
+      : rows;
+#else
   kernel_arg.grid_dim[0] = rows;
+#endif
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
   kernel_arg.block_dim[0] = threads_per_block;

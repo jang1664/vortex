@@ -6,6 +6,76 @@
 
 using data_t = fp16_t;
 
+#if HADAMARD_VARIANT_TAG == 2
+static inline uint32_t float_to_bits(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } bits = {value};
+  return bits.u;
+}
+
+static inline float bits_to_float(uint32_t value) {
+  union {
+    uint32_t u;
+    float f;
+  } bits = {value};
+  return bits.f;
+}
+
+static inline float shuffle_butterfly(float value, uint32_t stride) {
+  return bits_to_float(static_cast<uint32_t>(
+      vx_shfl_bfly(float_to_bits(value), stride, 31, 0)));
+}
+
+static inline float butterfly_lane(float value, uint32_t lane,
+                                   uint32_t stride) {
+  const float other = shuffle_butterfly(value, stride);
+  return (lane & stride) ? (other - value) : (value + other);
+}
+
+static inline void kernel_hadamard_r3_shuffle(
+    const data_t* input, data_t* output, uint32_t row, float scale) {
+  const uint32_t lane = threadIdx.x;
+  const uint64_t row_offset = static_cast<uint64_t>(row) * 128u;
+
+  float value0 = fp16_to_float(input[row_offset + lane]);
+  float value1 = fp16_to_float(input[row_offset + lane + 32u]);
+  float value2 = fp16_to_float(input[row_offset + lane + 64u]);
+  float value3 = fp16_to_float(input[row_offset + lane + 96u]);
+
+  for (uint32_t stride = 1; stride < 32u; stride <<= 1) {
+    value0 = butterfly_lane(value0, lane, stride);
+    value1 = butterfly_lane(value1, lane, stride);
+    value2 = butterfly_lane(value2, lane, stride);
+    value3 = butterfly_lane(value3, lane, stride);
+  }
+
+  float a = value0;
+  float b = value1;
+  value0 = a + b;
+  value1 = a - b;
+  a = value2;
+  b = value3;
+  value2 = a + b;
+  value3 = a - b;
+
+  a = value0;
+  b = value2;
+  value0 = a + b;
+  value2 = a - b;
+  a = value1;
+  b = value3;
+  value1 = a + b;
+  value3 = a - b;
+
+  output[row_offset + lane] = float_to_fp16(value0 * scale);
+  output[row_offset + lane + 32u] = float_to_fp16(value1 * scale);
+  output[row_offset + lane + 64u] = float_to_fp16(value2 * scale);
+  output[row_offset + lane + 96u] = float_to_fp16(value3 * scale);
+}
+#endif
+
 static inline uint32_t effective_stop_stride(const kernel_arg_t* arg) {
   return arg->stop_stride == 0u ? arg->padded_dim : arg->stop_stride;
 }
@@ -26,6 +96,17 @@ void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
   if (row >= arg->rows) {
     return;
   }
+
+#if HADAMARD_VARIANT_TAG == 2
+  if (arg->base_k == 1u && dim == 128u && block_size == 32u) {
+    for (uint32_t persistent_row = row; persistent_row < arg->rows;
+         persistent_row += gridDim.x) {
+      kernel_hadamard_r3_shuffle(
+          input, output, persistent_row, scale);
+    }
+    return;
+  }
+#endif
 
   auto buf = reinterpret_cast<float *>(__local_mem(padded_dim * sizeof(float)));
   const uint32_t row_offset = row * dim;

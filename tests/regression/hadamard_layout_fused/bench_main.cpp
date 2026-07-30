@@ -204,21 +204,36 @@ int main(int argc, char** argv) {
     return -1;
 
   RT_CHECK(vx_dev_open(&device));
+  uint64_t num_cores = 1;
   uint64_t num_threads = 0;
   uint64_t num_warps = 1;
   uint32_t max_local_mem = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG >= 1
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
 #endif
-#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2 \
+    || HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
   const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
   const uint32_t factor_width = factorized ? dim / base_k : scratch_dim;
   const bool use_multiwarp =
       static_cast<uint64_t>(matrix_count) * launched_rows < num_warps
       && (!factorized || factor_width > num_threads);
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  const bool use_r3_shuffle =
+      factorized && base_k == 1u && dim == 128u
+      && input_layout == HADAMARD_INPUT_ROW_MAJOR;
+  const bool use_r3_persistent =
+      use_r3_shuffle && !padded_row_launch;
+  const uint32_t launch_threads = use_r3_shuffle
+      ? static_cast<uint32_t>(num_threads)
+      : static_cast<uint32_t>(
+          num_threads * (use_multiwarp ? num_warps : 1u));
+#else
   const uint32_t launch_threads = static_cast<uint32_t>(
       num_threads * (use_multiwarp ? num_warps : 1u));
+#endif
 #else
   const uint32_t launch_threads =
       static_cast<uint32_t>(num_threads * num_warps);
@@ -240,9 +255,19 @@ int main(int argc, char** argv) {
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  arg.grid_dim[0] = use_r3_persistent
+      ? std::min(rows, static_cast<uint32_t>(num_cores * num_warps))
+      : (padded_row_launch ? m_pad : rows);
+  arg.grid_dim[1] = matrix_count;
+#else
   arg.grid_dim[0] =
       matrix_count * (padded_row_launch ? m_pad : rows);
+#endif
   arg.block_dim[0] = launch_threads;
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  arg.block_dim[1] = 1;
+#endif
   RT_CHECK(vx_mem_address(input_buffer, &arg.input_addr));
   RT_CHECK(vx_mem_address(matrix_buffer, &arg.matrix_addr));
   RT_CHECK(vx_mem_address(output_buffer, &arg.output_addr));

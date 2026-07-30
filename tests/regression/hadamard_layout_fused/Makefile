@@ -7,15 +7,18 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 
 SRCS := $(SRC_DIR)/main.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp
 
-HADAMARD_LAYOUT_FUSED_VARIANT ?= adaptive_multiwarp_row
-HADAMARD_LAYOUT_FUSED_VARIANTS := single_warp multiwarp_row adaptive_multiwarp_row
+HADAMARD_LAYOUT_FUSED_VARIANT ?= r3_shuffle_incremental
+HADAMARD_LAYOUT_FUSED_VARIANTS := single_warp multiwarp_row adaptive_multiwarp_row r3_shuffle_incremental
 ifneq ($(filter $(HADAMARD_LAYOUT_FUSED_VARIANT),$(HADAMARD_LAYOUT_FUSED_VARIANTS)),$(HADAMARD_LAYOUT_FUSED_VARIANT))
   $(error Unsupported HADAMARD_LAYOUT_FUSED_VARIANT=$(HADAMARD_LAYOUT_FUSED_VARIANT); expected one of: $(HADAMARD_LAYOUT_FUSED_VARIANTS))
 endif
 
 VX_SRCS := $(SRC_DIR)/kernel.cpp
 
-ifeq ($(HADAMARD_LAYOUT_FUSED_VARIANT),adaptive_multiwarp_row)
+ifeq ($(HADAMARD_LAYOUT_FUSED_VARIANT),r3_shuffle_incremental)
+  CXXFLAGS += -DHADAMARD_LAYOUT_FUSED_VARIANT_TAG=3
+  VX_CFLAGS += -DHADAMARD_LAYOUT_FUSED_VARIANT_TAG=3
+else ifeq ($(HADAMARD_LAYOUT_FUSED_VARIANT),adaptive_multiwarp_row)
   CXXFLAGS += -DHADAMARD_LAYOUT_FUSED_VARIANT_TAG=2
   VX_CFLAGS += -DHADAMARD_LAYOUT_FUSED_VARIANT_TAG=2
 else ifeq ($(HADAMARD_LAYOUT_FUSED_VARIANT),multiwarp_row)

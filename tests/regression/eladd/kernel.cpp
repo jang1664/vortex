@@ -1,5 +1,6 @@
 #include "common.h"
 #include "../vector_common/fp16.h"
+#include <VX_config.h>
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 
@@ -19,7 +20,9 @@ static inline uint32_t effective_power_kernel_iterations(const kernel_arg_t* arg
 // - x = x + residual (after attention)
 // - x = x + residual (after FFN)
 // 
-// Strategy: Simple grid-stride loop, element-wise operation
+// Strategy selected by the Makefile:
+// - row_coalesced_cursor (default): warp-owned rows with pointer cursors
+// - baseline: legacy flat grid-stride loop
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_eladd(kernel_arg_t *__UNIFORM__ arg) {
@@ -31,15 +34,45 @@ void kernel_eladd(kernel_arg_t *__UNIFORM__ arg) {
     auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
     uint32_t size = arg->size;
 
-    // Grid-stride loop
     uint32_t total_threads = gridDim.x * blockDim.x;
     uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-    for (uint32_t i = thread_id; i < size; i += total_threads) {
-      float a = fp16_to_float(pInputA[i]);
-      float b = fp16_to_float(pInputB[i]);
-      pOutput[i] = float_to_fp16(a + b);
+#if defined(ELADD_ROW_COALESCED_CURSOR)
+    static_assert(ELADD_ROW_SIZE > 0, "ELADD_ROW_SIZE must be positive");
+    {
+      const uint32_t row_size = ELADD_ROW_SIZE;
+      const uint32_t lane = thread_id % NUM_THREADS;
+      const uint32_t warp_id = thread_id / NUM_THREADS;
+      const uint32_t total_warps = total_threads / NUM_THREADS;
+      const uint32_t num_rows = (size + row_size - 1) / row_size;
+
+      for (uint32_t row = warp_id; row < num_rows; row += total_warps) {
+        const uint32_t row_begin = row * row_size;
+        const uint32_t row_length = (row_begin + row_size < size)
+                                  ? row_size : size - row_begin;
+        data_t* input_a_cursor = pInputA + row_begin + lane;
+        data_t* input_b_cursor = pInputB + row_begin + lane;
+        data_t* output_cursor = pOutput + row_begin + lane;
+
+        for (uint32_t k = lane; k < row_length; k += NUM_THREADS) {
+          float a = fp16_to_float(*input_a_cursor);
+          float b = fp16_to_float(*input_b_cursor);
+          *output_cursor = float_to_fp16(a + b);
+          input_a_cursor += NUM_THREADS;
+          input_b_cursor += NUM_THREADS;
+          output_cursor += NUM_THREADS;
+        }
+      }
     }
+#else
+    {
+      for (uint32_t i = thread_id; i < size; i += total_threads) {
+        float a = fp16_to_float(pInputA[i]);
+        float b = fp16_to_float(pInputB[i]);
+        pOutput[i] = float_to_fp16(a + b);
+      }
+    }
+#endif
   }
 }
 
