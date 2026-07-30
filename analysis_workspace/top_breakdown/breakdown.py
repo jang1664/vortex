@@ -66,13 +66,13 @@ REPORT_IN_RUN_DIR = Path("syn_topo.lpp") / REPORT_IN_SYN_DIR
 # Compatibility name retained for callers that imported the old constant.
 REPORT_REL = REPORT_IN_RUN_DIR
 
-SIMT_LABEL = "SIMT (excl. memory)"
-SIMT_NO_XBAR_LABEL = "SIMT (excl. SRAM / XBAR)"
+SIMT_LABEL = "SIMT (without MEM)"
+SIMT_NO_XBAR_LABEL = "SIMT (without SRAM / XBAR)"
 MEMORY_LABEL = "Cache / LMEM / TMEM"
 MXU_LABEL = "GEMM Engine"
 XBAR_LABEL = "XBAR"
 DMA_LABEL = "DMA"
-MISC_LABEL = "Misc. (incl. interconnect, mux/demux)"
+MISC_LABEL = "Misc. (including interconnect and mux/demux)"
 XBAR_MISC_LABEL = "Misc."
 
 

@@ -19,10 +19,12 @@ from analysis_workspace.top_breakdown.get_area_of_candidates import (
     MacroMapping,
     MacroTile,
     SramGroup,
+    area_breakdown,
     choose_depth_tiles,
     default_candidate_options,
     get_top_areas,
     replace_sram_macro,
+    write_candidate_breakdown_plot,
 )
 
 
@@ -117,6 +119,62 @@ def test_hd_1536_kib_lmem_uses_area_optimal_depth_tiles() -> None:
     )
 
     assert [tile.depth for tile in tiles] == [4096, 1024, 1024]
+
+
+def test_candidate_breakdown_plot_is_written(tmp_path: Path) -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "candidate": candidate,
+                "sram_type": "HD",
+                "total_area_um2": 150.0,
+            }
+            for candidate in ("C1", "C2", "C3", "C4")
+        ]
+    )
+    components = pd.DataFrame(
+        [
+            {
+                "candidate": candidate,
+                "sram_type": "HD",
+                "component": component,
+                "area_um2": area,
+            }
+            for candidate in ("C1", "C2", "C3", "C4")
+            for component, area in (
+                ("C3 f16 common backbone", 100.0),
+                (f"{candidate} LMEM SRAM (1024 KiB)", 50.0),
+            )
+        ]
+    )
+    for name in ("simt", "memory", "mxu", "dma", "xbar", "residual"):
+        components[f"{name}_area_um2"] = 0.0
+    components.loc[
+        components["component"].eq("C3 f16 common backbone"),
+        "simt_area_um2",
+    ] = 100.0
+    components.loc[
+        components["component"].str.contains("LMEM SRAM", regex=False),
+        "memory_area_um2",
+    ] = 50.0
+
+    csv_path, png_path = write_candidate_breakdown_plot(
+        summary,
+        components,
+        "HD",
+        "C2",
+        tmp_path,
+        area_breakdown.LEGEND_GROUPS[0],
+    )
+
+    assert csv_path.is_file()
+    assert png_path.is_file()
+    assert png_path.stat().st_size > 0
+    plotted = pd.read_csv(csv_path)
+    assert len(plotted) == 5
+    assert set(plotted["candidate"]) == {"C2"}
+    assert plotted["area_um2"].sum() == pytest.approx(150.0)
+    assert plotted["percent"].sum() == pytest.approx(100.0)
 
 
 def test_replace_register_fallback_removes_implementation(tmp_path: Path) -> None:
@@ -237,6 +295,14 @@ def test_naive_acc_with_768_kib_lmem_hs_profile() -> None:
         components["component"].eq("Previous naive GEMM logic")
     ]
     assert set(naive_components["candidate"]) == {"C2", "C3"}
+    acc_components = components.loc[
+        components["component"].str.contains("ACC SRAM", regex=False)
+    ]
+    assert set(acc_components["candidate"]) == {"C2", "C3", "C4"}
+    assert acc_components["memory_area_um2"].sum() == pytest.approx(0.0)
+    assert acc_components["mxu_area_um2"].tolist() == pytest.approx(
+        acc_components["area_um2"].tolist()
+    )
     c3_lmem = audit.loc[
         audit["candidate"].eq("C3") & audit["group"].eq("LMEM")
     ].iloc[0]
