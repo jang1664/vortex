@@ -6,7 +6,7 @@ repo_dir="$(cd -- "$script_dir/../.." && pwd)"
 
 cd "$repo_dir"
 
-conda run -n stable python \
+python \
     analysis_workspace/top_breakdown/get_area_of_candidates.py \
     --sram-type HD \
     --naive-acc \

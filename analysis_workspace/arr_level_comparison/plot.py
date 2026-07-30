@@ -577,10 +577,16 @@ def fig8_wkv_vs_woq_breakdown():
                loc="lower center", bbox_to_anchor=(0.5, -0.01),
                ncol=4, fontsize=10.5, framealpha=0.95)
     fig.tight_layout(rect=[0, 0.18, 1, 0.93])
-    out = HERE / "fig8_wkv_vs_woq_breakdown.svg"
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    outputs = []
+    for ext in ("png", "pdf", "svg"):
+        out = HERE / f"fig8_wkv_vs_woq_breakdown.{ext}"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        outputs.append(out)
     plt.close(fig)
-    print(f"[fig8] wrote {out}; WKV overhead = {total_overhead:.3f} mW")
+    print(
+        f"[fig8] wrote {', '.join(str(out) for out in outputs)}; "
+        f"WKV overhead = {total_overhead:.3f} mW"
+    )
 
 
 WKV_WOQ_GROUPS = [
@@ -737,7 +743,7 @@ def fig9_wkv_vs_woq_breakdown():
         fig.subplots_adjust(left=0.08, right=0.93, top=0.94, bottom=0.23,
                             hspace=1.25)
         outputs = []
-        for ext in ("svg", "png"):
+        for ext in ("png", "pdf", "svg"):
             out = HERE / f"fig9_wkv_vs_woq_breakdown.{ext}"
             fig.savefig(out, dpi=300, bbox_inches="tight")
             outputs.append(out)
@@ -835,7 +841,7 @@ def fig10_wkv_vs_woq_relative_breakdown():
             left=0.08, right=0.93, top=0.94, bottom=0.23, hspace=0.45
         )
         outputs = []
-        for ext in ("svg", "png"):
+        for ext in ("png", "pdf", "svg"):
             out = HERE / f"fig10_wkv_vs_woq_relative_breakdown.{ext}"
             fig.savefig(out, dpi=300, bbox_inches="tight")
             outputs.append(out)
