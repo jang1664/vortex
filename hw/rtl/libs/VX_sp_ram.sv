@@ -72,6 +72,7 @@ module VX_sp_ram #(
     parameter LUTRAM      = 0,
     parameter USE_URAM    = 0, // 0: BRAM (no auto URAM), 1: force URAM
     parameter `STRING RDW_MODE = "W", // W: write-first, R: read-first, N: no-change
+    parameter `STRING SRAM_TYPE = "HS", // 28LPP compiled SRAM: HS or HD
     parameter RADDR_REG   = 0, // read address registered hint
     parameter RADDR_RESET = 0, // read address has reset
     parameter RDW_ASSERT  = 0,
@@ -98,6 +99,7 @@ module VX_sp_ram #(
 
     `VX_STATIC_ASSERT(!(WRENW * WSELW != DATAW), ("invalid parameter"))
     `VX_STATIC_ASSERT((RDW_MODE == "R" || RDW_MODE == "W" || RDW_MODE == "N"), ("invalid parameter"))
+    `VX_STATIC_ASSERT((SRAM_TYPE == "HS" || SRAM_TYPE == "HD"), ("invalid SRAM_TYPE"))
     `UNUSED_PARAM (RDW_ASSERT)
 
 `ifdef SYNTHESIS
@@ -112,9 +114,10 @@ module VX_sp_ram #(
 `ifdef COMPILED_SRAM_28LPP
     if (OUT_REG && FORCE_BRAM) begin : g_compiled
         VX_sp_ram_compiled #(
-            .DATAW (DATAW),
-            .SIZE  (SIZE),
-            .WRENW (WRENW)
+            .DATAW     (DATAW),
+            .SIZE      (SIZE),
+            .WRENW     (WRENW),
+            .SRAM_TYPE (SRAM_TYPE)
         ) u_compiled (
             .clk   (clk),
             .reset (reset),
