@@ -8,6 +8,7 @@ cd "$repo_dir"
 
 conda run -n stable python \
     analysis_workspace/top_breakdown/get_area_of_candidates.py \
+    --memory-csv analysis_workspace/top_breakdown/lpp28_sram_macro_areas.csv \
     --sram-type HD \
     --naive-acc \
     --c1-lmem-kib 2048 \

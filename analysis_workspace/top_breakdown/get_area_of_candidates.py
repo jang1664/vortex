@@ -6,8 +6,10 @@ from its block-level report, and imports only the improve GEMM and memory-unit
 roots from the older C4 top report.
 
 Single-port compiled SRAM rows are normalized at DataFrame level before the
-candidate areas are assembled.  This removes register fallback implementations
+candidate areas are assembled. This removes register fallback implementations
 and permits the same reports to be compared with either HS or HD SRAM macros.
+Physical macro dimensions come from the checked-in
+``lpp28_sram_macro_areas.csv`` table, so estimation does not require PDK LEFs.
 
 Run in the stable conda environment:
 
@@ -32,7 +34,6 @@ numerical CSV outputs are needed.
 from __future__ import annotations
 
 import argparse
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -73,7 +74,7 @@ DEFAULT_NAIVE_ACC_REPORT = TOP_ANALYSIS / (
     "Vortex_axi_naive_gemm_th32_tcol32_hwexp_dcache/"
     "top/reports/14_Vortex_axi.mapped.area.rpt"
 )
-DEFAULT_MEMORY_ROOT = Path("/home/data/memory_compiler/28LPP/genSEC")
+DEFAULT_MEMORY_CSV = HERE / "lpp28_sram_macro_areas.csv"
 DEFAULT_OUTPUT_DIR = HERE / "candidate_area_results"
 
 # Reuse breakdown.py's paper-facing visual style.
@@ -146,6 +147,22 @@ class MacroTile:
     depth: int
     width: int
     macro_name: str
+
+
+@dataclass(frozen=True)
+class MacroAreaCatalog:
+    """Version-controlled physical macro areas used by the estimator."""
+
+    source: Path
+    areas_um2: Mapping[str, float]
+
+    def area(self, macro_name: str) -> float:
+        try:
+            return float(self.areas_um2[macro_name])
+        except KeyError as exc:
+            raise ValueError(
+                f"macro area is missing from {self.source}: {macro_name}"
+            ) from exc
 
 
 PAPER_COMPONENTS = ("simt", "memory", "mxu", "dma", "xbar", "residual")
@@ -226,9 +243,10 @@ C3_CACHE_GROUPS = C3_SRAM_GROUPS[1:]
 C4_LMEM_GROUP, C4_ACC_GROUP, C4_TMEM_GROUP = C4_SRAM_GROUPS
 
 # Native macro choices follow the macro families already used by
-# VX_sp_ram_compiled.  Depth tiling minimizes the sum of physical LEF macro
-# rectangles while covering the requested logical depth.  Macro count and
-# unused depth are deterministic tie breakers; mux/decode logic is not modeled.
+# VX_sp_ram_compiled. Depth tiling minimizes the sum of physical macro
+# rectangles from the checked-in CSV while covering the requested logical
+# depth. Macro count and unused depth are deterministic tie breakers;
+# mux/decode logic is not modeled.
 MACRO_FAMILIES: dict[tuple[str, str], tuple[MacroTile, ...]] = {
     ("LMEM", "HS"): (
         MacroTile(8192, 64, "cmos28lpp_ra1w_hs_8192x64m16"),
@@ -257,12 +275,6 @@ MACRO_FAMILIES: dict[tuple[str, str], tuple[MacroTile, ...]] = {
         MacroTile(1024, 64, "cmos28lpp_ra1w_hd_1024x64m8"),
     ),
 }
-
-LEF_SIZE_RE = re.compile(
-    r"^\s*SIZE\s+([0-9]+(?:\.[0-9]+)?)\s+BY\s+"
-    r"([0-9]+(?:\.[0-9]+)?)\s*;"
-)
-
 
 def resolve_path(path: Path) -> Path:
     """Resolve command-line paths relative to the repository root."""
@@ -301,25 +313,74 @@ def load_area_report(name: str, path: Path) -> AreaReport:
     return AreaReport(name, path, hierarchy, float(database.metadata["total_cell_area"]))
 
 
-def read_lef_area(memory_root: Path, macro_name: str) -> float:
-    """Return a macro's physical rectangle area in square micrometers."""
-    memory_root = resolve_path(memory_root)
-    lef = memory_root / macro_name / f"{macro_name}.lef"
-    if not lef.is_file():
-        raise FileNotFoundError(f"LEF is missing for {macro_name}: {lef}")
+def required_macro_names() -> set[str]:
+    """Return every macro name reachable by fixed or configurable mappings."""
+    names = {
+        tile.macro_name
+        for family in MACRO_FAMILIES.values()
+        for tile in family
+    }
+    for group in (*C3_SRAM_GROUPS, *C4_SRAM_GROUPS, NAIVE_ACC_SRAM_GROUP):
+        names.update(mapping.macro_name for mapping in group.mappings.values())
+    return names
 
-    matches = []
-    with lef.open(errors="strict") as stream:
-        for line in stream:
-            match = LEF_SIZE_RE.match(line)
-            if match:
-                matches.append((float(match.group(1)), float(match.group(2))))
-    if len(matches) != 1:
+
+def load_macro_area_catalog(path: Path = DEFAULT_MEMORY_CSV) -> MacroAreaCatalog:
+    """Load and validate the checked-in SRAM physical-dimension table."""
+    path = resolve_path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"SRAM macro area CSV does not exist: {path}")
+    table = pd.read_csv(path)
+    required_columns = {
+        "macro_name",
+        "sram_type",
+        "depth",
+        "data_width",
+        "width_um",
+        "height_um",
+        "area_um2",
+    }
+    missing_columns = sorted(required_columns - set(table.columns))
+    if missing_columns:
         raise ValueError(
-            f"expected exactly one SIZE statement in {lef}, found {len(matches)}"
+            f"SRAM macro area CSV is missing columns: {', '.join(missing_columns)}"
         )
-    width, height = matches[0]
-    return width * height
+    if table["macro_name"].isna().any() or table["macro_name"].duplicated().any():
+        raise ValueError("SRAM macro area CSV has empty or duplicate macro names")
+
+    for column in ("depth", "data_width", "width_um", "height_um", "area_um2"):
+        table[column] = pd.to_numeric(table[column], errors="raise")
+        if (table[column] <= 0).any():
+            raise ValueError(f"SRAM macro area CSV has non-positive {column}")
+    calculated_area = table["width_um"] * table["height_um"]
+    if ((calculated_area - table["area_um2"]).abs() > 1e-6).any():
+        raise ValueError("SRAM macro area CSV has inconsistent rectangle areas")
+
+    missing_macros = sorted(required_macro_names() - set(table["macro_name"]))
+    if missing_macros:
+        raise ValueError(
+            "SRAM macro area CSV is missing required macros: "
+            + ", ".join(missing_macros)
+        )
+    indexed = table.set_index("macro_name")
+    for (_, expected_type), family in MACRO_FAMILIES.items():
+        for tile in family:
+            row = indexed.loc[tile.macro_name]
+            actual = (
+                str(row["sram_type"]).upper(),
+                int(row["depth"]),
+                int(row["data_width"]),
+            )
+            expected = (expected_type, tile.depth, tile.width)
+            if actual != expected:
+                raise ValueError(
+                    f"SRAM macro metadata mismatch for {tile.macro_name}: "
+                    f"expected {expected}, got {actual}"
+                )
+    return MacroAreaCatalog(
+        source=path,
+        areas_um2=dict(zip(table["macro_name"], table["area_um2"])),
+    )
 
 
 def default_candidate_options(naive_acc: bool = False) -> dict[str, CandidateOptions]:
@@ -378,9 +439,9 @@ def capacity_to_depth(capacity_kib: int, banks: int, logical_width: int) -> int:
 def choose_depth_tiles(
     required_depth: int,
     family: tuple[MacroTile, ...],
-    memory_root: Path,
+    macro_catalog: MacroAreaCatalog,
 ) -> list[MacroTile]:
-    """Choose the minimum-LEF-area native-macro cover for one bank depth.
+    """Choose the minimum-area native-macro cover for one bank depth.
 
     The search permits physical over-provisioning when it saves macro area.
     Among equal-area covers, it prefers fewer macros and then less unused
@@ -398,7 +459,7 @@ def choose_depth_tiles(
     max_depth = max(tile.depth for tile in family)
     search_limit = required_depth + max_depth - 1
     tile_areas = {
-        tile.macro_name: read_lef_area(memory_root, tile.macro_name)
+        tile.macro_name: macro_catalog.area(tile.macro_name)
         for tile in family
     }
 
@@ -441,14 +502,14 @@ def estimate_memory_macro(
     banks: int,
     logical_width: int,
     sram_type: str,
-    memory_root: Path,
+    macro_catalog: MacroAreaCatalog,
     included: bool,
 ) -> dict[str, object]:
-    """Estimate a configurable LMEM/ACC/TMEM using physical LEF rectangles."""
+    """Estimate a configurable LMEM/ACC/TMEM using catalog rectangles."""
     family_name = "LMEM" if memory_name == "LMEM" else "WIDE"
     family = MACRO_FAMILIES[(family_name, sram_type)]
     logical_depth = capacity_to_depth(capacity_kib, banks, logical_width)
-    depth_tiles = choose_depth_tiles(logical_depth, family, memory_root)
+    depth_tiles = choose_depth_tiles(logical_depth, family, macro_catalog)
     physical_width = family[0].width
     if logical_width % physical_width:
         raise ValueError(
@@ -463,7 +524,7 @@ def estimate_memory_macro(
     for tile in depth_tiles:
         tile_counts[tile.macro_name] = tile_counts.get(tile.macro_name, 0) + width_tiles
         tile_depths[tile.macro_name] = tile.depth
-        area_per_bank += read_lef_area(memory_root, tile.macro_name) * width_tiles
+        area_per_bank += macro_catalog.area(tile.macro_name) * width_tiles
 
     total_macro_area = area_per_bank * banks
     total_macros = sum(tile_counts.values()) * banks
@@ -488,8 +549,8 @@ def estimate_memory_macro(
         "macro_area_um2": pd.NA,
         "total_macro_area_um2": total_macro_area,
         "included_area_um2": total_macro_area if included else 0.0,
-        "source": "memory_compiler_LEF",
-        "source_report": str(resolve_path(memory_root)),
+        "source": "SRAM_macro_area_CSV",
+        "source_report": str(macro_catalog.source),
     }
 
 
@@ -616,15 +677,15 @@ def replace_sram_macro(
     report: AreaReport,
     group: SramGroup,
     sram_type: str,
-    memory_root: Path = DEFAULT_MEMORY_ROOT,
+    macro_catalog: MacroAreaCatalog,
 ) -> dict[str, object]:
     """Replace one SRAM group with its fixed registered HS/HD mapping."""
     sram_type = sram_type.upper()
     if sram_type not in group.mappings:
         raise ValueError(f"unsupported SRAM type {sram_type!r} for {group.name}")
     mapping = group.mappings[sram_type]
-    macro_area = read_lef_area(memory_root, mapping.macro_name)
-    return replace_sram_with_area(
+    macro_area = macro_catalog.area(mapping.macro_name)
+    audit = replace_sram_with_area(
         report,
         group,
         sram_type,
@@ -632,6 +693,8 @@ def replace_sram_macro(
         mapping.macro_name,
         mapping.macros_per_bank,
     )
+    audit["macro_area_source"] = str(macro_catalog.source)
+    return audit
 
 
 def strip_sram_group(report: AreaReport, group: SramGroup, sram_type: str) -> None:
@@ -643,7 +706,7 @@ def correct_sram_groups(
     source: AreaReport,
     groups: Iterable[SramGroup],
     sram_type: str,
-    memory_root: Path,
+    macro_catalog: MacroAreaCatalog,
 ) -> tuple[AreaReport, list[dict[str, object]]]:
     """Return a corrected copy of a report and its SRAM replacement audit."""
     corrected = AreaReport(
@@ -653,7 +716,7 @@ def correct_sram_groups(
         source.total_area,
     )
     audit = [
-        replace_sram_macro(corrected, group, sram_type, memory_root)
+        replace_sram_macro(corrected, group, sram_type, macro_catalog)
         for group in groups
     ]
     return corrected, audit
@@ -814,7 +877,7 @@ def assemble_candidates(
     sram_type: str,
     candidate_options: Mapping[str, CandidateOptions],
     naive_acc: bool,
-    memory_root: Path,
+    macro_catalog: MacroAreaCatalog,
     naive_acc_logic: AreaReport | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble additive C1--C4 components without hierarchy double counting."""
@@ -939,7 +1002,7 @@ def assemble_candidates(
                 banks,
                 width,
                 sram_type,
-                memory_root,
+                macro_catalog,
                 option.include_memory,
             )
             memory_audit.append(estimate)
@@ -992,7 +1055,7 @@ def get_top_areas(
     c3_report: Path = DEFAULT_C3_REPORT,
     c4_report: Path = DEFAULT_C4_REPORT,
     tcu_report: Path = DEFAULT_TCU_REPORT,
-    memory_root: Path = DEFAULT_MEMORY_ROOT,
+    memory_csv: Path = DEFAULT_MEMORY_CSV,
     sram_types: Iterable[str] = ("HS", "HD"),
     candidate_options: Mapping[str, CandidateOptions] | None = None,
     naive_acc: bool = False,
@@ -1002,6 +1065,7 @@ def get_top_areas(
     if candidate_options is None:
         candidate_options = default_candidate_options(naive_acc)
     candidate_options = validate_candidate_options(candidate_options, naive_acc)
+    macro_catalog = load_macro_area_catalog(memory_csv)
     raw_c3 = load_area_report("C3_top", c3_report)
     raw_c4 = load_area_report("C4_old_top", c4_report)
     tcu = load_area_report("TCU_submodule", tcu_report)
@@ -1019,7 +1083,7 @@ def get_top_areas(
         if sram_type not in {"HS", "HD"}:
             raise ValueError(f"unsupported SRAM type: {requested_type}")
         c3_logic, cache_audit = correct_sram_groups(
-            raw_c3, C3_CACHE_GROUPS, sram_type, memory_root
+            raw_c3, C3_CACHE_GROUPS, sram_type, macro_catalog
         )
         strip_sram_group(c3_logic, C3_LMEM_GROUP, sram_type)
 
@@ -1049,7 +1113,7 @@ def get_top_areas(
             sram_type,
             candidate_options,
             naive_acc,
-            memory_root,
+            macro_catalog,
             naive_acc_logic,
         )
         summaries.append(summary)
@@ -1078,7 +1142,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--naive-acc-report", type=Path, default=DEFAULT_NAIVE_ACC_REPORT
     )
-    parser.add_argument("--memory-root", type=Path, default=DEFAULT_MEMORY_ROOT)
+    parser.add_argument(
+        "--memory-csv",
+        type=Path,
+        default=DEFAULT_MEMORY_CSV,
+        help="Version-controlled SRAM macro dimensions/area CSV.",
+    )
     parser.add_argument(
         "--naive-acc",
         action=argparse.BooleanOptionalAction,
@@ -1363,7 +1432,7 @@ def main(argv: list[str] | None = None) -> int:
         c3_report=args.c3_report,
         c4_report=args.c4_report,
         tcu_report=args.tcu_report,
-        memory_root=args.memory_root,
+        memory_csv=args.memory_csv,
         sram_types=sram_types,
         candidate_options=candidate_options,
         naive_acc=args.naive_acc,
