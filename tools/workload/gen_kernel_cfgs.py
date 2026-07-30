@@ -360,9 +360,9 @@ def _decode_length_alignment(kernel: dict) -> int | None:
     if backend in FPINT_GEMM_BACKENDS:
         return 32
     if backend == "sgemm_tcu":
-        # The latency workload maps sgemm_tcu to the baseline FP16 TCU shape.
-        # QK grows in N (tileN=8); PV grows in K (tileK=16).
-        return 8 if name == "attn_qkT" else 16
+        # C1 uses the NUM_THREADS=32 FP16 WMMA shape. QK grows in N
+        # (tileN=16); PV grows in K (tileK=32 after FP16 packing).
+        return 16 if name == "attn_qkT" else 32
     if backend in {"softmax", "softmax_layout_fused"}:
         return 32
     if backend == "kv_cache_dequant_w4a16":

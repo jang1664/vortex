@@ -171,6 +171,63 @@ workloads:
                 {case["shape"]["seqk"] for case in cases if case["stage"] == "generation"},
             )
 
+    def test_generate_suites_cli_overrides_and_remaps_fpga_bins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            suite_path = tmp_path / "suite.yaml"
+            suite_path.write_text(
+                """
+name: fpga_bin_overrides
+defaults:
+  warmup: 1
+  iterations: 1
+fpga_bins:
+  default: old_default
+  by_app:
+    silu: old_app
+  by_backend:
+    gemm_backend: old_backend
+  by_kind:
+    rope: old_kind
+cases:
+  - {id: app_case, app: silu, kind: silu, args: "-n 1"}
+  - {id: backend_case, app: gemm, backend: gemm_backend, kind: gemm, args: "-n 2"}
+  - {id: kind_case, app: rope, kind: rope, args: "-n 3"}
+  - {id: default_case, app: eladd, kind: eladd, args: "-n 4"}
+  - {id: explicit_case, app: softmax, kind: softmax, fpga_bin: old_explicit, args: "-n 5"}
+""".lstrip()
+            )
+            out_dir = tmp_path / "generated"
+
+            rc = main([
+                "generate-suites",
+                "--suite", str(suite_path),
+                "--out", str(out_dir),
+                "--fpga-bin-default", "default_override",
+                "--fpga-bin-by-app", "silu=app_override",
+                "--fpga-bin-by-backend", "gemm_backend=backend_override",
+                "--fpga-bin-by-kind", "rope=kind_override",
+                "--fpga-bin-remap", "backend_override=backend_final",
+                "--fpga-bin-remap", "old_explicit=explicit_final",
+            ])
+
+            self.assertEqual(0, rc)
+            index = yaml.safe_load((out_dir / "index.yaml").read_text())
+            labels_by_app = {
+                entry["app"]: entry["fpga_bin"]
+                for entry in index["generated"]
+            }
+            self.assertEqual(
+                {
+                    "silu": "app_override",
+                    "gemm": "backend_final",
+                    "rope": "kind_override",
+                    "eladd": "default_override",
+                    "softmax": "explicit_final",
+                },
+                labels_by_app,
+            )
+
     def test_generate_suites_cli_overrides_prefill_and_generation_separately(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

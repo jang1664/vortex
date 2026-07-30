@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,11 @@ class GenerateSuitesOptions:
     generation_max_seq_len: int | None = None
     generation_decode_measurement: str | None = None
     generation_decode_sample_interval: int | None = None
+    fpga_bin_remaps: tuple[tuple[str, str], ...] = ()
+    fpga_bin_default: str | None = None
+    fpga_bin_by_app: tuple[tuple[str, str], ...] = ()
+    fpga_bin_by_backend: tuple[tuple[str, str], ...] = ()
+    fpga_bin_by_kind: tuple[tuple[str, str], ...] = ()
     dump_model_structures: bool = False
 
 
@@ -58,6 +63,42 @@ def _run_command(suite_path: Path, out_dir: Path) -> str:
         "--out",
         shlex.quote(str(out_dir)),
     ])
+
+
+def _updated_mapping(
+    spec: dict[str, Any],
+    canonical_key: str,
+    aliases: tuple[str, ...],
+    overrides: tuple[tuple[str, str], ...],
+) -> None:
+    if not overrides:
+        return
+    current: Any = None
+    for key in (canonical_key, *aliases):
+        if spec.get(key):
+            current = spec[key]
+            break
+    mapping = dict(current) if isinstance(current, dict) else {}
+    mapping.update(overrides)
+    spec[canonical_key] = mapping
+
+
+def _apply_fpga_bin_overrides(
+    suite: BenchSuite,
+    options: GenerateSuitesOptions,
+) -> BenchSuite:
+    spec = dict(suite.fpga_bins or {})
+    if options.fpga_bin_default is not None:
+        spec["default"] = options.fpga_bin_default
+    _updated_mapping(spec, "by_app", (), options.fpga_bin_by_app)
+    _updated_mapping(spec, "by_backend", (), options.fpga_bin_by_backend)
+    _updated_mapping(
+        spec,
+        "by_kind",
+        ("by_kernel", "kernels"),
+        options.fpga_bin_by_kind,
+    )
+    return replace(suite, fpga_bins=spec)
 
 
 def _write_model_structure_dumps(
@@ -103,12 +144,14 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         repo_root=repo_root,
         matrix_overrides=matrix_overrides,
     )
-    source_suite = loaded.suite
+    source_suite = _apply_fpga_bin_overrides(loaded.suite, options)
     out_dir = options.out_dir.expanduser().resolve()
+    fpga_bin_remaps = dict(options.fpga_bin_remaps)
 
     groups: dict[tuple[str, str], list[BenchCase]] = {}
     for case in source_suite.cases:
         fpga_bin = resolve_case_fpga_bin(source_suite, case)
+        fpga_bin = fpga_bin_remaps.get(fpga_bin, fpga_bin)
         groups.setdefault((case.app, fpga_bin), []).append(case)
 
     generated_specs: list[tuple[Path, BenchSuite, str, str]] = []

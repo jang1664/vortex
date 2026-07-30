@@ -81,7 +81,7 @@ class MidpointSelection:
 
 
 _DYNAMIC_SHAPE_KEYS = {
-    "K", "N", "seqk", "cache_len", "logical_cache_length",
+    "K", "N", "seqk", "cache_len", "maxseq", "logical_cache_length",
     "logical_kv_start", "logical_kv_end", "padded_cache_length",
     "output_token_index", "offset", "cache_position",
     "decode_sample_weight", "measurement_kind",
@@ -93,6 +93,19 @@ _DYNAMIC_SHAPE_KEYS = {
 def kernel_type(case: BenchCase) -> str:
     """Identify the physical kernel implementation used for interpolation."""
     return "|".join((case.app, case.backend))
+
+
+def _kernel_type_filter(args: argparse.Namespace) -> set[str]:
+    values = getattr(args, "kernel_types", []) or []
+    parsed = {
+        item.strip()
+        for value in values
+        for item in value.split(",")
+        if item.strip()
+    }
+    if values and not parsed:
+        raise ValueError("--kernel-type must contain at least one APP|BACKEND value")
+    return parsed
 
 
 def interpolation_group_key(case: BenchCase) -> str:
@@ -689,6 +702,7 @@ def write_refinement_progress(
     selections: list[dict[str, Any]],
     status: str,
 ) -> None:
+    kernel_type_filter = _kernel_type_filter(args)
     iteration_columns = [
         "kernel_type",
         "iteration",
@@ -729,13 +743,16 @@ def write_refinement_progress(
         "max_iterations": args.max_iterations,
         "seed": args.seed,
         "sampling_strategy": args.sampling_strategy,
+        "kernel_type_filter": sorted(kernel_type_filter),
         "kernel_types": len(grouped),
         "bracketed_intervals": interval_count,
         "bracketed_candidates": bracketed_count,
         "unbracketed_candidates": unbracketed_count,
         "initial_unresolved_cases": len(unresolved),
         "remaining_unresolved_cases": sum(
-            case.exec_key not in raw_values for case in interpolation_candidates(suite)
+            case.exec_key not in raw_values
+            and (not kernel_type_filter or kernel_type(case) in kernel_type_filter)
+            for case in interpolation_candidates(suite)
         ),
         "promoted_measurements": sum(
             int(item.get("promoted_measurements", 0)) for item in history
@@ -905,9 +922,20 @@ def refine_command(args: argparse.Namespace) -> int:
     grouped: dict[str, list[BenchCase]] = defaultdict(list)
     scan_started = time.monotonic()
     print("[refine] scanning unresolved interpolation cases", flush=True)
+    candidates = interpolation_candidates(suite)
+    kernel_type_filter = _kernel_type_filter(args)
+    available_kernel_types = {kernel_type(case) for case in candidates}
+    unknown_kernel_types = kernel_type_filter - available_kernel_types
+    if unknown_kernel_types:
+        raise ValueError(
+            "unknown --kernel-type value(s): "
+            f"{', '.join(sorted(unknown_kernel_types))}; available: "
+            f"{', '.join(sorted(available_kernel_types))}"
+        )
     unresolved = [
-        case for case in interpolation_candidates(suite)
+        case for case in candidates
         if case.exec_key not in raw_values
+        and (not kernel_type_filter or kernel_type(case) in kernel_type_filter)
     ]
     for case in unresolved:
         grouped[kernel_type(case)].append(case)
@@ -1243,6 +1271,18 @@ def add_cli_parsers(sub: argparse._SubParsersAction) -> None:
     )
     refine.add_argument("--validation-samples", type=int, default=3)
     refine.add_argument("--max-iterations", type=int, default=10)
+    refine.add_argument(
+        "--kernel-type",
+        dest="kernel_types",
+        action="append",
+        default=[],
+        metavar="APP|BACKEND[,APP|BACKEND...]",
+        help=(
+            "Refine only the listed kernel types. Separate multiple exact "
+            "APP|BACKEND values with commas or repeat this option. By default "
+            "all kernel types are refined."
+        ),
+    )
     refine.add_argument(
         "--sampling-strategy",
         choices=("midpoint", "random"),

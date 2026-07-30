@@ -96,6 +96,39 @@ class KernelVariantTest(unittest.TestCase):
             {k["shape"]["measurement_kind"] for k in softmax},
         )
 
+    def test_generation_sgemm_uses_th32_fp16_attention_tiles(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=14,
+            out_tokens=4,
+            max_seq_len=64,
+            qblk=32,
+            variant="all_sgemm_tcu",
+            decode_measurement="sampled",
+            decode_sample_interval=32,
+        )
+
+        qk = [k for k in payload["kernels"] if k["name"] == "attn_qkT"]
+        pv = [k for k in payload["kernels"] if k["name"] == "attn_pv"]
+
+        self.assertEqual([16, 16, 32, 32], [
+            k["shape"]["padded_cache_length"] for k in qk
+        ])
+        self.assertEqual(
+            ["measured", "bucket_reused", "measured", "bucket_reused"],
+            [k["shape"]["measurement_kind"] for k in qk],
+        )
+        self.assertEqual([32, 32, 32, 32], [
+            k["shape"]["padded_cache_length"] for k in pv
+        ])
+        self.assertEqual(
+            ["measured", "bucket_reused", "bucket_reused", "bucket_reused"],
+            [k["shape"]["measurement_kind"] for k in pv],
+        )
+
     def test_prefill_kernels_ignore_out_tokens(self) -> None:
         common = dict(
             model_name="llama2-7b",

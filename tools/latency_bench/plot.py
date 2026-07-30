@@ -534,9 +534,11 @@ def _apply_case_latency_scale_rules(composed: pd.DataFrame, options: SuiteBarPlo
         scaled = apply_latency_scale_rules(
             out.loc[eligible],
             options.case_latency_scale_rules,
-            metric_columns=("latency_us",),
+            metric_columns=("latency_us", "fpga_cycle", "fpga_cycle_latency"),
         )
-        out.loc[eligible, "latency_us"] = scaled["latency_us"]
+        for column in ("latency_us", "fpga_cycle", "fpga_cycle_latency"):
+            if column in scaled.columns:
+                out.loc[eligible, column] = scaled[column]
         out.loc[eligible, "case_latency_scale_rules"] = scaled["_latency_scale_rules"]
         out.loc[eligible, "case_latency_scales"] = scaled["_latency_scale_factor"]
 

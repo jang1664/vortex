@@ -33,11 +33,14 @@ def load_canonicalization_policies(
     fpga_bins = raw.get("fpga_bins")
     if not isinstance(fpga_bins, dict):
         raise ValueError(f"canonicalization policy must define fpga_bins: {path}")
-    unsupported = set(fpga_bins).difference({"C1", "C2", "C3", "C4"})
+    unsupported = set(fpga_bins).difference({"default", "C1", "C2", "C3", "C4", "C4_2"})
     if unsupported:
         raise ValueError(
-            f"canonicalization policy only supports C1-C4, got {sorted(unsupported)}"
+            f"unsupported canonicalization FPGA bins: {sorted(unsupported)}"
         )
+    default_policy = fpga_bins.get("default")
+    if not isinstance(default_policy, dict):
+        raise ValueError(f"canonicalization policy must define fpga_bins.default: {path}")
     return fpga_bins
 
 
@@ -48,15 +51,21 @@ def canonicalize_args(
     fpga_bin_label: str,
     policies: dict[str, Any],
 ) -> CanonicalizedArgs:
-    bin_policy = policies.get(fpga_bin_label)
+    default_policy = policies.get("default")
+    bin_policy = policies.get(fpga_bin_label, default_policy)
     if not isinstance(bin_policy, dict):
         return CanonicalizedArgs(args, {})
+    using_default_bin = bin_policy is default_policy
     apps = bin_policy.get("apps")
     app_policy = apps.get(app) if isinstance(apps, dict) else None
+    if not isinstance(app_policy, dict):
+        app_policy = default_policy
     if not isinstance(app_policy, dict):
         return CanonicalizedArgs(args, {})
     mode = str(app_policy.get("mode", "exact"))
     if mode == "exact":
+        if using_default_bin or app_policy is default_policy:
+            return CanonicalizedArgs(args, {})
         return CanonicalizedArgs(
             args,
             {

@@ -316,8 +316,11 @@ automatically; use a new output directory or convert the old file explicitly.
 Kernel latency canonicalization is defined outside suites in
 `tools/latency_bench/kernel_latency_canonicalization.yaml`. A case keeps its
 logical `args`, while `measurement_args` is used to build `exec_key` and launch
-the benchmark. For C1-C4, FPINT GEMM uses M/N/K alignments 8/32/32,
-`sgemm_tcu` uses 8/8/16, and `tile_input_a` uses M/K alignments 8/32.
+the benchmark. FPINT GEMM uses M/N/K alignments 8/32/32, `sgemm_tcu` uses the
+current NUM_THREADS=32 FP16 C1 physical WMMA alignments 16/16/32, and
+`tile_input_a` uses M/K alignments 8/32. SGEMM `padded_args` matches
+`measurement_args`, and decode bucket sampling follows the same physical N/K
+granularity.
 The remaining vector kernels are explicitly marked `exact` because their valid
 loop bounds or edge handling can affect latency. Cases such as FPINT K=33 and
 K=34 therefore share the same K=64 measurement. Unknown FPGA labels and apps
@@ -400,6 +403,22 @@ FPGA bin for each expanded case, then writes explicit generated suites plus an
 - `fpga_bins.by_kind[case.kind]` or the compatible `by_kernel`/`kernels` keys.
 - `fpga_bins.default`.
 - `defaults.fpga_bin`.
+
+Frequently changing FPGA aliases can be changed without editing the base
+suite. Remapping applies after the precedence above is resolved, including an
+explicit case-level `fpga_bin`:
+
+```bash
+python -m tools.latency_bench generate-suites \
+  --suite tools/latency_bench/suites/llama2_7b_prefill.yaml \
+  --out results/latency/generated_suites \
+  --fpga-bin-remap C4=C4_2
+```
+
+Use repeatable `--fpga-bin-by-app APP=BIN`,
+`--fpga-bin-by-backend BACKEND=BIN`, and `--fpga-bin-by-kind KIND=BIN` options
+for targeted mapping changes, or `--fpga-bin-default BIN` for the fallback.
+These targeted overrides are applied before final `--fpga-bin-remap` rules.
 
 Each generated suite sets `defaults.fpga_bin`, so it can be launched without
 repeating `--fpga-bin`:

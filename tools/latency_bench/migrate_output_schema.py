@@ -52,6 +52,38 @@ def _canonicalize_row(
     return canonical.measurement_args, canonical.latency_shape
 
 
+def _padded_args(
+    row: dict[str, str],
+    *,
+    measurement_args: str,
+) -> str:
+    if row.get("app", "") == "sgemm_tcu":
+        return measurement_args
+    return (
+        row.get("padded_args", "")
+        or (measurement_args if measurement_args != row.get("args", "") else "")
+    )
+
+
+def _numeric_cell(row: dict[str, object], column: str) -> float:
+    try:
+        return float(row.get(column, "") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _raw_row_rank(row: dict[str, object]) -> tuple[object, ...]:
+    """Prefer the most complete passing measurement when canonical keys merge."""
+    return (
+        row.get("status") == "pass",
+        bool(row.get("fpga_cycle")),
+        bool(row.get("avg_us")),
+        _numeric_cell(row, "power_samples"),
+        _numeric_cell(row, "samples"),
+        str(row.get("timestamp_utc", "")),
+    )
+
+
 def migrate_cases(
     path: Path,
     *,
@@ -91,10 +123,7 @@ def migrate_cases(
         row.update({
             "measurement_args": measurement_args,
             "latency_shape_json": json.dumps(latency_shape, sort_keys=True),
-            "padded_args": (
-                old.get("padded_args", "")
-                or (measurement_args if measurement_args != old.get("args", "") else "")
-            ),
+            "padded_args": _padded_args(old, measurement_args=measurement_args),
             "output_token_index": output_token_index,
             "out_tokens": old.get("out_tokens", "1") or "1",
             "measurement_kind": old.get("measurement_kind", "measured") or "measured",
@@ -111,7 +140,7 @@ def migrate_cases(
 
 def migrate_raw_db(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[int, int]:
     old_rows = _read_rows(path)
-    unique: dict[tuple[str, ...], dict[str, object]] = {}
+    unique: dict[str, dict[str, object]] = {}
     changed_args = 0
     for old in old_rows:
         measurement_args, _ = _canonicalize_row(
@@ -130,23 +159,11 @@ def migrate_raw_db(path: Path, *, fpga_bin_label: str, policies: dict) -> tuple[
         row.update({
             "exec_key": exec_key,
             "args": measurement_args,
-            "padded_args": (
-                old.get("padded_args", "")
-                or (measurement_args if measurement_args != old.get("args", "") else "")
-            ),
+            "padded_args": _padded_args(old, measurement_args=measurement_args),
         })
-        key = (
-            old.get("run_id", ""),
-            old.get("fpga_bin_label", fpga_bin_label),
-            old.get("xclbin_sha256", ""),
-            old.get("app", ""),
-            measurement_args,
-        )
-        previous = unique.get(key)
-        if previous is None or (
-            previous.get("status") != "pass" and row.get("status") == "pass"
-        ):
-            unique[key] = row
+        previous = unique.get(exec_key)
+        if previous is None or _raw_row_rank(row) > _raw_row_rank(previous):
+            unique[exec_key] = row
     rows = list(unique.values())
     _write_rows(path, RAW_DB_COLUMNS, rows)
     return len(old_rows), len(rows)
@@ -169,6 +186,7 @@ def migrate_roots(roots: list[Path], backup_root: Path) -> None:
         for path in (
             list(root.glob("*/raw_db.csv"))
             + list(root.glob("*/runs/*/cases.csv"))
+            + list(root.glob("*/latest/cases.csv"))
         )
     ]
     for path in files:
@@ -182,8 +200,14 @@ def migrate_roots(roots: list[Path], backup_root: Path) -> None:
             )
             raw_before += before
             raw_after += after
-        for path in sorted(root.glob("*/runs/*/cases.csv")):
+        case_paths = sorted(
+            list(root.glob("*/runs/*/cases.csv"))
+            + list(root.glob("*/latest/cases.csv"))
+        )
+        for path in case_paths:
             raw_db = path.parents[2] / "raw_db.csv"
+            if path.parent.name == "latest":
+                raw_db = path.parents[1] / "raw_db.csv"
             raw_rows = _read_rows(raw_db)
             xclbin_shas = {
                 str(row.get("xclbin_sha256", "")).strip()
@@ -197,7 +221,7 @@ def migrate_roots(roots: list[Path], backup_root: Path) -> None:
                 )
             rows, changed = migrate_cases(
                 path,
-                fpga_bin_label=path.parents[2].name,
+                fpga_bin_label=raw_db.parent.name,
                 xclbin_sha256=next(iter(xclbin_shas)),
                 policies=policies,
             )

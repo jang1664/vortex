@@ -10,11 +10,15 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from .fpga_clock import DEFAULT_FPGA_PERIOD_S, resolve_fpga_period_s
 from .suite import BenchCase, BenchSuite, make_exec_key, resolve_case_fpga_bin, suite_to_rows
 from .interpolation import interpolation_group_key
 
 
-METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us", "fpga_cycle")
+METRIC_COLUMNS = (
+    "avg_us", "p50_us", "p95_us", "min_us", "max_us",
+    "fpga_cycle", "fpga_cycle_latency",
+)
 POWER_METRIC_COLUMNS = (
     "power_avg_w",
     "power_vcc_avg_w",
@@ -85,6 +89,49 @@ def _unique_join(values: pd.Series) -> str:
 
 def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
+
+
+def _require_xclbin_sha256(raw: pd.DataFrame) -> pd.DataFrame:
+    _require_columns(raw, ["xclbin_sha256"])
+    out = raw.copy()
+    sha256 = out["xclbin_sha256"].fillna("").astype(str).str.strip()
+    missing = sha256.eq("") | sha256.str.lower().eq("nan")
+    if bool(missing.any()):
+        locations = []
+        for _, row in out.loc[missing].head(10).iterrows():
+            raw_db = str(row.get("raw_db", ""))
+            run_id = str(row.get("run_id", ""))
+            locations.append(":".join(value for value in (raw_db, run_id) if value))
+        preview = ", ".join(locations)
+        suffix = "" if int(missing.sum()) <= 10 else f", ... ({int(missing.sum())} total)"
+        raise ValueError(
+            "raw DB contains missing xclbin_sha256"
+            + (f": {preview}{suffix}" if preview else suffix)
+        )
+    out["xclbin_sha256"] = sha256
+    return out
+
+
+def _add_fpga_cycle_latency(raw: pd.DataFrame) -> pd.DataFrame:
+    """Add cycle count, period, and cycle-derived latency in microseconds."""
+    if "fpga_cycle" not in raw.columns:
+        return raw.copy()
+    out = raw.copy()
+    representatives = out.drop_duplicates("xclbin_sha256", keep="first")
+    period_by_sha256 = {
+        str(row["xclbin_sha256"]): resolve_fpga_period_s(
+            row.to_dict(), default=DEFAULT_FPGA_PERIOD_S
+        )
+        for _, row in representatives.iterrows()
+    }
+    out["fpga_period_s"] = pd.to_numeric(
+        out["xclbin_sha256"].map(period_by_sha256), errors="coerce"
+    )
+    out["fpga_cycle"] = pd.to_numeric(out["fpga_cycle"], errors="coerce")
+    out["fpga_cycle_latency"] = (
+        out["fpga_cycle"] * out["fpga_period_s"] * 1_000_000.0
+    )
+    return out
 
 
 def _filter_pass_raw_rows(raw: pd.DataFrame) -> pd.DataFrame:
@@ -318,6 +365,11 @@ def _raw_selection_row(
             "source_xclbin_sha256s": _unique_join(matches["xclbin_sha256"]) if "xclbin_sha256" in matches.columns else "",
         }
     )
+    for supplemental_metric in ("fpga_cycle", "fpga_cycle_latency", "fpga_period_s"):
+        if supplemental_metric in matches.columns:
+            row[supplemental_metric], _ = _select_value(
+                matches, supplemental_metric, select
+            )
     for power_metric in POWER_METRIC_COLUMNS:
         if power_metric in matches.columns:
             row[power_metric], _ = _select_value(matches, power_metric, select)
@@ -763,6 +815,46 @@ def _apply_missing_policy(
     return composed
 
 
+def _synchronize_fpga_cycle_metrics(composed: pd.DataFrame) -> pd.DataFrame:
+    """Keep cycle count and cycle-derived microsecond latency explicit."""
+    if "metric" not in composed.columns:
+        return composed
+    cycle_metric = composed["metric"].astype(str).isin(
+        {"fpga_cycle", "fpga_cycle_latency"}
+    )
+    if not bool(cycle_metric.any()):
+        return composed
+
+    out = composed.copy()
+    for column in ("fpga_cycle", "fpga_cycle_latency", "fpga_period_s"):
+        if column not in out.columns:
+            out[column] = math.nan
+    periods = pd.to_numeric(out["fpga_period_s"], errors="coerce")
+    unresolved = cycle_metric & (periods.isna() | periods.le(0.0))
+    if bool(unresolved.any()):
+        periods.loc[unresolved] = [
+            resolve_fpga_period_s(row, default=DEFAULT_FPGA_PERIOD_S)
+            for row in out.loc[unresolved].to_dict(orient="records")
+        ]
+    out.loc[cycle_metric, "fpga_period_s"] = periods.loc[cycle_metric]
+
+    latency = pd.to_numeric(out["latency_us"], errors="coerce")
+    cycles = pd.to_numeric(out["fpga_cycle"], errors="coerce")
+    is_cycle = out["metric"].astype(str).eq("fpga_cycle")
+    cycles = cycles.where(~is_cycle, latency)
+    derived_latency = cycles * periods * 1_000_000.0
+    is_cycle_latency = out["metric"].astype(str).eq("fpga_cycle_latency")
+    derived_latency = derived_latency.where(~is_cycle_latency, latency)
+    missing_cycles = cycle_metric & cycles.isna() & derived_latency.notna()
+    cycles.loc[missing_cycles] = (
+        derived_latency.loc[missing_cycles]
+        / (periods.loc[missing_cycles] * 1_000_000.0)
+    )
+    out.loc[cycle_metric, "fpga_cycle"] = cycles.loc[cycle_metric]
+    out.loc[cycle_metric, "fpga_cycle_latency"] = derived_latency.loc[cycle_metric]
+    return out
+
+
 def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     if options.metric not in METRIC_COLUMNS:
         raise ValueError(f"metric must be one of {', '.join(METRIC_COLUMNS)}")
@@ -772,7 +864,10 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
         raise ValueError(f"missing must be one of {', '.join(MISSING_POLICIES)}")
 
     raw = _read_raw_dbs(options.raw_dbs)
-    _require_columns(raw, ["exec_key", "app", "args", "status", options.metric])
+    _require_columns(raw, ["exec_key", "app", "args", "status"])
+    raw = _require_xclbin_sha256(raw)
+    raw = _add_fpga_cycle_latency(raw)
+    _require_columns(raw, [options.metric])
     raw = _filter_pass_raw_rows(raw)
     if options.match_fpga_bin:
         _require_columns(raw, ["fpga_bin_label"])
@@ -806,6 +901,7 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     )
     composed = _resolve_decode_reuse(composed, suite)
     composed = _resolve_decode_interpolation(composed, suite)
+    composed = _synchronize_fpga_cycle_metrics(composed)
     return _apply_missing_policy(composed, options.missing)
 
 

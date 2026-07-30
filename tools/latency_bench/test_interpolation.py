@@ -103,6 +103,33 @@ class InterpolationGroupingTest(unittest.TestCase):
             interpolation_group_key(different_shape),
         )
 
+    def test_decode_maxseq_does_not_split_interpolation_curve(self) -> None:
+        first = _case(
+            "first",
+            app="rope",
+            backend="rope",
+            variant="variant_a",
+            name="rope_q",
+            logical_cache_length=4097,
+        )
+        second = replace(
+            first,
+            case_id="second",
+            args="-seqk 4098",
+            output_token_index=2,
+            shape={
+                **first.shape,
+                "logical_cache_length": 4098,
+                "maxseq": 4098,
+            },
+        )
+        first = replace(first, shape={**first.shape, "maxseq": 4097})
+
+        self.assertEqual(
+            interpolation_group_key(first),
+            interpolation_group_key(second),
+        )
+
     def test_sampling_uses_one_group_per_physical_kernel(self) -> None:
         cases = [
             _case(
@@ -299,8 +326,10 @@ class RefineCommandTest(unittest.TestCase):
         validation_samples: int = 1,
         max_iterations: int = 2,
         seed: int = 0,
+        kernel_types: list[str] | None = None,
+        include_extra_kernel: bool = False,
     ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-        cases = [
+        softmax_cases = [
             _case(
                 f"case_{length}",
                 app="softmax",
@@ -311,12 +340,31 @@ class RefineCommandTest(unittest.TestCase):
             )
             for length in lengths
         ]
+        extra_cases = [
+            _case(
+                f"kv_case_{length}",
+                app="kv_cache",
+                backend="kv_cache",
+                variant="v",
+                name="kv_cache",
+                logical_cache_length=length,
+            )
+            for length in lengths
+        ] if include_extra_kernel else []
+        cases = softmax_cases + extra_cases
         suite = BenchSuite("test", BenchDefaults(), cases)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             main_raw = root / "raw_db.csv"
             probe_raw = root / "probe.csv"
-            self.write_raw(main_raw, [(cases[0], 100.0), (cases[-1], 200.0)])
+            anchor_cases = [softmax_cases[0], softmax_cases[-1]]
+            if extra_cases:
+                anchor_cases.extend((extra_cases[0], extra_cases[-1]))
+            self.write_raw(
+                main_raw,
+                [(case, 100.0 if index % 2 == 0 else 200.0)
+                 for index, case in enumerate(anchor_cases)],
+            )
             self.write_raw(
                 probe_raw,
                 [
@@ -325,7 +373,8 @@ class RefineCommandTest(unittest.TestCase):
                         100.0 + 100.0 * int(case.shape["logical_cache_length"])
                         / lengths[-1],
                     )
-                    for case in cases[1:-1]
+                    for group in (softmax_cases, extra_cases)
+                    for case in group[1:-1]
                 ] if probe_has_sample else [],
             )
             args = argparse.Namespace(
@@ -340,6 +389,7 @@ class RefineCommandTest(unittest.TestCase):
                 samples_per_iteration=2,
                 validation_samples=validation_samples,
                 max_iterations=max_iterations,
+                kernel_types=kernel_types or [],
                 sampling_strategy=strategy,
                 seed=seed,
                 metric="p50_us",
@@ -367,6 +417,37 @@ class RefineCommandTest(unittest.TestCase):
 
         self.assertEqual(2, len(history))
         self.assertNotIn("converged", {item["status"] for item in history})
+
+    def test_kernel_type_filter_selects_requested_type(self) -> None:
+        history, _ = self.run_refine(
+            probe_has_sample=True,
+            kernel_types=["softmax|softmax"],
+            include_extra_kernel=True,
+        )
+
+        self.assertEqual(
+            {"softmax|softmax"},
+            {item["kernel_type"] for item in history},
+        )
+
+    def test_kernel_type_filter_accepts_comma_separated_types(self) -> None:
+        history, _ = self.run_refine(
+            probe_has_sample=True,
+            kernel_types=["softmax|softmax, kv_cache|kv_cache"],
+            include_extra_kernel=True,
+        )
+
+        self.assertEqual(
+            {"softmax|softmax", "kv_cache|kv_cache"},
+            {item["kernel_type"] for item in history},
+        )
+
+    def test_kernel_type_filter_rejects_unknown_type(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown --kernel-type"):
+            self.run_refine(
+                probe_has_sample=True,
+                kernel_types=["missing|missing"],
+            )
 
     def test_random_strategy_preserves_seeded_shuffle_order(self) -> None:
         lengths = (0, 2, 4, 6, 8, 10)

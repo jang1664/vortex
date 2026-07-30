@@ -1,18 +1,16 @@
 version: 1
-default:
-  mode: exact
 
-# A policy is enabled only for the FPGA aliases listed below. "exact" means
-# that logical arguments remain part of the latency identity. "aligned" means
-# that the listed integer CLI arguments are rounded before measurement.
+# "exact" means that logical arguments remain part of the latency identity.
+# "aligned" means that the listed integer CLI arguments are rounded before
+# measurement.
 app_policies: &app_policies
   # GEMM kernels whose host harness executes the padded shape.
   sgemm_tcu:
     mode: aligned
     align:
-      -m: 8
-      -n: 8
-      -k: 16
+      -m: 16
+      -n: 16
+      -k: 32
   fpint_gemm_ffn_hw:
     mode: aligned
     align:
@@ -66,6 +64,8 @@ app_policies: &app_policies
   tile_scale_zp_w4a16: {mode: exact}
 
 fpga_bins:
+  default:
+    apps: *app_policies
   C1:
     apps: *app_policies
   C2:
@@ -73,4 +73,6 @@ fpga_bins:
   C3:
     apps: *app_policies
   C4:
+    apps: *app_policies
+  C4_2:
     apps: *app_policies

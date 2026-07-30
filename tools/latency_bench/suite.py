@@ -384,6 +384,11 @@ def _canonicalize_suite_cases(suite: BenchSuite) -> BenchSuite:
             case,
             measurement_args=canonical.measurement_args,
             latency_shape=canonical.latency_shape,
+            padded_args=(
+                canonical.measurement_args
+                if case.app == "sgemm_tcu"
+                else case.padded_args
+            ),
         ))
     return replace(suite, cases=cases)
 

@@ -30,9 +30,9 @@ class CanonicalizationTest(unittest.TestCase):
         self.assertEqual(first.exec_key, different_environment.exec_key)
         self.assertNotEqual(first.exec_key, different_xclbin.exec_key)
 
-    def test_fpint_gemm_aligns_m_n_k_for_c1_through_c4(self) -> None:
+    def test_fpint_gemm_aligns_m_n_k_for_supported_fpga_bins(self) -> None:
         policies = load_canonicalization_policies()
-        for fpga_bin in ("C1", "C2", "C3", "C4"):
+        for fpga_bin in ("C1", "C2", "C3", "C4", "C4_2"):
             for app in ("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw_naive"):
                 with self.subTest(fpga_bin=fpga_bin, app=app):
                     result = canonicalize_args(
@@ -46,11 +46,11 @@ class CanonicalizationTest(unittest.TestCase):
                         result.measurement_args,
                     )
 
-    def test_unknown_bin_or_app_keeps_logical_args(self) -> None:
+    def test_default_policy_handles_unknown_bin_and_app(self) -> None:
         policies = load_canonicalization_policies()
         args = "-m 1 -n 33 -k 34"
         self.assertEqual(
-            "-m 8 -n 40 -k 48",
+            "-m 16 -n 48 -k 64",
             canonicalize_args(
                 app="sgemm_tcu",
                 args=args,
@@ -59,7 +59,7 @@ class CanonicalizationTest(unittest.TestCase):
             ).measurement_args,
         )
         self.assertEqual(
-            args,
+            "-m 8 -n 64 -k 64",
             canonicalize_args(
                 app="fpint_gemm_ffn_hw",
                 args=args,
@@ -67,6 +67,47 @@ class CanonicalizationTest(unittest.TestCase):
                 policies=policies,
             ).measurement_args,
         )
+        unknown_app = canonicalize_args(
+            app="other",
+            args=args,
+            fpga_bin_label="other",
+            policies=policies,
+        )
+        self.assertEqual(args, unknown_app.measurement_args)
+        self.assertEqual({}, unknown_app.latency_shape)
+
+    def test_sgemm_padded_args_match_physical_measurement_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "suite.yaml"
+            path.write_text(
+                """
+name: sgemm_physical_shape
+defaults:
+  fpga_bin: C1
+cases:
+  - id: qk
+    app: sgemm_tcu
+    args: "-m 1 -n 17 -k 17"
+    padded_args: "-m 1 -n 32 -k 17"
+""".lstrip()
+            )
+            case = load_suite(path, repo_root=Path.cwd()).cases[0]
+            self.assertEqual("-m 16 -n 32 -k 32", case.measurement_args)
+            self.assertEqual(case.measurement_args, case.padded_args)
+
+    def test_default_policy_preserves_actual_fpga_bin_label(self) -> None:
+        result = canonicalize_args(
+            app="fpint_gemm_ffn_hw_naive",
+            args="-m 1 -n 33 -k 34 -q 32 -t 0 -d 0",
+            fpga_bin_label="C3_v2",
+            policies=load_canonicalization_policies(),
+        )
+        self.assertEqual(
+            "-m 8 -n 64 -k 64 -q 32 -t 0 -d 0",
+            result.measurement_args,
+        )
+        self.assertEqual("C3_v2", result.latency_shape["fpga_bin_label"])
+        self.assertEqual("aligned", result.latency_shape["mode"])
 
     def test_vector_policies_distinguish_padded_and_valid_work(self) -> None:
         policies = load_canonicalization_policies()

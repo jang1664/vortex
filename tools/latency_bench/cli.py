@@ -584,6 +584,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the sampled decode interval.",
     )
+    gen.add_argument(
+        "--fpga-bin-remap",
+        action="append",
+        default=[],
+        metavar="OLD=NEW",
+        help=(
+            "Remap a final resolved FPGA bin label; repeat for multiple labels. "
+            "This also applies to case-level fpga_bin values."
+        ),
+    )
+    gen.add_argument(
+        "--fpga-bin-default",
+        default=None,
+        metavar="FPGA_BIN",
+        help="Override fpga_bins.default before resolving cases.",
+    )
+    gen.add_argument(
+        "--fpga-bin-by-app",
+        action="append",
+        default=[],
+        metavar="APP=FPGA_BIN",
+        help="Override one fpga_bins.by_app entry; repeat for multiple apps.",
+    )
+    gen.add_argument(
+        "--fpga-bin-by-backend",
+        action="append",
+        default=[],
+        metavar="BACKEND=FPGA_BIN",
+        help="Override one fpga_bins.by_backend entry; repeat for multiple backends.",
+    )
+    gen.add_argument(
+        "--fpga-bin-by-kind",
+        "--fpga-bin-by-kernel",
+        action="append",
+        default=[],
+        metavar="KIND=FPGA_BIN",
+        help="Override one fpga_bins.by_kind entry; repeat for multiple kinds.",
+    )
 
     merge = sub.add_parser(
         "merge-suites",
@@ -670,6 +708,21 @@ def parse_positive_int_csv(raw: str | None, option_name: str) -> tuple[int, ...]
     if not values:
         raise ValueError(f"{option_name} must include at least one value")
     return tuple(values)
+
+
+def parse_assignment_list(
+    raw_values: list[str],
+    option_name: str,
+) -> tuple[tuple[str, str], ...]:
+    assignments: list[tuple[str, str]] = []
+    for raw in raw_values:
+        if "=" not in str(raw):
+            raise ValueError(f"{option_name} must use KEY=VALUE form: {raw!r}")
+        key, value = (part.strip() for part in str(raw).split("=", 1))
+        if not key or not value:
+            raise ValueError(f"{option_name} must use non-empty KEY=VALUE form: {raw!r}")
+        assignments.append((key, value))
+    return tuple(assignments)
 
 
 def run_cmd(args: argparse.Namespace) -> int:
@@ -864,6 +917,24 @@ def main(argv: list[str] | None = None) -> int:
                 args.generation_out_tokens,
                 "--generation-out-tokens",
             )
+            fpga_bin_remaps = parse_assignment_list(
+                args.fpga_bin_remap,
+                "--fpga-bin-remap",
+            )
+            fpga_bin_by_app = parse_assignment_list(
+                args.fpga_bin_by_app,
+                "--fpga-bin-by-app",
+            )
+            fpga_bin_by_backend = parse_assignment_list(
+                args.fpga_bin_by_backend,
+                "--fpga-bin-by-backend",
+            )
+            fpga_bin_by_kind = parse_assignment_list(
+                args.fpga_bin_by_kind,
+                "--fpga-bin-by-kind",
+            )
+            if args.fpga_bin_default is not None and not args.fpga_bin_default.strip():
+                raise ValueError("--fpga-bin-default must not be empty")
             if args.generation_max_seq_len is not None and args.generation_max_seq_len < 1:
                 raise ValueError("--generation-max-seq-len must be > 0")
             if (
@@ -887,6 +958,15 @@ def main(argv: list[str] | None = None) -> int:
             generation_max_seq_len=args.generation_max_seq_len,
             generation_decode_measurement=args.generation_decode_measurement,
             generation_decode_sample_interval=args.generation_decode_sample_interval,
+            fpga_bin_remaps=fpga_bin_remaps,
+            fpga_bin_default=(
+                args.fpga_bin_default.strip()
+                if args.fpga_bin_default is not None
+                else None
+            ),
+            fpga_bin_by_app=fpga_bin_by_app,
+            fpga_bin_by_backend=fpga_bin_by_backend,
+            fpga_bin_by_kind=fpga_bin_by_kind,
             dump_model_structures=args.dump_model_structures,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")

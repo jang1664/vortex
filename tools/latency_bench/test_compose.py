@@ -16,10 +16,26 @@ from tools.latency_bench.compose import (
     compose_latency,
     compose_to_csv,
 )
+from tools.latency_bench.fpga_clock import resolve_fpga_period_s
 from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
 
 
 class ComposeTest(unittest.TestCase):
+    def test_fpga_period_uses_achieved_kernel_frequency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp)
+            (bin_dir / "vortex_afu.xclbin.info").write_text(
+                "System Clocks\n"
+                "   Name:           ulp_ucs_aclk_kernel_00\n"
+                "   Requested Freq: 100 MHz\n"
+                "   Achieved Freq:  99.5 MHz\n"
+            )
+
+            period_s = resolve_fpga_period_s({"fpga_bin_dir": str(bin_dir)})
+
+            self.assertIsNotNone(period_s)
+            self.assertAlmostEqual(1.0 / (99.5 * 1_000_000.0), period_s)
+
     def _suite(self) -> BenchSuite:
         return BenchSuite(
             name="mini_suite",
@@ -165,6 +181,27 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual(280.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(600.0, float(composed.loc[1, "weighted_latency_us"]))
 
+    def test_compose_records_cycle_derived_latency_in_microseconds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed = compose_latency(
+                self._suite(),
+                ComposeOptions(
+                    raw_dbs=(raw_db,),
+                    out=Path(tmp) / "composed.csv",
+                    metric="fpga_cycle_latency",
+                ),
+            )
+
+            self.assertEqual("fpga_cycle_latency", composed.loc[0, "metric"])
+            self.assertEqual(140.0, float(composed.loc[0, "fpga_cycle"]))
+            self.assertAlmostEqual(1.4, float(composed.loc[0, "fpga_cycle_latency"]))
+            self.assertAlmostEqual(1.4, float(composed.loc[0, "latency_us"]))
+            self.assertAlmostEqual(2.8, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertAlmostEqual(10e-9, float(composed.loc[0, "fpga_period_s"]))
+
     def test_fully_expanded_decode_uses_one_logical_row_per_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
@@ -294,6 +331,7 @@ class ComposeTest(unittest.TestCase):
                         shape={
                             "decode_sampling_class": "invariant",
                             "logical_cache_length": 101,
+                            "maxseq": 101,
                             "offset": 100,
                         },
                         warmup=1,
@@ -312,6 +350,7 @@ class ComposeTest(unittest.TestCase):
                         shape={
                             "decode_sampling_class": "invariant",
                             "logical_cache_length": 102,
+                            "maxseq": 102,
                             "offset": 101,
                             "reuse_representative_step": 1,
                         },
@@ -636,6 +675,7 @@ class ComposeTest(unittest.TestCase):
                 {
                     "run_id": "run_a",
                     "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "xclbin_sha256": "abc",
                     "app": "fpint_gemm_ffn_hw",
                     "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
                     "exec_key": self._suite().cases[0].exec_key,
@@ -663,6 +703,7 @@ class ComposeTest(unittest.TestCase):
                 {
                     "run_id": "run_a",
                     "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "xclbin_sha256": "abc",
                     "app": "fpint_gemm_ffn_hw",
                     "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
                     "exec_key": self._suite().cases[0].exec_key,
@@ -686,6 +727,20 @@ class ComposeTest(unittest.TestCase):
 
             self.assertEqual(10.0, float(composed.loc[0, "latency_us"]))
             self.assertEqual("", composed.loc[0, "expected_fpga_bin_label"])
+
+    def test_compose_requires_nonempty_xclbin_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            frame = pd.read_csv(raw_db)
+            frame.loc[0, "xclbin_sha256"] = ""
+            frame.to_csv(raw_db, index=False)
+
+            with self.assertRaisesRegex(ValueError, "missing xclbin_sha256"):
+                compose_latency(
+                    self._suite(),
+                    ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"),
+                )
 
     def test_directory_out_writes_composed_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
