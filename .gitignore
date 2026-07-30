@@ -84,6 +84,7 @@ verdiLog/
 **.log
 **summary
 **.csv
+!analysis_workspace/top_breakdown/lpp28_sram_macro_areas.csv
 .Xil/
 vivado_pid*.str
 vivado*.jou

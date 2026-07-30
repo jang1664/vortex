@@ -5,6 +5,9 @@
 *.png
 *.svg
 
+# Portable SRAM physical dimensions used by top_breakdown area estimation.
+!top_breakdown/lpp28_sram_macro_areas.csv
+
 # Portable inputs/tables for arr_level_comparison figure generation.
 !arr_level_comparison/data.csv
 !arr_level_comparison/data_tcu.csv

@@ -10,30 +10,28 @@ import pytest
 from analysis_workspace.top_breakdown.get_area_of_candidates import (
     DEFAULT_C3_REPORT,
     DEFAULT_C4_REPORT,
-    DEFAULT_MEMORY_ROOT,
+    DEFAULT_MEMORY_CSV,
     DEFAULT_NAIVE_ACC_REPORT,
     DEFAULT_TCU_REPORT,
     MACRO_FAMILIES,
     AreaReport,
     CandidateOptions,
     MacroMapping,
+    MacroAreaCatalog,
     MacroTile,
     SramGroup,
     area_breakdown,
     choose_depth_tiles,
     default_candidate_options,
     get_top_areas,
+    load_macro_area_catalog,
     replace_sram_macro,
     write_candidate_breakdown_plot,
 )
 
 
-def _write_lef(root: Path, macro_name: str, width: float, height: float) -> None:
-    macro_dir = root / macro_name
-    macro_dir.mkdir(parents=True)
-    (macro_dir / f"{macro_name}.lef").write_text(
-        f"MACRO {macro_name}\n  SIZE {width} BY {height} ;\nEND {macro_name}\n"
-    )
+def _macro_catalog(tmp_path: Path, areas: dict[str, float]) -> MacroAreaCatalog:
+    return MacroAreaCatalog(tmp_path / "synthetic_macro_areas.csv", areas)
 
 
 def _synthetic_report(*, blackbox_area: float) -> AreaReport:
@@ -92,30 +90,32 @@ def _synthetic_group(macro_name: str) -> SramGroup:
     )
 
 
-def test_depth_tiling_minimizes_lef_area(tmp_path: Path) -> None:
-    _write_lef(tmp_path, "depth4096", 10.0, 10.0)
-    _write_lef(tmp_path, "depth2048", 8.0, 10.0)
-    _write_lef(tmp_path, "depth1024", 3.0, 10.0)
+def test_depth_tiling_minimizes_catalog_area(tmp_path: Path) -> None:
+    catalog = _macro_catalog(
+        tmp_path,
+        {"depth4096": 100.0, "depth2048": 80.0, "depth1024": 30.0},
+    )
     family = (
         MacroTile(4096, 64, "depth4096"),
         MacroTile(2048, 64, "depth2048"),
         MacroTile(1024, 64, "depth1024"),
     )
 
-    tiles = choose_depth_tiles(6144, family, tmp_path)
+    tiles = choose_depth_tiles(6144, family, catalog)
 
     assert [tile.depth for tile in tiles] == [4096, 1024, 1024]
 
 
 @pytest.mark.skipif(
-    not DEFAULT_MEMORY_ROOT.is_dir(),
-    reason="memory compiler LEFs are unavailable",
+    not DEFAULT_MEMORY_CSV.is_file(),
+    reason="checked-in SRAM macro area CSV is unavailable",
 )
 def test_hd_1536_kib_lmem_uses_area_optimal_depth_tiles() -> None:
+    catalog = load_macro_area_catalog()
     tiles = choose_depth_tiles(
         6144,
         MACRO_FAMILIES[("LMEM", "HD")],
-        DEFAULT_MEMORY_ROOT,
+        catalog,
     )
 
     assert [tile.depth for tile in tiles] == [4096, 1024, 1024]
@@ -179,10 +179,12 @@ def test_candidate_breakdown_plot_is_written(tmp_path: Path) -> None:
 
 def test_replace_register_fallback_removes_implementation(tmp_path: Path) -> None:
     macro_name = "test_macro"
-    _write_lef(tmp_path, macro_name, 5.0, 4.0)
+    catalog = _macro_catalog(tmp_path, {macro_name: 20.0})
     report = _synthetic_report(blackbox_area=0.0)
 
-    audit = replace_sram_macro(report, _synthetic_group(macro_name), "HS", tmp_path)
+    audit = replace_sram_macro(
+        report, _synthetic_group(macro_name), "HS", catalog
+    )
 
     root = report.hierarchy.loc[
         report.hierarchy["full_path"].eq("Top/u_mem/g_compiled_u_compiled")
@@ -200,10 +202,12 @@ def test_replace_register_fallback_removes_implementation(tmp_path: Path) -> Non
 
 def test_replace_macro_preserves_wrapper_glue(tmp_path: Path) -> None:
     macro_name = "test_macro"
-    _write_lef(tmp_path, macro_name, 5.0, 4.0)
+    catalog = _macro_catalog(tmp_path, {macro_name: 20.0})
     report = _synthetic_report(blackbox_area=70.0)
 
-    audit = replace_sram_macro(report, _synthetic_group(macro_name), "HS", tmp_path)
+    audit = replace_sram_macro(
+        report, _synthetic_group(macro_name), "HS", catalog
+    )
 
     root = report.hierarchy.loc[
         report.hierarchy["full_path"].eq("Top/u_mem/g_compiled_u_compiled")
@@ -220,8 +224,8 @@ def test_replace_macro_preserves_wrapper_glue(tmp_path: Path) -> None:
         path.is_file()
         for path in (DEFAULT_C3_REPORT, DEFAULT_C4_REPORT, DEFAULT_TCU_REPORT)
     )
-    or not DEFAULT_MEMORY_ROOT.is_dir(),
-    reason="local synthesis reports or memory compiler LEFs are unavailable",
+    or not DEFAULT_MEMORY_CSV.is_file(),
+    reason="local synthesis reports or SRAM macro area CSV are unavailable",
 )
 def test_current_reports_match_provisional_reference_values() -> None:
     summary, components, audit = get_top_areas()
@@ -268,8 +272,8 @@ def test_current_reports_match_provisional_reference_values() -> None:
             DEFAULT_NAIVE_ACC_REPORT,
         )
     )
-    or not DEFAULT_MEMORY_ROOT.is_dir(),
-    reason="local synthesis reports or memory compiler LEFs are unavailable",
+    or not DEFAULT_MEMORY_CSV.is_file(),
+    reason="local synthesis reports or SRAM macro area CSV are unavailable",
 )
 def test_naive_acc_with_768_kib_lmem_hs_profile() -> None:
     options = default_candidate_options(naive_acc=True)
@@ -316,8 +320,8 @@ def test_naive_acc_with_768_kib_lmem_hs_profile() -> None:
         path.is_file()
         for path in (DEFAULT_C3_REPORT, DEFAULT_C4_REPORT, DEFAULT_TCU_REPORT)
     )
-    or not DEFAULT_MEMORY_ROOT.is_dir(),
-    reason="local synthesis reports or memory compiler LEFs are unavailable",
+    or not DEFAULT_MEMORY_CSV.is_file(),
+    reason="local synthesis reports or SRAM macro area CSV are unavailable",
 )
 def test_candidate_can_exclude_memory_and_common() -> None:
     options = default_candidate_options()
