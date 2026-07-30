@@ -22,6 +22,11 @@ Example: model the previous naive accelerator with a 768 KiB LMEM and a
       --sram-type HS --naive-acc \
       --c2-lmem-kib 768 --c2-acc-kib 256 \
       --c3-lmem-kib 768 --c3-acc-kib 256
+
+The output directory contains the summary/component/audit CSV files and a
+separate normalized ``original`` and ``xbar`` stacked-bar PNG/CSV pair for
+each candidate and requested SRAM type. Use ``--no-plot`` when only the
+numerical CSV outputs are needed.
 """
 
 from __future__ import annotations
@@ -33,6 +38,11 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 import pandas as pd
+
+try:
+    from analysis_workspace.top_breakdown import breakdown as area_breakdown
+except ModuleNotFoundError:  # pragma: no cover - direct script invocation
+    import breakdown as area_breakdown
 
 try:
     from hwexplorer.report_parser import SynopsysDesignCompilerAreaParser
@@ -65,6 +75,12 @@ DEFAULT_NAIVE_ACC_REPORT = TOP_ANALYSIS / (
 )
 DEFAULT_MEMORY_ROOT = Path("/home/data/memory_compiler/28LPP/genSEC")
 DEFAULT_OUTPUT_DIR = HERE / "candidate_area_results"
+
+# Reuse breakdown.py's paper-facing visual style.
+FIGURE_WIDTH_IN = area_breakdown.FIGURE_WIDTH_IN
+FIGURE_HEIGHT_IN = area_breakdown.FIGURE_HEIGHT_IN
+PLOT_FONT_SIZE = area_breakdown.PLOT_FONT_SIZE
+OUTPUT_DPI = area_breakdown.OUTPUT_DPI
 
 CORE_PATH = (
     "Vortex_axi/vortex/g_clusters_0__cluster/g_sockets_0__socket/"
@@ -130,6 +146,9 @@ class MacroTile:
     depth: int
     width: int
     macro_name: str
+
+
+PAPER_COMPONENTS = ("simt", "memory", "mxu", "dma", "xbar", "residual")
 
 
 C3_SRAM_GROUPS = (
@@ -651,14 +670,93 @@ def exact_root_area(report: AreaReport, full_path: str) -> float:
     return float(matches.iloc[0]["area"])
 
 
+def semantic_area_breakdown(
+    report: AreaReport,
+    full_path: str | None = None,
+) -> dict[str, float]:
+    """Classify a report or hierarchy root using breakdown.py semantics."""
+    hierarchy = report.hierarchy.copy(deep=True)
+    if full_path is None:
+        total_area = report.total_area
+    else:
+        hierarchy = hierarchy.loc[
+            hierarchy["full_path"].map(
+                lambda path: path == full_path or path.startswith(full_path + "/")
+            )
+        ].copy()
+        total_area = exact_root_area(report, full_path)
+
+    # breakdown.py targets the improve hierarchy name. Naive GEMM uses the
+    # same semantic child names under gemm_node_naive, so normalize only the
+    # path spelling before applying its regular expressions.
+    hierarchy["full_path"] = hierarchy["full_path"].str.replace(
+        "/gemm_node_naive", "/gemm_node", regex=False
+    )
+    detail_sums, _, _ = area_breakdown.aggregate(hierarchy)
+    local_mem_area, _ = area_breakdown.exact_area(
+        hierarchy, area_breakdown.LOCAL_MEM_PATTERN
+    )
+    mem_unit_area = detail_sums["memory unit"]
+    if local_mem_area > mem_unit_area + 1e-6:
+        raise ValueError(
+            f"{report.name}: local-memory area exceeds memory-unit area"
+        )
+
+    semantic = {
+        "simt": sum(
+            detail_sums[label] for label in area_breakdown.SIMT_BUCKETS
+        ),
+        "memory": local_mem_area
+        + sum(
+            detail_sums[label] for label in area_breakdown.MEMORY_BUCKETS
+        ),
+        "mxu": detail_sums["GEMM unit (MXU compute)"],
+        "dma": sum(
+            detail_sums[label] for label in area_breakdown.DMA_BUCKETS
+        ),
+        "xbar": max(0.0, mem_unit_area - local_mem_area)
+        + sum(
+            detail_sums[label] for label in area_breakdown.XBAR_BUCKETS
+        ),
+    }
+    semantic["residual"] = total_area - sum(semantic.values())
+    if semantic["residual"] < -1e-3:
+        raise ValueError(
+            f"{report.name}: semantic categories exceed root area by "
+            f"{-semantic['residual']} um^2"
+        )
+    semantic["residual"] = max(0.0, semantic["residual"])
+    return semantic
+
+
+def subtract_semantic_areas(
+    minuend: Mapping[str, float],
+    *subtrahends: Mapping[str, float],
+) -> dict[str, float]:
+    """Subtract semantic component maps with numerical-tolerance checks."""
+    result = {
+        component: float(minuend.get(component, 0.0))
+        - sum(float(areas.get(component, 0.0)) for areas in subtrahends)
+        for component in PAPER_COMPONENTS
+    }
+    for component, area in result.items():
+        if area < -1e-3:
+            raise ValueError(
+                f"semantic component {component} became negative: {area}"
+            )
+        result[component] = max(0.0, area)
+    return result
+
+
 def _component_row(
     candidate: str,
     sram_type: str,
     component: str,
     area: float,
     source: AreaReport,
+    semantic_areas: Mapping[str, float],
 ) -> dict[str, object]:
-    return {
+    row = {
         "candidate": candidate,
         "config": CONFIG_PATHS[candidate],
         "sram_type": sram_type,
@@ -668,6 +766,15 @@ def _component_row(
         "source": source.name,
         "source_report": str(source.path),
     }
+    row.update(
+        {
+            f"{name}_area_um2": float(semantic_areas.get(name, 0.0))
+            for name in PAPER_COMPONENTS
+        }
+    )
+    if abs(sum(row[f"{name}_area_um2"] for name in PAPER_COMPONENTS) - area) > 1e-3:
+        raise ValueError(f"{candidate} {component}: semantic areas do not sum to area")
+    return row
 
 
 def _memory_component_row(
@@ -676,7 +783,7 @@ def _memory_component_row(
     estimate: Mapping[str, object],
 ) -> dict[str, object]:
     area = float(estimate["included_area_um2"])
-    return {
+    row = {
         "candidate": candidate,
         "config": CONFIG_PATHS[candidate],
         "sram_type": sram_type,
@@ -689,6 +796,15 @@ def _memory_component_row(
         "source": estimate["source"],
         "source_report": estimate["source_report"],
     }
+    row.update(
+        {
+            f"{name}_area_um2": area
+            if name == ("mxu" if estimate["group"] == "ACC" else "memory")
+            else 0.0
+            for name in PAPER_COMPONENTS
+        }
+    )
+    return row
 
 
 def assemble_candidates(
@@ -713,36 +829,68 @@ def assemble_candidates(
     if common_backbone <= 0.0:
         raise ValueError(f"C3 common backbone is not positive: {common_backbone}")
 
+    c3_mem_semantic = semantic_area_breakdown(c3_logic, C3_MEM_UNIT_PATH)
+    c3_gemm_semantic = semantic_area_breakdown(c3_logic, C3_GEMM_PATH)
+    c3_dma_semantic = semantic_area_breakdown(c3_logic, C3_DMA_NODE_PATH)
+    common_semantic = subtract_semantic_areas(
+        semantic_area_breakdown(c3_logic),
+        c3_mem_semantic,
+        c3_gemm_semantic,
+        c3_dma_semantic,
+    )
+    c4_mem_semantic = semantic_area_breakdown(c4_logic, C4_MEM_UNIT_PATH)
+    c4_gemm_semantic = semantic_area_breakdown(c4_logic, C4_GEMM_PATH)
+    tcu_semantic = {"simt": tcu.total_area}
+
     if naive_acc:
         if naive_acc_logic is None:
             raise ValueError("naive ACC logic report is required when naive_acc=True")
         naive_gemm_logic = exact_root_area(naive_acc_logic, C3_GEMM_PATH)
         naive_source = naive_acc_logic
         naive_label = "Previous naive GEMM logic"
+        naive_gemm_semantic = semantic_area_breakdown(
+            naive_acc_logic, C3_GEMM_PATH
+        )
     else:
         naive_gemm_logic = c3_gemm
         naive_source = c3_logic
         naive_label = "Current naive GEMM logic"
+        naive_gemm_semantic = c3_gemm_semantic
 
     architecture_components = {
         "C1": (
-            ("C3 memory-unit logic", c3_mem_logic, c3_logic),
-            ("TCU unit", tcu.total_area, tcu),
+            ("C3 memory-unit logic", c3_mem_logic, c3_logic, c3_mem_semantic),
+            ("TCU unit", tcu.total_area, tcu, tcu_semantic),
         ),
         "C2": (
-            ("C3 memory-unit logic", c3_mem_logic, c3_logic),
-            (naive_label, naive_gemm_logic, naive_source),
-            ("C3 naive DMA node", c3_dma_node, c3_logic),
-            ("TCU unit", tcu.total_area, tcu),
+            ("C3 memory-unit logic", c3_mem_logic, c3_logic, c3_mem_semantic),
+            (
+                naive_label,
+                naive_gemm_logic,
+                naive_source,
+                naive_gemm_semantic,
+            ),
+            ("C3 naive DMA node", c3_dma_node, c3_logic, c3_dma_semantic),
+            ("TCU unit", tcu.total_area, tcu, tcu_semantic),
         ),
         "C3": (
-            ("C3 memory-unit logic", c3_mem_logic, c3_logic),
-            (naive_label, naive_gemm_logic, naive_source),
-            ("C3 naive DMA node", c3_dma_node, c3_logic),
+            ("C3 memory-unit logic", c3_mem_logic, c3_logic, c3_mem_semantic),
+            (
+                naive_label,
+                naive_gemm_logic,
+                naive_source,
+                naive_gemm_semantic,
+            ),
+            ("C3 naive DMA node", c3_dma_node, c3_logic, c3_dma_semantic),
         ),
         "C4": (
-            ("C4 memory-unit logic", c4_mem_logic, c4_logic),
-            ("C4 improve GEMM logic", c4_gemm_logic, c4_logic),
+            ("C4 memory-unit logic", c4_mem_logic, c4_logic, c4_mem_semantic),
+            (
+                "C4 improve GEMM logic",
+                c4_gemm_logic,
+                c4_logic,
+                c4_gemm_semantic,
+            ),
         ),
     }
 
@@ -758,11 +906,19 @@ def assemble_candidates(
                     "C3 f16 common backbone",
                     common_backbone,
                     c3_logic,
+                    common_semantic,
                 )
             )
-        for component, area, source in components:
+        for component, area, source, semantic_areas in components:
             component_rows.append(
-                _component_row(candidate, sram_type, component, area, source)
+                _component_row(
+                    candidate,
+                    sram_type,
+                    component,
+                    area,
+                    source,
+                    semantic_areas,
+                )
             )
 
         memory_specs = [("LMEM", option.lmem_kib, 32, 64)]
@@ -960,6 +1116,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             ),
         )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--plot",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Write separate normalized breakdown.py original/xbar plots for "
+            "each C1--C4 candidate and SRAM type."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1006,6 +1171,190 @@ def _print_summary(summary: pd.DataFrame) -> None:
     print(display.to_string(index=False))
 
 
+def build_plot_breakdown(
+    summary: pd.DataFrame,
+    components: pd.DataFrame,
+    sram_type: str,
+    legend_group: area_breakdown.LegendGroup,
+) -> pd.DataFrame:
+    """Project candidate semantic areas onto one breakdown.py legend group."""
+    sram_type = sram_type.upper()
+    typed_summary = summary.loc[summary["sram_type"].eq(sram_type)].copy()
+    typed_components = components.loc[components["sram_type"].eq(sram_type)].copy()
+    if typed_summary.empty:
+        raise ValueError(f"no summary rows for SRAM type {sram_type}")
+
+    totals = typed_summary.set_index("candidate")["total_area_um2"].astype(float)
+    rows = []
+    for candidate in CONFIG_PATHS:
+        selected = typed_components.loc[typed_components["candidate"].eq(candidate)]
+        semantic = {
+            name: float(selected[f"{name}_area_um2"].sum())
+            for name in PAPER_COMPONENTS
+        }
+        explicit = {
+            category.label: sum(semantic[name] for name in category.components)
+            for category in legend_group.categories
+            if category.components
+        }
+        residual_categories = [
+            category for category in legend_group.categories if not category.components
+        ]
+        if len(residual_categories) != 1:
+            raise ValueError(
+                f"legend group {legend_group.name} must have one residual category"
+            )
+        residual_label = residual_categories[0].label
+        explicit[residual_label] = float(totals.loc[candidate]) - sum(explicit.values())
+        if explicit[residual_label] < -1e-3:
+            raise ValueError(
+                f"{sram_type} {candidate}: legend categories exceed total area"
+            )
+        explicit[residual_label] = max(0.0, explicit[residual_label])
+        for category in legend_group.categories:
+            area = explicit[category.label]
+            rows.append(
+                {
+                    "candidate": candidate,
+                    "legend_group": legend_group.name,
+                    "category": category.label,
+                    "sram_type": sram_type,
+                    "area_um2": area,
+                    "area_mm2": area / 1e6,
+                    "total_area_um2": float(totals.loc[candidate]),
+                    "percent": area / float(totals.loc[candidate]) * 100.0,
+                }
+            )
+    plot_data = pd.DataFrame(rows)
+
+    plotted_totals = plot_data.groupby("candidate")["area_um2"].sum()
+    for candidate, expected in totals.items():
+        actual = float(plotted_totals.loc[candidate])
+        if abs(actual - float(expected)) > 1e-3:
+            raise ValueError(
+                f"{sram_type} {candidate}: plotted component sum {actual} "
+                f"does not match total area {expected}"
+            )
+    return plot_data
+
+
+def write_candidate_breakdown_plot(
+    summary: pd.DataFrame,
+    components: pd.DataFrame,
+    sram_type: str,
+    candidate: str,
+    output_dir: Path,
+    legend_group: area_breakdown.LegendGroup,
+) -> tuple[Path, Path]:
+    """Write one candidate's normalized stacked-bar CSV/PNG."""
+    plt = area_breakdown.plt
+
+    plt.rcParams.update(
+        {
+            "font.size": PLOT_FONT_SIZE,
+            "axes.titlesize": PLOT_FONT_SIZE,
+            "axes.labelsize": PLOT_FONT_SIZE,
+            "xtick.labelsize": PLOT_FONT_SIZE,
+            "ytick.labelsize": PLOT_FONT_SIZE,
+            "legend.fontsize": PLOT_FONT_SIZE,
+            "figure.titlesize": PLOT_FONT_SIZE,
+        }
+    )
+
+    sram_type = sram_type.upper()
+    candidate = candidate.upper()
+    if candidate not in CONFIG_PATHS:
+        raise ValueError(f"unknown candidate: {candidate}")
+    all_plot_data = build_plot_breakdown(
+        summary, components, sram_type, legend_group
+    )
+    plot_data = all_plot_data.loc[
+        all_plot_data["candidate"].eq(candidate)
+    ].copy()
+    stem = (
+        f"candidate_area_breakdown_{sram_type.lower()}_{candidate.lower()}"
+        f"{legend_group.output_suffix}"
+    )
+    csv_path = output_dir / f"{stem}.csv"
+    png_path = output_dir / f"{stem}.png"
+    plot_data.to_csv(csv_path, index=False)
+
+    fig, ax = plt.subplots(figsize=(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN))
+    left = 0.0
+    handles = []
+    for category in legend_group.categories:
+        selected = plot_data.loc[plot_data["category"].eq(category.label)].iloc[0]
+        percent = float(selected["percent"])
+        ax.barh(
+            0,
+            percent,
+            left=left,
+            color=category.color,
+            edgecolor="white",
+            linewidth=0.3,
+            height=0.62,
+        )
+        if percent >= 5.0:
+            ax.text(
+                left + percent / 2,
+                0,
+                f"{percent:.1f}%",
+                ha="center",
+                va="center",
+                fontsize=PLOT_FONT_SIZE,
+                fontweight="bold",
+                color="white",
+            )
+        legend_label = (
+            f"{category.label} ({percent:.1f}%)"
+            if category.show_percent_in_legend
+            or category.label.startswith(("DMA", "Misc"))
+            else category.label
+        )
+        handles.append(
+            plt.Rectangle(
+                (0, 0),
+                1,
+                1,
+                fc=category.color,
+                label=legend_label,
+                edgecolor="none",
+            )
+        )
+        left += percent
+
+    ax.set_xlim(0.0, 100.0)
+    ax.set_ylim(-0.55, 0.55)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.spines[["left", "right", "top", "bottom"]].set_visible(False)
+    legend_columns = 3 if candidate == "C4" else 1
+    ax.legend(
+        handles=handles,
+        loc="upper left",
+        bbox_to_anchor=(0.0, -0.32, 1.0, 0.2),
+        ncol=legend_columns,
+        mode="expand" if candidate == "C4" else None,
+        frameon=False,
+        fontsize=PLOT_FONT_SIZE,
+        handlelength=0.9,
+        columnspacing=1.0,
+        labelspacing=0.5,
+        borderaxespad=0.0,
+    )
+    fig.subplots_adjust(
+        left=0.02,
+        right=0.985,
+        top=0.96,
+        bottom=0.58 if candidate == "C4" else 0.70,
+    )
+    fig.savefig(png_path, dpi=OUTPUT_DPI, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {csv_path}")
+    print(f"Wrote {png_path}")
+    return csv_path, png_path
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     sram_types = ("HS", "HD") if args.sram_type == "both" else (args.sram_type,)
@@ -1026,6 +1375,19 @@ def main(argv: list[str] | None = None) -> int:
     summary.to_csv(output_dir / "candidate_area_summary.csv", index=False)
     components.to_csv(output_dir / "candidate_area_components.csv", index=False)
     audit.to_csv(output_dir / "sram_replacements.csv", index=False)
+
+    if args.plot:
+        for sram_type in sram_types:
+            for candidate in CONFIG_PATHS:
+                for legend_group in area_breakdown.LEGEND_GROUPS:
+                    write_candidate_breakdown_plot(
+                        summary,
+                        components,
+                        sram_type,
+                        candidate,
+                        output_dir,
+                        legend_group,
+                    )
 
     _print_summary(summary)
     print(f"Wrote area estimates to {output_dir}")
