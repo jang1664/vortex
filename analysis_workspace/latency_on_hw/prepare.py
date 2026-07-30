@@ -43,7 +43,7 @@ for path in (REPO_ROOT, LATENCY_DIR):
         sys.path.insert(0, str(path))
 
 import tools.latency_bench.plot as latency_plot_module
-from tools.latency_bench.compose import LatencyScaleRule
+from tools.latency_bench.compose import LatencyScaleRule, apply_latency_scale_rules
 from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data_versions
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
 from energy_per_token import (
@@ -206,6 +206,8 @@ ENERGY_SHAPE_SELECTION = _selection_tuple(
     generation_seq_lens=ENERGY_GENERATION_SEQ_LENS,
     generation_out_tokens=ENERGY_GENERATION_OUT_TOKENS,
 )
+ENERGY_OUTPUT_TAG = "dequant_pure"
+
 
 def main_out_name(model: str) -> str:
     return f"{model}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
@@ -241,23 +243,33 @@ def gemm_only_no_area_norm_out_name(model: str) -> str:
 def gemm_only_energy_out_name(model: str, power_metric: str) -> str:
     return (
         f"{model}_gemm_only_energy_per_token_stacked_by_name_{power_metric}_"
-        f"{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
+        f"{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 
 def gemm_only_energy_no_area_norm_out_name(model: str, power_metric: str) -> str:
     return (
         f"{model}_gemm_only_energy_per_token_no_area_norm_stacked_by_name_"
-        f"{power_metric}_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
+        f"{power_metric}_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 
 def energy_out_name(model: str, power_metric: str) -> str:
-    return f"{model}_energy_per_token_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    return (
+        f"{model}_energy_per_token_{power_metric}_"
+        f"{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
+    )
 
 
 def energy_stacked_out_name(model: str, power_metric: str) -> str:
-    return f"{model}_energy_per_token_stacked_by_{E2E_STACK_BY}_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+    return (
+        f"{model}_energy_per_token_stacked_by_{E2E_STACK_BY}_{power_metric}_"
+        f"{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
+    )
 
 
 def energy_gemm_layout_vector_stacked_out_name(
@@ -266,21 +278,24 @@ def energy_gemm_layout_vector_stacked_out_name(
 ) -> str:
     return (
         f"{model}_energy_per_token_gemm_layout_vector_stacked_by_name_backend_"
-        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 
 def energy_no_area_norm_out_name(model: str, power_metric: str) -> str:
     return (
         f"{model}_energy_per_token_no_area_norm_{power_metric}_"
-        f"{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+        f"{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 
 def energy_no_area_norm_stacked_out_name(model: str, power_metric: str) -> str:
     return (
         f"{model}_energy_per_token_no_area_norm_stacked_by_{E2E_STACK_BY}_"
-        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 
@@ -291,7 +306,8 @@ def energy_no_area_norm_gemm_layout_vector_stacked_out_name(
     return (
         f"{model}_energy_per_token_no_area_norm_"
         "gemm_layout_vector_stacked_by_name_backend_"
-        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+        f"{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}_"
+        f"{ENERGY_OUTPUT_TAG}"
     )
 
 RAW_DB_SUBDIRS = (
@@ -683,47 +699,47 @@ LATENCY_SCALE_RULES = []
 
 # Target-case area normalization rules. These match composed suite-case columns
 # after raw measurements are mapped back to C1/C2/C3/C4 variants.
-TH16_FP_TCU_CELL_AREA=276593.0284
-TH32_FP_TCU_CELL_AREA=547111.5339
-FPINT_MXU_CELL_AREA=693436.0606
+# TH16_FP_TCU_CELL_AREA=276593.0284
+# TH32_FP_TCU_CELL_AREA=547111.5339
+# FPINT_MXU_CELL_AREA=693436.0606
+# C1_CELL_AREA = {
+#     "tcu":TH32_FP_TCU_CELL_AREA
+# }
+# C2_CELL_AREA = {
+#   "dma_node":275297.9538,
+#   "ldma":51471.6923*3+28456.6227,
+#   "mem_split" : 18339.1647*3,
+#   "tcu" : TH32_FP_TCU_CELL_AREA,
+#   "mxu" : FPINT_MXU_CELL_AREA
+# }
+# C3_CELL_AREA = {
+#     "dma_node":275297.9538,
+#     "ldma":51471.6923*3+28456.6227,
+#     "mem_split" : 18339.1647*3,
+#     "mxu" : FPINT_MXU_CELL_AREA
+# }
+# C4_CELL_AREA = {
+#     "dma_engine":262747.8322,
+#     "ldma" : 30213.8456*4,
+#     "arbiters":3196.3230+4162.9771+4162.9771+4162.9771+4162.9771,
+#     "mxu" : FPINT_MXU_CELL_AREA
+# }
+
+# naive with ACC MEM version, 2MB version
 C1_CELL_AREA = {
-    "tcu":TH32_FP_TCU_CELL_AREA
+    "top": 10.1331,
 }
 C2_CELL_AREA = {
-  "dma_node":275297.9538,
-  "ldma":51471.6923*3+28456.6227,
-  "mem_split" : 18339.1647*3,
-  "tcu" : TH32_FP_TCU_CELL_AREA,
-  "mxu" : FPINT_MXU_CELL_AREA
+  "top":12.0691,
 }
 C3_CELL_AREA = {
-    "dma_node":275297.9538,
-    "ldma":51471.6923*3+28456.6227,
-    "mem_split" : 18339.1647*3,
-    "mxu" : FPINT_MXU_CELL_AREA
+  "top":11.5220
 }
 C4_CELL_AREA = {
-    "dma_engine":262747.8322,
-    "ldma" : 30213.8456*4,
-    "arbiters":3196.3230+4162.9771+4162.9771+4162.9771+4162.9771,
-    "mxu" : FPINT_MXU_CELL_AREA
+  "top":11.2137
 }
 
-# naive with ACC MEM version
-C1_CELL_AREA = {
-    "top": 9.2347,
-}
-C2_CELL_AREA = {
-  "top":11.1987,
-}
-C3_CELL_AREA = {
-  "top":10.6516
-}
-C4_CELL_AREA = {
-  "top":10.6989
-}
-
-AREA_RATIO=FPINT_MXU_CELL_AREA / TH32_FP_TCU_CELL_AREA
+# AREA_RATIO=FPINT_MXU_CELL_AREA / TH32_FP_TCU_CELL_AREA
 # CASE_LATENCY_SCALE_RULES = [
 #     # C1 GEMM scale is 1.0, so no rule is needed.
 #     LatencyScaleRule(
@@ -1281,7 +1297,29 @@ main_all_result: PlotRunResult | None = None
 # Energy per token.
 ENERGY_IDLE_POWER_W = FPGA_IDLE_POWER
 INCLUDE_IDLE_POWER = False
-ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
+# power_dynamic_avg_W is the measured kernel power above idle.  The board and
+# VCC metrics include idle power and therefore are intentionally not exported.
+ENERGY_POWER_METRICS = ("power_dynamic_avg_W",)
+
+# Idle-subtracted pure/total dynamic-energy ratios measured by
+# tests/regression/dequant_hbm_energy on U55C C4_v3.  The weight rule uses the
+# 128x128 qdir=0 measurement.  The KV rule uses the available qdir=1, qblk=32
+# measurement; qblk=128 SpinQuant KV kernels should be remeasured when possible.
+DEQUANT_PURE_ENERGY_RULES = (
+    LatencyScaleRule(
+        "weight_dequant_pure_energy",
+        {"kind": "dequantization", "name": {"regex": r"_weight_"}},
+        0.53230,
+    ),
+    LatencyScaleRule(
+        "kv_dequant_pure_energy",
+        {
+            "kind": "dequantization",
+            "name": {"regex": r"^kv_cache_dequant_"},
+        },
+        0.25339,
+    ),
+)
 PREPARE_ENERGY = os.environ.get("LATENCY_PREPARE_ENERGY", "1").lower() not in {
     "0",
     "false",
@@ -1608,7 +1646,40 @@ def _vectorized_energy_rows(
         )
         current["energy_missing_power"] = power.isna()
         frames.append(current)
-    return pd.concat(frames, ignore_index=True)
+    rows = pd.concat(frames, ignore_index=True)
+    return _apply_dequant_pure_energy_rules(rows)
+
+
+def _apply_dequant_pure_energy_rules(rows: pd.DataFrame) -> pd.DataFrame:
+    """Replace standalone dequant energy with its measured pure-energy share."""
+    adjusted = apply_latency_scale_rules(
+        rows,
+        DEQUANT_PURE_ENERGY_RULES,
+        metric_columns=("kernel_energy_j",),
+    )
+    applied_rules = adjusted["_latency_scale_rules"].fillna("").astype(str)
+    dequantization = adjusted["kind"].astype(str).eq("dequantization")
+    unmatched = dequantization & applied_rules.eq("")
+    if bool(unmatched.any()):
+        names = sorted(
+            adjusted.loc[unmatched, "name"].fillna("").astype(str).unique()
+        )
+        raise ValueError(f"dequant pure-energy rules did not match: {names}")
+
+    tokens = pd.to_numeric(adjusted["energy_tokens"], errors="coerce")
+    adjusted["joules_per_token_component"] = (
+        pd.to_numeric(adjusted["kernel_energy_j"], errors="coerce")
+        / tokens.where(tokens.gt(0.0))
+    )
+    for rule in DEQUANT_PURE_ENERGY_RULES:
+        matched = applied_rules.str.split(";").map(lambda names: rule.name in names)
+        print(
+            f"energy discount rule {rule.name}: scale={rule.scale:.5f}, "
+            f"matched_rows={int(matched.sum())}"
+        )
+    return adjusted.drop(
+        columns=["_latency_scale_factor", "_latency_scale_rules"]
+    )
 
 
 def _energy_summaries_all_metrics(

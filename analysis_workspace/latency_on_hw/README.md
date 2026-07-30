@@ -28,4 +28,4 @@
 - hadamard랑 eladd 추가 최적화. prefill만 다시 돌리는 중.
 
 # V3
-- C3_v2, C4_v2_noperf 사용.
+- C3_v3, C4_v3 사용.

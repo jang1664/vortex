@@ -66,6 +66,23 @@ class GemmLayoutPlotTests(unittest.TestCase):
         self.assertEqual(indexed.loc["C4", "vector"], 3.0 + 5.0 + 9.0 - layout_overhead)
         self.assertEqual(indexed.loc["C4", "total"], 21.0)
 
+    def test_faster_fused_kernel_does_not_cancel_other_layout_overhead(self) -> None:
+        rows = self._backend_rows()
+        c4 = rows["candidate"].eq("C4")
+        rows.loc[c4, "attn_softmax::softmax_layout_fused"] = 3.0
+        rows.loc[c4, "q_hadamard::hadamard_layout_fused"] = 1.0
+
+        result = plot._build_gemm_layout_vector_stack(pd, rows).set_index(
+            "candidate"
+        )
+
+        # Softmax contributes 3 - 1 = 2 units of layout overhead.  The fused
+        # Hadamard is faster than its 2-unit C3 base, so its contribution is
+        # zero instead of cancelling one unit of the softmax overhead.
+        self.assertEqual(result.loc["C4", "layout"], 2.0)
+        self.assertEqual(result.loc["C4", "vector"], 3.0 + 1.0 + 9.0 - 2.0)
+        self.assertEqual(result.loc["C4", "total"], 17.0)
+
     def test_out_tokens_is_not_counted_as_latency_or_vector(self) -> None:
         rows = self._backend_rows(stage="Generation").assign(out_tokens=128)
 
@@ -128,6 +145,63 @@ class GemmLayoutPlotTests(unittest.TestCase):
         knobs = plot.StackedBarKnobs()
 
         self.assertTrue(knobs.relative)
+
+    def test_stacked_segments_have_no_border_gap(self) -> None:
+        knobs = plot.StackedBarKnobs()
+
+        self.assertEqual(knobs.bar_linewidth, 0.0)
+
+    def test_latency_y_labels_follow_stage_semantics(self) -> None:
+        all_knobs = plot.PlotKnobs()
+        for knobs in (
+            all_knobs.llama_e2e,
+            all_knobs.llama_e2e_no_area_norm,
+            all_knobs.llama_e2e_stacked,
+            all_knobs.llama_e2e_no_area_norm_stacked,
+            all_knobs.llama_e2e_gemm_layout_stacked,
+            all_knobs.llama_e2e_gemm_layout_vector_stacked,
+        ):
+            self.assertEqual(plot._stage_y_label(knobs, "Prefill"), "relative TTFT")
+            self.assertEqual(
+                plot._stage_y_label(knobs, "Decode"),
+                "relative TPOT/token",
+            )
+
+        for knobs in (
+            all_knobs.llama_gemm_only,
+            all_knobs.llama_gemm_only_no_area_norm,
+        ):
+            self.assertEqual(
+                plot._stage_y_label(knobs, "Prefill"),
+                "relative latency",
+            )
+            self.assertEqual(
+                plot._stage_y_label(knobs, "Decode"),
+                "relative latency/token",
+            )
+
+    def test_all_energy_y_labels_are_per_token(self) -> None:
+        all_knobs = plot.PlotKnobs()
+        energy_knobs = (
+            all_knobs.energy,
+            all_knobs.llama_gemm_only_energy,
+            all_knobs.llama_gemm_only_energy_no_area_norm,
+            all_knobs.llama_energy,
+            all_knobs.llama_energy_no_area_norm,
+            all_knobs.llama_energy_stacked,
+            all_knobs.llama_energy_no_area_norm_stacked,
+            all_knobs.llama_energy_gemm_layout_vector_stacked,
+            all_knobs.llama_energy_no_area_norm_gemm_layout_vector_stacked,
+        )
+        for knobs in energy_knobs:
+            self.assertEqual(
+                plot._stage_y_label(knobs, "Prefill"),
+                "relative energy/token",
+            )
+            self.assertEqual(
+                plot._stage_y_label(knobs, "Decode"),
+                "relative energy/token",
+            )
 
     def test_all_plot_knobs_default_to_auto_value_label_fontsize(self) -> None:
         knobs = plot.PlotKnobs()
@@ -234,6 +308,48 @@ class GemmLayoutPlotTests(unittest.TestCase):
             ),
             "llama3 Decode",
         )
+
+    def test_layout_stack_colors_follow_displayed_legend_order(self) -> None:
+        knobs = plot.PlotKnobs().llama_e2e_gemm_layout_vector_stacked
+
+        colors = plot._stack_colors(("gemm", "layout", "vector"), knobs)
+
+        self.assertEqual(colors["gemm"], plot.STACK_PALETTE[0])
+        self.assertEqual(colors["vector"], plot.STACK_PALETTE[1])
+        self.assertEqual(colors["layout"], plot.STACK_PALETTE[2])
+
+    def test_layout_segments_follow_displayed_legend_order(self) -> None:
+        knobs = plot.PlotKnobs().llama_e2e_gemm_layout_vector_stacked
+
+        ordered = plot._ordered_stack_columns(
+            ("gemm", "layout", "vector"),
+            knobs,
+        )
+
+        self.assertEqual(ordered, ["gemm", "vector", "layout"])
+
+    def test_energy_stack_order_and_colors_are_progressive(self) -> None:
+        expected = ("gemm", "vector", "layout", "W dequant", "KV dequant")
+        for knobs in (
+            plot.PlotKnobs().llama_energy_gemm_layout_vector_stacked,
+            plot.PlotKnobs().llama_energy_no_area_norm_gemm_layout_vector_stacked,
+        ):
+            self.assertEqual(knobs.legend_order, expected)
+            colors = plot._stack_colors(
+                ("gemm", "layout", "vector", "W dequant", "KV dequant"),
+                knobs,
+            )
+            self.assertEqual(
+                tuple(colors[column] for column in expected),
+                plot.STACK_PALETTE[:5],
+            )
+            self.assertEqual(
+                plot._ordered_stack_columns(
+                    ("gemm", "layout", "vector", "W dequant", "KV dequant"),
+                    knobs,
+                ),
+                list(expected),
+            )
 
     def test_layout_backend_suffix_is_preserved_for_c3_correspondence(self) -> None:
         self.assertEqual(

@@ -88,7 +88,14 @@ SUBPLOT_TITLE_TEMPLATE = "{stage}"
 LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE = "{model}, {stage}"
 X_LABEL = "sequence length"
 Y_LABEL = "relative latency"
-ENERGY_Y_LABEL = "relative energy"
+ENERGY_Y_LABEL = "relative energy/token"
+E2E_STAGE_Y_LABELS = {
+    "Prefill": "relative TTFT",
+    "Decode": "relative TPOT/token",
+}
+GEMM_ONLY_STAGE_Y_LABELS = {
+    "Decode": "relative latency/token",
+}
 LEGEND_TITLE = "candidate"
 LEGEND_NCOL = 4
 GEMM_LEGEND_TITLE = "kernel"
@@ -230,6 +237,7 @@ class WideBarKnobs:
     subplot_title_template: str = SUBPLOT_TITLE_TEMPLATE
     x_label: str = X_LABEL
     y_label: str = Y_LABEL
+    stage_y_labels: dict[str, str] = field(default_factory=dict)
     title_fontsize: float = TITLE_FONTSIZE
     subplot_title_fontsize: float = SUBPLOT_TITLE_FONTSIZE
     subplot_title_inside: bool = False
@@ -356,6 +364,7 @@ def _llama_e2e_wide_knobs() -> WideBarKnobs:
     return WideBarKnobs(
         **_llama_compact_kwargs(Y_LABEL),
         legend_ncol=4,
+        stage_y_labels=dict(E2E_STAGE_Y_LABELS),
     )
 
 
@@ -364,6 +373,7 @@ class StackedBarKnobs(WideBarKnobs):
     figsize: tuple[float, float] = GEMM_FIGSIZE
     row_height: float | None = 2.1
     bar_width: float = 0.76
+    bar_linewidth: float = 0.0
     relative: bool = True
     y_lim_top_scale: float = 1.18
     legend_title: str | None = GEMM_LEGEND_TITLE
@@ -382,6 +392,7 @@ def _llama_e2e_stacked_knobs() -> StackedBarKnobs:
         legend_ncol=2,
         stack_palette=E2E_KIND_STACK_PALETTE,
         stack_groups=E2E_KIND_STACK_GROUPS,
+        stage_y_labels=dict(E2E_STAGE_Y_LABELS),
     )
 
 
@@ -406,6 +417,7 @@ class PlotKnobs:
             row_height=TWO_COLUMN_FIGSIZE[1],
             title=MAIN_ALL_TITLE,
             y_label=Y_LABEL,
+            stage_y_labels=dict(E2E_STAGE_Y_LABELS),
             value_labels=VALUE_LABELS
         )
     )
@@ -413,6 +425,7 @@ class PlotKnobs:
         default_factory=lambda: StackedBarKnobs(
             title=GEMM_ONLY_TITLE,
             y_label=Y_LABEL,
+            stage_y_labels=dict(GEMM_ONLY_STAGE_Y_LABELS),
             value_labels=VALUE_LABELS,
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
@@ -442,6 +455,7 @@ class PlotKnobs:
             **_llama_compact_kwargs(Y_LABEL),
             legend_ncol=2,
             stack_palette=E2E_GEMM_LAYOUT_STACK_PALETTE,
+            stage_y_labels=dict(E2E_STAGE_Y_LABELS),
         )
     )
     llama_e2e_gemm_layout_vector_stacked: StackedBarKnobs = field(
@@ -450,6 +464,7 @@ class PlotKnobs:
             legend_ncol=3,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE,
             legend_order=("gemm", "vector", "layout"),
+            stage_y_labels=dict(E2E_STAGE_Y_LABELS),
         )
     )
     llama_e2e_stacked: StackedBarKnobs = field(
@@ -461,6 +476,7 @@ class PlotKnobs:
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
+            stage_y_labels=dict(GEMM_ONLY_STAGE_Y_LABELS),
         )
     )
     llama_gemm_only_no_area_norm: StackedBarKnobs = field(
@@ -469,6 +485,7 @@ class PlotKnobs:
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
+            stage_y_labels=dict(GEMM_ONLY_STAGE_Y_LABELS),
         )
     )
     llama_gemm_only_energy: StackedBarKnobs = field(
@@ -520,6 +537,7 @@ class PlotKnobs:
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
             legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
+            legend_order=("gemm", "vector", "layout", "W dequant", "KV dequant"),
         )
     )
     llama_energy_no_area_norm_gemm_layout_vector_stacked: StackedBarKnobs = field(
@@ -527,6 +545,7 @@ class PlotKnobs:
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
             legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
+            legend_order=("gemm", "vector", "layout", "W dequant", "KV dequant"),
         )
     )
 
@@ -1293,12 +1312,44 @@ def _plot_size(knobs: WideBarKnobs, row_count: int) -> tuple[float, float]:
     return (knobs.figsize[0], max(knobs.figsize[1], row_height * row_count))
 
 
+def _stage_y_label(knobs: WideBarKnobs, stage: Any) -> str:
+    return knobs.stage_y_labels.get(str(stage), knobs.y_label)
+
+
 def _palette(knobs: WideBarKnobs) -> tuple[str, ...]:
     return BAR_PALETTE if knobs.palette is None else knobs.palette
 
 
 def _stack_palette(knobs: StackedBarKnobs) -> tuple[str, ...]:
     return GEMM_ONLY_STACK_PALETTE if knobs.stack_palette is None else knobs.stack_palette
+
+
+def _stack_colors(
+    stack_columns: Sequence[str],
+    knobs: StackedBarKnobs,
+) -> dict[str, str]:
+    """Assign palette shades in displayed legend order when one is specified."""
+    palette = _stack_palette(knobs)
+    color_order = [
+        column for column in knobs.legend_order if column in stack_columns
+    ]
+    color_order.extend(column for column in stack_columns if column not in color_order)
+    return {
+        column: palette[idx % len(palette)]
+        for idx, column in enumerate(color_order)
+    }
+
+
+def _ordered_stack_columns(
+    stack_columns: Sequence[str],
+    knobs: StackedBarKnobs,
+) -> list[str]:
+    """Match bottom-to-top stack order to the displayed legend order."""
+    ordered = [
+        column for column in knobs.legend_order if column in stack_columns
+    ]
+    ordered.extend(column for column in stack_columns if column not in ordered)
+    return ordered
 
 
 def _stage_bar_width(
@@ -1364,6 +1415,7 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
             item.x_label = args.x_label
         if args.y_label is not None:
             item.y_label = args.y_label
+            item.stage_y_labels = {}
         if args.legend_title is not None:
             item.legend_title = args.legend_title
         if args.legend_ncol is not None:
@@ -2052,7 +2104,7 @@ def plot_wide_candidate_bars(
             _format_template(knobs.subplot_title_template, stage=stage, model=""),
             fontsize=knobs.subplot_title_fontsize,
         )
-        ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
+        ax.set_ylabel(_stage_y_label(knobs, stage), fontsize=knobs.axis_label_fontsize)
         _set_grouped_x_ticks(
             ax,
             stage_df,
@@ -2283,7 +2335,17 @@ def _build_gemm_layout_stack(
                     f"missing C3 stack column {base_column!r} corresponding to "
                     f"C4 stack column {layout_column!r} for model/stage/batch/seq={group_key}"
                 )
-            layout_overhead += layout_value - float(c3[base_column])
+            # A fused kernel can be faster than its C3 counterpart for reasons
+            # unrelated to layout (for example, the new C4 SiLU and Hadamard
+            # implementations).  Do not let those kernel speedups cancel the
+            # positive layout overhead measured on other fused kernels.  A
+            # negative per-kernel layout cost is not meaningful and would be
+            # clipped below the plot's zero y-axis, making the layout stack
+            # appear to be missing.
+            layout_overhead += max(
+                0.0,
+                layout_value - float(c3[base_column]),
+            )
 
         for _, row in group.iterrows():
             candidate = str(row["candidate"])
@@ -2483,6 +2545,7 @@ def plot_gemm_stacked_bars(
     for column in stack_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
     df, stack_columns = _apply_stack_groups(df, stack_columns, knobs.stack_groups)
+    stack_columns = _ordered_stack_columns(stack_columns, knobs)
     if knobs.relative:
         df = _apply_relative_stack_values(
             pd,
@@ -2494,8 +2557,7 @@ def plot_gemm_stacked_bars(
     stages = sorted(_ordered_unique(df["stage"].tolist()), key=_stage_sort_key)
     fig, axes = plt.subplots(len(stages), 1, figsize=_plot_size(knobs, len(stages)), squeeze=False)
     axes_list = list(axes[:, 0])
-    palette = _stack_palette(knobs)
-    colors = {column: palette[idx % len(palette)] for idx, column in enumerate(stack_columns)}
+    colors = _stack_colors(stack_columns, knobs)
     candidate_order = {candidate: idx for idx, candidate in enumerate(E2E_CANDIDATE_COLUMNS)}
 
     for ax, stage in zip(axes_list, stages):
@@ -2551,7 +2613,7 @@ def plot_gemm_stacked_bars(
             _format_template(knobs.subplot_title_template, stage=stage, model=""),
             fontsize=knobs.subplot_title_fontsize,
         )
-        ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
+        ax.set_ylabel(_stage_y_label(knobs, stage), fontsize=knobs.axis_label_fontsize)
         _set_grouped_x_ticks(
             ax,
             stage_df,
@@ -2716,7 +2778,7 @@ def plot_model_wide_candidate_bars(
 
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
-        ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
+        ax.set_ylabel(_stage_y_label(knobs, stage), fontsize=knobs.axis_label_fontsize)
         _set_grouped_x_ticks(
             ax,
             stage_df,
@@ -2806,6 +2868,7 @@ def plot_model_stacked_bars(
     for column in stack_columns:
         combined[column] = pd.to_numeric(combined[column], errors="coerce").fillna(0.0)
     combined, stack_columns = _apply_stack_groups(combined, stack_columns, knobs.stack_groups)
+    stack_columns = _ordered_stack_columns(stack_columns, knobs)
     if knobs.relative:
         combined = _apply_relative_stack_values(
             pd,
@@ -2817,8 +2880,7 @@ def plot_model_stacked_bars(
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
-    palette = _stack_palette(knobs)
-    colors = {column: palette[idx % len(palette)] for idx, column in enumerate(stack_columns)}
+    colors = _stack_colors(stack_columns, knobs)
     candidate_order = {candidate: idx for idx, candidate in enumerate(E2E_CANDIDATE_COLUMNS)}
     legend_handles = None
     legend_labels = None
@@ -2916,7 +2978,7 @@ def plot_model_stacked_bars(
 
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
-        ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
+        ax.set_ylabel(_stage_y_label(knobs, stage), fontsize=knobs.axis_label_fontsize)
         _set_grouped_x_ticks(
             ax,
             stage_df,

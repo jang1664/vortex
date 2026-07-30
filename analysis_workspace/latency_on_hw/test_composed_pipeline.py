@@ -139,6 +139,34 @@ class ComposedPipelineTest(unittest.TestCase):
             ].tolist()
             self.assertEqual(legacy_energy, vectorized_energy)
 
+    def test_vectorized_energy_discounts_dequant_without_new_columns(self) -> None:
+        frame = _decode_frame(out_tokens=2)
+        frame["kind"] = "dequantization"
+        frame.loc[frame.index[0], "name"] = "dequant_q_proj_weight_to_fp16"
+        frame.loc[frame.index[1], "name"] = "kv_cache_dequant_k_to_attn_qkT"
+
+        vectorized = prepare._vectorized_energy_rows(frame)
+
+        self.assertEqual(("power_dynamic_avg_W",), prepare.ENERGY_POWER_METRICS)
+        self.assertAlmostEqual(
+            20e-6 * 0.53230,
+            vectorized.loc[0, "kernel_energy_j"],
+        )
+        self.assertAlmostEqual(
+            40e-6 * 0.25339,
+            vectorized.loc[1, "kernel_energy_j"],
+        )
+        self.assertNotIn("_latency_scale_factor", vectorized.columns)
+        self.assertNotIn("_latency_scale_rules", vectorized.columns)
+
+    def test_energy_output_names_identify_pure_dequant_adjustment(self) -> None:
+        name = prepare.energy_stacked_out_name(
+            "llama2_7b",
+            "power_dynamic_avg_W",
+        )
+
+        self.assertTrue(name.endswith("_dequant_pure"))
+
     def test_prepare_keeps_multiple_batch_and_sequence_workloads(self) -> None:
         frames = []
         for batch, seq_len in ((1, 512), (1, 1024), (2, 512), (2, 1024)):

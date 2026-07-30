@@ -58,7 +58,19 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/bin
     configs: configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh
 
+  naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16:  &naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/bin
+    configs: configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16.sh
+
+  naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem:  &naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem_
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin
+    configs: configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+
   C3: *C3_
+
+  C3_v2: *naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_
+
+  C3_v3: *naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem_
   
   # ------------------------------------ C3 -------------------------------------------------
   improve_th16_tcol32_hwexp_dcache_rev1:
@@ -81,6 +93,24 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/bin
     configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh
 
+  improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4: &C4_2_ # fp16 switching surpression
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/bin
+    configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh
+
+  improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4_noperf: &improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4_noperf_ # fp16 switching surpression
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/bin
+    configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh
+
+  improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem: &improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_ # no perf, 2MB mem
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin
+    configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+
   C4: *C4_
+
+  C4_2: *C4_2_
+
+  C4_v2_noperf: *improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4_noperf_
+
+  C4_v3: *improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_
 
   # ------------------------------------ ETC -------------------------------------------------
