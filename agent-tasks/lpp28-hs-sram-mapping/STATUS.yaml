@@ -1,0 +1,56 @@
+task: lpp28-hs-sram-mapping
+state: COMPLETE
+updated: "2026-07-30 16:37"
+summary: >-
+  Generate Samsung 28LPP x64 HS macros, add default-HS selectable compiled
+  single-port SRAM mappings, verify them, and recompute LEF-based area.
+iterations:
+  - iteration: 1
+    implementation: "Added selectable HS/HD mappings for all registered single-port SRAM shapes and synchronized the Synopsys macro inventories."
+    verification: "FAIL: VCS rejected unsupported shapes, but SRAM_TYPE=BAD elaborated through the HD else branch; positive simulation was not run."
+    next_action: "Make invalid selectors enter an unresolved sentinel branch, then rerun the same verify_rtl.py harness."
+  - iteration: 2
+    implementation: "Added a highest-priority invalid SRAM_TYPE sentinel while preserving all valid HS/HD mappings."
+    verification: "PASS: verify_rtl.py/VCS passed 26 HS/HD shape cases, invalid and unsupported elaboration rejection, HD upper-address zeroing, and TMEM/ACC tile counts."
+    next_action: "Run top synthesis integration and finalize generated-view and LEF-area documentation."
+  - iteration: 3
+    implementation: "Added HS/HD mappings for top-synthesis shapes 128x512 full-word and 32x512 byte-enabled; confirmed the reported 512x512 byte-enabled shape was already mapped."
+    verification: "PASS: verify_rtl.py/VCS passed 30 HS/HD shape cases and 164 macro instances, including the new 128x512 full-word and 32x512 byte-enabled mappings, address zero-extension, and negative elaboration checks."
+    next_action: "Complete: default-HS top elaboration/link is clean; compile_ultra was stopped after elaboration at the user's request."
+log:
+  - timestamp: "2026-07-30 15:10"
+    action: "Created the confirmed specification and started implementation."
+    result: "The user-approved plan fixes VX_sp_ram scope, HS default, RF1-HS ICACHE coverage, and LEF-based analysis."
+  - timestamp: "2026-07-30 15:12"
+    action: "Attempted the hwexplorer memory compiler with the PATH-default python3."
+    result: "Failed before generation because /usr/bin/python3 is Python 3.6.8 and cannot parse the framework's walrus operator; no macro artifacts were created. Python 3.11.13 is available at /usr/bin/python3.11 for the retry."
+  - timestamp: "2026-07-30 15:17"
+    action: "Confirmed the revised wide-memory policy and execution environment."
+    result: "RA1-HS is limited to 144 bits at m4/m8, so TMEM keeps four x128 tiles and ACC keeps eight. The user selected Conda stable; the read-only compiler will be staged under build before generation."
+  - timestamp: "2026-07-30 15:31"
+    action: "Ran verification iteration 1 with tools/verify_rtl.py and VCS."
+    result: "Unsupported shapes failed as intended, but an invalid SRAM_TYPE string selected HD because the shape-local branch used a plain else. Sent the failure back for iteration 2."
+  - timestamp: "2026-07-30 15:51"
+    action: "Generated all six requested FE macro packages and completed verification iteration 2."
+    result: "Using Conda stable and lc_shell for Liberty conversion produced Verilog, LEF, Liberty, and DB views in genSEC. All 13 shapes passed both HS and HD functional verification; invalid selector and unsupported shape rejection also passed."
+  - timestamp: "2026-07-30 15:51"
+    action: "Recomputed equal-capacity all-HS raw macro area from generated LEFs."
+    result: "Partition overhead is 40.499% for 1 MiB and 10.338% for 2 MiB; docs/hw_analysis/lmem_acc_tmem_sram_scaling.md now records the exact dimensions and formulas."
+  - timestamp: "2026-07-30 16:03"
+    action: "Implemented selector coverage found missing by default-HS top synthesis."
+    result: "Mapped logical 128x512 full-word and 32x512 byte-enabled arrays to four 256x128 HS tiles or eight 1024x64 HD tiles with zero-extended addresses. The existing 512x512 byte-enabled mapping already met the requested HS/HD policy. Expanded the selector harness to 30 cases and 164 expected macro instances without running verification."
+  - timestamp: "2026-07-30 16:05"
+    action: "Ran verification iteration 3 with tools/verify_rtl.py and VCS."
+    result: "All 30 HS/HD functional cases passed with 164 bound macro instances. The new 128x512 and 32x512 cases passed full-word or byte-enable readback, HS/HD tile counts, address zero-extension, and invalid-selector/unsupported-shape rejection."
+  - timestamp: "2026-07-30 16:37"
+    action: "Reran the default-HS improve top through elaboration and link."
+    result: "All 30 compiled-SRAM DBs loaded, the 246 MiB elaborated DDC was written, and the link report had zero unresolved references. Stopped compile_ultra at the user's request and preserved the elaboration artifacts."
+pitfalls:
+  - "The existing genSEC inventory contains only x128 RA1-HS macros, but the PDK compiler legally supports x64; inventory absence is not a compiler restriction."
+  - "The worktree contains unrelated user changes and generated top-analysis output that must be preserved."
+  - "hwexplorer memory_compiler requires Python newer than the PATH-default Python 3.6; activate Conda stable (Python 3.9) explicitly."
+  - "The installed hwexplorer source tree is read-only but writes config/lpp28_dynamic.env; run a writable staged copy under build/."
+  - "RA1-HS native x512/x1024 macros are outside the PDK width range; x128 tiling is mandatory."
+  - "The hwexplorer wrapper's dc_shell cannot compile the generated Liberty in library-only mode; lc_shell succeeds and is required in the writable staged compiler."
+  - "LPP28 BE path discovery must select the 7U1x_2T8x_LB ICC2 directory and the sc9 technology file; compiler pathfiles must include the revision directory containing lib/site.spec."
+  - "Top synthesis can expose additional small single-port SRAM shapes that configuration-level inventory analysis misses; audit every VX_sp_ram_compiled parameter tuple from the elaborated hierarchy."

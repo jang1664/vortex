@@ -1,0 +1,6 @@
+cmos28lpp_ra1w_hs_512x64m8
+cmos28lpp_ra1w_hs_1024x64m8
+cmos28lpp_ra1w_hs_2048x64m8
+cmos28lpp_ra1w_hs_4096x64m8
+cmos28lpp_ra1w_hs_8192x64m16
+cmos28lpp_rf1_hs_64x128m2
