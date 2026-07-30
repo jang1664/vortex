@@ -11,10 +11,10 @@ void kernel_elmul_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (arg->log2_mxu_nt == arg->log2_mxu_kt) {
+  if (arg->log2_mxu_nt == arg->log2_mxu_kt
+      && arg->M_real == arg->M_pad) {
     // GEMM-C inputs and GEMM-A output have identical physical slot order.
-    // Processing pad rows is harmless and removes all per-element decoding.
-    const uint32_t total = arg->M_pad * arg->K;
+    const uint32_t total = arg->M_real * arg->K;
     for (uint32_t idx = thread_id; idx < total; idx += total_threads) {
       const float a = fp16_to_float(input_a[idx]);
       const float b = fp16_to_float(input_b[idx]);

@@ -113,7 +113,8 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_b_row(row_elems);
   std::vector<data_t> h_a_tiled(tiled_elems);
   std::vector<data_t> h_b_tiled(tiled_elems);
-  std::vector<data_t> h_out(tiled_elems, 0);
+  const data_t padding_sentinel = float_to_fp16(-123.0f);
+  std::vector<data_t> h_out(tiled_elems, padding_sentinel);
   init_values(h_a_row, 1.0f);
   init_values(h_b_row, 0.75f);
   pack_gemm_c_tiled(h_a_row, h_a_tiled, M, M_pad, K);
@@ -126,6 +127,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_WRITE, &output_buffer));
   RT_CHECK(vx_copy_to_dev(input_a_buffer, h_a_tiled.data(), 0, tiled_bytes));
   RT_CHECK(vx_copy_to_dev(input_b_buffer, h_b_tiled.data(), 0, tiled_bytes));
+  RT_CHECK(vx_copy_to_dev(output_buffer, h_out.data(), 0, tiled_bytes));
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -180,6 +182,19 @@ int main(int argc, char *argv[]) {
         if (errors < 10) {
           printf("Error at m=%u k=%u: got=%f expected=%f diff=%f\n",
                  m, k, got, expected, diff);
+        }
+        ++errors;
+      }
+    }
+  }
+  for (uint32_t m = M; m < M_pad; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      const uint64_t off = gemm_a_tiled_elem_offset(
+          m, k, M_pad, K, log2_mt, log2_mxu_kt);
+      if (h_out[off] != padding_sentinel) {
+        if (errors < 10) {
+          printf("Modified padding at m=%u k=%u: got=%f\n",
+                 m, k, fp16_to_float(h_out[off]));
         }
         ++errors;
       }

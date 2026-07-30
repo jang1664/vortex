@@ -178,7 +178,8 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_input_row(row_elems);
   std::vector<data_t> h_input_tiled(tiled_elems);
   std::vector<data_t> h_ref(tiled_elems);
-  std::vector<data_t> h_out(tiled_elems, 0);
+  const data_t padding_sentinel = float_to_fp16(-123.0f);
+  std::vector<data_t> h_out(tiled_elems, padding_sentinel);
   initialize_softmax_scores(h_input_row);
   pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
   softmax_reference(h_input_row, h_ref, batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask != 0, scale);
@@ -188,6 +189,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_WRITE, &output_buffer));
   RT_CHECK(vx_copy_to_dev(input_buffer, h_input_tiled.data(), 0, tiled_bytes));
+  RT_CHECK(vx_copy_to_dev(output_buffer, h_out.data(), 0, tiled_bytes));
 
   uint64_t num_warps = 0;
   uint64_t num_threads = 0;
@@ -295,11 +297,10 @@ int main(int argc, char *argv[]) {
         for (uint32_t k = seq_k; k < seq_k_pad; ++k) {
           const uint64_t off = base + gemm_a_tiled_elem_offset(
               q, k, M_pad, seq_k_pad, arg.log2_mt, arg.log2_mxu_kt);
-          const float got = fp16_to_float(h_out[off]);
-          if (got != 0.0f) {
+          if (h_out[off] != padding_sentinel) {
             if (errors < 10) {
-              printf("Non-zero padding at b=%u h=%u q=%u k=%u: got=%f\n",
-                     b, h, q, k, got);
+              printf("Modified padding at b=%u h=%u q=%u k=%u: got=%f\n",
+                     b, h, q, k, fp16_to_float(h_out[off]));
             }
             ++errors;
           }

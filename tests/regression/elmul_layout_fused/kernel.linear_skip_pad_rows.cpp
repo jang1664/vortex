@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
@@ -56,12 +57,17 @@ void kernel_elmul_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  // Uncommon non-power-of-two padded row counts keep the original harmless
-  // padding-row work while still avoiding per-element tile decoding.
-  const uint32_t total = M_pad * K;
+  // Generic padded-row case: decode logical coordinates so padding rows are
+  // left untouched.
+  const uint32_t total = M * K;
   for (uint32_t idx = thread_id; idx < total; idx += total_threads) {
-    output[idx] = float_to_fp16(
-        fp16_to_float(input_a[idx]) * fp16_to_float(input_b[idx]));
+    const uint32_t m = idx / K;
+    const uint32_t k = idx - m * K;
+    const uint64_t physical_idx = gemm_c_tiled_elem_offset(
+        m, k, M_pad, K, arg->log2_mt, arg->log2_mxu_nt);
+    output[physical_idx] = float_to_fp16(
+        fp16_to_float(input_a[physical_idx]) *
+        fp16_to_float(input_b[physical_idx]));
   }
 }
 

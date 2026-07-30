@@ -70,7 +70,6 @@ static inline void softmax_row_shuffle_grouped(
     data_t *input,
     data_t *output,
     uint32_t seq_len_k,
-    uint32_t output_k_extent,
     uint32_t q,
     uint32_t use_mask,
     float scale,
@@ -117,14 +116,8 @@ static inline void softmax_row_shuffle_grouped(
       store += NUM_THREADS;
     }
   }
-
-  uint32_t zero_k = k_end + lane;
-  if (zero_k < output_k_extent) {
-    data_t *zero = output + zero_k;
-    for (; zero_k < output_k_extent; zero_k += NUM_THREADS) {
-      *zero = float_to_fp16(0.0f);
-      zero += NUM_THREADS;
-    }
+  for (uint32_t k = k_end + lane; k < seq_len_k; k += NUM_THREADS) {
+    output[k] = float_to_fp16(0.0f);
   }
 }
 
@@ -145,7 +138,6 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
 
     softmax_row_shuffle_grouped(
         input, output, arg->seq_len_k,
-        arg->row_pitch_bytes / (uint32_t)sizeof(data_t),
         q, arg->use_mask, arg->scale, threadIdx.x);
   }
 }

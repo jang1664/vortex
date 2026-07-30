@@ -125,7 +125,6 @@ struct TiledAccessor {
 
 static inline void softmax_tiled_shuffle(const TiledAccessor& accessor,
                                          uint32_t seq_len_k,
-                                         uint32_t output_k_extent,
                                          uint32_t q,
                                          uint32_t use_mask,
                                          float scale,
@@ -247,7 +246,7 @@ static inline void softmax_tiled_shuffle(const TiledAccessor& accessor,
   uint32_t zero_k = k_end + lane;
   const uint32_t zero_lane = zero_k & 31u;
   uint32_t zero_group = zero_k >> 5;
-  for (; zero_k < output_k_extent;
+  for (; zero_k < seq_len_k;
        zero_k += NUM_THREADS, ++zero_group) {
     const uint32_t within_matrix =
         zero_group * accessor.output_group_stride + zero_lane;
@@ -284,21 +283,21 @@ static inline void softmax_tiled_shuffle(const TiledAccessor& accessor,
     }
   }
   uint32_t zero_k = k_end + lane;
-  if (zero_k < output_k_extent) {
+  if (zero_k < seq_len_k) {
     const uint64_t zero_offset = accessor.output_row_prefix
         + (uint64_t)(zero_k >> 5) * accessor.output_group_stride
         + (zero_k & 31u);
     data_t *zero0 = accessor.output + zero_offset;
     data_t *zero1 = zero0 + accessor.output_group_stride;
     const uint32_t two_group_stride = accessor.output_group_stride << 1;
-    for (; zero_k + NUM_THREADS < output_k_extent;
+    for (; zero_k + NUM_THREADS < seq_len_k;
          zero_k += 2u * NUM_THREADS) {
       *zero0 = float_to_fp16(0.0f);
       *zero1 = float_to_fp16(0.0f);
       zero0 += two_group_stride;
       zero1 += two_group_stride;
     }
-    if (zero_k < output_k_extent) {
+    if (zero_k < seq_len_k) {
       *zero0 = float_to_fp16(0.0f);
     }
   }
@@ -309,7 +308,7 @@ static inline void softmax_tiled_shuffle(const TiledAccessor& accessor,
         : vx_expf(fp16_to_float(accessor.load(k)) * scale - global_max);
     accessor.store(k, float_to_fp16(exp_value * inv_sum));
   }
-  for (uint32_t k = k_end + lane; k < output_k_extent; k += NUM_THREADS) {
+  for (uint32_t k = k_end + lane; k < seq_len_k; k += NUM_THREADS) {
     accessor.store(k, float_to_fp16(0.0f));
   }
 #endif
@@ -357,7 +356,6 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     };
     softmax_tiled_shuffle(accessor,
                           arg->seq_len_k,
-                          arg->output_k_pad,
                           q,
                           arg->use_mask,
                           arg->scale,
