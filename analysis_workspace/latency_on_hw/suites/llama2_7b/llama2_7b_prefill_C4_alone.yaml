@@ -3,7 +3,7 @@ defaults:
   warmup: 1
   iterations: 3
   app: fpint_gemm_ffn_hw
-  fpga_bin: improve_th32_tcol32_hwexp_dcache
+  fpga_bin: C4
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
