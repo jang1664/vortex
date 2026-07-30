@@ -1,0 +1,377 @@
+ 
+****************************************
+Report : area
+Design : VX_mem_bus_split__7235cf4a8435
+Version: V-2023.12-SP5-3
+Date   : Wed Jul 29 06:41:55 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        27099
+Number of nets:                         48770
+Number of cells:                        26499
+Number of combinational cells:          12815
+Number of sequential cells:             13233
+Number of macros/black boxes:               0
+Number of buf/inv:                       3776
+Number of references:                      54
+
+Combinational area:               8601.957068
+Buf/Inv area:                     1706.678989
+Noncombinational area:           27800.603303
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 36402.560371
+Total area:                 undefined
+
+Core Area:                     78666
+Aspect Ratio:                 1.0023
+Utilization Ratio:            0.4627
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 36402.6
+  Total fixed cell area: 0.0
+  Total physical cell area: 36402.6
+ Core area: 0.000, 0.000, 280.150, 280.800
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ----------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-     Noncombi-   Black-
+                                  Total       Total    national   national    boxes   Design
+--------------------------------  ----------  -------  ---------  ----------  ------  -----------------------------------------------------
+VX_mem_bus_split__7235cf4a8435    36402.5604    100.0    83.4210     33.6960  0.0000  VX_mem_bus_split__7235cf4a8435
+clk_gate_req_sent_r_reg               1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_mem_bus_split__7235cf4a8435
+clk_gate_req_sent_r_reg_0             1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_mem_bus_split__7235cf4a8435_0
+g_lane_req_0__req_skid              635.4270      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_15
+g_lane_req_0__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_15
+g_lane_req_0__req_skid/g_eb2_stream_buffer   583.0110     1.6  111.9690   467.5320 0.0000 VX_stream_buffer_114_1_15
+g_lane_req_0__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_15_0
+g_lane_req_0__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_15_1
+g_lane_req_10__req_skid             636.5970      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_5
+g_lane_req_10__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_5
+g_lane_req_10__req_skid/g_eb2_stream_buffer   584.1810     1.6  113.1390   467.5320 0.0000 VX_stream_buffer_114_1_5
+g_lane_req_10__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_5_0
+g_lane_req_10__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_5_1
+g_lane_req_11__req_skid             636.5970      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_4
+g_lane_req_11__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_4
+g_lane_req_11__req_skid/g_eb2_stream_buffer   584.1810     1.6  113.1390   467.5320 0.0000 VX_stream_buffer_114_1_4
+g_lane_req_11__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_4_0
+g_lane_req_11__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_4_1
+g_lane_req_12__req_skid             636.2460      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_3
+g_lane_req_12__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_3
+g_lane_req_12__req_skid/g_eb2_stream_buffer   583.8300     1.6  112.7880   467.5320 0.0000 VX_stream_buffer_114_1_3
+g_lane_req_12__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_3_0
+g_lane_req_12__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_3_1
+g_lane_req_13__req_skid             634.6080      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_2
+g_lane_req_13__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_2
+g_lane_req_13__req_skid/g_eb2_stream_buffer   582.1920     1.6  111.1500   467.5320 0.0000 VX_stream_buffer_114_1_2
+g_lane_req_13__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_2_0
+g_lane_req_13__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_2_1
+g_lane_req_14__req_skid             634.9590      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_1
+g_lane_req_14__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_1
+g_lane_req_14__req_skid/g_eb2_stream_buffer   582.5430     1.6  111.5010   467.5320 0.0000 VX_stream_buffer_114_1_1
+g_lane_req_14__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_1_0
+g_lane_req_14__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_1_1
+g_lane_req_15__req_skid             634.9590      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_0
+g_lane_req_15__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000 0.0000  VX_pipe_buffer_23_0
+g_lane_req_15__req_skid/g_eb2_stream_buffer   582.5430     1.6  111.5010   467.5320 0.0000 VX_stream_buffer_114_1_0
+g_lane_req_15__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_0_0
+g_lane_req_15__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_0_1
+g_lane_req_1__req_skid              636.2460      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_14
+g_lane_req_1__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_14
+g_lane_req_1__req_skid/g_eb2_stream_buffer   583.8300     1.6  112.7880   467.5320 0.0000 VX_stream_buffer_114_1_14
+g_lane_req_1__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_14_0
+g_lane_req_1__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_14_1
+g_lane_req_2__req_skid              637.0650      1.8     0.0000      0.0000  0.0000  VX_elastic_buffer_17_13
+g_lane_req_2__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_13
+g_lane_req_2__req_skid/g_eb2_stream_buffer   584.6490     1.6  113.6070   467.5320 0.0000 VX_stream_buffer_114_1_13
+g_lane_req_2__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_13_0
+g_lane_req_2__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_13_1
+g_lane_req_3__req_skid              635.7780      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_12
+g_lane_req_3__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_12
+g_lane_req_3__req_skid/g_eb2_stream_buffer   583.3620     1.6  112.3200   467.5320 0.0000 VX_stream_buffer_114_1_12
+g_lane_req_3__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_12_0
+g_lane_req_3__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_12_1
+g_lane_req_4__req_skid              635.3100      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_11
+g_lane_req_4__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_11
+g_lane_req_4__req_skid/g_eb2_stream_buffer   582.8940     1.6  111.8520   467.5320 0.0000 VX_stream_buffer_114_1_11
+g_lane_req_4__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_11_0
+g_lane_req_4__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_11_1
+g_lane_req_5__req_skid              636.2460      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_10
+g_lane_req_5__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_10
+g_lane_req_5__req_skid/g_eb2_stream_buffer   583.8300     1.6  112.7880   467.5320 0.0000 VX_stream_buffer_114_1_10
+g_lane_req_5__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_10_0
+g_lane_req_5__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_10_1
+g_lane_req_6__req_skid              635.7780      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_9
+g_lane_req_6__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_9
+g_lane_req_6__req_skid/g_eb2_stream_buffer   583.3620     1.6  112.3200   467.5320 0.0000 VX_stream_buffer_114_1_9
+g_lane_req_6__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_9_0
+g_lane_req_6__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_9_1
+g_lane_req_7__req_skid              634.6080      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_8
+g_lane_req_7__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_8
+g_lane_req_7__req_skid/g_eb2_stream_buffer   582.1920     1.6  111.1500   467.5320 0.0000 VX_stream_buffer_114_1_8
+g_lane_req_7__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_8_0
+g_lane_req_7__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_8_1
+g_lane_req_8__req_skid              636.2460      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_7
+g_lane_req_8__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_7
+g_lane_req_8__req_skid/g_eb2_stream_buffer   583.8300     1.6  112.7880   467.5320 0.0000 VX_stream_buffer_114_1_7
+g_lane_req_8__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_7_0
+g_lane_req_8__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_7_1
+g_lane_req_9__req_skid              634.9590      1.7     0.0000      0.0000  0.0000  VX_elastic_buffer_17_6
+g_lane_req_9__req_skid/g_eb2_out_buf    52.4160     0.1   52.4160     0.0000  0.0000  VX_pipe_buffer_23_6
+g_lane_req_9__req_skid/g_eb2_stream_buffer   582.5430     1.6  111.5010   467.5320 0.0000 VX_stream_buffer_114_1_6
+g_lane_req_9__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_6_0
+g_lane_req_9__req_skid/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_114_1_6_1
+g_lane_rsp_0__rsp_skid             1788.3450      4.9     1.8720      0.0000  0.0000  VX_elastic_buffer_18_15
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue  1752.3090     4.8   79.5600   162.1620 0.0000 VX_fifo_queue_71_8_1_0_15
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_15
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1477.8270     4.1  267.5790  1196.2080 0.0000 VX_dp_ram_19_15
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_127
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_126
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_125
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_124
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_123
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_122
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_121
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_120
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_15
+g_lane_rsp_0__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_15_0
+g_lane_rsp_0__rsp_skid/g_ebN_out_buf    34.1640     0.1   34.1640     0.0000  0.0000  VX_pipe_buffer_24_15
+g_lane_rsp_10__rsp_skid            1621.2690      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_5
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue  1588.5090     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_5
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_5
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_5
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_47
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_46
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_45
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_44
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_43
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_42
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_41
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_40
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_5
+g_lane_rsp_10__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_5_0
+g_lane_rsp_10__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_5
+g_lane_rsp_11__rsp_skid            1622.2050      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_4
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue  1589.4450     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_4
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_4
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1336.2570     3.7  243.9450  1078.2720 0.0000 VX_dp_ram_19_4
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_39
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_38
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_37
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_36
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_35
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_34
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_33
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_32
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_4
+g_lane_rsp_11__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_4_0
+g_lane_rsp_11__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_4
+g_lane_rsp_12__rsp_skid            1621.2690      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_3
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue  1588.5090     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_3
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_3
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_3
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_31
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_30
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_29
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_28
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_27
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_26
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_25
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_24
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_3
+g_lane_rsp_12__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_3_0
+g_lane_rsp_12__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_3
+g_lane_rsp_13__rsp_skid            1620.9180      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_2
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue  1588.1580     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_2
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_2
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_2
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_23
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_22
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_21
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_20
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_19
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_18
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_17
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_16
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_2
+g_lane_rsp_13__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_2_0
+g_lane_rsp_13__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_2
+g_lane_rsp_14__rsp_skid            1621.3860      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_1
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue  1588.6260     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_1
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_1
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.7890     3.7  243.4770  1078.2720 0.0000 VX_dp_ram_19_1
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_15
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_14
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_13
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_12
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_11
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_10
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_9
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_8
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_1
+g_lane_rsp_14__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_1_0
+g_lane_rsp_14__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_1
+g_lane_rsp_15__rsp_skid            1621.2690      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue  1588.5090     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_7
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_6
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_5
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_4
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_3
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_2
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_1
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_0
+g_lane_rsp_15__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_0_0
+g_lane_rsp_15__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000 0.0000  VX_pipe_buffer_24_0
+g_lane_rsp_1__rsp_skid             1620.9180      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_14
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue  1588.1580     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_14
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_14
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_14
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_119
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_118
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_117
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_116
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_115
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_114
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_113
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_112
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_14
+g_lane_rsp_1__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_14_0
+g_lane_rsp_1__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_14
+g_lane_rsp_2__rsp_skid             1620.8010      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_13
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue  1588.0410     4.4   72.5400   147.4200 0.0000 VX_fifo_queue_71_8_1_0_13
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_13
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_13
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_111
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_110
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_109
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_108
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_107
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_106
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_105
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_104
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_13
+g_lane_rsp_2__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_13_0
+g_lane_rsp_2__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_13
+g_lane_rsp_3__rsp_skid             1621.2690      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_12
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue  1588.5090     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_12
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_12
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_12
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_103
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_102
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_101
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_100
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_99
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_98
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_97
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_96
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_12
+g_lane_rsp_3__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_12_0
+g_lane_rsp_3__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_12
+g_lane_rsp_4__rsp_skid             1623.0240      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_11
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue  1590.2640     4.4   73.3590   147.4200 0.0000 VX_fifo_queue_71_8_1_0_11
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_11
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1336.7250     3.7  244.4130  1078.2720 0.0000 VX_dp_ram_19_11
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_95
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_94
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_93
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_92
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_91
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_90
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_89
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_88
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_11
+g_lane_rsp_4__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_11_0
+g_lane_rsp_4__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_11
+g_lane_rsp_5__rsp_skid             1621.3860      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_10
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue  1588.6260     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_10
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_10
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.7890     3.7  243.4770  1078.2720 0.0000 VX_dp_ram_19_10
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_87
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_86
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_85
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_84
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_83
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_82
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_81
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_80
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_10
+g_lane_rsp_5__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_10_0
+g_lane_rsp_5__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_10
+g_lane_rsp_6__rsp_skid             1621.2690      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_9
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue  1588.5090     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_9
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_9
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_9
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_79
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_78
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_77
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_76
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_75
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_74
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_73
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_72
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_9
+g_lane_rsp_6__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_9_0
+g_lane_rsp_6__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_9
+g_lane_rsp_7__rsp_skid             1621.7370      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_8
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue  1588.9770     4.4   73.0080   147.4200 0.0000 VX_fifo_queue_71_8_1_0_8
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_8
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.7890     3.7  243.4770  1078.2720 0.0000 VX_dp_ram_19_8
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_71
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_70
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_69
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_68
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_67
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_66
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_65
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_64
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_8
+g_lane_rsp_7__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_8_0
+g_lane_rsp_7__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_8
+g_lane_rsp_8__rsp_skid             1620.9180      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_7
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue  1588.1580     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_7
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_7
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1335.3210     3.7  243.0090  1078.2720 0.0000 VX_dp_ram_19_7
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_63
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_62
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_61
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_60
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_59
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_58
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_57
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_56
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_7
+g_lane_rsp_8__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_7_0
+g_lane_rsp_8__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_7
+g_lane_rsp_9__rsp_skid             1622.3220      4.5     1.8720      0.0000  0.0000  VX_elastic_buffer_18_6
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue  1589.5620     4.4   72.6570   147.4200 0.0000 VX_fifo_queue_71_8_1_0_6
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/clk_gate_g_depth_n_g_out_reg_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_fifo_queue_71_8_1_0_0_6
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram  1336.7250     3.7  244.4130  1078.2720 0.0000 VX_dp_ram_19_6
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_0_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_55
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_1_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_54
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_2_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_53
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_3_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_52
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_4_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_51
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_5_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_50
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_6_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_49
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/g_depth_n_dp_ram/clk_gate_g_async_g_bram_g_write_first_g_no_wren_ram_reg_7_     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_19_0_48
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/pending_size    31.0050     0.1   16.6140    12.6360 0.0000 VX_pending_size_2_6
+g_lane_rsp_9__rsp_skid/g_ebN_fifo_queue/pending_size/clk_gate_g_size_gt1_g_single_step_used_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_pending_size_2_6_0
+g_lane_rsp_9__rsp_skid/g_ebN_out_buf    30.8880     0.1   30.8880     0.0000  0.0000  VX_pipe_buffer_24_6
+--------------------------------  ----------  -------  ---------  ----------  ------  -----------------------------------------------------
+Total                                                  8601.9571  27800.6033  0.0000
+
+1
