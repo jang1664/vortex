@@ -1,0 +1,18 @@
+task: remain-only-latest-dry-run
+status: COMPLETE
+started: "2026-07-31 21:40"
+updated: "2026-07-31 22:00"
+summary: "Added dry-run summaries and safe multi-sub-root processing for output-root paths to remain_only_latest.py."
+log:
+  - time: "2026-07-31 21:40"
+    entry: "Defined dry-run output as per-app counts with up to three representative removed rows showing args, timestamp, and run ID."
+  - time: "2026-07-31 21:45"
+    entry: "Implemented exact discarded-row analysis without changing the existing normal rewrite API or timestamped-backup behavior."
+  - time: "2026-07-31 22:00"
+    entry: "Extended PATH handling to one raw DB, one sub-root, or every direct FPGA-bin sub-root of an output root; nested run/probe DBs are intentionally excluded and every DB is validated before writes begin."
+pitfalls:
+  - "The retained row is selected by timestamp and input order, so dry-run must report the exact discarded row objects rather than infer them by value."
+verification:
+  - "python3 -m unittest analysis_workspace.latency_on_hw.docs.test_remain_only_latest: 4 tests passed."
+  - "python3 analysis_workspace/latency_on_hw/docs/remain_only_latest.py --help: --dry-run usage rendered successfully."
+  - "git diff --check passed for the implementation, tests, and status file."
