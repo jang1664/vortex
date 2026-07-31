@@ -1,0 +1,38 @@
+task: head-concat-gqa-benchmark
+status: complete
+summary: >-
+  Correct Llama3 decode head-concat standalone latency measurement to use the
+  grouped 8xM4 PV layout and remeasure normal versus fused on C4 hardware.
+iterations:
+  - iteration: 1
+    status: pass
+    error_summary: none
+    root_cause: >-
+      Llama3 generation carried query_heads_per_kv only in shape metadata;
+      the generated command and latency benchmark used the default value 1.
+    fix_applied: >-
+      Propagated -query-heads-per-kv 4, parsed and validated it in the fused
+      bench, and derived grouped input rows, padding, and matrix allocation.
+    lesson: >-
+      Physical-layout metadata must be represented in executable benchmark
+      arguments; semantic head counts alone do not select grouped GQA layout.
+verification:
+  - >-
+    3 focused workload generator tests passed, including Llama3 q_per_kv=4
+    args and Llama2 q_per_kv=1 preservation.
+  - >-
+    build_latency_llama3 head_concat_layout_fused bench rebuilt successfully
+    with /usr/bin/g++ under the C4_v3 configuration.
+  - >-
+    Generated Llama3 decode payload reports q_per_kv=4 and 8 input matrices.
+  - >-
+    C4_v3 grouped-layout correctness passed for batch=1, seq=1, heads=32,
+    headdim=128, query_heads_per_kv=4.
+  - >-
+    C4_v3 three-iteration latency runs completed for batch 1/2/4/64. Normal
+    cycles were 153240/171215/192607/916126 and corrected fused cycles were
+    188945/206140/218239/814283.
+pitfalls:
+  - >-
+    query_heads_per_kv in shape metadata does not affect execution unless the
+    generated CLI args and latency benchmark both propagate it.

@@ -56,28 +56,40 @@ int main(int argc, char *argv[]) {
   uint32_t seq = 128;
   uint32_t heads = 32;
   uint32_t headdim = 128;
+  uint32_t query_heads_per_kv = 1;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seq") == 0) seq = atoi(argv[++i]);
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-query-heads-per-kv") == 0)
+      query_heads_per_kv = atoi(argv[++i]);
     else if (strcmp(argv[i], "--layout-to") == 0) ++i;
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) {}
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch B] [-seq S] [-heads H] [-headdim D] "
+             "[-query-heads-per-kv G] "
              "[--layout-to gemm_a_tiled]\n", argv[0]);
       return 0;
     }
   }
 
   const uint32_t hidden = heads * headdim;
-  const uint32_t input_m_pad = (seq + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
+  if (query_heads_per_kv == 0 || heads % query_heads_per_kv != 0) {
+    printf("ERROR: query-heads-per-kv must be positive and divide heads\n");
+    return 1;
+  }
+  const uint32_t input_rows = seq * query_heads_per_kv;
+  const uint32_t input_m_pad =
+      (input_rows + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
   const uint32_t output_m = batch * seq;
   const uint32_t output_m_pad = (output_m + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-  const size_t input_elems = (size_t)batch * heads * input_m_pad * headdim;
+  const uint32_t input_matrix_count = batch * (heads / query_heads_per_kv);
+  const size_t input_elems =
+      (size_t)input_matrix_count * input_m_pad * headdim;
   const size_t output_elems = (size_t)output_m_pad * hidden;
   const size_t logical_elems = (size_t)batch * seq * hidden;
   const size_t input_bytes = input_elems * sizeof(data_t);
@@ -129,7 +141,7 @@ int main(int argc, char *argv[]) {
   arg.headdim = headdim;
   arg.input_m_pad = input_m_pad;
   arg.output_m_pad = output_m_pad;
-  arg.query_heads_per_kv = 1;
+  arg.query_heads_per_kv = query_heads_per_kv;
   arg.log2_mt = log2_u32(TILE_DMA_MT);
   arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   arg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);

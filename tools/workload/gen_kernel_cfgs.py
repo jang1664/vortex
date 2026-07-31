@@ -1023,10 +1023,30 @@ def _head_concat_kernel(stage: str,
                         variant: str,
                         backend: str = "head_concat",
                         layout_from: str = "row_major",
-                        layout_to: str = "row_major") -> dict:
+                        layout_to: str = "row_major",
+                        query_heads_per_kv: int = 1) -> dict:
     args = f"-batch {batch} -seq {seq} -heads {heads} -headdim {head_dim}"
     if backend == "head_concat_layout_fused":
         args = f"{args} --layout-to {layout_to}"
+        if query_heads_per_kv != 1:
+            args = f"{args} -query-heads-per-kv {query_heads_per_kv}"
+    shape = {
+        "batch": batch,
+        "seq": seq,
+        "heads": heads,
+        "headdim": head_dim,
+        "hidden": heads * head_dim,
+        "layout_from": layout_from,
+        "layout_to": layout_to,
+        "producer": "attn_pv",
+        "consumer": "o_proj",
+        "layout_group": "attn_pv_to_head_concat_to_o_proj",
+    }
+    if backend == "head_concat_layout_fused":
+        shape.update({
+            "query_heads_per_kv": query_heads_per_kv,
+            "input_matrix_count": batch * (heads // query_heads_per_kv),
+        })
     return _llm_kernel(
         name="attn_head_concat",
         kind="concat",
@@ -1034,18 +1054,7 @@ def _head_concat_kernel(stage: str,
         stage=stage,
         args=args,
         calls_per_forward=calls_per_forward,
-        shape={
-            "batch": batch,
-            "seq": seq,
-            "heads": heads,
-            "headdim": head_dim,
-            "hidden": heads * head_dim,
-            "layout_from": layout_from,
-            "layout_to": layout_to,
-            "producer": "attn_pv",
-            "consumer": "o_proj",
-            "layout_group": "attn_pv_to_head_concat_to_o_proj",
-        },
+        shape=shape,
         variant=variant,
     )
 
@@ -1559,6 +1568,9 @@ def _apply_fused_layout_variant(kernels: list[dict],
             calls_per_forward=layers, variant=variant,
             backend="head_concat_layout_fused",
             layout_from="gemm_c_tiled_per_head", layout_to="gemm_a_tiled",
+            query_heads_per_kv=(
+                heads_q // heads_kv if stage == "generation" else 1
+            ),
         ),
         by_name["o_proj"],
         _with_fused_backend(

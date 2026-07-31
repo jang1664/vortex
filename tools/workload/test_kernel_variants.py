@@ -709,6 +709,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertNotIn("grouped_query_attention", attn_qk["shape"])
         self.assertEqual(1, concat["shape"]["query_heads_per_kv"])
         self.assertEqual(32, concat["shape"]["input_matrix_count"])
+        self.assertNotIn("-query-heads-per-kv", concat["args"])
 
     def test_llama3_generation_gqa_groups_attention_gemms(self) -> None:
         payload = build_llm_kernels(
@@ -761,6 +762,23 @@ class KernelVariantTest(unittest.TestCase):
         concat = _kernel_by_name(payload, "attn_head_concat")
         self.assertEqual(4, concat["shape"]["query_heads_per_kv"])
         self.assertEqual(8, concat["shape"]["input_matrix_count"])
+        self.assertIn("-query-heads-per-kv 4", concat["args"])
+
+    def test_fused_head_concat_cli_keeps_llama2_generation_ungrouped(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=128,
+            gen_kv_len=128,
+            qblk=32,
+            variant=LAYOUT_FUSED_VARIANT,
+        )
+
+        concat = _kernel_by_name(payload, "attn_head_concat")
+        self.assertEqual(1, concat["shape"]["query_heads_per_kv"])
+        self.assertEqual(32, concat["shape"]["input_matrix_count"])
+        self.assertNotIn("-query-heads-per-kv", concat["args"])
 
     def test_layout_variants_are_registered(self) -> None:
         self.assertIn("all_fpint_gemm_improve_alone_layout", WORKLOAD_VARIANTS)
