@@ -739,6 +739,20 @@ C4_CELL_AREA = {
   "top":11.2137
 }
 
+# naive with no ACC MEM version, 2MB version
+# C1_CELL_AREA = {
+#     "top": 10.1331,
+# }
+# C2_CELL_AREA = {
+#   "top":11.4596,
+# }
+# C3_CELL_AREA = {
+#   "top":10.9125
+# }
+# C4_CELL_AREA = {
+#   "top":11.2137
+# }
+
 # AREA_RATIO=FPINT_MXU_CELL_AREA / TH32_FP_TCU_CELL_AREA
 # CASE_LATENCY_SCALE_RULES = [
 #     # C1 GEMM scale is 1.0, so no rule is needed.

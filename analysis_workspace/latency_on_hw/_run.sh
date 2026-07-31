@@ -3,9 +3,9 @@
 set -euo pipefail
 
 # Edit these three values when changing FPGA versions.
-suite_postfix="C3_v3_C4_v3"
-output_postfix="C3_v3_C4_v3"
-fpga_bins="C3_v3 C4_v3"
+suite_postfix="C3_C4_v3"
+output_postfix="C3_C4_v3"
+fpga_bins="C1 C3 C4_v3"
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "Usage: $0 <llama2|llama3|llama3p2_1b|llama3p2_3b> [prefill|decode|generation|all]" >&2
@@ -55,12 +55,12 @@ esac
 case "${model}" in
   llama2)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama2"
-    input_dir="generated_suites/llama2_7b_main_full.${suite_postfix}"
+    input_dir="generated_suites/llama2_7b_main_full_v2.${suite_postfix}"
     output_dir="outputs_llama2_main.${output_postfix}"
     ;;
   llama3)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama3"
-    input_dir="generated_suites/llama3_8b_main_full.${suite_postfix}"
+    input_dir="generated_suites/llama3_8b_main_full_v2.${suite_postfix}"
     output_dir="outputs_llama3_main.${output_postfix}"
     ;;
   llama3p2_1b)

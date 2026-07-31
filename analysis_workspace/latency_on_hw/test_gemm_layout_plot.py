@@ -164,7 +164,7 @@ class GemmLayoutPlotTests(unittest.TestCase):
             self.assertEqual(plot._stage_y_label(knobs, "Prefill"), "relative TTFT")
             self.assertEqual(
                 plot._stage_y_label(knobs, "Decode"),
-                "relative TPOT/token",
+                "relative TPOT",
             )
 
         for knobs in (

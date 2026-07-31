@@ -91,7 +91,7 @@ Y_LABEL = "relative latency"
 ENERGY_Y_LABEL = "relative energy/token"
 E2E_STAGE_Y_LABELS = {
     "Prefill": "relative TTFT",
-    "Decode": "relative TPOT/token",
+    "Decode": "relative TPOT",
 }
 GEMM_ONLY_STAGE_Y_LABELS = {
     "Decode": "relative latency/token",
@@ -124,7 +124,12 @@ E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 # Candidate used as 1.0 for relative plots. Set to None to retain the previous
 # behavior of normalizing against the smallest positive value at each x tick.
 RELATIVE_BASELINE_CANDIDATE: str | None = "C4"
-ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
+SUPPORTED_ENERGY_POWER_METRICS = (
+    "power_avg_W",
+    "power_vcc_avg_W",
+    "power_dynamic_avg_W",
+)
+ENERGY_POWER_METRICS = ("power_dynamic_avg_W",)
 STAGE_ORDER = ("Prefill", "Decode")
 RAW_DB_SUBDIRS = ("C1", "C3", "C4")
 RAW_DB_ROOT_NAMES = (
@@ -611,7 +616,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--power-metric",
-        choices=ENERGY_POWER_METRICS,
+        choices=SUPPORTED_ENERGY_POWER_METRICS,
         default=None,
         help=argparse.SUPPRESS,
     )
@@ -1095,7 +1100,7 @@ def _discover_model_csv(prepared_root: Path, model_key: str, kind: str, label: s
 
 def _energy_csv_power_metric(path: Path) -> str | None:
     name = path.parent.name
-    for metric in ENERGY_POWER_METRICS:
+    for metric in SUPPORTED_ENERGY_POWER_METRICS:
         if metric in name:
             return metric
     try:

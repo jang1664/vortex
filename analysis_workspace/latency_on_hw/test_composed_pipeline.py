@@ -148,6 +148,7 @@ class ComposedPipelineTest(unittest.TestCase):
         vectorized = prepare._vectorized_energy_rows(frame)
 
         self.assertEqual(("power_dynamic_avg_W",), prepare.ENERGY_POWER_METRICS)
+        self.assertEqual(("power_dynamic_avg_W",), plot.ENERGY_POWER_METRICS)
         self.assertAlmostEqual(
             20e-6 * 0.53230,
             vectorized.loc[0, "kernel_energy_j"],

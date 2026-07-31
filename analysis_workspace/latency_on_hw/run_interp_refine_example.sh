@@ -24,15 +24,15 @@ fi
 
 MODEL="$1"
 
-LLAMA2_SUITE_NAME=llama2_7b_main_full.new_c4
-LLAMA2_OUT_NAME=outputs_llama2_main.new_c4
+LLAMA2_SUITE_NAME=llama2_7b_main_full.C3_v3_C4_v3
+LLAMA2_OUT_NAME=outputs_llama2_main.C3_v3_C4_v3
 LLAMA2_KERNEL_TYPE_FILTER=""
 
-LLAMA3_SUITE_NAME=llama3_8b_main_full.new_c4
-LLAMA3_OUT_NAME=outputs_llama3_main.new_c4
+LLAMA3_SUITE_NAME=llama3_8b_main_full.C3_v3_C4_v3
+LLAMA3_OUT_NAME=outputs_llama3_main.C3_v3_C4_v3
 LLAMA3_KERNEL_TYPE_FILTER=""
 
-FPGA_BINS=(C1 C3 C4_2)
+FPGA_BINS=(C1 C3_v3 C4_v3)
 
 if [[ "${MODEL}" == "llama2" ]]; then
   SUITE_NAME="${LLAMA2_SUITE_NAME}"
