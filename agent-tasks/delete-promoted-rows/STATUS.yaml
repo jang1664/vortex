@@ -1,0 +1,18 @@
+task: delete-promoted-rows
+status: COMPLETE
+started: "2026-07-31 21:00"
+updated: "2026-07-31 21:15"
+summary: "Implemented and tested safe deletion of interpolation-refine promoted rows, including compact dry-run summaries by app and representative args."
+log:
+  - time: "2026-07-31 21:00"
+    entry: "Confirmed tools/latency_bench/interpolation.py marks promoted probe rows with run_id=interpolation_refine and only promotes measurement keys absent from the main raw DB."
+  - time: "2026-07-31 21:05"
+    entry: "Implemented direct-child root discovery, full preflight schema validation, dry-run reporting, timestamped backups, and atomic CSV replacement while preserving headers and non-promoted row order."
+  - time: "2026-07-31 21:15"
+    entry: "Extended dry-run output with per-app row counts and up to three representative unique args, truncating long args and reporting omitted unique-args counts."
+pitfalls:
+  - "Output sub-roots can contain nested refinement probe raw_db.csv files; root discovery must inspect direct children only."
+verification:
+  - "python3 -m unittest analysis_workspace.latency_on_hw.test_delete_promoted_rows: 5 tests passed."
+  - "python3 analysis_workspace/latency_on_hw/delete_promoted_rows.py --help: CLI usage rendered successfully."
+  - "git diff --check passed for the implementation, tests, and status file."
