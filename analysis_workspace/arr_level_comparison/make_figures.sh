@@ -4,20 +4,19 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-extract_mode="full"
+extract_breakdown=false
 
 usage() {
     cat <<'EOF'
-Usage: ./make_figures.sh [--extract | --extract-breakdown]
+Usage: ./make_figures.sh [--extract]
 
-Extract GEMM synthesis reports and regenerate arr_level_comparison figures and tables.
+Generate Figure 10 and retain FPxFP/WKV/WoQ efficiency data.
 
 Environment:
   PYTHON=/path/to/python   Python interpreter to use (default: auto-detected)
 
 Options:
-  --extract                Rebuild data_fpint_mxu.csv and breakdown from GEMM reports (default)
-  --extract-breakdown      Rebuild only wkvwoq_breakdown.csv from GEMM reports
+  --extract                Refresh both CSVs from synthesis reports
   -h, --help               Show this help text
 EOF
 }
@@ -53,8 +52,7 @@ find_python() {
 
         if "$resolved" - <<'PY' >/dev/null 2>&1
 import importlib
-for name in ("matplotlib", "numpy"):
-    importlib.import_module(name)
+importlib.import_module("matplotlib")
 PY
         then
             printf '%s\n' "$resolved"
@@ -70,10 +68,7 @@ PY
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --extract)
-            extract_mode="full"
-            ;;
-        --extract-breakdown)
-            extract_mode="breakdown"
+            extract_breakdown=true
             ;;
         -h|--help)
             usage
@@ -90,22 +85,16 @@ done
 
 python_bin="$(find_python)"
 
-case "$extract_mode" in
-    full)
-        "$python_bin" extract.py
-        ;;
-    breakdown)
-        "$python_bin" extract.py --breakdown-only
-        ;;
-esac
+if "$extract_breakdown"; then
+    "$python_bin" extract.py
+fi
 
-for input in data_base.csv data_tcu.csv data_fpint_mxu.csv wkvwoq_breakdown.csv; do
+for input in wkvwoq_breakdown.csv fpxfp_wkv_woq_efficiency.csv; do
     if [ ! -s "$input" ]; then
         echo "error: missing required input: $script_dir/$input" >&2
-        echo "       run with --extract on a machine with the source reports, or check out the cached CSVs" >&2
+        echo "       run with --extract where the synthesis reports are available" >&2
         exit 1
     fi
 done
 
 "$python_bin" plot.py
-"$python_bin" scale_array_size.py

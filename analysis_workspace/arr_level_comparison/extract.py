@@ -1,10 +1,9 @@
-"""Extract TCU and GEMM-unit power and area metrics from synthesis reports.
+"""Extract the synthesis data used by Figure 10 and its efficiency table.
 
-Scalar FP and INT-unit measurements are kept in ``data_base.csv`` and are not
-regenerated here. This script reads the thread-32 FP TCU report and the WKV/WoQ
-reports under ``build/hw/syn/synopsys`` and writes ``data_tcu.csv`` and
-``data_fpint_mxu.csv``. All powers in the CSV are normalized to microwatts
-(uW), and area is in um^2.
+The generated CSVs are:
+
+* ``wkvwoq_breakdown.csv``: WKV/WoQ module power and area, including a total.
+* ``fpxfp_wkv_woq_efficiency.csv``: FPxFP, WKV, and WoQ TOPS/W and TOPS/mm².
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -31,6 +30,9 @@ TCU_POWER_FALLBACK = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" \
     / "top_analysis" / "Vortex_tcu_th32_c1_rev2_subdesign_partial" / "blocks" \
     / "blocks" / "VX_tcu_unit__d2e8e198f1ee" / "reports" \
     / "18_VX_tcu_unit__d2e8e198f1ee.mapped.power.rpt"
+TCU_AREA_FALLBACK = TCU_POWER_FALLBACK.with_name(
+    "14_VX_tcu_unit__d2e8e198f1ee.mapped.area.rpt"
+)
 
 # PrimePower emits two distinct hierarchical-power formats:
 #   (a) "Report : Averaged Power"  — no units header, all values in Watts,
@@ -164,6 +166,7 @@ def collect_tcu() -> Row | None:
     area_candidates = [
         TCU_REPORT_DIR / "14_VX_tcu_unit.mapped.area.rpt",
         TCU_REPORT_DIR / "15_VX_tcu_unit.mapped.designware_area.rpt",
+        TCU_AREA_FALLBACK,
     ]
     power_candidates = [
         TCU_REPORT_DIR / "18_VX_tcu_unit.mapped.power.rpt",
@@ -202,15 +205,6 @@ def collect_tcu() -> Row | None:
         crit_ns=crit or 0.0,
         rpt_path=str(power_path),
     )
-
-
-def write_rows(path: Path, rows: list[Row]) -> None:
-    fields = list(asdict(rows[0]).keys())
-    with path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(asdict(row))
 
 
 def collect_gemm_unit(
@@ -412,18 +406,122 @@ def collect_wkv_woq_breakdown():
     return breakdown
 
 
+def write_efficiency_csv(tcu: Row, gemm_rows: list[Row]) -> Path:
+    """Write absolute and FPxFP-relative efficiency for the three engines."""
+    rows_by_design = {row.design: row for row in gemm_rows}
+    wkv = rows_by_design["VX_gemm_unit_32x32_mpGEMM"]
+    woq = rows_by_design["VX_woq_gemm_unit_32x32_mpGEMM"]
+    configurations = [
+        {
+            "config": "FPxFP",
+            "precision": tcu.precision,
+            "macs_per_cycle": 8 * 4 * 4 * 2,
+            "row": tcu,
+            "area_report": TCU_AREA_FALLBACK,
+        },
+        {
+            "config": "WKV",
+            "precision": wkv.precision,
+            "macs_per_cycle": 32 * 32,
+            "row": wkv,
+            "area_report": (
+                VORTEX_BUILD_GEMM
+                / "syn_topo.run1"
+                / "reports"
+                / "14_VX_gemm_unit_top.mapped.area.rpt"
+            ),
+        },
+        {
+            "config": "WoQ",
+            "precision": woq.precision,
+            "macs_per_cycle": 32 * 32,
+            "row": woq,
+            "area_report": (
+                VORTEX_BUILD_GEMM
+                / "syn_topo_woq.run1"
+                / "reports"
+                / "14_VX_woq_gemm_unit_top.mapped.area.rpt"
+            ),
+        },
+    ]
+
+    metrics = []
+    for configuration in configurations:
+        row = configuration["row"]
+        clock_mhz = 1000.0 / row.period_ns
+        tops = configuration["macs_per_cycle"] * 2 * clock_mhz * 1e6 / 1e12
+        power_w = row.total_uw / 1e6
+        area_mm2 = row.area_um2 / 1e6
+        metrics.append(
+            {
+                **configuration,
+                "clock_mhz": clock_mhz,
+                "tops": tops,
+                "power_mw": row.total_uw / 1000.0,
+                "area_mm2": area_mm2,
+                "tops_per_w": tops / power_w,
+                "tops_per_mm2": tops / area_mm2,
+            }
+        )
+
+    fpxfp_tops_per_w = metrics[0]["tops_per_w"]
+    fpxfp_tops_per_mm2 = metrics[0]["tops_per_mm2"]
+    output = HERE / "fpxfp_wkv_woq_efficiency.csv"
+    fields = [
+        "config",
+        "precision",
+        "clock_MHz",
+        "MACs_per_cycle",
+        "TOPS",
+        "power_mW",
+        "area_mm2",
+        "TOPS_per_W",
+        "TOPS_per_mm2",
+        "relative_TOPS_per_W_vs_FPxFP",
+        "relative_TOPS_per_mm2_vs_FPxFP",
+        "power_report",
+        "area_report",
+    ]
+    with output.open("w", newline="") as output_file:
+        writer = csv.DictWriter(
+            output_file,
+            fieldnames=fields,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        for metric in metrics:
+            row = metric["row"]
+            writer.writerow(
+                {
+                    "config": metric["config"],
+                    "precision": metric["precision"],
+                    "clock_MHz": f"{metric['clock_mhz']:.3f}",
+                    "MACs_per_cycle": metric["macs_per_cycle"],
+                    "TOPS": f"{metric['tops']:.4f}",
+                    "power_mW": f"{metric['power_mw']:.3f}",
+                    "area_mm2": f"{metric['area_mm2']:.6f}",
+                    "TOPS_per_W": f"{metric['tops_per_w']:.3f}",
+                    "TOPS_per_mm2": f"{metric['tops_per_mm2']:.4f}",
+                    "relative_TOPS_per_W_vs_FPxFP": (
+                        f"{metric['tops_per_w'] / fpxfp_tops_per_w:.3f}"
+                    ),
+                    "relative_TOPS_per_mm2_vs_FPxFP": (
+                        f"{metric['tops_per_mm2'] / fpxfp_tops_per_mm2:.3f}"
+                    ),
+                    "power_report": row.rpt_path,
+                    "area_report": metric["area_report"],
+                }
+            )
+    print(f"FPxFP/WKV/WoQ efficiency -> {output}")
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser()
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
+    parser.add_argument(
         "--breakdown-only",
         action="store_true",
         help="rebuild only wkvwoq_breakdown.csv from GEMM synthesis reports",
-    )
-    mode.add_argument(
-        "--tcu-only",
-        action="store_true",
-        help="rebuild only data_tcu.csv from the thread-32 TCU synthesis reports",
     )
     args = parser.parse_args()
 
@@ -431,17 +529,13 @@ def main():
         tcu = collect_tcu()
         if tcu is None:
             raise RuntimeError(
-                "TCU reports are incomplete; refusing to overwrite data_tcu.csv"
+                "FPxFP TCU reports are incomplete; "
+                "refusing to overwrite the efficiency CSV"
             )
-        tcu_out = HERE / "data_tcu.csv"
-        write_rows(tcu_out, [tcu])
-        print(f"wrote TCU baseline -> {tcu_out}")
         print(
-            f"  power={tcu.total_uw / 1000.0:.3f} mW, "
+            f"FPxFP baseline: power={tcu.total_uw / 1000.0:.3f} mW, "
             f"area={tcu.area_um2 / 1e6:.6f} mm^2"
         )
-        if args.tcu_only:
-            return
 
     if not args.breakdown_only:
         rows = collect_fpint_mxu()
@@ -462,17 +556,16 @@ def main():
                 "Use --breakdown-only to extract only the module breakdown."
             )
 
-        out = HERE / "data_fpint_mxu.csv"
-        write_rows(out, rows)
-        print(f"wrote {len(rows)} rows -> {out}")
-        # also dump a quick table to stdout
-        print(f"\n{'design':<30} {'prec':<25} {'P_total (uW)':>14} {'area (um^2)':>14} {'WNS':>6}")
-        print("-" * 90)
-        for row in rows:
-            print(f"{row.design:<30} {row.precision:<25} {row.total_uw:>14.3f} {row.area_um2:>14.1f} {row.wns_ns:>6.2f}")
+        write_efficiency_csv(tcu, rows)
 
     # WKV vs WoQ module-level breakdown
     bd = collect_wkv_woq_breakdown()
+    totals = {
+        "wkv_power": sum(bd["WKV_power"].values()),
+        "woq_power": sum(bd["WoQ_power"].values()),
+        "wkv_area": sum(bd["WKV_area"].values()),
+        "woq_area": sum(bd["WoQ_area"].values()),
+    }
     bd_path = HERE / "wkvwoq_breakdown.csv"
     with bd_path.open("w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
@@ -485,6 +578,15 @@ def main():
             woq_area = bd["WoQ_area"].get(inst, 0.0)
             w.writerow([inst, f"{wkv:.3f}", f"{woq:.3f}", f"{wkv - woq:.3f}",
                         f"{wkv_area:.3f}", f"{woq_area:.3f}", f"{wkv_area - woq_area:.3f}"])
+        w.writerow([
+            "total",
+            f"{totals['wkv_power']:.3f}",
+            f"{totals['woq_power']:.3f}",
+            f"{totals['wkv_power'] - totals['woq_power']:.3f}",
+            f"{totals['wkv_area']:.3f}",
+            f"{totals['woq_area']:.3f}",
+            f"{totals['wkv_area'] - totals['woq_area']:.3f}",
+        ])
     print(f"\nWKV/WoQ module-level breakdown -> {bd_path}")
     print(f"{'instance':<28} {'WKV (uW)':>12} {'WoQ (uW)':>12} {'Δ (uW)':>10} "
           f"{'WKV area':>12} {'WoQ area':>12} {'Δ area':>10}")
