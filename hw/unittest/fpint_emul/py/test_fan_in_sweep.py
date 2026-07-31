@@ -13,6 +13,7 @@ from fan_in_sweep import (
     bits_to_fp16,
     fp16_to_bits,
     generate_trial_data,
+    gpu_fp64_reference_outputs,
     gpu_model_prefix_outputs,
     plot_csv,
     qcol_real_2scomp_prefix_outputs,
@@ -175,33 +176,75 @@ def test_tensor_core_smoke():
     assert np.all(np.isfinite(bits_to_fp16(outputs[32])))
 
 
+def test_gpu_fp64_reference_smoke():
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    data = generate_trial_data(seed=53, m=16, n=16, max_k=64)
+    cpu = reference_prefix_outputs(
+        data.input_bits,
+        data.weights,
+        data.qcol_scale_bits,
+        data.qcol_zero,
+        QCOL,
+        (32, 64),
+    )
+    gpu = gpu_fp64_reference_outputs(
+        data.input_bits,
+        data.weights,
+        data.qcol_scale_bits,
+        data.qcol_zero,
+        QCOL,
+        (32, 64),
+        "cuda:0",
+    )
+    for k in (32, 64):
+        assert gpu[k].shape == (16, 16)
+        assert np.array_equal(gpu[k], cpu[k])
+
+
 def test_plot_csv_creates_fixed_column_width_figure(tmp_path):
     pd = pytest.importorskip("pandas")
     rows = []
     for seed in (1, 2):
         for qdir in ("qcol", "qrow"):
             for k in (32, 64):
-                for method, mean_ulp in (("gpu_tensor_core", 1.0), ("ours", 0.5)):
-                    rows.append(
-                        {
-                            "seed": seed,
-                            "qdir": qdir,
-                            "K": k,
-                            "method": method,
-                            "mean_ulp": mean_ulp,
-                        }
-                    )
+                for reference, reference_scale in (
+                    ("cpu_fp64", 1.0),
+                    ("gpu_fp64", 1.1),
+                ):
+                    for method, mean_ulp in (
+                        ("gpu_tensor_core", 1.0),
+                        ("ours", 0.5),
+                    ):
+                        rows.append(
+                            {
+                                "seed": seed,
+                                "qdir": qdir,
+                                "K": k,
+                                "method": method,
+                                "reference": reference,
+                                "mean_ulp": mean_ulp * reference_scale,
+                            }
+                        )
     csv_path = tmp_path / "raw_seed_metrics.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
-    png_path, svg_path, pdf_path = plot_csv(csv_path)
+    paths = plot_csv(csv_path)
 
-    assert png_path.exists()
-    assert svg_path.exists()
-    assert pdf_path.exists()
-    assert svg_path.read_text().lstrip().startswith("<?xml")
+    assert len(paths) == 6
+    for suffix in ("CPU", "GPU"):
+        png_path = tmp_path / f"fp16_int4_real2scomp_fanin_vs_ref_{suffix}.png"
+        svg_path = tmp_path / f"fp16_int4_real2scomp_fanin_vs_ref_{suffix}.svg"
+        pdf_path = tmp_path / f"fp16_int4_real2scomp_fanin_vs_ref_{suffix}.pdf"
+        assert png_path.exists()
+        assert svg_path.exists()
+        assert pdf_path.exists()
+        svg = svg_path.read_text()
+        assert svg.lstrip().startswith("<?xml")
+        assert "Mean ULP Error" in svg
+        with png_path.open("rb") as image:
+            image.seek(16)
+            width, height = struct.unpack(">II", image.read(8))
+        assert (width, height) == (700, 224)
     assert (tmp_path / "summary.csv").exists()
-    with png_path.open("rb") as image:
-        image.seek(16)
-        width, height = struct.unpack(">II", image.read(8))
-    assert (width, height) == (700, 280)

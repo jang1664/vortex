@@ -36,10 +36,13 @@ METHOD_GPU = "gpu_tensor_core"
 METHOD_GPU_MODEL = "gpu_model"
 METHOD_OURS = "ours"
 METHODS = (METHOD_GPU, METHOD_GPU_MODEL, METHOD_OURS)
+REFERENCE_CPU = "cpu_fp64"
+REFERENCE_GPU = "gpu_fp64"
+REFERENCES = (REFERENCE_CPU, REFERENCE_GPU)
 QDIR_NAMES = {QCOL: "qcol", QROW: "qrow"}
 PLOT_LOG_FLOOR = 1e-5
 COL_WIDTH = 3.5
-FIG_HEIGHT = 1.4
+FIG_HEIGHT = 1.12
 DEFAULT_FONT_SIZE = 4.0
 TITLE_FONT_SIZE = 4.2
 LINE_WIDTH = 0.25
@@ -175,6 +178,51 @@ def reference_prefix_outputs(
 
 def input_bits_to_float64(bits: np.ndarray) -> np.ndarray:
     return bits_to_fp16(bits).astype(np.float64)
+
+
+def gpu_fp64_reference_outputs(
+    input_bits: np.ndarray,
+    weights: np.ndarray,
+    scale_bits: np.ndarray,
+    zero: np.ndarray,
+    qdir: int,
+    k_values: Sequence[int],
+    device: str,
+    qblock: int = QBLOCK,
+) -> Dict[int, np.ndarray]:
+    """Run the FP64 reference matmul on CUDA and round outputs to FP16."""
+    torch = _load_torch()
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available in the vortex conda environment")
+
+    max_k = max(k_values)
+    n = weights.shape[1]
+    scales, zeros = _expand_qparams(scale_bits, zero, qdir, max_k, n, qblock)
+    input_gpu = torch.from_numpy(bits_to_fp16(input_bits[:, :max_k]).copy()).to(
+        device=device,
+        dtype=torch.float64,
+    )
+    weights_gpu = torch.from_numpy(weights[:max_k].copy()).to(
+        device=device,
+        dtype=torch.float64,
+    )
+    scales_gpu = torch.from_numpy(scales.copy()).to(
+        device=device,
+        dtype=torch.float64,
+    )
+    zeros_gpu = torch.from_numpy(zeros.copy()).to(
+        device=device,
+        dtype=torch.float64,
+    )
+    dequant_gpu = (weights_gpu - zeros_gpu) * scales_gpu
+
+    outputs: Dict[int, np.ndarray] = {}
+    with torch.no_grad():
+        for k in k_values:
+            output = torch.matmul(input_gpu[:, :k], dequant_gpu[:k, :])
+            outputs[k] = fp16_to_bits(output.cpu().numpy())
+    torch.cuda.synchronize()
+    return outputs
 
 
 def gpu_model_prefix_outputs(
@@ -384,6 +432,7 @@ def _metric_row(
     qdir: int,
     k: int,
     method: str,
+    reference_name: str,
     reference: np.ndarray,
     evaluated: np.ndarray,
 ) -> dict:
@@ -395,6 +444,7 @@ def _metric_row(
         "qdir": QDIR_NAMES[qdir],
         "K": k,
         "method": method,
+        "reference": reference_name,
         "mean_ulp": float(np.mean(error)),
         "max_ulp": float(np.max(error)),
         "p50_ulp": float(np.percentile(error, 50)),
@@ -407,8 +457,14 @@ def summarize_results(raw):
     import pandas as pd
     from scipy.stats import t
 
+    raw = raw.copy()
+    if "reference" not in raw.columns:
+        raw["reference"] = REFERENCE_CPU
     rows = []
-    for (qdir, k, method), group in raw.groupby(["qdir", "K", "method"], sort=True):
+    for (reference, qdir, k, method), group in raw.groupby(
+        ["reference", "qdir", "K", "method"],
+        sort=True,
+    ):
         values = group["mean_ulp"].to_numpy(dtype=np.float64)
         count = len(values)
         mean = float(np.mean(values))
@@ -416,6 +472,7 @@ def summarize_results(raw):
         half_width = float(t.ppf(0.975, count - 1) * std / np.sqrt(count)) if count > 1 else 0.0
         rows.append(
             {
+                "reference": reference,
                 "qdir": qdir,
                 "K": int(k),
                 "method": method,
@@ -426,11 +483,17 @@ def summarize_results(raw):
                 "trial_count": count,
             }
         )
-    return pd.DataFrame(rows).sort_values(["qdir", "K", "method"]).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values(
+        ["reference", "qdir", "K", "method"]
+    ).reset_index(drop=True)
 
 
-def plot_summary(summary, output_dir: Path) -> tuple[Path, Path, Path]:
-    """Render a two-panel paper-column plot from summarized seed metrics."""
+def _plot_reference_summary(
+    summary,
+    output_dir: Path,
+    reference_suffix: str,
+) -> tuple[Path, Path, Path]:
+    """Render one reference-specific two-panel paper-column plot."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -508,16 +571,17 @@ def plot_summary(summary, output_dir: Path) -> tuple[Path, Path, Path]:
             axis.set_yscale("log")
             axis.set_ylim(bottom=PLOT_LOG_FLOOR)
             if column == 0:
-                axis.set_ylabel("Mean FP16 ULP Error")
+                axis.set_ylabel("Mean ULP Error")
                 axis.tick_params(axis="y", which="both", width=Y_TICK_WIDTH)
             else:
                 axis.tick_params(axis="y", which="both", left=False, labelleft=False)
                 axis.legend(loc="lower right")
         fig.supxlabel("Fan-in (K)", fontsize=DEFAULT_FONT_SIZE)
         fig.tight_layout(pad=0.3, w_pad=0.6)
-        png_path = output_dir / "fp16_int4_real2scomp_fanin.png"
-        svg_path = output_dir / "fp16_int4_real2scomp_fanin.svg"
-        pdf_path = output_dir / "fp16_int4_real2scomp_fanin.pdf"
+        stem = f"fp16_int4_real2scomp_fanin_vs_ref_{reference_suffix}"
+        png_path = output_dir / f"{stem}.png"
+        svg_path = output_dir / f"{stem}.svg"
+        pdf_path = output_dir / f"{stem}.pdf"
         fig.savefig(png_path, dpi=200)
         fig.savefig(svg_path)
         fig.savefig(pdf_path)
@@ -525,8 +589,21 @@ def plot_summary(summary, output_dir: Path) -> tuple[Path, Path, Path]:
     return png_path, svg_path, pdf_path
 
 
-def plot_csv(csv_path: Path) -> tuple[Path, Path, Path]:
-    """Load raw seed metrics from one CSV and create PNG/SVG/PDF plots beside it."""
+def plot_summary(summary, output_dir: Path) -> tuple[Path, ...]:
+    """Render CPU- and GPU-reference figures available in summarized metrics."""
+    outputs: list[Path] = []
+    for reference, suffix in (
+        (REFERENCE_CPU, "CPU"),
+        (REFERENCE_GPU, "GPU"),
+    ):
+        selected = summary[summary["reference"].eq(reference)]
+        if not selected.empty:
+            outputs.extend(_plot_reference_summary(selected, output_dir, suffix))
+    return tuple(outputs)
+
+
+def plot_csv(csv_path: Path) -> tuple[Path, ...]:
+    """Load raw seed metrics and create reference-specific figures beside it."""
     import pandas as pd
 
     csv_path = csv_path.resolve()
@@ -588,9 +665,19 @@ def export_data(args: argparse.Namespace) -> Path:
     if raw_path.exists() and not args.resume:
         raise FileExistsError(f"Result already exists; use --resume: {raw_path}")
     raw = pd.read_csv(raw_path) if raw_path.exists() else pd.DataFrame()
+    if not raw.empty and "reference" not in raw.columns:
+        raw["reference"] = REFERENCE_CPU
     completed = set()
     if not raw.empty:
-        completed = set(zip(raw["seed"], raw["qdir"], raw["K"], raw["method"]))
+        completed = set(
+            zip(
+                raw["seed"],
+                raw["qdir"],
+                raw["K"],
+                raw["method"],
+                raw["reference"],
+            )
+        )
 
     kernels = verify_tensor_core(args.device, k_values) if args.verify_tensor_core else {}
     metadata = {
@@ -605,6 +692,7 @@ def export_data(args: argparse.Namespace) -> Path:
             "trials": args.trials,
             "base_seed": args.base_seed,
             "quant": "signed-asymmetric",
+            "references": list(REFERENCES),
             "weight_range": [-8, 7],
             "zero_range": [-4, 3],
             "scale_range": [SCALE_MIN, SCALE_MAX],
@@ -630,10 +718,16 @@ def export_data(args: argparse.Namespace) -> Path:
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
-    expected_per_seed = 2 * len(k_values) * len(METHODS)
+    expected_per_seed = 2 * len(k_values) * len(METHODS) * len(REFERENCES)
     for trial in range(args.trials):
         seed = args.base_seed + trial
-        seed_keys = {(seed, qdir, k, method) for qdir in QDIR_NAMES.values() for k in k_values for method in METHODS}
+        seed_keys = {
+            (seed, qdir, k, method, reference)
+            for qdir in QDIR_NAMES.values()
+            for k in k_values
+            for method in METHODS
+            for reference in REFERENCES
+        }
         if len(seed_keys & completed) == expected_per_seed:
             print(f"[{trial + 1}/{args.trials}] seed={seed}: already complete")
             continue
@@ -654,6 +748,16 @@ def export_data(args: argparse.Namespace) -> Path:
             reference = reference_prefix_outputs(
                 data.input_bits, data.weights, scales, zeros, qdir, k_values, args.qblock
             )
+            gpu_reference = gpu_fp64_reference_outputs(
+                data.input_bits,
+                data.weights,
+                scales,
+                zeros,
+                qdir,
+                k_values,
+                args.device,
+                args.qblock,
+            )
             gpu_model = gpu_model_prefix_outputs(
                 data.input_bits, data.weights, scales, zeros, qdir, k_values, args.qblock
             )
@@ -669,17 +773,37 @@ def export_data(args: argparse.Namespace) -> Path:
             )
             evaluations = {METHOD_GPU: gpu, METHOD_GPU_MODEL: gpu_model, METHOD_OURS: ours}
             for k in k_values:
-                for method, outputs in evaluations.items():
-                    key = (seed, QDIR_NAMES[qdir], k, method)
-                    if key not in completed:
-                        new_rows.append(
-                            _metric_row(seed, qdir, k, method, reference[k], outputs[k])
+                for reference_name, reference_outputs in (
+                    (REFERENCE_CPU, reference),
+                    (REFERENCE_GPU, gpu_reference),
+                ):
+                    for method, outputs in evaluations.items():
+                        key = (
+                            seed,
+                            QDIR_NAMES[qdir],
+                            k,
+                            method,
+                            reference_name,
                         )
-                        completed.add(key)
+                        if key not in completed:
+                            new_rows.append(
+                                _metric_row(
+                                    seed,
+                                    qdir,
+                                    k,
+                                    method,
+                                    reference_name,
+                                    reference_outputs[k],
+                                    outputs[k],
+                                )
+                            )
+                            completed.add(key)
 
         if new_rows:
             raw = pd.concat((raw, pd.DataFrame(new_rows)), ignore_index=True)
-            raw = raw.sort_values(["seed", "qdir", "K", "method"]).reset_index(drop=True)
+            raw = raw.sort_values(
+                ["seed", "reference", "qdir", "K", "method"]
+            ).reset_index(drop=True)
             temporary = raw_path.with_suffix(".csv.tmp")
             raw.to_csv(temporary, index=False)
             temporary.replace(raw_path)

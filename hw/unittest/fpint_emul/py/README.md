@@ -84,7 +84,9 @@ pytest test_fpint_emul.py -v
 
 The reproducible numerical-accuracy sweep uses signed asymmetric INT4
 weights, the real two's-complement QCOL/QROW emulators, and an actual NVIDIA
-FP16 Tensor Core GEMM. Run it from the `vortex` conda environment:
+FP16 Tensor Core GEMM. Each evaluated result is compared against both a NumPy
+FP64 reference on the CPU and a PyTorch FP64 GEMM reference on the GPU. Run it
+from the `vortex` conda environment:
 
 Inputs independently sample a uniform sign bit, a discrete-uniform exponent
 in the inclusive range `[-24, 15]`, and a mantissa field from
@@ -110,6 +112,9 @@ exported CSV path:
 python fan_in_sweep.py plot \
   analysis_workspace/numerical_acc/results/fpint_real_2scomp/RUN/raw_seed_metrics.csv
 ```
+
+This creates `fp16_int4_real2scomp_fanin_vs_ref_CPU.{png,svg,pdf}` and
+`fp16_int4_real2scomp_fanin_vs_ref_GPU.{png,svg,pdf}` beside the CSV.
 
 Run the focused tests from this directory with importlib mode because this
 directory is named `py`, which otherwise conflicts with pytest's `py` module:
