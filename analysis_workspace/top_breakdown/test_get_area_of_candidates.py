@@ -170,6 +170,8 @@ def test_candidate_breakdown_plot_is_written(tmp_path: Path) -> None:
     assert csv_path.is_file()
     assert png_path.is_file()
     assert png_path.stat().st_size > 0
+    assert png_path.with_suffix(".pdf").stat().st_size > 0
+    assert png_path.with_suffix(".svg").stat().st_size > 0
     plotted = pd.read_csv(csv_path)
     assert len(plotted) == 5
     assert set(plotted["candidate"]) == {"C2"}

@@ -1315,7 +1315,7 @@ def write_candidate_breakdown_plot(
     output_dir: Path,
     legend_group: area_breakdown.LegendGroup,
 ) -> tuple[Path, Path]:
-    """Write one candidate's normalized stacked-bar CSV/PNG."""
+    """Write one candidate's normalized stacked-bar CSV/PNG/PDF/SVG."""
     plt = area_breakdown.plt
 
     plt.rcParams.update(
@@ -1417,10 +1417,21 @@ def write_candidate_breakdown_plot(
         top=0.96,
         bottom=0.58 if candidate == "C4" else 0.70,
     )
-    fig.savefig(png_path, dpi=OUTPUT_DPI, facecolor="white")
+    figure_paths = []
+    for extension in ("png", "pdf", "svg"):
+        figure_path = output_dir / f"{stem}.{extension}"
+        fig.savefig(
+            figure_path,
+            dpi=OUTPUT_DPI,
+            facecolor="white",
+            bbox_inches="tight",
+            pad_inches=0.0,
+        )
+        figure_paths.append(figure_path)
     plt.close(fig)
     print(f"Wrote {csv_path}")
-    print(f"Wrote {png_path}")
+    for figure_path in figure_paths:
+        print(f"Wrote {figure_path}")
     return csv_path, png_path
 
 
