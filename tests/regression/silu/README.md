@@ -5,7 +5,7 @@ device kernel in version-matched sets. Use matching postfixes together.
 
 ## Active Combination
 
-The default active files are symlinks to the optimized v2 path:
+The host and correctness harness use the optimized v2 path:
 
 ```text
 kernel.cpp     -> kernel_v2.cpp
@@ -13,12 +13,29 @@ main.cpp       -> main_v2.cpp
 bench_main.cpp -> bench_main_v2.cpp
 ```
 
+The Makefile selects the device traversal independently. The default is
+`SILU_VARIANT=linear`.
+
+## Device Traversal Variants
+
+| Variant | Device source | Traversal | Purpose |
+| --- | --- | --- | --- |
+| `linear` (default) | `kernel.linear.cpp` | Element-wise grid-stride | Coalesced row-major baseline for comparison with layout-fused SiLU. |
+| `chunk32` | `kernel.chunk32.cpp` | One serial 32-element chunk per lane | Previous v2 traversal retained for A/B and regression analysis. |
+
+Select a variant at build time:
+
+```bash
+make -B -C build/tests/regression/silu SILU_VARIANT=linear
+make -B -C build/tests/regression/silu SILU_VARIANT=chunk32
+```
+
 ## Versions
 
 | Version | Files | Traversal | Purpose |
 | --- | --- | --- | --- |
 | v1 | `kernel_v1.cpp`, `main_v1.cpp`, `bench_main_v1.cpp` | Element-wise grid-stride | Original baseline implementation. |
-| v2 | `kernel_v2.cpp`, `main_v2.cpp`, `bench_main_v2.cpp` | `M x K` rows with 32-wide K chunks | Optimized baseline aligned with `silu_layout_fused_v2` traversal. Supports both `-n SIZE` and `-m M -k K`. |
+| v2 | `kernel_v2.cpp`, `main_v2.cpp`, `bench_main_v2.cpp` | Makefile-selected `linear` or `chunk32` traversal | Supports both `-n SIZE` and `-m M -k K`. |
 
 ## Switching
 

@@ -14,20 +14,28 @@ using data_t = fp16_t;
 // 
 // This is used in GLU variants (SwiGLU, GeGLU) for LLaMA-style FFN
 // 
-// Strategy: flat grid-stride traversal over 32-element chunks. Keeping the
-// chunk-local loop preserves contiguous row-major accesses while distributing
-// both M and K across the full grid.
+// The build selects one of two traversal variants:
+//
+//   linear:  consecutive lanes process consecutive elements.
+//   chunk32: each lane owns a 32-element chunk and processes it serially.
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   auto pInput = reinterpret_cast<data_t *>(arg->input_addr);
   auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
   const uint32_t size = arg->size;
-  constexpr uint32_t CHUNK = 32;
-  constexpr uint32_t LOG2_CHUNK = 5;
 
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+#ifdef SILU_USE_LINEAR
+  for (uint32_t i = thread_id; i < size; i += total_threads) {
+    float x = fp16_to_float(pInput[i]);
+    pOutput[i] = float_to_fp16(x / (1.0f + vx_expf(-x)));
+  }
+#else
+  constexpr uint32_t CHUNK = 32;
+  constexpr uint32_t LOG2_CHUNK = 5;
   const uint32_t total_chunks = (size + CHUNK - 1) >> LOG2_CHUNK;
 
   for (uint32_t chunk = thread_id; chunk < total_chunks;
@@ -40,6 +48,7 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
       pOutput[i] = float_to_fp16(x / (1.0f + vx_expf(-x)));
     }
   }
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////
