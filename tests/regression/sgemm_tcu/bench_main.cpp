@@ -162,17 +162,18 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
 
-  std::vector<itype_t> h_A(sizeA, 0);
-  std::vector<itype_t> h_B(sizeB, 0);
-  for (uint32_t m = 0; m < M; ++m) {
-    random_bytes(&h_A[m * K_exec], K * sizeof(itype_t));
+  if (bench.copy_inputs) {
+    std::vector<itype_t> h_A(sizeA, 0);
+    std::vector<itype_t> h_B(sizeB, 0);
+    for (uint32_t m = 0; m < M; ++m) {
+      random_bytes(&h_A[m * K_exec], K * sizeof(itype_t));
+    }
+    for (uint32_t k = 0; k < K; ++k) {
+      random_bytes(&h_B[k * N_exec], N * sizeof(itype_t));
+    }
+    RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
+    RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
   }
-  for (uint32_t k = 0; k < K; ++k) {
-    random_bytes(&h_B[k * N_exec], N * sizeof(itype_t));
-  }
-
-  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
-  RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));

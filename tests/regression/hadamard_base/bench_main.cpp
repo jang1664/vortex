@@ -88,10 +88,13 @@ int main(int argc, char** argv) {
     return -1;
   }
 
-  std::vector<data_t> input(total);
-  std::vector<data_t> matrix(static_cast<size_t>(base_k) * base_k);
-  initialize_values(input);
-  initialize_values(matrix);
+  std::vector<data_t> input, matrix;
+  if (bench.copy_inputs) {
+    input.resize(total);
+    matrix.resize(static_cast<size_t>(base_k) * base_k);
+    initialize_values(input);
+    initialize_values(matrix);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart())
@@ -114,12 +117,14 @@ int main(int argc, char** argv) {
 
   const uint64_t tensor_bytes = total * sizeof(data_t);
   const uint64_t matrix_bytes =
-      static_cast<uint64_t>(matrix.size()) * sizeof(data_t);
+      static_cast<uint64_t>(base_k) * base_k * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, tensor_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, matrix_bytes, VX_MEM_READ, &matrix_buffer));
   RT_CHECK(vx_mem_alloc(device, tensor_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, input.data(), 0, tensor_bytes));
-  RT_CHECK(vx_copy_to_dev(matrix_buffer, matrix.data(), 0, matrix_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, input.data(), 0, tensor_bytes));
+    RT_CHECK(vx_copy_to_dev(matrix_buffer, matrix.data(), 0, matrix_bytes));
+  }
 
   kernel_arg_t kernel_arg{};
   kernel_arg.kernel_id = KERNEL_HADAMARD_BASE;

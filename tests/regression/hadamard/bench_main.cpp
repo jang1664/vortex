@@ -155,13 +155,15 @@ int main(int argc, char *argv[]) {
            rows, dim, padded_dim, base_k, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_input(numel);
   const uint32_t matrix_dim = std::max(1u, base_k);
-  std::vector<data_t> h_matrix(
-      static_cast<size_t>(matrix_dim) * matrix_dim);
-  srand(seed);
-  initialize_random(h_input);
-  initialize_random(h_matrix);
+  std::vector<data_t> h_input, h_matrix;
+  if (bench.copy_inputs) {
+    h_input.resize(numel);
+    h_matrix.resize(static_cast<size_t>(matrix_dim) * matrix_dim);
+    srand(seed);
+    initialize_random(h_input);
+    initialize_random(h_matrix);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -203,12 +205,14 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
   const uint64_t matrix_bytes =
-      static_cast<uint64_t>(h_matrix.size()) * sizeof(data_t);
+      static_cast<uint64_t>(matrix_dim) * matrix_dim * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, matrix_bytes, VX_MEM_READ, &matrix_buffer));
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
-  RT_CHECK(vx_copy_to_dev(
-      matrix_buffer, h_matrix.data(), 0, matrix_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+    RT_CHECK(vx_copy_to_dev(
+        matrix_buffer, h_matrix.data(), 0, matrix_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_HADAMARD;

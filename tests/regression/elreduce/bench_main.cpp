@@ -90,9 +90,12 @@ int main(int argc, char *argv[]) {
   }
 
   uint32_t input_size = batch_size * reduce_dim;
-  std::vector<data_t> h_in(input_size);
-  srand(42);
-  initialize_random(h_in);
+  std::vector<data_t> h_in;
+  if (bench.copy_inputs) {
+    h_in.resize(input_size);
+    srand(42);
+    initialize_random(h_in);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -110,7 +113,9 @@ int main(int argc, char *argv[]) {
   uint32_t output_bytes = batch_size * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, input_bytes,  VX_MEM_READ,  &input_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, input_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, input_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = op_id;

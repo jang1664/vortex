@@ -81,13 +81,18 @@ int main(int argc, char *argv[]) {
   const size_t dst_elems = (size_t)K * N;
   const size_t packed_bytes = dst_elems / 2;
   const size_t qparam_elems = kv_qparam_count(K, N, QBLK, QDIR);
-  std::vector<uint8_t> h_packed(packed_bytes, 0x84);
-  std::vector<fp16_t> h_scales(qparam_elems, float_to_fp16(0.125f));
-  std::vector<int16_t> h_zeros(
-      qparam_elems,
-      quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-          ? 0
-          : (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 3 : -1));
+  std::vector<uint8_t> h_packed;
+  std::vector<fp16_t> h_scales;
+  std::vector<int16_t> h_zeros;
+  if (bench.copy_inputs) {
+    h_packed.assign(packed_bytes, 0x84);
+    h_scales.assign(qparam_elems, float_to_fp16(0.125f));
+    h_zeros.assign(
+        qparam_elems,
+        quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+            ? 0
+            : (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 3 : -1));
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -100,9 +105,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, dst_elems * sizeof(fp16_t), VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(fp16_t), VX_MEM_READ, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t), VX_MEM_READ, &zero_buffer));
-  RT_CHECK(vx_copy_to_dev(src_buffer, h_packed.data(), 0, packed_bytes));
-  RT_CHECK(vx_copy_to_dev(scale_buffer, h_scales.data(), 0, qparam_elems * sizeof(fp16_t)));
-  RT_CHECK(vx_copy_to_dev(zero_buffer, h_zeros.data(), 0, qparam_elems * sizeof(int16_t)));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buffer, h_packed.data(), 0, packed_bytes));
+    RT_CHECK(vx_copy_to_dev(scale_buffer, h_scales.data(), 0, qparam_elems * sizeof(fp16_t)));
+    RT_CHECK(vx_copy_to_dev(zero_buffer, h_zeros.data(), 0, qparam_elems * sizeof(int16_t)));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

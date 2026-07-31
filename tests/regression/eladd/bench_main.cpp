@@ -70,10 +70,14 @@ int main(int argc, char *argv[]) {
            size, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_a(size), h_b(size);
-  srand(42);
-  initialize_random(h_a);
-  initialize_random(h_b);
+  std::vector<data_t> h_a, h_b;
+  if (bench.copy_inputs) {
+    h_a.resize(size);
+    h_b.resize(size);
+    srand(42);
+    initialize_random(h_a);
+    initialize_random(h_b);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -91,8 +95,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_a_buffer));
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_b_buffer));
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_a_buffer, h_a.data(), 0, buffer_bytes));
-  RT_CHECK(vx_copy_to_dev(input_b_buffer, h_b.data(), 0, buffer_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_a_buffer, h_a.data(), 0, buffer_bytes));
+    RT_CHECK(vx_copy_to_dev(input_b_buffer, h_b.data(), 0, buffer_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_ELADD;

@@ -83,8 +83,11 @@ int main(int argc, char *argv[]) {
   const size_t src_elems = (size_t)K * N;
   const size_t packed_bytes = src_elems / 2;
   const size_t qparam_elems = kv_qparam_count(K, N, QBLK, QDIR);
-  std::vector<fp16_t> h_src(src_elems);
-  init_src(h_src);
+  std::vector<fp16_t> h_src;
+  if (bench.copy_inputs) {
+    h_src.resize(src_elems);
+    init_src(h_src);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -97,7 +100,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, packed_bytes, VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(fp16_t), VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t), VX_MEM_WRITE, &zero_buffer));
-  RT_CHECK(vx_copy_to_dev(src_buffer, h_src.data(), 0, src_elems * sizeof(fp16_t)));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buffer, h_src.data(), 0, src_elems * sizeof(fp16_t)));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

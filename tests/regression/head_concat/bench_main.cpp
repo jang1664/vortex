@@ -67,8 +67,11 @@ int main(int argc, char *argv[]) {
   const uint32_t hidden = heads * headdim;
   const size_t elems = (size_t)batch * seq * hidden;
   const size_t bytes = elems * sizeof(data_t);
-  std::vector<data_t> h_input(elems);
-  init_input(h_input);
+  std::vector<data_t> h_input;
+  if (bench.copy_inputs) {
+    h_input.resize(elems);
+    init_input(h_input);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -79,7 +82,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, bytes));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

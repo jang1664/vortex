@@ -245,6 +245,10 @@ int main(int argc, char* argv[]) {
   if (vx_bench::report_parse_error(bench)) {
     return -1;
   }
+  // This app is also a correctness test: full/memory modes read the result
+  // back and compare it against a host reference. Its payload upload is
+  // therefore intentionally mandatory, including when skip is requested.
+  bench.copy_inputs = true;
 
   uint32_t K = 128;
   uint32_t N = 128;

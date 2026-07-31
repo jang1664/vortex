@@ -94,12 +94,15 @@ int main(int argc, char *argv[]) {
            num_points, buffer_bytes, bench.warmup, bench.iterations);
   }
 
-  std::vector<TYPE> h_src0(num_points);
-  std::vector<TYPE> h_src1(num_points);
-  srand(seed);
-  for (uint32_t i = 0; i < num_points; ++i) {
-    h_src0[i] = generate_value<TYPE>();
-    h_src1[i] = generate_value<TYPE>();
+  std::vector<TYPE> h_src0, h_src1;
+  if (bench.copy_inputs) {
+    h_src0.resize(num_points);
+    h_src1.resize(num_points);
+    srand(seed);
+    for (uint32_t i = 0; i < num_points; ++i) {
+      h_src0[i] = generate_value<TYPE>();
+      h_src1[i] = generate_value<TYPE>();
+    }
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -119,8 +122,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(src1_buffer, &kernel_arg.src1_addr));
   RT_CHECK(vx_mem_address(dst_buffer, &kernel_arg.dst_addr));
 
-  RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buffer_bytes));
-  RT_CHECK(vx_copy_to_dev(src1_buffer, h_src1.data(), 0, buffer_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buffer_bytes));
+    RT_CHECK(vx_copy_to_dev(src1_buffer, h_src1.data(), 0, buffer_bytes));
+  }
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));

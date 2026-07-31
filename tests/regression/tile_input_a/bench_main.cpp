@@ -95,12 +95,16 @@ int main(int argc, char** argv) {
   if (!validate_tile_params()) return 1;
   const uint32_t K_pad = align_up(K, TILE_DMA_MXU_KT);
 
-  std::vector<uint16_t> h_src(size_t(M) * K);
-  for (size_t i = 0; i < h_src.size(); ++i) {
-    h_src[i] = uint16_t((i + 1) & 0xffff);
+  const size_t src_elems = size_t(M) * K;
+  std::vector<uint16_t> h_src;
+  if (bench.copy_inputs) {
+    h_src.resize(src_elems);
+    for (size_t i = 0; i < h_src.size(); ++i) {
+      h_src[i] = uint16_t((i + 1) & 0xffff);
+    }
   }
 
-  const size_t src_bytes = h_src.size() * TILE_ELEM_BYTES;
+  const size_t src_bytes = src_elems * TILE_ELEM_BYTES;
   const size_t dst_bytes = size_t(M_pad) * K_pad * TILE_ELEM_BYTES;
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -112,7 +116,9 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_bytes, VX_MEM_READ, &src_buf));
   RT_CHECK(vx_mem_alloc(device, dst_bytes, VX_MEM_WRITE, &dst_buf));
-  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  }
 
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));

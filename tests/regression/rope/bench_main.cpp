@@ -104,10 +104,15 @@ int main(int argc, char *argv[]) {
 
   uint32_t input_size = batch_size * seq_len * num_heads * head_dim;
   uint32_t freq_size  = max_seq_len * (head_dim / 2);
-  std::vector<data_t> h_in(input_size), h_cos(freq_size), h_sin(freq_size);
-  srand(42);
-  initialize_random(h_in);
-  precompute_freqs(h_cos, h_sin, max_seq_len, head_dim);
+  std::vector<data_t> h_in, h_cos, h_sin;
+  if (bench.copy_inputs) {
+    h_in.resize(input_size);
+    h_cos.resize(freq_size);
+    h_sin.resize(freq_size);
+    srand(42);
+    initialize_random(h_in);
+    precompute_freqs(h_cos, h_sin, max_seq_len, head_dim);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -128,9 +133,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, freq_bytes,   VX_MEM_READ,  &cos_buffer));
   RT_CHECK(vx_mem_alloc(device, freq_bytes,   VX_MEM_READ,  &sin_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(),  0, input_bytes));
-  RT_CHECK(vx_copy_to_dev(cos_buffer,   h_cos.data(), 0, freq_bytes));
-  RT_CHECK(vx_copy_to_dev(sin_buffer,   h_sin.data(), 0, freq_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(),  0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(cos_buffer,   h_cos.data(), 0, freq_bytes));
+    RT_CHECK(vx_copy_to_dev(sin_buffer,   h_sin.data(), 0, freq_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_ROPE;

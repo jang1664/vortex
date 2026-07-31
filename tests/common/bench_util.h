@@ -55,6 +55,9 @@ struct Args {
     int         warmup        = 3;
     int         iterations    = 10;
     bool        latency_enabled = true;
+    // Payload uploads are enabled by default. Latency-only experiments may
+    // explicitly disable host preparation and H2D copies.
+    bool        copy_inputs   = true;
     bool        csv           = false;
     // Optional report file. Empty => write report to stdout.
     std::string output;
@@ -328,7 +331,9 @@ inline bool read_next_value(int& r, int argc, char** argv, const char* flag, con
     return true;
 }
 
-// Parses --warmup=N / --iterations=N / --latency / --no-latency / --csv / --output=PATH / --output-append
+// Parses --warmup=N / --iterations=N / --latency / --no-latency /
+// --input-copy=skip|copy / --copy-inputs / --skip-input-copy /
+// --csv / --output=PATH / --output-append
 // plus optional --power* flags in place:
 // matched flags are removed from argv and argc is decremented so the caller's
 // existing argument parser sees only its own flags.
@@ -356,6 +361,14 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--no-latency") == 0 ||
                    std::strcmp(s, "--skip-latency") == 0) {
             a.latency_enabled = false;
+        } else if (std::strcmp(s, "--copy-inputs") == 0 ||
+                   std::strcmp(s, "--input-copy=copy") == 0) {
+            a.copy_inputs = true;
+        } else if (std::strcmp(s, "--skip-input-copy") == 0 ||
+                   std::strcmp(s, "--input-copy=skip") == 0) {
+            a.copy_inputs = false;
+        } else if (std::strncmp(s, "--input-copy=", 13) == 0) {
+            set_parse_error(a, std::string("invalid --input-copy mode: ") + (s + 13));
         } else if (std::strcmp(s, "--csv") == 0) {
             a.csv = true;
         } else if (std::strncmp(s, "--output=", 9) == 0) {

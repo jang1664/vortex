@@ -113,11 +113,14 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_address(dst_buffer, &kernel_arg.dst_addr));
 
-  std::vector<TYPE> h_src0(num_points);
-  for (uint32_t i = 0; i < num_points; ++i) {
-    h_src0[i] = Compare<TYPE>::gen();
+  std::vector<TYPE> h_src0;
+  if (bench.copy_inputs) {
+    h_src0.resize(num_points);
+    for (uint32_t i = 0; i < num_points; ++i) {
+      h_src0[i] = Compare<TYPE>::gen();
+    }
+    RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buf_size));
   }
-  RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buf_size));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));

@@ -213,9 +213,12 @@ int main(int argc, char** argv) {
     src_cols = ceil_div_pow2(N, QBLK);
   }
   const size_t src_elems = size_t(src_rows) * src_cols;
-  std::vector<uint16_t> h_src(src_elems);
-  for (size_t i = 0; i < src_elems; ++i) {
-    h_src[i] = uint16_t(i & 0xffff);
+  std::vector<uint16_t> h_src;
+  if (bench.copy_inputs) {
+    h_src.resize(src_elems);
+    for (size_t i = 0; i < src_elems; ++i) {
+      h_src[i] = uint16_t(i & 0xffff);
+    }
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -227,7 +230,9 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(uint16_t), VX_MEM_READ, &src_buf));
   RT_CHECK(vx_mem_alloc(device, total_bytes, VX_MEM_WRITE, &dst_buf));
-  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_elems * sizeof(uint16_t)));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_elems * sizeof(uint16_t)));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

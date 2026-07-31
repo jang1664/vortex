@@ -293,22 +293,33 @@ int main(int argc, char *argv[]) {
   std::vector<uint8_t>  h_W_int4;
   std::vector<uint16_t> h_scales;
   std::vector<int16_t>  h_zeros;
-  build_test_vectors(h_A, h_W_int4, h_scales, h_zeros);
+  if (bench.copy_inputs) {
+    build_test_vectors(h_A, h_W_int4, h_scales, h_zeros);
+  }
 
   size_t out_total_bytes = size_t(M) * N * sizeof(uint16_t);
+  size_t input_bytes = size_t(M) * K * sizeof(uint16_t);
+  size_t weight_bytes = (WTRANS == 0)
+      ? size_t(K) * ((N + 1) / 2)
+      : size_t(N) * ((K + 1) / 2);
+  size_t qparam_elems = (QDIR == 0)
+      ? size_t((K + QBLK - 1) / QBLK) * N
+      : size_t(K) * ((N + QBLK - 1) / QBLK);
 
   // ---- Allocate device buffers (row-major; no tile conversion) ----
-  RT_CHECK(vx_mem_alloc(device, h_A.size()      * sizeof(uint16_t), VX_MEM_READ,  &A_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_W_int4.size() * sizeof(uint8_t),  VX_MEM_READ,  &W_int4_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_scales.size() * sizeof(uint16_t), VX_MEM_READ,  &scales_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_zeros.size()  * sizeof(int16_t),  VX_MEM_READ,  &zeros_buffer));
+  RT_CHECK(vx_mem_alloc(device, input_bytes,                       VX_MEM_READ,  &A_buffer));
+  RT_CHECK(vx_mem_alloc(device, weight_bytes,                      VX_MEM_READ,  &W_int4_buffer));
+  RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(uint16_t),   VX_MEM_READ,  &scales_buffer));
+  RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t),    VX_MEM_READ,  &zeros_buffer));
   RT_CHECK(vx_mem_alloc(device, out_total_bytes,                    VX_MEM_WRITE, &C_buffer));
 
   // ---- Upload row-major data ----
-  RT_CHECK(vx_copy_to_dev(A_buffer,      h_A.data(),      0, h_A.size()      * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, h_W_int4.size() * sizeof(uint8_t)));
-  RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, h_scales.size() * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(zeros_buffer,  h_zeros.data(),  0, h_zeros.size()  * sizeof(int16_t)));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(A_buffer,      h_A.data(),      0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, weight_bytes));
+    RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, qparam_elems * sizeof(uint16_t)));
+    RT_CHECK(vx_copy_to_dev(zeros_buffer,  h_zeros.data(),  0, qparam_elems * sizeof(int16_t)));
+  }
 
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));

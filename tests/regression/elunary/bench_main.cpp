@@ -95,11 +95,14 @@ int main(int argc, char *argv[]) {
            cur.name, size, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_in(size);
-  srand(42);
-  if (cur.is_trig)            initialize_for_trig(h_in);
-  else if (cur.needs_positive) initialize_random(h_in, 0.1f, 4.0f);
-  else                         initialize_random(h_in, -2.0f, 2.0f);
+  std::vector<data_t> h_in;
+  if (bench.copy_inputs) {
+    h_in.resize(size);
+    srand(42);
+    if (cur.is_trig)            initialize_for_trig(h_in);
+    else if (cur.needs_positive) initialize_random(h_in, 0.1f, 4.0f);
+    else                         initialize_random(h_in, -2.0f, 2.0f);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -116,7 +119,9 @@ int main(int argc, char *argv[]) {
   uint32_t buffer_bytes = size * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, buffer_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, buffer_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = op_id;

@@ -140,15 +140,18 @@ int main(int argc, char *argv[]) {
   size_t output_elems = size_t(M_pad) * K;
   uint32_t output_bytes = output_elems * sizeof(data_t);
 
-  std::vector<data_t> h_in(input_elems);
-  initialize_input(h_in);
-  std::vector<data_t> h_in_device(output_elems, 0);
-  if (variant == Variant::RowMatched) {
-    std::copy(h_in.begin(), h_in.end(), h_in_device.begin());
-  } else {
-    for (uint32_t m = 0; m < M; ++m) {
-      for (uint32_t k = 0; k < K; ++k) {
-        h_in_device[gemm_c_tiled_index(m, k, M_pad, K)] = h_in[(uint64_t)m * K + k];
+  std::vector<data_t> h_in_device;
+  if (bench.copy_inputs) {
+    std::vector<data_t> h_in(input_elems);
+    initialize_input(h_in);
+    h_in_device.assign(output_elems, 0);
+    if (variant == Variant::RowMatched) {
+      std::copy(h_in.begin(), h_in.end(), h_in_device.begin());
+    } else {
+      for (uint32_t m = 0; m < M; ++m) {
+        for (uint32_t k = 0; k < K; ++k) {
+          h_in_device[gemm_c_tiled_index(m, k, M_pad, K)] = h_in[(uint64_t)m * K + k];
+        }
       }
     }
   }
@@ -161,7 +164,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in_device.data(), 0, output_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in_device.data(), 0, output_bytes));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

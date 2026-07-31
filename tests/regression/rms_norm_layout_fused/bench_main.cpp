@@ -104,10 +104,13 @@ int main(int argc, char *argv[]) {
   uint32_t output_bytes = output_elems * sizeof(data_t);
   uint32_t gamma_bytes = K * sizeof(data_t);
 
-  std::vector<data_t> h_in(input_elems);
-  std::vector<data_t> h_gamma(K);
-  initialize_input(h_in);
-  initialize_gamma(h_gamma);
+  std::vector<data_t> h_in, h_gamma;
+  if (bench.copy_inputs) {
+    h_in.resize(input_elems);
+    h_gamma.resize(K);
+    initialize_input(h_in);
+    initialize_gamma(h_gamma);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -119,8 +122,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, input_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, gamma_bytes, VX_MEM_READ, &gamma_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, input_bytes));
-  RT_CHECK(vx_copy_to_dev(gamma_buffer, h_gamma.data(), 0, gamma_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(gamma_buffer, h_gamma.data(), 0, gamma_bytes));
+  }
 
   uint64_t num_warps = 0, num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));

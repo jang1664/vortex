@@ -167,35 +167,38 @@ int main(int argc, char** argv) {
   const uint64_t matrix_bytes = static_cast<uint64_t>(base_k) * base_k * sizeof(data_t);
   const uint64_t output_bytes = output_elems * sizeof(data_t);
 
-  std::vector<data_t> logical_input(logical_input_elems);
-  std::vector<data_t> input(input_elems, 0);
-  std::vector<data_t> matrix(static_cast<size_t>(base_k) * base_k);
-  initialize_values(logical_input, 1.0f);
-  if (input_layout == HADAMARD_INPUT_GEMM_A_TILED) {
-    for (uint32_t matrix_idx = 0; matrix_idx < matrix_count; ++matrix_idx) {
-      const uint64_t logical_base =
-          (uint64_t)matrix_idx * rows * dim;
-      const uint64_t tiled_base =
-          (uint64_t)matrix_idx * m_pad * dim;
-      for (uint32_t row = 0; row < rows; ++row) {
-        for (uint32_t column = 0; column < dim; ++column) {
-          const uint64_t offset = tiled_base + gemm_a_tiled_elem_offset(
-              row, column, m_pad, dim,
-              log2_u32(HADAMARD_TILE_DMA_MT),
-              log2_u32(HADAMARD_TILE_MXU_KT));
-          input[offset] = logical_input[
-              logical_base + (uint64_t)row * dim + column];
+  std::vector<data_t> input, matrix;
+  if (bench.copy_inputs) {
+    std::vector<data_t> logical_input(logical_input_elems);
+    input.assign(input_elems, 0);
+    matrix.resize(static_cast<size_t>(base_k) * base_k);
+    initialize_values(logical_input, 1.0f);
+    if (input_layout == HADAMARD_INPUT_GEMM_A_TILED) {
+      for (uint32_t matrix_idx = 0; matrix_idx < matrix_count; ++matrix_idx) {
+        const uint64_t logical_base =
+            (uint64_t)matrix_idx * rows * dim;
+        const uint64_t tiled_base =
+            (uint64_t)matrix_idx * m_pad * dim;
+        for (uint32_t row = 0; row < rows; ++row) {
+          for (uint32_t column = 0; column < dim; ++column) {
+            const uint64_t offset = tiled_base + gemm_a_tiled_elem_offset(
+                row, column, m_pad, dim,
+                log2_u32(HADAMARD_TILE_DMA_MT),
+                log2_u32(HADAMARD_TILE_MXU_KT));
+            input[offset] = logical_input[
+                logical_base + (uint64_t)row * dim + column];
+          }
         }
       }
+    } else {
+      input = logical_input;
     }
-  } else {
-    input = logical_input;
-  }
-  for (uint32_t row = 0; row < base_k; ++row) {
-    for (uint32_t column = 0; column < base_k; ++column) {
-      const float value = row == column ? 1.0f
-          : (((row + column) & 1u) ? -0.25f : 0.25f);
-      matrix[row * base_k + column] = float_to_fp16(value);
+    for (uint32_t row = 0; row < base_k; ++row) {
+      for (uint32_t column = 0; column < base_k; ++column) {
+        const float value = row == column ? 1.0f
+            : (((row + column) & 1u) ? -0.25f : 0.25f);
+        matrix[row * base_k + column] = float_to_fp16(value);
+      }
     }
   }
 
@@ -250,8 +253,10 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_alloc_aligned(device, input_bytes, 512, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, matrix_bytes, 512, VX_MEM_READ, &matrix_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, output_bytes, 512, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, input.data(), 0, input_bytes));
-  RT_CHECK(vx_copy_to_dev(matrix_buffer, matrix.data(), 0, matrix_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, input.data(), 0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(matrix_buffer, matrix.data(), 0, matrix_bytes));
+  }
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;

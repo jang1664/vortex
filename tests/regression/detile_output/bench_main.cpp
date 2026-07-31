@@ -90,9 +90,12 @@ int main(int argc, char** argv) {
   const size_t src_bytes = src_elems * TILE_ELEM_BYTES;
   const size_t dst_bytes = size_t(M) * N * TILE_ELEM_BYTES;
 
-  std::vector<uint16_t> h_src(src_elems);
-  for (size_t i = 0; i < h_src.size(); ++i) {
-    h_src[i] = uint16_t((i + 1) & 0xffff);
+  std::vector<uint16_t> h_src;
+  if (bench.copy_inputs) {
+    h_src.resize(src_elems);
+    for (size_t i = 0; i < h_src.size(); ++i) {
+      h_src[i] = uint16_t((i + 1) & 0xffff);
+    }
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -104,7 +107,9 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_bytes, VX_MEM_READ, &src_buf));
   RT_CHECK(vx_mem_alloc(device, dst_bytes, VX_MEM_WRITE, &dst_buf));
-  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  }
 
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));

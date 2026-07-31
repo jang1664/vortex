@@ -78,10 +78,14 @@ int main(int argc, char *argv[]) {
 
   uint32_t total_tokens = batch_size * seq_len;
   uint32_t input_size = total_tokens * hidden_dim;
-  std::vector<data_t> h_in(input_size), h_gamma(hidden_dim);
-  srand(42);
-  initialize_random(h_in);
-  initialize_random(h_gamma);
+  std::vector<data_t> h_in, h_gamma;
+  if (bench.copy_inputs) {
+    h_in.resize(input_size);
+    h_gamma.resize(hidden_dim);
+    srand(42);
+    initialize_random(h_in);
+    initialize_random(h_gamma);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -101,8 +105,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, input_bytes,  VX_MEM_READ,  &input_buffer));
   RT_CHECK(vx_mem_alloc(device, gamma_bytes,  VX_MEM_READ,  &gamma_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(),    0, input_bytes));
-  RT_CHECK(vx_copy_to_dev(gamma_buffer, h_gamma.data(), 0, gamma_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(),    0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(gamma_buffer, h_gamma.data(), 0, gamma_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_RMSNORM;

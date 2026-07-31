@@ -89,12 +89,15 @@ int main(int argc, char *argv[]) {
   const size_t row_bytes = row_elems * sizeof(data_t);
   const size_t tiled_bytes = tiled_elems * sizeof(data_t);
 
-  std::vector<data_t> h_a_row(row_elems);
-  std::vector<data_t> h_b(row_elems);
-  std::vector<data_t> h_a_tiled(tiled_elems);
-  init_values(h_a_row, 1.0f);
-  init_values(h_b, 0.5f);
-  pack_gemm_c_tiled(h_a_row, h_a_tiled, M, M_pad, K);
+  std::vector<data_t> h_a_tiled, h_b;
+  if (bench.copy_inputs) {
+    std::vector<data_t> h_a_row(row_elems);
+    h_b.resize(row_elems);
+    h_a_tiled.resize(tiled_elems);
+    init_values(h_a_row, 1.0f);
+    init_values(h_b, 0.5f);
+    pack_gemm_c_tiled(h_a_row, h_a_tiled, M, M_pad, K);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -106,8 +109,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_READ, &input_a_buffer));
   RT_CHECK(vx_mem_alloc(device, row_bytes, VX_MEM_READ, &input_b_buffer));
   RT_CHECK(vx_mem_alloc(device, row_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_a_buffer, h_a_tiled.data(), 0, tiled_bytes));
-  RT_CHECK(vx_copy_to_dev(input_b_buffer, h_b.data(), 0, row_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_a_buffer, h_a_tiled.data(), 0, tiled_bytes));
+    RT_CHECK(vx_copy_to_dev(input_b_buffer, h_b.data(), 0, row_bytes));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

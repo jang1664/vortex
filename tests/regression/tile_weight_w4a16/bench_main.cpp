@@ -113,9 +113,12 @@ int main(int argc, char** argv) {
                                            : align_up(N, TILE_DMA_MXU_NT);
   const size_t src_bytes = size_t(K) * (N / 2);
   const size_t dst_bytes = size_t(out_K) * (out_N / 2);
-  std::vector<uint8_t> h_src(src_bytes);
-  for (size_t i = 0; i < h_src.size(); ++i) {
-    h_src[i] = uint8_t(i & 0xff);
+  std::vector<uint8_t> h_src;
+  if (bench.copy_inputs) {
+    h_src.resize(src_bytes);
+    for (size_t i = 0; i < h_src.size(); ++i) {
+      h_src[i] = uint8_t(i & 0xff);
+    }
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -127,7 +130,9 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_bytes, VX_MEM_READ, &src_buf));
   RT_CHECK(vx_mem_alloc(device, dst_bytes, VX_MEM_WRITE, &dst_buf));
-  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

@@ -165,19 +165,25 @@ int main(int argc, char *argv[]) {
   const size_t scale_bytes = scale_total_bytes_host(
       output_K, N, QBLK, GEMM_QDIR,
       SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
-  std::vector<fp16_t> h_src((size_t)K * N);
-  init_src(h_src);
-  std::vector<fp16_t> h_src_combined(src_elems, 0);
-  for (uint32_t k = 0; k < K; ++k) {
-    std::copy_n(h_src.begin() + (uint64_t)k * N, N,
-                h_src_combined.begin() + (uint64_t)k * source_total_n + head_col_offset);
+  std::vector<fp16_t> h_src_device;
+  if (bench.copy_inputs) {
+    std::vector<fp16_t> h_src((size_t)K * N);
+    init_src(h_src);
+    std::vector<fp16_t> h_src_combined(src_elems, 0);
+    for (uint32_t k = 0; k < K; ++k) {
+      std::copy_n(h_src.begin() + (uint64_t)k * N, N,
+                  h_src_combined.begin() + (uint64_t)k * source_total_n + head_col_offset);
+    }
+    h_src_device.resize(src_elems);
+    pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n,
+                        src_layout, DMA_MT);
   }
-  std::vector<fp16_t> h_src_device(src_elems);
-  pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n,
-                      src_layout, DMA_MT);
-  std::vector<uint8_t> initial_weight(weight_bytes, 0);
-  std::vector<uint8_t> initial_scale(scale_bytes, 0);
-  std::vector<uint8_t> initial_zero(scale_bytes, 0);
+  std::vector<uint8_t> initial_weight, initial_scale, initial_zero;
+  if (append_update) {
+    initial_weight.assign(weight_bytes, 0);
+    initial_scale.assign(scale_bytes, 0);
+    initial_zero.assign(scale_bytes, 0);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -200,7 +206,9 @@ int main(int argc, char *argv[]) {
     RT_CHECK(vx_mem_alloc(
         device, logical_bytes, output_mem_flags, &logical_zero_buffer));
   }
-  RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_elems * sizeof(fp16_t)));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_elems * sizeof(fp16_t)));
+  }
   if (append_update) {
     RT_CHECK(vx_copy_to_dev(
         weight_buffer, initial_weight.data(), 0, weight_bytes));

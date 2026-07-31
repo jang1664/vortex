@@ -124,10 +124,12 @@ int main(int argc, char *argv[]) {
   uint32_t total_rows = batch_size * num_heads * seq_len_q;
   uint32_t input_size = total_rows * seq_len_k;
 
-  std::vector<data_t> h_input(input_size);
-
-  srand(42);
-  initialize_random(h_input);
+  std::vector<data_t> h_input;
+  if (bench.copy_inputs) {
+    h_input.resize(input_size);
+    srand(42);
+    initialize_random(h_input);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -149,15 +151,21 @@ int main(int argc, char *argv[]) {
   std::vector<uint8_t> h_input_pitched;
 
   if (uses_pitched_storage) {
-    h_input_pitched.assign(buffer_bytes, 0);
-    pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
+    if (bench.copy_inputs) {
+      h_input_pitched.assign(buffer_bytes, 0);
+      pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
+    }
     RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), VX_MEM_READ, &input_buffer));
     RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), softmax_output_mem_flags(), &output_buffer));
-    RT_CHECK(vx_copy_to_dev(input_buffer, h_input_pitched.data(), 0, buffer_bytes));
+    if (bench.copy_inputs) {
+      RT_CHECK(vx_copy_to_dev(input_buffer, h_input_pitched.data(), 0, buffer_bytes));
+    }
   } else {
     RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
     RT_CHECK(vx_mem_alloc(device, buffer_bytes, softmax_output_mem_flags(), &output_buffer));
-    RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+    if (bench.copy_inputs) {
+      RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+    }
   }
 
   kernel_arg_t kernel_arg = {};

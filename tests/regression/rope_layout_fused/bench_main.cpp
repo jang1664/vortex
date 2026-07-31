@@ -168,13 +168,15 @@ int main(int argc, char *argv[]) {
   const size_t input_tiled_bytes = input_tiled_elems * sizeof(data_t);
   const size_t output_bytes = output_elems * sizeof(data_t);
 
-  std::vector<data_t> h_input_row(input_row_elems);
-  std::vector<data_t> h_input_tiled(input_tiled_elems);
-  std::vector<data_t> h_cos;
-  std::vector<data_t> h_sin;
-  init_input(h_input_row);
-  precompute_freqs(h_cos, h_sin, max_seq, head_dim);
-  pack_projection(h_input_row, h_input_tiled, batch, seq, heads, head_dim, input_m_pad);
+  const size_t freq_elems = (size_t)max_seq * (head_dim >> 1);
+  std::vector<data_t> h_input_tiled, h_cos, h_sin;
+  if (bench.copy_inputs) {
+    std::vector<data_t> h_input_row(input_row_elems);
+    h_input_tiled.resize(input_tiled_elems);
+    init_input(h_input_row);
+    precompute_freqs(h_cos, h_sin, max_seq, head_dim);
+    pack_projection(h_input_row, h_input_tiled, batch, seq, heads, head_dim, input_m_pad);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -185,11 +187,13 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, input_tiled_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_cos.size() * sizeof(data_t), VX_MEM_READ, &cos_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_sin.size() * sizeof(data_t), VX_MEM_READ, &sin_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input_tiled.data(), 0, input_tiled_bytes));
-  RT_CHECK(vx_copy_to_dev(cos_buffer, h_cos.data(), 0, h_cos.size() * sizeof(data_t)));
-  RT_CHECK(vx_copy_to_dev(sin_buffer, h_sin.data(), 0, h_sin.size() * sizeof(data_t)));
+  RT_CHECK(vx_mem_alloc(device, freq_elems * sizeof(data_t), VX_MEM_READ, &cos_buffer));
+  RT_CHECK(vx_mem_alloc(device, freq_elems * sizeof(data_t), VX_MEM_READ, &sin_buffer));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input_tiled.data(), 0, input_tiled_bytes));
+    RT_CHECK(vx_copy_to_dev(cos_buffer, h_cos.data(), 0, freq_elems * sizeof(data_t)));
+    RT_CHECK(vx_copy_to_dev(sin_buffer, h_sin.data(), 0, freq_elems * sizeof(data_t)));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;

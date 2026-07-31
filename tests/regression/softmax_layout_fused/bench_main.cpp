@@ -105,7 +105,8 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-batch B] [-heads H] "
-             "[-seqq Q] [-seqk K] [-seqk-stride KS] [-mask 0|1] [-scale S]\n",
+             "[-seqq Q] [-seqk K] [-seqk-stride KS] [-mask 0|1] [-scale S] "
+             "[--input-copy=skip|copy]\n",
              argv[0]);
       return 0;
     }
@@ -123,13 +124,16 @@ int main(int argc, char *argv[]) {
   const uint32_t M_pad = (seq_q + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
   const uint32_t seq_k_pad = align_up(
       seq_k_stride, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
-  const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
   const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
   const size_t tiled_bytes = tiled_elems * sizeof(data_t);
-  std::vector<data_t> h_input_row(row_elems);
-  std::vector<data_t> h_input_tiled(tiled_elems);
-  init_scores(h_input_row);
-  pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
+  std::vector<data_t> h_input_tiled;
+  if (bench.copy_inputs) {
+    const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
+    std::vector<data_t> h_input_row(row_elems);
+    h_input_tiled.resize(tiled_elems);
+    init_scores(h_input_row);
+    pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
+  }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -140,7 +144,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input_tiled.data(), 0, tiled_bytes));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input_tiled.data(), 0, tiled_bytes));
+  } else if (!bench.csv) {
+    printf("Skipping input preparation and H2D copy (%zu bytes)\n", tiled_bytes);
+  }
 
   uint64_t num_warps = 0;
   uint64_t num_threads = 0;

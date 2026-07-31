@@ -204,6 +204,21 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 
 // Input tiled: reserve an 8-row-aligned slot for each (mt, kt) tile so the next
 // tile address stays aligned, but store only real M rows inside that slot.
+static size_t input_total_bytes() {
+  uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
+  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
+  size_t total = 0;
+  for (uint32_t mt = 0; mt < m_tiles; ++mt) {
+    uint32_t cur_m = std::min(DMA_MT, M - mt * DMA_MT);
+    uint32_t cur_m_slot = align_up8_u32(cur_m);
+    for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+      uint32_t cur_k = std::min(DMA_KT, K - kt * DMA_KT);
+      total += size_t(cur_m_slot) * cur_k * 2;
+    }
+  }
+  return total;
+}
+
 static void convert_input_tiled(const std::vector<uint16_t>& h_A,
                                 std::vector<uint8_t>& tiled) {
   uint32_t m_tiles  = (M + DMA_MT - 1) / DMA_MT;
@@ -245,6 +260,19 @@ static void convert_input_tiled(const std::vector<uint16_t>& h_A,
 }
 
 // Weight tiled: per (kt, nt) tile, kb_per_kt contiguous micro-tiles of packed int4
+static size_t weight_total_bytes() {
+  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
+  uint32_t n_tiles = N / DMA_MXU_NT;
+  size_t seg = (WTRANS == 0) ? DMA_MXU_KT * (DMA_MXU_NT / 2)
+                              : DMA_MXU_NT * (DMA_MXU_KT / 2);
+  size_t total = 0;
+  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+    uint32_t cur_k = std::min(DMA_KT, K - kt * DMA_KT);
+    total += n_tiles * (cur_k / DMA_MXU_KT) * seg;
+  }
+  return total;
+}
+
 static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
                                  std::vector<uint8_t>& tiled) {
   uint32_t k_tiles   = (K + DMA_KT - 1) / DMA_KT;
@@ -553,14 +581,17 @@ int main(int argc, char *argv[]) {
   std::vector<int8_t>   h_W_raw;
   std::vector<uint16_t> h_scales;
   std::vector<int16_t>  h_zeros;
-  build_test_vectors(h_A, h_W_raw, h_scales, h_zeros);
-
-  // ---- Convert to tiled DRAM layout ----
   std::vector<uint8_t> tiled_input, tiled_weight, tiled_scale, tiled_zp;
-  convert_input_tiled(h_A,      tiled_input);
-  convert_weight_tiled(h_W_raw, tiled_weight);
-  convert_scale_tiled(h_scales, tiled_scale);
-  convert_zp_tiled(h_zeros,     tiled_zp);
+  if (bench.copy_inputs) {
+    build_test_vectors(h_A, h_W_raw, h_scales, h_zeros);
+    convert_input_tiled(h_A,      tiled_input);
+    convert_weight_tiled(h_W_raw, tiled_weight);
+    convert_scale_tiled(h_scales, tiled_scale);
+    convert_zp_tiled(h_zeros,     tiled_zp);
+  }
+  const size_t input_bytes = input_total_bytes();
+  const size_t weight_bytes = weight_total_bytes();
+  const size_t qparam_bytes = scale_total_bytes();
 
   // Reserve padded output slots; the kernel writes only real M rows in each slot.
   uint32_t m_tiles = (M_pad + DMA_MT - 1) / DMA_MT;
@@ -572,17 +603,19 @@ int main(int argc, char *argv[]) {
   }
 
   // ---- Allocate device buffers ----
-  RT_CHECK(vx_mem_alloc_aligned(device, tiled_input.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ,  &A_buffer));
-  RT_CHECK(vx_mem_alloc_aligned(device, tiled_weight.size(), DRAM_ALIGN_BYTES, VX_MEM_READ,  &W_int4_buffer));
-  RT_CHECK(vx_mem_alloc_aligned(device, tiled_scale.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ,  &scales_buffer));
-  RT_CHECK(vx_mem_alloc_aligned(device, tiled_zp.size(),     DRAM_ALIGN_BYTES, VX_MEM_READ,  &zeros_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, input_bytes,         DRAM_ALIGN_BYTES, VX_MEM_READ,  &A_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, weight_bytes,        DRAM_ALIGN_BYTES, VX_MEM_READ,  &W_int4_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, qparam_bytes,        DRAM_ALIGN_BYTES, VX_MEM_READ,  &scales_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, qparam_bytes,        DRAM_ALIGN_BYTES, VX_MEM_READ,  &zeros_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_WRITE, &C_buffer));
 
   // ---- Upload tiled data ----
-  RT_CHECK(vx_copy_to_dev(A_buffer,      tiled_input.data(),  0, tiled_input.size()));
-  RT_CHECK(vx_copy_to_dev(W_int4_buffer, tiled_weight.data(), 0, tiled_weight.size()));
-  RT_CHECK(vx_copy_to_dev(scales_buffer, tiled_scale.data(),  0, tiled_scale.size()));
-  RT_CHECK(vx_copy_to_dev(zeros_buffer,  tiled_zp.data(),     0, tiled_zp.size()));
+  if (bench.copy_inputs) {
+    RT_CHECK(vx_copy_to_dev(A_buffer,      tiled_input.data(),  0, input_bytes));
+    RT_CHECK(vx_copy_to_dev(W_int4_buffer, tiled_weight.data(), 0, weight_bytes));
+    RT_CHECK(vx_copy_to_dev(scales_buffer, tiled_scale.data(),  0, qparam_bytes));
+    RT_CHECK(vx_copy_to_dev(zeros_buffer,  tiled_zp.data(),     0, qparam_bytes));
+  }
 
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));
