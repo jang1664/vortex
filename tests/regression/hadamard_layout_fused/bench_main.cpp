@@ -229,6 +229,13 @@ int main(int argc, char** argv) {
       && input_layout == HADAMARD_INPUT_ROW_MAJOR;
   const bool use_r3_persistent =
       use_r3_shuffle && !padded_row_launch;
+  const uint64_t r3_worker_count = num_cores * num_warps;
+  const uint64_t logical_rows =
+      static_cast<uint64_t>(matrix_count) * rows;
+  const bool use_r3_flattened_persistent =
+      use_r3_persistent && matrix_count > 1u
+      && rows <= r3_worker_count && logical_rows > r3_worker_count
+      && (r3_worker_count % rows) == 0u;
   const uint32_t launch_threads = use_r3_shuffle
       ? static_cast<uint32_t>(num_threads)
       : static_cast<uint32_t>(
@@ -261,10 +268,12 @@ int main(int argc, char** argv) {
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
-  arg.grid_dim[0] = use_r3_persistent
-      ? std::min(rows, static_cast<uint32_t>(num_cores * num_warps))
-      : (padded_row_launch ? m_pad : rows);
-  arg.grid_dim[1] = matrix_count;
+  arg.grid_dim[0] = use_r3_flattened_persistent
+      ? static_cast<uint32_t>(r3_worker_count)
+      : (use_r3_persistent
+          ? std::min(rows, static_cast<uint32_t>(r3_worker_count))
+          : (padded_row_launch ? m_pad : rows));
+  arg.grid_dim[1] = use_r3_flattened_persistent ? 1u : matrix_count;
 #else
   arg.grid_dim[0] =
       matrix_count * (padded_row_launch ? m_pad : rows);

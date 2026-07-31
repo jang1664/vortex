@@ -113,6 +113,28 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   const uint32_t tid = threadIdx.x;
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+  // Small decode shapes use one persistent 1D grid across all matrices. This
+  // avoids paying one workgroup launch per matrix while preserving the 2D
+  // decomposition used by larger prefill shapes.
+  if (arg->base_k == 1u && arg->dim == 128u
+      && blockDim.x == 32u
+      && arg->input_layout == HADAMARD_INPUT_ROW_MAJOR
+      && arg->padded_row_launch == 0u
+      && arg->matrix_count > 1u
+      && gridDim.y == 1u) {
+    const uint32_t row = blockIdx.x % arg->rows;
+    const uint32_t first_matrix_idx = blockIdx.x / arg->rows;
+    const uint32_t matrix_stride = gridDim.x / arg->rows;
+    for (uint32_t matrix_idx = first_matrix_idx;
+         matrix_idx < arg->matrix_count; matrix_idx += matrix_stride) {
+      const uint64_t output_base =
+          static_cast<uint64_t>(matrix_idx) * arg->m_pad * arg->dim;
+      kernel_hadamard_r3_shuffle_incremental(
+          input, output, arg, matrix_idx, row, output_base);
+    }
+    return;
+  }
+
   const uint32_t matrix_idx = blockIdx.y;
   const uint32_t row = blockIdx.x;
 #else

@@ -1,0 +1,90 @@
+# Hadamard Layout-Fused Decode Debug
+
+status: completed
+scope:
+  - tests/regression/hadamard
+  - tests/regression/hadamard_layout_fused
+  - analysis_workspace/latency_on_hw/docs/layout_fused_results_summary.md
+findings:
+  - timestamp: "2026-07-31 19:28"
+    summary: >-
+      The normal Makefile defaults to HADAMARD_VARIANT=r3_shuffle, while the
+      fused Makefile defaults to HADAMARD_LAYOUT_FUSED_VARIANT=r3_shuffle_incremental.
+  - timestamp: "2026-07-31 19:28"
+    summary: >-
+      For dim=128 and base_k=1 both variants use the 32-thread shuffle path.
+      Normal flattens m*n into rows and caps the persistent launch at
+      cores*warps blocks. Fused caps only grid.x by m and retains n in grid.y,
+      producing n blocks for decode m=1. This matches the measured n-dependent
+      slowdown and is the leading root-cause hypothesis.
+  - timestamp: "2026-07-31 19:37"
+    summary: >-
+      Fixed the r3 decode path by flattening small rows-by-matrix geometry into
+      at most cores*warps persistent workers. Workers advance by matrix stride,
+      avoiding a workgroup per matrix and avoiding division inside the loop.
+verification:
+  - timestamp: "2026-07-31 19:33"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 1 -n 32 -k 128"
+    summary: "Functional PASS; 133034 cycles after the first persistent-grid fix."
+  - timestamp: "2026-07-31 19:34"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 1 -n 2048 -k 128"
+    summary: "Functional PASS; 2687438 cycles before eliminating per-row division."
+  - timestamp: "2026-07-31 19:34"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 4 -n 512 -k 128"
+    summary: "Functional PASS; 2673119 cycles."
+  - timestamp: "2026-07-31 19:35"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 1024 -n 32 -k 128"
+    summary: "Prefill control-path functional PASS; 37162853 cycles."
+  - timestamp: "2026-07-31 19:36"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 1 -n 1 -k 14336 --layout-from gemm_a_tiled"
+    summary: "R4 tiled-input control-path functional PASS; 793704 cycles."
+  - timestamp: "2026-07-31 19:37"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 1 -n 2048 -k 128"
+    summary: >-
+      Final functional PASS; 2452950 cycles versus the prior measured 17004691
+      cycles and the corresponding normal baseline of 2364713 cycles.
+  - timestamp: "2026-07-31 19:38"
+    status: pass
+    command: >-
+      ci/run_black.sh hw --fpga-bin C4_v3 --app hadamard_layout_fused
+      --args "-m 4 -n 512 -k 128"
+    summary: >-
+      Final functional PASS; 2452763 cycles versus the prior measured 17116118
+      cycles and the corresponding normal baseline of 2359881 cycles.
+pitfalls:
+  - >-
+    Existing user changes in analysis_workspace/latency_on_hw must be
+    preserved; do not overwrite or clean them.
+  - >-
+    CONFIGS is not exported by the repository .envrc in this shell. Source a
+    specific configs file before any simulation or synthesis command.
+  - >-
+    From build/tests/regression/hadamard_layout_fused, the source-tree configs
+    directory is four levels up, not three.
+log:
+  - timestamp: "2026-07-31 19:28"
+    action: >-
+      Read the results summary, both Makefiles, host launch code, kernel fast
+      paths, and the project xrt_vcs debugging procedures.
+  - timestamp: "2026-07-31 19:37"
+    action: >-
+      Implemented and verified the persistent flattened decode launch on C4_v3
+      hardware. All tested decode, prefill, and tiled-input cases passed.
