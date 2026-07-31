@@ -1,0 +1,79 @@
+{
+  "status": "complete",
+  "created_at": "2026-07-31T11:32:02.239631+00:00",
+  "command": "fan_in_sweep.py data --k-values 32,64,128,256,512,1024,2048,4096,8192,16384,32768 --m 16 --n 16 --qblock 32 --trials 100 --base-seed 20260729 --quant signed-asymmetric --device cuda:0 --verify-tensor-core --output /home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/numerical_acc/results/fpint_real_2scomp/20260731T2026KST_fp16_qrow_fp32_qcol",
+  "config": {
+    "k_values": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096,
+      8192,
+      16384,
+      32768
+    ],
+    "m": 16,
+    "n": 16,
+    "qblock": 32,
+    "trials": 100,
+    "base_seed": 20260729,
+    "quant": "signed-asymmetric",
+    "references": [
+      "cpu_fp64",
+      "gpu_fp64"
+    ],
+    "weight_range": [
+      -8,
+      7
+    ],
+    "zero_range": [
+      -4,
+      3
+    ],
+    "scale_range": [
+      6.103515625e-05,
+      0.00048828125
+    ],
+    "input_distribution": {
+      "kind": "independent-sign-exponent-mantissa-rounded-to-fp16",
+      "sign": "uniform-{0,1}",
+      "exponent": {
+        "distribution": "discrete-uniform-inclusive",
+        "min": -24,
+        "max": 15
+      },
+      "mantissa_field": {
+        "distribution": "normal-rounded-and-clipped",
+        "mean": 512.0,
+        "std": 256.0,
+        "min": 0,
+        "max": 1023
+      }
+    }
+  },
+  "system": {
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "compute_capability": "8.6",
+    "gpu_memory_bytes": 25306529792,
+    "driver_version": "570.211.01",
+    "torch_version": "2.11.0+cu126",
+    "torch_cuda_version": "12.6",
+    "numpy_version": "2.2.5",
+    "python_version": "3.10.0 (default, Mar  3 2022, 09:58:08) [GCC 7.5.0]",
+    "git_commit": "ed789627a368c77d8bb5231570f3984df08bbb1a"
+  },
+  "tensor_core_kernels": {
+    "32": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8::Params)"
+    ],
+    "32768": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_s161616gemm_f16_16x16_128x2_nn_align8>(cutlass_80_wmma_tensorop_s161616gemm_f16_16x16_128x2_nn_align8::Params)"
+    ]
+  },
+  "completed_at": "2026-07-31T11:35:55.856784+00:00",
+  "raw_row_count": 13200
+}

@@ -296,12 +296,15 @@ def qcol_real_2scomp_prefix_outputs(
     reduce_sum = np.sum(aligned_reduce, axis=-1, dtype=np.int64)
     correction = zero[:groups].astype(np.int64)[None, :, :] * reduce_sum[:, :, None]
     post = inner - (correction << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE))
+    # Match the QCOL FPINT pipeline: restore the post-inner-product in FP32,
+    # multiply it by the FP16 scale promoted to FP32, and accumulate in FP32.
     factor = np.exp2(
-        max_exponent.astype(np.float64) - IN_EXP_BIAS - (IN_MAN_WIDTH + EXTRA_BIT)
-    )
-    scales = bits_to_fp16(scale_bits[:groups]).astype(np.float64)
-    tile_values = post.astype(np.float64) * factor[:, :, None] * scales[None, :, :]
-    accumulated = np.cumsum(tile_values, axis=1, dtype=np.float64)
+        max_exponent.astype(np.float32) - IN_EXP_BIAS - (IN_MAN_WIDTH + EXTRA_BIT)
+    ).astype(np.float32)
+    scales = bits_to_fp16(scale_bits[:groups]).astype(np.float32)
+    post_fp32 = post.astype(np.float32) * factor[:, :, None]
+    tile_values = post_fp32 * scales[None, :, :]
+    accumulated = np.cumsum(tile_values, axis=1, dtype=np.float32)
     return {k: fp16_to_bits(accumulated[:, k // qblock - 1, :]) for k in k_values}
 
 

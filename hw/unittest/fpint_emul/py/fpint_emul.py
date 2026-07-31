@@ -472,7 +472,7 @@ def fpint_gemm_qcol_2scomp(
     for m in range(M):
         for nt in range(N // MXU_N):
             for nt2 in range(MXU_N):
-                acc_fp = 0.0
+                acc_fp = np.float32(0.0)
                 n = nt * MXU_N + nt2
                 
                 for kt in range(K // QBLOCK):
@@ -501,13 +501,16 @@ def fpint_gemm_qcol_2scomp(
                         )
                         
                         # Convert to float
-                        post_inner_product_fp = (
+                        post_inner_product_fp = np.float32(
                             float(post_inner_product) *
                             (2.0 ** (int(aligned_exp_data[m, kg]) - IN_EXP_BIAS)) *
                             (2.0 ** (-(IN_MAN_WIDTH + EXTRA_BIT)))
                         )
                         
-                        scaled_post_inner_product = (scale_data_fp[kg, n] / 2.0) * post_inner_product_fp
+                        # FP32 post-inner-product * FP32 scale (and 0.5 for 2's-complement encoding).
+                        scaled_post_inner_product = np.float32(
+                            post_inner_product_fp * scale_data_fp[kg, n] * np.float32(0.5)
+                        )
                         
                         if debug:
                             print(f"[FPINT_EMUL.QCOL_2SCOMP] m={m} n={n} kt={kt} kt2={kt2} kg={kg}")
@@ -516,7 +519,7 @@ def fpint_gemm_qcol_2scomp(
                             print(f"  aligned_exp={aligned_exp_data[m, kg]}, post_fp={post_inner_product_fp:.6f}, "
                                   f"scale={scale_data_fp[kg, n]:.6f}, scaled={scaled_post_inner_product:.6f}, acc={acc_fp:.6f}")
                         
-                        acc_fp += scaled_post_inner_product
+                        acc_fp = np.float32(acc_fp + scaled_post_inner_product)
                 
                 output_data[m, n] = float_to_fp16_bit(acc_fp)
                 
@@ -589,7 +592,7 @@ def fpint_gemm_qcol_zero_less(
     for m in range(M):
         for nt in range(N // MXU_N):
             for nt2 in range(MXU_N):
-                acc_fp = 0.0
+                acc_fp = np.float32(0.0)
                 n = nt * MXU_N + nt2
 
                 for kt in range(K // QBLOCK):
@@ -617,14 +620,17 @@ def fpint_gemm_qcol_zero_less(
                         )
 
                         # Convert to float
-                        post_inner_product_fp = (
+                        post_inner_product_fp = np.float32(
                             float(post_inner_product) *
                             (2.0 ** (int(aligned_exp_data[m, kg]) - IN_EXP_BIAS)) *
                             (2.0 ** (-(IN_MAN_WIDTH + EXTRA_BIT)))
                         )
 
                         # Note: no /2.0 for scale (different from 2scomp)
-                        scaled_post_inner_product = scale_data_fp[kg, n] * post_inner_product_fp
+                        # FP32 post-inner-product * FP32 scale.
+                        scaled_post_inner_product = np.float32(
+                            post_inner_product_fp * scale_data_fp[kg, n]
+                        )
 
                         if debug:
                             print(f"[FPINT_EMUL.QCOL_ZERO_LESS] m={m} n={n} kt={kt} kt2={kt2} kg={kg}")
@@ -633,7 +639,7 @@ def fpint_gemm_qcol_zero_less(
                             print(f"  aligned_exp={aligned_exp_data[m, kg]}, post_fp={post_inner_product_fp:.6f}, "
                                   f"scale={scale_data_fp[kg, n]:.6f}, scaled={scaled_post_inner_product:.6f}, acc={acc_fp:.6f}")
 
-                        acc_fp += scaled_post_inner_product
+                        acc_fp = np.float32(acc_fp + scaled_post_inner_product)
 
                 output_data[m, n] = float_to_fp16_bit(acc_fp)
 
@@ -697,7 +703,7 @@ def fpint_gemm_qcol_real_2scomp(
     for m in range(M):
         for nt in range(N // MXU_N):
             for nt2 in range(MXU_N):
-                acc_fp = 0.0
+                acc_fp = np.float32(0.0)
                 n = nt * MXU_N + nt2
                 
                 for kt in range(K // QBLOCK):
@@ -722,13 +728,16 @@ def fpint_gemm_qcol_real_2scomp(
                         post_inner_product = inner_product + ((-(zero_signed * act_sum_for_reduce) << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE)))
                         
                         # Convert to float
-                        post_inner_product_fp = (
+                        post_inner_product_fp = np.float32(
                             float(post_inner_product) *
                             (2.0 ** (int(aligned_exp_data[m, kg]) - IN_EXP_BIAS)) *
                             (2.0 ** (-(IN_MAN_WIDTH + EXTRA_BIT)))
                         )
                         
-                        scaled_post_inner_product = scale_data_fp[kg, n] * post_inner_product_fp
+                        # FP32 post-inner-product * FP32 scale.
+                        scaled_post_inner_product = np.float32(
+                            post_inner_product_fp * scale_data_fp[kg, n]
+                        )
                         
                         if debug:
                             print(f"[FPINT_EMUL.QCOL_REAL_2SCOMP] m={m} n={n} kt={kt} kt2={kt2} kg={kg}")
@@ -737,7 +746,7 @@ def fpint_gemm_qcol_real_2scomp(
                             print(f"  aligned_exp={aligned_exp_data[m, kg]}, post_fp={post_inner_product_fp:.6f}, "
                                   f"scale={scale_data_fp[kg, n]:.6f}, scaled={scaled_post_inner_product:.6f}, acc={acc_fp:.6f}")
                         
-                        acc_fp += scaled_post_inner_product
+                        acc_fp = np.float32(acc_fp + scaled_post_inner_product)
                 
                 output_data[m, n] = float_to_fp16_bit(acc_fp)
                 
@@ -773,15 +782,6 @@ def fpint_gemm_qrow_2scomp(
     """
     assert K % MXU_K == 0
 
-    # Use ceil division for NG to handle N not multiple of QBLOCK
-    NG = (N + QBLOCK - 1) // QBLOCK
-
-    # Convert scale data to float
-    scale_data_fp = np.zeros((K, NG), dtype=np.float32)
-    for k in range(K):
-        for ng in range(scale_data.shape[1]):  # Use actual scale_data shape
-            scale_data_fp[k, ng] = fp16_bit_to_float(scale_data[k, ng])
-
     output_data = np.zeros((M, N), dtype=np.uint16)
 
     if debug:
@@ -803,11 +803,11 @@ def fpint_gemm_qrow_2scomp(
                     # Scale input and prealign for this specific output element
                     scaled_input_data = np.zeros(K, dtype=np.uint16)
                     for k in range(K):
-                        in_fp = fp16_bit_to_float(input_data[m, k])
                         ng = min(n // QBLOCK, scale_data.shape[1] - 1)  # Clamp to valid range
-                        scale_fp = scale_data_fp[k, ng]
-                        scaled_in_fp = in_fp * scale_fp
-                        scaled_input_data[k] = float_to_fp16_bit(scaled_in_fp)
+                        # FP16 input * FP16 scale -> FP16, before prealignment.
+                        scaled_input_data[k] = fp16_multiply(
+                            input_data[m, k], scale_data[k, ng]
+                        )
 
                     # Reshape for prealign (expects 2D)
                     scaled_input_2d = scaled_input_data.reshape(1, K)
@@ -898,15 +898,6 @@ def fpint_gemm_qrow_zero_less(
     """
     assert K % MXU_K == 0
 
-    # Use ceil division for NG to handle N not multiple of QBLOCK
-    NG = (N + QBLOCK - 1) // QBLOCK
-
-    # Convert scale data to float
-    scale_data_fp = np.zeros((K, NG), dtype=np.float32)
-    for k in range(K):
-        for ng in range(scale_data.shape[1]):  # Use actual scale_data shape
-            scale_data_fp[k, ng] = fp16_bit_to_float(scale_data[k, ng])
-
     # Convert weight to 2's complement: (signed(weight) - 1) / 2
     weight_data_2scomp = np.zeros((K, N), dtype=np.int8)
     for k in range(K):
@@ -945,11 +936,11 @@ def fpint_gemm_qrow_zero_less(
                     # Scale input and prealign for this specific output element
                     scaled_input_data = np.zeros(K, dtype=np.uint16)
                     for k in range(K):
-                        in_fp = fp16_bit_to_float(input_data[m, k])
                         ng = min(n // QBLOCK, scale_data.shape[1] - 1)  # Clamp to valid range
-                        scale_fp = scale_data_fp[k, ng]
-                        scaled_in_fp = in_fp * scale_fp
-                        scaled_input_data[k] = float_to_fp16_bit(scaled_in_fp)
+                        # FP16 input * FP16 scale -> FP16, before prealignment.
+                        scaled_input_data[k] = fp16_multiply(
+                            input_data[m, k], scale_data[k, ng]
+                        )
 
                     # Reshape for prealign (expects 2D)
                     scaled_input_2d = scaled_input_data.reshape(1, K)
@@ -1035,15 +1026,6 @@ def fpint_gemm_qrow_real_2scomp(
     """
     assert K % MXU_K == 0
 
-    # Use ceil division for NG to handle N not multiple of QBLOCK
-    NG = (N + QBLOCK - 1) // QBLOCK
-
-    # Convert scale data to float
-    scale_data_fp = np.zeros((K, NG), dtype=np.float32)
-    for k in range(K):
-        for ng in range(scale_data.shape[1]):  # Use actual scale_data shape
-            scale_data_fp[k, ng] = fp16_bit_to_float(scale_data[k, ng])
-
     # Do prealign
     # if debug:
     #     print(f"[FPINT_EMUL.QROW_REAL_2SCOMP] ===== Prealign for main (extra_bit={EXTRA_BIT}, before input scale) =====")
@@ -1076,11 +1058,11 @@ def fpint_gemm_qrow_real_2scomp(
                     # Scale input and prealign for this specific output element
                     scaled_input_data = np.zeros(K, dtype=np.uint16)
                     for k in range(K):
-                        in_fp = fp16_bit_to_float(input_data[m, k])
                         ng = min(n // QBLOCK, scale_data.shape[1] - 1)  # Clamp to valid range
-                        scale_fp = scale_data_fp[k, ng]
-                        scaled_in_fp = in_fp * scale_fp
-                        scaled_input_data[k] = float_to_fp16_bit(scaled_in_fp)
+                        # FP16 input * FP16 scale -> FP16, before prealignment.
+                        scaled_input_data[k] = fp16_multiply(
+                            input_data[m, k], scale_data[k, ng]
+                        )
 
                     # Reshape for prealign (expects 2D)
                     scaled_input_2d = scaled_input_data.reshape(1, K)
