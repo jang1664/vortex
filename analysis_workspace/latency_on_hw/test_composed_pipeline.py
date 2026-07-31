@@ -139,23 +139,57 @@ class ComposedPipelineTest(unittest.TestCase):
             ].tolist()
             self.assertEqual(legacy_energy, vectorized_energy)
 
+    def test_default_energy_export_uses_total_and_dynamic_board_power(self) -> None:
+        frame = _decode_frame(out_tokens=1)
+        frame["power_avg_w"] = 4.0
+        frame["power_dynamic_avg_w"] = 1.0
+
+        rows = prepare._vectorized_energy_rows(frame)
+
+        self.assertEqual(
+            ["power_avg_W", "power_dynamic_avg_W"],
+            rows["power_metric"].tolist(),
+        )
+        self.assertAlmostEqual(80e-6, rows.iloc[0]["kernel_energy_j"])
+        self.assertAlmostEqual(20e-6, rows.iloc[1]["kernel_energy_j"])
+
     def test_vectorized_energy_discounts_dequant_without_new_columns(self) -> None:
-        frame = _decode_frame(out_tokens=2)
+        frame = _decode_frame(out_tokens=3)
         frame["kind"] = "dequantization"
         frame.loc[frame.index[0], "name"] = "dequant_q_proj_weight_to_fp16"
         frame.loc[frame.index[1], "name"] = "kv_cache_dequant_k_to_attn_qkT"
+        frame.loc[frame.index[2], "name"] = "kv_cache_dequant_v_to_attn_pv"
 
         vectorized = prepare._vectorized_energy_rows(frame)
 
-        self.assertEqual(("power_dynamic_avg_W",), prepare.ENERGY_POWER_METRICS)
-        self.assertEqual(("power_dynamic_avg_W",), plot.ENERGY_POWER_METRICS)
+        self.assertEqual(
+            ("power_avg_W", "power_dynamic_avg_W"),
+            prepare.ENERGY_POWER_METRICS,
+        )
+        self.assertEqual(
+            ("power_avg_W", "power_dynamic_avg_W"),
+            plot.ENERGY_POWER_METRICS,
+        )
+        total = vectorized[vectorized["power_metric"].eq("power_avg_W")]
+        dynamic = vectorized[
+            vectorized["power_metric"].eq("power_dynamic_avg_W")
+        ]
+        for actual, expected in zip(
+            total["kernel_energy_j"].tolist(),
+            (20e-6, 40e-6, 60e-6),
+        ):
+            self.assertAlmostEqual(expected, actual)
         self.assertAlmostEqual(
-            20e-6 * 0.53230,
-            vectorized.loc[0, "kernel_energy_j"],
+            20e-6 * 0.48263,
+            dynamic.iloc[0]["kernel_energy_j"],
         )
         self.assertAlmostEqual(
-            40e-6 * 0.25339,
-            vectorized.loc[1, "kernel_energy_j"],
+            40e-6 * 0.28516,
+            dynamic.iloc[1]["kernel_energy_j"],
+        )
+        self.assertAlmostEqual(
+            60e-6 * 0.28516,
+            dynamic.iloc[2]["kernel_energy_j"],
         )
         self.assertNotIn("_latency_scale_factor", vectorized.columns)
         self.assertNotIn("_latency_scale_rules", vectorized.columns)

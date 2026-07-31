@@ -1311,27 +1311,36 @@ main_all_result: PlotRunResult | None = None
 # Energy per token.
 ENERGY_IDLE_POWER_W = FPGA_IDLE_POWER
 INCLUDE_IDLE_POWER = False
-# power_dynamic_avg_W is the measured kernel power above idle.  The board and
-# VCC metrics include idle power and therefore are intentionally not exported.
-ENERGY_POWER_METRICS = ("power_dynamic_avg_W",)
+# Export both total board energy and idle-subtracted dynamic energy.  Total
+# energy is less sensitive to idle-baseline sampling noise, while dynamic
+# energy isolates the measured power increase attributable to the kernel.
+ENERGY_POWER_METRICS = ("power_avg_W", "power_dynamic_avg_W")
 
-# Idle-subtracted pure/total dynamic-energy ratios measured by
-# tests/regression/dequant_hbm_energy on U55C C4_v3.  The weight rule uses the
-# 128x128 qdir=0 measurement.  The KV rule uses the available qdir=1, qblk=32
-# measurement; qblk=128 SpinQuant KV kernels should be remeasured when possible.
+# Plot policy override: weight dequantization uses the minimum 48.263% ratio
+# observed in the completed QDIR=0, QBLK=32 asymmetric shape sweep.  KV
+# dequantization keeps the selected 28.516% QDIR=1 V/symmetric ratio.  See
+# docs/dequant_energy_discount_remeasurement.md for the measurements and policy.
 DEQUANT_PURE_ENERGY_RULES = (
     LatencyScaleRule(
         "weight_dequant_pure_energy",
         {"kind": "dequantization", "name": {"regex": r"_weight_"}},
-        0.53230,
+        0.48263,
     ),
     LatencyScaleRule(
-        "kv_dequant_pure_energy",
+        "kv_k_dequant_pure_energy",
         {
             "kind": "dequantization",
-            "name": {"regex": r"^kv_cache_dequant_"},
+            "name": {"regex": r"^kv_cache_dequant_k_"},
         },
-        0.25339,
+        0.28516,
+    ),
+    LatencyScaleRule(
+        "kv_v_dequant_pure_energy",
+        {
+            "kind": "dequantization",
+            "name": {"regex": r"^kv_cache_dequant_v_"},
+        },
+        0.28516,
     ),
 )
 PREPARE_ENERGY = os.environ.get("LATENCY_PREPARE_ENERGY", "1").lower() not in {
@@ -1665,24 +1674,32 @@ def _vectorized_energy_rows(
 
 
 def _apply_dequant_pure_energy_rules(rows: pd.DataFrame) -> pd.DataFrame:
-    """Replace standalone dequant energy with its measured pure-energy share."""
-    adjusted = apply_latency_scale_rules(
-        rows,
+    """Apply measured pure-dequant discounts to dynamic energy only."""
+    dynamic = rows["power_metric"].astype(str).eq("power_dynamic_avg_W")
+    if not bool(dynamic.any()):
+        return rows
+    adjusted_dynamic = apply_latency_scale_rules(
+        rows.loc[dynamic].copy(),
         DEQUANT_PURE_ENERGY_RULES,
         metric_columns=("kernel_energy_j",),
     )
-    applied_rules = adjusted["_latency_scale_rules"].fillna("").astype(str)
-    dequantization = adjusted["kind"].astype(str).eq("dequantization")
+    applied_rules = (
+        adjusted_dynamic["_latency_scale_rules"].fillna("").astype(str)
+    )
+    dequantization = adjusted_dynamic["kind"].astype(str).eq("dequantization")
     unmatched = dequantization & applied_rules.eq("")
     if bool(unmatched.any()):
         names = sorted(
-            adjusted.loc[unmatched, "name"].fillna("").astype(str).unique()
+            adjusted_dynamic.loc[unmatched, "name"]
+            .fillna("")
+            .astype(str)
+            .unique()
         )
         raise ValueError(f"dequant pure-energy rules did not match: {names}")
 
-    tokens = pd.to_numeric(adjusted["energy_tokens"], errors="coerce")
-    adjusted["joules_per_token_component"] = (
-        pd.to_numeric(adjusted["kernel_energy_j"], errors="coerce")
+    tokens = pd.to_numeric(adjusted_dynamic["energy_tokens"], errors="coerce")
+    adjusted_dynamic["joules_per_token_component"] = (
+        pd.to_numeric(adjusted_dynamic["kernel_energy_j"], errors="coerce")
         / tokens.where(tokens.gt(0.0))
     )
     for rule in DEQUANT_PURE_ENERGY_RULES:
@@ -1691,9 +1708,12 @@ def _apply_dequant_pure_energy_rules(rows: pd.DataFrame) -> pd.DataFrame:
             f"energy discount rule {rule.name}: scale={rule.scale:.5f}, "
             f"matched_rows={int(matched.sum())}"
         )
-    return adjusted.drop(
-        columns=["_latency_scale_factor", "_latency_scale_rules"]
-    )
+    adjusted = rows.copy()
+    adjusted.loc[dynamic, "kernel_energy_j"] = adjusted_dynamic["kernel_energy_j"]
+    adjusted.loc[dynamic, "joules_per_token_component"] = adjusted_dynamic[
+        "joules_per_token_component"
+    ]
+    return adjusted
 
 
 def _energy_summaries_all_metrics(

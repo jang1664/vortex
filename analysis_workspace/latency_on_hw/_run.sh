@@ -26,7 +26,7 @@ mkdir -p logs
 # --------------------------------------------------------------------------------------------------------
 model="$1"
 requested_stage="${2:-all}"
-case_filter=""
+case_filter="(app=hadamard_layout_fused | app=head_concat_layout_fused | app=head_concat | app=silu)"
 
 filter_args=()
 if [[ -n "${case_filter//[[:space:]]/}" ]]; then
@@ -82,7 +82,7 @@ esac
 FPGA_BINS="${fpga_bins}" \
 STAGES="${stages}" \
 BUILD_DIR="${build_dir}" \
-SKIP_EXISTING=1 \
+SKIP_EXISTING=0 \
 BLACKBOX_TIMEOUT=24h ./run_hw.sh \
     --input "${input_dir}" \
     --output "${output_dir}" \

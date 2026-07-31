@@ -129,7 +129,8 @@ SUPPORTED_ENERGY_POWER_METRICS = (
     "power_vcc_avg_W",
     "power_dynamic_avg_W",
 )
-ENERGY_POWER_METRICS = ("power_dynamic_avg_W",)
+# Export both total board energy and idle-subtracted dynamic energy by default.
+ENERGY_POWER_METRICS = ("power_avg_W", "power_dynamic_avg_W")
 STAGE_ORDER = ("Prefill", "Decode")
 RAW_DB_SUBDIRS = ("C1", "C3", "C4")
 RAW_DB_ROOT_NAMES = (
@@ -207,8 +208,8 @@ LLAMA_E2E_MODELS = tuple(
 )
 LLAMA_E2E_ROW_ORDER = tuple(
     (model_label, stage)
-    for _model_key, model_label in LLAMA_E2E_MODELS
     for stage in STAGE_ORDER
+    for _model_key, model_label in LLAMA_E2E_MODELS
 )
 
 BAR_PALETTE = (
@@ -292,6 +293,9 @@ class WideBarKnobs:
     tight_layout_rect: tuple[float, float, float, float] = (0.0, 0.04, 1.0, 0.88)
     tight_layout_pad: float = 1.08
     tight_layout_h_pad: float | None = None
+    stage_subplot_gap_scales: dict[str, float] = field(default_factory=dict)
+    stage_transition_gap_scale: float = 1.0
+    save_pad_inches: float = 0.1
     save_png: bool = True
     save_pdf: bool = True
     save_svg: bool = True
@@ -335,7 +339,11 @@ ENERGY_KIND_STACK_GROUPS = (
 )
 
 
-def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
+def _llama_compact_kwargs(
+    y_label: str,
+    *,
+    legend_y: float = 0.950,
+) -> dict[str, Any]:
     return {
         "figsize": LLAMA_E2E_STACKED_FIGSIZE,
         "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / 4,
@@ -357,9 +365,13 @@ def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
         "x_group_labels_inside": True,
         "legend_position": "top",
         "legend_title": None,
-        "legend_y": 0.950,
-        "tight_layout_rect": (0.0, 0.02, 1.0, 0.93),
+        "legend_y": legend_y,
+        "tight_layout_rect": (0.0, 0.0, 1.0, 0.93),
+        "tight_layout_pad": 0.0,
         "tight_layout_h_pad": 0.2,
+        "stage_subplot_gap_scales": {"Prefill": 0.50, "Decode": 0.50},
+        "stage_transition_gap_scale": 0.90,
+        "save_pad_inches": 0.0,
         "value_labels": VALUE_LABELS,
         "stage_x_tick_label_rotations": {"Prefill": 0.0, "Decode": 45.0},
     }
@@ -477,7 +489,7 @@ class PlotKnobs:
     )
     llama_gemm_only: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL),
+            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -486,7 +498,7 @@ class PlotKnobs:
     )
     llama_gemm_only_no_area_norm: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL),
+            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -495,7 +507,7 @@ class PlotKnobs:
     )
     llama_gemm_only_energy: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -503,7 +515,7 @@ class PlotKnobs:
     )
     llama_gemm_only_energy_no_area_norm: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -511,13 +523,13 @@ class PlotKnobs:
     )
     llama_energy: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=4,
         )
     )
     llama_energy_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=4,
             stack_palette=ENERGY_KIND_STACK_PALETTE,
             stack_groups=ENERGY_KIND_STACK_GROUPS,
@@ -525,13 +537,13 @@ class PlotKnobs:
     )
     llama_energy_no_area_norm: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=4,
         )
     )
     llama_energy_no_area_norm_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=4,
             stack_palette=ENERGY_KIND_STACK_PALETTE,
             stack_groups=ENERGY_KIND_STACK_GROUPS,
@@ -539,7 +551,7 @@ class PlotKnobs:
     )
     llama_energy_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
             legend_order=("gemm", "vector", "layout", "W dequant", "KV dequant"),
@@ -547,7 +559,7 @@ class PlotKnobs:
     )
     llama_energy_no_area_norm_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
             legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
             legend_order=("gemm", "vector", "layout", "W dequant", "KV dequant"),
@@ -1724,13 +1736,26 @@ def _save_figure(fig: Any, path: Path, knobs: WideBarKnobs) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _fit_auto_value_labels(fig, knobs)
     if knobs.save_png:
-        fig.savefig(path, dpi=knobs.dpi, bbox_inches="tight")
+        fig.savefig(
+            path,
+            dpi=knobs.dpi,
+            bbox_inches="tight",
+            pad_inches=knobs.save_pad_inches,
+        )
         print(f"wrote {path}")
     if knobs.save_pdf:
-        fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
+        fig.savefig(
+            path.with_suffix(".pdf"),
+            bbox_inches="tight",
+            pad_inches=knobs.save_pad_inches,
+        )
         print(f"wrote {path.with_suffix('.pdf')}")
     if knobs.save_svg:
-        fig.savefig(path.with_suffix(".svg"), bbox_inches="tight")
+        fig.savefig(
+            path.with_suffix(".svg"),
+            bbox_inches="tight",
+            pad_inches=knobs.save_pad_inches,
+        )
         print(f"wrote {path.with_suffix('.svg')}")
 
 
@@ -1741,6 +1766,7 @@ def _set_grouped_x_ticks(
     *,
     include_batch: bool,
     knobs: WideBarKnobs,
+    show_labels: bool = True,
 ) -> None:
     stage = str(stage_df["stage"].iloc[0]) if "stage" in stage_df.columns and not stage_df.empty else ""
     tick_label_rotation = knobs.stage_x_tick_label_rotations.get(
@@ -1767,6 +1793,14 @@ def _set_grouped_x_ticks(
         fontsize=knobs.tick_label_fontsize,
         rotation=tick_label_rotation,
     )
+    if not show_labels:
+        ax.tick_params(
+            axis="x",
+            which="both",
+            bottom=False,
+            top=False,
+            labelbottom=False,
+        )
     if not include_batch:
         return
 
@@ -2662,6 +2696,64 @@ def _read_model_excel_frames(
     return frames
 
 
+def _share_model_x_axes_by_stage(
+    axes: Sequence[Any],
+    row_specs: Sequence[tuple[str, str]],
+) -> set[int]:
+    """Share x axes within each stage and return rows that display the x axis."""
+    first_axis_by_stage: dict[str, Any] = {}
+    last_row_by_stage: dict[str, int] = {}
+    for row_index, (ax, (_model_label, stage)) in enumerate(zip(axes, row_specs)):
+        first_axis = first_axis_by_stage.setdefault(stage, ax)
+        if ax is not first_axis:
+            ax.sharex(first_axis)
+        last_row_by_stage[stage] = row_index
+    return set(last_row_by_stage.values())
+
+
+def _scale_model_subplot_gaps_by_stage(
+    axes: Sequence[Any],
+    row_specs: Sequence[tuple[str, str]],
+    knobs: WideBarKnobs,
+) -> None:
+    for row_index in range(len(row_specs) - 1):
+        stage = row_specs[row_index][1]
+        next_stage = row_specs[row_index + 1][1]
+        if next_stage == stage:
+            scale = float(knobs.stage_subplot_gap_scales.get(stage, 1.0))
+        else:
+            scale = float(knobs.stage_transition_gap_scale)
+        if not math.isfinite(scale) or scale < 0.0:
+            raise ValueError("subplot gap scale must be a non-negative finite number")
+        if scale >= 1.0:
+            continue
+
+        upper = axes[row_index]
+        lower = axes[row_index + 1]
+        upper_position = upper.get_position()
+        lower_position = lower.get_position()
+        gap = upper_position.y0 - lower_position.y1
+        if gap <= 0.0:
+            continue
+        expansion = gap * (1.0 - scale) / 2.0
+        upper.set_position(
+            [
+                upper_position.x0,
+                upper_position.y0 - expansion,
+                upper_position.width,
+                upper_position.height + expansion,
+            ]
+        )
+        lower.set_position(
+            [
+                lower_position.x0,
+                lower_position.y0,
+                lower_position.width,
+                lower_position.height + expansion,
+            ]
+        )
+
+
 def plot_model_wide_candidate_bars(
     model_csvs: Sequence[tuple[str, str, Path]],
     out_dir: Path,
@@ -2691,12 +2783,17 @@ def plot_model_wide_candidate_bars(
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
+    x_axis_rows = _share_model_x_axes_by_stage(axes_list, row_specs)
+    x_label_row = max(x_axis_rows)
     palette = _palette(knobs)
     colors = {column: palette[idx % len(palette)] for idx, column in enumerate(value_columns)}
     legend_handles = None
     legend_labels = None
 
-    for ax, (model_label, stage) in zip(axes_list, row_specs):
+    for row_index, (ax, (model_label, stage)) in enumerate(
+        zip(axes_list, row_specs)
+    ):
+        show_x_axis = row_index in x_axis_rows
         stage_df = combined[
             combined["model"].astype(str).eq(model_label)
             & combined["stage"].astype(str).eq(stage)
@@ -2790,7 +2887,14 @@ def plot_model_wide_candidate_bars(
             positions,
             include_batch=include_batch,
             knobs=knobs,
+            show_labels=show_x_axis,
         )
+        if knobs.x_label and row_index == x_label_row:
+            ax.set_xlabel(
+                knobs.x_label,
+                fontsize=knobs.axis_label_fontsize,
+                labelpad=1.0,
+            )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max((float(value) for column in value_columns for value in stage_df[column].fillna(0.0)), default=1.0)
@@ -2800,17 +2904,12 @@ def plot_model_wide_candidate_bars(
     _add_top_legend(fig, legend_handles, legend_labels, len(value_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    if knobs.x_label:
-        axes_list[-1].set_xlabel(
-            knobs.x_label,
-            fontsize=knobs.axis_label_fontsize,
-            labelpad=1.0,
-        )
     fig.tight_layout(
         rect=knobs.tight_layout_rect,
         pad=knobs.tight_layout_pad,
         h_pad=knobs.tight_layout_h_pad,
     )
+    _scale_model_subplot_gaps_by_stage(axes_list, row_specs, knobs)
     _save_figure(fig, out_dir / filename, knobs)
     plt.close(fig)
 
@@ -2885,12 +2984,17 @@ def plot_model_stacked_bars(
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
+    x_axis_rows = _share_model_x_axes_by_stage(axes_list, row_specs)
+    x_label_row = max(x_axis_rows)
     colors = _stack_colors(stack_columns, knobs)
     candidate_order = {candidate: idx for idx, candidate in enumerate(E2E_CANDIDATE_COLUMNS)}
     legend_handles = None
     legend_labels = None
 
-    for ax, (model_label, stage) in zip(axes_list, row_specs):
+    for row_index, (ax, (model_label, stage)) in enumerate(
+        zip(axes_list, row_specs)
+    ):
+        show_x_axis = row_index in x_axis_rows
         stage_df = combined[
             combined["model"].astype(str).eq(model_label)
             & combined["stage"].astype(str).eq(stage)
@@ -2990,7 +3094,14 @@ def plot_model_stacked_bars(
             positions,
             include_batch=include_batch,
             knobs=knobs,
+            show_labels=show_x_axis,
         )
+        if knobs.x_label and row_index == x_label_row:
+            ax.set_xlabel(
+                knobs.x_label,
+                fontsize=knobs.axis_label_fontsize,
+                labelpad=1.0,
+            )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
         ymax = max(bottoms, default=1.0)
@@ -3006,17 +3117,12 @@ def plot_model_stacked_bars(
     _add_top_legend(fig, legend_handles, legend_labels, len(stack_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    if knobs.x_label:
-        axes_list[-1].set_xlabel(
-            knobs.x_label,
-            fontsize=knobs.axis_label_fontsize,
-            labelpad=1.0,
-        )
     fig.tight_layout(
         rect=knobs.tight_layout_rect,
         pad=knobs.tight_layout_pad,
         h_pad=knobs.tight_layout_h_pad,
     )
+    _scale_model_subplot_gaps_by_stage(axes_list, row_specs, knobs)
     _save_figure(fig, out_dir / filename, knobs)
     plt.close(fig)
 

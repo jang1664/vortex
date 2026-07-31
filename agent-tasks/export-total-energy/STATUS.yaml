@@ -1,0 +1,16 @@
+task: export-total-energy
+status: COMPLETE
+started: "2026-07-31 23:00"
+updated: "2026-07-31 23:10"
+summary: "Switched the default prepared and plotted energy metric from idle-subtracted dynamic power to total run board power."
+log:
+  - time: "2026-07-31 23:00"
+    entry: "Confirmed energy_per_token.py already supports power_avg_W as total run board power; prepare.py and plot.py independently selected power_dynamic_avg_W as their default export/discovery metric."
+  - time: "2026-07-31 23:10"
+    entry: "Changed both default metric selectors to power_avg_W, retained explicit dynamic-power support and the kernel_dynamic_power diagnostic, and added a regression proving default energy uses total rather than dynamic power."
+pitfalls:
+  - "Changing plot.py alone would fail auto-discovery because prepare.py would continue generating only power_dynamic_avg_W directories."
+verification:
+  - "/home/jaeyongjang/.conda/envs/vortex/bin/python -m unittest analysis_workspace.latency_on_hw.test_composed_pipeline: 15 tests passed."
+  - "plot.py --help and prepare.py --help completed in the Vortex conda environment."
+  - "git diff --check passed for the modified implementation, regression test, and status file."
