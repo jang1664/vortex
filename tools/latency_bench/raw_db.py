@@ -462,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--failure-reason",
         default="",
-        choices=["", "build", "timeout", "xrt_context_open", "xrt_device_open", "run", "parse_error", "power_samples_low"],
+        choices=["", "build", "timeout", "xrt_context_open", "xrt_device_open", "run", "parse_error", "power_samples_low", "power_idle_unstable"],
         help="Specific failure reason, if known.",
     )
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")

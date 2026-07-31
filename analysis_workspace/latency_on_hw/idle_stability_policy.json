@@ -1,0 +1,14 @@
+{
+  "default": {
+    "window_samples": 8,
+    "confirmation_windows": 2,
+    "window_step_samples": 4,
+    "max_wait_s": 4.0,
+    "poll_interval_s": 0.05,
+    "max_mean_delta_w": 0.08,
+    "max_std_w": 0.30,
+    "max_stderr_w": 0.08,
+    "max_abs_slope_w_per_s": 0.08
+  },
+  "devices": {}
+}

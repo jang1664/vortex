@@ -72,6 +72,8 @@ struct Args {
     int         power_fpga_id    = 0;
     int         power_iterations = -1;
     double      power_idle_sec   = 2.0;
+    std::string power_idle_policy;
+    std::string power_idle_guard_script;
     uint64_t    power_csv_max_bytes = 1024ull * 1024ull;
     std::string power_script;
     bool        power_measure_latency = false;
@@ -417,6 +419,16 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-idle-sec") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-idle-sec", &value, a)) a.power_idle_sec = std::atof(value);
+        } else if (std::strncmp(s, "--power-idle-policy=", 20) == 0) {
+            a.power_idle_policy = s + 20;
+        } else if (std::strcmp(s, "--power-idle-policy") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-idle-policy", &value, a)) a.power_idle_policy = value;
+        } else if (std::strncmp(s, "--power-idle-guard-script=", 26) == 0) {
+            a.power_idle_guard_script = s + 26;
+        } else if (std::strcmp(s, "--power-idle-guard-script") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-idle-guard-script", &value, a)) a.power_idle_guard_script = value;
         } else if (std::strncmp(s, "--power-csv-max-bytes=", 22) == 0) {
             a.power_csv_max_bytes = static_cast<uint64_t>(std::strtoull(s + 22, nullptr, 0));
         } else if (std::strcmp(s, "--power-csv-max-bytes") == 0) {
@@ -820,6 +832,149 @@ struct PowerPhase {
     std::vector<uint64_t> fpga_cycles;
 };
 
+inline bool read_idle_guard_window(const std::string& path,
+                                   PowerPhase* phase,
+                                   double not_before_s,
+                                   FILE* msg = stderr) {
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f) {
+        std::fprintf(msg, "[power] idle guard result missing: %s\n", path.c_str());
+        return false;
+    }
+    char header[1024];
+    char row[1024];
+    const bool has_rows = std::fgets(header, sizeof(header), f)
+                       && std::fgets(row, sizeof(row), f);
+    std::fclose(f);
+    if (!has_rows) {
+        std::fprintf(msg, "[power] idle guard result empty: %s\n", path.c_str());
+        return false;
+    }
+    int stable = 0;
+    int samples = 0;
+    int observed_samples = 0;
+    double start_s = 0.0;
+    double end_s = 0.0;
+    double mean_w = 0.0;
+    double std_w = 0.0;
+    double stderr_w = 0.0;
+    double slope_w_per_s = 0.0;
+    double mean_delta_w = 0.0;
+    const int fields = std::sscanf(
+        row,
+        "%d,%lf,%lf,%d,%lf,%lf,%lf,%lf,%lf,%d",
+        &stable,
+        &start_s,
+        &end_s,
+        &samples,
+        &mean_w,
+        &std_w,
+        &stderr_w,
+        &slope_w_per_s,
+        &mean_delta_w,
+        &observed_samples);
+    if (fields != 10 || stable != 1 || samples < 2 || end_s < start_s) {
+        std::fprintf(msg, "[power] idle guard result invalid: %s\n", row);
+        return false;
+    }
+    phase->start_s = start_s;
+    phase->end_s = end_s;
+    std::fprintf(msg,
+        "[power] stage=idle_stable samples=%d observed_samples=%d elapsed_s=%.6f "
+        "selected_window_s=%.6f "
+        "mean_w=%.6f std_w=%.6f stderr_w=%.6f slope_w_per_s=%.6f "
+        "mean_delta_w=%.6f\n",
+        samples,
+        observed_samples,
+        end_s - not_before_s,
+        end_s - start_s,
+        mean_w,
+        std_w,
+        stderr_w,
+        slope_w_per_s,
+        mean_delta_w);
+    std::fflush(msg);
+    return true;
+}
+
+inline bool capture_idle_phase(const Args& args,
+                               PowerPhase* phase,
+                               const char* label,
+                               FILE* msg = stderr) {
+    phase->mode = "idle";
+    phase->phase = "idle";
+    if (args.power_idle_policy.empty()) {
+        phase->start_s = epoch_seconds();
+        sleep_seconds(args.power_idle_sec);
+        phase->end_s = epoch_seconds();
+        return true;
+    }
+    if (!is_executable(args.power_idle_guard_script)) {
+        std::fprintf(msg,
+            "[power] stage=idle_guard_error label=%s script_not_executable=%s\n",
+            label,
+            args.power_idle_guard_script.c_str());
+        return false;
+    }
+
+    const std::string result_path = args.power_csv + ".idle_guard.csv";
+    std::remove(result_path.c_str());
+    const double not_before_s = epoch_seconds();
+    char not_before[64];
+    std::snprintf(not_before, sizeof(not_before), "%.9f", not_before_s);
+    std::fprintf(msg,
+        "[power] stage=idle_guard_begin label=%s policy=%s not_before_s=%s\n",
+        label,
+        args.power_idle_policy.c_str(),
+        not_before);
+    std::fflush(msg);
+
+    const pid_t child = ::fork();
+    if (child < 0) {
+        std::fprintf(msg, "[power] idle guard fork failed: %s\n", std::strerror(errno));
+        return false;
+    }
+    if (child == 0) {
+        ::execl(
+            args.power_idle_guard_script.c_str(),
+            args.power_idle_guard_script.c_str(),
+            "wait",
+            "--csv",
+            args.power_csv.c_str(),
+            "--policy",
+            args.power_idle_policy.c_str(),
+            "--not-before",
+            not_before,
+            "--result",
+            result_path.c_str(),
+            static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    if (::waitpid(child, &status, 0) != child) {
+        std::fprintf(msg, "[power] idle guard waitpid failed: %s\n", std::strerror(errno));
+        return false;
+    }
+    const int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+    if (rc != 0) {
+        std::fprintf(msg,
+            "[power] stage=idle_unstable label=%s guard_rc=%d policy=%s\n",
+            label,
+            rc,
+            args.power_idle_policy.c_str());
+        std::fflush(msg);
+        return false;
+    }
+    if (!read_idle_guard_window(result_path, phase, not_before_s, msg)) {
+        std::fprintf(msg,
+            "[power] stage=idle_guard_error label=%s invalid_result=%s\n",
+            label,
+            result_path.c_str());
+        return false;
+    }
+    return true;
+}
+
 struct UIntStatsSummary {
     size_t n = 0;
     uint64_t min = 0;
@@ -1205,13 +1360,18 @@ public:
             return false;
         }
         std::fprintf(msg_,
-            "[power] stage=latency_idle_begin duration_s=%.3f interval=%.6g\n",
+            "[power] stage=latency_idle_begin duration_s=%.3f interval=%.6g adaptive=%s\n",
             args_.power_idle_sec,
-            idle_args.power_interval);
+            idle_args.power_interval,
+            args_.power_idle_policy.empty() ? "off" : "on");
         std::fflush(msg_);
-        args_.power_latency_idle_start_s = epoch_seconds();
-        sleep_seconds(args_.power_idle_sec);
-        args_.power_latency_idle_end_s = epoch_seconds();
+        PowerPhase idle_phase;
+        if (!capture_idle_phase(args_, &idle_phase, "latency", msg_)) {
+            sampler_.stop();
+            return false;
+        }
+        args_.power_latency_idle_start_s = idle_phase.start_s;
+        args_.power_latency_idle_end_s = idle_phase.end_s;
         sampler_.stop();
 
         Args latency_args = args_;
@@ -1501,15 +1661,15 @@ inline bool run_power_measurement_impl(const char* label,
     }
 
     PowerPhase idle_phase;
-    idle_phase.mode = "idle";
-    idle_phase.phase = "idle";
-    std::fprintf(msg, "[power] stage=idle_begin label=%s duration_s=%.3f\n",
+    std::fprintf(msg, "[power] stage=idle_begin label=%s duration_s=%.3f adaptive=%s\n",
                  label,
-                 power_args.power_idle_sec);
+                 power_args.power_idle_sec,
+                 power_args.power_idle_policy.empty() ? "off" : "on");
     std::fflush(msg);
-    idle_phase.start_s = epoch_seconds();
-    sleep_seconds(power_args.power_idle_sec);
-    idle_phase.end_s = epoch_seconds();
+    if (!capture_idle_phase(power_args, &idle_phase, label, msg)) {
+        sampler.stop();
+        return false;
+    }
     std::fprintf(msg, "[power] stage=idle_end label=%s elapsed_s=%.6f\n",
                  label,
                  idle_phase.end_s - idle_phase.start_s);

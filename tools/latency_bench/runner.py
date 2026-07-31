@@ -142,6 +142,8 @@ class RunOptions:
     power_min_interval: float = 0.05
     power_max_interval: float = 1.0
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
+    power_idle_stability_policy: Path | None = None
+    power_idle_guard_script: Path | None = None
     power_kernel_iterations: int = 1
     power_kernel_iterations_auto: bool = False
     power_target_sec: float = 20.0
@@ -190,6 +192,21 @@ def validate_inputs(options: RunOptions) -> None:
         raise ValueError("--case-progress-interval must be >= 1")
     if options.power_min_samples < 0:
         raise ValueError("--power-min-samples must be >= 0")
+    if options.power_idle_stability_policy is not None:
+        if not options.measure_power:
+            raise ValueError("--power-idle-stability-policy requires power measurement")
+        if not options.power_idle_stability_policy.is_file():
+            raise FileNotFoundError(
+                f"idle stability policy not found: {options.power_idle_stability_policy}"
+            )
+        if (
+            options.power_idle_guard_script is None
+            or not options.power_idle_guard_script.is_file()
+            or not os.access(options.power_idle_guard_script, os.X_OK)
+        ):
+            raise FileNotFoundError(
+                f"idle guard is not executable: {options.power_idle_guard_script}"
+            )
     if options.power_kernel_iterations < 1:
         raise ValueError("--power-kernel-iterations must be >= 1")
     if options.power_target_sec <= 0:
@@ -966,6 +983,10 @@ def write_run_script(
         "    printf 'xrt_device_open\\n'",
         "    return 0",
         "  fi",
+        "  if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q '\\[power\\] stage=idle_unstable' \"$attempt_log\"; then",
+        "    printf 'power_idle_unstable\\n'",
+        "    return 0",
+        "  fi",
         "  if [[ \"$rc\" != \"0\" ]]; then printf 'run\\n'; return 0; fi",
         "  printf '\\n'",
         "}",
@@ -1080,6 +1101,11 @@ def write_run_script(
                 f"--power-target-samples={options.power_target_samples}",
                 f"--power-latency-interval={options.power_latency_interval}",
             ])
+            if options.power_idle_stability_policy is not None:
+                bench_arg_parts.extend([
+                    f"--power-idle-policy={options.power_idle_stability_policy}",
+                    f"--power-idle-guard-script={options.power_idle_guard_script}",
+                ])
             if options.power_auto_duration:
                 bench_arg_parts.extend([
                     "--power-auto-duration=on",
@@ -1211,7 +1237,7 @@ def write_run_script(
             "    if [[ -n \"$power_failure_reason\" ]]; then failure_reason=\"$power_failure_reason\"; fi",
             "  fi",
             "fi",
-            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && ( \"$failure_reason\" == \"timeout\" || \"$failure_reason\" == \"xrt_device_open\" ) ]]; then",
+            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && ( \"$failure_reason\" == \"timeout\" || \"$failure_reason\" == \"xrt_device_open\" || \"$failure_reason\" == \"power_idle_unstable\" ) ]]; then",
             f"  if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
             "  reset_ran=\"1\"",
             "  reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
@@ -1300,7 +1326,7 @@ def write_run_script(
             'if [[ "$failure_reason" == "timeout" ]]; then',
             "  LATENCY_BENCH_TIMEOUT_RETRIES=$((LATENCY_BENCH_TIMEOUT_RETRIES + 1))",
             "fi",
-            'if [[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]; then',
+            'if [[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "power_idle_unstable" && "$reset_rc" == "0" ) || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]; then',
             "  LATENCY_BENCH_RETRYABLE_FAILURES=$((LATENCY_BENCH_RETRYABLE_FAILURES + 1))",
             f"  LATENCY_BENCH_NEXT_SHOULD_RUN[{_q(unit.exec_key)}]=1",
             "fi",
@@ -1441,6 +1467,16 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "power_min_interval": run_options.power_min_interval,
         "power_max_interval": run_options.power_max_interval,
         "power_min_samples": run_options.power_min_samples,
+        "power_idle_stability_policy": (
+            str(run_options.power_idle_stability_policy)
+            if run_options.power_idle_stability_policy is not None
+            else ""
+        ),
+        "power_idle_guard_script": (
+            str(run_options.power_idle_guard_script)
+            if run_options.power_idle_guard_script is not None
+            else ""
+        ),
         "power_kernel_iterations": run_options.power_kernel_iterations,
         "power_kernel_iterations_auto": run_options.power_kernel_iterations_auto,
         "power_target_sec": run_options.power_target_sec,

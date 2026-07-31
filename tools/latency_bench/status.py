@@ -6,6 +6,7 @@ from typing import Any
 TIMEOUT_RETURNCODES = {124, 137}
 DEFAULT_POWER_MIN_SAMPLES = 5
 POWER_SAMPLES_LOW_REASON = "power_samples_low"
+POWER_IDLE_UNSTABLE_REASON = "power_idle_unstable"
 
 
 def _parse_sample_count(value: Any) -> int | None:
@@ -54,7 +55,7 @@ def classify_status(
         return "build_fail"
     if returncode in TIMEOUT_RETURNCODES or failure_reason == "timeout":
         return "timeout"
-    if failure_reason == POWER_SAMPLES_LOW_REASON:
+    if failure_reason in {POWER_SAMPLES_LOW_REASON, POWER_IDLE_UNSTABLE_REASON}:
         return "fail"
 
     bench = bench or {}

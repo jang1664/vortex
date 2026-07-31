@@ -171,6 +171,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Minimum required power samples for power-mode pass status; 0 disables the check (default: {DEFAULT_POWER_MIN_SAMPLES}).",
     )
     run.add_argument(
+        "--power-idle-stability-policy",
+        default="",
+        help=(
+            "Opt in to adaptive idle-power stabilization using the given JSON "
+            "policy. Empty preserves fixed-duration idle measurement."
+        ),
+    )
+    run.add_argument(
         "--power-kernel-iterations",
         default="1",
         help="Device-side kernel body repetitions per power-phase launch, or 'auto' to derive from first latency iteration.",
@@ -793,6 +801,16 @@ def run_cmd(args: argparse.Namespace) -> int:
         power_min_interval=args.power_min_interval,
         power_max_interval=args.power_max_interval,
         power_min_samples=args.power_min_samples,
+        power_idle_stability_policy=(
+            Path(args.power_idle_stability_policy).resolve()
+            if args.power_idle_stability_policy
+            else None
+        ),
+        power_idle_guard_script=(
+            (repo_root / "tools" / "latency_bench" / "idle_guard.py").resolve()
+            if args.power_idle_stability_policy
+            else None
+        ),
         power_kernel_iterations=power_kernel_iterations,
         power_kernel_iterations_auto=power_kernel_iterations_auto,
         power_target_sec=args.power_target_sec,

@@ -75,6 +75,17 @@ class ReportTest(unittest.TestCase):
             classify_status(2, has_status=True, bench={"parse_error": "missing"}, failure_reason="build"),
         )
 
+    def test_classifies_unstable_idle_as_fail(self) -> None:
+        self.assertEqual(
+            "fail",
+            classify_status(
+                1,
+                has_status=True,
+                bench={},
+                failure_reason="power_idle_unstable",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

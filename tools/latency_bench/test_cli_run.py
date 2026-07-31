@@ -480,6 +480,35 @@ aliases:
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertEqual(8, manifest["power_min_samples"])
 
+    def test_run_can_enable_adaptive_idle_stability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            policy = tmp_path / "idle_policy.json"
+            policy.write_text('{"max_wait_s": 2.0}\n')
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "adaptive_idle",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--power-idle-stability-policy", str(policy),
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "adaptive_idle"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn(f"--power-idle-policy={policy}", script)
+            self.assertIn("--power-idle-guard-script=", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(str(policy), manifest["power_idle_stability_policy"])
+            self.assertTrue(manifest["power_idle_guard_script"].endswith("idle_guard.py"))
+
     def test_run_blackbox_args_merge_into_generated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -565,7 +594,7 @@ aliases:
             self.assertIn("latency_bench_power_failure_reason", script)
             self.assertIn("LATENCY_BENCH_RETRYABLE_FAILURES=0", script)
             self.assertIn(
-                '[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]',
+                '[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "power_idle_unstable" && "$reset_rc" == "0" ) || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]',
                 script,
             )
             self.assertNotIn("LATENCY_BENCH_TIMEOUT_FAILURES", script)
