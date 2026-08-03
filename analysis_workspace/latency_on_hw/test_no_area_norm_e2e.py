@@ -118,7 +118,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(
                 prepare,
                 "load_or_export_suite_figure_data",
-                side_effect=(main_result, stacked_result, other_result, gemm_result),
+                side_effect=(main_result, stacked_result, stacked_result, gemm_result),
             ) as load_mock,
             patch.object(
                 prepare,
@@ -206,7 +206,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
             prepare.e2e_no_area_norm_stacked_out_name("llama2_7b"),
         )
         self.assertTrue(no_area_norm_stacked_call.kwargs["stacked"])
-        self.assertEqual(no_area_norm_stacked_call.kwargs["stack_by"], prepare.E2E_STACK_BY)
+        self.assertEqual(no_area_norm_stacked_call.kwargs["stack_by"], "name_backend")
         self.assertEqual(no_area_norm_stacked_call.kwargs["case_latency_scale_rules"], ())
         gemm_no_area_norm_call = load_mock.call_args_list[6]
         self.assertEqual(
@@ -289,7 +289,10 @@ class NoAreaNormE2ETests(unittest.TestCase):
 
     def test_no_area_norm_stacked_data_has_a_distinct_plot_kind(self) -> None:
         csv_path = (
-            Path("llama2_7b_e2e_no_area_norm_stacked_by_kind_prefill_b1_s1024")
+            Path(
+                "llama2_7b_e2e_no_area_norm_"
+                "gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024"
+            )
             / EXCEL_FIGURE_DATA_CSV
         )
 
@@ -378,8 +381,11 @@ class NoAreaNormE2ETests(unittest.TestCase):
                             "batch": 1,
                             "seq": "1k",
                             "candidate": candidate,
-                            "gemm": total * 0.75,
-                            "vector": total * 0.25,
+                            "proj::sgemm_tcu": total * 0.75 if candidate in {"C1", "C2"} else 0.0,
+                            "proj::fpint_gemm_naive": total * 0.75 if candidate == "C3" else 0.0,
+                            "proj::fpint_gemm_improve": total * 0.75 if candidate == "C4" else 0.0,
+                            "vec::plain": total * 0.25 if candidate != "C4" else 0.0,
+                            "vec::plain_layout_fused": total * 0.25 if candidate == "C4" else 0.0,
                             "total": total,
                         }
                         for stage in plot.STAGE_ORDER

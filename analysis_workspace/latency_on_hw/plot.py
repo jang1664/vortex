@@ -313,7 +313,7 @@ GEMM_ONLY_STACK_GROUPS = (
         columns=("q_proj", "k_proj", "v_proj", "o_proj"),
     ),
     StackGroupKnobs(
-        label="attention (QK^T,PV)",
+        label=r"attention (QK$^{T}$,PV)",
         columns=("attn_qkT", "attn_pv"),
     ),
     StackGroupKnobs(
@@ -465,7 +465,13 @@ class PlotKnobs:
         default_factory=_llama_e2e_wide_knobs
     )
     llama_e2e_no_area_norm_stacked: StackedBarKnobs = field(
-        default_factory=_llama_e2e_stacked_knobs
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=3,
+            stack_palette=E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE,
+            legend_order=("gemm", "vector", "layout"),
+            stage_y_labels=dict(E2E_STAGE_Y_LABELS),
+        )
     )
     llama_e2e_gemm_layout_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
@@ -998,9 +1004,16 @@ def _candidate_matches_kind(path: Path, kind: str) -> bool:
             )
         )
     if kind == "e2e_no_area_norm":
-        return "e2e_no_area_norm" in name and "stacked_by_kind" not in name
+        return (
+            "e2e_no_area_norm" in name
+            and "stacked_by_kind" not in name
+            and "gemm_layout_vector_stacked_by_name_backend" not in name
+        )
     if kind == "e2e_no_area_norm_stacked":
-        return "e2e_no_area_norm_stacked_by_kind" in name
+        return (
+            "e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend"
+            in name
+        )
     if kind == "e2e_gemm_layout_stacked":
         return "e2e_gemm_layout_stacked_by_name_backend" in name
     if kind == "e2e_stacked":
@@ -2440,6 +2453,11 @@ def _build_gemm_layout_vector_stack(pd: Any, df: Any) -> Any:
     return _build_gemm_layout_stack(pd, df, include_vector=True)
 
 
+def _build_latency_gemm_vector_layout_stack(pd: Any, df: Any) -> Any:
+    """Build the latency GEMM, vector, and layout stack."""
+    return _build_gemm_layout_vector_stack(pd, df)
+
+
 def _build_gemm_layout_vector_dequant_stack(pd: Any, df: Any) -> Any:
     """Separate energy into GEMM, layout, vector, W dequant, and KV dequant."""
     return _build_gemm_layout_stack(
@@ -3170,7 +3188,7 @@ def plot_llama_e2e_gemm_layout_vector_stacked_bars(
         filename="llama_e2e_gemm_layout_vector_latency_stacked.png",
         data_label="Llama E2E GEMM + layout + vector stacked",
         knobs=knobs,
-        stack_transform=_build_gemm_layout_vector_stack,
+        stack_transform=_build_latency_gemm_vector_layout_stack,
     )
 
 
@@ -3186,6 +3204,7 @@ def plot_llama_e2e_no_area_norm_stacked_bars(
         filename="llama_e2e_latency_no_area_norm_stacked.png",
         data_label="Llama E2E stacked without area normalization",
         knobs=knobs,
+        stack_transform=_build_latency_gemm_vector_layout_stack,
     )
 
 

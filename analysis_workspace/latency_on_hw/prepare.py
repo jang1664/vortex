@@ -226,7 +226,11 @@ def e2e_gemm_layout_stacked_out_name(model: str) -> str:
 
 
 def e2e_no_area_norm_stacked_out_name(model: str) -> str:
-    return f"{model}_e2e_no_area_norm_stacked_by_{E2E_STACK_BY}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+    return (
+        f"{model}_e2e_no_area_norm_"
+        "gemm_layout_vector_stacked_by_name_backend_"
+        f"{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+    )
 
 
 def gemm_only_out_name(model: str) -> str:
@@ -2407,12 +2411,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         no_area_norm_stacked_result = load_or_export_no_area_norm_figure_data(
-            e2e_stacked_result,
+            e2e_gemm_layout_stacked_result,
             model=model,
             suite_tag=suite_tag,
             out_name=no_area_norm_stacked_name,
             stacked=True,
-            stack_by=E2E_STACK_BY,
+            stack_by="name_backend",
         )
         print(
             f"{model} E2E stacked figure data without area normalization source: "

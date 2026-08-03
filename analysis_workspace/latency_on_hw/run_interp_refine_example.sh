@@ -28,11 +28,11 @@ C3_NAME=C3
 C4_NAME=C4_v3
 
 LLAMA2_SUITE_NAME=llama2_7b_main_full_v2.${C3_NAME}_${C4_NAME}
-LLAMA2_OUT_NAME=outputs_llama2_main.${C3_NAME}_${C4_NAME}
+LLAMA2_OUT_NAME=outputs_llama2_main.${C3_NAME}_${C4_NAME}.run2
 LLAMA2_KERNEL_TYPE_FILTER=""
 
 LLAMA3_SUITE_NAME=llama3_8b_main_full_v2.${C3_NAME}_${C4_NAME}
-LLAMA3_OUT_NAME=outputs_llama3_main.${C3_NAME}_${C4_NAME}
+LLAMA3_OUT_NAME=outputs_llama3_main.${C3_NAME}_${C4_NAME}.run2
 LLAMA3_KERNEL_TYPE_FILTER=""
 
 FPGA_BINS=(C1 ${C3_NAME} ${C4_NAME})
