@@ -45,6 +45,14 @@ QCOL and QROW preprocessing use parallel paths so adjacent packets may
 change quantization direction and register selectors without sharing
 crossed mode-dependent state.
 
+The FPU wrapper parameter is selected per backend to preserve this same
+one-cycle contract. FPnew uses `LATENCY=0` because its mandatory input buffer
+already supplies the cycle. DPI and the latency-1 Xilinx IP path use
+`LATENCY=1`. This rule is applied consistently to the FP16 input/output
+multipliers, FP32 output multiplier, and FP32 accumulator adder. A DPI
+`LATENCY=0` setting would be combinational and would make data valid arrive
+one cycle before `ctrl_pipe`, dropping the final ACC write.
+
 ## Accumulator scheduling
 
 The accumulator consists of four physical single-port SRAM banks. The
@@ -74,7 +82,10 @@ packet's accumulator-input stage.
 Simulation assertions check always-ready behavior, control/data alignment,
 single-port read/write exclusion, early-response availability, forwarding
 source validity/address equality, and legal sequential or immediate
-same-address dependencies within a command stream.
+same-address dependencies within a command stream. Load packets are checked
+at the scaler stage as well as accumulation packets, so a backend latency
+mismatch fails at its first packet instead of appearing as a later command
+completion hang.
 
 ## Verification scope
 
@@ -89,4 +100,6 @@ An admission-based scoreboard independently checks the exact write/read cycle,
 bank, address, enable, completion marker, and ordering of every packet. A
 fixed-seed constrained-random stream also covers bubbles, disabled writes,
 mode/register changes, and physical bank-group crossings. Top-level simulation
-and synthesis are outside this unit-level change.
+was additionally verified with `fpint_gemm_ffn_hw` in `xrt-vcs-sim` for M1
+K32/K64/K128, M32 K64/K128, WTRANS, and QROW cases. Synthesis remains outside
+this change.

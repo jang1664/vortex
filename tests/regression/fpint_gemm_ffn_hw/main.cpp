@@ -200,6 +200,14 @@ static float fp16_to_float(uint16_t h) {
   return out;
 }
 
+// QDIR_ROW scales the FP16 input in the GEMM input pipeline before the dot
+// product.  Both operands are FP16, so their product is exact in FP32; the
+// conversion below applies the same round-to-nearest-even FP16 boundary as
+// the RTL multiplier before the value reaches the accumulator.
+static float fp16_mul_rne(float lhs, float rhs) {
+  return fp16_to_float(float_to_fp16(lhs * rhs));
+}
+
 static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
   return uint8_t((uint8_t(hi) & 0x0F) << 4) | uint8_t(lo & 0x0F);
 }
@@ -277,7 +285,11 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
             zp = float(h_zeros[k * ng_total + ng]);
           }
           float w = float(h_W_raw[k * N + n]);
-          sum += a * (w - zp) * scale;
+          if (QDIR == 0) {
+            sum += a * (w - zp) * scale;
+          } else {
+            sum += fp16_mul_rne(a, scale) * (w - zp);
+          }
         }
         h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
       }

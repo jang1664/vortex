@@ -49,9 +49,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY
                                 - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
     localparam INTTOFP_OUT_DLY = 2;
-    localparam FP16_MUL_LATENCY = 0;
-    localparam FP32_MUL_LATENCY = 0;
-    localparam FP32_ADD_LATENCY = 0;
+`ifdef FPU_FPNEW
+    // FPnew's input buffer supplies the fixed pipeline cycle at LATENCY=0.
+    localparam FPU_OPERATOR_LATENCY = 0;
+`else
+    localparam FPU_OPERATOR_LATENCY = 1;
+`endif
+    localparam FP16_MUL_LATENCY = FPU_OPERATOR_LATENCY;
+    localparam FP32_MUL_LATENCY = FPU_OPERATOR_LATENCY;
+    localparam FP32_ADD_LATENCY = FPU_OPERATOR_LATENCY;
     localparam FP_SCALER_DLY = 1;
     localparam ACC_SRAM_RD_DLY = 1;
     localparam ACC_ADD_DLY = 1;
@@ -575,11 +581,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
 
 `ifndef SYNTHESIS
             always @(posedge clk) begin
-                if (!reset && a_valid && !in_scaler_a_ready[i]) begin
+                if ((reset === 1'b0)
+                 && (a_valid === 1'b1)
+                 && (in_scaler_a_ready[i] !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM input scaler lane %0d backpressured while a_valid is asserted",
                            $time, LANE_ID);
                 end
-                if (!reset && b_valid && !in_scaler_b_ready[i]) begin
+                if ((reset === 1'b0)
+                 && (b_valid === 1'b1)
+                 && (in_scaler_b_ready[i] !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM input scaler lane %0d backpressured while b_valid is asserted",
                            $time, LANE_ID);
                 end
@@ -893,11 +903,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
             );
 `ifndef SYNTHESIS
             always @(posedge clk) begin
-                if (!reset && a_valid && !a_ready) begin
+                if ((reset === 1'b0)
+                 && (a_valid === 1'b1)
+                 && (a_ready !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
                            $time, LANE_ID);
                 end
-                if (!reset && b_valid && !b_ready) begin
+                if ((reset === 1'b0)
+                 && (b_valid === 1'b1)
+                 && (b_ready !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while b_valid is asserted",
                            $time, LANE_ID);
                 end
@@ -924,11 +938,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
             );
 `ifndef SYNTHESIS
             always @(posedge clk) begin
-                if (!reset && a_valid && !a_ready) begin
+                if ((reset === 1'b0)
+                 && (a_valid === 1'b1)
+                 && (a_ready !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
                            $time, LANE_ID);
                 end
-                if (!reset && b_valid && !b_ready) begin
+                if ((reset === 1'b0)
+                 && (b_valid === 1'b1)
+                 && (b_ready !== 1'b1)) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while b_valid is asserted",
                            $time, LANE_ID);
                 end
@@ -1243,8 +1261,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     end
 
     always @(posedge clk) begin
-        if (!reset) begin
-            assert (i_lmem_bus_if.req_ready)
+        if (reset === 1'b0) begin
+            assert (i_lmem_bus_if.req_ready === 1'b1)
                 else $fatal(1, "GEMM v2 input ready deasserted");
             assert (gemm_unit_v2_if.packet_ctrl.valid
                  == i_lmem_bus_if.req_valid)
@@ -1255,7 +1273,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 else $fatal(1, "GEMM v2 same-bank read/write collision");
             assert ((early_rsp_pending & early_hold_valid) == '0)
                 else $fatal(1, "GEMM v2 early hold overwrite");
-            if (input_fire && stream_address_valid) begin
+            if ((input_fire === 1'b1)
+             && (stream_address_valid === 1'b1)) begin
                 assert ((gemm_unit_v2_if.packet_ctrl.acc_rd_addr
                        == stream_rd_addr_q + `GEMM_PSUM_DATA_SIZE
                       && gemm_unit_v2_if.packet_ctrl.acc_wr_addr
@@ -1267,21 +1286,21 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                        == stream_wr_addr_q))
                     else $fatal(1, "GEMM v2 address is neither strict progression nor immediate forwarding");
             end
-            if (admission_forward) begin
+            if (admission_forward === 1'b1) begin
                 assert (ctrl_pipe[0].valid && ctrl_pipe[0].acc_wr_en)
                     else $fatal(1, "GEMM v2 forwarding dependency has no prior writer");
                 assert (ctrl_pipe[0].acc_wr_addr
                      == gemm_unit_v2_if.packet_ctrl.acc_rd_addr)
                     else $fatal(1, "GEMM v2 forwarding admission address mismatch");
             end
-            if (ctrl_pipe[SCALER_CTRL_IDX].valid
-             && ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en
-             && early_pipe[SCALER_CTRL_IDX]) begin
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             && (ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en === 1'b1)
+             && (early_pipe[SCALER_CTRL_IDX] === 1'b1)) begin
                 assert (early_hold_valid[accum_bank])
                     else $fatal(1, "GEMM v2 missing early PSUM");
             end
-            if (ctrl_pipe[SCALER_CTRL_IDX].valid
-             && forward_pipe[SCALER_CTRL_IDX]) begin
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             && (forward_pipe[SCALER_CTRL_IDX] === 1'b1)) begin
                 assert (ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en)
                     else $fatal(1, "GEMM v2 forwarding packet is not accumulating");
                 assert (acc_write_fire)
@@ -1290,10 +1309,51 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                      == ctrl_pipe[SCALER_CTRL_IDX].acc_rd_addr)
                     else $fatal(1, "GEMM v2 forwarding consume address mismatch");
             end
-            if (ctrl_pipe[SCALER_CTRL_IDX].valid
-             && ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en) begin
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             && (ctrl_pipe[SCALER_CTRL_IDX].is_load === 1'b1)) begin
+                assert (final_scaler_output_valid === 1'b1)
+                    else $fatal(1, "GEMM v2 load control/data latency mismatch");
+            end
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             && (ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en === 1'b1)) begin
                 assert (final_scaler_output_valid)
                     else $fatal(1, "GEMM v2 control/data latency mismatch");
+            end
+        end
+    end
+`endif
+
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+        if (reset === 1'b0) begin
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             || (final_scaler_output_valid === 1'b1)) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_SCALER_STAGE | {inst=%s, ctrl_valid=%0d, data_valid=%0d, load=%0d, rd=%0d, addr=0x%0h, last=%0d}\n",
+                    $time, INSTANCE_ID,
+                    ctrl_pipe[SCALER_CTRL_IDX].valid,
+                    final_scaler_output_valid,
+                    ctrl_pipe[SCALER_CTRL_IDX].is_load,
+                    ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en,
+                    ctrl_pipe[SCALER_CTRL_IDX].acc_wr_addr,
+                    ctrl_pipe[SCALER_CTRL_IDX].last))
+            end
+            if ((load_result_valid === 1'b1)
+             || ((ctrl_pipe[WRITE_CTRL_IDX].valid === 1'b1)
+              && (ctrl_pipe[WRITE_CTRL_IDX].is_load === 1'b1))) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_LOAD_ALIGN | {inst=%s, ctrl_valid=%0d, data_valid=%0d, addr=0x%0h, last=%0d}\n",
+                    $time, INSTANCE_ID,
+                    ctrl_pipe[WRITE_CTRL_IDX].valid,
+                    load_result_valid,
+                    ctrl_pipe[WRITE_CTRL_IDX].acc_wr_addr,
+                    ctrl_pipe[WRITE_CTRL_IDX].last))
+            end
+            if (acc_write_fire === 1'b1) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_WRITE_FIRE | {inst=%s, bank=%0d, addr=0x%0h, load=%0d, last=%0d}\n",
+                    $time, INSTANCE_ID,
+                    write_bank,
+                    ctrl_pipe[WRITE_CTRL_IDX].acc_wr_addr,
+                    ctrl_pipe[WRITE_CTRL_IDX].is_load,
+                    ctrl_pipe[WRITE_CTRL_IDX].last))
             end
         end
     end

@@ -114,9 +114,22 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Control interfaces
     // -------------------------------------------------------------------------
     VX_gemm_unit_v2_if gemm_unit_v2_if ();
-    gemm_unit_ctrl_t input_cmd_ctrl_r;
-    logic [`GEMM_ACC_MAX_CNT-1:0] input_packet_idx_r;
-    logic input_cmd_active_r;
+
+    typedef struct packed {
+        logic                 active;
+        logic                 ingress_complete;
+        logic [`XLEN-1:0]     acc_base;
+        logic [20:0]          packet_count;
+        logic [20:0]          packet_index;
+        logic                 is_accum;
+        logic                 quant_dir;
+        logic                 wreg_use_idx;
+        logic                 sreg_use_idx;
+        logic                 zreg_use_idx;
+    } input_cmd_context_t;
+
+    input_cmd_context_t input_cmd_ctx_r;
+    input_cmd_context_t input_cmd_ctx;
     VX_gemm_ctrl_if gemm_ctrl_if ();
 
     // LMEM DMA control interfaces (issued by gemm_ctrl)
@@ -227,83 +240,226 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Packet-level control for the stateless fixed-latency GEMM unit.
     wire input_cmd_start = gemm_ctrl_if.input_read_ctrl.start
                          && !input_is_notify;
-    wire input_packet_fire = i_gemm_bus_if.req_valid;
-    wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] input_ctrl_base_addr
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.rs1_data
-                          : input_cmd_ctrl_r.acc_mem_base_addr;
-    wire [`GEMM_ACC_MAX_CNT-1:0] input_ctrl_acc_cnt
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4]
-                          : input_cmd_ctrl_r.acc_cnt;
-    wire input_ctrl_is_load
-        = input_cmd_start ? ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3]
-                          : input_cmd_ctrl_r.is_load;
-    wire [`GEMM_ACC_MAX_CNT-1:0] input_packet_idx
-        = input_cmd_start ? '0 : input_packet_idx_r;
+    wire input_packet_fire = i_gemm_bus_if.req_valid
+                           && i_gemm_bus_if.req_ready;
+    wire input_last_admission = input_packet_fire
+                              && gemm_unit_v2_if.packet_ctrl.last;
+    wire [`XLEN-1:0] input_packet_addr_full
+        = input_cmd_ctx.acc_base
+        + `XLEN'(input_cmd_ctx.packet_index * `GEMM_PSUM_DATA_SIZE);
     wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] input_packet_addr
-        = input_ctrl_base_addr
-        + `GEMM_ACC_MEM_ADDR_WIDTH'(
-            input_packet_idx << `CLOG2(`GEMM_PSUM_DATA_SIZE));
+        = input_packet_addr_full[`GEMM_ACC_MEM_ADDR_WIDTH-1:0];
 
-    assign gemm_unit_v2_if.packet_ctrl.valid = i_gemm_bus_if.req_valid;
-    assign gemm_unit_v2_if.packet_ctrl.acc_rd_en
-        = !input_ctrl_is_load;
-    assign gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
-    assign gemm_unit_v2_if.packet_ctrl.acc_rd_addr = input_packet_addr;
-    assign gemm_unit_v2_if.packet_ctrl.acc_wr_addr = input_packet_addr;
-    assign gemm_unit_v2_if.packet_ctrl.quant_dir
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[5]
-                          : input_cmd_ctrl_r.quant_dir;
-    assign gemm_unit_v2_if.packet_ctrl.wreg_use_idx
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[2]
-                          : input_cmd_ctrl_r.wreg_use_idx;
-    assign gemm_unit_v2_if.packet_ctrl.sreg_use_idx
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[1]
-                          : input_cmd_ctrl_r.sreg_use_idx;
-    assign gemm_unit_v2_if.packet_ctrl.zreg_use_idx
-        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[0]
-                          : input_cmd_ctrl_r.zreg_use_idx;
-    assign gemm_unit_v2_if.packet_ctrl.is_load
-        = input_ctrl_is_load;
-    assign gemm_unit_v2_if.packet_ctrl.last
-        = (input_packet_idx == input_ctrl_acc_cnt - 1'b1);
+    // Select the incoming command on its start cycle so a zero-latency first
+    // LDMA packet cannot observe stale registered context.
+    always_comb begin
+        input_cmd_ctx = input_cmd_ctx_r;
+        if (input_cmd_start) begin
+            input_cmd_ctx.active = 1'b1;
+            input_cmd_ctx.ingress_complete = 1'b0;
+            input_cmd_ctx.acc_base
+                = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
+            input_cmd_ctx.packet_count
+                = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
+            input_cmd_ctx.packet_index = '0;
+            input_cmd_ctx.is_accum
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+            input_cmd_ctx.quant_dir
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
+            input_cmd_ctx.wreg_use_idx
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+            input_cmd_ctx.sreg_use_idx
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
+            input_cmd_ctx.zreg_use_idx
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
+        end
+    end
+
+    always_comb begin
+        gemm_unit_v2_if.packet_ctrl = '0;
+        gemm_unit_v2_if.packet_ctrl.valid = input_packet_fire;
+        gemm_unit_v2_if.packet_ctrl.acc_rd_en = input_cmd_ctx.is_accum;
+        gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
+        gemm_unit_v2_if.packet_ctrl.acc_rd_addr = input_packet_addr;
+        gemm_unit_v2_if.packet_ctrl.acc_wr_addr = input_packet_addr;
+        gemm_unit_v2_if.packet_ctrl.quant_dir = input_cmd_ctx.quant_dir;
+        gemm_unit_v2_if.packet_ctrl.wreg_use_idx
+            = input_cmd_ctx.wreg_use_idx;
+        gemm_unit_v2_if.packet_ctrl.sreg_use_idx
+            = input_cmd_ctx.sreg_use_idx;
+        gemm_unit_v2_if.packet_ctrl.zreg_use_idx
+            = input_cmd_ctx.zreg_use_idx;
+        gemm_unit_v2_if.packet_ctrl.is_load = !input_cmd_ctx.is_accum;
+        gemm_unit_v2_if.packet_ctrl.last
+            = (input_cmd_ctx.packet_count != 0)
+           && (input_cmd_ctx.packet_index
+            == input_cmd_ctx.packet_count - 1'b1);
+    end
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            input_cmd_ctrl_r <= '0;
-            input_packet_idx_r <= '0;
-            input_cmd_active_r <= 1'b0;
+            input_cmd_ctx_r <= '0;
         end else begin
             if (input_cmd_start) begin
-                input_cmd_ctrl_r.quant_dir
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
-                input_cmd_ctrl_r.acc_mem_base_addr
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-                input_cmd_ctrl_r.output_mem_base_addr <= '0;
-                input_cmd_ctrl_r.output_mem_stride <= '0;
-                input_cmd_ctrl_r.acc_cnt
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4];
-                input_cmd_ctrl_r.wreg_use_idx
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
-                input_cmd_ctrl_r.sreg_use_idx
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
-                input_cmd_ctrl_r.zreg_use_idx
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
-                input_cmd_ctrl_r.is_load
-                    <= ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
-                input_cmd_ctrl_r.is_last <= 1'b0;
-                input_packet_idx_r
-                    <= input_packet_fire ? `GEMM_ACC_MAX_CNT'(1) : '0;
-                input_cmd_active_r <= 1'b1;
-            end else if (input_packet_fire) begin
-                input_packet_idx_r <= input_packet_idx_r + 1'b1;
+                input_cmd_ctx_r <= input_cmd_ctx;
+                if (input_packet_fire) begin
+                    if (gemm_unit_v2_if.packet_ctrl.last)
+                        input_cmd_ctx_r.ingress_complete <= 1'b1;
+                    else
+                        input_cmd_ctx_r.packet_index <= 21'd1;
+                end
+            end else if (input_packet_fire
+                      && input_cmd_ctx_r.active
+                      && !input_cmd_ctx_r.ingress_complete) begin
+                if (gemm_unit_v2_if.packet_ctrl.last)
+                    input_cmd_ctx_r.ingress_complete <= 1'b1;
+                else
+                    input_cmd_ctx_r.packet_index
+                        <= input_cmd_ctx_r.packet_index + 1'b1;
             end else if (gemm_unit_v2_if.last_write) begin
-                input_cmd_active_r <= 1'b0;
+                input_cmd_ctx_r <= '0;
             end
         end
     end
 
+`ifndef SYNTHESIS
+    // Named integration probes used by node-level and XRT-VCS debug.
+    logic        dbg_input_cmd_start;
+    logic        dbg_input_admission;
+    logic [20:0] dbg_input_packet_index;
+    logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] dbg_input_acc_addr;
+    logic        dbg_input_acc_rd_en;
+    logic        dbg_input_last_admission;
+    logic        dbg_input_last_write;
+    logic        dbg_input_cmd_done;
+
+    assign dbg_input_cmd_start = input_cmd_start;
+    assign dbg_input_admission = input_packet_fire;
+    assign dbg_input_packet_index = input_cmd_ctx.packet_index;
+    assign dbg_input_acc_addr = input_packet_addr;
+    assign dbg_input_acc_rd_en = gemm_unit_v2_if.packet_ctrl.acc_rd_en;
+    assign dbg_input_last_admission = input_last_admission;
+    assign dbg_input_last_write = gemm_unit_v2_if.last_write;
+    assign dbg_input_cmd_done = gemm_ctrl_if.input_read_flag.done;
+
+    logic        input_ctx_sample_valid_r;
+    logic [20:0] input_packet_index_sample_r;
+    logic        input_packet_fire_sample_r;
+    logic        input_cmd_start_sample_r;
+    logic        input_last_write_sample_r;
+    logic [31:0] input_cmd_count_r;
+    logic [31:0] input_last_admission_count_r;
+    logic [31:0] input_last_write_count_r;
+    logic [31:0] input_done_count_r;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            input_ctx_sample_valid_r <= 1'b0;
+            input_packet_index_sample_r <= '0;
+            input_packet_fire_sample_r <= 1'b0;
+            input_cmd_start_sample_r <= 1'b0;
+            input_last_write_sample_r <= 1'b0;
+            input_cmd_count_r <= '0;
+            input_last_admission_count_r <= '0;
+            input_last_write_count_r <= '0;
+            input_done_count_r <= '0;
+        end else begin
+            input_ctx_sample_valid_r <= 1'b1;
+            input_packet_index_sample_r <= input_cmd_ctx_r.packet_index;
+            input_packet_fire_sample_r <= input_packet_fire;
+            input_cmd_start_sample_r <= input_cmd_start;
+            input_last_write_sample_r <= gemm_unit_v2_if.last_write;
+
+            if (input_cmd_start)
+                input_cmd_count_r <= input_cmd_count_r + 1'b1;
+            if (input_last_admission)
+                input_last_admission_count_r
+                    <= input_last_admission_count_r + 1'b1;
+            if (gemm_unit_v2_if.last_write)
+                input_last_write_count_r <= input_last_write_count_r + 1'b1;
+            if (gemm_ctrl_if.input_read_flag.done
+             && !input_notify_pending_r)
+                input_done_count_r <= input_done_count_r + 1'b1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (reset === 1'b0) begin
+            assert (gemm_unit_v2_if.packet_ctrl.valid == input_packet_fire)
+                else $fatal(1, "GEMM node V2 packet valid/admission mismatch");
+
+            if (input_cmd_start) begin
+                assert (!input_cmd_ctx_r.active)
+                    else $fatal(1, "GEMM node V2 input command overwrote active context");
+                assert (gemm_ctrl_if.input_read_ctrl.cmd.eff_mt != 0)
+                    else $fatal(1, "GEMM node V2 input command has zero packet count");
+                assert (gemm_ctrl_if.input_read_ctrl.cmd.eff_mt
+                     == {5'd0, gemm_ctrl_if.input_read_ctrl.cmd.bound})
+                    else $fatal(1, "GEMM node V2 eff_mt/input LDMA bound mismatch");
+            end
+
+            if (input_packet_fire) begin
+                assert (input_cmd_start || input_cmd_ctx_r.active)
+                    else $fatal(1, "GEMM node V2 admitted input without command context");
+                assert (input_cmd_start || !input_cmd_ctx_r.ingress_complete)
+                    else $fatal(1, "GEMM node V2 admitted input after last packet");
+                assert (input_cmd_ctx.packet_count != 0)
+                    else $fatal(1, "GEMM node V2 packet has zero command count");
+                assert (input_cmd_ctx.packet_index < input_cmd_ctx.packet_count)
+                    else $fatal(1, "GEMM node V2 packet index exceeds command count");
+                assert (input_packet_addr_full[`CLOG2(`GEMM_PSUM_DATA_SIZE)-1:0]
+                     == '0)
+                    else $fatal(1, "GEMM node V2 accumulation address is not row aligned");
+                assert ((input_packet_addr_full + `GEMM_PSUM_DATA_SIZE)
+                     <= `GEMM_ACC_MEM_TOT_SIZE)
+                    else $fatal(1, "GEMM node V2 accumulation address is out of range");
+                assert (gemm_unit_v2_if.packet_ctrl.last
+                     == (input_cmd_ctx.packet_index
+                      == input_cmd_ctx.packet_count - 1'b1))
+                    else $fatal(1, "GEMM node V2 last metadata mismatch");
+            end
+
+            if (input_last_admission) begin
+                assert (!input_cmd_ctx_r.ingress_complete)
+                    else $fatal(1, "GEMM node V2 emitted duplicate last packet");
+                assert (input_last_admission_count_r < input_cmd_count_r
+                     || input_cmd_start)
+                    else $fatal(1, "GEMM node V2 has multiple last packets per command");
+            end
+
+            if (gemm_unit_v2_if.last_write) begin
+                assert (input_cmd_ctx_r.active
+                     && input_cmd_ctx_r.ingress_complete)
+                    else $fatal(1, "GEMM node V2 last_write lacks completed ingress");
+                assert (!input_notify_pending_r
+                     && gemm_ctrl_if.input_read_flag.done)
+                    else $fatal(1, "GEMM node V2 final write did not complete input command");
+                assert (input_last_write_count_r < input_last_admission_count_r)
+                    else $fatal(1, "GEMM node V2 emitted duplicate last_write");
+            end
+
+            if (gemm_ctrl_if.input_read_flag.done
+             && !input_notify_pending_r) begin
+                assert (gemm_unit_v2_if.last_write)
+                    else $fatal(1, "GEMM node V2 command done is not a final writeback");
+                assert (input_done_count_r < input_cmd_count_r)
+                    else $fatal(1, "GEMM node V2 emitted duplicate command done");
+            end
+
+            if (input_ctx_sample_valid_r
+             && !input_packet_fire_sample_r
+             && !input_cmd_start_sample_r
+             && !input_last_write_sample_r) begin
+                assert (input_cmd_ctx_r.packet_index
+                     == input_packet_index_sample_r)
+                    else $fatal(1, "GEMM node V2 packet index changed without admission");
+            end
+        end
+    end
+`endif
+
     // Connect gemm_ctrl_if to DMA ctrl interfaces
-    assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
+    assign input_dma_ctrl_if.start           = input_cmd_start;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
     assign input_dma_ctrl_if.src_strides[0]  = gemm_ctrl_if.input_read_ctrl.cmd.stride;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
@@ -320,7 +476,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
     assign gemm_ctrl_if.input_read_flag.idle
-        = input_notify_pending_r ? 1'b0 : !input_cmd_active_r;
+        = input_notify_pending_r ? 1'b0 : !input_cmd_ctx_r.active;
     assign gemm_ctrl_if.input_read_flag.done
         = input_notify_pending_r ? input_notify_fire
                                  : gemm_unit_v2_if.last_write;
@@ -391,8 +547,42 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 	    end
 
 `ifdef DBG_TRACE_GEMM
-	    always @(posedge clk) begin
-	      if (~reset) begin
+    always @(posedge clk) begin
+	      if (reset === 1'b0) begin
+	        if (input_cmd_start) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_CMD_START | {inst=%s, base=0x%0h, packets=%0d, flags=0x%0h}\n",
+	              $time, INSTANCE_ID,
+	              gemm_ctrl_if.input_read_ctrl.cmd.rs1_data,
+	              gemm_ctrl_if.input_read_ctrl.cmd.eff_mt,
+	              gemm_ctrl_if.input_read_ctrl.cmd.flags))
+	        end
+	        if (input_packet_fire) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_PACKET | {inst=%s, index=%0d, addr=0x%0h, rd=%0d, wr=%0d, last=%0d}\n",
+	              $time, INSTANCE_ID,
+	              input_cmd_ctx.packet_index,
+	              input_packet_addr,
+	              gemm_unit_v2_if.packet_ctrl.acc_rd_en,
+	              gemm_unit_v2_if.packet_ctrl.acc_wr_en,
+	              gemm_unit_v2_if.packet_ctrl.last))
+	        end
+	        if (input_dma_ctrl_if.done) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_DMA_DONE | {inst=%s, index=%0d, active=%0d}\n",
+	              $time, INSTANCE_ID,
+	              input_cmd_ctx_r.packet_index,
+	              input_cmd_ctx_r.active))
+	        end
+	        if (gemm_unit_v2_if.last_write) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_LAST_WRITE | {inst=%s, index=%0d, ingress_complete=%0d}\n",
+	              $time, INSTANCE_ID,
+	              input_cmd_ctx_r.packet_index,
+	              input_cmd_ctx_r.ingress_complete))
+	        end
+	        if (gemm_ctrl_if.input_read_flag.done
+	         && !input_notify_pending_r) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_CMD_DONE | {inst=%s, index=%0d}\n",
+	              $time, INSTANCE_ID,
+	              input_cmd_ctx_r.packet_index))
+	        end
 	        if (weight_dma_start) begin
 	          `TRACE(1, ("%m : [%0t] | GEMM_WEIGHT_DMA_START | {inst=%s, src=0x%0h, stride=%0d, bound=%0d, flags=0x%0h, seg_size=%0d}\n",
 	              $time, INSTANCE_ID,

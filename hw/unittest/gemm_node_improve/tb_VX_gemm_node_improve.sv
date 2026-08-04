@@ -212,6 +212,7 @@ module tb_VX_gemm_node_improve
   bit trace_input_speed_en  = 1'b0;
   bit trace_rd_fifo_en      = 1'b0;
   bit require_dual_bank_prefetch = 1'b0;
+  bit require_input_metadata = 1'b0;
   int input_gap_min         = 1;
   int input_gap_max         = 3;
   int input_stall_period    = 0;
@@ -2165,8 +2166,8 @@ module tb_VX_gemm_node_improve
       $display("\n[%0t] === RUN CONFIG GEMM: %s (M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d) ===",
                $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
 
-      if ((test_m <= 0) || (test_m % DMA_MXU_KT != 0))
-        $fatal(1, "[%0t] M must be positive multiple of MXU_KT=%0d (got %0d)", $time, DMA_MXU_KT, test_m);
+      if (test_m <= 0)
+        $fatal(1, "[%0t] M must be positive (got %0d)", $time, test_m);
       if ((test_n <= 0) || (test_n % DMA_MXU_NT != 0))
         $fatal(1, "[%0t] N must be positive multiple of MXU_NT=%0d (got %0d)", $time, DMA_MXU_NT, test_n);
       if ((test_k <= 0) || (test_k % DMA_MXU_KT != 0))
@@ -2244,6 +2245,217 @@ module tb_VX_gemm_node_improve
   endtask
 
   // =========================================================================
+  // Independent V2 command-to-packet metadata/lifecycle scoreboard
+  // =========================================================================
+  typedef struct packed {
+    logic             active;
+    logic             ingress_complete;
+    logic [`XLEN-1:0] acc_base;
+    logic [20:0]      packet_count;
+    logic [20:0]      packet_index;
+    logic             is_accum;
+    logic             quant_dir;
+    logic             wreg_use_idx;
+    logic             sreg_use_idx;
+    logic             zreg_use_idx;
+  } input_metadata_model_t;
+
+  input_metadata_model_t input_metadata_model;
+  longint unsigned input_metadata_cmd_count;
+  longint unsigned input_metadata_packet_count;
+  longint unsigned input_metadata_last_admission_count;
+  longint unsigned input_metadata_last_write_count;
+  longint unsigned input_metadata_done_count;
+  longint unsigned input_metadata_bubble_count;
+
+  function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]
+    expected_input_metadata_addr(
+      input logic [`XLEN-1:0] acc_base,
+      input logic [20:0] packet_index
+    );
+    logic [`XLEN-1:0] full_addr;
+    begin
+      full_addr = acc_base
+                + `XLEN'(packet_index * `GEMM_PSUM_DATA_SIZE);
+      return full_addr[`GEMM_ACC_MEM_ADDR_WIDTH-1:0];
+    end
+  endfunction
+
+  always @(posedge clk) begin : input_metadata_scoreboard
+    logic input_fire;
+    logic non_notify_done;
+    logic expected_last;
+    logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] expected_addr;
+
+    input_fire = u_dut.i_gemm_bus_if.req_valid
+              && u_dut.i_gemm_bus_if.req_ready;
+    non_notify_done = u_dut.gemm_ctrl_if.input_read_flag.done
+                   && !u_dut.input_notify_pending_r;
+
+    if (reset) begin
+      input_metadata_model = '0;
+      input_metadata_cmd_count = 0;
+      input_metadata_packet_count = 0;
+      input_metadata_last_admission_count = 0;
+      input_metadata_last_write_count = 0;
+      input_metadata_done_count = 0;
+      input_metadata_bubble_count = 0;
+    end else begin
+      if (u_dut.gemm_unit_v2_if.packet_ctrl.valid !== input_fire)
+        $fatal(1, "[%0t] INPUT_METADATA valid/fire mismatch: valid=%b fire=%b",
+               $time, u_dut.gemm_unit_v2_if.packet_ctrl.valid, input_fire);
+
+      if (u_dut.input_cmd_start) begin
+        if (input_metadata_model.active)
+          $fatal(1, "[%0t] INPUT_METADATA command overwrote active model", $time);
+
+        input_metadata_model.active = 1'b1;
+        input_metadata_model.ingress_complete = 1'b0;
+        input_metadata_model.acc_base
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
+        input_metadata_model.packet_count
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
+        input_metadata_model.packet_index = '0;
+        input_metadata_model.is_accum
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+        input_metadata_model.quant_dir
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
+        input_metadata_model.wreg_use_idx
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+        input_metadata_model.sreg_use_idx
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
+        input_metadata_model.zreg_use_idx
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
+        input_metadata_cmd_count++;
+
+        if (input_metadata_model.packet_count == 0)
+          $fatal(1, "[%0t] INPUT_METADATA captured zero packet count", $time);
+        if (input_metadata_model.packet_count
+            != {5'd0, u_dut.gemm_ctrl_if.input_read_ctrl.cmd.bound})
+          $fatal(1, "[%0t] INPUT_METADATA eff_mt/bound mismatch: eff_mt=%0d bound=%0d",
+                 $time, input_metadata_model.packet_count,
+                 u_dut.gemm_ctrl_if.input_read_ctrl.cmd.bound);
+
+      end else if (input_metadata_model.active) begin
+        // Compare registered DUT context against the independently captured
+        // semantic context on every non-start cycle.  In particular, this
+        // proves that LDMA bubbles cannot advance or corrupt metadata.
+        if (u_dut.input_cmd_ctx_r.active !== input_metadata_model.active
+            || u_dut.input_cmd_ctx_r.ingress_complete
+               !== input_metadata_model.ingress_complete
+            || u_dut.input_cmd_ctx_r.acc_base
+               !== input_metadata_model.acc_base
+            || u_dut.input_cmd_ctx_r.packet_count
+               !== input_metadata_model.packet_count
+            || u_dut.input_cmd_ctx_r.packet_index
+               !== input_metadata_model.packet_index
+            || u_dut.input_cmd_ctx_r.is_accum
+               !== input_metadata_model.is_accum
+            || u_dut.input_cmd_ctx_r.quant_dir
+               !== input_metadata_model.quant_dir
+            || u_dut.input_cmd_ctx_r.wreg_use_idx
+               !== input_metadata_model.wreg_use_idx
+            || u_dut.input_cmd_ctx_r.sreg_use_idx
+               !== input_metadata_model.sreg_use_idx
+            || u_dut.input_cmd_ctx_r.zreg_use_idx
+               !== input_metadata_model.zreg_use_idx)
+          $fatal(1, "[%0t] INPUT_METADATA registered context mismatch during command",
+                 $time);
+
+        if (!input_fire && !input_metadata_model.ingress_complete)
+          input_metadata_bubble_count++;
+      end
+
+      if (input_fire) begin
+        if (!input_metadata_model.active
+            || input_metadata_model.ingress_complete)
+          $fatal(1, "[%0t] INPUT_METADATA packet outside active ingress", $time);
+
+        expected_addr = expected_input_metadata_addr(
+          input_metadata_model.acc_base,
+          input_metadata_model.packet_index
+        );
+        expected_last = input_metadata_model.packet_index
+                     == input_metadata_model.packet_count - 1'b1;
+
+        if (u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_en
+              !== input_metadata_model.is_accum
+            || u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_en !== 1'b1
+            || u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_addr
+               !== expected_addr
+            || u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr
+               !== expected_addr
+            || u_dut.gemm_unit_v2_if.packet_ctrl.quant_dir
+               !== input_metadata_model.quant_dir
+            || u_dut.gemm_unit_v2_if.packet_ctrl.wreg_use_idx
+               !== input_metadata_model.wreg_use_idx
+            || u_dut.gemm_unit_v2_if.packet_ctrl.sreg_use_idx
+               !== input_metadata_model.sreg_use_idx
+            || u_dut.gemm_unit_v2_if.packet_ctrl.zreg_use_idx
+               !== input_metadata_model.zreg_use_idx
+            || u_dut.gemm_unit_v2_if.packet_ctrl.is_load
+               !== !input_metadata_model.is_accum
+            || u_dut.gemm_unit_v2_if.packet_ctrl.last !== expected_last)
+          $fatal(1, "[%0t] INPUT_METADATA packet mismatch: idx=%0d addr=0x%0h last=%0d",
+                 $time, input_metadata_model.packet_index,
+                 expected_addr, expected_last);
+
+        input_metadata_packet_count++;
+
+        if (expected_last) begin
+          input_metadata_model.ingress_complete = 1'b1;
+          input_metadata_last_admission_count++;
+        end else begin
+          input_metadata_model.packet_index++;
+        end
+      end
+
+      if (u_dut.gemm_unit_v2_if.last_write) begin
+        if (!input_metadata_model.active
+            || !input_metadata_model.ingress_complete)
+          $fatal(1, "[%0t] INPUT_METADATA last_write before last admission", $time);
+        input_metadata_last_write_count++;
+      end
+
+      if (non_notify_done) begin
+        if (!u_dut.gemm_unit_v2_if.last_write)
+          $fatal(1, "[%0t] INPUT_METADATA non-notify done without last_write", $time);
+        input_metadata_done_count++;
+      end
+
+      if (u_dut.gemm_unit_v2_if.last_write) begin
+        if (!non_notify_done)
+          $fatal(1, "[%0t] INPUT_METADATA last_write without non-notify done", $time);
+        input_metadata_model = '0;
+      end
+    end
+  end
+
+  task automatic check_input_metadata_coverage;
+    begin
+      if (input_metadata_model.active)
+        $fatal(1, "INPUT_METADATA command still active at completion");
+      if (input_metadata_cmd_count == 0
+          || input_metadata_packet_count == 0)
+        $fatal(1, "INPUT_METADATA observed no command/packet traffic");
+      if (input_metadata_last_admission_count != input_metadata_cmd_count
+          || input_metadata_last_write_count != input_metadata_cmd_count
+          || input_metadata_done_count != input_metadata_cmd_count)
+        $fatal(1, "INPUT_METADATA lifecycle count mismatch: cmd=%0d last_admission=%0d last_write=%0d done=%0d",
+               input_metadata_cmd_count, input_metadata_last_admission_count,
+               input_metadata_last_write_count, input_metadata_done_count);
+      if (input_metadata_bubble_count == 0)
+        $fatal(1, "INPUT_METADATA did not cover an ingress bubble");
+
+      $display("[%0t] INPUT_METADATA_PASSED | {commands=%0d, packets=%0d, last_admission=%0d, last_write=%0d, done=%0d, bubbles=%0d}",
+               $time, input_metadata_cmd_count, input_metadata_packet_count,
+               input_metadata_last_admission_count,
+               input_metadata_last_write_count, input_metadata_done_count,
+               input_metadata_bubble_count);
+    end
+  endtask
+
+  // =========================================================================
   // Main sim
   // =========================================================================
   initial begin
@@ -2287,6 +2499,7 @@ module tb_VX_gemm_node_improve
     deterministic_input_stall = (input_stall_period > 0);
     trace_rd_fifo_en = $test$plusargs("TRACE_RD_FIFO");
     require_dual_bank_prefetch = $test$plusargs("REQUIRE_DUAL_BANK_PREFETCH");
+    require_input_metadata = $test$plusargs("REQUIRE_INPUT_METADATA");
     trace_input_speed_en = randomize_input_speed || $test$plusargs("TRACE_INPUT_SPEED");
     void'($value$plusargs("INPUT_GAP_MIN=%d", input_gap_min));
     void'($value$plusargs("INPUT_GAP_MAX=%d", input_gap_max));
@@ -2360,6 +2573,9 @@ module tb_VX_gemm_node_improve
       );
       $display("[%0t] BACK_TO_BACK GEMM PASSED", $time);
     end
+
+    if (require_input_metadata)
+      check_input_metadata_coverage();
 
     if (require_dual_bank_prefetch)
       check_dual_bank_prefetch();
