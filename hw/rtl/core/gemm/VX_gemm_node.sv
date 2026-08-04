@@ -113,7 +113,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Control interfaces
     // -------------------------------------------------------------------------
-    VX_gemm_unit_if gemm_unit_if ();
+    VX_gemm_unit_v2_if gemm_unit_v2_if ();
+    gemm_unit_ctrl_t input_cmd_ctrl_r;
+    logic [`GEMM_ACC_MAX_CNT-1:0] input_packet_idx_r;
+    logic input_cmd_active_r;
     VX_gemm_ctrl_if gemm_ctrl_if ();
 
     // LMEM DMA control interfaces (issued by gemm_ctrl)
@@ -221,19 +224,83 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Control-plane wiring
     // -------------------------------------------------------------------------
 
-    // GEMM unit direct control bridge (temporary/static mapping).
-    // TODO: replace with full command mapping from gemm_ctrl.
-    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify; // start signal로 동기화
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4];
-    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-    assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = '0;
-    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = '0;
-    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[5]; //QDIR
-    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[2]; //mxu tile double buffering 번호
-    assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
-    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[0]; //mxu tile double buffering 번호
-    assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
-    assign gemm_unit_if.gemm_unit_ctrl.is_last           = 1'b0;
+    // Packet-level control for the stateless fixed-latency GEMM unit.
+    wire input_cmd_start = gemm_ctrl_if.input_read_ctrl.start
+                         && !input_is_notify;
+    wire input_packet_fire = i_gemm_bus_if.req_valid;
+    wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] input_ctrl_base_addr
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.rs1_data
+                          : input_cmd_ctrl_r.acc_mem_base_addr;
+    wire [`GEMM_ACC_MAX_CNT-1:0] input_ctrl_acc_cnt
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4]
+                          : input_cmd_ctrl_r.acc_cnt;
+    wire input_ctrl_is_load
+        = input_cmd_start ? ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3]
+                          : input_cmd_ctrl_r.is_load;
+    wire [`GEMM_ACC_MAX_CNT-1:0] input_packet_idx
+        = input_cmd_start ? '0 : input_packet_idx_r;
+    wire [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] input_packet_addr
+        = input_ctrl_base_addr
+        + `GEMM_ACC_MEM_ADDR_WIDTH'(
+            input_packet_idx << `CLOG2(`GEMM_PSUM_DATA_SIZE));
+
+    assign gemm_unit_v2_if.packet_ctrl.valid = i_gemm_bus_if.req_valid;
+    assign gemm_unit_v2_if.packet_ctrl.acc_rd_en
+        = !input_ctrl_is_load;
+    assign gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
+    assign gemm_unit_v2_if.packet_ctrl.acc_rd_addr = input_packet_addr;
+    assign gemm_unit_v2_if.packet_ctrl.acc_wr_addr = input_packet_addr;
+    assign gemm_unit_v2_if.packet_ctrl.quant_dir
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[5]
+                          : input_cmd_ctrl_r.quant_dir;
+    assign gemm_unit_v2_if.packet_ctrl.wreg_use_idx
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[2]
+                          : input_cmd_ctrl_r.wreg_use_idx;
+    assign gemm_unit_v2_if.packet_ctrl.sreg_use_idx
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[1]
+                          : input_cmd_ctrl_r.sreg_use_idx;
+    assign gemm_unit_v2_if.packet_ctrl.zreg_use_idx
+        = input_cmd_start ? gemm_ctrl_if.input_read_ctrl.cmd.flags[0]
+                          : input_cmd_ctrl_r.zreg_use_idx;
+    assign gemm_unit_v2_if.packet_ctrl.is_load
+        = input_ctrl_is_load;
+    assign gemm_unit_v2_if.packet_ctrl.last
+        = (input_packet_idx == input_ctrl_acc_cnt - 1'b1);
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            input_cmd_ctrl_r <= '0;
+            input_packet_idx_r <= '0;
+            input_cmd_active_r <= 1'b0;
+        end else begin
+            if (input_cmd_start) begin
+                input_cmd_ctrl_r.quant_dir
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
+                input_cmd_ctrl_r.acc_mem_base_addr
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
+                input_cmd_ctrl_r.output_mem_base_addr <= '0;
+                input_cmd_ctrl_r.output_mem_stride <= '0;
+                input_cmd_ctrl_r.acc_cnt
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4];
+                input_cmd_ctrl_r.wreg_use_idx
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+                input_cmd_ctrl_r.sreg_use_idx
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
+                input_cmd_ctrl_r.zreg_use_idx
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
+                input_cmd_ctrl_r.is_load
+                    <= ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+                input_cmd_ctrl_r.is_last <= 1'b0;
+                input_packet_idx_r
+                    <= input_packet_fire ? `GEMM_ACC_MAX_CNT'(1) : '0;
+                input_cmd_active_r <= 1'b1;
+            end else if (input_packet_fire) begin
+                input_packet_idx_r <= input_packet_idx_r + 1'b1;
+            end else if (gemm_unit_v2_if.last_write) begin
+                input_cmd_active_r <= 1'b0;
+            end
+        end
+    end
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
@@ -252,8 +319,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
-    assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
-    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
+    assign gemm_ctrl_if.input_read_flag.idle
+        = input_notify_pending_r ? 1'b0 : !input_cmd_active_r;
+    assign gemm_ctrl_if.input_read_flag.done
+        = input_notify_pending_r ? input_notify_fire
+                                 : gemm_unit_v2_if.last_write;
 
     assign gemm_sync_if[0].valid   = input_notify_pending_r;
     assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
@@ -559,16 +629,16 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
 
     // GEMM compute unit
-    VX_gemm_unit #(
+    VX_gemm_unit_v2 #(
       .INSTANCE_ID(INSTANCE_ID)
-    ) u_VX_gemm_unit (
+    ) u_VX_gemm_unit_v2 (
       .clk(clk),
       .reset(reset),
       .i_lmem_bus_if(i_gemm_bus_if),
       .w_lmem_bus_if(w_gemm_bus_if),
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
-      .gemm_unit_if(gemm_unit_if)
+      .gemm_unit_v2_if(gemm_unit_v2_if)
 `ifdef ENABLE_HW_DEBUG_GEMM
       ,.debug(gemm_unit_debug)
 `endif

@@ -941,6 +941,22 @@ package VX_gpu_pkg;
       logic is_last;
    } gemm_unit_ctrl_t;
 
+   // Per-input control carried alongside the fixed-latency GEMM v2 datapath.
+   // ACC addresses are byte addresses in the internal accumulation memory.
+   typedef struct packed {
+      logic valid;
+      logic acc_rd_en;
+      logic acc_wr_en;
+      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_rd_addr;
+      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_wr_addr;
+      logic quant_dir;
+      logic wreg_use_idx;
+      logic sreg_use_idx;
+      logic zreg_use_idx;
+      logic is_load;
+      logic last;
+   } gemm_input_ctrl_t;
+
     function automatic int get_pipe_stage_bitmask(input int row_size, input int PIPE_INTERVAL);
       /*
         - output of component : one stage
