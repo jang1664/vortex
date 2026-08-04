@@ -284,6 +284,12 @@ module tb_vcs_xrtsim #(
     if (!$value$plusargs("fsdb_file=%s", fsdb_file)) fsdb_file = "vcs_cosim.fsdb";
     $fsdbDumpfile(fsdb_file);
 `ifdef FSDB_GEMM_ONLY
+`ifdef GEMM_IMPROVE
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node,
+      "+all");
+`else
     $fsdbDumpvars(2,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
         .g_sockets[0].socket.g_cores[0].core.gemm_node_naive,
@@ -313,6 +319,7 @@ module tb_vcs_xrtsim #(
         .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
         .u_weight_gather_dma,
       "+all");
+`endif
 `elsif FSDB_DMA_ONLY
     $fsdbDumpvars(0,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
