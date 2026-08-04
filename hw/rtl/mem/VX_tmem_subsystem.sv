@@ -153,17 +153,17 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) ldma_gemm [NUM_LDMA] ();
 
-`ifdef WLOAD_AT_ONCE
     VX_mem_bus_if #(
         .DATA_SIZE  (GEMM_WEIGHT_DATA_SIZE),
         .TAG_WIDTH  (TAG_WIDTH)
     ) ldma_weight_to_tmem ();
 
+    // Weight transfers use their native GEMM beat width on both sides. The
+    // wide TMEM switch fans each source read out to the required bank group.
     VX_mem_bus_if #(
         .DATA_SIZE  (GEMM_WEIGHT_DATA_SIZE),
         .TAG_WIDTH  (TAG_WIDTH)
     ) ldma_gemm_weight ();
-`endif
 
     VX_gemm_sync_if ldma_sync_if [NUM_LDMA] ();
 
@@ -187,7 +187,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .bus_out_if (in_switch_to_tmem)
     );
 
-`ifdef WLOAD_AT_ONCE
     VX_tmem_wide_read_switch #(
         .INSTANCE_ID    ({INSTANCE_ID, ":sw_wt_wide"}),
         .NUM_BANKS      (NUM_BANKS),
@@ -200,20 +199,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .bus_in_if  (ldma_weight_to_tmem),
         .bus_out_if (wt_switch_to_tmem)
     );
-
-`else
-    VX_tmem_switch #(
-        .INSTANCE_ID    ({INSTANCE_ID, ":sw_wt"}),
-        .NUM_BANKS      (NUM_BANKS),
-        .DATA_SIZE      (DATA_SIZE),
-        .TAG_WIDTH      (TAG_WIDTH)
-    ) u_switch_weight (
-        .clk        (clk),
-        .reset      (reset),
-        .bus_in_if  (ldma_to_switch[1]),
-        .bus_out_if (wt_switch_to_tmem)
-    );
-`endif
 
     VX_tmem_switch #(
         .INSTANCE_ID    ({INSTANCE_ID, ":sw_sz"}),
@@ -384,7 +369,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     );
 
     // Weight local DMA
-`ifdef WLOAD_AT_ONCE
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
         .DIR         (0),
@@ -408,29 +392,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     );
 
     `INIT_VX_MEM_BUS_IF (ldma_to_switch[1])
-`else
-    VX_lmem_dma_misal #(
-        .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
-        .DIR         (0),
-        .TAG_WIDTH   (TAG_WIDTH),
-        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
-        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
-        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
-        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(W_RD_OUTSTANDING)
-    ) u_ldma_weight (
-        .clk         (clk),
-        .reset       (reset),
-        .ctrl_if     (ldma_ctrl_if[1]),
-        .gemm_sync_if(ldma_sync_if[1]),
-        .lmem_bus_if (ldma_to_switch[1]),
-        .gemm_bus_if (ldma_gemm[1])
-    `ifdef PERF_ENABLE
-        ,.perf       (ldma_perf[1])
-    `endif
-    );
-`endif
 
     // Scale/zero-point local DMA
     VX_lmem_dma_misal #(
@@ -501,21 +462,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     assign ldma_gemm[0].rsp_data         = gemm_input_if.rsp_data;
     assign gemm_input_if.rsp_ready       = ldma_gemm[0].rsp_ready;
 
-`ifdef WLOAD_AT_ONCE
     assign gemm_weight_if.req_valid      = ldma_gemm_weight.req_valid;
     assign gemm_weight_if.req_data       = ldma_gemm_weight.req_data;
     assign ldma_gemm_weight.req_ready    = gemm_weight_if.req_ready;
     assign ldma_gemm_weight.rsp_valid    = gemm_weight_if.rsp_valid;
     assign ldma_gemm_weight.rsp_data     = gemm_weight_if.rsp_data;
     assign gemm_weight_if.rsp_ready      = ldma_gemm_weight.rsp_ready;
-`else
-    assign gemm_weight_if.req_valid      = ldma_gemm[1].req_valid;
-    assign gemm_weight_if.req_data       = ldma_gemm[1].req_data;
-    assign ldma_gemm[1].req_ready        = gemm_weight_if.req_ready;
-    assign ldma_gemm[1].rsp_valid        = gemm_weight_if.rsp_valid;
-    assign ldma_gemm[1].rsp_data         = gemm_weight_if.rsp_data;
-    assign gemm_weight_if.rsp_ready      = ldma_gemm[1].rsp_ready;
-`endif
 
     assign gemm_sz_if.req_valid          = ldma_gemm[2].req_valid;
     assign gemm_sz_if.req_data           = ldma_gemm[2].req_data;
@@ -551,7 +503,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
                 $time, INSTANCE_ID, ldma_to_switch[0].req_data.addr,
                 ldma_to_switch[0].req_data.rw))
         end
-    `ifdef WLOAD_AT_ONCE
         if (ldma_weight_to_tmem.req_valid && ldma_weight_to_tmem.req_ready) begin
             `TRACE(1, ("%t: %s ldma_wt_wide req: addr=0x%0h, rw=%0b\n",
                 $time, INSTANCE_ID, ldma_weight_to_tmem.req_data.addr,
@@ -566,13 +517,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
                 $time, INSTANCE_ID, ldma_gemm_weight.req_data.addr,
                 ldma_gemm_weight.req_data.rw))
         end
-    `else
-        if (ldma_to_switch[1].req_valid && ldma_to_switch[1].req_ready) begin
-            `TRACE(1, ("%t: %s ldma_wt req: addr=0x%0h, rw=%0b\n",
-                $time, INSTANCE_ID, ldma_to_switch[1].req_data.addr,
-                ldma_to_switch[1].req_data.rw))
-        end
-    `endif
         if (ldma_to_switch[2].req_valid && ldma_to_switch[2].req_ready) begin
             `TRACE(1, ("%t: %s ldma_sz req: addr=0x%0h, rw=%0b\n",
                 $time, INSTANCE_ID, ldma_to_switch[2].req_data.addr,
@@ -582,180 +526,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             `TRACE(1, ("%t: %s ldma_out req: addr=0x%0h, rw=%0b\n",
                 $time, INSTANCE_ID, ldma_to_switch[3].req_data.addr,
                 ldma_to_switch[3].req_data.rw))
-        end
-    end
-`endif
-
-endmodule
-
-module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
-    parameter `STRING INSTANCE_ID = "",
-    parameter NUM_BANKS      = 8,
-    parameter DATA_SIZE      = 64,
-    parameter WIDE_DATA_SIZE = NUM_BANKS * DATA_SIZE,
-    parameter TAG_WIDTH      = 8,
-    parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH
-) (
-    input wire clk,
-    input wire reset,
-
-    // Wide input from weight local DMA.
-    VX_mem_bus_if.slave     bus_in_if,
-
-    // Narrow per-bank outputs to TMEM banks.
-    VX_mem_bus_if.master    bus_out_if [NUM_BANKS]
-);
-
-    localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
-    localparam DATA_WIDTH       = DATA_SIZE * 8;
-    localparam WIDE_DATA_WIDTH  = WIDE_DATA_SIZE * 8;
-    localparam IN_ADDR_WIDTH    = MEM_ADDR_WIDTH - `CLOG2(WIDE_DATA_SIZE);
-    localparam OUT_ADDR_WIDTH   = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
-    localparam OUT_TAG_WIDTH    = TAG_WIDTH + BANK_SEL_BITS;
-
-    `UNUSED_SPARAM (INSTANCE_ID)
-    `UNUSED_PARAM (MEM_ADDR_WIDTH)
-
-    initial begin
-        if (WIDE_DATA_SIZE != (NUM_BANKS * DATA_SIZE)) begin
-            $fatal(1, "VX_tmem_wide_read_switch requires WIDE_DATA_SIZE (%0d) == NUM_BANKS*DATA_SIZE (%0d)",
-                   WIDE_DATA_SIZE, NUM_BANKS * DATA_SIZE);
-        end
-    end
-
-    typedef struct packed {
-        logic [`UP(UUID_WIDTH)-1:0]             uuid;
-        logic [TAG_WIDTH-`UP(UUID_WIDTH)-1:0]   value;
-    } in_tag_t;
-
-    typedef struct packed {
-        logic                         rw;
-        logic [IN_ADDR_WIDTH-1:0]     addr;
-        logic [WIDE_DATA_WIDTH-1:0]   data;
-        logic [WIDE_DATA_SIZE-1:0]    byteen;
-        logic [MEM_FLAGS_WIDTH-1:0]   flags;
-        in_tag_t                      tag;
-    } wide_req_data_t;
-
-    logic [NUM_BANKS-1:0]                  req_issued_r;
-    logic                                  req_pending_r;
-    logic                                  req_is_read_r;
-    wide_req_data_t                        req_data_r;
-
-    logic [NUM_BANKS-1:0]                  rsp_seen_r;
-    logic [NUM_BANKS-1:0][DATA_WIDTH-1:0]  rsp_data_r;
-    logic [TAG_WIDTH-1:0]                  rsp_tag_r;
-    logic                                  rsp_active_r;
-    logic                                  rsp_valid_r;
-
-    wire [NUM_BANKS-1:0] req_ready_bank;
-    wire [NUM_BANKS-1:0] req_fire_bank;
-    wire [NUM_BANKS-1:0] rsp_fire_bank;
-    wire [NUM_BANKS-1:0][DATA_WIDTH-1:0] rsp_data_bank;
-    wire                 can_accept = !req_pending_r && !rsp_active_r && !rsp_valid_r;
-    wire                 req_accept = bus_in_if.req_valid && bus_in_if.req_ready;
-    wire [NUM_BANKS-1:0] req_issued_next = req_issued_r | req_fire_bank;
-    wire                 req_issue_done = req_pending_r && (&req_issued_next);
-    wire [NUM_BANKS-1:0] rsp_seen_next = rsp_seen_r | rsp_fire_bank;
-    wire                 rsp_complete = rsp_active_r && (&rsp_seen_next);
-
-    assign bus_in_if.req_ready = can_accept;
-
-    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_bank_req
-        assign req_ready_bank[b] = bus_out_if[b].req_ready;
-        assign req_fire_bank[b] = bus_out_if[b].req_valid && bus_out_if[b].req_ready;
-        assign rsp_fire_bank[b] = bus_out_if[b].rsp_valid && bus_out_if[b].rsp_ready;
-        assign rsp_data_bank[b] = bus_out_if[b].rsp_data.data;
-
-        assign bus_out_if[b].req_valid       = req_pending_r && !req_issued_r[b];
-        assign bus_out_if[b].req_data.rw     = req_data_r.rw;
-        // A 512B-aligned wide address is the same value as each bank-local
-        // 64B address after the normal interleaved bank-select bits are stripped.
-        assign bus_out_if[b].req_data.addr   = OUT_ADDR_WIDTH'(req_data_r.addr);
-        assign bus_out_if[b].req_data.data   = req_data_r.data[b*DATA_WIDTH +: DATA_WIDTH];
-        assign bus_out_if[b].req_data.byteen = req_data_r.byteen[b*DATA_SIZE +: DATA_SIZE];
-        assign bus_out_if[b].req_data.flags  = req_data_r.flags;
-        assign bus_out_if[b].req_data.tag    = OUT_TAG_WIDTH'({BANK_SEL_BITS'(b), req_data_r.tag});
-
-        assign bus_out_if[b].rsp_ready = rsp_active_r && !rsp_seen_r[b] && !rsp_valid_r;
-    end
-
-    assign bus_in_if.rsp_valid     = rsp_valid_r;
-    assign bus_in_if.rsp_data.tag  = rsp_tag_r;
-
-    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_rsp_pack
-        assign bus_in_if.rsp_data.data[b*DATA_WIDTH +: DATA_WIDTH] = rsp_data_r[b];
-    end
-
-    always_ff @(posedge clk) begin
-        if (reset) begin
-            req_issued_r <= '0;
-            req_pending_r <= 1'b0;
-            req_is_read_r <= 1'b0;
-            req_data_r    <= '0;
-            rsp_seen_r   <= '0;
-            rsp_data_r   <= '0;
-            rsp_tag_r    <= '0;
-            rsp_active_r <= 1'b0;
-            rsp_valid_r  <= 1'b0;
-        end else begin
-            if (req_accept) begin
-                req_issued_r  <= '0;
-                req_pending_r <= 1'b1;
-                req_is_read_r <= !bus_in_if.req_data.rw;
-                req_data_r    <= bus_in_if.req_data;
-            end else begin
-                req_issued_r <= req_issued_next;
-            end
-
-            if (req_issue_done) begin
-                req_issued_r  <= '0;
-                req_pending_r <= 1'b0;
-                rsp_seen_r   <= '0;
-                rsp_tag_r    <= {req_data_r.tag.uuid, req_data_r.tag.value};
-                rsp_active_r <= req_is_read_r;
-            end
-
-            for (int b = 0; b < NUM_BANKS; ++b) begin
-                if (rsp_fire_bank[b]) begin
-                    rsp_seen_r[b] <= 1'b1;
-                    rsp_data_r[b] <= rsp_data_bank[b];
-                end
-            end
-
-            if (rsp_complete) begin
-                rsp_seen_r   <= '0;
-                rsp_active_r <= 1'b0;
-                rsp_valid_r  <= 1'b1;
-            end else if (bus_in_if.rsp_valid && bus_in_if.rsp_ready) begin
-                rsp_valid_r <= 1'b0;
-            end
-        end
-    end
-
-`ifdef DBG_TRACE_MEM
-    always @(posedge clk) begin
-        if (bus_in_if.req_valid && bus_in_if.req_ready) begin
-            `TRACE(1, ("%t: %s wide accept: addr=0x%0h, rw=%0b\n",
-                $time, INSTANCE_ID, bus_in_if.req_data.addr,
-                bus_in_if.req_data.rw))
-        end
-        if (|req_fire_bank) begin
-            `TRACE(1, ("%t: %s wide bank_req: fired=0x%0h, ready=0x%0h, issued=0x%0h\n",
-                $time, INSTANCE_ID, req_fire_bank, req_ready_bank, req_issued_next))
-        end
-        if (bus_in_if.rsp_valid && bus_in_if.rsp_ready) begin
-            `TRACE(1, ("%t: %s wide rsp: tag=0x%0h\n",
-                $time, INSTANCE_ID, bus_in_if.rsp_data.tag))
-        end
-    end
-
-    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_bank_rsp_trace
-        always @(posedge clk) begin
-            if (bus_out_if[b].rsp_valid && bus_out_if[b].rsp_ready) begin
-                `TRACE(1, ("%t: %s wide bank_rsp[%0d]: tag=0x%0h\n",
-                    $time, INSTANCE_ID, b, bus_out_if[b].rsp_data.tag))
-            end
         end
     end
 `endif

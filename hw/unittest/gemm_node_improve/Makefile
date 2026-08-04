@@ -127,6 +127,7 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/libs/VX_index_buffer.sv \
         $(RTL_DIR)/libs/VX_axi_adapter.sv \
         $(RTL_DIR)/libs/VX_axi_write_ack.sv \
+        $(RTL_DIR)/mem/VX_tmem_wide_read_switch.sv \
         $(RTL_DIR)/mem/VX_tmem_subsystem.sv \
         $(RTL_DIR)/mem/VX_dma_engine.sv \
         $(RTL_DIR)/mem/VX_tensor_mem_bank.sv \

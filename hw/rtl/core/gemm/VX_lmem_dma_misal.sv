@@ -50,8 +50,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     if (NDIM != 3)
       $fatal(1, "%s: NDIM(%0d) unsupported, this implementation requires NDIM=3",
              INSTANCE_ID, NDIM);
-    if (lmem_bus_if.DATA_SIZE != gemm_bus_if.DATA_SIZE)
-      $fatal(1, "%s: DATA_SIZE mismatch (lmem=%0d, gemm=%0d)",
+    if (((lmem_bus_if.DATA_SIZE % gemm_bus_if.DATA_SIZE) != 0)
+     && ((gemm_bus_if.DATA_SIZE % lmem_bus_if.DATA_SIZE) != 0))
+      $fatal(1, "%s: DATA_SIZE values must be divisible (lmem=%0d, gemm=%0d)",
              INSTANCE_ID, lmem_bus_if.DATA_SIZE, gemm_bus_if.DATA_SIZE);
     if (LMEM_ADDR_WIDTH_P != lmem_bus_if.ADDR_WIDTH)
       $fatal(1, "%s: LMEM_ADDR_WIDTH_P(%0d) != lmem_bus_if.ADDR_WIDTH(%0d)",

@@ -1,0 +1,33 @@
+task: tmem-partial-wide-weight-read
+status: complete
+spec: agent-tasks/tmem-partial-wide-weight-read/tmem-partial-wide-weight-read-spec.md
+current_phase: complete
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    phase: unittest
+    status: pass
+    test_type: new_tb
+    command: "python3 tools/verify_rtl.py unittest --path build/hw/unittest/tmem_wide_read_switch --sim vcs"
+    result: "WLOAD 4/8/16/32 (1/2/4/8 banks per beat) all passed; request mask/address/backpressure, skew response assembly, tag restoration, and response backpressure verified."
+    logs:
+      compile: build/hw/unittest/tmem_wide_read_switch/logs/compile.log
+      simulation: build/hw/unittest/tmem_wide_read_switch/logs/sim.log
+  - iteration: 2
+    phase: blackbox
+    status: pass
+    test_type: xrt-vcs-sim
+    command: "ci/run_target_gemm.sh run --wload {4,8,16,32} --timeout 1800"
+    result: "All M4/N256/K256/Q32/T0/D1 cases passed numerical comparison. Weight fire/stall counts were WLOAD4=512/0, WLOAD8=256/0, WLOAD16=128/0, WLOAD32=64/0; no fatal, mismatch, psum underflow, or read/write conflict."
+    artifacts:
+      wload4: build/run_logs/target_gemm/20260804-181400_run_wload4_m4_n256_k256_q32_t0_d1_pid977139
+      wload8: build/run_logs/target_gemm/20260804-181532_run_wload8_m4_n256_k256_q32_t0_d1_pid1007157
+      wload16: build/run_logs/target_gemm/20260804-181705_run_wload16_m4_n256_k256_q32_t0_d1_pid1036989
+      wload32: build/run_logs/target_gemm/20260804-181833_run_wload32_m4_n256_k256_q32_t0_d1_pid1067423
+pitfalls:
+  - "The previous VX_tmem_wide_read_switch waited for all NUM_BANKS and asserted WIDE_DATA_SIZE == NUM_BANKS*DATA_SIZE, so changing only the data width would deadlock partial groups."
+  - "The previous non-WLOAD_AT_ONCE path used a single-bank VX_tmem_switch and serial width conversion in VX_dma_unit_align; it did not provide native wide TMEM bandwidth."
+  - "Request and response completion must use the captured selected-bank mask, not an all-bank reduction."
+notes:
+  - "2026-08-04: Confirmed mapping WLOAD 4/8/16/32 to simultaneous 1/2/4/8-bank reads."
+  - "2026-08-04: Runner dry-run selects exactly one MXU_WLOAD_NUM define for each supported value; invalid values and override attempts are rejected."
