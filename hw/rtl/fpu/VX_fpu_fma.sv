@@ -182,7 +182,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
 `ifdef SIMULATION
     always @(negedge clk) begin
-        if (!reset && !$isunknown({
+        if ((reset === 1'b0) && !$isunknown({
             pe_issue_h, pe_issue_s, pe_enable_h, pe_enable_s,
             pe_inflight_h, pe_inflight_s
         })) begin
@@ -271,9 +271,10 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         // and count enabled cycles even while the surrounding core is reset.
         initial expected_valid_pipe_h = '0;
         always @(posedge clk) begin
-            if (pe_enable_h) begin
+            if (pe_enable_h === 1'b1) begin
                 expected_valid_pipe_h <= {
-                    expected_valid_pipe_h[`LATENCY_FMA-2:0], pe_issue_h
+                    expected_valid_pipe_h[`LATENCY_FMA-2:0],
+                    (pe_issue_h === 1'b1)
                 };
             end
         end
@@ -282,7 +283,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         // enabled cycles. Check the generated Xilinx IP follows that exact
         // contract instead of silently trusting its configured latency.
         always @(negedge clk) begin
-            if (!$isunknown(result_valid_h)) begin
+            if (!$isunknown({result_valid_h, expected_valid_h})) begin
                 assert (result_valid_h == expected_valid_h)
                     else $fatal(1,
                         "FP16 FMA latency mismatch: expected_valid=%b, ip_valid=%b, latency=%0d",
