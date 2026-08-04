@@ -1241,16 +1241,20 @@ module tb_VX_gemm_node_improve
     input int test_wtrans,
     input logic [63:0] dram_w_base
   );
-    int k_tiles, n_tiles, kb_per_kt, dram_idx;
+    int k_tiles, n_tiles, dram_idx;
     begin
-      k_tiles    = test_k / DMA_KT;
-      n_tiles    = test_n / DMA_MXU_NT;
-      kb_per_kt  = DMA_KT / DMA_MXU_KT;
+      k_tiles    = ceil_div_int(test_k, DMA_KT);
+      n_tiles    = ceil_div_int(test_n, DMA_MXU_NT);
       dram_idx   = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
+        int cur_k;
+        int valid_kb;
+        cur_k = (test_k - kt * DMA_KT < DMA_KT)
+              ? test_k - kt * DMA_KT : DMA_KT;
+        valid_kb = ceil_div_int(cur_k, DMA_MXU_KT);
         for (int nt = 0; nt < n_tiles; nt++) begin
-          // Write kb_per_kt contiguous micro-tiles
-          for (int kb = 0; kb < kb_per_kt; kb++) begin
+          // Emit only the MXU K micro-tiles present in this DMA K tile.
+          for (int kb = 0; kb < valid_kb; kb++) begin
             if (test_wtrans == 0) begin
               // wtrans=0: [MXU_KT rows][MXU_NT/2 cols], k outer, n-pairs inner
               for (int k = 0; k < DMA_MXU_KT; k++) begin
@@ -1260,8 +1264,10 @@ module tb_VX_gemm_node_improve
                   gk  = kt * DMA_KT + kb * DMA_MXU_KT + k;
                   gn0 = nt * DMA_MXU_NT + n;
                   gn1 = gn0 + 1;
-                  w0 = weight_mat[gk * test_n + gn0];
-                  w1 = (gn1 < test_n) ? weight_mat[gk * test_n + gn1] : 4'h0;
+                  w0 = ((gk < test_k) && (gn0 < test_n))
+                     ? weight_mat[gk * test_n + gn0] : 4'h0;
+                  w1 = ((gk < test_k) && (gn1 < test_n))
+                     ? weight_mat[gk * test_n + gn1] : 4'h0;
                   if ((dram_w_base + dram_idx) < DRAM_SIZE)
                     dram[dram_w_base + dram_idx] = pack_int4_pair(w0, w1);
                   dram_idx += 1;
@@ -1276,8 +1282,10 @@ module tb_VX_gemm_node_improve
                   gk0 = kt * DMA_KT + kb * DMA_MXU_KT + k;
                   gk1 = gk0 + 1;
                   gn  = nt * DMA_MXU_NT + n;
-                  w0 = weight_mat[gk0 * test_n + gn];
-                  w1 = (gk1 < test_k) ? weight_mat[gk1 * test_n + gn] : 4'h0;
+                  w0 = ((gk0 < test_k) && (gn < test_n))
+                     ? weight_mat[gk0 * test_n + gn] : 4'h0;
+                  w1 = ((gk1 < test_k) && (gn < test_n))
+                     ? weight_mat[gk1 * test_n + gn] : 4'h0;
                   if ((dram_w_base + dram_idx) < DRAM_SIZE)
                     dram[dram_w_base + dram_idx] = pack_int4_pair(w0, w1);
                   dram_idx += 1;
@@ -2383,20 +2391,20 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   int acc_wr_mon_cnt = 0;
   always @(posedge clk) begin
-    if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[0] && acc_wr_mon_cnt < 3) begin
+    if (!reset && u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en[0] && acc_wr_mon_cnt < 3) begin
       $display("[%0t] [ACC_WR_MON] bank0 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
-               u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
-               u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[0],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[0]);
+               u_dut.u_VX_gemm_unit_v2.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr,
+               u_dut.u_VX_gemm_unit_v2.acc_mem_addr[0],
+               u_dut.u_VX_gemm_unit_v2.acc_mem_in_data[0]);
       acc_wr_mon_cnt++;
     end
-    if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[1] && acc_wr_mon_cnt < 3) begin
+    if (!reset && u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en[1] && acc_wr_mon_cnt < 3) begin
       $display("[%0t] [ACC_WR_MON] bank1 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
-               u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
-               u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[1],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[1]);
+               u_dut.u_VX_gemm_unit_v2.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr,
+               u_dut.u_VX_gemm_unit_v2.acc_mem_addr[1],
+               u_dut.u_VX_gemm_unit_v2.acc_mem_in_data[1]);
       acc_wr_mon_cnt++;
     end
   end
@@ -2404,11 +2412,11 @@ module tb_VX_gemm_node_improve
   // Monitor input pipe valid
   int in_pipe_cnt = 0;
   always @(posedge clk) begin
-    if (!reset && u_dut.u_VX_gemm_unit.in_pipe_valid_out && in_pipe_cnt < 3) begin
+    if (!reset && u_dut.u_VX_gemm_unit_v2.in_pipe_valid_out && in_pipe_cnt < 3) begin
       $display("[%0t] [IN_PIPE_MON] input beat %0d: data[15:0]=0x%04h data[31:16]=0x%04h",
                $time, in_pipe_cnt,
-               u_dut.u_VX_gemm_unit.in_pipe_data_out[15:0],
-               u_dut.u_VX_gemm_unit.in_pipe_data_out[31:16]);
+               u_dut.u_VX_gemm_unit_v2.in_pipe_data_out[15:0],
+               u_dut.u_VX_gemm_unit_v2.in_pipe_data_out[31:16]);
       in_pipe_cnt++;
     end
   end
@@ -2495,119 +2503,132 @@ module tb_VX_gemm_node_improve
     end
   end
 
-  int acc_rd_fifo_depth_mon [2] = '{0, 0};
-  longint unsigned dual_rd_accept_count [2] = '{0, 0};
-  longint unsigned dual_rd_response_count [2] = '{0, 0};
-  longint unsigned dual_rd_push_count [2] = '{0, 0};
-  longint unsigned dual_rd_pop_count [2] = '{0, 0};
+  logic [3:0] nominal_read_req_q = '0;
+  longint unsigned dual_rd_accept_count [4] = '{default: 0};
+  longint unsigned dual_rd_response_count [4] = '{default: 0};
+  longint unsigned dual_rd_consume_count [4] = '{default: 0};
+  longint unsigned dual_fwd_consume_count [4] = '{default: 0};
+  longint unsigned dual_rd_early_count [4] = '{default: 0};
+  longint unsigned dual_rd_nominal_count [4] = '{default: 0};
   longint unsigned dual_rd_conflict_count = 0;
   longint unsigned dual_rd_underflow_count = 0;
 
   task check_dual_bank_prefetch;
-    for (int i = 0; i < 2; ++i) begin
+    for (int i = 0; i < 4; ++i) begin
       if (dual_rd_accept_count[i] != dual_rd_response_count[i])
         $fatal(1, "Dual-bank read response mismatch for bank %0d: accept=%0d response=%0d",
                i, dual_rd_accept_count[i], dual_rd_response_count[i]);
-      if (dual_rd_response_count[i] != dual_rd_push_count[i])
-        $fatal(1, "Dual-bank FIFO push mismatch for bank %0d: response=%0d push=%0d",
-               i, dual_rd_response_count[i], dual_rd_push_count[i]);
-      if (dual_rd_push_count[i] != dual_rd_pop_count[i])
-        $fatal(1, "Dual-bank FIFO pop mismatch for bank %0d: push=%0d pop=%0d",
-               i, dual_rd_push_count[i], dual_rd_pop_count[i]);
-      if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank[i])
-        $fatal(1, "Dual-bank FIFO %0d is not empty at test completion", i);
+      if (dual_rd_response_count[i] != dual_rd_consume_count[i])
+        $fatal(1, "Dual-bank read consume mismatch for bank %0d: response=%0d consume=%0d",
+               i, dual_rd_response_count[i], dual_rd_consume_count[i]);
     end
     if (dual_rd_conflict_count != 0)
       $fatal(1, "Dual-bank scheduler observed %0d read/write conflicts", dual_rd_conflict_count);
     if (dual_rd_underflow_count != 0)
       $fatal(1, "Dual-bank scheduler observed %0d psum underflows", dual_rd_underflow_count);
-    if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid)
+    if (nominal_read_req_q != '0
+        || u_dut.u_VX_gemm_unit_v2.early_rsp_pending != '0
+        || u_dut.u_VX_gemm_unit_v2.early_hold_valid != '0)
       $fatal(1, "Dual-bank scheduler has a pending read response at test completion");
+    if (!u_dut.gemm_unit_v2_if.pipeline_empty)
+      $fatal(1, "Dual-bank scheduler pipeline is not empty at test completion");
 
-    $display("[%0t] DUAL_BANK_PREFETCH_PASSED | {accept={%0d,%0d}, push={%0d,%0d}, pop={%0d,%0d}, conflict=%0d, underflow=%0d}",
+    $display("[%0t] DUAL_BANK_PREFETCH_PASSED | {accept={%0d,%0d,%0d,%0d}, response={%0d,%0d,%0d,%0d}, consume={%0d,%0d,%0d,%0d}, forward={%0d,%0d,%0d,%0d}, early={%0d,%0d,%0d,%0d}, nominal={%0d,%0d,%0d,%0d}, conflict=%0d, underflow=%0d}",
              $time,
+             dual_rd_accept_count[3], dual_rd_accept_count[2],
              dual_rd_accept_count[1], dual_rd_accept_count[0],
-             dual_rd_push_count[1], dual_rd_push_count[0],
-             dual_rd_pop_count[1], dual_rd_pop_count[0],
+             dual_rd_response_count[3], dual_rd_response_count[2],
+             dual_rd_response_count[1], dual_rd_response_count[0],
+             dual_rd_consume_count[3], dual_rd_consume_count[2],
+             dual_rd_consume_count[1], dual_rd_consume_count[0],
+             dual_fwd_consume_count[3], dual_fwd_consume_count[2],
+             dual_fwd_consume_count[1], dual_fwd_consume_count[0],
+             dual_rd_early_count[3], dual_rd_early_count[2],
+             dual_rd_early_count[1], dual_rd_early_count[0],
+             dual_rd_nominal_count[3], dual_rd_nominal_count[2],
+             dual_rd_nominal_count[1], dual_rd_nominal_count[0],
              dual_rd_conflict_count, dual_rd_underflow_count);
   endtask
 
   always @(posedge clk) begin
-    int next_depth [2];
-    bit low_cushion_event;
+    logic [3:0] read_req;
+    bit acc_consume;
+    bit forwarded_consume;
+    bit early_underflow;
 
     if (reset) begin
-      for (int i = 0; i < 2; ++i) begin
-        acc_rd_fifo_depth_mon[i] <= 0;
+      nominal_read_req_q <= '0;
+      for (int i = 0; i < 4; ++i) begin
         dual_rd_accept_count[i] <= 0;
         dual_rd_response_count[i] <= 0;
-        dual_rd_push_count[i] <= 0;
-        dual_rd_pop_count[i] <= 0;
+        dual_rd_consume_count[i] <= 0;
+        dual_fwd_consume_count[i] <= 0;
+        dual_rd_early_count[i] <= 0;
+        dual_rd_nominal_count[i] <= 0;
       end
       dual_rd_conflict_count <= 0;
       dual_rd_underflow_count <= 0;
     end else begin
-      for (int i = 0; i < 2; ++i) begin
-        next_depth[i] = acc_rd_fifo_depth_mon[i];
-        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
-            && !u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
-          next_depth[i]++;
-        end else if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
-                     && u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
-          next_depth[i]--;
-        end
+      read_req = u_dut.u_VX_gemm_unit_v2.early_read_req
+               | u_dut.u_VX_gemm_unit_v2.nominal_read_req;
+      nominal_read_req_q <= u_dut.u_VX_gemm_unit_v2.nominal_read_req;
+      acc_consume = u_dut.u_VX_gemm_unit_v2.acc_in_data_valid[0];
+      forwarded_consume = acc_consume
+                       && u_dut.u_VX_gemm_unit_v2.forward_pipe[
+                            u_dut.u_VX_gemm_unit_v2.SCALER_CTRL_IDX];
+      early_underflow = acc_consume
+                     && !forwarded_consume
+                     && u_dut.u_VX_gemm_unit_v2.early_pipe[
+                          u_dut.u_VX_gemm_unit_v2.SCALER_CTRL_IDX]
+                     && !u_dut.u_VX_gemm_unit_v2.early_hold_valid[
+                          u_dut.u_VX_gemm_unit_v2.accum_bank];
 
-        if (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept
-            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank[0] == i))
+      for (int i = 0; i < 4; ++i) begin
+        if (read_req[i])
           dual_rd_accept_count[i] <= dual_rd_accept_count[i] + 1;
-        if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_take
-            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank_q[0] == i))
+        if (nominal_read_req_q[i]
+            || u_dut.u_VX_gemm_unit_v2.early_rsp_pending[i])
           dual_rd_response_count[i] <= dual_rd_response_count[i] + 1;
-        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i])
-          dual_rd_push_count[i] <= dual_rd_push_count[i] + 1;
-        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i])
-          dual_rd_pop_count[i] <= dual_rd_pop_count[i] + 1;
-
-        acc_rd_fifo_depth_mon[i] <= next_depth[i];
+        if (acc_consume && (u_dut.u_VX_gemm_unit_v2.accum_bank == i)) begin
+          if (forwarded_consume)
+            dual_fwd_consume_count[i] <= dual_fwd_consume_count[i] + 1;
+          else
+            dual_rd_consume_count[i] <= dual_rd_consume_count[i] + 1;
+        end
+        if (u_dut.u_VX_gemm_unit_v2.early_read_req[i])
+          dual_rd_early_count[i] <= dual_rd_early_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit_v2.nominal_read_req[i])
+          dual_rd_nominal_count[i] <= dual_rd_nominal_count[i] + 1;
       end
 
-      if (u_dut.u_VX_gemm_unit.rd_wr_conflict_event)
+      if ((u_dut.u_VX_gemm_unit_v2.early_read_req
+           & u_dut.u_VX_gemm_unit_v2.nominal_read_req) != '0
+          || (u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en
+              & u_dut.u_VX_gemm_unit_v2.acc_mem_rd_en) != '0)
         dual_rd_conflict_count <= dual_rd_conflict_count + 1;
-      if (u_dut.u_VX_gemm_unit.psum_underflow_event)
+      if (early_underflow)
         dual_rd_underflow_count <= dual_rd_underflow_count + 1;
 
-      low_cushion_event = u_dut.u_VX_gemm_unit.acc_rd_fifo_pop
-                       && (next_depth[u_dut.u_VX_gemm_unit.acc_rd_consume_bank] <= 1);
       if (trace_rd_fifo_en &&
-          (u_dut.u_VX_gemm_unit.gemm_unit_if.start || u_dut.u_VX_gemm_unit.gemm_done
-           || low_cushion_event || u_dut.u_VX_gemm_unit.rd_wr_conflict_event
-           || u_dut.u_VX_gemm_unit.psum_underflow_event)) begin
-        `TRACE(1, ("%m : [%0t] | TB_ACC_RD_FIFO_DEPTH | {cycle=%0d, depth={%0d,%0d}, next={%0d,%0d}, push=%b, pop_fire=%b, empty=%b, full=%b, credit={%0d,%0d}, consume_bank=%0d, rd_req=%b, rd_accept=%b, mem_valid=%b, scaler=%b, acc=%b, underflow=%b, conflict=%b, is_load=%b, rd_cnt={%0d,%0d}, wr_cnt=%0d, rd_bank=%0d, wr_bank=%0d, rd_addr=0x%0h, wr_addr=0x%0h}\n",
+          ((read_req != '0) || acc_consume
+           || u_dut.gemm_unit_v2_if.last_write
+           || early_underflow
+           || ((u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en
+                & u_dut.u_VX_gemm_unit_v2.acc_mem_rd_en) != '0))) begin
+        `TRACE(1, ("%m : [%0t] | TB_ACC_RD_SCHED | {cycle=%0d, early_req=%b, nominal_req=%b, nominal_rsp=%b, early_rsp=%b, early_hold=%b, consume=%b, forward=%b, consume_bank=%0d, rd_en=%b, wr_en=%b, underflow=%b, pipeline_empty=%b}\n",
                    $time, tb_cycle,
-                   acc_rd_fifo_depth_mon[1], acc_rd_fifo_depth_mon[0],
-                   next_depth[1], next_depth[0],
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_full_by_bank,
-                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[1],
-                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[0],
-                   u_dut.u_VX_gemm_unit.acc_rd_consume_bank,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_req,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept,
-                   u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid,
-                   u_dut.u_VX_gemm_unit.final_scaler_output_valid,
-                   u_dut.u_VX_gemm_unit.acc_output_valid[0],
-                   u_dut.u_VX_gemm_unit.psum_underflow_event,
-                   u_dut.u_VX_gemm_unit.rd_wr_conflict_event,
-                   u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[1],
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[0],
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_cnt,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_bank,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_addr,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr))
+                   u_dut.u_VX_gemm_unit_v2.early_read_req,
+                   u_dut.u_VX_gemm_unit_v2.nominal_read_req,
+                   nominal_read_req_q,
+                   u_dut.u_VX_gemm_unit_v2.early_rsp_pending,
+                   u_dut.u_VX_gemm_unit_v2.early_hold_valid,
+                   acc_consume,
+                   forwarded_consume,
+                   u_dut.u_VX_gemm_unit_v2.accum_bank,
+                   u_dut.u_VX_gemm_unit_v2.acc_mem_rd_en,
+                   u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en,
+                   early_underflow,
+                   u_dut.gemm_unit_v2_if.pipeline_empty))
       end
     end
   end

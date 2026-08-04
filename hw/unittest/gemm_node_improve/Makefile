@@ -42,8 +42,8 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
         $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_unit_v2.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_unit_v2_if.sv \
         $(RTL_DIR)/core/gemm/VX_prealigner.sv \
         $(RTL_DIR)/core/gemm/VX_pint2fp.sv \
         $(RTL_DIR)/core/gemm/VX_f32_to_f16.sv \
