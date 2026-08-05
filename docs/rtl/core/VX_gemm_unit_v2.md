@@ -71,35 +71,45 @@ bank and consumed at the accumulator input. Strict sequential ping-pong
 addresses guarantee that moving the request by one cycle cannot create a
 second same-bank conflict.
 
-Two adjacent accumulation packets may target the same PSUM address. In this
-case, the second packet suppresses its SRAM read and forwards the first
-packet's aligned writeback result directly into the accumulator input. The
-forward-dependency bit travels with the packet sideband, so the input remains
-always-ready and the write latency stays fixed. Elaboration asserts that the
-previous packet's writeback stage is exactly one cycle ahead of the dependent
-packet's accumulator-input stage.
+Same-address accumulation dependencies use two fixed forwarding paths. At
+admission distance `d=1`, the consumer suppresses its SRAM read and uses the
+producer's concurrent writeback result. At `d=2`, the consumer suppresses both
+the otherwise-conflicting early read and its nominal read, then uses the
+producer result retained in a one-cycle writeback-history register. Immediate
+forwarding has priority when both admission-history comparisons match, which
+preserves a full-rate chain of three or more same-address packets. At `d=3`
+or greater, the producer has already updated ACC SRAM before the consumer's
+nominal read.
+
+This contract is intentionally limited to `L_R=1`, `L_A=1`, and `L_P=0`.
+Elaboration rejects a different accumulator timing instead of silently
+generalizing the history window. Both forwarding dependency bits travel with
+the packet sideband, so the input remains always-ready and every enabled write
+keeps its fixed latency.
 
 Simulation assertions check always-ready behavior, control/data alignment,
-single-port read/write exclusion, early-response availability, forwarding
-source validity/address equality, and legal sequential or immediate
-same-address dependencies within a command stream. Load packets are checked
-at the scaler stage as well as accumulation packets, so a backend latency
-mismatch fails at its first packet instead of appearing as a later command
-completion hang.
+single-port read/write exclusion, early-response availability, both forwarding
+sources' validity/address equality, and legal sequential or same-address
+dependencies within a command stream. Load packets are checked at the scaler
+stage as well as accumulation packets, so a backend latency mismatch fails at
+its first packet instead of appearing as a later command completion hang.
 
 ## Verification scope
 
 The dedicated unittest is `hw/unittest/gemm_unit_v2`. It covers continuous
 input traffic, load and accumulate paths, nominal and one-cycle-early reads,
-bubbles, physical bank-group boundaries, immediate same-address forwarding,
-alternating QCOL/QROW modes and register selectors, reset draining, and
-non-zero arithmetic reference cases. The forwarding test sends two adjacent
-accumulation packets to one PSUM initialized to 1.0, checks the final FP32
-value 65.0, and requires one SRAM read, one forwarded consume, and two writes.
-An admission-based scoreboard independently checks the exact write/read cycle,
-bank, address, enable, completion marker, and ordering of every packet. A
-fixed-seed constrained-random stream also covers bubbles, disabled writes,
-mode/register changes, and physical bank-group crossings. Top-level simulation
-was additionally verified with `fpint_gemm_ffn_hw` in `xrt-vcs-sim` for M1
-K32/K64/K128, M32 K64/K128, WTRANS, and QROW cases. Synthesis remains outside
-this change.
+bubbles, physical bank-group boundaries, and non-zero arithmetic reference
+cases. Directed same-address tests cover `d=1`, `d=2`, and `d=3` both within a
+command and across a `last` boundary, plus a three-packet `d=1` chain. A
+same-bank/different-address `d=2` case ensures exact-address history forwarding
+does not replace the existing early-read scheduler. An M=2 seamless micro-K
+case drives `row0(k0), row1(k0), row0(k1), row1(k1)` without bubbles, proving
+that both rows use exact-address history forwarding at `d=2` even though the
+other row writes in the intervening cycle. Each case checks the final FP32
+value, read/forward/write counts, fixed write timing, address alignment, and
+pipeline drain. An admission-based scoreboard independently checks the exact
+write/read cycle, bank, address, enable, completion marker, forwarding source,
+and ordering of every packet. A fixed-seed constrained-random stream also
+covers bubbles, disabled writes, mode/register changes, and physical bank-group
+crossings. Node, blackbox, and synthesis verification are outside this
+forwarding-window change.

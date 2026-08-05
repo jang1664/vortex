@@ -16,7 +16,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     localparam int RANDOM_COMMAND_LENGTH = 10;
     localparam int RANDOM_COMMAND_COUNT
         = RANDOM_PACKET_COUNT / RANDOM_COMMAND_LENGTH;
-    localparam int EXPECTED_LAST_WRITES = 9 + RANDOM_COMMAND_COUNT;
+    localparam int EXPECTED_LAST_WRITES = 22 + RANDOM_COMMAND_COUNT;
 
     typedef logic [`MXU_ROW-1:0][`IFP_WIDTH-1:0] input_vector_t;
     typedef logic [`MXU_COL-1:0][FP32_WIDTH-1:0] psum_vector_t;
@@ -45,7 +45,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
 
     typedef struct {
         longint unsigned due_cycle;
-        logic forward;
+        logic immediate_forward;
+        logic history_forward;
         logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] read_address;
     } forward_expect_t;
 
@@ -58,6 +59,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     int nominal_read_count;
     int coincident_read_count;
     int forward_count;
+    int history_forward_count;
     int last_write_count;
     bit test_failed;
     longint unsigned scoreboard_cycle;
@@ -66,6 +68,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     int scoreboard_read_count;
     int scoreboard_coincident_read_count;
     int scoreboard_forward_count;
+    int scoreboard_history_forward_count;
     write_expect_t write_expect_q[$];
     read_expect_t read_expect_q[$];
     admission_history_t admission_history_q[$];
@@ -136,6 +139,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             nominal_read_count <= 0;
             coincident_read_count <= 0;
             forward_count <= 0;
+            history_forward_count <= 0;
         end else begin
             cycle_count <= cycle_count + 1;
             if (i_lmem_bus_if.req_valid) begin
@@ -156,6 +160,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid
              && u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX])
                 forward_count <= forward_count + 1;
+            if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid
+             && u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX])
+                history_forward_count <= history_forward_count + 1;
             if (gemm_unit_v2_if.last_write)
                 last_write_count <= last_write_count + 1;
         end
@@ -176,6 +183,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic [1:0] current_read_bank;
         logic schedule_early;
         logic schedule_forward;
+        logic schedule_history_forward;
 
         if (reset) begin
             scoreboard_cycle = 0;
@@ -264,19 +272,29 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                  || u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr
                     !== forward_expect.read_address
                  || u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX]
-                    !== forward_expect.forward) begin
-                    $error("forward sideband mismatch cycle=%0d exp_forward=%0b exp_addr=%h actual_valid=%0b actual_forward=%0b actual_addr=%h",
-                           scoreboard_cycle, forward_expect.forward,
+                    !== forward_expect.immediate_forward
+                 || u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX]
+                    !== forward_expect.history_forward) begin
+                    $error("forward sideband mismatch cycle=%0d exp_immediate=%0b exp_history=%0b exp_addr=%h actual_valid=%0b actual_immediate=%0b actual_history=%0b actual_addr=%h",
+                           scoreboard_cycle,
+                           forward_expect.immediate_forward,
+                           forward_expect.history_forward,
                            forward_expect.read_address,
                            u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid,
                            u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX],
+                           u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX],
                            u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr);
                     test_failed = 1'b1;
                 end
-                if (forward_expect.forward)
+                if (forward_expect.immediate_forward)
                     scoreboard_forward_count
                         = scoreboard_forward_count + 1;
-            end else if (u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX] !== 1'b0) begin
+                if (forward_expect.history_forward)
+                    scoreboard_history_forward_count
+                        = scoreboard_history_forward_count + 1;
+            end else if ((u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX] !== 1'b0)
+                      || (u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX]
+                          !== 1'b0)) begin
                 $error("unexpected forwarding sideband cycle=%0d",
                        scoreboard_cycle);
                 test_failed = 1'b1;
@@ -357,6 +375,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 write_expect_q.push_back(write_expect);
 
                 schedule_forward = 1'b0;
+                schedule_history_forward = 1'b0;
                 foreach (admission_history_q[index]) begin
                     if (admission_history_q[index].admission_cycle + 1
                           == scoreboard_cycle) begin
@@ -366,16 +385,29 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                            && (admission_history_q[index].write_address
                               == gemm_unit_v2_if.packet_ctrl.acc_rd_addr);
                     end
+                    if (admission_history_q[index].admission_cycle + 2
+                          == scoreboard_cycle) begin
+                        schedule_history_forward
+                            = !schedule_forward
+                           && gemm_unit_v2_if.packet_ctrl.acc_rd_en
+                           && admission_history_q[index].acc_wr_en
+                           && (admission_history_q[index].write_address
+                              == gemm_unit_v2_if.packet_ctrl.acc_rd_addr);
+                    end
                 end
+                schedule_history_forward
+                    = schedule_history_forward && !schedule_forward;
                 forward_expect.due_cycle
                     = scoreboard_cycle + u_dut.L_PRE;
-                forward_expect.forward = schedule_forward;
+                forward_expect.immediate_forward = schedule_forward;
+                forward_expect.history_forward = schedule_history_forward;
                 forward_expect.read_address
                     = gemm_unit_v2_if.packet_ctrl.acc_rd_addr;
                 forward_expect_q.push_back(forward_expect);
 
                 if (gemm_unit_v2_if.packet_ctrl.acc_rd_en
-                 && !schedule_forward) begin
+                 && !schedule_forward
+                 && !schedule_history_forward) begin
                     current_read_bank = scoreboard_acc_bank(
                         gemm_unit_v2_if.packet_ctrl.acc_rd_addr);
                     schedule_early = 1'b0;
@@ -753,7 +785,102 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end
     endtask
 
-    task automatic test_same_address_forwarding();
+    task automatic test_same_address_distance(
+        input int distance,
+        input logic command_boundary,
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address
+    );
+        input_vector_t input_data;
+        psum_vector_t initial_value;
+        logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
+            weight_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
+        int early_before;
+        int nominal_before;
+        int forwards_before;
+        int history_forwards_before;
+        int writes_before;
+        int expected_reads;
+        int expected_immediate_forwards;
+        int expected_history_forwards;
+        string context;
+
+        input_data = '{default: 16'h3c00};
+        weight_data = '{default: `W_BIT_WIDTH'(1)};
+        scale_data = '{default: 16'h3c00};
+        zero_data = '0;
+        initial_value = '{default: 32'h3f80_0000};
+        context = $sformatf("same-address d=%0d boundary=%0b",
+                            distance, command_boundary);
+
+        if ((distance < 1) || (distance > 3)) begin
+            $error("invalid directed forwarding distance %0d", distance);
+            test_failed = 1'b1;
+            return;
+        end
+        if ((address % ACC_ROW_BYTES) != 0) begin
+            $error("unaligned directed forwarding address %h", address);
+            test_failed = 1'b1;
+            return;
+        end
+
+        write_scale_reg(1'b0, scale_data);
+        write_zero_reg(1'b0, zero_data);
+        write_weight_matrix(1'b0, weight_data);
+        u_dut.initialize_acc_mem(address, 1, initial_value);
+
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
+        forwards_before = forward_count;
+        history_forwards_before = history_forward_count;
+        writes_before = write_count;
+        drive_packet(input_data, address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, command_boundary);
+        if (distance > 1)
+            drive_bubble(distance - 1);
+        drive_packet(input_data, address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b1);
+        end_stream();
+        wait_for_last_write();
+        wait_for_empty();
+        check_scoreboard_empty(context);
+
+        expected_reads = (distance == 3) ? 2 : 1;
+        expected_immediate_forwards = (distance == 1) ? 1 : 0;
+        expected_history_forwards = (distance == 2) ? 1 : 0;
+        if ((early_read_count - early_before) != 0
+         || (nominal_read_count - nominal_before) != expected_reads) begin
+            $error("%s read count mismatch expected_early=0 expected_nominal=%0d actual_early=%0d actual_nominal=%0d",
+                   context, expected_reads,
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before);
+            test_failed = 1'b1;
+        end
+        if ((forward_count - forwards_before)
+            != expected_immediate_forwards) begin
+            $error("%s immediate forwarding count mismatch expected=%0d actual=%0d",
+                   context, expected_immediate_forwards,
+                   forward_count - forwards_before);
+            test_failed = 1'b1;
+        end
+        if ((history_forward_count - history_forwards_before)
+            != expected_history_forwards) begin
+            $error("%s history forwarding count mismatch expected=%0d actual=%0d",
+                   context, expected_history_forwards,
+                   history_forward_count - history_forwards_before);
+            test_failed = 1'b1;
+        end
+        if ((write_count - writes_before) != 2) begin
+            $error("%s write count mismatch expected=2 actual=%0d",
+                   context, write_count - writes_before);
+            test_failed = 1'b1;
+        end
+        // Initial 1.0 plus two dot products of 32.0 = 65.0.
+        check_memory(address, 1, 32'h4282_0000);
+    endtask
+
+    task automatic test_same_address_d1_chain();
         input_vector_t input_data;
         psum_vector_t initial_value;
         logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
@@ -761,51 +888,196 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
         logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
         logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address;
-        int reads_before;
+        int early_before;
+        int nominal_before;
         int forwards_before;
+        int history_forwards_before;
         int writes_before;
 
         input_data = '{default: 16'h3c00};
         weight_data = '{default: `W_BIT_WIDTH'(1)};
         scale_data = '{default: 16'h3c00};
         zero_data = '0;
-        address = `GEMM_ACC_MEM_ADDR_WIDTH'(24 * ACC_ROW_BYTES);
         initial_value = '{default: 32'h3f80_0000};
+        address = `GEMM_ACC_MEM_ADDR_WIDTH'(160 * ACC_ROW_BYTES);
 
         write_scale_reg(1'b0, scale_data);
         write_zero_reg(1'b0, zero_data);
         write_weight_matrix(1'b0, weight_data);
         u_dut.initialize_acc_mem(address, 1, initial_value);
 
-        reads_before = early_read_count + nominal_read_count;
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
         forwards_before = forward_count;
+        history_forwards_before = history_forward_count;
         writes_before = write_count;
-        drive_packet(input_data, address, 1'b0, `QDIR_COL,
-                     1'b0, 1'b0, 1'b0, 1'b0);
-        drive_packet(input_data, address, 1'b0, `QDIR_COL,
+        for (int i = 0; i < 3; ++i) begin
+            drive_packet(input_data, address, 1'b0, `QDIR_COL,
+                         1'b0, 1'b0, 1'b0, i == 2);
+        end
+        end_stream();
+        wait_for_last_write();
+        wait_for_empty();
+        check_scoreboard_empty("same-address d=1 chain");
+
+        if ((early_read_count - early_before) != 0
+         || (nominal_read_count - nominal_before) != 1
+         || (forward_count - forwards_before) != 2
+         || (history_forward_count - history_forwards_before) != 0
+         || (write_count - writes_before) != 3) begin
+            $error("same-address d=1 chain event mismatch early=%0d nominal=%0d immediate=%0d history=%0d writes=%0d",
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before,
+                   forward_count - forwards_before,
+                   history_forward_count - history_forwards_before,
+                   write_count - writes_before);
+            test_failed = 1'b1;
+        end
+        // Initial 1.0 plus three dot products of 32.0 = 97.0.
+        check_memory(address, 1, 32'h42c2_0000);
+    endtask
+
+    task automatic test_same_bank_different_address_d2();
+        input_vector_t input_data;
+        psum_vector_t initial_value;
+        logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
+            weight_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address_a;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address_b;
+        int early_before;
+        int nominal_before;
+        int forwards_before;
+        int history_forwards_before;
+        int writes_before;
+
+        input_data = '{default: 16'h3c00};
+        weight_data = '{default: `W_BIT_WIDTH'(1)};
+        scale_data = '{default: 16'h3c00};
+        zero_data = '0;
+        initial_value = '{default: 32'h3f80_0000};
+        address_a = `GEMM_ACC_MEM_ADDR_WIDTH'(168 * ACC_ROW_BYTES);
+        address_b = `GEMM_ACC_MEM_ADDR_WIDTH'(170 * ACC_ROW_BYTES);
+
+        if (scoreboard_acc_bank(address_a) != scoreboard_acc_bank(address_b)) begin
+            $error("directed d=2 addresses do not share an ACC bank");
+            test_failed = 1'b1;
+            return;
+        end
+        write_scale_reg(1'b0, scale_data);
+        write_zero_reg(1'b0, zero_data);
+        write_weight_matrix(1'b0, weight_data);
+        u_dut.initialize_acc_mem(address_a, 3, initial_value);
+
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
+        forwards_before = forward_count;
+        history_forwards_before = history_forward_count;
+        writes_before = write_count;
+        drive_packet(input_data, address_a, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b1);
+        drive_bubble(1);
+        drive_packet(input_data, address_b, 1'b0, `QDIR_COL,
                      1'b0, 1'b0, 1'b0, 1'b1);
         end_stream();
         wait_for_last_write();
         wait_for_empty();
-        check_scoreboard_empty("same-address forwarding stream");
+        check_scoreboard_empty("same-bank different-address d=2");
 
-        if ((early_read_count + nominal_read_count - reads_before) != 1) begin
-            $error("same-address forwarding issued extra ACC read expected=1 actual=%0d",
-                   early_read_count + nominal_read_count - reads_before);
-            test_failed = 1'b1;
-        end
-        if ((forward_count - forwards_before) != 1) begin
-            $error("same-address forwarding count mismatch expected=1 actual=%0d",
-                   forward_count - forwards_before);
-            test_failed = 1'b1;
-        end
-        if ((write_count - writes_before) != 2) begin
-            $error("same-address forwarding write count mismatch expected=2 actual=%0d",
+        if ((early_read_count - early_before) != 1
+         || (nominal_read_count - nominal_before) != 1
+         || (forward_count - forwards_before) != 0
+         || (history_forward_count - history_forwards_before) != 0
+         || (write_count - writes_before) != 2) begin
+            $error("same-bank different-address d=2 event mismatch early=%0d nominal=%0d immediate=%0d history=%0d writes=%0d",
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before,
+                   forward_count - forwards_before,
+                   history_forward_count - history_forwards_before,
                    write_count - writes_before);
             test_failed = 1'b1;
         end
-        // Initial 1.0 plus two consecutive dot products of 32.0 = 65.0.
-        check_memory(address, 1, 32'h4282_0000);
+        // Each row starts at 1.0 and receives one dot product of 32.0.
+        check_memory(address_a, 1, 32'h4204_0000);
+        check_memory(address_b, 1, 32'h4204_0000);
+    endtask
+
+    task automatic test_m2_seamless_micro_k_d2();
+        input_vector_t input_data;
+        psum_vector_t initial_value;
+        logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
+            weight_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] row0_address;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] row1_address;
+        int early_before;
+        int nominal_before;
+        int forwards_before;
+        int history_forwards_before;
+        int writes_before;
+        int last_writes_before;
+
+        input_data = '{default: 16'h3c00};
+        weight_data = '{default: `W_BIT_WIDTH'(1)};
+        scale_data = '{default: 16'h3c00};
+        zero_data = '0;
+        initial_value = '{default: 32'h3f80_0000};
+        row0_address = `GEMM_ACC_MEM_ADDR_WIDTH'(176 * ACC_ROW_BYTES);
+        row1_address = `GEMM_ACC_MEM_ADDR_WIDTH'(177 * ACC_ROW_BYTES);
+
+        if (scoreboard_acc_bank(row0_address)
+            == scoreboard_acc_bank(row1_address)) begin
+            $error("M=2 seamless micro-K rows must use different ACC banks");
+            test_failed = 1'b1;
+            return;
+        end
+        write_scale_reg(1'b0, scale_data);
+        write_zero_reg(1'b0, zero_data);
+        write_weight_matrix(1'b0, weight_data);
+        u_dut.initialize_acc_mem(row0_address, 2, initial_value);
+
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
+        forwards_before = forward_count;
+        history_forwards_before = history_forward_count;
+        writes_before = write_count;
+        last_writes_before = last_write_count;
+
+        // Two seamless micro-K commands: row0/row1 repeat at d=2 while the
+        // other row occupies the intervening admission and writeback cycle.
+        drive_packet(input_data, row0_address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b0);
+        drive_packet(input_data, row1_address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b1);
+        drive_packet(input_data, row0_address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b0);
+        drive_packet(input_data, row1_address, 1'b0, `QDIR_COL,
+                     1'b0, 1'b0, 1'b0, 1'b1);
+        end_stream();
+        wait_for_last_write();
+        wait_for_empty();
+        check_scoreboard_empty("M=2 seamless micro-K d=2");
+
+        if ((early_read_count - early_before) != 0
+         || (nominal_read_count - nominal_before) != 2
+         || (forward_count - forwards_before) != 0
+         || (history_forward_count - history_forwards_before) != 2
+         || (write_count - writes_before) != 4
+         || (last_write_count - last_writes_before) != 2) begin
+            $error("M=2 seamless micro-K event mismatch early=%0d nominal=%0d immediate=%0d history=%0d writes=%0d last_writes=%0d",
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before,
+                   forward_count - forwards_before,
+                   history_forward_count - history_forwards_before,
+                   write_count - writes_before,
+                   last_write_count - last_writes_before);
+            test_failed = 1'b1;
+        end
+        // Each row starts at 1.0 and accumulates both K-tile products: 65.0.
+        check_memory(row0_address, 1, 32'h4282_0000);
+        check_memory(row1_address, 1, 32'h4282_0000);
     endtask
 
     task automatic test_full_rate_load(input logic quant_dir);
@@ -1056,6 +1328,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         scoreboard_read_count = 0;
         scoreboard_coincident_read_count = 0;
         scoreboard_forward_count = 0;
+        scoreboard_history_forward_count = 0;
         reset = 1'b0;
         init_signals();
         apply_reset();
@@ -1066,7 +1339,21 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             `GEMM_ACC_MEM_ADDR_WIDTH'(8 * ACC_ROW_BYTES));
         test_nonzero_reference(`QDIR_ROW, 1'b1,
             `GEMM_ACC_MEM_ADDR_WIDTH'(16 * ACC_ROW_BYTES));
-        test_same_address_forwarding();
+        test_same_address_distance(1, 1'b0,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(136 * ACC_ROW_BYTES));
+        test_same_address_distance(2, 1'b0,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(140 * ACC_ROW_BYTES));
+        test_same_address_distance(3, 1'b0,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(144 * ACC_ROW_BYTES));
+        test_same_address_distance(1, 1'b1,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(148 * ACC_ROW_BYTES));
+        test_same_address_distance(2, 1'b1,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(152 * ACC_ROW_BYTES));
+        test_same_address_distance(3, 1'b1,
+            `GEMM_ACC_MEM_ADDR_WIDTH'(156 * ACC_ROW_BYTES));
+        test_same_address_d1_chain();
+        test_same_bank_different_address_d2();
+        test_m2_seamless_micro_k_d2();
         test_full_rate_load(`QDIR_COL);
         test_full_rate_load(`QDIR_ROW);
         test_accumulate_scheduler();
@@ -1079,12 +1366,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
          || (scoreboard_write_count == 0)
          || (scoreboard_read_count == 0)
          || (scoreboard_coincident_read_count == 0)
-         || (scoreboard_forward_count == 0)) begin
-            $error("scoreboard coverage gap admissions=%0d writes=%0d reads=%0d coincident_reads=%0d forwards=%0d",
+         || (scoreboard_forward_count == 0)
+         || (scoreboard_history_forward_count == 0)) begin
+            $error("scoreboard coverage gap admissions=%0d writes=%0d reads=%0d coincident_reads=%0d immediate_forwards=%0d history_forwards=%0d",
                    scoreboard_admission_count, scoreboard_write_count,
                    scoreboard_read_count,
                    scoreboard_coincident_read_count,
-                   scoreboard_forward_count);
+                   scoreboard_forward_count,
+                   scoreboard_history_forward_count);
             test_failed = 1'b1;
         end
 

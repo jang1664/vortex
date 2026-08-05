@@ -100,6 +100,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         ("write control index mismatch"))
     `VX_STATIC_ASSERT(WRITE_CTRL_IDX == SCALER_CTRL_IDX + 1,
         ("immediate forwarding requires concurrent prior writeback"))
+    `VX_STATIC_ASSERT(L_R == 1 && L_A == 1 && L_P == 0,
+        ("same-address history forwarding requires fixed 1/1/0 ACC latency"))
 
     function automatic [1:0] get_acc_mem_idx(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr
@@ -278,6 +280,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     gemm_input_ctrl_t ctrl_pipe [0:WRITE_CTRL_IDX];
     logic [WRITE_CTRL_IDX:0] early_pipe;
     logic [WRITE_CTRL_IDX:0] forward_pipe;
+    logic [WRITE_CTRL_IDX:0] history_forward_pipe;
 
     logic [3:0] early_read_req;
     logic [3:0] nominal_read_req;
@@ -295,6 +298,9 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0] selected_psum_data;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0] load_result_data;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0] writeback_result_data;
+    logic writeback_history_valid;
+    logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] writeback_history_addr;
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] writeback_history_data;
     logic load_result_valid;
     logic acc_write_fire;
     logic [1:0] write_bank;
@@ -319,6 +325,14 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
        && ctrl_pipe[0].valid
        && ctrl_pipe[0].acc_wr_en
        && (ctrl_pipe[0].acc_wr_addr
+        == gemm_unit_v2_if.packet_ctrl.acc_rd_addr);
+    wire admission_history_forward
+        = input_fire
+       && gemm_unit_v2_if.packet_ctrl.acc_rd_en
+       && !admission_forward
+       && ctrl_pipe[1].valid
+       && ctrl_pipe[1].acc_wr_en
+       && (ctrl_pipe[1].acc_wr_addr
         == gemm_unit_v2_if.packet_ctrl.acc_rd_addr);
     wire input_stage_is_qcol
         = ctrl_pipe[INPUT_CTRL_IDX].quant_dir == `QDIR_COL;
@@ -349,14 +363,17 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 ctrl_pipe[i] <= '0;
                 early_pipe[i] <= 1'b0;
                 forward_pipe[i] <= 1'b0;
+                history_forward_pipe[i] <= 1'b0;
             end
         end else begin
             ctrl_pipe[0] <= gemm_unit_v2_if.packet_ctrl;
             ctrl_pipe[0].valid <= input_fire;
             forward_pipe[0] <= admission_forward;
+            history_forward_pipe[0] <= admission_history_forward;
             early_pipe[0] <= input_fire
                           && gemm_unit_v2_if.packet_ctrl.acc_rd_en
                           && !admission_forward
+                          && !admission_history_forward
                           && ctrl_pipe[K_LOOKBACK-1].valid
                           && ctrl_pipe[K_LOOKBACK-1].acc_wr_en
                           && (get_acc_mem_idx(ctrl_pipe[K_LOOKBACK-1].acc_wr_addr)
@@ -365,6 +382,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 ctrl_pipe[i] <= ctrl_pipe[i-1];
                 early_pipe[i] <= early_pipe[i-1];
                 forward_pipe[i] <= forward_pipe[i-1];
+                history_forward_pipe[i] <= history_forward_pipe[i-1];
             end
         end
     end
@@ -1020,6 +1038,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         selected_psum_data = acc_mem_out_data[accum_bank];
         if (forward_pipe[SCALER_CTRL_IDX]) begin
             selected_psum_data = writeback_result_data;
+        end else if (history_forward_pipe[SCALER_CTRL_IDX]) begin
+            selected_psum_data = writeback_history_data;
         end else if (early_pipe[SCALER_CTRL_IDX]) begin
             selected_psum_data = early_hold_data[accum_bank];
         end
@@ -1067,6 +1087,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         if (ctrl_pipe[EARLY_READ_DLY-1].valid
          && ctrl_pipe[EARLY_READ_DLY-1].acc_rd_en
          && !forward_pipe[EARLY_READ_DLY-1]
+         && !history_forward_pipe[EARLY_READ_DLY-1]
          && early_pipe[EARLY_READ_DLY-1]) begin
             early_read_req[
                 get_acc_mem_idx(ctrl_pipe[EARLY_READ_DLY-1].acc_rd_addr)
@@ -1079,6 +1100,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         if (ctrl_pipe[NOMINAL_READ_DLY-1].valid
          && ctrl_pipe[NOMINAL_READ_DLY-1].acc_rd_en
          && !forward_pipe[NOMINAL_READ_DLY-1]
+         && !history_forward_pipe[NOMINAL_READ_DLY-1]
          && !early_pipe[NOMINAL_READ_DLY-1]) begin
             nominal_read_req[
                 get_acc_mem_idx(ctrl_pipe[NOMINAL_READ_DLY-1].acc_rd_addr)
@@ -1118,6 +1140,19 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     assign writeback_result_data
         = ctrl_pipe[WRITE_CTRL_IDX].is_load
         ? load_result_data : acc_output_data;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            writeback_history_valid <= 1'b0;
+            writeback_history_addr <= '0;
+            writeback_history_data <= '0;
+        end else if (acc_write_fire) begin
+            writeback_history_valid <= 1'b1;
+            writeback_history_addr
+                <= ctrl_pipe[WRITE_CTRL_IDX].acc_wr_addr;
+            writeback_history_data <= writeback_result_data;
+        end
+    end
 
     assign output_read_addr
         = `GEMM_ACC_MEM_ADDR_WIDTH'(
@@ -1279,12 +1314,12 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                        == stream_rd_addr_q + `GEMM_PSUM_DATA_SIZE
                       && gemm_unit_v2_if.packet_ctrl.acc_wr_addr
                        == stream_wr_addr_q + `GEMM_PSUM_DATA_SIZE)
-                     || (admission_forward
+                     || (gemm_unit_v2_if.packet_ctrl.acc_rd_en
                       && gemm_unit_v2_if.packet_ctrl.acc_rd_addr
                        == stream_wr_addr_q
                       && gemm_unit_v2_if.packet_ctrl.acc_wr_addr
                        == stream_wr_addr_q))
-                    else $fatal(1, "GEMM v2 address is neither strict progression nor immediate forwarding");
+                    else $fatal(1, "GEMM v2 address is neither strict progression nor a same-address accumulation");
             end
             if (admission_forward === 1'b1) begin
                 assert (ctrl_pipe[0].valid && ctrl_pipe[0].acc_wr_en)
@@ -1292,6 +1327,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 assert (ctrl_pipe[0].acc_wr_addr
                      == gemm_unit_v2_if.packet_ctrl.acc_rd_addr)
                     else $fatal(1, "GEMM v2 forwarding admission address mismatch");
+            end
+            if (admission_history_forward === 1'b1) begin
+                assert (!admission_forward)
+                    else $fatal(1, "GEMM v2 immediate/history forwarding overlap");
+                assert (ctrl_pipe[1].valid && ctrl_pipe[1].acc_wr_en)
+                    else $fatal(1, "GEMM v2 history forwarding dependency has no d=2 writer");
+                assert (ctrl_pipe[1].acc_wr_addr
+                     == gemm_unit_v2_if.packet_ctrl.acc_rd_addr)
+                    else $fatal(1, "GEMM v2 history forwarding admission address mismatch");
             end
             if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
              && (ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en === 1'b1)
@@ -1308,6 +1352,18 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 assert (ctrl_pipe[WRITE_CTRL_IDX].acc_wr_addr
                      == ctrl_pipe[SCALER_CTRL_IDX].acc_rd_addr)
                     else $fatal(1, "GEMM v2 forwarding consume address mismatch");
+            end
+            if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
+             && (history_forward_pipe[SCALER_CTRL_IDX] === 1'b1)) begin
+                assert (ctrl_pipe[SCALER_CTRL_IDX].acc_rd_en)
+                    else $fatal(1, "GEMM v2 history forwarding packet is not accumulating");
+                assert (!forward_pipe[SCALER_CTRL_IDX])
+                    else $fatal(1, "GEMM v2 immediate/history forwarding consume overlap");
+                assert (writeback_history_valid)
+                    else $fatal(1, "GEMM v2 history forwarding source is invalid");
+                assert (writeback_history_addr
+                     == ctrl_pipe[SCALER_CTRL_IDX].acc_rd_addr)
+                    else $fatal(1, "GEMM v2 history forwarding consume address mismatch");
             end
             if ((ctrl_pipe[SCALER_CTRL_IDX].valid === 1'b1)
              && (ctrl_pipe[SCALER_CTRL_IDX].is_load === 1'b1)) begin
