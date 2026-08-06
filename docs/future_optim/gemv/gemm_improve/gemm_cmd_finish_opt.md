@@ -14,18 +14,19 @@ NOTIFY와 sync register update까지 포함하면 마지막 input admission 이�
    child command 완료는 `input_read_flag.idle`이 busy를 거쳐 다시 1이 되는 것으로
    간접 판단한다. 따라서 done signal 두 개를 추가하는 것만으로 scheduling은 바뀌지
    않는다.
-2. 같은 ACC address를 읽는 다음 command라고 해서 항상 `writeback_done`까지 기다릴
-   필요는 없다. 정확한 조건은 두 packet의 admission cycle 거리 `d`이다. 현재 latency에서
-   `d=1`은 forwarding, `d>=3`은 최신 ACC MEM read로 안전하고, 정확히 `d=2`만 현재
-   forwarding이 커버하지 못하는 RAW hazard다.
+2. 같은 ACC address를 읽는 다음 command도 `writeback_done`까지 기다릴 필요가 없다.
+   현재 고정 latency에서 `d=1`은 immediate forwarding, `d=2`는 writeback-history
+   forwarding, `d>=3`은 최신 ACC MEM read로 처리된다. 따라서 가능한 모든 양의
+   admission 거리에서 동일 주소 RAW가 해결된다.
 3. command completion과 다음 input command를 받을 수 있는 상태는 같은 개념이
    아니다. 마지막 input admission 직후에도 local DMA는 현재 파형에서 4~5 cycle 더
    active하다. 또한 단일 `input_cmd_ctx_r`는 현재 `last_write`까지 유지되므로 이를
    그대로 조기 해제하면 back-to-back command와 이전 command의 `last_write`를 구분할
-   수 없다.
-4. 현재 M=4 파형에서는 local DMA의 route gap만으로 동일 주소 재입력이 안전 구간에
-   들어간다. 그러나 이 사실은 아직 RTL contract나 unittest로 고정되어 있지 않다.
-   completion 최적화보다 먼저 `d=1/2/3` 경계를 assertion과 directed test로 고정해야 한다.
+   수 없다. final command의 writeback은 raw `last_write`가 아니라 input packet과 함께
+   고정-latency GEMM control pipeline을 통과한 `notify_on_writeback` marker로 식별한다.
+4. `d=2` history forwarding과 `d=1/2/3` directed unittest가 구현되어 VCS unittest를
+   통과했다. M=2의 `row0,row1,row0,row1` seamless micro-K도 검증했으므로 micro-K
+   scheduling의 correctness를 LDMA route gap에 의존시킬 필요가 없다.
 
 따라서 completion을 다음 세 의미로 분리해야 한다.
 
@@ -193,27 +194,25 @@ d >= K_LOOKBACK + 1
 | 동일 주소 admission 거리 `d` | 현재 동작 | 판정 |
 |---:|---|---|
 | 1 | `admission_forward`가 이전 packet의 aligned writeback을 선택 | 안전 |
-| 2 | same-bank conflict로 one-cycle-early read를 선택 | **안전하지 않음: A write 전의 stale PSUM** |
+| 2 | exact-address history forwarding; early/nominal read 억제 | 안전 |
 | 3 이상 | nominal read가 A write 뒤에 발생 | 안전 |
 
-`d=2`에서는 nominal read와 A write가 충돌한다. 현재 early-read scheduler는 address가
-아니라 bank만 비교하므로 read를 한 cycle 앞당긴다. 서로 다른 address라면 이 동작이
-맞지만, 같은 address라면 A가 쓰기 전 값을 읽기 때문에 collision assertion은 통과하면서
-계산 결과가 틀릴 수 있다.
+`d=2`에서는 nominal read와 A write가 충돌하므로 기존 one-cycle-early read를 그대로
+사용하면 stale PSUM을 읽는다. 현재 RTL은 exact-address `d=2` dependency를 admission에서
+검출하고, producer writeback의 `{valid, addr, data}`를 한 cycle 보관해 consumer가
+accumulator input에서 선택한다. 해당 consumer의 early/nominal read는 모두 억제한다.
+same-bank이지만 address가 다른 `d=2` packet은 기존 one-cycle-early scheduler를 유지한다.
 
-현재 forwarding은 오직 `ctrl_pipe[0]`, 즉 정확히 직전 cycle의 writer만 비교한다.
-또한 다음 static assertion으로 producer writeback과 consumer accumulator input의 정렬을
-강제한다.
+`d=1`은 `ctrl_pipe[0]` writer의 현재 writeback을 선택하며 history forwarding보다 우선한다.
+다음 static assertion들은 현재 forwarding contract를 고정한다.
 
 ```systemverilog
 WRITE_CTRL_IDX == SCALER_CTRL_IDX + 1
+L_R == 1 && L_A == 1 && L_P == 0
 ```
 
-따라서 immediate forwarding은 `L_A + L_P = 1`인 현재 구조에 종속된다. 보장 조건은
-accumulator latency 하나만이 아니라 `L_R + L_A + L_P` 전체다. 예를 들어 `L_A=2`가
-되면 `K_LOOKBACK=3`, SRAM-safe 경계는 `d>=4`가 되고 `d=2,3`을 추가 forwarding이나
-admission 제한으로 처리해야 한다. 현재 RTL은 이 latency 변경을 그대로 지원하지 않고
-위 static assertion에서 막힌다.
+따라서 이 문서의 계획은 `L_R/L_A/L_P=1/1/0`에 한정한다. accumulator latency 일반화는
+범위 밖이며, 다른 latency가 설정되면 elaboration에서 실패하도록 했다.
 
 ### 4.5 micro-K transition에 적용
 
@@ -232,23 +231,33 @@ command가 bubble 없이 붙으면 `G_start=1`이므로 `d_same_row=eff_mt`이�
 | `eff_mt` | command가 완전히 연속일 때 | 현재 판정 |
 |---:|---:|---|
 | 1 | `d=1` | immediate forwarding으로 안전 |
-| 2 | `d=2` | 현재 유일한 hazard hole |
+| 2 | `d=2` | writeback-history forwarding으로 안전 |
 | 3 이상 | `d>=3` | 최신 ACC MEM read로 안전 |
 
-M=1도 항상 안전한 것은 아니다. 완전히 연속이면 forwarding으로 안전하지만, admission
-사이에 정확히 한 cycle의 bubble이 생겨 `d=2`가 되면 오히려 위험하다. 두 cycle 이상
-bubble이 있어 `d>=3`이면 다시 SRAM으로 안전하다.
+따라서 `eff_mt`와 command gap의 조합에 관계없이 같은 row의 다음 K contribution은
+안전하다. M=1에서 command가 완전히 붙으면 `d=1`, 한 cycle bubble이면 `d=2`, 더 멀면
+`d>=3`이며 세 경우가 모두 각각의 source로 처리된다. M=2 seamless 패턴은 다음과 같이
+별도로 검증했다.
+
+```text
+row0(k0), row1(k0,last), row0(k1), row1(k1,last)
+```
+
+두 row 모두 `d=2` history forwarding을 사용하고 최종 FP32 65.0을 생성했다. 중간 cycle의
+다른 row writeback이 history register를 갱신하더라도 consumer는 edge 직전의 올바른
+producer 값을 소비한다.
 
 현재 M=4 FSDB에서는 last admission 후 input LDMA `done`이 +4 cycle, `idle`이 +5 cycle에
 발생했다. 다음 normal command의 `route_ready`가 계속 `input_dma_ctrl_if.idle`을 요구한다면
 M=1조차 다음 first admission은 관측상 `d>=5`이고, M=4의 동일 row는 그보다 더 멀다.
-따라서 현재 target의 micro-K transition에 blanket `writeback_done` barrier를 두는 것은
-과도하게 보수적이다. 다만 +5는 한 workload의 관측값이므로 다음 조건을 RTL contract로
-고정한 뒤에만 ingress completion을 사용한다.
+이 +5 cycle은 이제 correctness 조건이 아니라 다음 command의 resource availability와
+실제 성능을 결정하는 route latency다. micro-K transition은 `writeback_done`을 기다리지
+않고 `ingress_done`과 `route_ready`만으로 진행할 수 있다.
 
 ```text
-same_acc_addr -> admission_distance == 1
-              || admission_distance >= K_LOOKBACK + 1
+same_acc_addr && d == 1 -> immediate_forward
+same_acc_addr && d == 2 -> history_forward
+same_acc_addr && d >= 3 -> updated_acc_mem_read
 ```
 
 ## 5. Dependency 분류
@@ -258,11 +267,11 @@ same_acc_addr -> admission_distance == 1
 
 | 다음 동작 | 기다릴 completion | 이유 |
 |---|---|---|
-| 독립 weight/scale/ZP preload | 없음 또는 `ingress_done` | ACC MEM 비의존 |
-| 다른 `nt_mxu`의 input command | `ingress_done` | accumulator address range가 다름 |
-| 같은 `nt_mxu`의 다음 K microtile | `ingress_done` + `route_ready` hazard check | `d=1` 또는 `d>=K_LOOKBACK+1`이면 안전 |
-| `OP_O_ACC2LMEM` | `writeback_done` | 현재 ACC 결과를 소비 |
-| buffer/address overlap을 증명하지 못한 command | `writeback_done` | conservative fallback |
+| 독립 weight/scale/ZP preload | 없음 또는 early NOTIFY | ACC MEM 비의존 |
+| 다른 `nt_mxu`의 input command | early NOTIFY | qualified I_LDMA idle에서 완료 |
+| 같은 `nt_mxu`의 다음 K microtile | early NOTIFY | 모든 `d>=1` 동일 주소 dependency를 GEMM unit이 처리 |
+| `OP_O_ACC2LMEM` | final NOTIFY | tagged final writeback에서 완료되어 최신 ACC 결과 보장 |
+| 표준 node contract 밖의 custom metadata command | final NOTIFY | writeback visibility를 증명해야 하는 경우 |
 
 현재 FSM은 K microtile을 inner loop로 순회한다.
 
@@ -272,187 +281,372 @@ n_nt_mxu = K loop wrap 시 nt_mxu + 1
 acc_base = acc_group_base + nt_mxu * acc_nb_stride
 ```
 
-따라서 같은 N microtile 안에서 K가 증가하면 address overlap은 존재하지만, overlap만으로
-late dependency라고 판정하면 안 된다. 실제 admission 거리와 forwarding 가능 여부를
-판정해야 한다. 현재 route gap이 유지되면 micro-K transition도 early completion 후보가
-된다. 반대로 scheduler 변경으로 정확히 `d=2`가 가능해지면 별도 보호가 필요하다.
+따라서 같은 N microtile 안에서 K가 증가하는 transition은 address overlap과 무관하게
+early completion 대상이다. node/FSM이 admission 거리를 계산하거나 `d=2`를 피하기 위한
+stall을 넣을 필요가 없다. 이 결론은 fixed `1/1/0` latency와 input당 최대 한 packet이라는
+현재 contract에 한정한다.
 
-## 6. 권장 해결책
+## 6. 권장 해결책: completion 조건을 선택하는 paired NOTIFY
 
-### 6.1 Completion domain 분리
+### 6.1 확정한 completion 구조
 
-GEMM input route에 두 개의 monotonic completion domain을 둔다.
+sync register update는 항상 command stream의 `OP_NOTIFY`만 수행한다. GEMM unit의
+writeback signal은 sync port로 연결하지 않고 `VX_gemm_node` 내부에서 final NOTIFY를
+release하는 completion signal로만 사용한다.
 
-- ingress domain: 기존 `RID_G0/RID_G1` 사용
-- writeback domain: 새 `RID_GW0/RID_GW1` 사용
+각 `OP_I_LDMA_ARM`에는 paired `OP_NOTIFY`가 정확히 하나 있고, 다음 consumer에 따라
+NOTIFY가 기다리는 조건만 달라진다.
 
-`VX_gemm_sync`는 현재 11개 register를 가지며 0~8이 사용 중이므로, 우선 9와 10을
-`RID_GW0/RID_GW1` 후보로 사용할 수 있다. 실제 적용 전 다른 command에서 9/10을
-사용하지 않는지 static assertion으로 고정한다.
-
-### 6.2 Input command lifecycle 분리
-
-`input_cmd_ctx_r`를 다음 두 역할로 분리한다.
-
-1. ingress context
-   - 현재 admission 중인 command의 ACC base, packet index, mode, register index 보관
-   - `input_last_admission`에서 해제
-   - 다음 command의 metadata capture에 재사용 가능
-2. writeback completion tracker
-   - command 순서대로 `last_write`를 대응시키는 token FIFO
-   - 최소 payload: `{buffer_id, sequence/target, late_rid}`
-   - pipeline에 동시에 존재할 수 있는 command 수를 수용할 depth 필요
-
-고정 latency pipeline은 input과 writeback 순서를 보존하므로 FIFO head와
-`gemm_unit_v2_if.last_write`를 순서대로 대응시킬 수 있다.
-
-### 6.3 Child queue의 명시적 완료 사용
-
-input child만큼은 idle edge 추론 대신 명시적 completion을 사용한다.
-
-- normal `OP_I_LDMA_ARM` retirement: `ingress_done`
-- NOTIFY acceptance: notification buffer에 enqueue되었을 때
-- 다음 normal input issue ready:
-  `ingress context free && input_dma_ctrl_if.idle && notification resource available`
-
-NOTIFY는 DMA transfer를 시작하지 않으므로 `input_dma_ctrl_if.idle`과 분리해 받을 수
-있어야 한다. 반대로 다음 normal I_LDMA command는 이전 LDMA가 idle이 되기 전에
-start하면 안 된다. 이를 위해 child head opcode를 기반으로 ready를 구분하거나 input
-child queue를 작은 전용 adapter로 분리한다.
-
-### 6.4 Early/late sync event 생성
-
-`OP_I_LDMA_ARM` 뒤의 NOTIFY를 input child가 받으면 다음을 수행한다.
-
-1. ingress completion target을 `RID_G*`에 update
-2. 대응하는 `{RID_GW*, target}` token을 writeback FIFO에 enqueue
-3. 해당 command의 `last_write`가 오면 FIFO를 pop하고 `RID_GW*` update
-
-early notify와 이전 command의 late writeback이 같은 cycle에 발생할 수 있으므로
-두 event를 잃지 않는 arbitration/FIFO가 필요하다. 단순 priority mux만 두고 한쪽 pulse를
-버리면 안 된다.
-
-### 6.5 FSM dependency 선택
-
-`S_MXU_WAIT_GEMM_DONE`에서 항상 `RID_G*` 하나만 기다리는 대신 dependency와 다음 input의
-admission 가능 시점을 분리한다.
+| I_LDMA 종류 | paired NOTIFY fire 조건 | 다음 동작 |
+|---|---|---|
+| non-final K | qualified I_LDMA idle | 다음 K/N microtile |
+| ACC-to-TMEM 직전 final K | tagged final writeback | `OP_O_ACC2LMEM` |
 
 ```text
-if next command is ACC output read:
-    wait RID_GW[buffer]       // writeback_done
-else:
-    wait RID_G[buffer]        // ingress_done
-    issue only when route_ready && acc_hazard_free
+non-final K:
+    I_LDMA
+      -> ingress_done
+      -> qualified I_LDMA idle
+      -> paired NOTIFY updates RID_G[b]
+      -> WAIT RID_G[b]
+      -> next microtile
+
+final K:
+    I_LDMA(notify_on_writeback=1)
+      -> ingress_done
+      -> tagged final ACC writeback
+      -> paired NOTIFY updates RID_G[b]
+      -> WAIT RID_G[b]
+      -> ACC-to-TMEM
 ```
 
-`acc_hazard_free`는 disjoint address이면 즉시 참이다. 같은 address range이면 첫 packet의
-예상 admission 거리가 `1` 또는 `K_LOOKBACK+1` 이상인지 확인한다. 이를 증명할 수 없는
-경우만 `RID_GW`로 fallback한다. `OP_O_ACC2LMEM`은 계속 late completion을 사용한다.
+따라서 GEMM 전용 sync port, `RID_GW0/RID_GW1`, `N_NODE=6` 확장은 만들지 않는다.
+기존 input NOTIFY port와 `RID_G0/RID_G1`만 사용한다.
+
+### 6.2 FSM completion mode 생성
+
+FSM은 `OP_I_LDMA_ARM`을 생성할 때 다음 consumer가 ACC-to-TMEM인지 알고 있다. raw K index를
+node에서 다시 해석하지 않고 FSM이 명시적인 `notify_on_writeback` bit를 command metadata에
+설정한다.
+
+```text
+next consumer is another GEMM input:
+    notify_on_writeback = 0
+
+next consumer is ACC-to-TMEM:
+    notify_on_writeback = 1
+```
+
+같은 mode를 paired NOTIFY에도 넣어 command pair의 정합성을 검증할 수 있게 한다. final 여부는
+단순 `last_k` bit가 아니라 실제 다음 dependency가 `OP_O_ACC2LMEM`인지로 결정한다.
+`VX_gemm_node`는 ARM start에서 mode를 command completion state에 capture하고 selected
+completion이 발생할 때까지 유지한다. 동일 mode를 각 input packet의 GEMM sideband에도
+전달한다.
+
+FSM의 command 순서는 유지한다.
+
+```text
+OP_I_LDMA_ARM -> OP_NOTIFY(RID_G) -> WAIT(RID_G)
+```
+
+### 6.3 Qualified I_LDMA idle
+
+`input_dma_ctrl_if.idle`은 command 시작 전에도 1이므로 raw idle level만으로 non-final
+completion을 만들면 안 된다. 해당 command가 실제 실행됐고 ingress가 끝났음을 qualification한
+뒤의 idle만 인정한다.
+
+권장 조건은 다음과 같다.
+
+```systemverilog
+qualified_ldma_idle = input_cmd_active
+                   && !notify_on_writeback
+                   && input_ingress_done_seen
+                   && input_dma_ctrl_if.idle;
+```
+
+`input_ingress_done_seen` 대신 command별 `input_dma_busy_seen`의 busy-to-idle transition을
+사용할 수도 있지만, last admission을 이미 명시적으로 검출하므로 ingress-done qualification을
+사용하는 편이 의미가 분명하다. 현재 파형에서 I_LDMA idle은 ingress보다 약 5 cycle 늦으므로
+qualification 이후에는 idle이 실질적인 early completion 시점이다.
+
+다음 invariant를 고정한다.
+
+```text
+qualified_ldma_idle -> corresponding ingress_done already occurred
+non-final command done -> qualified_ldma_idle
+```
+
+### 6.4 Tagged final writeback
+
+raw `gemm_unit_v2_if.last_write`를 final completion으로 사용하면 안 된다. 이전 non-final
+command가 이미 NOTIFY를 마친 뒤에도 pipeline에 남아 있다가, 다음 final command가 실행 중일
+때 `last_write`를 발생시킬 수 있기 때문이다.
+
+`notify_on_writeback`을 input packet control과 함께 기존 `ctrl_pipe`의 write stage까지
+pipeline한다.
+
+```systemverilog
+tagged_final_writeback = acc_write_fire
+                       && ctrl_pipe[WRITE_CTRL_IDX].last
+                       && ctrl_pipe[WRITE_CTRL_IDX].notify_on_writeback;
+```
+
+non-final command의 delayed writeback은 marker가 0이므로 final NOTIFY를 release하지 않는다.
+final command는 paired NOTIFY가 완료될 때까지 다음 normal I_LDMA를 시작하지 않으므로
+동시에 outstanding인 final completion은 최대 하나다. token FIFO나 command sequence tag는
+필요하지 않다.
+
+### 6.5 Child queue와 NOTIFY handshake
+
+input child normal command의 selected completion은 다음과 같다.
+
+```systemverilog
+input_cmd_done = notify_on_writeback
+               ? tagged_final_writeback
+               : qualified_ldma_idle;
+```
+
+`VX_gemm_ctrl`은 기존 idle-edge 추론 대신 explicit `input_read_flag.done`으로 input child의
+`child_cmd_inflight_r`를 해제한다. completion pulse가 paired NOTIFY보다 먼저 발생해도 기존
+inflight state가 완료 사실을 보존하므로 별도 completion FIFO는 필요하지 않다.
+
+paired NOTIFY는 input child queue head에 남아 있다가 normal command inflight가 해제되고
+sync port가 ready일 때 update와 queue pop을 같은 cycle에 수행한다. controller는 이미 queue
+head opcode와 `child_cmd_inflight_r`를 알고 있으므로 `child_notify_ok`를 유지한다. node는 queue
+head opcode를 보고 NOTIFY일 때 `input_read_flag.idle`을 sync ready로 반환한다.
+
+```systemverilog
+// Node: readiness of the command currently visible at the child interface.
+input_read_flag.idle = input_head_is_notify
+                     ? gemm_sync_if[0].ready
+                     : normal_input_ready;
+
+// Controller: existing child queue pop/start, now opcode-qualified.
+child_out_fire = !child_q_empty
+              && input_read_flag.idle
+              && (!input_head_is_notify || !child_cmd_inflight_r);
+
+// Node: child_out_fire appears as input_read_ctrl.start.
+input_notify_valid       = input_read_ctrl.start && input_head_is_notify;
+input_notify_fire        = input_notify_valid && gemm_sync_if[0].ready;
+gemm_sync_if[0].valid    = input_notify_valid;
+gemm_sync_if[0].reg_idx  = input_notify_cmd.rs1_data[31:0];
+gemm_sync_if[0].value    = input_notify_cmd.rs2_data[31:0];
+```
+
+기존 child queue가 NOTIFY payload를 보관하므로 `input_notify_pending_r`,
+`input_notify_reg_idx_r`, `input_notify_value_r`는 제거한다. sync ready가 낮아지면 queue를
+pop하지 않고 NOTIFY를 head에 유지한다. `child_out_fire`, queue pop, NOTIFY sync handshake는
+동일 cycle에 성립한다.
+
+### 6.6 Sync counter와 invocation lifecycle
+
+각 I_LDMA command는 early 또는 final 시점 중 하나에서 paired NOTIFY를 정확히 한 번 발생시킨다.
+`RID_G0/RID_G1`은 ADD 1 event counter로 사용한다.
+
+```text
+paired NOTIFY for buffer b:
+    RID_G[b] += 1
+```
+
+FSM은 buffer별 `gemm_expected_count[2]`를 유지한다.
+
+```text
+OP_I_LDMA_ARM for buffer b is accepted into parent queue:
+    gemm_expected_count[b] += 1
+
+paired WAIT:
+    RID_G[b] >= gemm_expected_count[b]
+```
+
+count는 command 생성 시도가 아니라 `out_start && can_emit`으로 ARM이 parent queue에 실제
+accept된 cycle에만 증가한다. paired NOTIFY는 `value=32'd1`을 전달하고, WAIT는 이미 증가한
+expected count를 target으로 사용한다.
+
+32-bit wrap은 지원하지 않고 increment 전에 assertion으로 막는다.
+
+```systemverilog
+assert (gemm_expected_count[mxu_buf] != 32'hffff_ffff);
+```
+
+hardware reset과 새 GEMM invocation accept에서 `gemm_expected_count[0/1]`를 0으로
+초기화한다. 이전 invocation의 `S_FINAL_CLEAR`가 발행한 `OP_CLEAR`는 sync register를 0으로
+만든다. CLEAR는 input NOTIFY update와 같은 cycle에 발생하지 않아야 하며 assertion으로
+확인한다.
+
+NOTIFY update와 이미 대기 중인 WAIT가 같은 cycle에 겹치면 WAIT는 update된 sync register를
+다음 cycle에 관측해 해제한다. combinational update bypass는 추가하지 않아 sync register와
+WAIT 비교의 critical path를 늘리지 않는다.
+
+정상 동작 중 GEMM invocation 중간에는 reset이 들어오지 않는 system contract를 사용한다.
+reset은 idle 상태에서만 허용하고, active input command, child inflight 또는 GEMM pipeline에
+outstanding packet이 있을 때 reset이 assertion되면 simulation에서 실패시킨다. reset 자체는
+completion mode, ingress qualification, child inflight와 delayed marker를 모두 0으로
+초기화한다.
+
+### 6.7 적용 범위와 compile configuration
+
+새 completion contract는 현재 improved/V2 module 경로에 조건 없이 직접 적용한다.
+`GEMM_IMPROVE_V2` 같은 새 macro는 추가하지 않는다.
+
+현재 RTL의 실제 node 선택은 `GEMM_IMPROVE`가 아니라 `GEMM_NAIVE` 여부로 결정된다.
+
+```text
+GEMM_NAIVE defined:
+    VX_gemm_node_naive / VX_gemm_fsm_naive / VX_gemm_ctrl_naive / VX_gemm_unit
+
+GEMM_NAIVE not defined:
+    VX_gemm_node / VX_gemm_fsm / VX_gemm_ctrl / VX_gemm_unit_v2
+```
+
+따라서 `notify_on_writeback`, qualified I_LDMA idle, explicit input child done과 paired NOTIFY
+direct handshake는 improved/V2 module들에 구현하고 naive/legacy module은 변경하지 않는다.
+config의 `GEMM_IMPROVE` define은 improve target 식별, CI 검증, FSDB hierarchy 선택 용도로
+계속 유지하지만 새 RTL contract를 별도 `` `ifdef GEMM_IMPROVE`` block으로 감싸지 않는다.
 
 ## 7. 구현 계획
 
-### Phase 0: forwarding 경계 고정 — 최우선
+### Phase 0: forwarding 경계 고정 — 완료
 
-1. `VX_gemm_unit_v2` directed test에 동일 주소 `d=1`, `d=2`, `d=3` case를 추가한다.
-2. `last`로 stream을 끊은 뒤 같은 주소를 다시 쓰는 cross-command 형태로도 반복한다.
-3. 현재 `d=2`가 stale PSUM을 사용하는 failing test임을 먼저 재현한다.
-4. 첫 구현은 다음 둘 중 하나로 `d=2`를 제거한다.
-   - node에서 최근 `K_LOOKBACK` cycle의 writer address를 추적해 unsafe admission 금지
-   - GEMM unit에서 직전 writeback `{valid, addr, data}`를 한 cycle 더 보관해 history
-     forwarding하고 해당 packet의 early/nominal SRAM read 억제
-5. command completion 최적화에는 node guard를 필수로 둔다. history forwarding을 함께
-   구현하면 guard는 assertion/fallback 역할로 유지한다.
-6. 다음 invariant를 unit/node 양쪽 assertion으로 고정한다.
+1. 동일 주소 `d=1/2/3`을 command 내부와 `last` 경계 양쪽에서 검증했다.
+2. `d=1` 연속 chain과 same-bank/different-address `d=2` early-read를 검증했다.
+3. exact-address `d=2`용 one-cycle writeback-history forwarding을 구현했다.
+4. M=2 seamless micro-K `row0,row1,row0,row1`을 검증했다.
+5. fixed `L_R/L_A/L_P=1/1/0` contract를 static assertion으로 고정했다.
+6. configured-build VCS `gemm_unit_v2` unittest가 두 verification iteration에서 통과했다.
+
+### Phase 1: Completion mode와 tagged writeback 구현
+
+1. FSM의 I_LDMA command와 paired NOTIFY에 `notify_on_writeback` metadata를 추가한다.
+2. 다음 consumer가 `OP_O_ACC2LMEM`일 때만 mode를 1로 설정한다.
+3. packet control에 mode를 넣고 기존 `ctrl_pipe`의 write stage까지 delay한다.
+4. delayed mode, delayed `last`, `acc_write_fire`로 `tagged_final_writeback`을 만든다.
+5. raw `last_write`는 final command completion에 사용하지 않는다.
+
+필수 invariant:
 
 ```text
-same_acc_addr && acc_rd_en
-  -> d == 1 || d >= K_LOOKBACK + 1 || history_forward_hit
+tagged_final_writeback -> last_write && delayed_notify_on_writeback
+non-final delayed last_write -> !tagged_final_writeback
+final last admission -> exactly one tagged_final_writeback after fixed WRITE_DLY
 ```
 
-### Phase 1: 관측 신호와 contract 고정
+### Phase 2: Qualified LDMA idle과 explicit child completion
 
-1. `VX_gemm_node`에 다음 probe/counter를 추가한다.
-   - `input_ingress_done`
-   - `input_writeback_done`
-   - `input_route_ready`
-   - ingress/writeback command sequence
-   - writeback token FIFO occupancy
-2. assertion을 추가한다.
-   - command당 ingress/writeback completion이 정확히 한 번 발생
-   - `writeback_done`은 대응하는 `ingress_done`보다 빠를 수 없음
-   - completion 순서 보존
-3. 기존 FSDB workload로 baseline 15/19-cycle 간격을 자동 측정한다.
+1. ARM start에서 `notify_on_writeback`을 command completion state에 capture한다.
+2. command별 `input_ingress_done_seen`을 추가하고 last admission에서 set한다.
+3. non-final command completion을 `ingress_done_seen && input_dma_idle`로 정의한다.
+4. final command completion을 `tagged_final_writeback`으로 정의한다.
+5. `gemm_ctrl_if.input_read_flag.done`에 selected completion을 연결한다.
+6. `VX_gemm_ctrl` input child inflight를 idle edge가 아니라 explicit done으로 해제한다.
+7. selected completion에서 mode와 ingress-done qualification state를 clear한다.
+8. normal command start 전 initial idle을 completion으로 오인하지 않는 assertion을 추가한다.
 
-### Phase 2: Node context와 completion tracker 분리
+### Phase 3: Paired NOTIFY direct handshake
 
-1. `input_cmd_ctx_r`를 last admission에서 해제하는 ingress context로 변경한다.
-2. `last_write`에서 context 전체를 clear하는 현재 로직을 제거한다.
-3. command별 writeback token FIFO를 추가한다.
-4. back-to-back command 중 이전 `last_write`가 새 ingress context를 훼손하지 않는지
-   unittest로 검증한다.
+1. FSM의 기존 ARM → NOTIFY → WAIT command sequence를 유지한다.
+2. `input_notify_pending_r`와 저장된 RID/value register를 제거한다.
+3. child queue head의 NOTIFY payload로 `gemm_sync_if[0]`을 직접 구동한다.
+4. sync valid/ready handshake와 child queue pop을 같은 cycle에 묶는다.
+5. normal command inflight가 해제되기 전에는 paired NOTIFY가 fire되지 않게 한다.
+6. GEMM 전용 sync port, `RID_GW`, `N_NODE=6` 관련 변경은 구현하지 않는다.
 
-### Phase 3: Input child completion/ready 변경
+### Phase 4: Sync counter와 FSM 적용
 
-1. `VX_gemm_ctrl` input child가 `ingress_done`으로 normal command를 retire하도록 한다.
-2. NOTIFY와 normal command의 ready 조건을 분리한다.
-3. NOTIFY는 LDMA busy 중에도 completion buffer가 비어 있으면 accept한다.
-4. normal input command는 LDMA idle과 ingress context availability를 모두 확인한다.
-5. 기존 children 1~4의 idle-edge completion 동작은 유지해 변경 범위를 제한한다.
+1. 모든 paired input NOTIFY가 `RID_G[buffer]`에 `value=32'd1`을 전달하게 한다.
+2. ARM parent-queue accept에서 buffer별 `gemm_expected_count`를 증가시킨다.
+3. paired WAIT가 해당 expected count를 target으로 사용하게 한다.
+4. hardware reset과 새 invocation accept에서 expected count를 0으로 초기화한다.
+5. count wrap, CLEAR/update 비동시, invocation 간 CLEAR ordering assertion을 추가한다.
+6. final NOTIFY/WAIT 뒤에만 `OP_O_ACC2LMEM`이 진행되게 한다.
+7. WAIT는 sync update를 다음 cycle에 관측하며 combinational bypass는 추가하지 않는다.
+8. active GEMM invocation 중 reset 금지 assertion을 추가하고 reset 시 completion 관련 state를
+   모두 clear한다.
+9. `o_lmem_bus_if.req_ready = pipeline_empty && !output_read_valid`는 최종 안전장치로 유지한다.
 
-### Phase 4: Dual sync completion 구현
+### Phase 5: Improved/V2 경로 통합
 
-1. `RID_GW0/RID_GW1`를 정의한다.
-2. early notify에서 ingress RID를 update하고 late token을 enqueue한다.
-3. `last_write`에서 writeback RID를 update한다.
-4. early/late event 동시 발생을 처리하는 completion event FIFO를 구현한다.
-5. FIFO overflow/underflow 및 RID/target pairing assertion을 추가한다.
-
-### Phase 5: Dependency-aware FSM 적용
-
-1. current/next ACC range 비교 helper를 추가한다.
-2. 동일 N의 다음 K microtile도 `route_ready && acc_hazard_free`이면 ingress RID를 기다린다.
-3. disjoint N microtile transition은 ingress RID를 기다린다.
-4. 정확한 admission 거리를 증명할 수 없는 overlapping transition만 writeback RID를
-   선택한다.
-5. `o_lmem_bus_if.req_ready = pipeline_empty && !output_read_valid`는 유지한다.
-
-### Phase 6: latency 일반화
-
-1. `L_R`, `L_A`, `L_P` 변화에 대해 unsafe window `2..K_LOOKBACK`을 자동 산출한다.
-2. accumulator latency가 1보다 커지면 multi-entry result forwarding 또는 admission
-   scoreboard로 unsafe window 전체를 처리한다.
-3. current-writeback 하나만 선택하는 immediate forwarding static assertion을 새 구조에
-   맞게 일반화한다.
+1. `VX_gemm_fsm`, `VX_gemm_ctrl`, `VX_gemm_node`, `VX_gemm_unit_v2`와 V2 interface/package
+   metadata에 새 completion contract를 직접 적용한다.
+2. `GEMM_IMPROVE_V2` macro와 V2 내부 기능 분기 `` `ifdef``를 추가하지 않는다.
+3. `VX_gemm_fsm_naive`, `VX_gemm_ctrl_naive`, `VX_gemm_node_naive`, `VX_gemm_unit`은
+   변경하지 않는다.
+4. 기존 `GEMM_IMPROVE` config와 `ci/run_target_gemm.sh` target을 그대로 사용해 검증한다.
 
 ## 8. Verification 계획
 
-### 8.1 RTL unittest
+### 8.1 완료된 GEMM unit unittest
 
-- 단일 packet command: ingress와 writeback 간 고정 latency 확인
-- multi-packet command: 마지막 admission에서만 ingress completion 발생
-- disjoint back-to-back command: 이전 writeback 전에 다음 ingress 허용
-- 동일 주소 `d=1`: immediate forwarding 및 연속 chain 확인
-- 동일 주소 `d=2`: stale early-read 금지와 guard/history forwarding 확인
-- 동일 주소 `d=3`: writeback 이후 nominal SRAM read 확인
-- same-bank/different-address `d=2`: 기존 one-cycle-early read 유지 확인
-- micro-K transition: M=1, M=2, M=4와 `G_start=1,2,3` 조합
-- `OP_O_ACC2LMEM`: 마지막 writeback 이전 ACC read fire 금지
-- early notify와 late writeback 동시 발생
-- writeback token FIFO full/backpressure
-- reset 중 outstanding token flush
+- 동일 주소 `d=1`: immediate forwarding 및 3-packet chain
+- 동일 주소 `d=2`: history forwarding, stale early/nominal read 억제
+- 동일 주소 `d=3`: writeback 이후 nominal SRAM read
+- 위 `d=1/2/3`을 command 내부와 `last` 경계에서 각각 검증
+- same-bank/different-address `d=2`: 기존 one-cycle-early read 유지
+- M=2 seamless micro-K `row0,row1,row0,row1`: 두 history forwarding과 최종값 검증
+- fixed write timing, address, completion marker, read/forward/write count, pipeline drain
+- configured-build VCS 결과: PASS
 
-필수 assertion:
+### 8.2 GEMM unit/node/controller/sync RTL unittest
+
+- non-final command의 initial idle을 completion으로 오인하지 않음
+- non-final NOTIFY는 last admission 이후 qualified LDMA idle에서만 fire
+- non-final NOTIFY는 해당 command의 writeback을 기다리지 않음
+- 이전 non-final command의 늦은 raw `last_write`가 final NOTIFY를 release하지 않음
+- final NOTIFY는 tagged final writeback 이후에만 fire
+- final NOTIFY/WAIT 완료 전 `OP_O_ACC2LMEM` 시작 금지
+- multi-packet command에서 마지막 admission만 ingress-done qualification 생성
+- completion pulse가 NOTIFY enqueue/head 도달보다 빨라도 inflight state로 유실되지 않음
+- NOTIFY sync handshake와 child queue pop이 동일 cycle에 발생
+- sync ready가 낮을 때 NOTIFY가 queue head에 유지됨
+- `OP_I_LDMA_ARM` parent queue accept 때만 `gemm_expected_count` 증가
+- command enqueue stall cycle에는 expected count 유지
+- 새 GEMM invocation에서 expected count와 sync count가 0에서 시작
+- expected count가 32-bit wrap을 일으키지 않음
+- M=1/M=2/M=4 micro-K의 최종 ACC 값과 forwarding source 확인
+- reset 시 delayed `notify_on_writeback` marker flush
+- active GEMM invocation/input child/pipeline outstanding 중 reset assertion 금지
+- CLEAR와 input NOTIFY update가 같은 cycle에 발생하지 않음
+- NOTIFY update와 WAIT가 겹치면 WAIT가 다음 cycle에 해제됨
+- naive/legacy build가 기존 completion contract로 compile됨
+
+필수 assertion 및 coverage:
 
 ```text
-ingress_count >= writeback_count
-ingress_count - writeback_count <= tracker_depth
-late_target(command_i) == ingress_target(command_i)
-same_acc_addr -> d == 1 || d >= K_LOOKBACK + 1 || history_forward_hit
-unsafe_same_addr -> no early_read_req && no nominal_read_req
-output_read_fire -> pipeline_empty && required_writeback_done
+qualified_ldma_idle -> prior ingress_done for same command
+nonfinal_input_done -> qualified_ldma_idle
+tagged_final_writeback -> last_write && delayed_notify_on_writeback
+final_input_done -> tagged_final_writeback
+raw_nonfinal_last_write -> !final_input_done
+input_notify_fire -> corresponding input_cmd_done
+input_notify_fire == child_queue_pop && input_sync_update_fire
+arm_parent_queue_accept(buffer) -> expected_count[buffer] increments exactly once
+!arm_parent_queue_accept -> expected_count remains stable
+expected_count_increment -> previous_expected_count != 32'hffff_ffff
+clear_fire -> !input_notify_update
+reset -> gemm_idle && !input_cmd_active && !child_cmd_inflight && pipeline_empty
+output_read_fire -> pipeline_empty && final_notify_wait_satisfied
+cover(next_micro_k_start before previous_nonfinal_writeback)
 ```
 
-### 8.2 XRT-VCS
+2026-08-06 configured-build VCS 결과:
+
+- `gemm_unit_v2`: PASS. accumulator latency를 1로 고정하고 `d=1/2/3`, command
+  boundary, `d=1` chain과 seamless micro-K forwarding을 재검증했다.
+- `gemm_sync`, `gemm_fsm`, `gemm_ctrl`: PASS. registered WAIT, expected-count,
+  explicit done과 paired NOTIFY lifecycle을 재검증했다.
+- `gemm_node_improve`: M=1 command-finish lifecycle과
+  M=4/N=32/K=256, M=4/N=64/K=128, M=4/N=256/K=256/QDIR=1이 PASS했다.
+- M=1/M=2 node 파형에서는 W/SZ readiness wait 때문에 final command start가 이전 raw
+  writeback보다 7 cycle 늦어 자연적인 prior-raw/final-active overlap은 발생하지 않았다.
+  따라서 이 overlap 자체는 node coverage로 주장하지 않으며, forwarding dependency는 위
+  `gemm_unit_v2` directed test로 검증한다. 실제 workload에서의 start-to-start 개선 여부는
+  8.3 XRT-VCS 단계에서 확인한다.
+- M=4 target의 기존 1013/1024 mismatch는 command-finish RTL 문제가 아니었다. 최초로
+  M=4를 허용한 `51a99040`의 node testbench가 production FSM/app의 `align8(M)` input/output
+  DRAM slot contract를 반영하지 않은 것이 원인이었고, testbench physical footprint와
+  checker stride를 수정한 뒤 1024/1024가 일치했다.
+
+### 8.3 XRT-VCS
 
 기능 검증:
 
@@ -467,21 +661,97 @@ ci/run_target_gemm.sh run --wload 32
 
 - target: `M=4, N=256, K=256, QBLK=32, WTRANS=0, QDIR=1`
 - 비교 항목:
-  - last admission -> ingress RID update
-  - last admission -> writeback RID update
+  - non-final last admission -> qualified LDMA idle -> NOTIFY update
+  - final last admission -> tagged writeback -> NOTIFY update
+  - raw non-final writeback과 tagged final writeback 구분
   - micro-GEMM start-to-start interval
+  - next-K start가 이전 non-final writeback보다 빠른지
+  - final NOTIFY가 ACC-to-TMEM 이전에 완료되는지
   - `S_MXU_WAIT_GEMM_DONE` blocked cycles
   - parent/child queue full cycles
   - `psum_underflow`, `rd_wr_conflict`
   - ACC output numerical comparison
 
+2026-08-06 XRT-VCS 결과:
+
+- `ci/run_target_gemm.sh run`으로 WLOAD 4/8/16/32를 모두 검증했고 전부 PASS했다.
+  각 실행은 input 256개, output 32개, ACC write 256개를 완료했으며
+  `psum_underflow=0`, `rd_wr_conflict=0`이었다. weight fire count는 각각
+  512/256/128/64로 WLOAD 폭에 맞게 감소했다.
+- command-finish 변경 전 같은 runner/config/workload의 보존된 결과와 비교하면 다음과 같다.
+
+| WLOAD | 변경 전 total cycles | 변경 후 total cycles | 변화 | 변경 전 app cycles | 변경 후 app cycles | 변화 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 3992 | 3963 | -29 (-0.73%) | 10330 | 10255 | -75 (-0.73%) |
+| 8 | 3339 | 3131 | -208 (-6.23%) | 9655 | 9429 | -226 (-2.34%) |
+| 16 | 3369 | 3132 | -237 (-7.03%) | 9656 | 9430 | -226 (-2.34%) |
+| 32 | 3339 | 3131 | -208 (-6.23%) | 9655 | 9430 | -225 (-2.33%) |
+
+- WLOAD8 trace에서 64개 input command 중 non-final 62개와 final 2개를 확인했다.
+  non-final은 start부터 LDMA done까지 18 cycle, command done까지 19 cycle,
+  raw last write까지 29 cycle이었다. final은 command done과 tagged last write가 모두
+  start+29 cycle에 발생했다.
+- non-final `RID_G` WAIT는 command마다 20 cycle block됐고 final 두 command는 30 cycle
+  block됐다. 즉 non-final completion은 raw writeback보다 10 cycle 일찍 해제됐다.
+- 그렇지만 이 workload에서 다음 input start가 이전 raw writeback보다 빨랐던 경우는
+  0/63이었다. 보통 next start는 raw writeback 10 cycle 뒤였고, W/SZ readiness WAIT가
+  남은 간격을 결정했다. 따라서 조기 completion은 전체 cycle을 줄였지만 실제 target의
+  input admission이 forwarding 구간까지 당겨지지는 않았다. forwarding correctness는
+  8.1의 directed `d=1/2/3` unittest가 담당한다.
+- final ordering은 의도대로였다. 첫 final command는 tagged writeback 70.725 us,
+  input NOTIFY sync update 70.735 us, `RID_G1` WAIT 만족 70.745 us 순으로 진행했고,
+  실제 `OP_O_ACC2LMEM` child 실행은 70.765 us였다. FSM이 output command를 parent queue에
+  미리 생성해도 child 실행은 final NOTIFY/WAIT 뒤로 보호된다. 두 번째 final command도
+  같은 순서를 보였다.
+- text trace만으로 completion, sync, 실제 child 실행 순서를 모두 판별할 수 있어 FSDB는
+  추가로 생성하지 않았다.
+
+주 비교 artifact:
+
+```text
+변경 전 WLOAD8:
+build/run_logs/target_gemm/
+  20260804-181532_run_wload8_m4_n256_k256_q32_t0_d1_pid1007157/
+
+변경 후 WLOAD8:
+build/run_logs/target_gemm/
+  20260806-121946_run_wload8_m4_n256_k256_q32_t0_d1_pid573073/
+
+변경 후 WLOAD8 trace:
+build/run_logs/target_gemm/
+  20260806-122550_trace_wload8_m4_n256_k256_q32_t0_d1_pid640256/
+```
+
 ## 9. 기대 효과와 한계
 
-현재 파형 기준으로 ingress completion은 sync-visible completion에서 최대 약 15 cycle의
-writeback latency를 제거할 수 있다. 다음 normal input command는 input LDMA idle 때문에
-last admission 후 관측상 최소 약 5 cycle 뒤에 시작할 수 있으므로, 현재 latency의
-SRAM-safe 경계 `d>=3`을 이미 넘는다. M=4 target은 동일 row 재입력 거리도 추가로 확보된다.
+non-final K iteration은 기존 writeback-based NOTIFY 대신 qualified I_LDMA idle에서 완료된다.
+현재 파형에서는 last admission 이후 약 5 cycle로, 기존 sync-visible completion의 약 19
+cycle보다 빨라진다. 다음 micro-K는 이전 command의 ACC writeback보다 먼저 시작할 수 있고,
+동일 주소 dependency는 검증된 `d=1/2/3` forwarding/read contract가 처리한다.
 
-따라서 동일 `nt_mxu`의 K accumulation transition도 우선적인 early-completion 대상이다.
-성능 최적화 전에 Phase 0에서 `d=2` hole을 test/assertion으로 재현하고 제거해야 하며,
-`route_ready`가 LDMA idle과 `acc_hazard_free`를 모두 포함한다는 contract를 유지해야 한다.
+ACC-to-TMEM 직전 final command는 tagged final writeback까지 NOTIFY를 지연하므로 별도의
+`RID_GW`, GEMM sync port 또는 output-side writeback tracker 없이 ACC data visibility를
+보장한다. 모든 sync register update는 기존 NOTIFY command 경로를 유지한다.
+
+이 구조는 한 input child command와 paired NOTIFY를 순서대로 처리하며 동시에 outstanding인
+final completion이 최대 하나라는 현재 FSM contract를 전제로 한다. accumulator latency는
+`L_R/L_A/L_P=1/1/0`으로 고정한다.
+
+NOTIFY update bypass는 사용하지 않고 active GEMM 중 reset을 금지하며, 새 macro 없이 현재
+improved/V2 module 경로에만 새 completion contract를 적용하는 것으로 남은 설계 결정을
+모두 확정했다.
+
+# hard rule
+
+계획 수행 도중에 계획한 설계에서 문제가 발견되면 즉시 멈추고 문제를 보고한다.
+그 이후에 해결책을 논의한다.
+
+# Result
+
+GEMM input command completion 최적화와 forwarding 검증을 완료했다. RTL unittest와
+`fpint_gemm_ffn_hw` XRT-VCS의 WLOAD 4/8/16/32가 모두 통과했으며, WLOAD8 기준 total
+cycle은 3339에서 3131로 6.23% 감소했다. final writeback/NOTIFY/WAIT/ACC-to-TMEM 순서와
+`psum_underflow=0`, `rd_wr_conflict=0`도 확인했다. 현재 target에서는 W/SZ readiness가
+남은 병목이어서 next input이 이전 writeback보다 먼저 시작하지는 않았다.
+
+Done

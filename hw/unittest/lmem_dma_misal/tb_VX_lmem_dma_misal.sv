@@ -13,6 +13,11 @@
 `ifndef TB_GEMM_REQ_BACKPRESSURE
 `define TB_GEMM_REQ_BACKPRESSURE 1
 `endif
+`ifdef GEMM_IMPROVE
+`define TB_NO_WRAPPER_SYNC
+`elsif GEMM_NAIVE
+`define TB_NO_WRAPPER_SYNC
+`endif
 
 // -----------------------------------------------------------------------------
 // Testbench for VX_lmem_dma_misal with REAL VX_local_mem + byte-addressed GEMM node
@@ -333,7 +338,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   integer sync1_accept_count;
   integer done0_count;
   integer done1_count;
+  integer write_done0_count;
+  integer write_done1_count;
   integer request_accept_count;
+  longint unsigned expected_write_remaining0;
+  longint unsigned expected_write_remaining1;
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -342,7 +351,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       sync1_accept_count <= 0;
       done0_count <= 0;
       done1_count <= 0;
+      write_done0_count <= 0;
+      write_done1_count <= 0;
       request_accept_count <= 0;
+      expected_write_remaining0 <= 0;
+      expected_write_remaining1 <= 0;
     end else begin
       cycle_count_r <= cycle_count_r + 1;
       if (sync0_if.valid && sync0_if.ready)
@@ -353,6 +366,45 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
         done0_count <= done0_count + 1;
       if (ctrl1_if.done)
         done1_count <= done1_count + 1;
+      if (ctrl0_if.start)
+        expected_write_remaining0 <= 64'(ctrl0_if.seg_size)
+                                   * 64'(ctrl0_if.bounds[0])
+                                   * 64'(ctrl0_if.bounds[1])
+                                   * 64'(ctrl0_if.bounds[2]);
+      if (ctrl1_if.start)
+        expected_write_remaining1 <= 64'(ctrl1_if.seg_size)
+                                   * 64'(ctrl1_if.bounds[0])
+                                   * 64'(ctrl1_if.bounds[1])
+                                   * 64'(ctrl1_if.bounds[2]);
+      if (!sel && gemm_req_fire && gemm_bus_s.req_data.rw) begin
+        if (ctrl0_if.write_done
+            !== (expected_write_remaining0 == $countones(gemm_bus_s.req_data.byteen)))
+          $fatal(1, "DIR0 write_done is not the exact final accepted destination write");
+        expected_write_remaining0 <= expected_write_remaining0
+                                   - $countones(gemm_bus_s.req_data.byteen);
+      end else if (ctrl0_if.write_done) begin
+        $fatal(1, "DIR0 write_done without accepted GEMM destination write");
+      end
+      if (sel && lmem_bus_s.req_valid && lmem_bus_s.req_ready
+          && lmem_bus_s.req_data.rw) begin
+        if (ctrl1_if.write_done
+            !== (expected_write_remaining1 == $countones(lmem_bus_s.req_data.byteen)))
+          $fatal(1, "DIR1 write_done is not the exact final accepted destination write");
+        expected_write_remaining1 <= expected_write_remaining1
+                                   - $countones(lmem_bus_s.req_data.byteen);
+      end else if (ctrl1_if.write_done) begin
+        $fatal(1, "DIR1 write_done without accepted LMEM destination write");
+      end
+      if (ctrl0_if.write_done) begin
+        if (ctrl0_if.done)
+          $fatal(1, "DIR0 write_done was delayed to wrapper done");
+        write_done0_count <= write_done0_count + 1;
+      end
+      if (ctrl1_if.write_done) begin
+        if (ctrl1_if.done)
+          $fatal(1, "DIR1 write_done was delayed to wrapper done");
+        write_done1_count <= write_done1_count + 1;
+      end
       request_accept_count <= request_accept_count
                             + (lmem_bus_s.req_valid && lmem_bus_s.req_ready)
                             + (gemm_bus_s.req_valid && gemm_bus_s.req_ready);
@@ -380,10 +432,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   end
 `endif
 
-`ifdef GEMM_NAIVE
+`ifdef TB_NO_WRAPPER_SYNC
   always_ff @(posedge clk) begin
     if (!reset && (sync0_if.valid || sync1_if.valid))
-      $fatal(1, "GEMM_NAIVE local DMA unexpectedly emitted wrapper sync");
+      $fatal(1, "Improved/naive local DMA unexpectedly emitted wrapper sync");
+`ifdef GEMM_IMPROVE
+    if (!reset && ((dut_dir0.state == dut_dir0.S_SYNC)
+                || (dut_dir1.state == dut_dir1.S_SYNC)))
+      $fatal(1, "GEMM_IMPROVE local DMA entered removed S_SYNC state");
+`endif
   end
 `endif
 
@@ -602,7 +659,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
     logic [31:0] reg0_idx, reg0_val;
     logic [31:0] reg1_idx, reg1_val;
-    integer sync_before, done_before;
+    integer sync_before, done_before, write_done_before;
     longint unsigned dir0_start_cycle, dir1_start_cycle;
     longint unsigned dir0_cycles, dir1_cycles;
 
@@ -633,6 +690,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     // 1) GEMM -> LMEM  (DIR=1)
     sync_before = sync1_accept_count;
     done_before = done1_count;
+    write_done_before = write_done1_count;
     dir1_start_cycle = cycle_count_r;
     ctrl1_pulse_start(
       gemm_src_base, lmem_base,
@@ -641,15 +699,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       seg_bytes,
       reg1_idx, reg1_val
     );
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
     wait_sync1_and_check(reg1_idx, reg1_val, "DIR1");
 `endif
     wait_dma_done1();
     #1;
     dir1_cycles = cycle_count_r - dir1_start_cycle;
-`ifdef GEMM_NAIVE
+`ifdef TB_NO_WRAPPER_SYNC
     if (sync1_accept_count != sync_before)
-      $fatal(1, "DIR1 GEMM_NAIVE emitted sync");
+      $fatal(1, "DIR1 improved/naive emitted sync");
 `else
     if (sync1_accept_count != (sync_before + 1))
       $fatal(1, "DIR1 sync count mismatch: before=%0d after=%0d",
@@ -658,10 +716,14 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     if (done1_count != (done_before + 1))
       $fatal(1, "DIR1 done pulse count mismatch: before=%0d after=%0d",
              done_before, done1_count);
+    if (write_done1_count != (write_done_before + 1))
+      $fatal(1, "DIR1 write_done exact pulse count mismatch: before=%0d after=%0d",
+             write_done_before, write_done1_count);
 
     // 2) LMEM -> GEMM  (DIR=0)
     sync_before = sync0_accept_count;
     done_before = done0_count;
+    write_done_before = write_done0_count;
     dir0_start_cycle = cycle_count_r;
     ctrl0_pulse_start(
       lmem_base, gemm_dst_base,
@@ -670,15 +732,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       seg_bytes,
       reg0_idx, reg0_val
     );
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
     wait_sync0_and_check(reg0_idx, reg0_val, "DIR0");
 `endif
     wait_dma_done0();
     #1;
     dir0_cycles = cycle_count_r - dir0_start_cycle;
-`ifdef GEMM_NAIVE
+`ifdef TB_NO_WRAPPER_SYNC
     if (sync0_accept_count != sync_before)
-      $fatal(1, "DIR0 GEMM_NAIVE emitted sync");
+      $fatal(1, "DIR0 improved/naive emitted sync");
 `else
     if (sync0_accept_count != (sync_before + 1))
       $fatal(1, "DIR0 sync count mismatch: before=%0d after=%0d",
@@ -687,6 +749,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     if (done0_count != (done_before + 1))
       $fatal(1, "DIR0 done pulse count mismatch: before=%0d after=%0d",
              done_before, done0_count);
+    if (write_done0_count != (write_done_before + 1))
+      $fatal(1, "DIR0 write_done exact pulse count mismatch: before=%0d after=%0d",
+             write_done_before, write_done0_count);
 
     // 3) Verify GEMM only
     gemm_check_equal(gemm_src_base, gemm_dst_base, total_bytes, "ROUNDTRIP");
@@ -703,7 +768,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     input bit zero_seg_size,
     input bit zero_bound
   );
-    integer req_before, sync_before, done_before;
+    integer req_before, sync_before, done_before, write_done_before;
     logic [31:0] reg_idx, reg_val;
 
     req_before = request_accept_count;
@@ -713,6 +778,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     if (dir) begin
       sync_before = sync1_accept_count;
       done_before = done1_count;
+      write_done_before = write_done1_count;
       ctrl1_pulse_start(
         32'h3000, 32'h1000,
         DATA_SIZE_BYTES, DATA_SIZE_BYTES, DATA_SIZE_BYTES,
@@ -720,23 +786,26 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
         zero_seg_size ? 0 : DATA_SIZE_BYTES,
         reg_idx, reg_val
       );
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
       wait_sync1_and_check(reg_idx, reg_val, "DIR1_ZERO");
 `endif
       wait_dma_done1();
       #1;
       if (done1_count != (done_before + 1))
         $fatal(1, "DIR1 zero-size done count mismatch");
-`ifdef GEMM_NAIVE
+`ifdef TB_NO_WRAPPER_SYNC
       if (sync1_accept_count != sync_before)
         $fatal(1, "DIR1 zero-size GEMM_NAIVE emitted sync");
 `else
       if (sync1_accept_count != (sync_before + 1))
         $fatal(1, "DIR1 zero-size sync count mismatch");
 `endif
+      if (write_done1_count != write_done_before)
+        $fatal(1, "DIR1 zero-size unexpectedly emitted write_done");
     end else begin
       sync_before = sync0_accept_count;
       done_before = done0_count;
+      write_done_before = write_done0_count;
       ctrl0_pulse_start(
         32'h1000, 32'h5000,
         DATA_SIZE_BYTES, DATA_SIZE_BYTES, DATA_SIZE_BYTES,
@@ -744,20 +813,22 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
         zero_seg_size ? 0 : DATA_SIZE_BYTES,
         reg_idx, reg_val
       );
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
       wait_sync0_and_check(reg_idx, reg_val, "DIR0_ZERO");
 `endif
       wait_dma_done0();
       #1;
       if (done0_count != (done_before + 1))
         $fatal(1, "DIR0 zero-size done count mismatch");
-`ifdef GEMM_NAIVE
+`ifdef TB_NO_WRAPPER_SYNC
       if (sync0_accept_count != sync_before)
         $fatal(1, "DIR0 zero-size GEMM_NAIVE emitted sync");
 `else
       if (sync0_accept_count != (sync_before + 1))
         $fatal(1, "DIR0 zero-size sync count mismatch");
 `endif
+      if (write_done0_count != write_done_before)
+        $fatal(1, "DIR0 zero-size unexpectedly emitted write_done");
     end
 
     if (request_accept_count != req_before)
@@ -767,7 +838,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
              dir, zero_seg_size, zero_bound);
   endtask
 
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
   task automatic run_sync_backpressure_case();
     integer sync_before, done_before;
     logic [31:0] reg_idx = 32'd52;
@@ -859,7 +930,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     run_zero_case(1'b1, 1'b1, 1'b0);
     run_zero_case(1'b1, 1'b0, 1'b1);
 
-`ifndef GEMM_NAIVE
+`ifndef TB_NO_WRAPPER_SYNC
     run_sync_backpressure_case();
 `endif
 
@@ -867,6 +938,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     $display("=====================  ALL TESTS COMPLETED  =========================");
     $display("=====================================================================");
     $display("TEST PASSED");
+`ifdef GEMM_IMPROVE
+    $display("LMEM_DMA_EXACT_COMPLETION_PASS dir0_write_done=%0d dir1_write_done=%0d sync0=%0d sync1=%0d s_sync_entries=0",
+             write_done0_count, write_done1_count,
+             sync0_accept_count, sync1_accept_count);
+`endif
   endtask
 
   task automatic sim_power();

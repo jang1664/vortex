@@ -68,7 +68,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     // localparam int GEN_W      = `JOB_MMIO_GEN_W;
 
-    localparam logic [3:0] OP_NOTIFY = 4'd3;
+    localparam int INPUT_NOTIFY_ON_WRITEBACK_FLAG = 4;
     localparam int OUTPUT_PROGRESS_REG_IDX = 43;
 
     // -------------------------------------------------------------------------
@@ -122,6 +122,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         logic [20:0]          packet_count;
         logic [20:0]          packet_index;
         logic                 is_accum;
+        logic                 notify_on_writeback;
         logic                 quant_dir;
         logic                 wreg_use_idx;
         logic                 sreg_use_idx;
@@ -139,74 +140,42 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lmem_dma_ctrl_if output_dma_ctrl_if ();
     VX_gemm_dma_ctrl_if gemm_dma_ctrl_if ();
 
-    logic        input_notify_pending_r;
-    logic [31:0] input_notify_reg_idx_r;
-    logic [31:0] input_notify_value_r;
-
-    wire input_is_notify   = (gemm_ctrl_if.input_read_ctrl.start && gemm_ctrl_if.input_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
-    wire input_notify_req  = gemm_ctrl_if.input_read_ctrl.start && input_dma_ctrl_if.idle && input_is_notify;
-    wire input_notify_fire = input_notify_pending_r && gemm_sync_if[0].ready;
-
-    logic        weight_notify_pending_r;
-    logic [31:0] weight_notify_reg_idx_r;
-    logic [31:0] weight_notify_value_r;
     logic [7:0]  weight_cmd_flags_r;
+    logic        weight_write_active_r;
+    logic [63:0] weight_writes_remaining_r;
+    logic        quant_write_active_r;
+    logic [63:0] quant_writes_remaining_r;
+    logic        output_write_active_r;
 
-    wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.start && gemm_ctrl_if.weight_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
-    wire weight_dma_start   = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
-    wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
-    wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
+    wire weight_dma_start = gemm_ctrl_if.weight_read_ctrl.start;
+    wire quant_dma_start = gemm_ctrl_if.quant_param_read_ctrl.start;
+    wire [63:0] weight_command_bytes
+        = 64'(gemm_ctrl_if.weight_read_ctrl.cmd.bound)
+        * 64'(MXU_KT * (MXU_NT >> 1));
+    wire [63:0] weight_command_writes
+        = (weight_command_bytes + 64'(`GEMM_WEIGHT_DATA_SIZE) - 1)
+        / 64'(`GEMM_WEIGHT_DATA_SIZE);
+    wire [63:0] quant_command_bytes
+        = 64'(gemm_ctrl_if.quant_param_read_ctrl.cmd.bound)
+        * 64'(MXU_NT * 2);
+    wire [63:0] quant_command_writes
+        = (quant_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
+        / 64'(`GEMM_SCALE_ZERO_DATA_SIZE);
+    wire weight_last_register_write
+        = gemm_unit_v2_if.weight_register_write
+       && weight_write_active_r
+       && (weight_writes_remaining_r == 64'd1);
+    wire quant_last_register_write
+        = gemm_unit_v2_if.quant_register_write
+       && quant_write_active_r
+       && (quant_writes_remaining_r == 64'd1);
     // wire weight_wtrans      = weight_cmd_flags_r[1];
-
-    logic        sz_notify_pending_r;
-    logic [31:0] sz_notify_reg_idx_r;
-    logic [31:0] sz_notify_value_r;
-
-    wire sz_is_notify   = (gemm_ctrl_if.quant_param_read_ctrl.start && gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
-    wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && quant_param_dma_ctrl_if.idle && sz_is_notify;
-    wire sz_notify_fire = sz_notify_pending_r && gemm_sync_if[2].ready;
-
-    logic        output_notify_pending_r;
-    logic [31:0] output_notify_reg_idx_r;
-    logic [31:0] output_notify_value_r;
-
-    wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.start && gemm_ctrl_if.output_write_ctrl.cmd.instr[3:0] == OP_NOTIFY);
-    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
-    wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
 `ifndef SYNTHESIS
     logic [31:0] dbg_cyc_q;
     always_ff @(posedge clk) begin
         if (reset) dbg_cyc_q <= 32'd0;
         else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
-    end
-
-    logic        dbg_input_notify_fire;
-    logic        dbg_weight_notify_fire;
-    logic        dbg_sz_notify_fire;
-    logic        dbg_output_notify_fire;
-    logic [31:0] dbg_input_notify_cyc_q;
-    logic [31:0] dbg_weight_notify_cyc_q;
-    logic [31:0] dbg_sz_notify_cyc_q;
-    logic [31:0] dbg_output_notify_cyc_q;
-
-    assign dbg_input_notify_fire  = input_notify_fire;
-    assign dbg_weight_notify_fire = weight_notify_fire;
-    assign dbg_sz_notify_fire     = sz_notify_fire;
-    assign dbg_output_notify_fire = output_notify_fire;
-
-    always_ff @(posedge clk) begin
-        if (reset) begin
-            dbg_input_notify_cyc_q  <= 32'd0;
-            dbg_weight_notify_cyc_q <= 32'd0;
-            dbg_sz_notify_cyc_q     <= 32'd0;
-            dbg_output_notify_cyc_q <= 32'd0;
-        end else begin
-            if (input_notify_fire)  dbg_input_notify_cyc_q  <= dbg_cyc_q;
-            if (weight_notify_fire) dbg_weight_notify_cyc_q <= dbg_cyc_q;
-            if (sz_notify_fire)     dbg_sz_notify_cyc_q     <= dbg_cyc_q;
-            if (output_notify_fire) dbg_output_notify_cyc_q <= dbg_cyc_q;
-        end
     end
 
     logic        dbg_weight_dma_start;
@@ -218,7 +187,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     end
 `endif
 
-    // Completion/synchronization path from child nodes to gemm_ctrl.
+    // Legacy sync wires are inert compatibility pins; executors publish only
+    // architectural done events and the scheduler owns all sync updates.
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
     // Job frontend dispatch/done handshake.
@@ -238,12 +208,23 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
 
     // Packet-level control for the stateless fixed-latency GEMM unit.
-    wire input_cmd_start = gemm_ctrl_if.input_read_ctrl.start
-                         && !input_is_notify;
+    wire input_cmd_start = gemm_ctrl_if.input_read_ctrl.start;
     wire input_packet_fire = i_gemm_bus_if.req_valid
                            && i_gemm_bus_if.req_ready;
     wire input_last_admission = input_packet_fire
                               && gemm_unit_v2_if.packet_ctrl.last;
+    wire qualified_input_dma_idle
+        = input_cmd_ctx_r.active
+       && !input_cmd_ctx_r.notify_on_writeback
+       && input_cmd_ctx_r.ingress_complete
+       && input_dma_ctrl_if.idle;
+    wire tagged_final_writeback
+        = input_cmd_ctx_r.active
+       && input_cmd_ctx_r.notify_on_writeback
+       && gemm_unit_v2_if.tagged_final_writeback;
+    wire input_cmd_done = input_cmd_ctx_r.notify_on_writeback
+                        ? tagged_final_writeback
+                        : qualified_input_dma_idle;
     wire [`XLEN-1:0] input_packet_addr_full
         = input_cmd_ctx.acc_base
         + `XLEN'(input_cmd_ctx.packet_index * `GEMM_PSUM_DATA_SIZE);
@@ -264,6 +245,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             input_cmd_ctx.packet_index = '0;
             input_cmd_ctx.is_accum
                 = gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+            input_cmd_ctx.notify_on_writeback
+                = gemm_ctrl_if.input_read_ctrl.cmd.flags[
+                    INPUT_NOTIFY_ON_WRITEBACK_FLAG];
             input_cmd_ctx.quant_dir
                 = gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
             input_cmd_ctx.wreg_use_idx
@@ -290,6 +274,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         gemm_unit_v2_if.packet_ctrl.zreg_use_idx
             = input_cmd_ctx.zreg_use_idx;
         gemm_unit_v2_if.packet_ctrl.is_load = !input_cmd_ctx.is_accum;
+        gemm_unit_v2_if.packet_ctrl.notify_on_writeback
+            = input_cmd_ctx.notify_on_writeback;
         gemm_unit_v2_if.packet_ctrl.last
             = (input_cmd_ctx.packet_count != 0)
            && (input_cmd_ctx.packet_index
@@ -316,7 +302,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                 else
                     input_cmd_ctx_r.packet_index
                         <= input_cmd_ctx_r.packet_index + 1'b1;
-            end else if (gemm_unit_v2_if.last_write) begin
+            end else if (input_cmd_done) begin
                 input_cmd_ctx_r <= '0;
             end
         end
@@ -368,7 +354,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             input_packet_index_sample_r <= input_cmd_ctx_r.packet_index;
             input_packet_fire_sample_r <= input_packet_fire;
             input_cmd_start_sample_r <= input_cmd_start;
-            input_last_write_sample_r <= gemm_unit_v2_if.last_write;
+            input_last_write_sample_r <= input_cmd_done;
 
             if (input_cmd_start)
                 input_cmd_count_r <= input_cmd_count_r + 1'b1;
@@ -377,8 +363,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                     <= input_last_admission_count_r + 1'b1;
             if (gemm_unit_v2_if.last_write)
                 input_last_write_count_r <= input_last_write_count_r + 1'b1;
-            if (gemm_ctrl_if.input_read_flag.done
-             && !input_notify_pending_r)
+            if (gemm_ctrl_if.input_read_flag.done)
                 input_done_count_r <= input_done_count_r + 1'b1;
         end
     end
@@ -428,20 +413,30 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             end
 
             if (gemm_unit_v2_if.last_write) begin
-                assert (input_cmd_ctx_r.active
-                     && input_cmd_ctx_r.ingress_complete)
-                    else $fatal(1, "GEMM node V2 last_write lacks completed ingress");
-                assert (!input_notify_pending_r
-                     && gemm_ctrl_if.input_read_flag.done)
-                    else $fatal(1, "GEMM node V2 final write did not complete input command");
                 assert (input_last_write_count_r < input_last_admission_count_r)
                     else $fatal(1, "GEMM node V2 emitted duplicate last_write");
             end
 
-            if (gemm_ctrl_if.input_read_flag.done
-             && !input_notify_pending_r) begin
+            if (qualified_input_dma_idle) begin
+                assert (input_cmd_ctx_r.active
+                     && input_cmd_ctx_r.ingress_complete
+                     && !input_cmd_ctx_r.notify_on_writeback)
+                    else $fatal(1, "GEMM node V2 accepted an unqualified input DMA idle");
+            end
+
+            if (gemm_unit_v2_if.tagged_final_writeback) begin
                 assert (gemm_unit_v2_if.last_write)
-                    else $fatal(1, "GEMM node V2 command done is not a final writeback");
+                    else $fatal(1, "GEMM node V2 tagged writeback lacks last_write");
+            end
+
+            if (gemm_ctrl_if.input_read_flag.done) begin
+                assert (input_cmd_ctx_r.active
+                     && input_cmd_ctx_r.ingress_complete)
+                    else $fatal(1, "GEMM node V2 command done lacks completed ingress");
+                assert (input_cmd_ctx_r.notify_on_writeback
+                      ? tagged_final_writeback
+                      : qualified_input_dma_idle)
+                    else $fatal(1, "GEMM node V2 command done used the wrong completion source");
                 assert (input_done_count_r < input_cmd_count_r)
                     else $fatal(1, "GEMM node V2 emitted duplicate command done");
             end
@@ -454,6 +449,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                      == input_packet_index_sample_r)
                     else $fatal(1, "GEMM node V2 packet index changed without admission");
             end
+        end
+    end
+
+    always @(posedge reset) begin
+        if ($time > 0) begin
+            assert (!input_cmd_ctx_r.active
+                 && gemm_unit_v2_if.pipeline_empty)
+                else $fatal(1, "Reset asserted with outstanding GEMM input/pipeline state");
         end
     end
 `endif
@@ -476,33 +479,15 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
     assign gemm_ctrl_if.input_read_flag.idle
-        = input_notify_pending_r ? 1'b0 : !input_cmd_ctx_r.active;
-    assign gemm_ctrl_if.input_read_flag.done
-        = input_notify_pending_r ? input_notify_fire
-                                 : gemm_unit_v2_if.last_write;
+        = !input_cmd_ctx_r.active && input_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.input_read_flag.done = input_cmd_done;
 
-    assign gemm_sync_if[0].valid   = input_notify_pending_r;
-    assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
-    assign gemm_sync_if[0].value   = input_notify_pending_r ? input_notify_value_r : 32'd0;
-
-    always_ff @(posedge clk) begin
-      if (reset) begin
-        input_notify_pending_r <= 1'b0;
-        input_notify_reg_idx_r <= '0;
-        input_notify_value_r   <= '0;
-      end else begin
-        if (input_notify_req) begin
-          input_notify_pending_r <= 1'b1;
-          input_notify_reg_idx_r <= gemm_ctrl_if.input_read_ctrl.cmd.rs1_data[31:0];
-          input_notify_value_r   <= gemm_ctrl_if.input_read_ctrl.cmd.rs2_data[31:0];
-        end else if (input_notify_fire) begin
-          input_notify_pending_r <= 1'b0;
-        end
-      end
-    end
+    assign gemm_sync_if[0].valid   = 1'b0;
+    assign gemm_sync_if[0].reg_idx = 32'd0;
+    assign gemm_sync_if[0].value   = 32'd0;
 
     // Weight load DMA command mapping.
-    assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
+    assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
     assign weight_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.weight_read_ctrl.cmd.stride;
     assign weight_dma_ctrl_if.src_strides[1] = 0;
@@ -518,33 +503,33 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
 
     assign weight_dma_ctrl_if.seg_size       = MXU_KT * (MXU_NT >> 1);  //int4, bytes
-    assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
+    assign gemm_ctrl_if.weight_read_flag.idle
+        = weight_dma_ctrl_if.idle && !weight_write_active_r;
+    assign gemm_ctrl_if.weight_read_flag.done = weight_last_register_write;
 
-    assign gemm_sync_if[1].valid   = weight_notify_pending_r;
-    assign gemm_sync_if[1].reg_idx = weight_notify_pending_r ? weight_notify_reg_idx_r : 32'd0;
-    assign gemm_sync_if[1].value   = weight_notify_pending_r ? weight_notify_value_r : 32'd0;
+    assign gemm_sync_if[1].valid   = 1'b0;
+    assign gemm_sync_if[1].reg_idx = 32'd0;
+    assign gemm_sync_if[1].value   = 32'd0;
 
-	    always_ff @(posedge clk) begin
-	      if (reset) begin
-	        weight_notify_pending_r <= 1'b0;
-	        weight_notify_reg_idx_r <= '0;
-        weight_notify_value_r   <= '0;
-        weight_cmd_flags_r      <= '0;
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        weight_cmd_flags_r <= '0;
+        weight_write_active_r <= 1'b0;
+        weight_writes_remaining_r <= '0;
       end else begin
-        if (weight_notify_req) begin
-          weight_notify_pending_r <= 1'b1;
-          weight_notify_reg_idx_r <= gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data[31:0];
-          weight_notify_value_r   <= gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data[31:0];
-        end else if (weight_notify_fire) begin
-          weight_notify_pending_r <= 1'b0;
+        // Capture flags when weight DMA starts (FIFO pops same cycle, so cmd
+        // changes next cycle), and count writes at the GEMM register endpoint.
+        if (weight_dma_start) begin
+          weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
+          weight_write_active_r <= 1'b1;
+          weight_writes_remaining_r <= weight_command_writes;
+        end else if (gemm_unit_v2_if.weight_register_write) begin
+          weight_writes_remaining_r <= weight_writes_remaining_r - 1'b1;
+          if (weight_writes_remaining_r == 64'd1)
+            weight_write_active_r <= 1'b0;
         end
-	        // Capture flags when weight DMA starts (FIFO pops same cycle, so cmd changes next cycle)
-	        if (weight_dma_start) begin
-	          weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
-	        end
-	      end
-	    end
+      end
+    end
 
 `ifdef DBG_TRACE_GEMM
     always @(posedge clk) begin
@@ -577,8 +562,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 	              input_cmd_ctx_r.packet_index,
 	              input_cmd_ctx_r.ingress_complete))
 	        end
-	        if (gemm_ctrl_if.input_read_flag.done
-	         && !input_notify_pending_r) begin
+	        if (gemm_ctrl_if.input_read_flag.done) begin
 	          `TRACE(1, ("%m : [%0t] | GEMM_INPUT_CMD_DONE | {inst=%s, index=%0d}\n",
 	              $time, INSTANCE_ID,
 	              input_cmd_ctx_r.packet_index))
@@ -592,18 +576,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 	              gemm_ctrl_if.weight_read_ctrl.cmd.flags,
 	              MXU_KT * (MXU_NT >> 1)))
 	        end
-	        if (weight_notify_req) begin
-	          `TRACE(1, ("%m : [%0t] | GEMM_WEIGHT_NOTIFY_REQ | {inst=%s, reg=%0d, value=0x%0h}\n",
-	              $time, INSTANCE_ID,
-	              gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data[31:0],
-	              gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data[31:0]))
-	        end
 	      end
 	    end
 `endif
 
 	    // Quant parameter load DMA command mapping.
-    assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
+    assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
 
     assign quant_param_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.quant_param_read_ctrl.cmd.stride[31:16];
@@ -621,31 +599,33 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
     assign quant_param_dma_ctrl_if.seg_size        = MXU_NT * 2; // MXU_NT == MXU_KT 의 가정 하에
-    assign gemm_ctrl_if.quant_param_read_flag.idle = sz_notify_pending_r ? 1'b0 : quant_param_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.quant_param_read_flag.done = sz_notify_pending_r ? sz_notify_fire : quant_param_dma_ctrl_if.done;
-
-    assign gemm_sync_if[2].valid   = sz_notify_pending_r;
-    assign gemm_sync_if[2].reg_idx = sz_notify_pending_r ? sz_notify_reg_idx_r : 32'd0;
-    assign gemm_sync_if[2].value   = sz_notify_pending_r ? sz_notify_value_r : 32'd0;
+    assign gemm_ctrl_if.quant_param_read_flag.idle
+        = quant_param_dma_ctrl_if.idle && !quant_write_active_r;
+    assign gemm_ctrl_if.quant_param_read_flag.done
+        = quant_last_register_write;
 
     always_ff @(posedge clk) begin
       if (reset) begin
-        sz_notify_pending_r <= 1'b0;
-        sz_notify_reg_idx_r <= '0;
-        sz_notify_value_r   <= '0;
+        quant_write_active_r <= 1'b0;
+        quant_writes_remaining_r <= '0;
       end else begin
-        if (sz_notify_req) begin
-          sz_notify_pending_r <= 1'b1;
-          sz_notify_reg_idx_r <= gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data[31:0];
-          sz_notify_value_r   <= gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data[31:0];
-        end else if (sz_notify_fire) begin
-          sz_notify_pending_r <= 1'b0;
+        if (quant_dma_start) begin
+          quant_write_active_r <= 1'b1;
+          quant_writes_remaining_r <= quant_command_writes;
+        end else if (gemm_unit_v2_if.quant_register_write) begin
+          quant_writes_remaining_r <= quant_writes_remaining_r - 1'b1;
+          if (quant_writes_remaining_r == 64'd1)
+            quant_write_active_r <= 1'b0;
         end
       end
     end
 
+    assign gemm_sync_if[2].valid   = 1'b0;
+    assign gemm_sync_if[2].reg_idx = 32'd0;
+    assign gemm_sync_if[2].value   = 32'd0;
+
     // Output store DMA command mapping.
-    assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
+    assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
     assign output_dma_ctrl_if.src_strides[0] = 0;
     assign output_dma_ctrl_if.src_strides[1] = 0;
@@ -661,28 +641,75 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
     assign output_dma_ctrl_if.seg_size         = MXU_NT * 2 * gemm_ctrl_if.output_write_ctrl.cmd.bound;  // all rows in one segment
-    assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
-
-    assign gemm_sync_if[3].valid   = output_notify_pending_r;
-    assign gemm_sync_if[3].reg_idx = output_notify_pending_r ? output_notify_reg_idx_r : 32'd0;
-    assign gemm_sync_if[3].value   = output_notify_pending_r ? output_notify_value_r : 32'd0;
+    assign gemm_ctrl_if.output_write_flag.idle
+        = output_dma_ctrl_if.idle && !output_write_active_r;
+    assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.write_done;
 
     always_ff @(posedge clk) begin
       if (reset) begin
-        output_notify_pending_r <= 1'b0;
-        output_notify_reg_idx_r <= '0;
-        output_notify_value_r   <= '0;
-      end else begin
-        if (output_notify_req) begin
-          output_notify_pending_r <= 1'b1;
-          output_notify_reg_idx_r <= gemm_ctrl_if.output_write_ctrl.cmd.rs1_data[31:0];
-          output_notify_value_r   <= gemm_ctrl_if.output_write_ctrl.cmd.rs2_data[31:0];
-        end else if (output_notify_fire) begin
-          output_notify_pending_r <= 1'b0;
-        end
+        output_write_active_r <= 1'b0;
+      end else if (gemm_ctrl_if.output_write_ctrl.start) begin
+        output_write_active_r <= 1'b1;
+      end else if (output_dma_ctrl_if.write_done) begin
+        output_write_active_r <= 1'b0;
       end
     end
+
+    assign gemm_sync_if[3].valid   = 1'b0;
+    assign gemm_sync_if[3].reg_idx = 32'd0;
+    assign gemm_sync_if[3].value   = 32'd0;
+
+`ifndef SYNTHESIS
+    // The scheduler completion pulses must coincide with the exact terminal
+    // architectural writes and may occur only once for an active command.
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        if (weight_dma_start) begin
+          assert (!weight_write_active_r && (weight_command_writes != 0))
+            else $fatal(1, "%s: overlapping/empty weight command", INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.weight_register_write) begin
+          assert (weight_write_active_r && (weight_writes_remaining_r != 0))
+            else $fatal(1, "%s: early or duplicate weight register write", INSTANCE_ID);
+        end
+        if (gemm_ctrl_if.weight_read_flag.done) begin
+          assert (gemm_unit_v2_if.weight_register_write
+               && weight_write_active_r
+               && (weight_writes_remaining_r == 1))
+            else $fatal(1, "%s: weight done is not the final register write", INSTANCE_ID);
+        end
+
+        if (quant_dma_start) begin
+          assert (!quant_write_active_r && (quant_command_writes != 0))
+            else $fatal(1, "%s: overlapping/empty quant command", INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.quant_register_write) begin
+          assert (quant_write_active_r && (quant_writes_remaining_r != 0))
+            else $fatal(1, "%s: early or duplicate SC/ZP register write", INSTANCE_ID);
+        end
+        if (gemm_ctrl_if.quant_param_read_flag.done) begin
+          assert (gemm_unit_v2_if.quant_register_write
+               && quant_write_active_r
+               && (quant_writes_remaining_r == 1))
+            else $fatal(1, "%s: SC/ZP done is not the final register write", INSTANCE_ID);
+        end
+
+        if (gemm_ctrl_if.output_write_ctrl.start) begin
+          assert (!output_write_active_r)
+            else $fatal(1, "%s: overlapping output command", INSTANCE_ID);
+        end
+        if (output_dma_ctrl_if.write_done) begin
+          assert (output_write_active_r)
+            else $fatal(1, "%s: early or duplicate output destination write done",
+                        INSTANCE_ID);
+        end
+        assert (gemm_ctrl_if.output_write_flag.done
+             == output_dma_ctrl_if.write_done)
+          else $fatal(1, "%s: output done is not direct final destination write",
+                      INSTANCE_ID);
+      end
+    end
+`endif
 
     // External DMA control: VX_gemm_tmem_dma_ctrl translates GEMM DMA
     // commands into VX_config_reg_if writes for the DMA engine.
@@ -755,6 +782,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign tmem_ldma_ctrl_if[0].seg_size       = input_dma_ctrl_if.seg_size;
     assign input_dma_ctrl_if.idle              = tmem_ldma_ctrl_if[0].idle;
     assign input_dma_ctrl_if.done              = tmem_ldma_ctrl_if[0].done;
+    assign input_dma_ctrl_if.write_done        = tmem_ldma_ctrl_if[0].write_done;
 
     assign tmem_ldma_ctrl_if[1].start          = weight_dma_ctrl_if.start;
     assign tmem_ldma_ctrl_if[1].src_base_addr  = weight_dma_ctrl_if.src_base_addr;
@@ -765,6 +793,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign tmem_ldma_ctrl_if[1].seg_size       = weight_dma_ctrl_if.seg_size;
     assign weight_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[1].idle;
     assign weight_dma_ctrl_if.done             = tmem_ldma_ctrl_if[1].done;
+    assign weight_dma_ctrl_if.write_done       = tmem_ldma_ctrl_if[1].write_done;
 
     assign tmem_ldma_ctrl_if[2].start          = quant_param_dma_ctrl_if.start;
     assign tmem_ldma_ctrl_if[2].src_base_addr  = quant_param_dma_ctrl_if.src_base_addr;
@@ -775,6 +804,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign tmem_ldma_ctrl_if[2].seg_size       = quant_param_dma_ctrl_if.seg_size;
     assign quant_param_dma_ctrl_if.idle        = tmem_ldma_ctrl_if[2].idle;
     assign quant_param_dma_ctrl_if.done        = tmem_ldma_ctrl_if[2].done;
+    assign quant_param_dma_ctrl_if.write_done  = tmem_ldma_ctrl_if[2].write_done;
 
     assign tmem_ldma_ctrl_if[3].start          = output_dma_ctrl_if.start;
     assign tmem_ldma_ctrl_if[3].src_base_addr  = output_dma_ctrl_if.src_base_addr;
@@ -785,6 +815,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign tmem_ldma_ctrl_if[3].seg_size       = output_dma_ctrl_if.seg_size;
     assign output_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[3].idle;
     assign output_dma_ctrl_if.done             = tmem_ldma_ctrl_if[3].done;
+    assign output_dma_ctrl_if.write_done       = tmem_ldma_ctrl_if[3].write_done;
 
     VX_tmem_subsystem #(
       .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),

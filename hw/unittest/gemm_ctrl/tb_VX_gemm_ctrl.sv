@@ -27,8 +27,15 @@ module tb_VX_gemm_ctrl;
   localparam int N_CHILDREN = 5;
   localparam int N_NODE     = 5;
 
-  localparam logic [7:0] OP_WAIT   = 8'hF0;
-  localparam logic [7:0] OP_NOTIFY = 8'hF1;
+  localparam logic [3:0] OP_DMA_LD      = 4'd1;
+  localparam logic [3:0] OP_DMA_ST      = 4'd2;
+  localparam logic [3:0] OP_NOTIFY      = 4'd3;
+  localparam logic [3:0] OP_WAIT        = 4'd4;
+  localparam logic [3:0] OP_W_LDMA_MXU  = 4'd5;
+  localparam logic [3:0] OP_SZ_LDMA_MXU = 4'd6;
+  localparam logic [3:0] OP_I_LDMA_ARM  = 4'd7;
+  localparam logic [3:0] OP_O_ACC2LMEM  = 4'd8;
+  localparam logic [3:0] OP_CLEAR       = 4'd9;
 
   // Fake execution latencies (cycles) for each child node (non-NOTIFY ops)
   localparam int LAT_I   = 60;
@@ -42,6 +49,16 @@ module tb_VX_gemm_ctrl;
 
   logic clk;
   logic reset;
+  bit sched_directed;
+  bit expect_collision_fatal;
+  bit expect_stray_fatal;
+  logic [N_CHILDREN-1:0] directed_idle;
+  logic [N_CHILDREN-1:0] directed_done;
+  logic directed_start;
+  gemm_unified_cmd_t directed_cmd;
+  int unsigned total_cfg_accept_count;
+  int unsigned total_done_handshake_count;
+  logic [31:0] done_entry_ids [0:15];
 
   VX_config_reg_if #(.NUM(`GEMM_CFG_REG_NUM), .DW(32)) cfg_reg_if();
   VX_gemm_ctrl_if                      gemm_ctrl_if();
@@ -109,6 +126,11 @@ module tb_VX_gemm_ctrl;
   task automatic reset_dut();
     begin
       reset = 1'b1;
+
+      directed_idle = '1;
+      directed_done = '0;
+      directed_start = 1'b0;
+      directed_cmd = '0;
 
       cfg_reg_if.valid      = 1'b0;
       cfg_reg_if.regs       = '0;
@@ -237,8 +259,8 @@ module tb_VX_gemm_ctrl;
   // --------------------------------------------------------------------------
   // Helpers: opcode / notify fields
   // --------------------------------------------------------------------------
-  function automatic [7:0] op_of(input gemm_unified_cmd_t c);
-    return c.instr[7:0];
+  function automatic logic [3:0] op_of(input gemm_unified_cmd_t c);
+    return c.instr[3:0];
   endfunction
 
   function automatic logic [31:0] notify_reg_id(input gemm_unified_cmd_t c);
@@ -266,18 +288,18 @@ module tb_VX_gemm_ctrl;
   // --------------------------------------------------------------------------
   // Pretty print ALL commands (parent + children)
   // --------------------------------------------------------------------------
-  function automatic string op_name(input logic [7:0] op);
+  function automatic string op_name(input logic [3:0] op);
     begin
       unique case (op)
-        8'hF0: op_name = "WAIT";
-        8'hF1: op_name = "NOTIFY";
-        8'h10: op_name = "DMA_LD";
-        8'h11: op_name = "DMA_ST";
-        8'h20: op_name = "W_LDMA_MXU";
-        8'h21: op_name = "SC_LDMA_MXU";
-        8'h22: op_name = "I_LDMA_ARM";
-        8'h23: op_name = "O_ACC2LMEM";
-        8'h24: op_name = "ZP_LDMA_MXU";
+        OP_DMA_LD:      op_name = "DMA_LD";
+        OP_DMA_ST:      op_name = "DMA_ST";
+        OP_NOTIFY:      op_name = "NOTIFY";
+        OP_WAIT:        op_name = "WAIT";
+        OP_W_LDMA_MXU:  op_name = "W_LDMA_MXU";
+        OP_SZ_LDMA_MXU: op_name = "SZ_LDMA_MXU";
+        OP_I_LDMA_ARM:  op_name = "I_LDMA_ARM";
+        OP_O_ACC2LMEM:  op_name = "O_ACC2LMEM";
+        OP_CLEAR:       op_name = "CLEAR";
         default: op_name = "OP_??";
       endcase
     end
@@ -287,7 +309,7 @@ module tb_VX_gemm_ctrl;
     input string who,
     input gemm_unified_cmd_t c
   );
-    logic [7:0] op;
+    logic [3:0] op;
     begin
       op = op_of(c);
       $display("[%0t] %-10s op=0x%02h (%s) instr=0x%08h rs1_data=0x%016h rs2_data=0x%016h",
@@ -304,39 +326,6 @@ module tb_VX_gemm_ctrl;
   endtask
 
   // --------------------------------------------------------------------------
-  // Parent stream prints
-  // --------------------------------------------------------------------------
-  wire parent_valid = dut.gemm_pqueue_out.ctrl.start;
-  wire parent_ready = dut.gemm_pqueue_out.flag.idle;
-  wire parent_fire  = parent_valid && parent_ready;
-
-  logic wait_head_seen;
-
-  always_ff @(posedge clk) begin
-    if (reset) begin
-      wait_head_seen <= 1'b0;
-    end else begin
-      if (parent_fire) begin
-        print_cmd("PARENT", dut.gemm_pqueue_out.ctrl.cmd);
-      end
-
-      if (parent_valid && (op_of(dut.gemm_pqueue_out.ctrl.cmd) == OP_WAIT) && !parent_ready) begin
-        if (!wait_head_seen) begin
-          wait_head_seen <= 1'b1;
-          $display("[%0t] PARENT     WAIT(head, stalling) reg_id=%0d target=%0d (rs2=0x%08h)",
-            $time,
-            dut.gemm_pqueue_out.ctrl.cmd.rs1_data[7:0],
-            dut.gemm_pqueue_out.ctrl.cmd.rs2_data[30:0],
-            dut.gemm_pqueue_out.ctrl.cmd.rs2_data[31:0]
-          );
-        end
-      end else begin
-        wait_head_seen <= 1'b0;
-      end
-    end
-  end
-
-  // --------------------------------------------------------------------------
   // Node busy model + event request pulses
   //   - Node busy always_ff drives nb[] and evt_req[] (ONLY)
   //   - Sync-event always_ff drives comp[] and gemm_sync_slv_if[] (ONLY)
@@ -351,6 +340,11 @@ module tb_VX_gemm_ctrl;
 
   node_busy_t nb[N_CHILDREN];
 
+  int unsigned input_normal_start_count;
+  int unsigned input_explicit_done_count;
+  int unsigned input_notify_start_count;
+  int unsigned removed_opcode_count;
+
   typedef struct packed {
     logic        v;   // pulse
     logic [31:0] rid;
@@ -364,7 +358,7 @@ module tb_VX_gemm_ctrl;
     input int child,
     input gemm_unified_cmd_t c
   );
-    logic [7:0] op;
+    logic [3:0] op;
     begin
       op = op_of(c);
 
@@ -415,7 +409,7 @@ module tb_VX_gemm_ctrl;
         evt_req[n].val <= '0;
         evt_req[n].lat <= 0;
       end
-    end else begin
+    end else if (!sched_directed) begin
       // default: drop req pulses
       for (int n = 0; n < N_NODE; n++) begin
         evt_req[n].v <= 1'b0;
@@ -474,19 +468,88 @@ module tb_VX_gemm_ctrl;
     end
   end
 
+  // Directed lifecycle check for the improved input child contract:
+  // normal start -> explicit done -> exactly one paired NOTIFY start.
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      input_normal_start_count <= 0;
+      input_explicit_done_count <= 0;
+      input_notify_start_count <= 0;
+      removed_opcode_count <= 0;
+    end else if (!sched_directed) begin
+      if (gemm_ctrl_if.input_read_flag.done) begin
+        assert (input_explicit_done_count < input_normal_start_count)
+          else $fatal(1, "Input explicit done occurred without an outstanding normal command");
+        input_explicit_done_count <= input_explicit_done_count + 1;
+      end
+
+      if (gemm_ctrl_if.input_read_ctrl.start) begin
+        if (op_of(gemm_ctrl_if.input_read_ctrl.cmd) == OP_NOTIFY) begin
+          input_notify_start_count <= input_notify_start_count + 1;
+          removed_opcode_count <= removed_opcode_count + 1;
+        end else begin
+          assert (input_normal_start_count == input_explicit_done_count)
+            else $fatal(1, "Input normal command started while another command was outstanding");
+          input_normal_start_count <= input_normal_start_count + 1;
+        end
+      end
+
+      if ((gemm_ctrl_if.weight_read_ctrl.start
+           && (op_of(gemm_ctrl_if.weight_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
+          || (gemm_ctrl_if.quant_param_read_ctrl.start
+           && (op_of(gemm_ctrl_if.quant_param_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
+          || (gemm_ctrl_if.output_write_ctrl.start
+           && (op_of(gemm_ctrl_if.output_write_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
+          || (gemm_ctrl_if.dma_ctrl.start
+           && (op_of(gemm_ctrl_if.dma_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR})))
+        removed_opcode_count <= removed_opcode_count + 1;
+    end
+  end
+
   // Drive child flags from busy model (the DUT uses these idles to decide pop)
   always_comb begin
-    gemm_ctrl_if.input_read_flag.idle       = ~nb[0].busy;
-    gemm_ctrl_if.weight_read_flag.idle      = ~nb[1].busy;
-    gemm_ctrl_if.quant_param_read_flag.idle = ~nb[2].busy;
-    gemm_ctrl_if.output_write_flag.idle     = ~nb[3].busy;
-    gemm_ctrl_if.dma_flag.idle              = ~nb[4].busy;
+    if (sched_directed) begin
+      gemm_ctrl_if.input_read_flag.idle       = directed_idle[0];
+      gemm_ctrl_if.weight_read_flag.idle      = directed_idle[1];
+      gemm_ctrl_if.quant_param_read_flag.idle = directed_idle[2];
+      gemm_ctrl_if.output_write_flag.idle     = directed_idle[3];
+      gemm_ctrl_if.dma_flag.idle              = directed_idle[4];
+      gemm_ctrl_if.input_read_flag.done       = directed_done[0];
+      gemm_ctrl_if.weight_read_flag.done      = directed_done[1];
+      gemm_ctrl_if.quant_param_read_flag.done = directed_done[2];
+      gemm_ctrl_if.output_write_flag.done     = directed_done[3];
+      gemm_ctrl_if.dma_flag.done              = directed_done[4];
+    end else begin
+      gemm_ctrl_if.input_read_flag.idle       = ~nb[0].busy;
+      gemm_ctrl_if.weight_read_flag.idle      = ~nb[1].busy;
+      gemm_ctrl_if.quant_param_read_flag.idle = ~nb[2].busy;
+      gemm_ctrl_if.output_write_flag.idle     = ~nb[3].busy;
+      gemm_ctrl_if.dma_flag.idle              = ~nb[4].busy;
+      gemm_ctrl_if.input_read_flag.done
+          = nb[0].busy && (nb[0].cnt == 0);
+      gemm_ctrl_if.weight_read_flag.done
+          = nb[1].busy && (nb[1].cnt == 0);
+      gemm_ctrl_if.quant_param_read_flag.done
+          = nb[2].busy && (nb[2].cnt == 0);
+      gemm_ctrl_if.output_write_flag.done
+          = nb[3].busy && (nb[3].cnt == 0);
+      gemm_ctrl_if.dma_flag.done
+          = nb[4].busy && (nb[4].cnt == 0);
+    end
+  end
 
-    gemm_ctrl_if.input_read_flag.done       = 1'b0;
-    gemm_ctrl_if.weight_read_flag.done      = 1'b0;
-    gemm_ctrl_if.quant_param_read_flag.done = 1'b0;
-    gemm_ctrl_if.output_write_flag.done     = 1'b0;
-    gemm_ctrl_if.dma_flag.done              = 1'b0;
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      total_cfg_accept_count <= 0;
+      total_done_handshake_count <= 0;
+    end else begin
+      if (cfg_reg_if.valid && cfg_reg_if.ready)
+        total_cfg_accept_count <= total_cfg_accept_count + 1;
+      if (done_if.valid && done_if.ready)
+        done_entry_ids[total_done_handshake_count] <= done_if.entry_id;
+      if (done_if.valid && done_if.ready)
+        total_done_handshake_count <= total_done_handshake_count + 1;
+    end
   end
 
   // --------------------------------------------------------------------------
@@ -635,11 +698,420 @@ module tb_VX_gemm_ctrl;
     input int unsigned max_cycles
   );
     int unsigned c;
+    bit returned_to_idle;
     begin
+      returned_to_idle = 1'b0;
       for (c = 0; c < max_cycles; c++) begin
         @(posedge clk);
+        if (cfg_reg_if.ready) begin
+          returned_to_idle = 1'b1;
+          break;
+        end
       end
-      //$display("FINISH: %s timeout", tag);
+      if (!returned_to_idle)
+        $fatal(1, "Timed out after %0d cycles waiting for cfg_reg_if.ready",
+               max_cycles);
+    end
+  endtask
+
+  function automatic gemm_unified_cmd_t make_directed_cmd(
+    input logic [3:0] op,
+    input logic notify_valid,
+    input logic [3:0] notify_rid,
+    input logic notify_set_mode,
+    input logic [31:0] notify_value
+  );
+    gemm_unified_cmd_t c;
+    begin
+      c = '0;
+      c.instr = {28'd1, op};
+      c.bound = 16'd1;
+      c.eff_mt = 21'd1;
+      c.notify.valid = notify_valid;
+      c.notify.reg_id = notify_rid;
+      c.notify.set_mode = notify_set_mode;
+      c.notify.value = notify_value;
+      return c;
+    end
+  endfunction
+
+  task automatic directed_inject(
+    input gemm_unified_cmd_t c,
+    input int child
+  );
+    begin
+      if (dut.child_q_full_v[child])
+        $fatal(1, "SCHED_DIRECTED injection child %0d unexpectedly full", child);
+      @(negedge clk);
+      directed_cmd = c;
+      directed_start = 1'b1;
+      @(posedge clk);
+      #1;
+      directed_start = 1'b0;
+      #1;
+      if (dut.child_q_empty_v[child])
+        $fatal(1, "SCHED_DIRECTED injection child %0d did not enqueue", child);
+    end
+  endtask
+
+  task automatic directed_accept_issue(input int child);
+    begin
+      if (!dut.child_issue_fire_v[child])
+        $fatal(1, "SCHED_DIRECTED child %0d expected issue start", child);
+      @(posedge clk);
+      #1;
+      if (dut.child_inflight_empty_v[child])
+        $fatal(1, "SCHED_DIRECTED child %0d issue did not occupy inflight", child);
+    end
+  endtask
+
+  task automatic directed_complete(input int child);
+    begin
+      @(negedge clk);
+      directed_done[child] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[child])
+        $fatal(1, "SCHED_DIRECTED child %0d completion did not select inflight head", child);
+      @(posedge clk);
+      #1;
+      directed_done[child] = 1'b0;
+      #1;
+    end
+  endtask
+
+  task automatic directed_set_sync(
+    input logic [3:0] rid,
+    input logic [31:0] value
+  );
+    gemm_unified_cmd_t c;
+    begin
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, rid, 1'b1, value);
+      directed_inject(c, 4);
+      directed_accept_issue(4);
+      directed_complete(4);
+      if (dut.sync_regs_q[rid] !== value)
+        $fatal(1, "SCHED_DIRECTED SET rid=%0d got=%0d expected=%0d",
+               rid, dut.sync_regs_q[rid], value);
+    end
+  endtask
+
+  task automatic send_small_directed_config(input logic [31:0] entry_id_val);
+    begin
+      send_config(
+        64'h1000_0000, 64'h2000_0000, 64'h3000_0000,
+        64'h4000_0000, 64'h5000_0000,
+        64'h6000_0000, 64'h7000_0000,
+        64'h8000_0000, 64'h9000_0000,
+        64'hA000_0000, 64'hB000_0000,
+        64'hC000_0000, 64'hD000_0000,
+        64'hE000_0000,
+        32'd4, 32'd32, 32'd64, 32'd5, entry_id_val
+      );
+    end
+  endtask
+
+  task automatic run_scheduler_directed();
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    int unsigned cfg_count_before;
+    int unsigned done_count_before;
+    bit saw_done;
+    begin
+      directed_idle = '1;
+      directed_done = '0;
+      directed_start = 1'b0;
+      force dut.gemm_fsm_if.ctrl.start = directed_start;
+      force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+
+      // Seed four independent scoreboard registers with legal SET completions.
+      directed_set_sync(4'd0, 32'd10);
+      directed_set_sync(4'd1, 32'd20);
+      directed_set_sync(4'd2, 32'd30);
+      directed_set_sync(4'd3, 32'd40);
+
+      // Four waits, all ready.
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
+      c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
+      c.waits[2] = '{valid:1'b1, reg_id:4'd2, target:32'd30};
+      c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd40};
+      directed_inject(c, 0);
+      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED four-wait all-ready command did not start");
+      directed_accept_issue(0);
+      directed_complete(0);
+      $display("SCHED_DIRECTED_FOUR_WAIT_ALL_READY_PASS count=4");
+
+      // One of four blocked, then a producer SET completion resolves it in
+      // the same cycle and the dependent command starts immediately.
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd3, 1'b1, 32'd41);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
+      c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
+      c.waits[2] = '{valid:1'b1, reg_id:4'd2, target:32'd30};
+      c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd41};
+      directed_inject(c, 0);
+      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED one-blocked wait was not masked");
+      @(negedge clk);
+      directed_done[1] = 1'b1;
+      #1;
+      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED same-cycle SET did not start dependent head");
+      @(posedge clk);
+      #1;
+      directed_done[1] = 1'b0;
+      directed_complete(0);
+      $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SAME_CYCLE_SET_PASS blocked=1 resolved=1");
+
+      // PLUS completion also participates in the same-cycle effective view.
+      c = make_directed_cmd(OP_SZ_LDMA_MXU, 1'b1, 4'd4, 1'b0, 32'd1);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      directed_inject(c, 0);
+      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED PLUS dependent unexpectedly ready before completion");
+      @(negedge clk);
+      directed_done[2] = 1'b1;
+      #1;
+      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED same-cycle PLUS did not start dependent head");
+      @(posedge clk);
+      #1;
+      directed_done[2] = 1'b0;
+      directed_complete(0);
+      if (dut.sync_regs_q[4] !== 32'd1)
+        $fatal(1, "SCHED_DIRECTED PLUS scoreboard update mismatch");
+      $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[4]);
+
+      // Ready-low retention: eligibility remains set, FIFO head and metadata
+      // remain stable, and pop occurs only when start is finally asserted.
+      directed_idle[0] = 1'b0;
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
+      directed_inject(c, 0);
+      held_cmd = dut.child_q_cmd[0];
+      repeat (3) begin
+        if (!dut.child_dependency_eligible_v[0]
+            || dut.child_issue_fire_v[0]
+            || dut.child_q_pop_v[0]
+            || dut.child_q_cmd[0] !== held_cmd)
+          $fatal(1, "SCHED_DIRECTED ready-low head was not retained");
+        @(posedge clk);
+        #1;
+      end
+      @(negedge clk);
+      directed_idle[0] = 1'b1;
+      #1;
+      if (!dut.child_issue_fire_v[0] || !dut.child_q_pop_v[0])
+        $fatal(1, "SCHED_DIRECTED retained head did not pop on start");
+      @(posedge clk);
+      #1;
+      directed_complete(0);
+      $display("SCHED_DIRECTED_RETENTION_HANDSHAKE_POP_PASS held_cycles=3");
+
+      // The physical inflight FIFO remains two entries deep, but the executor
+      // contract permits at most one active command.  Keep a second command
+      // queued, then prove an oldest-complete/new-issue rollover in one cycle.
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd1);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b0, 32'd1);
+      directed_inject(c, 1);
+      if (dut.child_inflight_full_v[1]
+          || dut.child_issue_fire_v[1]
+          || dut.child_q_pop_v[1])
+        $fatal(1, "SCHED_DIRECTED second command escaped max-one-active gate");
+      if (dut.g_child_scheduler[1].u_child_inflight_queue.DEPTH != 2)
+        $fatal(1, "SCHED_DIRECTED physical inflight FIFO depth changed from two");
+      @(negedge clk);
+      directed_done[1] = 1'b1;
+      #1;
+      if (!dut.child_issue_fire_v[1]
+          || !dut.child_completion_pop_v[1])
+        $fatal(1, "SCHED_DIRECTED completion did not permit same-cycle rollover");
+      @(posedge clk);
+      #1;
+      directed_done[1] = 1'b0;
+      if (dut.child_inflight_empty_v[1] || dut.child_inflight_full_v[1]
+          || dut.sync_regs_q[9] !== 32'd1)
+        $fatal(1, "SCHED_DIRECTED rollover lost occupancy or reordered SET");
+      directed_complete(1);
+      if (dut.sync_regs_q[9] !== 32'd2)
+        $fatal(1, "SCHED_DIRECTED in-order PLUS completion mismatch");
+      if (!dut.child_inflight_empty_v[1])
+        $fatal(1, "SCHED_DIRECTED inflight drain incomplete");
+      $display("SCHED_DIRECTED_SINGLE_ACTIVE_INORDER_PASS physical_depth=2 blocked_second=1 rollover=1 ordered=1");
+
+      // RID_O ordering: enqueue the store before ACC completion.  It must be
+      // visibly blocked until the same-cycle odd SET releases it.
+      directed_set_sync(4'd4, 32'd0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd4, 1'b1, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd0};
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+      c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd4, 1'b0, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      directed_inject(c, 4);
+      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
+          || dut.child_q_pop_v[4])
+        $fatal(1, "SCHED_DIRECTED RID_O store was not blocked before ACC completion");
+      @(negedge clk);
+      directed_done[3] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[3]
+          || !dut.child_deps_ready_v[4]
+          || !dut.child_issue_fire_v[4]
+          || !dut.child_q_pop_v[4])
+        $fatal(1, "SCHED_DIRECTED RID_O store did not release with ACC SET");
+      @(posedge clk);
+      #1;
+      directed_done[3] = 1'b0;
+      if (dut.sync_regs_q[4] !== 32'd1 || dut.child_inflight_empty_v[4])
+        $fatal(1, "SCHED_DIRECTED RID_O release lost SET or store issue");
+      directed_complete(4);
+      if (dut.sync_regs_q[4] !== 32'd2)
+        $fatal(1, "SCHED_DIRECTED RID_O even PLUS mismatch");
+      $display("SCHED_DIRECTED_RID_O_QUEUED_STORE_PASS blocked_before_acc=1 released_on_acc=1 odd=1 even=2");
+
+      // A notify-invalid inflight command prevents quiescence, config ready,
+      // and invocation done until its architectural completion retires it.
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b0, '0, 1'b0, '0);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+      force dut.invocation_active_q = 1'b1;
+      #1;
+      if (dut.scheduler_quiescent || cfg_reg_if.ready || done_if.valid)
+        $fatal(1, "SCHED_DIRECTED strict quiescence did not block config/done");
+      repeat (2) begin
+        @(posedge clk);
+        #1;
+        if (cfg_reg_if.ready || done_if.valid)
+          $fatal(1, "SCHED_DIRECTED config/done escaped before drain");
+      end
+      directed_complete(1);
+      saw_done = 1'b0;
+      repeat (2) begin
+        @(posedge clk);
+        #1;
+        if (done_if.valid)
+          saw_done = 1'b1;
+      end
+      if (!saw_done)
+        $fatal(1, "SCHED_DIRECTED completion did not assert done after drain");
+      release dut.invocation_active_q;
+      repeat (2) @(posedge clk);
+      #1;
+      if (!cfg_reg_if.ready)
+        $fatal(1, "SCHED_DIRECTED completion did not restore config readiness");
+      $display("SCHED_DIRECTED_STRICT_QUIESCENCE_PASS blocked_cycles=2 done_after_drain=1");
+
+      if (!(dut.child_inflight_empty_v == '1)
+          || !(dut.child_q_empty_v == '1)
+          || directed_done != '0)
+        $fatal(1, "SCHED_DIRECTED stray-done guard precondition not clean");
+      $display("SCHED_DIRECTED_FATAL_GUARDS_ELABORATED collision_precondition=1 stray_precondition=1 runtime_fatal_triggered=0");
+
+      // Return ownership to the real FSM/executor model. Preserve nonzero
+      // RID_O so the first accepted config can prove implicit clearing.
+      @(negedge clk);
+      release dut.gemm_fsm_if.ctrl.start;
+      release dut.gemm_fsm_if.ctrl.cmd;
+      sched_directed = 1'b0;
+      cfg_count_before = total_cfg_accept_count;
+      done_count_before = total_done_handshake_count;
+
+      send_small_directed_config(32'd11);
+      saw_done = 1'b0;
+      repeat (100) begin
+        @(posedge clk);
+        #1;
+        if (!dut.fsm_idle && dut.scheduler_quiescent) begin
+          if (cfg_reg_if.ready)
+            $fatal(1, "SCHED_DIRECTED config ready ignored non-idle FSM");
+          saw_done = 1'b1;
+          break;
+        end
+      end
+      if (!saw_done)
+        $fatal(1, "SCHED_DIRECTED did not observe non-idle/quiescent ready gate");
+      $display("SCHED_DIRECTED_CFG_READY_EXACT_PASS fsm_nonidle_quiescent_blocked=1");
+      for (int rid = 0; rid < 11; rid++) begin
+        if (dut.sync_regs_q[rid] !== 32'd0)
+          $fatal(1, "SCHED_DIRECTED implicit clear failed rid=%0d value=%0d",
+                 rid, dut.sync_regs_q[rid]);
+      end
+      wait_return_to_idle(50000);
+      send_small_directed_config(32'd12);
+      wait_return_to_idle(50000);
+      // cfg readiness returns on architectural quiescence; the registered
+      // node-done handshake is observed on the following edge.
+      repeat (2) @(posedge clk);
+      #1;
+      if ((total_cfg_accept_count - cfg_count_before) != 2
+          || (total_done_handshake_count - done_count_before) != 2)
+        $fatal(1, "SCHED_DIRECTED back-to-back lifecycle mismatch cfg=%0d done=%0d",
+               total_cfg_accept_count - cfg_count_before,
+               total_done_handshake_count - done_count_before);
+      if (done_entry_ids[done_count_before] !== 32'd11
+          || done_entry_ids[done_count_before + 1] !== 32'd12)
+        $fatal(1, "SCHED_DIRECTED done entry IDs mismatch got=%0d,%0d",
+               done_entry_ids[done_count_before],
+               done_entry_ids[done_count_before + 1]);
+      if (input_normal_start_count == 0
+          || input_normal_start_count != input_explicit_done_count)
+        $fatal(1, "SCHED_DIRECTED natural input lifecycle mismatch start=%0d done=%0d",
+               input_normal_start_count, input_explicit_done_count);
+      if (input_notify_start_count != 0 || removed_opcode_count != 0)
+        $fatal(1, "SCHED_DIRECTED natural lifecycle emitted removed opcode");
+      $display("SCHED_DIRECTED_IMPLICIT_CLEAR_BACK_TO_BACK_PASS configs=2 done=2 entry_ids=11,12 input_starts=%0d",
+               input_normal_start_count);
+    end
+  endtask
+
+  task automatic run_expected_collision_fatal();
+    gemm_unified_cmd_t c;
+    begin
+      directed_idle = '1;
+      directed_done = '0;
+      directed_start = 1'b0;
+      force dut.gemm_fsm_if.ctrl.start = directed_start;
+      force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd1);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+      c = make_directed_cmd(OP_SZ_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd2);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      if (dut.child_inflight_empty_v[1] || dut.child_inflight_empty_v[2])
+        $fatal(1, "EXPECT_COLLISION_FATAL setup failed before intended assertion");
+      @(negedge clk);
+      directed_done[1] = 1'b1;
+      directed_done[2] = 1'b1;
+      $display("EXPECT_COLLISION_FATAL_ARMED rid=9 children=1,2");
+      @(posedge clk);
+      #2;
+      $fatal(1, "EXPECT_COLLISION_FATAL intended assertion did not fire");
+    end
+  endtask
+
+  task automatic run_expected_stray_fatal();
+    begin
+      directed_idle = '1;
+      directed_done = '0;
+      if (!dut.child_inflight_empty_v[0])
+        $fatal(1, "EXPECT_STRAY_FATAL setup found unexpected inflight metadata");
+      @(negedge clk);
+      directed_done[0] = 1'b1;
+      $display("EXPECT_STRAY_FATAL_ARMED child=0 inflight_empty=1");
+      @(posedge clk);
+      #2;
+      $fatal(1, "EXPECT_STRAY_FATAL intended assertion did not fire");
     end
   endtask
 
@@ -651,7 +1123,24 @@ module tb_VX_gemm_ctrl;
     $display("  %s", TB_NAME);
     $display("====================================");
 
+    expect_collision_fatal = $test$plusargs("EXPECT_COLLISION_FATAL");
+    expect_stray_fatal = $test$plusargs("EXPECT_STRAY_FATAL");
+    sched_directed = $test$plusargs("SCHED_DIRECTED")
+                  || expect_collision_fatal
+                  || expect_stray_fatal;
     reset_dut();
+
+    if (expect_collision_fatal && expect_stray_fatal)
+      $fatal(1, "Select only one expected-fatal mode");
+    if (expect_collision_fatal)
+      run_expected_collision_fatal();
+    if (expect_stray_fatal)
+      run_expected_stray_fatal();
+    if (sched_directed) begin
+      run_scheduler_directed();
+      $display("TEST PASSED: GEMM scheduler directed Phase-5 checks completed");
+      $finish;
+    end
 
     send_config(
       64'h1000_0000, // input_base
@@ -680,8 +1169,19 @@ module tb_VX_gemm_ctrl;
 
     wait_return_to_idle(150000);
 
+    if (input_normal_start_count == 0)
+      $fatal(1, "Input lifecycle scoreboard observed no normal commands");
+    if (input_normal_start_count != input_explicit_done_count)
+      $fatal(1, "Input lifecycle count mismatch: normal=%0d done=%0d",
+             input_normal_start_count, input_explicit_done_count);
+    if (input_notify_start_count != 0 || removed_opcode_count != 0)
+      $fatal(1, "Controller emitted removed sync opcodes: input_notify=%0d total=%0d",
+             input_notify_start_count, removed_opcode_count);
+    if (dropped_events != 0)
+      $fatal(1, "Controller TB dropped %0d modeled sync events", dropped_events);
+
     $display("====================================");
-    $display("  FINISH: All tests done");
+    $display("  TEST PASSED: GEMM controller lifecycle checks completed");
     $display("====================================");
     $finish;
   end

@@ -91,8 +91,22 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   state_e state, state_n;
   logic [31:0] reg_idx_r;
   logic [31:0] reg_value_r;
+  logic [63:0] write_bytes_remaining_r;
 
   wire cfg_fire = dma_cfg_if.valid && dma_cfg_if.ready;
+  wire [63:0] descriptor_write_bytes
+      = 64'(ctrl_if.seg_size)
+      * 64'(ctrl_if.bounds[0])
+      * 64'(ctrl_if.bounds[1])
+      * 64'(ctrl_if.bounds[2]);
+  wire dst_write_fire = (DIR != 0)
+      ? (lmem_bus_if.req_valid && lmem_bus_if.req_ready
+         && lmem_bus_if.req_data.rw)
+      : (gemm_bus_if.req_valid && gemm_bus_if.req_ready
+         && gemm_bus_if.req_data.rw);
+  wire [31:0] dst_write_bytes = (DIR != 0)
+      ? 32'($countones(lmem_bus_if.req_data.byteen))
+      : 32'($countones(gemm_bus_if.req_data.byteen));
 
   always_comb begin
     dma_cfg_if.regs = '0;
@@ -122,7 +136,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       end
       S_COPY: begin
         if (dma_done_if.valid) begin
-        `ifdef GEMM_NAIVE
+        `ifdef GEMM_IMPROVE
+          state_n = S_DONE;
+        `elsif GEMM_NAIVE
           state_n = S_DONE;
         `else
           state_n = S_SYNC;
@@ -147,11 +163,16 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       state <= S_IDLE;
       reg_idx_r <= '0;
       reg_value_r <= '0;
+      write_bytes_remaining_r <= '0;
     end else begin
       state <= state_n;
       if (cfg_fire) begin
         reg_idx_r <= ctrl_if.reg_idx;
         reg_value_r <= ctrl_if.reg_value;
+        write_bytes_remaining_r <= descriptor_write_bytes;
+      end else if (dst_write_fire) begin
+        write_bytes_remaining_r
+            <= write_bytes_remaining_r - 64'(dst_write_bytes);
       end
     end
   end
@@ -159,9 +180,15 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   always_comb begin
     ctrl_if.idle = (state == S_IDLE);
     ctrl_if.done = (state == S_DONE);
+    ctrl_if.write_done = dst_write_fire
+                      && (write_bytes_remaining_r != 0)
+                      && (write_bytes_remaining_r <= 64'(dst_write_bytes));
     gemm_sync_if.reg_idx = reg_idx_r;
     gemm_sync_if.value = reg_value_r;
-  `ifdef GEMM_NAIVE
+  `ifdef GEMM_IMPROVE
+    gemm_sync_if.valid = 1'b0;
+    dma_done_if.ready = (state == S_COPY);
+  `elsif GEMM_NAIVE
     gemm_sync_if.valid = 1'b0;
     dma_done_if.ready = (state == S_COPY);
   `else
@@ -169,6 +196,30 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     dma_done_if.ready = (state == S_SYNC) && gemm_sync_if.ready;
   `endif
   end
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (dst_write_fire) begin
+        assert ((write_bytes_remaining_r != 0)
+             && (64'(dst_write_bytes) <= write_bytes_remaining_r))
+          else $fatal(1, "%s: destination write exceeded descriptor byte count",
+                      INSTANCE_ID);
+      end
+      if (ctrl_if.write_done) begin
+        assert (dst_write_fire
+             && (write_bytes_remaining_r <= 64'(dst_write_bytes)))
+          else $fatal(1, "%s: write_done did not match final destination write",
+                      INSTANCE_ID);
+      end
+      if (dma_done_if.valid) begin
+        assert (write_bytes_remaining_r == 0)
+          else $fatal(1, "%s: DMA core completed before final destination write",
+                      INSTANCE_ID);
+      end
+    end
+  end
+`endif
 
 `ifdef PERF_ENABLE
   dma_perf_t core_perf;

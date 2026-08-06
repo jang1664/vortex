@@ -49,6 +49,15 @@ PASS_PATTERNS = [
     "PASSED",
 ]
 
+# Unambiguous simulation failures.  Keep this deliberately narrow: generic
+# words such as "mismatch" may appear in successful coverage summaries as
+# counters (for example, mismatch=0).
+STRICT_FAILURE_PATTERNS = [
+    r"^\s*Fatal:",
+    r"OUTPUT CHECK FAILED",
+    r"TEST FAILED",
+]
+
 # Patterns that indicate errors (for log extraction)
 ERROR_PATTERNS = [
     r"Fatal:",
@@ -61,6 +70,14 @@ ERROR_PATTERNS = [
 ]
 
 LOG_EXCERPT_LINES = 60
+
+# GNU make diagnostic emitted when a unittest makefile exposes `sim` instead
+# of the otherwise conventional `run` target.  Do not fall back for any other
+# nonzero result, since that could hide a real simulation failure.
+MISSING_RUN_TARGET_RE = re.compile(
+    r"^make(?:\[\d+\])?: \*\*\* No rule to make target [`']run['`]\.\s+Stop\.$",
+    re.MULTILINE,
+)
 
 
 def run_cmd(cmd, cwd=None, timeout=600):
@@ -97,11 +114,21 @@ def extract_errors(log_text, max_lines=LOG_EXCERPT_LINES):
 
 
 def check_pass(log_text):
-    """Check if any pass pattern exists in log text."""
+    """Accept a pass marker only when no strict failure marker is present."""
+    if has_strict_failure(log_text):
+        return False
     for pat in PASS_PATTERNS:
         if pat in log_text:
             return True
     return False
+
+
+def has_strict_failure(log_text):
+    """Return true for explicit fatal/failure markers, independent of rc."""
+    return any(
+        re.search(pattern, log_text, re.MULTILINE) is not None
+        for pattern in STRICT_FAILURE_PATTERNS
+    )
 
 
 def find_log_file(test_dir, test_name=None):
@@ -189,7 +216,7 @@ def run_unittest(args):
 
 
 def run_unittest_make(test_dir, sim, params, extra_sim_args):
-    """Run unittest via make compile + make run."""
+    """Run unittest via make compile + make run, or make sim if run is absent."""
     test_name = os.path.basename(test_dir)
 
     # Step 1: Compile
@@ -229,6 +256,9 @@ def run_unittest_make(test_dir, sim, params, extra_sim_args):
             param_test_name = pdict["TEST"]
 
     rc, output = run_cmd(run_cmd_str, cwd=test_dir, timeout=600)
+    if rc != 0 and MISSING_RUN_TARGET_RE.search(output):
+        sim_cmd_str = run_cmd_str.replace("make run ", "make sim ", 1)
+        rc, output = run_cmd(sim_cmd_str, cwd=test_dir, timeout=600)
 
     # Find log
     log_file = find_log_file(test_dir, param_test_name) or ""
@@ -286,7 +316,8 @@ def run_unittest_test_sh(test_dir, sim, mode):
         pass_count = int(match.group(1))
         fail_count = int(match.group(2))
 
-    if rc == 0 and fail_count == 0 and pass_count > 0:
+    if (rc == 0 and fail_count == 0 and pass_count > 0
+            and not has_strict_failure(output)):
         report("pass", test_name,
                error_log=f"All {pass_count} tests passed")
         return 0

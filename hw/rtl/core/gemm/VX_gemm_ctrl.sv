@@ -1,481 +1,436 @@
-/*
-  - Gemm 연산할 때 필요한 제어 신호들을 생성하는 모듈. 주로 DMA와 관련된 제어 신호를 생성한다.
-  - cfg_reg를 받아서 동작함. cfg_reg에는 matrix 크기, stride, padding 등 정보가 들어있음.
-    - start, idle, done signal을 이용해서 시작 시점을 제어함.
-    - 내부에 wid, tid등 정보도 필요하면 추가해서 현재 요청이 어떤 워크 아이템, 스레드인지 추적할 수 있도록 함.
-  - gemm 연산을 위한 input, weight, output 데이터의 LMEM 접근 제어 신호를 생성함.
-    - 각 데이터 타입별로 별도의 read/write 제어 신호를 생성함.
-    - gemm_node안에있는 local DMA 엔진과 연동됨.
-    - LMEM <-> GEMM 유닛 간 데이터 전송을 control 하는 것이 목적.
-  - tiling을 위해서 global memory (dcache) <-> LMEM 사이의 DMA를 제어함.
-    - dma cmd controller에게 제어 신호를 보냄.
-  
-*/
-
-/*
-  - parent queue랑 child queue는 VX_fifo_queue를 사용
-  - child queue는 5개 (input micro-tile read, weight micro-tile read, sz micro-tile read, output micro-tile write, global dma)
-  - child queue는 node가 busy하면 대기 (idle 신호를 ready로 사용)
-  - 각 node가 notify를 만났을 때 gemm_sync_slv_if로 직접 올린다는 가정
-  - done_if는 sync module에서 CLEAR command 처리 시 flag.done으로 발생
-*/
-
 `include "VX_define.vh"
 
 module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter int N_CHILDREN = 5,
-    parameter int N_NODE     = 5
+    parameter int N_NODE     = 5,
+    parameter int CHILD_QUEUE_DEPTH = 4,
+    parameter int DMA_CHILD_QUEUE_DEPTH = 8
 ) (
     input  wire                   clk,
     input  wire                   reset,
 
-    VX_config_reg_if.slave        cfg_reg_if,         // from job frontend
-    VX_gemm_ctrl_if.master        gemm_ctrl_if,       // to gemm unit + cmd ctrls
-    VX_node_done_if.master        done_if,            // to job frontend (clear)
-    VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE], // from cmd ctrls (notify events)
-    input wire                    output_store_done_i,
+    VX_config_reg_if.slave        cfg_reg_if,
+    VX_gemm_ctrl_if.master        gemm_ctrl_if,
+    VX_node_done_if.master        done_if,
+    VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE],
+    input  wire                   output_store_done_i,
     output wire                   progress_update_valid_o,
     output wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id_o,
     output wire [31:0]            progress_update_value_o
 `ifdef PERF_ENABLE
-    ,input  logic            gemm_unit_computing
-    ,output gemm_node_perf_t perf
+    ,input  logic                 gemm_unit_computing
+    ,output gemm_node_perf_t      perf
 `endif
 );
 
-    logic [N_CHILDREN-1:0]       child_q_empty_v;
-    logic                        parent_q_empty;
+    localparam int NUM_SYNC_REGS = 11;
+    localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
+    localparam int INFLIGHT_DATAW = $bits(gemm_notify_meta_t);
 
-`ifndef SYNTHESIS
-    logic [31:0] dbg_cyc_q;
-    always_ff @(posedge clk) begin
-      if (reset) dbg_cyc_q <= 32'd0;
-      else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
-    end
-`endif
-
-    wire cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
-    wire queues_idle    = parent_q_empty && (&child_q_empty_v);
-    wire done_fire      = done_if.valid && done_if.ready;
-    logic [31:0] active_entry_id_q;
-    logic [31:0] output_progress_q;
-
-    always_ff @(posedge clk) begin
-      if (reset) begin
-        active_entry_id_q <= '0;
-        output_progress_q <= '0;
-      end else if (cfg_fire) begin
-        active_entry_id_q <= cfg_reg_if.entry_id;
-        output_progress_q <= '0;
-      end else if (output_store_done_i) begin
-        output_progress_q <= output_progress_q + 32'd1;
-      end
-    end
-
-    assign progress_update_valid_o = output_store_done_i;
-    assign progress_update_entry_id_o = active_entry_id_q[`JOB_MMIO_ENTRYID_W-1:0];
-    assign progress_update_value_o = output_progress_q + 32'd1;
-
-`ifdef DBG_TRACE_GEMM_CTRL
-    always_ff @(posedge clk) begin
-      if (!reset) begin
-        if (cfg_fire) begin
-          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_CFG_ACCEPT | {inst=%s, entry_id=%0d}\n",
-                    $time, INSTANCE_ID, cfg_reg_if.entry_id))
-        end
-
-        if (queues_idle) begin
-          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_STATUS | {inst=%s, cfg_ready=%0d, queues_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h}\n",
-                    $time, INSTANCE_ID, cfg_reg_if.ready, queues_idle, parent_q_empty, child_q_empty_v))
-        end
-
-        if (done_fire) begin
-          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_DONE_HANDSHAKE | {inst=%s, queues_idle=%0d}\n",
-                    $time, INSTANCE_ID, queues_idle))
-        end
-      end
-    end
-`endif
-
-    // -------------------------------------------------------------------------
-    // Local interfaces
-    // -------------------------------------------------------------------------
-    VX_gemm_fsm_if gemm_fsm_if        ();
-    VX_gemm_fsm_if gemm_pqueue_out    ();
-    VX_gemm_fsm_if gemm_sync_out[N_CHILDREN] ();
+    VX_gemm_fsm_if gemm_fsm_if ();
     VX_gemm_fsm_if gemm_cqueue_out[N_CHILDREN] ();
 
-    // -------------------------------------------------------------------------
-    // FSM command generator: consumes one config-register snapshot and emits
-    // the full GEMM command stream.
-    // -------------------------------------------------------------------------
+    logic [N_CHILDREN-1:0] child_q_empty_v;
+    logic [N_CHILDREN-1:0] child_q_full_v;
+    logic [N_CHILDREN-1:0] child_q_push_v;
+    logic [N_CHILDREN-1:0] child_q_pop_v;
+    logic [N_CHILDREN-1:0] child_deps_ready_v;
+    logic [N_CHILDREN-1:0] child_dependency_eligible_v;
+    logic [N_CHILDREN-1:0] child_issue_fire_v;
+    logic [N_CHILDREN-1:0] child_inflight_empty_v;
+    logic [N_CHILDREN-1:0] child_inflight_full_v;
+    logic [N_CHILDREN-1:0] child_inflight_can_accept_v;
+    logic [N_CHILDREN-1:0] child_single_active_ready_v;
+    logic [N_CHILDREN-1:0] child_completion_pop_v;
+    gemm_unified_cmd_t child_q_cmd[N_CHILDREN];
+    gemm_notify_meta_t child_inflight_head[N_CHILDREN];
+
+    logic [31:0] sync_regs_q[NUM_SYNC_REGS];
+    logic [31:0] effective_sync[NUM_SYNC_REGS];
+
+    logic fsm_idle;
+    logic fsm_pending_work;
+    logic [2:0] fsm_pending_child;
+    logic invocation_active_q;
+    logic done_valid_q;
+    logic [31:0] active_entry_id_q;
+    logic [31:0] done_entry_id_q;
+    logic [31:0] output_progress_q;
+
+    wire scheduler_quiescent = (&child_q_empty_v)
+                             && (&child_inflight_empty_v);
+    wire new_invocation_ready = fsm_idle && scheduler_quiescent;
+    wire cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
+    wire invocation_complete = invocation_active_q
+                            && fsm_idle
+                            && scheduler_quiescent;
+    wire done_fire = done_if.valid && done_if.ready;
+
+    // VX_gemm_fsm applies its own fsm_idle term to cfg_reg_if.ready, yielding
+    // exactly: new_invocation_ready = fsm_idle && scheduler_quiescent.
+    assign gemm_fsm_if.flag.done = scheduler_quiescent;
+    assign gemm_fsm_if.flag.idle = 1'b1;
+    assign gemm_fsm_if.flag.child_ready = ~child_q_full_v;
+
     VX_gemm_fsm #(
-      .INSTANCE_ID(INSTANCE_ID)
+      .INSTANCE_ID (INSTANCE_ID)
     ) u_VX_gemm_fsm (
       .clk          (clk),
       .reset        (reset),
       .cfg_reg_if   (cfg_reg_if),
       .gemm_fsm_if  (gemm_fsm_if),
-      .gemm_start_o ()
+      .gemm_start_o (),
+      .fsm_idle_o   (fsm_idle),
+      .pending_work_o (fsm_pending_work),
+      .pending_child_o (fsm_pending_child)
     );
 
-    // -------------------------------------------------------------------------
-    // CLEAR completion: sync module signals done when CLEAR is consumed
-    // -------------------------------------------------------------------------
-    assign done_if.valid = gemm_pqueue_out.flag.done;
-    assign done_if.entry_id = active_entry_id_q;
+    function automatic logic [2:0] command_child(
+        input gemm_unified_cmd_t cmd
+    );
+      unique case (cmd.instr[3:0])
+        4'd7: command_child = 3'd0;
+        4'd5: command_child = 3'd1;
+        4'd6: command_child = 3'd2;
+        4'd8: command_child = 3'd3;
+        4'd1,
+        4'd2: command_child = 3'd4;
+        default: command_child = 3'd7;
+      endcase
+    endfunction
 
-    // -------------------------------------------------------------------------
-    // Parent cmd queue: store ONLY cmd payload (NOT start)
-    //   - start is regenerated as (valid && sync_ready) pulse.
-    //   - FSM sees idle when staging slot is empty or draining.
-    //
-    // A 1-stage skid register sits between gemm_fsm_if.ctrl.cmd and the
-    // BRAM-based parent fifo. This breaks the long combinational chain from
-    // FSM job_q registers (address arithmetic) into the BRAM data input port,
-    // so the long path now terminates at a flop (cmd_stage_q) instead.
-    // -------------------------------------------------------------------------
-    localparam int PARENT_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
+    wire [2:0] fsm_target_child = command_child(gemm_fsm_if.ctrl.cmd);
+    wire fsm_target_valid = (fsm_target_child < N_CHILDREN);
 
-    wire                          parent_q_full;
-    wire [PARENT_QUEUE_DATAW-1:0] parent_q_dout;
+    always_comb begin
+      child_q_push_v = '0;
+      if (gemm_fsm_if.ctrl.start && fsm_target_valid)
+        child_q_push_v[fsm_target_child] = 1'b1;
+    end
 
-    logic [PARENT_QUEUE_DATAW-1:0] cmd_stage_q;
-    logic                          stage_valid_q;
+    // Apply architectural completion updates before dependency comparison.
+    // Pairwise collision assertions below make this reduction deterministic.
+    always_comb begin
+      for (int rid = 0; rid < NUM_SYNC_REGS; ++rid)
+        effective_sync[rid] = sync_regs_q[rid];
 
-    wire stage_load    = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
-    wire stage_advance = stage_valid_q && !parent_q_full;
-
-    always_ff @(posedge clk) begin
-      if (reset) begin
-        stage_valid_q <= 1'b0;
-      end else begin
-        if (stage_load)              stage_valid_q <= 1'b1;
-        else if (stage_advance)      stage_valid_q <= 1'b0;
-        if (stage_load) cmd_stage_q <= gemm_fsm_if.ctrl.cmd;
+      for (int child = 0; child < N_CHILDREN; ++child) begin
+        if (child_completion_pop_v[child]
+         && child_inflight_head[child].valid) begin
+          if (child_inflight_head[child].set_mode) begin
+            effective_sync[child_inflight_head[child].reg_id]
+                = child_inflight_head[child].value;
+          end else begin
+            effective_sync[child_inflight_head[child].reg_id]
+                = effective_sync[child_inflight_head[child].reg_id]
+                + child_inflight_head[child].value;
+          end
+        end
       end
     end
 
-    wire parent_q_push   = stage_advance;
-    wire parent_out_fire = !parent_q_empty && gemm_pqueue_out.flag.idle;
+    always_ff @(posedge clk) begin
+      if (reset || cfg_fire) begin
+        for (int rid = 0; rid < NUM_SYNC_REGS; ++rid)
+          sync_regs_q[rid] <= 32'd0;
+      end else begin
+        for (int rid = 0; rid < NUM_SYNC_REGS; ++rid)
+          sync_regs_q[rid] <= effective_sync[rid];
+      end
+    end
 
-    // Backpressure to FSM: accept a new cmd when the staging slot is empty
-    // or will drain into the fifo this cycle.
-    assign gemm_fsm_if.flag.idle = !stage_valid_q || !parent_q_full;
-    assign gemm_fsm_if.flag.done = '0; // unused
-
-    // Drive payload to sync; generate start pulse from queue valid
-    assign gemm_pqueue_out.ctrl.cmd   = parent_q_dout;
-    assign gemm_pqueue_out.ctrl.start = ~parent_q_empty;
-
-    VX_fifo_queue #(
-      .DATAW (PARENT_QUEUE_DATAW),
-      .DEPTH (4)
-    ) u_parent_cmd_queue (
-      .clk      (clk),
-      .reset    (reset),
-      .push     (parent_q_push),
-      .pop      (parent_out_fire),
-      .data_in  (cmd_stage_q),
-      .data_out (parent_q_dout),
-      .empty    (parent_q_empty),
-      .full     (parent_q_full),
-      .alm_empty(),
-      .alm_full (),
-      .size     ()
-    );
-
-    // -------------------------------------------------------------------------
-    // Sync: wait/notify 처리 + child demux
-    //   - gemm_pqueue_out is "slave" into sync: sync drives gemm_pqueue_out.flag.idle
-    // -------------------------------------------------------------------------
-    VX_gemm_sync #(
-      .INSTANCE_ID (INSTANCE_ID),
-      .N_CHILDREN  (N_CHILDREN),
-      .N_NODE      (N_NODE)
-    ) u_VX_gemm_sync (
-      .clk             (clk),
-      .reset           (reset),
-      .gemm_fsm_slv_if  (gemm_pqueue_out),
-      .gemm_fsm_mas_if  (gemm_sync_out),
-      .gemm_sync_slv_if (gemm_sync_slv_if)
-    );
-
-    // -------------------------------------------------------------------------
-    // Child cmd queues: store ONLY cmd payload (NOT start)
-    //   - sync_out[i].flag.idle provides backpressure to sync:
-    //       here: buffer-only => idle = ~child_full
-    //   - unit stall is handled at queue output: fire = valid && unit_idle
-    // -------------------------------------------------------------------------
-    localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
-
-    genvar i;
     generate
-      for (i = 0; i < N_CHILDREN; i = i + 1) begin : gen_child_cmd_queues
-        wire                        child_q_full, child_q_empty;
+      for (genvar i = 0; i < N_CHILDREN; ++i) begin : g_child_scheduler
         wire [CHILD_QUEUE_DATAW-1:0] child_q_dout;
+        wire [INFLIGHT_DATAW-1:0] inflight_dout;
+        localparam int THIS_CHILD_QUEUE_DEPTH
+            = (i == 4) ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
+        logic deps_ready;
 
-        // push when sync issues and we report ready (buffer-only)
-        wire child_q_push = gemm_sync_out[i].ctrl.start && gemm_sync_out[i].flag.idle;
+        assign child_q_cmd[i] = child_q_dout;
+        assign child_inflight_head[i] = inflight_dout;
+        assign child_completion_pop_v[i]
+            = gemm_cqueue_out[i].flag.done
+           && !child_inflight_empty_v[i];
+        assign child_inflight_can_accept_v[i]
+            = !child_inflight_full_v[i] || child_completion_pop_v[i];
+        // Current executors accept at most one active command.  Keep the
+        // 2-entry metadata FIFO as the in-order completion boundary, while
+        // permitting only empty->push or same-cycle oldest pop/new push today.
+        assign child_single_active_ready_v[i]
+            = child_inflight_empty_v[i] || child_completion_pop_v[i];
 
-        // Detect if the command at queue head is a NOTIFY (opcode 3)
-        localparam logic [3:0] OP_NOTIFY_LOCAL = 4'd3;
-        gemm_unified_cmd_t child_q_cmd;
-        assign child_q_cmd = child_q_dout;
-        wire child_q_head_is_notify = !child_q_empty && (child_q_cmd.instr[3:0] == OP_NOTIFY_LOCAL);
-
-        // For children 0-3 (local DMA/GEMM-side paths), NOTIFY must wait for
-        // the preceding non-NOTIFY command to actually run and complete. A
-        // single "was idle" delay is not enough because the child command can be
-        // queued and the unit may still report idle in the start cycle.
-        localparam bit IS_DMA_CHILD = (i == 4);
-        logic child_cmd_inflight_r;
-        logic child_busy_seen_r;
-
-        // For DMA child (child 4), NOTIFY is handled inside its own FSM
-        // sequentially, so no guard needed.
-        wire child_notify_ok = IS_DMA_CHILD ? 1'b1 : !child_cmd_inflight_r;
-
-        // output to unit: valid if not empty, ready is unit idle
-        wire child_out_fire  = !child_q_empty && gemm_cqueue_out[i].flag.idle
-                             && (!child_q_head_is_notify || child_notify_ok);
-        wire child_q_head_is_normal = !child_q_empty && !child_q_head_is_notify;
-        wire child_normal_fire = child_out_fire && child_q_head_is_normal;
-
-        always_ff @(posedge clk) begin
-          if (reset) begin
-            child_cmd_inflight_r <= 1'b0;
-            child_busy_seen_r    <= 1'b0;
-          end else if (!IS_DMA_CHILD) begin
-            if (child_normal_fire) begin
-              child_cmd_inflight_r <= 1'b1;
-              child_busy_seen_r    <= 1'b0;
-            end else if (child_cmd_inflight_r && !gemm_cqueue_out[i].flag.idle) begin
-              child_busy_seen_r <= 1'b1;
-            end else if (child_cmd_inflight_r && child_busy_seen_r && gemm_cqueue_out[i].flag.idle) begin
-              child_cmd_inflight_r <= 1'b0;
-              child_busy_seen_r    <= 1'b0;
+        always_comb begin
+          deps_ready = 1'b1;
+          for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; ++dep) begin
+            if (child_q_cmd[i].waits[dep].valid) begin
+              deps_ready &= (child_q_cmd[i].waits[dep].reg_id
+                             < NUM_SYNC_REGS)
+                         && (effective_sync[
+                               child_q_cmd[i].waits[dep].reg_id]
+                             >= child_q_cmd[i].waits[dep].target);
             end
           end
         end
 
-`ifndef SYNTHESIS
-        logic [3:0]  dbg_child_op;
-        logic        dbg_child_start;
-        logic        dbg_child_done;
-        logic [31:0] dbg_child_start_cyc_q;
-        logic [31:0] dbg_child_done_cyc_q;
-        logic [31:0] dbg_child_lat_q;
-        logic [31:0] dbg_child_fire_count_q;
-
-        assign dbg_child_op = child_q_cmd.instr[3:0];
-
-        assign dbg_child_start = child_normal_fire;
-
-        logic prev_inflight_r;
-        logic prev_unit_idle;
-        always_ff @(posedge clk) begin
-          if (reset) begin
-            prev_inflight_r <= 1'b0;
-            prev_unit_idle  <= 1'b1;
-          end else begin
-            prev_inflight_r <= child_cmd_inflight_r;
-            prev_unit_idle  <= gemm_cqueue_out[i].flag.idle;
-          end
-        end
-        assign dbg_child_done = IS_DMA_CHILD
-            ? (~prev_unit_idle &&  gemm_cqueue_out[i].flag.idle)
-            : ( prev_inflight_r && ~child_cmd_inflight_r);
-
-        always_ff @(posedge clk) begin
-          if (reset) begin
-            dbg_child_start_cyc_q  <= 32'd0;
-            dbg_child_done_cyc_q   <= 32'd0;
-            dbg_child_lat_q        <= 32'd0;
-            dbg_child_fire_count_q <= 32'd0;
-          end else begin
-            if (dbg_child_start) begin
-              dbg_child_start_cyc_q  <= dbg_cyc_q;
-              dbg_child_fire_count_q <= dbg_child_fire_count_q + 32'd1;
-            end
-            if (dbg_child_done) begin
-              dbg_child_done_cyc_q <= dbg_cyc_q;
-              dbg_child_lat_q      <= dbg_cyc_q - dbg_child_start_cyc_q;
-            end
-          end
-        end
-`endif
-
-        // backpressure to sync: only depends on queue capacity
-        assign gemm_sync_out[i].flag.idle = ~child_q_full;
-        assign gemm_sync_out[i].flag.done = '0; // unused
-
-        // drive payload to unit-side interface; generate start from fire
-        assign gemm_cqueue_out[i].ctrl.cmd   = child_q_dout;
-        assign gemm_cqueue_out[i].ctrl.start = child_out_fire;
+        assign child_deps_ready_v[i] = deps_ready;
+        assign child_dependency_eligible_v[i]
+            = !child_q_empty_v[i] && deps_ready;
+        assign gemm_cqueue_out[i].ctrl.cmd = child_q_cmd[i];
+        assign gemm_cqueue_out[i].ctrl.start
+            = child_dependency_eligible_v[i]
+           && child_inflight_can_accept_v[i]
+           && child_single_active_ready_v[i]
+           && gemm_cqueue_out[i].flag.idle;
+        assign child_issue_fire_v[i] = gemm_cqueue_out[i].ctrl.start;
+        assign child_q_pop_v[i] = child_issue_fire_v[i];
 
         VX_fifo_queue #(
           .DATAW (CHILD_QUEUE_DATAW),
-          .DEPTH (4)
+          .DEPTH (THIS_CHILD_QUEUE_DEPTH)
         ) u_child_cmd_queue (
-          .clk      (clk),
-          .reset    (reset),
-          .push     (child_q_push),
-          .pop      (child_out_fire),
-          .data_in  (gemm_sync_out[i].ctrl.cmd),
-          .data_out (child_q_dout),
-          .empty    (child_q_empty),
-          .full     (child_q_full),
-          .alm_empty(),
-          .alm_full (),
-          .size     ()
+          .clk       (clk),
+          .reset     (reset),
+          .push      (child_q_push_v[i]),
+          .pop       (child_q_pop_v[i]),
+          .data_in   (gemm_fsm_if.ctrl.cmd),
+          .data_out  (child_q_dout),
+          .empty     (child_q_empty_v[i]),
+          .full      (child_q_full_v[i]),
+          .alm_empty (),
+          .alm_full  (),
+          .size      ()
         );
 
-        assign child_q_empty_v[i] = child_q_empty;
+        VX_fifo_queue #(
+          .DATAW (INFLIGHT_DATAW),
+          .DEPTH (2)
+        ) u_child_inflight_queue (
+          .clk       (clk),
+          .reset     (reset),
+          .push      (child_issue_fire_v[i]),
+          .pop       (child_completion_pop_v[i]),
+          .data_in   (child_q_cmd[i].notify),
+          .data_out  (inflight_dout),
+          .empty     (child_inflight_empty_v[i]),
+          .full      (child_inflight_full_v[i]),
+          .alm_empty (),
+          .alm_full  (),
+          .size      ()
+        );
+
+`ifndef SYNTHESIS
+        logic [31:0] dbg_child_empty_cycles_q;
+        logic [31:0] dbg_child_fallthrough_opportunity_q;
+        logic [31:0] dbg_child_full_block_cycles_q;
+
+        wire incoming_deps_ready = (gemm_fsm_if.ctrl.cmd.waits[0].valid
+              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[0].reg_id]
+                 >= gemm_fsm_if.ctrl.cmd.waits[0].target) : 1'b1)
+          && (gemm_fsm_if.ctrl.cmd.waits[1].valid
+              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[1].reg_id]
+                 >= gemm_fsm_if.ctrl.cmd.waits[1].target) : 1'b1)
+          && (gemm_fsm_if.ctrl.cmd.waits[2].valid
+              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[2].reg_id]
+                 >= gemm_fsm_if.ctrl.cmd.waits[2].target) : 1'b1)
+          && (gemm_fsm_if.ctrl.cmd.waits[3].valid
+              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[3].reg_id]
+                 >= gemm_fsm_if.ctrl.cmd.waits[3].target) : 1'b1);
+
+        always_ff @(posedge clk) begin
+          if (reset || cfg_fire) begin
+            dbg_child_empty_cycles_q <= '0;
+            dbg_child_fallthrough_opportunity_q <= '0;
+            dbg_child_full_block_cycles_q <= '0;
+          end else if (invocation_active_q) begin
+            if (child_q_empty_v[i])
+              dbg_child_empty_cycles_q <= dbg_child_empty_cycles_q + 1;
+            if (child_q_empty_v[i]
+             && child_q_push_v[i]
+             && incoming_deps_ready
+             && child_inflight_can_accept_v[i]
+             && gemm_cqueue_out[i].flag.idle)
+              dbg_child_fallthrough_opportunity_q
+                  <= dbg_child_fallthrough_opportunity_q + 1;
+            if (fsm_pending_work
+             && child_q_full_v[i]
+             && (fsm_pending_child == i))
+              dbg_child_full_block_cycles_q
+                  <= dbg_child_full_block_cycles_q + 1;
+          end
+        end
+
+        always_ff @(posedge clk) begin
+          if (!reset) begin
+            assert (!(gemm_cqueue_out[i].flag.done
+                   && child_inflight_empty_v[i]))
+              else $fatal(1, "%s: stray completion from child %0d",
+                          INSTANCE_ID, i);
+            assert (!(child_issue_fire_v[i]
+                   && child_inflight_full_v[i]
+                   && !child_completion_pop_v[i]))
+              else $fatal(1, "%s: inflight overflow for child %0d",
+                          INSTANCE_ID, i);
+            assert (!(!child_deps_ready_v[i]
+                   && gemm_cqueue_out[i].ctrl.start))
+              else $fatal(1, "%s: unresolved child %0d dependency issued",
+                          INSTANCE_ID, i);
+            assert (child_q_pop_v[i] == child_issue_fire_v[i])
+              else $fatal(1, "%s: child %0d pop/start mismatch",
+                          INSTANCE_ID, i);
+            assert (!(child_issue_fire_v[i]
+                   && !child_inflight_empty_v[i]
+                   && !child_completion_pop_v[i]))
+              else $fatal(1, "%s: child %0d accepted multiple active commands",
+                          INSTANCE_ID, i);
+          end
+        end
+`endif
       end
     endgenerate
 
-    // -------------------------------------------------------------------------
-    // Connect child cmd queues to gemm_ctrl_if outputs
-    // Mapping (as you wrote):
-    //   0=input_read, 1=weight_read, 2=quant_param_read, 3=output_write, 4=dma
-    // -------------------------------------------------------------------------
-    // child 0: input read
-    assign gemm_ctrl_if.input_read_ctrl.cmd   = gemm_cqueue_out[0].ctrl.cmd;
+    // Child-to-executor mapping. Executor done signals are architectural
+    // completion events and retire the oldest metadata entry for that child.
+    assign gemm_ctrl_if.input_read_ctrl.cmd = gemm_cqueue_out[0].ctrl.cmd;
     assign gemm_ctrl_if.input_read_ctrl.start = gemm_cqueue_out[0].ctrl.start;
-    assign gemm_cqueue_out[0].flag.idle       = gemm_ctrl_if.input_read_flag.idle;
-    assign gemm_cqueue_out[0].flag.done       = '0;
+    assign gemm_cqueue_out[0].flag.idle = gemm_ctrl_if.input_read_flag.idle;
+    assign gemm_cqueue_out[0].flag.done = gemm_ctrl_if.input_read_flag.done;
 
-    // child 1: weight read
-    assign gemm_ctrl_if.weight_read_ctrl.cmd   = gemm_cqueue_out[1].ctrl.cmd;
+    assign gemm_ctrl_if.weight_read_ctrl.cmd = gemm_cqueue_out[1].ctrl.cmd;
     assign gemm_ctrl_if.weight_read_ctrl.start = gemm_cqueue_out[1].ctrl.start;
-    assign gemm_cqueue_out[1].flag.idle        = gemm_ctrl_if.weight_read_flag.idle;
-    assign gemm_cqueue_out[1].flag.done        = '0;
+    assign gemm_cqueue_out[1].flag.idle = gemm_ctrl_if.weight_read_flag.idle;
+    assign gemm_cqueue_out[1].flag.done = gemm_ctrl_if.weight_read_flag.done;
 
-    // child 2: quant param read (scale/zp)
-    assign gemm_ctrl_if.quant_param_read_ctrl.cmd   = gemm_cqueue_out[2].ctrl.cmd;
+    assign gemm_ctrl_if.quant_param_read_ctrl.cmd = gemm_cqueue_out[2].ctrl.cmd;
     assign gemm_ctrl_if.quant_param_read_ctrl.start = gemm_cqueue_out[2].ctrl.start;
-    assign gemm_cqueue_out[2].flag.idle             = gemm_ctrl_if.quant_param_read_flag.idle;
-    assign gemm_cqueue_out[2].flag.done             = '0;
+    assign gemm_cqueue_out[2].flag.idle = gemm_ctrl_if.quant_param_read_flag.idle;
+    assign gemm_cqueue_out[2].flag.done = gemm_ctrl_if.quant_param_read_flag.done;
 
-    // child 3: output write
-    assign gemm_ctrl_if.output_write_ctrl.cmd   = gemm_cqueue_out[3].ctrl.cmd;
+    assign gemm_ctrl_if.output_write_ctrl.cmd = gemm_cqueue_out[3].ctrl.cmd;
     assign gemm_ctrl_if.output_write_ctrl.start = gemm_cqueue_out[3].ctrl.start;
-    assign gemm_cqueue_out[3].flag.idle         = gemm_ctrl_if.output_write_flag.idle;
-    assign gemm_cqueue_out[3].flag.done         = '0;
+    assign gemm_cqueue_out[3].flag.idle = gemm_ctrl_if.output_write_flag.idle;
+    assign gemm_cqueue_out[3].flag.done = gemm_ctrl_if.output_write_flag.done;
 
-    // child 4: global DMA (dcache <-> lmem)
-    assign gemm_ctrl_if.dma_ctrl.cmd   = gemm_cqueue_out[4].ctrl.cmd;
+    assign gemm_ctrl_if.dma_ctrl.cmd = gemm_cqueue_out[4].ctrl.cmd;
     assign gemm_ctrl_if.dma_ctrl.start = gemm_cqueue_out[4].ctrl.start;
     assign gemm_cqueue_out[4].flag.idle = gemm_ctrl_if.dma_flag.idle;
-    assign gemm_cqueue_out[4].flag.done = '0;
+    assign gemm_cqueue_out[4].flag.done = gemm_ctrl_if.dma_flag.done;
 
-`ifdef CHIPSCOPE
-`ifdef DBG_SCOPE_GEMM
-    localparam int DBG_BIT_W   = $bits(logic);
-    localparam int DBG_WORD_W  = $bits(logic [31:0]);
-    localparam int DBG_INSTR_W = 2 * DBG_WORD_W;
+    for (genvar n = 0; n < N_NODE; ++n) begin : g_unused_legacy_sync
+      assign gemm_sync_slv_if[n].ready = 1'b1;
+    end
 
-    localparam int DBG_GEMM_CTRL_P0_W = (14 * DBG_BIT_W) + $bits(child_q_empty_v);
-    localparam int DBG_GEMM_CTRL_P1_W = (4 * N_CHILDREN * DBG_BIT_W);
-    localparam int DBG_GEMM_CTRL_P2_W = (9 * DBG_WORD_W);
-    localparam int DBG_GEMM_CTRL_P3_W = ((N_CHILDREN + 2) * DBG_INSTR_W);
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        invocation_active_q <= 1'b0;
+        done_valid_q <= 1'b0;
+        active_entry_id_q <= '0;
+        done_entry_id_q <= '0;
+        output_progress_q <= '0;
+      end else begin
+        if (cfg_fire) begin
+          invocation_active_q <= 1'b1;
+          active_entry_id_q <= cfg_reg_if.entry_id;
+          output_progress_q <= '0;
+        end else if (output_store_done_i) begin
+          output_progress_q <= output_progress_q + 32'd1;
+        end
 
-    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P0_W-1:0] dbg_gemm_ctrl_probe0 = {
-        reset,
-        cfg_reg_if.valid,
-        cfg_reg_if.ready,
-        cfg_fire,
-        1'b0,
-        1'b0,
-        done_fire,
-        done_if.ready,
-        queues_idle,
-        parent_q_empty,
-        child_q_empty_v,
-        gemm_fsm_if.ctrl.start,
-        gemm_fsm_if.flag.idle,
-        gemm_pqueue_out.ctrl.start,
-        gemm_pqueue_out.flag.idle
-    };
-    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P1_W-1:0] dbg_gemm_ctrl_probe1 = {
-        gemm_ctrl_if.input_read_ctrl.start,
-        gemm_ctrl_if.weight_read_ctrl.start,
-        gemm_ctrl_if.quant_param_read_ctrl.start,
-        gemm_ctrl_if.output_write_ctrl.start,
-        gemm_ctrl_if.dma_ctrl.start,
-        gemm_ctrl_if.input_read_flag.idle,
-        gemm_ctrl_if.weight_read_flag.idle,
-        gemm_ctrl_if.quant_param_read_flag.idle,
-        gemm_ctrl_if.output_write_flag.idle,
-        gemm_ctrl_if.dma_flag.idle,
-        gemm_cqueue_out[0].ctrl.start,
-        gemm_cqueue_out[1].ctrl.start,
-        gemm_cqueue_out[2].ctrl.start,
-        gemm_cqueue_out[3].ctrl.start,
-        gemm_cqueue_out[4].ctrl.start,
-        gemm_sync_out[0].flag.idle,
-        gemm_sync_out[1].flag.idle,
-        gemm_sync_out[2].flag.idle,
-        gemm_sync_out[3].flag.idle,
-        gemm_sync_out[4].flag.idle
-    };
-    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P2_W-1:0] dbg_gemm_ctrl_probe2 = {
-        cfg_reg_if.entry_id,
-        cfg_reg_if.regs[0],
-        32'(gemm_fsm_if.ctrl.cmd.instr),
-        32'(gemm_pqueue_out.ctrl.cmd.instr),
-        32'(gemm_sync_out[0].ctrl.cmd.instr),
-        32'(gemm_sync_out[1].ctrl.cmd.instr),
-        32'(gemm_sync_out[2].ctrl.cmd.instr),
-        32'(gemm_sync_out[3].ctrl.cmd.instr),
-        32'(gemm_sync_out[4].ctrl.cmd.instr)
-    };
-    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P3_W-1:0] dbg_gemm_ctrl_probe3 = {
-        64'(gemm_fsm_if.ctrl.cmd.instr),
-        64'(gemm_pqueue_out.ctrl.cmd.instr),
-        64'(gemm_sync_out[0].ctrl.cmd.instr),
-        64'(gemm_sync_out[1].ctrl.cmd.instr),
-        64'(gemm_sync_out[2].ctrl.cmd.instr),
-        64'(gemm_sync_out[3].ctrl.cmd.instr),
-        64'(gemm_sync_out[4].ctrl.cmd.instr)
-    };
+        if (invocation_complete) begin
+          done_valid_q <= 1'b1;
+          done_entry_id_q <= active_entry_id_q;
+        end else if (done_fire) begin
+          done_valid_q <= 1'b0;
+        end
 
-    ila_gemm_ctrl ila_gemm_ctrl_inst (
-      .clk    (clk),
-      .probe0 (dbg_gemm_ctrl_probe0),
-      .probe1 (dbg_gemm_ctrl_probe1),
-      .probe2 (dbg_gemm_ctrl_probe2),
-      .probe3 (dbg_gemm_ctrl_probe3)
-    );
-`endif
+        if (!cfg_fire && invocation_complete)
+          invocation_active_q <= 1'b0;
+      end
+    end
+
+    assign done_if.valid = done_valid_q;
+    assign done_if.entry_id = done_entry_id_q;
+    assign progress_update_valid_o = output_store_done_i;
+    assign progress_update_entry_id_o
+        = active_entry_id_q[`JOB_MMIO_ENTRYID_W-1:0];
+    assign progress_update_value_o = output_progress_q + 32'd1;
+
+`ifndef SYNTHESIS
+    logic [31:0] dbg_invocation_active_cycles_q;
+    logic [31:0] dbg_fifo_full_blocks_ready_other_child_q;
+
+    always_ff @(posedge clk) begin
+      if (reset || cfg_fire) begin
+        dbg_invocation_active_cycles_q <= '0;
+        dbg_fifo_full_blocks_ready_other_child_q <= '0;
+      end else if (invocation_active_q) begin
+        dbg_invocation_active_cycles_q
+            <= dbg_invocation_active_cycles_q + 1;
+        if (fsm_pending_work
+         && child_q_full_v[fsm_pending_child]
+         && (|(child_q_empty_v & ~child_q_full_v))) begin
+          dbg_fifo_full_blocks_ready_other_child_q
+              <= dbg_fifo_full_blocks_ready_other_child_q + 1;
+        end
+      end
+    end
+
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        assert (!(cfg_fire && !scheduler_quiescent))
+          else $fatal(1, "%s: config accepted before scheduler quiescence",
+                      INSTANCE_ID);
+        assert (cfg_reg_if.ready == new_invocation_ready)
+          else $fatal(1, "%s: new invocation readiness is not strict quiescence",
+                      INSTANCE_ID);
+        assert (!(invocation_complete && done_valid_q && !done_fire))
+          else $fatal(1, "%s: invocation completion overwrote pending done",
+                      INSTANCE_ID);
+        assert (!(cfg_fire && (|child_completion_pop_v)))
+          else $fatal(1, "%s: implicit clear overlapped completion",
+                      INSTANCE_ID);
+        assert (!(gemm_fsm_if.ctrl.start && !fsm_target_valid))
+          else $fatal(1, "%s: FSM emitted removed or invalid opcode 0x%0h",
+                      INSTANCE_ID, gemm_fsm_if.ctrl.cmd.instr[3:0]);
+
+        for (int lhs = 0; lhs < N_CHILDREN; ++lhs) begin
+          for (int rhs = lhs + 1; rhs < N_CHILDREN; ++rhs) begin
+            assert (!(child_completion_pop_v[lhs]
+                   && child_completion_pop_v[rhs]
+                   && child_inflight_head[lhs].valid
+                   && child_inflight_head[rhs].valid
+                   && (child_inflight_head[lhs].reg_id
+                       == child_inflight_head[rhs].reg_id)))
+              else $fatal(1, "%s: simultaneous sync collision children %0d/%0d rid=%0d",
+                          INSTANCE_ID, lhs, rhs,
+                          child_inflight_head[lhs].reg_id);
+          end
+        end
+      end
+    end
 `endif
 
 `ifdef PERF_ENABLE
-    // -------------------------------------------------------------------------
-    // Performance counters
-    //   total_cycles increments while the controller has any in-flight work
-    //   (parent or any child queue is non-empty). This branch's instruction-
-    //   stream architecture has no explicit job_active_q (see commit 78ca77's
-    //   reference); !queues_idle is the closest semantic analog.
-    //   The MXU pipeline inside VX_gemm_unit can keep computing AFTER the
-    //   controller's queues have drained (the last command flows out of the
-    //   ctrl into the MXU, which then runs through its own latency). To keep
-    //   total_cycles a valid upper bound for compute_cycles (i.e. preserve
-    //   the natural invariant compute_cycles <= total_cycles), we OR in
-    //   gemm_unit_computing so any cycle the MXU is still active is also
-    //   counted as a "total" cycle.
-    // -------------------------------------------------------------------------
     reg [PERF_CTR_BITS-1:0] perf_total_cycles_r;
-    always @(posedge clk) begin
-        if (reset)
-            perf_total_cycles_r <= '0;
-        else if (!queues_idle || gemm_unit_computing)
-            perf_total_cycles_r <= perf_total_cycles_r + PERF_CTR_BITS'(1);
+    always_ff @(posedge clk) begin
+      if (reset)
+        perf_total_cycles_r <= '0;
+      else if (invocation_active_q || gemm_unit_computing)
+        perf_total_cycles_r <= perf_total_cycles_r + PERF_CTR_BITS'(1);
     end
     assign perf.total_cycles  = perf_total_cycles_r;
-    assign perf.lmem_rd_bytes = '0;  // filled by gemm_node
-    assign perf.lmem_wr_bytes = '0;  // filled by gemm_node
+    assign perf.lmem_rd_bytes = '0;
+    assign perf.lmem_wr_bytes = '0;
 `endif
+
+    `VX_STATIC_ASSERT(N_CHILDREN == 5,
+      ("VX_gemm_ctrl command schedule requires five children"));
+    `VX_STATIC_ASSERT(N_NODE == 5,
+      ("VX_gemm_ctrl command schedule requires five completion sources"));
+    `VX_STATIC_ASSERT(CHILD_QUEUE_DEPTH >= 2,
+      ("VX_gemm_ctrl child queue depth must be at least two"));
+    `VX_STATIC_ASSERT(DMA_CHILD_QUEUE_DEPTH >= CHILD_QUEUE_DEPTH,
+      ("VX_gemm_ctrl DMA child queue must not be shallower than peers"));
+
 endmodule

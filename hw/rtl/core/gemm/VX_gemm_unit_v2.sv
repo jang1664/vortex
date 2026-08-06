@@ -351,6 +351,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     assign i_lmem_bus_if.rsp_valid = 1'b0;
     assign gemm_unit_v2_if.last_write = acc_write_fire
                                       && ctrl_pipe[WRITE_CTRL_IDX].last;
+    assign gemm_unit_v2_if.tagged_final_writeback
+        = gemm_unit_v2_if.last_write
+       && ctrl_pipe[WRITE_CTRL_IDX].notify_on_writeback;
+    // Architectural executor completion endpoints.  These pulses are taken
+    // after the unit's own acceptance/pipeline logic, at the cycles in which
+    // the selected weight or scale/zero register is actually written.
+    assign gemm_unit_v2_if.weight_register_write = mxu_ready_weight;
+    assign gemm_unit_v2_if.quant_register_write
+        = scale_reg_wr_en || zp_reg_wr_en;
     assign gemm_unit_v2_if.pipeline_empty
         = !(i_lmem_bus_if.req_valid
           || (|early_rsp_pending)

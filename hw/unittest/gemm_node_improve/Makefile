@@ -63,7 +63,6 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
         $(RTL_DIR)/core/gemm/VX_cmd_constructor.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_sync.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
@@ -202,7 +201,7 @@ CVFPU_RTLS := $(RTL_DIR)/fpu/patched_cvfpu/fpnew_pkg.sv \
 RTLS := $(CVFPU_RTLS) $(RTLS)
 endif
 
-CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
+CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/build/hw -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS := 
 
 PARAMS_  := 

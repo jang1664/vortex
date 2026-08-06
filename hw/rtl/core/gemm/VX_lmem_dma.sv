@@ -142,6 +142,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   wire wr_ack_fire = (state == S_WR_WAIT) &&
                      ((DIR && lmem_bus_if.rsp_valid) ||
                       (!DIR && gemm_bus_if.rsp_valid));
+  assign ctrl_if.write_done = wr_ack_fire && last_done_after_write;
 
   // src/dst addr generation (byte address)
   logic [31:0] src_byte_addr, dst_byte_addr;

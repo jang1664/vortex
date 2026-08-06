@@ -56,6 +56,9 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
 
     assign ctrl_if.idle = !active_r;
     assign ctrl_if.done = done_r;
+    assign ctrl_if.write_done = retire_fire
+                             && ((retired_groups_r + 1'b1)
+                                 == total_groups_r);
 
     assign gemm_bus_if.req_valid       = retire_valid;
     assign gemm_bus_if.req_data.rw     = 1'b1;

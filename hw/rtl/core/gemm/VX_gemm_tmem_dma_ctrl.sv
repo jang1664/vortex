@@ -117,17 +117,15 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // =========================================================
     localparam logic [3:0] OP_DMA_LD = 4'd1;
     localparam logic [3:0] OP_DMA_ST = 4'd2;
-    localparam logic [3:0] OP_NOTIFY = 4'd3;
 
     // =========================================================
     // FSM states
     // =========================================================
-    typedef enum logic [2:0] {
+    typedef enum logic [1:0] {
         S_IDLE,
         S_PROG,
         S_WAIT_DONE,
-        S_DONE,
-        S_NOTIFY
+        S_DONE
     } state_t;
 
     state_t state_q, state_d;
@@ -137,6 +135,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // =========================================================
     gemm_unified_cmd_t cmd_q;
     wire [3:0] cmd_op = cmd_q.instr[3:0];
+`ifndef SYNTHESIS
+    logic arch_done_seen_q;
+`endif
 
     // =========================================================
     // Command decoding (combinational, from captured cmd_q)
@@ -217,7 +218,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] done_sticky;
 
     wire cfg_all_ready  = &cfg_ready_or_inactive;
-    wire done_all_valid = &done_sticky;
+    // Include completions arriving in the current cycle so the scheduler sees
+    // the exact all-channel architectural completion rather than S_DONE one
+    // cycle later.
+    wire done_all_valid = &(done_sticky | done_or_inactive);
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channels
         wire [NUM_CH_SHIFT-1:0] logical_ch = ch - start_ch;
@@ -343,7 +347,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // FSM outputs (active/idle/done to gemm_dma_ctrl_if)
     // =========================================================
     assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
-    assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
+    assign gemm_dma_ctrl_if.done = (state_q == S_WAIT_DONE)
+                                && done_all_valid;
     assign store_done = (state_q == S_WAIT_DONE) && done_all_valid && (cmd_op == OP_DMA_ST);
 
     // =========================================================
@@ -361,11 +366,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         unique case (state_q)
             S_IDLE: begin
                 if (gemm_dma_ctrl_if.start) begin
-                    if (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_NOTIFY) begin
-                        state_d = S_NOTIFY;
-                    end else begin
-                        state_d = S_PROG;
-                    end
+                    state_d = S_PROG;
                 end
             end
 
@@ -384,15 +385,6 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
             S_DONE: begin
                 state_d = S_IDLE;
-            end
-
-            S_NOTIFY: begin
-                gemm_sync_if.valid   = 1'b1;
-                gemm_sync_if.reg_idx = cmd_q.rs1_data[31:0];
-                gemm_sync_if.value   = cmd_q.rs2_data[31:0];
-                if (gemm_sync_if.ready) begin
-                    state_d = S_DONE;
-                end
             end
 
             default: begin
@@ -415,7 +407,6 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             S_PROG:      state_to_str = "S_PROG";
             S_WAIT_DONE: state_to_str = "S_WAIT_DONE";
             S_DONE:      state_to_str = "S_DONE";
-            S_NOTIFY:    state_to_str = "S_NOTIFY";
             default:     state_to_str = "S_UNKNOWN";
         endcase
     endfunction
@@ -461,6 +452,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             state_q     <= S_IDLE;
             cmd_q       <= '0;
             done_sticky <= '0;
+`ifndef SYNTHESIS
+            arch_done_seen_q <= 1'b0;
+`endif
         end else begin
             state_q <= state_d;
             if (state_q == S_IDLE) begin
@@ -471,6 +465,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
                 cmd_q <= gemm_dma_ctrl_if.cmd;
             end
+`ifndef SYNTHESIS
+            if (state_q == S_IDLE)
+                arch_done_seen_q <= 1'b0;
+            else if (gemm_dma_ctrl_if.done)
+                arch_done_seen_q <= 1'b1;
+`endif
         end
     end
 
@@ -480,6 +480,17 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
         if (!reset) begin
+            if (gemm_dma_ctrl_if.start) begin
+                assert ((gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_LD)
+                     || (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_ST))
+                    else $fatal(1, "%m: removed/invalid DMA opcode 0x%0h",
+                                gemm_dma_ctrl_if.cmd.instr[3:0]);
+            end
+            if (gemm_dma_ctrl_if.done) begin
+                assert ((state_q == S_WAIT_DONE) && done_all_valid
+                     && !arch_done_seen_q)
+                    else $fatal(1, "%m: early or duplicate all-channel DMA done");
+            end
             if (gemm_dma_ctrl_if.start
                 && ((gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_LD)
                  || (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_ST))) begin

@@ -213,6 +213,8 @@ module tb_VX_gemm_node_improve
   bit trace_rd_fifo_en      = 1'b0;
   bit require_dual_bank_prefetch = 1'b0;
   bit require_input_metadata = 1'b0;
+  bit require_prior_raw_overlap = 1'b0;
+  bit require_completion_endpoints = 1'b0;
   int input_gap_min         = 1;
   int input_gap_max         = 3;
   int input_stall_period    = 0;
@@ -923,13 +925,13 @@ module tb_VX_gemm_node_improve
     int unsigned timeout;
     begin
       timeout = 0;
-      while (u_dut.u_VX_gemm_ctrl.u_VX_gemm_sync.sync_regs[reg_id] !== expected_value) begin
+      while (u_dut.u_VX_gemm_ctrl.sync_regs_q[reg_id] !== expected_value) begin
         @(posedge clk);
         timeout++;
         if (timeout > timeout_cycles) begin
           $fatal(1, "[%0t] sync reg timeout: reg=%0d expected=0x%08h got=0x%08h",
                  $time, reg_id, expected_value,
-                 u_dut.u_VX_gemm_ctrl.u_VX_gemm_sync.sync_regs[reg_id]);
+                 u_dut.u_VX_gemm_ctrl.sync_regs_q[reg_id]);
         end
       end
     end
@@ -1180,6 +1182,69 @@ module tb_VX_gemm_node_improve
     align512_int = ((value + 511) / 512) * 512;
   endfunction
 
+  function automatic int align8_int(input int value);
+    align8_int = (value + 7) & ~7;
+  endfunction
+
+  // The config-FSM DRAM contract reserves an 8-row-aligned slot for every
+  // (M tile, K tile).  Only cur_m rows carry data; the tail of each slot is
+  // padding that keeps the following K tile on the address expected by
+  // I_KT_STRIDE_{FULL,LAST} in VX_gemm_fsm.
+  function automatic longint unsigned input_tiled_footprint_bytes(
+    input int test_m,
+    input int test_k
+  );
+    int m_tiles;
+    int k_tiles;
+    longint unsigned total;
+    begin
+      m_tiles = ceil_div_int(test_m, DMA_MT);
+      k_tiles = ceil_div_int(test_k, DMA_KT);
+      total = 0;
+      for (int mt = 0; mt < m_tiles; mt++) begin
+        int cur_m;
+        int cur_m_slot;
+        cur_m = (test_m - mt * DMA_MT < DMA_MT)
+              ? test_m - mt * DMA_MT : DMA_MT;
+        cur_m_slot = align8_int(cur_m);
+        for (int kt = 0; kt < k_tiles; kt++) begin
+          int cur_k;
+          cur_k = (test_k - kt * DMA_KT < DMA_KT)
+                ? test_k - kt * DMA_KT : DMA_KT;
+          total += longint'(cur_m_slot) * longint'(cur_k) * 2;
+        end
+      end
+      input_tiled_footprint_bytes = total;
+    end
+  endfunction
+
+  // Output stores use the same 8-row slot width for every 32-column MXU
+  // block.  The DMA writes only cur_m rows and leaves the padded rows unused.
+  function automatic longint unsigned output_tiled_footprint_bytes(
+    input int test_m,
+    input int test_n
+  );
+    int m_tiles;
+    int n_micros;
+    longint unsigned total;
+    begin
+      m_tiles = ceil_div_int(test_m, DMA_MT);
+      n_micros = ceil_div_int(test_n, DMA_MXU_NT);
+      total = 0;
+      for (int mt = 0; mt < m_tiles; mt++) begin
+        int cur_m;
+        int cur_m_slot;
+        cur_m = (test_m - mt * DMA_MT < DMA_MT)
+              ? test_m - mt * DMA_MT : DMA_MT;
+        cur_m_slot = align8_int(cur_m);
+        total += longint'(n_micros)
+               * longint'(cur_m_slot)
+               * longint'(DMA_MXU_NT) * 2;
+      end
+      output_tiled_footprint_bytes = total;
+    end
+  endfunction
+
   function automatic int qparam_slot_bytes(
     input int ck,
     input int cn,
@@ -1204,32 +1269,79 @@ module tb_VX_gemm_node_improve
     end
   endfunction
 
-  // Input tiled: (k,MXU_KT),(m,actual_m),(k,K/MXU_KT),(m,ceil(M/MT))
+  // Input tiled within each padded (mt,kt) slot:
+  //   (kb within KT, real m, k within MXU_KT).
+  // Slot stride is align8(cur_m)*cur_k*2, matching the production app/FSM.
   task automatic write_dram_tiled_input(
     input int test_m,
     input int test_k,
     input logic [63:0] dram_in_base
   );
-    int m_tiles, k_micros, dram_idx;
+    int m_tiles, k_tiles;
+    longint unsigned slot_offset;
     begin
       m_tiles  = (test_m + DMA_MT - 1) / DMA_MT;
-      k_micros = test_k / DMA_MXU_KT;
-      dram_idx = 0;
+      k_tiles  = (test_k + DMA_KT - 1) / DMA_KT;
+      slot_offset = 0;
       for (int mt = 0; mt < m_tiles; mt++) begin
         int cur_m;
+        int cur_m_slot;
         cur_m = (test_m - mt * DMA_MT < DMA_MT) ? (test_m - mt * DMA_MT) : DMA_MT;
-        for (int km = 0; km < k_micros; km++) begin
-          for (int m = 0; m < cur_m; m++) begin
-            for (int k = 0; k < DMA_MXU_KT; k++) begin
-              logic [15:0] val;
-              val = input_mat[(mt*DMA_MT+m)*test_k + (km*DMA_MXU_KT+k)];
-              if ((dram_in_base + dram_idx)   < DRAM_SIZE) dram[dram_in_base + dram_idx]   = val[7:0];
-              if ((dram_in_base + dram_idx+1) < DRAM_SIZE) dram[dram_in_base + dram_idx+1] = val[15:8];
-              dram_idx += 2;
+        cur_m_slot = align8_int(cur_m);
+        for (int kt = 0; kt < k_tiles; kt++) begin
+          int cur_k;
+          int k_micros;
+          longint unsigned slot_bytes;
+          longint unsigned payload_bytes;
+          longint unsigned payload_idx;
+
+          cur_k = (test_k - kt * DMA_KT < DMA_KT)
+                ? test_k - kt * DMA_KT : DMA_KT;
+          if ((cur_k % DMA_MXU_KT) != 0)
+            $fatal(1, "[%0t] input K tile is not MXU_KT aligned: kt=%0d cur_k=%0d",
+                   $time, kt, cur_k);
+
+          k_micros = cur_k / DMA_MXU_KT;
+          slot_bytes = longint'(cur_m_slot) * longint'(cur_k) * 2;
+          payload_bytes = longint'(cur_m) * longint'(cur_k) * 2;
+          payload_idx = 0;
+
+          if (payload_bytes > slot_bytes)
+            $fatal(1, "[%0t] input payload exceeds padded slot: mt=%0d kt=%0d payload=%0d slot=%0d",
+                   $time, mt, kt, payload_bytes, slot_bytes);
+          if ((dram_in_base + slot_offset + slot_bytes) > DRAM_SIZE)
+            $fatal(1, "[%0t] input padded slot exceeds DRAM: mt=%0d kt=%0d end=0x%0h limit=0x%0h",
+                   $time, mt, kt,
+                   dram_in_base + slot_offset + slot_bytes, DRAM_SIZE);
+
+          for (int kb = 0; kb < k_micros; kb++) begin
+            for (int m = 0; m < cur_m; m++) begin
+              for (int k = 0; k < DMA_MXU_KT; k++) begin
+                int gm, gk;
+                longint unsigned addr;
+                logic [15:0] val;
+                gm = mt * DMA_MT + m;
+                gk = kt * DMA_KT + kb * DMA_MXU_KT + k;
+                val = input_mat[gm * test_k + gk];
+                addr = dram_in_base + slot_offset + payload_idx;
+                dram[addr] = val[7:0];
+                dram[addr + 1] = val[15:8];
+                payload_idx += 2;
+              end
             end
           end
+
+          if (payload_idx != payload_bytes)
+            $fatal(1, "[%0t] input payload footprint mismatch: mt=%0d kt=%0d wrote=%0d expected=%0d",
+                   $time, mt, kt, payload_idx, payload_bytes);
+          slot_offset += slot_bytes;
         end
       end
+
+      if (slot_offset != input_tiled_footprint_bytes(test_m, test_k))
+        $fatal(1, "[%0t] input tiled footprint mismatch: wrote=0x%0h expected=0x%0h",
+               $time, slot_offset,
+               input_tiled_footprint_bytes(test_m, test_k));
     end
   endtask
 
@@ -1451,13 +1563,15 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  // Output tiled check: (n,MXU_NT),(m,actual_m),(n,N/MXU_NT),(m,ceil(M/MT))
+  // Output tiled check.  Each 32-column block reserves align8(cur_m) rows,
+  // while only the real cur_m rows contain architectural output.
   task automatic check_output_tiled(
     input int test_m,
     input int test_n,
     input logic [63:0] dram_out_base
   );
-    int m_tiles, n_tiles, dram_idx, mismatch_count;
+    int m_tiles, n_tiles, mismatch_count;
+    longint unsigned dram_idx;
     begin
       m_tiles = (test_m + DMA_MT - 1) / DMA_MT;
       n_tiles = test_n / DMA_MXU_NT;
@@ -1470,9 +1584,11 @@ module tb_VX_gemm_node_improve
 
       for (int mt = 0; mt < m_tiles; mt++) begin
         int cur_m;
+        int cur_m_slot;
         cur_m = (test_m - mt * DMA_MT < DMA_MT) ? (test_m - mt * DMA_MT) : DMA_MT;
+        cur_m_slot = align8_int(cur_m);
         for (int nt = 0; nt < n_tiles; nt++) begin
-          for (int m = 0; m < cur_m; m++) begin
+          for (int m = 0; m < cur_m_slot; m++) begin
             for (int n = 0; n < DMA_MXU_NT; n++) begin
               int gm, gn;
               int unsigned addr;
@@ -1481,20 +1597,28 @@ module tb_VX_gemm_node_improve
               gn = nt * DMA_MXU_NT + n;
               addr = dram_out_base + dram_idx;
               got = dram_read_u16(addr);
-              exp = ref_output[gm * test_n + gn];
-              if (!compare_fp16(got, exp, FP16_TOL)) begin
-                mismatch_count++;
-                if (mismatch_count <= 20)
-                  $display("[%0t] MISMATCH mt=%0d nt=%0d m=%0d n=%0d (gm=%0d gn=%0d) got=%f exp=%f",
-                           $time, mt, nt, m, n, gm, gn,
-                           cf_math_util_pkg::fp16_bit_to_fp16_val(got),
-                           cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
+              // Padded rows are reserved address space, not GEMM results.
+              if (m < cur_m) begin
+                exp = ref_output[gm * test_n + gn];
+                if (!compare_fp16(got, exp, FP16_TOL)) begin
+                  mismatch_count++;
+                  if (mismatch_count <= 20)
+                    $display("[%0t] MISMATCH mt=%0d nt=%0d m=%0d n=%0d (gm=%0d gn=%0d) got=%f exp=%f",
+                             $time, mt, nt, m, n, gm, gn,
+                             cf_math_util_pkg::fp16_bit_to_fp16_val(got),
+                             cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
+                end
               end
               dram_idx += 2;
             end
           end
         end
       end
+
+      if (dram_idx != output_tiled_footprint_bytes(test_m, test_n))
+        $fatal(1, "[%0t] output tiled footprint mismatch: checked=0x%0h expected=0x%0h",
+               $time, dram_idx,
+               output_tiled_footprint_bytes(test_m, test_n));
 
       if (mismatch_count != 0)
         $fatal(1, "[%0t] TILED OUTPUT CHECK FAILED: mismatches=%0d / %0d", $time, mismatch_count, test_m * test_n);
@@ -1518,10 +1642,15 @@ module tb_VX_gemm_node_improve
       mismatch_count = 0;
 
       for (int gm = m_start; gm < m_start + target_m; gm++) begin
-        int mt, local_m, cur_m;
+        int mt, local_m, cur_m, cur_m_slot;
         mt = gm / DMA_MT;
         local_m = gm % DMA_MT;
         cur_m = (test_m - mt * DMA_MT < DMA_MT) ? (test_m - mt * DMA_MT) : DMA_MT;
+        cur_m_slot = align8_int(cur_m);
+
+        if (local_m >= cur_m)
+          $fatal(1, "[%0t] output region selects padded M row: gm=%0d mt=%0d local_m=%0d cur_m=%0d",
+                 $time, gm, mt, local_m, cur_m);
 
         for (int gn = n_start; gn < n_start + target_n; gn++) begin
           int nt, local_n;
@@ -1531,7 +1660,7 @@ module tb_VX_gemm_node_improve
           local_n = gn % DMA_MXU_NT;
           addr = dram_out_base
                + mt * DMA_MT * test_n * 2
-               + nt * cur_m * DMA_MXU_NT * 2
+               + nt * cur_m_slot * DMA_MXU_NT * 2
                + local_m * DMA_MXU_NT * 2
                + local_n * 2;
           got = dram_read_u16(addr);
@@ -1693,13 +1822,16 @@ module tb_VX_gemm_node_improve
       ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
       ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
 
-      dram_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      // Use the physical padded footprints, not the number of mathematical
+      // elements.  Otherwise a partial-M input K slot aliases the following
+      // weight allocation and output N slots are checked at the wrong stride.
+      dram_in_bytes  = input_tiled_footprint_bytes(test_m, test_k);
       dram_w_bytes   = (test_wtrans == 0)
                      ? (longint'(test_k) * longint'((test_n + 1) / 2))
                      : (longint'(test_n) * longint'((test_k + 1) / 2));
       dram_sc_bytes  = qparam_total_bytes(test_n, test_k, test_qblk, test_qdir, 2);
       dram_zp_bytes  = qparam_total_bytes(test_n, test_k, test_qblk, test_qdir, 2);
-      dram_out_bytes = longint'(test_m) * longint'(test_n) * 2;
+      dram_out_bytes = output_tiled_footprint_bytes(test_m, test_n);
 
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
       lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;
@@ -1725,6 +1857,23 @@ module tb_VX_gemm_node_improve
       dram_zp_base = cur_dram[63:0];
       cur_dram += align_up(dram_zp_bytes, ADDR_ALIGN_BYTES);
       dram_out_base = cur_dram[63:0];
+
+      // These checks make the partial-M padding contract observable at layout
+      // construction time instead of allowing the first bad DMA to alias the
+      // next buffer silently.
+      assert_range_fit("dram_input", dram_in_base, dram_in_bytes, DRAM_LIMIT);
+      assert_range_fit("dram_weight", dram_w_base, dram_w_bytes, DRAM_LIMIT);
+      assert_range_fit("dram_scale", dram_sc_base, dram_sc_bytes, DRAM_LIMIT);
+      assert_range_fit("dram_zp", dram_zp_base, dram_zp_bytes, DRAM_LIMIT);
+      assert_range_fit("dram_output", dram_out_base, dram_out_bytes, DRAM_LIMIT);
+      assert_no_overlap("dram_input", dram_in_base, dram_in_bytes,
+                        "dram_weight", dram_w_base, dram_w_bytes);
+      assert_no_overlap("dram_weight", dram_w_base, dram_w_bytes,
+                        "dram_scale", dram_sc_base, dram_sc_bytes);
+      assert_no_overlap("dram_scale", dram_sc_base, dram_sc_bytes,
+                        "dram_zp", dram_zp_base, dram_zp_bytes);
+      assert_no_overlap("dram_zp", dram_zp_base, dram_zp_bytes,
+                        "dram_output", dram_out_base, dram_out_bytes);
 
       cur_lmem = align_up(AUTO_LMEM_BASE, ADDR_ALIGN_BYTES);
       lmem_ibuf0_base = cur_lmem[63:0];
@@ -2254,6 +2403,7 @@ module tb_VX_gemm_node_improve
     logic [20:0]      packet_count;
     logic [20:0]      packet_index;
     logic             is_accum;
+    logic             notify_on_writeback;
     logic             quant_dir;
     logic             wreg_use_idx;
     logic             sreg_use_idx;
@@ -2267,6 +2417,10 @@ module tb_VX_gemm_node_improve
   longint unsigned input_metadata_last_write_count;
   longint unsigned input_metadata_done_count;
   longint unsigned input_metadata_bubble_count;
+  longint unsigned input_nonfinal_done_count;
+  longint unsigned input_final_done_count;
+  longint unsigned input_scheduler_retire_count;
+  longint unsigned prior_raw_write_during_final_count;
 
   function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]
     expected_input_metadata_addr(
@@ -2289,8 +2443,7 @@ module tb_VX_gemm_node_improve
 
     input_fire = u_dut.i_gemm_bus_if.req_valid
               && u_dut.i_gemm_bus_if.req_ready;
-    non_notify_done = u_dut.gemm_ctrl_if.input_read_flag.done
-                   && !u_dut.input_notify_pending_r;
+    non_notify_done = u_dut.gemm_ctrl_if.input_read_flag.done;
 
     if (reset) begin
       input_metadata_model = '0;
@@ -2300,7 +2453,15 @@ module tb_VX_gemm_node_improve
       input_metadata_last_write_count = 0;
       input_metadata_done_count = 0;
       input_metadata_bubble_count = 0;
+      input_nonfinal_done_count = 0;
+      input_final_done_count = 0;
+      input_scheduler_retire_count = 0;
+      prior_raw_write_during_final_count = 0;
     end else begin
+      if (!input_metadata_model.active && u_dut.input_dma_ctrl_if.idle
+          && u_dut.gemm_ctrl_if.input_read_flag.done)
+        $fatal(1, "[%0t] INPUT_METADATA initial/raw LDMA idle completed a command", $time);
+
       if (u_dut.gemm_unit_v2_if.packet_ctrl.valid !== input_fire)
         $fatal(1, "[%0t] INPUT_METADATA valid/fire mismatch: valid=%b fire=%b",
                $time, u_dut.gemm_unit_v2_if.packet_ctrl.valid, input_fire);
@@ -2318,6 +2479,8 @@ module tb_VX_gemm_node_improve
         input_metadata_model.packet_index = '0;
         input_metadata_model.is_accum
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+        input_metadata_model.notify_on_writeback
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[4];
         input_metadata_model.quant_dir
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
         input_metadata_model.wreg_use_idx
@@ -2351,6 +2514,8 @@ module tb_VX_gemm_node_improve
                !== input_metadata_model.packet_index
             || u_dut.input_cmd_ctx_r.is_accum
                !== input_metadata_model.is_accum
+            || u_dut.input_cmd_ctx_r.notify_on_writeback
+               !== input_metadata_model.notify_on_writeback
             || u_dut.input_cmd_ctx_r.quant_dir
                !== input_metadata_model.quant_dir
             || u_dut.input_cmd_ctx_r.wreg_use_idx
@@ -2395,6 +2560,8 @@ module tb_VX_gemm_node_improve
                !== input_metadata_model.zreg_use_idx
             || u_dut.gemm_unit_v2_if.packet_ctrl.is_load
                !== !input_metadata_model.is_accum
+            || u_dut.gemm_unit_v2_if.packet_ctrl.notify_on_writeback
+               !== input_metadata_model.notify_on_writeback
             || u_dut.gemm_unit_v2_if.packet_ctrl.last !== expected_last)
           $fatal(1, "[%0t] INPUT_METADATA packet mismatch: idx=%0d addr=0x%0h last=%0d",
                  $time, input_metadata_model.packet_index,
@@ -2411,21 +2578,35 @@ module tb_VX_gemm_node_improve
       end
 
       if (u_dut.gemm_unit_v2_if.last_write) begin
-        if (!input_metadata_model.active
-            || !input_metadata_model.ingress_complete)
-          $fatal(1, "[%0t] INPUT_METADATA last_write before last admission", $time);
         input_metadata_last_write_count++;
+        if (input_metadata_model.active
+            && input_metadata_model.notify_on_writeback
+            && !u_dut.gemm_unit_v2_if.tagged_final_writeback) begin
+          if (non_notify_done)
+            $fatal(1, "[%0t] INPUT_METADATA prior raw writeback released final command", $time);
+          prior_raw_write_during_final_count++;
+        end
       end
 
       if (non_notify_done) begin
-        if (!u_dut.gemm_unit_v2_if.last_write)
-          $fatal(1, "[%0t] INPUT_METADATA non-notify done without last_write", $time);
+        if (!input_metadata_model.active
+            || !input_metadata_model.ingress_complete)
+          $fatal(1, "[%0t] INPUT_METADATA done before qualified ingress", $time);
+        if (input_metadata_model.notify_on_writeback) begin
+          if (!u_dut.gemm_unit_v2_if.tagged_final_writeback)
+            $fatal(1, "[%0t] INPUT_METADATA final done without tagged writeback", $time);
+          input_final_done_count++;
+        end else begin
+          if (!u_dut.qualified_input_dma_idle)
+            $fatal(1, "[%0t] INPUT_METADATA non-final done without qualified LDMA idle", $time);
+          if (u_dut.gemm_unit_v2_if.tagged_final_writeback)
+            $fatal(1, "[%0t] INPUT_METADATA non-final done used tagged writeback", $time);
+          input_nonfinal_done_count++;
+        end
+        if (!u_dut.u_VX_gemm_ctrl.child_completion_pop_v[0])
+          $fatal(1, "[%0t] INPUT_METADATA scheduler did not retire input metadata on done", $time);
+        input_scheduler_retire_count++;
         input_metadata_done_count++;
-      end
-
-      if (u_dut.gemm_unit_v2_if.last_write) begin
-        if (!non_notify_done)
-          $fatal(1, "[%0t] INPUT_METADATA last_write without non-notify done", $time);
         input_metadata_model = '0;
       end
     end
@@ -2440,18 +2621,112 @@ module tb_VX_gemm_node_improve
         $fatal(1, "INPUT_METADATA observed no command/packet traffic");
       if (input_metadata_last_admission_count != input_metadata_cmd_count
           || input_metadata_last_write_count != input_metadata_cmd_count
-          || input_metadata_done_count != input_metadata_cmd_count)
+          || input_metadata_done_count != input_metadata_cmd_count
+          || input_scheduler_retire_count != input_metadata_cmd_count)
         $fatal(1, "INPUT_METADATA lifecycle count mismatch: cmd=%0d last_admission=%0d last_write=%0d done=%0d",
                input_metadata_cmd_count, input_metadata_last_admission_count,
                input_metadata_last_write_count, input_metadata_done_count);
       if (input_metadata_bubble_count == 0)
         $fatal(1, "INPUT_METADATA did not cover an ingress bubble");
-
-      $display("[%0t] INPUT_METADATA_PASSED | {commands=%0d, packets=%0d, last_admission=%0d, last_write=%0d, done=%0d, bubbles=%0d}",
+      if (input_nonfinal_done_count == 0 || input_final_done_count == 0)
+        $fatal(1, "INPUT_METADATA did not cover both completion modes");
+      if (require_prior_raw_overlap
+          && prior_raw_write_during_final_count == 0)
+        $fatal(1, "INPUT_METADATA did not cover prior raw writeback during final command");
+      $display("[%0t] INPUT_METADATA_PASSED | {commands=%0d, packets=%0d, last_admission=%0d, last_write=%0d, done=%0d, nonfinal_done=%0d, final_done=%0d, scheduler_retire=%0d, prior_raw_during_final=%0d, bubbles=%0d}",
                $time, input_metadata_cmd_count, input_metadata_packet_count,
                input_metadata_last_admission_count,
                input_metadata_last_write_count, input_metadata_done_count,
+               input_nonfinal_done_count, input_final_done_count,
+               input_scheduler_retire_count, prior_raw_write_during_final_count,
                input_metadata_bubble_count);
+    end
+  endtask
+
+  // Exact architectural completion identity.  Wrapper-idle/done signals are
+  // intentionally observed too, so a later pulse cannot accidentally retire
+  // a scheduler entry after the true last-write endpoint already did.
+  longint unsigned completion_start_count [1:4];
+  longint unsigned completion_done_count [1:4];
+  longint unsigned legacy_nonretire_count;
+  logic [4:1] completion_done_prev;
+
+  always @(posedge clk) begin : exact_completion_endpoint_scoreboard
+    logic [4:1] start_now;
+    logic [4:1] done_now;
+    if (reset) begin
+      for (int child = 1; child <= 4; child++) begin
+        completion_start_count[child] = 0;
+        completion_done_count[child] = 0;
+      end
+      legacy_nonretire_count = 0;
+      completion_done_prev = '0;
+    end else if (require_completion_endpoints) begin
+      start_now[1] = u_dut.gemm_ctrl_if.weight_read_ctrl.start;
+      start_now[2] = u_dut.gemm_ctrl_if.quant_param_read_ctrl.start;
+      start_now[3] = u_dut.gemm_ctrl_if.output_write_ctrl.start;
+      start_now[4] = u_dut.gemm_ctrl_if.dma_ctrl.start;
+      done_now[1] = u_dut.weight_last_register_write;
+      done_now[2] = u_dut.quant_last_register_write;
+      done_now[3] = u_dut.output_dma_ctrl_if.write_done;
+      done_now[4] = u_dut.gemm_dma_ctrl_if.done;
+
+      if (u_dut.gemm_ctrl_if.weight_read_flag.done !== done_now[1]
+          || u_dut.gemm_ctrl_if.quant_param_read_flag.done !== done_now[2]
+          || u_dut.gemm_ctrl_if.output_write_flag.done !== done_now[3]
+          || u_dut.gemm_ctrl_if.dma_flag.done !== done_now[4])
+        $fatal(1, "COMPLETION_ENDPOINTS child done is not the exact architectural endpoint");
+
+      for (int child = 1; child <= 4; child++) begin
+        if (start_now[child])
+          completion_start_count[child]++;
+        if (done_now[child]) begin
+          if (completion_done_prev[child])
+            $fatal(1, "COMPLETION_ENDPOINTS child %0d emitted a multi-cycle done", child);
+          if (!u_dut.u_VX_gemm_ctrl.child_completion_pop_v[child])
+            $fatal(1, "COMPLETION_ENDPOINTS child %0d endpoint did not retire scheduler", child);
+          completion_done_count[child]++;
+        end
+      end
+
+      if (done_now[4] && !u_dut.u_tmem_dma_ctrl.done_all_valid)
+        $fatal(1, "COMPLETION_ENDPOINTS global DMA did not include current-cycle all-channel completion");
+
+      if (u_dut.weight_dma_ctrl_if.done && !done_now[1]) begin
+        if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[1])
+          $fatal(1, "COMPLETION_ENDPOINTS legacy weight wrapper done retired scheduler");
+        legacy_nonretire_count++;
+      end
+      if (u_dut.quant_param_dma_ctrl_if.done && !done_now[2]) begin
+        if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[2])
+          $fatal(1, "COMPLETION_ENDPOINTS legacy quant wrapper done retired scheduler");
+        legacy_nonretire_count++;
+      end
+      if (u_dut.output_dma_ctrl_if.done && !done_now[3]) begin
+        if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[3])
+          $fatal(1, "COMPLETION_ENDPOINTS legacy output wrapper done retired scheduler");
+        legacy_nonretire_count++;
+      end
+      completion_done_prev = done_now;
+    end
+  end
+
+  task automatic check_completion_endpoint_coverage;
+    begin
+      for (int child = 1; child <= 4; child++) begin
+        if (completion_start_count[child] == 0
+            || completion_done_count[child] != completion_start_count[child])
+          $fatal(1, "COMPLETION_ENDPOINTS lifecycle mismatch child=%0d start=%0d done=%0d",
+                 child, completion_start_count[child], completion_done_count[child]);
+      end
+      if (legacy_nonretire_count == 0)
+        $fatal(1, "COMPLETION_ENDPOINTS did not observe a delayed wrapper-done non-retirement");
+      $display("COMPLETION_ENDPOINTS_PASSED weight={start=%0d,done=%0d} sz={start=%0d,done=%0d} output={start=%0d,done=%0d} global={start=%0d,done=%0d} legacy_nonretire=%0d",
+               completion_start_count[1], completion_done_count[1],
+               completion_start_count[2], completion_done_count[2],
+               completion_start_count[3], completion_done_count[3],
+               completion_start_count[4], completion_done_count[4],
+               legacy_nonretire_count);
     end
   endtask
 
@@ -2500,6 +2775,8 @@ module tb_VX_gemm_node_improve
     trace_rd_fifo_en = $test$plusargs("TRACE_RD_FIFO");
     require_dual_bank_prefetch = $test$plusargs("REQUIRE_DUAL_BANK_PREFETCH");
     require_input_metadata = $test$plusargs("REQUIRE_INPUT_METADATA");
+    require_prior_raw_overlap = $test$plusargs("REQUIRE_PRIOR_RAW_OVERLAP");
+    require_completion_endpoints = $test$plusargs("REQUIRE_COMPLETION_ENDPOINTS");
     trace_input_speed_en = randomize_input_speed || $test$plusargs("TRACE_INPUT_SPEED");
     void'($value$plusargs("INPUT_GAP_MIN=%d", input_gap_min));
     void'($value$plusargs("INPUT_GAP_MAX=%d", input_gap_max));
@@ -2579,6 +2856,9 @@ module tb_VX_gemm_node_improve
 
     if (require_dual_bank_prefetch)
       check_dual_bank_prefetch();
+
+    if (require_completion_endpoints)
+      check_completion_endpoint_coverage();
 
     $display("[%0t] TB completed", $time);
 

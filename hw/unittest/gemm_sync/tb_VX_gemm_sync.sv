@@ -91,6 +91,54 @@ module tb_VX_gemm_sync import VX_gpu_pkg::*; ();
     end
   endtask
 
+  task automatic check_registered_wait_visibility;
+    begin
+      @(negedge clk);
+      gemm_fsm_slv_if.ctrl.cmd = '0;
+      gemm_fsm_slv_if.ctrl.cmd.instr[3:0] = 4'd4;
+      gemm_fsm_slv_if.ctrl.cmd.rs1_data = 64'd3;
+      gemm_fsm_slv_if.ctrl.cmd.rs2_data = 64'd1;
+      gemm_fsm_slv_if.ctrl.start = 1'b1;
+      gemm_sync_slv_if[0].valid = 1'b1;
+      gemm_sync_slv_if[0].reg_idx = 32'd3;
+      gemm_sync_slv_if[0].value = 32'd1;
+
+      #1;
+      if (gemm_fsm_slv_if.flag.idle !== 1'b0)
+        $fatal(1, "WAIT became ready combinationally in the update cycle");
+
+      @(posedge clk);
+      #1;
+      expect_reg(3, 32'd1, "registered WAIT update");
+      if (gemm_fsm_slv_if.flag.idle !== 1'b1)
+        $fatal(1, "WAIT did not become ready after the registered update");
+
+      @(negedge clk);
+      gemm_fsm_slv_if.ctrl.start = 1'b0;
+      gemm_sync_slv_if[0].valid = 1'b0;
+    end
+  endtask
+
+  task automatic check_clear_without_update;
+    begin
+      @(negedge clk);
+      gemm_fsm_slv_if.ctrl.cmd = '0;
+      gemm_fsm_slv_if.ctrl.cmd.instr[3:0] = 4'd9;
+      gemm_fsm_slv_if.ctrl.start = 1'b1;
+      gemm_sync_slv_if[0].valid = 1'b0;
+      gemm_sync_slv_if[1].valid = 1'b0;
+      gemm_sync_slv_if[2].valid = 1'b0;
+      gemm_sync_slv_if[3].valid = 1'b0;
+      gemm_sync_slv_if[4].valid = 1'b0;
+      @(posedge clk);
+      #1;
+      for (int i = 0; i < NUM_SYNC_REGS; ++i)
+        expect_reg(i, 32'd0, "OP_CLEAR");
+      @(negedge clk);
+      gemm_fsm_slv_if.ctrl.start = 1'b0;
+    end
+  endtask
+
   initial begin
     reset = 1'b1;
     gemm_fsm_slv_if.ctrl = '0;
@@ -137,6 +185,9 @@ module tb_VX_gemm_sync import VX_gpu_pkg::*; ();
     expect_reg(4, 32'h7fff_ffff, "set max positive");
     drive_updates(1, 4, 32'd2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     expect_reg(4, 32'h8000_0001, "32-bit wrap");
+
+    check_registered_wait_visibility();
+    check_clear_without_update();
 
     $display("TEST PASSED");
     $finish;

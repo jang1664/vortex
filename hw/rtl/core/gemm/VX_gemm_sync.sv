@@ -279,6 +279,20 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   end
 
 `ifndef SYNTHESIS
+  wire any_node_update_fire
+      = (gemm_sync_slv_if[0].valid && gemm_sync_slv_if[0].ready)
+      || (gemm_sync_slv_if[1].valid && gemm_sync_slv_if[1].ready)
+      || (gemm_sync_slv_if[2].valid && gemm_sync_slv_if[2].ready)
+      || (gemm_sync_slv_if[3].valid && gemm_sync_slv_if[3].ready)
+      || (gemm_sync_slv_if[4].valid && gemm_sync_slv_if[4].ready);
+
+  always @(posedge clk) begin
+    if (reset === 1'b0 && clear_fire) begin
+      assert (!any_node_update_fire)
+        else $fatal(1, "GEMM sync CLEAR coincided with a node update handshake");
+    end
+  end
+
   // Simulation-only provenance tracker for WAIT/NOTIFY debugging.
   // NOTIFY is routed to the child selected by the last accepted normal command;
   // keep that command's payload so waveforms can show what the NOTIFY belongs to.

@@ -909,6 +909,22 @@ package VX_gpu_pkg;
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////
+   localparam int GEMM_MAX_WAIT_DEPS     = 4;
+   localparam int GEMM_SYNC_REG_ID_WIDTH = 4;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic [GEMM_SYNC_REG_ID_WIDTH-1:0]         reg_id;
+       logic [31:0]                               target;
+   } gemm_wait_meta_t;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic [GEMM_SYNC_REG_ID_WIDTH-1:0]         reg_id;
+       logic                                      set_mode;
+       logic [31:0]                               value;
+   } gemm_notify_meta_t;
+
    typedef struct packed {
        logic [UUID_WIDTH-1:0]    uuid;
        logic [NW_WIDTH-1:0]      wid;
@@ -924,6 +940,8 @@ package VX_gpu_pkg;
        logic [7:0]               flags;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
+       gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
+       gemm_notify_meta_t        notify;
    } gemm_unified_cmd_t; // it can be union
 
    typedef struct packed {
@@ -954,6 +972,7 @@ package VX_gpu_pkg;
       logic sreg_use_idx;
       logic zreg_use_idx;
       logic is_load;
+      logic notify_on_writeback;
       logic last;
    } gemm_input_ctrl_t;
 

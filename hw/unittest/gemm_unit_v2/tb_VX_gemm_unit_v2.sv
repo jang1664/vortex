@@ -26,6 +26,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic acc_wr_en;
         logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address;
         logic [1:0] bank;
+        logic notify_on_writeback;
         logic last;
     } write_expect_t;
 
@@ -240,13 +241,26 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                            gemm_unit_v2_if.last_write);
                     test_failed = 1'b1;
                 end
+                if (gemm_unit_v2_if.tagged_final_writeback
+                    !== (write_expect.acc_wr_en
+                      && write_expect.last
+                      && write_expect.notify_on_writeback)) begin
+                    $error("tagged writeback misaligned cycle=%0d expected=%0b actual=%0b",
+                           scoreboard_cycle,
+                           write_expect.acc_wr_en
+                        && write_expect.last
+                        && write_expect.notify_on_writeback,
+                           gemm_unit_v2_if.tagged_final_writeback);
+                    test_failed = 1'b1;
+                end
                 if (write_expect.acc_wr_en)
                     scoreboard_write_count = scoreboard_write_count + 1;
             end else begin
                 if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid !== 1'b0
                  || u_dut.acc_write_fire !== 1'b0
                  || u_dut.acc_mem_wr_en !== '0
-                 || gemm_unit_v2_if.last_write !== 1'b0) begin
+                 || gemm_unit_v2_if.last_write !== 1'b0
+                 || gemm_unit_v2_if.tagged_final_writeback !== 1'b0) begin
                     $error("unexpected ACC write/control cycle=%0d valid=%0b fire=%0b banks=%b last=%0b",
                            scoreboard_cycle,
                            u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid,
@@ -372,6 +386,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 write_expect.bank = scoreboard_acc_bank(
                     gemm_unit_v2_if.packet_ctrl.acc_wr_addr);
                 write_expect.last = gemm_unit_v2_if.packet_ctrl.last;
+                write_expect.notify_on_writeback
+                    = gemm_unit_v2_if.packet_ctrl.notify_on_writeback;
                 write_expect_q.push_back(write_expect);
 
                 schedule_forward = 1'b0;
@@ -584,6 +600,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic wreg_idx,
         input logic sreg_idx,
         input logic zreg_idx,
+        input logic notify_on_writeback,
         input logic last
     );
         @(negedge clk);
@@ -602,6 +619,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         gemm_unit_v2_if.packet_ctrl.sreg_use_idx = sreg_idx;
         gemm_unit_v2_if.packet_ctrl.zreg_use_idx = zreg_idx;
         gemm_unit_v2_if.packet_ctrl.is_load = is_load;
+        gemm_unit_v2_if.packet_ctrl.notify_on_writeback
+            = notify_on_writeback;
         gemm_unit_v2_if.packet_ctrl.last = last;
         @(posedge clk);
         if (i_lmem_bus_if.req_ready !== 1'b1) begin
@@ -621,7 +640,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic last
     );
         drive_packet_ctrl(data, address, is_load, !is_load, 1'b1,
-                          quant_dir, wreg_idx, sreg_idx, zreg_idx, last);
+                          quant_dir, wreg_idx, sreg_idx, zreg_idx,
+                          last, last);
     endtask
 
     task automatic drive_bubble(input int count);
@@ -1259,7 +1279,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             drive_packet_ctrl(
                 zero_input, address, is_load, !is_load, acc_wr_en,
                 quant_dir, random_word[2], random_word[3], random_word[7],
-                is_last);
+                is_last && ((i / RANDOM_COMMAND_LENGTH) & 1), is_last);
             if (bubble_count != 0)
                 drive_bubble(bubble_count);
         end
@@ -1313,7 +1333,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         @(negedge clk);
         reset = 1'b0;
         repeat (u_dut.WRITE_DLY + 3) @(posedge clk);
-        if (u_dut.acc_write_fire || gemm_unit_v2_if.last_write) begin
+        if (u_dut.acc_write_fire
+         || gemm_unit_v2_if.last_write
+         || gemm_unit_v2_if.tagged_final_writeback) begin
             $error("ghost write after reset");
             test_failed = 1'b1;
         end

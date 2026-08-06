@@ -25,6 +25,10 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
   // Status signals (slave -> master)
   logic        idle;
   logic        done;
+  // Pulses on acceptance of the descriptor's final destination write.
+  // This is the architectural transfer completion, before wrapper lifecycle
+  // states such as legacy synchronization and S_DONE.
+  logic        write_done;
 
   modport master (
     output start,
@@ -37,7 +41,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     output reg_idx,
     output reg_value,
     input  idle,
-    input  done
+    input  done,
+    input  write_done
   );
 
   modport slave (
@@ -51,7 +56,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     input  reg_idx,
     input  reg_value,
     output idle,
-    output done
+    output done,
+    output write_done
   );
 
 endinterface

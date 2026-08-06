@@ -14,6 +14,7 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
   typedef struct packed {
     logic idle;  //ready처럼 사용
     logic done;
+    logic [4:0] child_ready;
   } flag_t;
 
   ctrl_t  ctrl;

@@ -46,6 +46,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   ) cfg_reg_if [NUM_CHANNELS] ();
 
   VX_node_done_if done_if [NUM_CHANNELS] ();
+  logic store_done;
 
   VX_gemm_tmem_dma_ctrl #(
     .INSTANCE_ID("tb_misalign"),
@@ -54,7 +55,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     .clk(clk),
     .reset(reset),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
-    .store_done(),
+    .store_done(store_done),
     .gemm_sync_if(gemm_sync_if),
     .cfg_reg_if(cfg_reg_if),
     .done_if(done_if)
@@ -70,6 +71,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   logic                                        notify_seen;
   logic [31:0]                                 notify_reg_seen;
   logic [31:0]                                 notify_val_seen;
+  integer dma_done_pulse_count;
+  integer store_done_pulse_count;
+  logic dma_done_prev;
 
   function automatic logic [31:0] make_instr(input logic [3:0] op, input logic [27:0] size_bytes);
     return {size_bytes, op};
@@ -115,35 +119,67 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     gemm_dma_ctrl_if.start <= 1'b0;
   endtask
 
-  task automatic wait_done_or_timeout(input int unsigned max_cycles, input string tag);
-    int unsigned c;
-    c = 0;
-    while (gemm_dma_ctrl_if.idle && (c < max_cycles)) begin
-      @(posedge clk);
-      c++;
-    end
-    if (c >= max_cycles)
-      $fatal(1, "[%s] timeout: never left idle", tag);
-
-    while (!gemm_dma_ctrl_if.done && (c < max_cycles)) begin
-      @(posedge clk);
-      c++;
-    end
-    if (c >= max_cycles)
-      $fatal(1, "[%s] timeout: done not asserted", tag);
-
-    @(posedge clk);
-  endtask
-
-  task automatic drive_done_for_active_channels;
+  task automatic complete_active_channels_exact(
+    input bit expect_store,
+    input string tag
+  );
+    int final_ch;
+    int active_count;
+    int done_before;
+    int store_before;
+    int wait_cycles;
+    final_ch = -1;
+    active_count = 0;
+    done_before = dma_done_pulse_count;
+    store_before = store_done_pulse_count;
     for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
       if (cfg_seen[ch]) begin
-        done_valid_s[ch] = 1'b1;
-        done_entry_s[ch] = 32'd0;
+        final_ch = ch;
+        active_count++;
       end
     end
+    if (final_ch < 0)
+      $fatal(1, "[%s] no active channel to complete", tag);
+
+    // Make every channel except the final one sticky first.
+    @(negedge clk);
+    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+      done_valid_s[ch] = cfg_seen[ch] && (ch != final_ch);
+    #1;
+    if (active_count > 1 && gemm_dma_ctrl_if.done)
+      $fatal(1, "[%s] DMA completed before final channel", tag);
     @(posedge clk);
+
+    // The final channel completion must be visible combinationally in this
+    // same cycle through done_sticky | done_or_inactive.
+    @(negedge clk);
     clear_done_inputs();
+    done_valid_s[final_ch] = 1'b1;
+    #1;
+    if (!dut.done_all_valid || !gemm_dma_ctrl_if.done)
+      $fatal(1, "[%s] current-cycle final channel did not assert DMA done", tag);
+    if (store_done !== expect_store)
+      $fatal(1, "[%s] store_done mismatch got=%0b expected=%0b",
+             tag, store_done, expect_store);
+    @(posedge clk);
+    #1;
+    clear_done_inputs();
+    if (gemm_dma_ctrl_if.done || store_done)
+      $fatal(1, "[%s] completion pulse repeated after one cycle", tag);
+
+    wait_cycles = 0;
+    while (!gemm_dma_ctrl_if.idle && wait_cycles < 20) begin
+      @(posedge clk);
+      wait_cycles++;
+    end
+    if (!gemm_dma_ctrl_if.idle)
+      $fatal(1, "[%s] controller did not return idle", tag);
+    if (dma_done_pulse_count != done_before + 1)
+      $fatal(1, "[%s] DMA done pulse count mismatch", tag);
+    if (store_done_pulse_count != store_before + (expect_store ? 1 : 0))
+      $fatal(1, "[%s] store_done pulse count mismatch", tag);
+    $display("TMEM_DMA_CURRENT_CYCLE_PASS tag=%s active_channels=%0d store=%0d one_pulse=1",
+             tag, active_count, expect_store);
   endtask
 
   task automatic expect_cfg_count(input int exp_count, input string tag);
@@ -183,7 +219,18 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     if (reset) begin
       clear_cfg_scoreboard();
       clear_notify_scoreboard();
+      dma_done_pulse_count = 0;
+      store_done_pulse_count = 0;
+      dma_done_prev = 1'b0;
     end else begin
+      if (gemm_dma_ctrl_if.done) begin
+        if (dma_done_prev)
+          $fatal(1, "DMA done remained asserted for more than one cycle");
+        dma_done_pulse_count++;
+      end
+      if (store_done)
+        store_done_pulse_count++;
+      dma_done_prev = gemm_dma_ctrl_if.done;
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         if (cfg_valid_s[ch] && cfg_ready_s[ch]) begin
           cfg_seen[ch]      <= 1'b1;
@@ -218,6 +265,17 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     reset = 1'b0;
     repeat (2) @(posedge clk);
 
+    if ($test$plusargs("EXPECT_NOTIFY_FATAL")) begin
+      gemm_unified_cmd_t c;
+      c = '0;
+      c.instr = make_instr(OP_NOTIFY, 28'd0);
+      gemm_dma_ctrl_if.cmd = c;
+      $display("EXPECT_TMEM_NOTIFY_FATAL_ARMED opcode=3");
+      pulse_start();
+      repeat (3) @(posedge clk);
+      $fatal(1, "EXPECT_NOTIFY_FATAL intended assertion did not fire");
+    end
+
     begin
       gemm_unified_cmd_t c;
       clear_cfg_scoreboard();
@@ -242,8 +300,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       expect_cfg_reg(0, DMA_R_DST_ST0, 32'd0, "ld_single_word");
       expect_cfg_reg(0, DMA_R_SRC_ST1, 32'(`HBM_BUS_STRIDE), "ld_single_word");
       expect_cfg_reg(0, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "ld_single_word");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "ld_single_word");
+      complete_active_channels_exact(1'b0, "ld_single_word");
     end
 
     begin
@@ -268,8 +325,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_cfg_reg(ch, DMA_R_BND0, 32'd1, "ld_full_8ch");
         expect_cfg_reg(ch, DMA_R_BND1, 32'd1, "ld_full_8ch");
       end
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "ld_full_8ch");
+      complete_active_channels_exact(1'b0, "ld_full_8ch");
     end
 
     begin
@@ -297,24 +353,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_cfg_reg(ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "st_full_8ch");
         expect_cfg_reg(ch, DMA_R_DST_ST1, 32'(`HBM_BUS_STRIDE), "st_full_8ch");
       end
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "st_full_8ch");
-    end
-
-    begin
-      gemm_unified_cmd_t c;
-      clear_cfg_scoreboard();
-      clear_notify_scoreboard();
-      c = '0;
-      c.instr    = make_instr(OP_NOTIFY, 28'd0);
-      c.rs1_data = 64'h0000_0000_0000_0012;
-      c.rs2_data = 64'h0000_0000_dead_beef;
-      gemm_dma_ctrl_if.cmd = c;
-      pulse_start();
-      wait_done_or_timeout(100, "notify");
-      expect_cfg_count(0, "notify");
-      if (!notify_seen || notify_reg_seen != 32'h12 || notify_val_seen != 32'hdead_beef)
-        $fatal(1, "[notify] mismatch seen=%0b reg=0x%08x val=0x%08x", notify_seen, notify_reg_seen, notify_val_seen);
+      complete_active_channels_exact(1'b1, "st_full_8ch");
     end
 
     begin
@@ -351,8 +390,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       // 2D form: fallback DST_ST1 is MEM_BLOCK_SIZE (TMEM bank stride),
       // independent of user s0.
       expect_cfg_reg(exp_ch, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_ld_cfg");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "tmem_misaligned_ld_cfg");
+      complete_active_channels_exact(1'b0, "tmem_misaligned_ld_cfg");
     end
 
     begin
@@ -387,11 +425,13 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       expect_cfg_reg(exp_ch, DMA_R_DST_BASE_LO, hbm_byte_addr[31:0], "tmem_misaligned_st_cfg");
       // 2D form: fallback SRC_ST1 is MEM_BLOCK_SIZE, independent of user s0.
       expect_cfg_reg(exp_ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_st_cfg");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "tmem_misaligned_st_cfg");
+      complete_active_channels_exact(1'b1, "tmem_misaligned_st_cfg");
     end
 
+    $display("TMEM_DMA_EXACT_COMPLETION_PASS dma_done_pulses=%0d store_done_pulses=%0d notify_removed=1",
+             dma_done_pulse_count, store_done_pulse_count);
     $display("All VX_gemm_tmem_dma_ctrl misalign tests passed");
+    $display("TEST PASSED");
     $finish;
   end
 endmodule

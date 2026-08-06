@@ -10,6 +10,7 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
+EXTRA_SIM_ARGS ?=
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_tmem_dma_ctrl_misalign
@@ -24,6 +25,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM PLATFORM_MEMORY_NUM_BANKS=32
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
