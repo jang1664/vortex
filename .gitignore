@@ -65,6 +65,10 @@ csrc/
 simv
 simv.daidir/
 simv.vdb/
+# Locally named VCS binaries produced by GEMM node experiments.
+**/compile_fpnew
+**/simv_fpnew
+**/simv_fpnew.daidir/
 ucli.key
 work.lib++/
 .vcs/
