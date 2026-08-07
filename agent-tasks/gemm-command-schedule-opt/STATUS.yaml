@@ -2,8 +2,8 @@ task: gemm-command-schedule-opt
 state: pass
 source: docs/future_optim/gemv/gemm_improve/command_schedule_opt.md
 spec: agent-tasks/gemm-command-schedule-opt/gemm-command-schedule-opt-spec.md
-updated: "2026-08-06 18:55"
-phase: "Complete: focused VCS and final WLOAD8 XRT-VCS pass"
+updated: "2026-08-06 19:41"
+phase: "Complete: DMA-union denominator implemented; VCS and XRT-VCS pass"
 iterations:
   - timestamp: "2026-08-06 16:01"
     iteration: 1
@@ -182,6 +182,71 @@ iterations:
         log: hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
         coverage: "Five LD/ST descriptors exercised single- and eight-channel current-cycle final completion bypass. Exactly five DMA done pulses and two store_done pulses were observed, with no repeated pulse. +EXPECT_NOTIFY_FATAL rejected opcode 3 at 75000ps with the exact removed/invalid DMA opcode assertion."
         markers: "TMEM_DMA_CURRENT_CYCLE_PASS for every descriptor and TMEM_DMA_EXACT_COMPLETION_PASS dma_done_pulses=5 store_done_pulses=2 notify_removed=1."
+  - timestamp: "2026-08-06 19:34"
+    iteration: 7
+    status: pass
+    report: |-
+      ### DMA+MXU Overlap Denominator — Iteration 7
+      - **Status**: pass
+      - **Error summary**: None. The configured VCS CSR unittest compiled and simulated successfully.
+      - **Root cause**: The old metric had no DMA-union-active denominator counter and divided overlap by GEMM total cycles.
+      - **Fix applied**: Added the DMA union-active counter and ACCEL_MXU B18/B98 mapping; runtime and analysis formulas now divide the unchanged overlap numerator by DMA union-active cycles.
+      - **Lesson**: The existing CSR unittest covers the new mapping's compile path but does not issue a directed B18 read; the requested XRT-VCS perf-class-3 run is the end-to-end counter/readout gate.
+    tests:
+      - name: csr_unit
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/csr_unit --sim vcs"
+        log: hw/unittest/csr_unit/logs/sim.log
+        compile_log: hw/unittest/csr_unit/logs/compile.log
+        coverage: "PERF_ENABLE compile path includes VX_csr_data.sv and the new ACCEL_MXU B18 mapping. No directed B18 functional-read marker exists in this testbench, so that coverage is not claimed."
+dma_mxu_overlap_followup:
+  spec: agent-tasks/gemm-command-schedule-opt/dma-mxu-overlap-metric-spec.md
+  implementation: "Added a per-core dma_union_active_cycles counter using the existing any_dma_busy union predicate, exposed it through accel_perf_t and ACCEL_MXU CSR B18/B98, summed it in runtime/stub/utils.cpp, and changed all runtime/analysis overlap percentages to overlap_dma_mxu / dma_union_active_cycles with zero guards. The numerator remains unchanged."
+  static_checks: "git diff --check PASS; runtime/stub/utils.cpp g++17 syntax-only PASS using the new generated-header macro value; cycle_util.py AST and cycle_analysis.ipynb JSON parsing PASS. A standalone CSR Verilator attempt was abandoned after environment-only missing FPU/interface inputs; no source error was reported and the verification request owns configured VCS compilation."
+  test_requests:
+    - test_type: unittest
+      test_path: hw/unittest/csr_unit
+      test_params: "PERF_ENABLE=1, ACCEL_MXU class"
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/VX_types.vh
+        - hw/rtl/VX_gpu_pkg.sv
+        - hw/rtl/core/VX_core.sv
+        - hw/rtl/core/VX_csr_data.sv
+        - runtime/stub/utils.cpp
+        - analysis_workspace/latency/cycle_util.py
+        - analysis_workspace/latency/README.md
+        - analysis_workspace/latency/cycle_analysis.ipynb
+      notes: "Regenerate VX_types.h through the configured build flow. Drive a known 64-bit accel_perf.dma_union_active_cycles value and prove ACCEL_MXU B18/B98 returns it without disturbing B11/B91 overlap. Exercise zero and nonzero denominator formatting/derivation."
+    - test_type: blackbox
+      test_path: fpint_gemm_ffn_hw
+      test_params: "WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1 PERF_CLASS=3"
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/VX_types.vh
+        - hw/rtl/VX_gpu_pkg.sv
+        - hw/rtl/core/VX_core.sv
+        - hw/rtl/core/VX_csr_data.sv
+        - runtime/stub/utils.cpp
+        - analysis_workspace/latency/cycle_util.py
+      notes: "Use run-bb-common/xrt-vcs-sim; implementation agent did not run blackbox. Verify dma_union_active_cycles equals the FSDB count of OR(cpu_dma.busy,hbm_dma.aggregate.busy,lmem input/weight/sz/output busy), concurrent engines count once, overlap numerator is unchanged, overlap<=dma_union_active, and printed raw/percentage values are overlap/dma_union_active with zero guard. Preserve numerical PASS and existing scheduler metrics."
+  verification:
+    status: pass
+    vcs_csr_unit: "PASS; configured PERF_ENABLE compile/simulation path includes ACCEL_MXU B18 mapping. Existing TB has no directed B18 read marker, so only compile-path coverage is claimed."
+    xrt_vcs_sim:
+      command: "source ../configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && PATH=/usr/bin:$PATH CC=/usr/bin/gcc CXX=/usr/bin/g++ timeout 1800 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 1\" --cores 1 --perf 3 --configs-extra \"-DDISABLE_FSDB\""
+      build: build_cmd_schedule
+      compile_log: build_cmd_schedule/sim/xrtsim_vcs/compile.log
+      simv_log: build_cmd_schedule/sim/xrtsim_vcs/simv.log
+      numerical: pass
+      total_cycles: 2237
+      busy_cycles: 8562
+      app_cycles: 8531
+      overlap_cycles: 1197
+      dma_union_active_cycles: 2176
+      overlap_pct_dma_active: "55.009%"
+      invariant: "1197 <= 2176; the simulation-only RTL assertion remained quiet."
+    stale_build_diagnosis: "The first run reused the 18:36 simv because simv's Makefile prerequisites omit library-searched RTL sources; it therefore read B18 as zero while the rebuilt runtime used the new formula. After a forced RTL rebuild, VCS explicitly recompiled VX_gpu_pkg/VX_core/VX_csr_data and the authoritative rerun produced 1197/2176 and PASS."
 phase6_provisional_baseline:
   status: "PASS before final completion-source and child-4-depth fixes; rerun required"
   configuration: "WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1"
@@ -189,7 +254,7 @@ phase6_provisional_baseline:
     total_cycles: "2554 vs prior 3131 (-577, -18.43%)"
     app_cycles: "8831 vs prior 9429 (-598, -6.34%)"
     busy_cycles: "8862 vs prior 9460"
-    overlap: "47.298% vs prior 33.791%"
+    overlap: "47.298% vs prior 33.791% (historical legacy denominator: GEMM total cycles)"
     fsdb_active_cycles: 2555
   functional:
     jobs_input_weight_output_writes: "256/256/256/32/256"
@@ -240,7 +305,7 @@ phase6_final:
     total_cycles: "2237 vs pre-optimization 3131 (-894, -28.55%); vs provisional 2554 (-317, -12.41%)"
     app_cycles: "8532 vs pre-optimization 9429 (-897, -9.51%); vs provisional 8831 (-299, -3.39%)"
     busy_cycles: "8563 vs pre-optimization 9460 (-897, -9.48%); vs provisional 8862 (-299, -3.37%)"
-    overlap: "53.509% vs pre-optimization 33.791% (+19.718 pp); vs provisional 47.298% (+6.211 pp)"
+    overlap: "53.509% vs pre-optimization 33.791% (+19.718 pp); vs provisional 47.298% (+6.211 pp). Historical legacy denominator: GEMM total cycles; superseded by dma_mxu_overlap_followup.verification.xrt_vcs_sim."
     repeat_observation: "A preceding PASS measured 2238/8531/8562 and 53.485%; the preserved final rerun differs by only one cycle and is authoritative for the values above."
     fsdb_active_cycles: 2244
   functional:
@@ -304,7 +369,7 @@ verification_request:
 history:
   - timestamp: "2026-08-06 18:55"
     action: "Completed the final WLOAD8 M=4 XRT-VCS functional, performance, FSDB latency, and exact HOL rerun."
-    result: "Both debug/FSDB and repeated perf-class-3 runs passed numerically. The preserved final total/app/busy cycles are 2237/8532/8563, overlap is 53.509%, psum_underflow and rd_wr_conflict are zero, all child push/issue/complete counts match, and exact reconstructed HOL is zero."
+    result: "Both debug/FSDB and repeated perf-class-3 runs passed numerically. The preserved final total/app/busy cycles are 2237/8532/8563; the historical 53.509% overlap used GEMM total cycles as denominator and is superseded by the DMA-union denominator follow-up. psum_underflow and rd_wr_conflict are zero, all child push/issue/complete counts match, and exact reconstructed HOL is zero."
     learned: "The child4 depth increase removed the only prior real HOL interval. Child2 still reports 1654 serialized full-block candidate cycles, but every cross-child successor already had a non-empty target queue, so increasing child2 depth is not justified by the document's exact HOL criterion."
   - timestamp: "2026-08-06 18:42"
     action: "Completed the exact architectural completion, dormant-notify removal, strict lifecycle, and trace-proven HOL RTL pass without changing verification infrastructure."
