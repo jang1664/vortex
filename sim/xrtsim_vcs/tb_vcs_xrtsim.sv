@@ -646,6 +646,14 @@ module tb_vcs_xrtsim #(
         if (cmd_type == CMD_SHUTDOWN) begin
           $display("[TB] Received SHUTDOWN command");
           socket_server_close();
+`ifdef FSDB_DUMP
+`ifndef DISABLE_FSDB
+          // A short simulation can finish before the periodic GEMM/DMA dump
+          // flush interval.  Flush explicitly so terminal dependency and
+          // quiescence state is available in the saved waveform.
+          $fsdbDumpflush;
+`endif
+`endif
           $finish;
         end
         begin
