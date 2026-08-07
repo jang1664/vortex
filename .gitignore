@@ -69,6 +69,9 @@ simv.vdb/
 **/compile_fpnew
 **/simv_fpnew
 **/simv_fpnew.daidir/
+# Waveform databases and their tool-generated sidecars are reproducible task
+# evidence; retain derived summaries rather than committing binary captures.
+/agent-tasks/**/*.fsdb*
 ucli.key
 work.lib++/
 .vcs/
