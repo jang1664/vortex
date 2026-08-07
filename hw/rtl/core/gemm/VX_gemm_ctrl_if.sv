@@ -20,11 +20,15 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   typedef struct packed {
     gemm_unified_cmd_t cmd;
     logic start;
+    logic cmd_valid;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] cmd_tag;
   } dma_ctrl_t;
 
   typedef struct packed {
     logic idle;
     logic done;
+    logic cmd_ready;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] done_tag;
   } dma_flag_t;
 
   // LMEM DMA controls and flags

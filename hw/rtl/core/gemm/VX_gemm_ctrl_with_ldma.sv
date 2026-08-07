@@ -146,7 +146,9 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign output_dma_ctrl_if.reg_value = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
   
   assign gemm_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
+  assign gemm_dma_ctrl_if.cmd_valid = gemm_ctrl_if.dma_ctrl.cmd_valid;
   assign gemm_dma_ctrl_if.cmd   = gemm_ctrl_if.dma_ctrl.cmd;
+  assign gemm_dma_ctrl_if.cmd_tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
   assign gemm_dma_ctrl_if.M_tot = gemm_ctrl_if.M_tot;
   assign gemm_dma_ctrl_if.N_tot = gemm_ctrl_if.N_tot;
   assign gemm_dma_ctrl_if.K_tot = gemm_ctrl_if.K_tot;
@@ -155,6 +157,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
 
   assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
   assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
+  assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_ctrl_if.cmd_ready;
+  assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
   
   VX_gemm_ctrl #(
     .INSTANCE_ID({INSTANCE_ID, "_gemm_ctrl"})

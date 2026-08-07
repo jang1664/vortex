@@ -59,6 +59,8 @@ module tb_VX_gemm_ctrl;
   logic [N_CHILDREN-1:0] directed_done;
   logic directed_start;
   gemm_unified_cmd_t directed_cmd;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] directed_dma_done_tag;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] natural_dma_done_tag;
   int unsigned total_cfg_accept_count;
   int unsigned total_done_handshake_count;
   logic [31:0] done_entry_ids [0:15];
@@ -134,6 +136,7 @@ module tb_VX_gemm_ctrl;
       directed_done = '0;
       directed_start = 1'b0;
       directed_cmd = '0;
+      directed_dma_done_tag = '0;
 
       cfg_reg_if.valid      = 1'b0;
       cfg_reg_if.regs       = '0;
@@ -399,6 +402,7 @@ module tb_VX_gemm_ctrl;
   // Child streams: print + start busy tracking, then countdown and issue evt_req on NOTIFY completion
   always_ff @(posedge clk) begin
     if (reset) begin
+      natural_dma_done_tag <= '0;
       for (int i = 0; i < N_CHILDREN; i++) begin
         nb[i].busy           <= 1'b0;
         nb[i].cnt            <= 0;
@@ -443,9 +447,13 @@ module tb_VX_gemm_ctrl;
         else $display("[%0t] ERROR: CH3 start while busy!", $time);
       end
 
-      if (gemm_ctrl_if.dma_ctrl.start) begin
+      if (gemm_ctrl_if.dma_ctrl.cmd_valid
+       && gemm_ctrl_if.dma_flag.cmd_ready) begin
         print_cmd("CH4_DMA", gemm_ctrl_if.dma_ctrl.cmd);
-        if (!nb[4].busy) start_node_busy(4, gemm_ctrl_if.dma_ctrl.cmd);
+        if (!nb[4].busy) begin
+          start_node_busy(4, gemm_ctrl_if.dma_ctrl.cmd);
+          natural_dma_done_tag <= gemm_ctrl_if.dma_ctrl.cmd_tag;
+        end
         else $display("[%0t] ERROR: CH4 start while busy!", $time);
       end
 
@@ -522,6 +530,8 @@ module tb_VX_gemm_ctrl;
       gemm_ctrl_if.quant_param_read_flag.done = directed_done[2];
       gemm_ctrl_if.output_write_flag.done     = directed_done[3];
       gemm_ctrl_if.dma_flag.done              = directed_done[4];
+      gemm_ctrl_if.dma_flag.cmd_ready         = directed_idle[4];
+      gemm_ctrl_if.dma_flag.done_tag          = directed_dma_done_tag;
     end else begin
       gemm_ctrl_if.input_read_flag.idle       = ~nb[0].busy;
       gemm_ctrl_if.weight_read_flag.idle      = ~nb[1].busy;
@@ -538,6 +548,8 @@ module tb_VX_gemm_ctrl;
           = nb[3].busy && (nb[3].cnt == 0);
       gemm_ctrl_if.dma_flag.done
           = nb[4].busy && (nb[4].cnt == 0);
+      gemm_ctrl_if.dma_flag.cmd_ready = ~nb[4].busy;
+      gemm_ctrl_if.dma_flag.done_tag = natural_dma_done_tag;
     end
   end
 
@@ -831,6 +843,12 @@ module tb_VX_gemm_ctrl;
   task automatic directed_complete(input int child);
     begin
       @(negedge clk);
+      if (child == 4) begin
+        for (int slot = 0; slot < 8; ++slot) begin
+          if (dut.dma_inflight_valid_q[slot])
+            directed_dma_done_tag = GEMM_DMA_TAG_WIDTH'(slot);
+        end
+      end
       directed_done[child] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[child])
@@ -839,6 +857,141 @@ module tb_VX_gemm_ctrl;
       #1;
       directed_done[child] = 1'b0;
       #1;
+    end
+  endtask
+
+  task automatic directed_dma_complete_tag(
+    input logic [GEMM_DMA_TAG_WIDTH-1:0] tag
+  );
+    begin
+      @(negedge clk);
+      directed_dma_done_tag = tag;
+      directed_done[4] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[4])
+        $fatal(1, "DMA_TAGGED completion tag %0d was not accepted", tag);
+      @(posedge clk);
+      #1;
+      directed_done[4] = 1'b0;
+    end
+  endtask
+
+  task automatic run_dma_tagged_scoreboard;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] held_tag;
+    int completion_order [0:6];
+    begin
+      completion_order[0] = 2;
+      completion_order[1] = 5;
+      completion_order[2] = 0;
+      completion_order[3] = 6;
+      completion_order[4] = 1;
+      completion_order[5] = 4;
+      completion_order[6] = 3;
+
+      // Reserve an issue tag while the executor applies backpressure.  Both
+      // the command and its sideband tag must remain stable until acceptance.
+      directed_idle[4] = 1'b0;
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'd10, 1'b1, 32'd77);
+      directed_inject(c, 4);
+      #1;
+      if (!gemm_ctrl_if.dma_ctrl.cmd_valid)
+        $fatal(1, "DMA_TAGGED backpressured command was not presented");
+      held_cmd = gemm_ctrl_if.dma_ctrl.cmd;
+      held_tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
+      repeat (3) begin
+        @(posedge clk);
+        #1;
+        if (!gemm_ctrl_if.dma_ctrl.cmd_valid
+         || gemm_ctrl_if.dma_ctrl.cmd !== held_cmd
+         || gemm_ctrl_if.dma_ctrl.cmd_tag !== held_tag
+         || dut.child_issue_fire_v[4])
+          $fatal(1, "DMA_TAGGED cmd/tag changed under backpressure");
+      end
+      @(negedge clk);
+      directed_idle[4] = 1'b1;
+      #1;
+      if (!dut.child_issue_fire_v[4])
+        $fatal(1, "DMA_TAGGED retained command did not handshake");
+      @(posedge clk);
+      #1;
+      if (!dut.dma_inflight_valid_q[held_tag])
+        $fatal(1, "DMA_TAGGED retained tag was not allocated");
+      directed_dma_complete_tag(held_tag);
+      if (dut.sync_regs_q[10] !== 32'd77)
+        $fatal(1, "DMA_TAGGED retained metadata mapped to wrong RID");
+
+      // Fill all eight slots with distinct SET notifications and prove that
+      // their direct tag identity permits out-of-order retirement.
+      for (int slot = 0; slot < 8; ++slot) begin
+        c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'(slot),
+                              1'b1, 32'(100 + slot));
+        directed_inject(c, 4);
+        if (!gemm_ctrl_if.dma_ctrl.cmd_valid
+         || gemm_ctrl_if.dma_ctrl.cmd_tag !== GEMM_DMA_TAG_WIDTH'(slot))
+          $fatal(1, "DMA_TAGGED allocation mismatch slot=%0d tag=%0d",
+                 slot, gemm_ctrl_if.dma_ctrl.cmd_tag);
+        directed_accept_issue(4);
+      end
+      if (!dut.child_inflight_full_v[4]
+       || dut.dma_inflight_valid_q !== 8'hff)
+        $fatal(1, "DMA_TAGGED scoreboard did not become full");
+
+      // Queue a ninth command.  A completion in this cycle must not allow
+      // same-cycle allocation; the released tag becomes usable next cycle.
+      c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd8, 1'b1, 32'd208);
+      directed_inject(c, 4);
+      if (gemm_ctrl_if.dma_ctrl.cmd_valid || dut.child_issue_fire_v[4])
+        $fatal(1, "DMA_TAGGED ninth command escaped full scoreboard");
+      @(negedge clk);
+      directed_dma_done_tag = 3'd7;
+      directed_done[4] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[4]
+       || gemm_ctrl_if.dma_ctrl.cmd_valid
+       || dut.child_issue_fire_v[4])
+        $fatal(1, "DMA_TAGGED same-cycle released slot was reused");
+      @(posedge clk);
+      #1;
+      directed_done[4] = 1'b0;
+      if (dut.sync_regs_q[7] !== 32'd107)
+        $fatal(1, "DMA_TAGGED boundary completion mapped wrong RID");
+      if (!gemm_ctrl_if.dma_ctrl.cmd_valid
+       || gemm_ctrl_if.dma_ctrl.cmd_tag !== 3'd7)
+        $fatal(1, "DMA_TAGGED released slot unavailable next cycle");
+      @(posedge clk);
+      #1;
+      if (!dut.dma_inflight_valid_q[7]
+       || dut.dma_inflight_meta_q[7].reg_id !== 4'd8)
+        $fatal(1, "DMA_TAGGED released slot did not capture ninth metadata");
+
+      for (int n = 0; n < 7; ++n) begin
+        int tag;
+        tag = completion_order[n];
+        directed_dma_complete_tag(GEMM_DMA_TAG_WIDTH'(tag));
+        if (dut.sync_regs_q[tag] !== 32'(100 + tag))
+          $fatal(1, "DMA_TAGGED OOO completion tag=%0d mapped wrong notify",
+                 tag);
+      end
+      directed_dma_complete_tag(3'd7);
+      if (dut.sync_regs_q[8] !== 32'd208
+       || dut.dma_inflight_valid_q !== '0
+       || !dut.child_inflight_empty_v[4])
+        $fatal(1, "DMA_TAGGED final drain or reused-tag metadata mismatch");
+      $display("DMA_TAGGED_SCOREBOARD_PASS tags=8 stable_backpressure=1 ooo=1 full_boundary=1 no_same_cycle_reuse=1 reused_tag=7");
+
+      // Leave the legacy dependency suite with its original all-zero
+      // scoreboard precondition.
+      for (int rid = 0; rid < 11; ++rid) begin
+        logic [GEMM_DMA_TAG_WIDTH-1:0] tag;
+        c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'(rid),
+                              1'b1, 32'd0);
+        directed_inject(c, 4);
+        tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
+        directed_accept_issue(4);
+        directed_dma_complete_tag(tag);
+      end
     end
   endtask
 
@@ -989,7 +1142,7 @@ module tb_VX_gemm_ctrl;
           || dut.child_issue_fire_v[1]
           || dut.child_q_pop_v[1])
         $fatal(1, "SCHED_DIRECTED second command escaped max-one-active gate");
-      if (dut.g_child_scheduler[1].u_child_inflight_queue.DEPTH != 2)
+      if (dut.g_child_scheduler[1].g_inorder_child.u_child_inflight_queue.DEPTH != 2)
         $fatal(1, "SCHED_DIRECTED physical inflight FIFO depth changed from two");
       @(negedge clk);
       directed_done[1] = 1'b1;

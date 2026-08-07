@@ -11,6 +11,7 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+TB_DMA_STORE_MAX_CHUNK_BEATS ?=
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_fsm
@@ -42,7 +43,14 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS := 
+PARAMS :=
+ifneq ($(strip $(TB_DMA_STORE_MAX_CHUNK_BEATS)),)
+ifeq ($(SIM_EXEC),vcs)
+PARAMS += -pvalue+$(TOP_MODULE).TB_DMA_STORE_MAX_CHUNK_BEATS=$(TB_DMA_STORE_MAX_CHUNK_BEATS)
+else
+PARAMS += -GTB_DMA_STORE_MAX_CHUNK_BEATS=$(TB_DMA_STORE_MAX_CHUNK_BEATS)
+endif
+endif
 
 setup:
 	mkdir -p logs reports

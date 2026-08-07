@@ -1366,6 +1366,13 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
 `define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
 
+// Maximum chunk size for chunkable GEMM output stores, in beats per HBM
+// channel.  Blackbox builds override this through CONFIGS, for example:
+//   -DGEMM_DMA_STORE_MAX_CHUNK_BEATS=16
+`ifndef GEMM_DMA_STORE_MAX_CHUNK_BEATS
+`define GEMM_DMA_STORE_MAX_CHUNK_BEATS 8
+`endif
+
 `ifdef GEMM_NAIVE
 // Naive controller compile-time tile dimensions.
 `define GEMM_FSM_MT 128

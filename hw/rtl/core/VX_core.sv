@@ -20,7 +20,9 @@
 module VX_core import VX_gpu_pkg::*; #(
     parameter CORE_ID = 0,
     parameter `STRING INSTANCE_ID = "",
-    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS
+    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS,
+    parameter int DMA_STORE_MAX_CHUNK_BEATS =
+        `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     `SCOPE_IO_DECL
 
@@ -442,7 +444,8 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
         .N_MASTER (`NUM_LSU_BLOCKS),
-        .NUM_TMEM_BANKS (NUM_TMEM_BANKS)
+        .NUM_TMEM_BANKS (NUM_TMEM_BANKS),
+        .DMA_STORE_MAX_CHUNK_BEATS (DMA_STORE_MAX_CHUNK_BEATS)
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),

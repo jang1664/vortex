@@ -14,6 +14,7 @@ EXTRA_SIM_ARGS ?=
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_tmem_dma_ctrl_misalign
+TB_PENDING_DEPTH ?= 4
 
 TB   := $(SRC_DIR)/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
@@ -38,7 +39,11 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS :=
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).TB_PENDING_DEPTH=$(TB_PENDING_DEPTH)
+else
+PARAMS := -GTB_PENDING_DEPTH=$(TB_PENDING_DEPTH)
+endif
 
 setup:
 	mkdir -p logs reports

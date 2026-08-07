@@ -5,7 +5,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     parameter int N_CHILDREN = 5,
     parameter int N_NODE     = 5,
     parameter int CHILD_QUEUE_DEPTH = 4,
-    parameter int DMA_CHILD_QUEUE_DEPTH = 8
+    parameter int DMA_CHILD_QUEUE_DEPTH = 8,
+    parameter int DMA_STORE_MAX_CHUNK_BEATS =
+        `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     input  wire                   clk,
     input  wire                   reset,
@@ -26,6 +28,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     localparam int NUM_SYNC_REGS = 11;
     localparam int RID_O = 4;
+    localparam int DMA_CHILD_INDEX = 4;
+    localparam int DMA_INFLIGHT_DEPTH = 1 << GEMM_DMA_TAG_WIDTH;
     localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
     localparam int INFLIGHT_DATAW = $bits(gemm_notify_meta_t);
 
@@ -46,6 +50,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0] child_completion_pop_v;
     gemm_unified_cmd_t child_q_cmd[N_CHILDREN];
     gemm_notify_meta_t child_inflight_head[N_CHILDREN];
+
+    logic [DMA_INFLIGHT_DEPTH-1:0] dma_inflight_valid_q;
+    gemm_notify_meta_t dma_inflight_meta_q[DMA_INFLIGHT_DEPTH];
+    logic dma_issue_tag_reserved_q;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] dma_issue_tag_q;
+    logic dma_free_tag_valid;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] dma_free_tag;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] dma_issue_tag;
 
     logic [31:0] sync_regs_q[NUM_SYNC_REGS];
     logic [31:0] effective_sync[NUM_SYNC_REGS];
@@ -68,6 +80,20 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                             && scheduler_quiescent;
     wire done_fire = done_if.valid && done_if.ready;
 
+    always_comb begin
+      dma_free_tag_valid = 1'b0;
+      dma_free_tag = '0;
+      for (int slot = 0; slot < DMA_INFLIGHT_DEPTH; ++slot) begin
+        if (!dma_free_tag_valid && !dma_inflight_valid_q[slot]) begin
+          dma_free_tag_valid = 1'b1;
+          dma_free_tag = GEMM_DMA_TAG_WIDTH'(slot);
+        end
+      end
+    end
+
+    assign dma_issue_tag = dma_issue_tag_reserved_q
+                         ? dma_issue_tag_q : dma_free_tag;
+
     // VX_gemm_fsm applies its own fsm_idle term to cfg_reg_if.ready, yielding
     // exactly: new_invocation_ready = fsm_idle && scheduler_quiescent.
     assign gemm_fsm_if.flag.done = scheduler_quiescent;
@@ -75,7 +101,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_fsm_if.flag.child_ready = ~child_q_full_v;
 
     VX_gemm_fsm #(
-      .INSTANCE_ID (INSTANCE_ID)
+      .INSTANCE_ID (INSTANCE_ID),
+      .DMA_STORE_MAX_CHUNK_BEATS (DMA_STORE_MAX_CHUNK_BEATS)
     ) u_VX_gemm_fsm (
       .clk          (clk),
       .reset        (reset),
@@ -147,21 +174,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         wire [CHILD_QUEUE_DATAW-1:0] child_q_dout;
         wire [INFLIGHT_DATAW-1:0] inflight_dout;
         localparam int THIS_CHILD_QUEUE_DEPTH
-            = (i == 4) ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
+            = (i == DMA_CHILD_INDEX) ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
         logic deps_ready;
 
         assign child_q_cmd[i] = child_q_dout;
-        assign child_inflight_head[i] = inflight_dout;
-        assign child_completion_pop_v[i]
-            = gemm_cqueue_out[i].flag.done
-           && !child_inflight_empty_v[i];
-        assign child_inflight_can_accept_v[i]
-            = !child_inflight_full_v[i] || child_completion_pop_v[i];
-        // Current executors accept at most one active command.  Keep the
-        // 2-entry metadata FIFO as the in-order completion boundary, while
-        // permitting only empty->push or same-cycle oldest pop/new push today.
-        assign child_single_active_ready_v[i]
-            = child_inflight_empty_v[i] || child_completion_pop_v[i];
 
         always_comb begin
           deps_ready = 1'b1;
@@ -180,13 +196,6 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         assign child_dependency_eligible_v[i]
             = !child_q_empty_v[i] && deps_ready;
         assign gemm_cqueue_out[i].ctrl.cmd = child_q_cmd[i];
-        assign gemm_cqueue_out[i].ctrl.start
-            = child_dependency_eligible_v[i]
-           && child_inflight_can_accept_v[i]
-           && child_single_active_ready_v[i]
-           && gemm_cqueue_out[i].flag.idle;
-        assign child_issue_fire_v[i] = gemm_cqueue_out[i].ctrl.start;
-        assign child_q_pop_v[i] = child_issue_fire_v[i];
 
         VX_fifo_queue #(
           .DATAW (CHILD_QUEUE_DATAW),
@@ -205,22 +214,65 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           .size      ()
         );
 
-        VX_fifo_queue #(
-          .DATAW (INFLIGHT_DATAW),
-          .DEPTH (2)
-        ) u_child_inflight_queue (
-          .clk       (clk),
-          .reset     (reset),
-          .push      (child_issue_fire_v[i]),
-          .pop       (child_completion_pop_v[i]),
-          .data_in   (child_q_cmd[i].notify),
-          .data_out  (inflight_dout),
-          .empty     (child_inflight_empty_v[i]),
-          .full      (child_inflight_full_v[i]),
-          .alm_empty (),
-          .alm_full  (),
-          .size      ()
-        );
+        if (i == DMA_CHILD_INDEX) begin : g_dma_child
+          assign inflight_dout = '0;
+          assign child_inflight_head[i]
+              = dma_inflight_meta_q[gemm_ctrl_if.dma_flag.done_tag];
+          assign child_completion_pop_v[i]
+              = gemm_cqueue_out[i].flag.done
+             && dma_inflight_valid_q[gemm_ctrl_if.dma_flag.done_tag];
+          assign child_inflight_empty_v[i] = !(|dma_inflight_valid_q);
+          assign child_inflight_full_v[i] = &dma_inflight_valid_q;
+          // A slot released by completion remains unavailable until the next
+          // cycle.  The allocator therefore considers only registered valid
+          // bits and never folds the current completion into can_accept.
+          assign child_inflight_can_accept_v[i]
+              = !child_inflight_full_v[i];
+          assign child_single_active_ready_v[i] = 1'b1;
+          assign gemm_cqueue_out[i].ctrl.start
+              = child_single_active_ready_v[i]
+             && (dma_issue_tag_reserved_q
+              || (child_dependency_eligible_v[i] && dma_free_tag_valid));
+          assign child_issue_fire_v[i]
+              = gemm_cqueue_out[i].ctrl.start
+             && gemm_ctrl_if.dma_flag.cmd_ready;
+          assign child_q_pop_v[i] = child_issue_fire_v[i];
+        end else begin : g_inorder_child
+          assign child_inflight_head[i] = inflight_dout;
+          assign child_completion_pop_v[i]
+              = gemm_cqueue_out[i].flag.done
+             && !child_inflight_empty_v[i];
+          assign child_inflight_can_accept_v[i]
+              = !child_inflight_full_v[i] || child_completion_pop_v[i];
+          // Non-DMA executors retain their single-active, in-order completion
+          // contract and two-entry metadata FIFO.
+          assign child_single_active_ready_v[i]
+              = child_inflight_empty_v[i] || child_completion_pop_v[i];
+          assign gemm_cqueue_out[i].ctrl.start
+              = child_dependency_eligible_v[i]
+             && child_inflight_can_accept_v[i]
+             && child_single_active_ready_v[i]
+             && gemm_cqueue_out[i].flag.idle;
+          assign child_issue_fire_v[i] = gemm_cqueue_out[i].ctrl.start;
+          assign child_q_pop_v[i] = child_issue_fire_v[i];
+
+          VX_fifo_queue #(
+            .DATAW (INFLIGHT_DATAW),
+            .DEPTH (2)
+          ) u_child_inflight_queue (
+            .clk       (clk),
+            .reset     (reset),
+            .push      (child_issue_fire_v[i]),
+            .pop       (child_completion_pop_v[i]),
+            .data_in   (child_q_cmd[i].notify),
+            .data_out  (inflight_dout),
+            .empty     (child_inflight_empty_v[i]),
+            .full      (child_inflight_full_v[i]),
+            .alm_empty (),
+            .alm_full  (),
+            .size      ()
+          );
+        end
 
 `ifndef SYNTHESIS
         logic [31:0] dbg_child_empty_cycles_q;
@@ -265,35 +317,84 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
         always_ff @(posedge clk) begin
           if (!reset) begin
-            assert (!(gemm_cqueue_out[i].flag.done
-                   && child_inflight_empty_v[i]))
-              else $fatal(1, "%s: stray completion from child %0d",
-                          INSTANCE_ID, i);
-            assert (!(child_issue_fire_v[i]
-                   && child_inflight_full_v[i]
-                   && !child_completion_pop_v[i]))
-              else $fatal(1, "%s: inflight overflow for child %0d",
-                          INSTANCE_ID, i);
-            assert (!(!child_deps_ready_v[i]
-                   && gemm_cqueue_out[i].ctrl.start))
-              else $fatal(1, "%s: unresolved child %0d dependency issued",
-                          INSTANCE_ID, i);
-            assert (child_q_pop_v[i] == child_issue_fire_v[i])
-              else $fatal(1, "%s: child %0d pop/start mismatch",
-                          INSTANCE_ID, i);
-            assert (!(child_issue_fire_v[i]
-                   && !child_inflight_empty_v[i]
-                   && !child_completion_pop_v[i]))
-              else $fatal(1, "%s: child %0d accepted multiple active commands",
-                          INSTANCE_ID, i);
+            if (i == DMA_CHILD_INDEX) begin
+              assert (!(gemm_cqueue_out[i].flag.done
+                     && !dma_inflight_valid_q[
+                          gemm_ctrl_if.dma_flag.done_tag]))
+                else $fatal(1, "%s: stray DMA completion tag %0d",
+                            INSTANCE_ID, gemm_ctrl_if.dma_flag.done_tag);
+              assert (!(child_issue_fire_v[i]
+                     && child_inflight_full_v[i]))
+                else $fatal(1, "%s: DMA inflight scoreboard overflow",
+                            INSTANCE_ID);
+              assert (!(!child_deps_ready_v[i]
+                     && gemm_cqueue_out[i].ctrl.start
+                     && !dma_issue_tag_reserved_q))
+                else $fatal(1, "%s: unresolved DMA dependency issued",
+                            INSTANCE_ID);
+              assert (child_q_pop_v[i] == child_issue_fire_v[i])
+                else $fatal(1, "%s: DMA child pop/handshake mismatch",
+                            INSTANCE_ID);
+            end else begin
+              assert (!(gemm_cqueue_out[i].flag.done
+                     && child_inflight_empty_v[i]))
+                else $fatal(1, "%s: stray completion from child %0d",
+                            INSTANCE_ID, i);
+              assert (!(child_issue_fire_v[i]
+                     && child_inflight_full_v[i]
+                     && !child_completion_pop_v[i]))
+                else $fatal(1, "%s: inflight overflow for child %0d",
+                            INSTANCE_ID, i);
+              assert (!(!child_deps_ready_v[i]
+                     && gemm_cqueue_out[i].ctrl.start))
+                else $fatal(1, "%s: unresolved child %0d dependency issued",
+                            INSTANCE_ID, i);
+              assert (child_q_pop_v[i] == child_issue_fire_v[i])
+                else $fatal(1, "%s: child %0d pop/start mismatch",
+                            INSTANCE_ID, i);
+              assert (!(child_issue_fire_v[i]
+                     && !child_inflight_empty_v[i]
+                     && !child_completion_pop_v[i]))
+                else $fatal(1, "%s: child %0d accepted multiple active commands",
+                            INSTANCE_ID, i);
+            end
           end
         end
 `endif
       end
     endgenerate
 
-    // Child-to-executor mapping. Executor done signals are architectural
-    // completion events and retire the oldest metadata entry for that child.
+    always_ff @(posedge clk) begin
+      if (reset || cfg_fire) begin
+        dma_inflight_valid_q <= '0;
+        dma_issue_tag_reserved_q <= 1'b0;
+        dma_issue_tag_q <= '0;
+        for (int slot = 0; slot < DMA_INFLIGHT_DEPTH; ++slot)
+          dma_inflight_meta_q[slot] <= '0;
+      end else begin
+        if (child_completion_pop_v[DMA_CHILD_INDEX]) begin
+          dma_inflight_valid_q[gemm_ctrl_if.dma_flag.done_tag] <= 1'b0;
+        end
+
+        if (child_issue_fire_v[DMA_CHILD_INDEX]) begin
+          dma_inflight_valid_q[dma_issue_tag] <= 1'b1;
+          dma_inflight_meta_q[dma_issue_tag]
+              <= child_q_cmd[DMA_CHILD_INDEX].notify;
+        end
+
+        if (child_issue_fire_v[DMA_CHILD_INDEX]) begin
+          dma_issue_tag_reserved_q <= 1'b0;
+        end else if (gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.start
+                  && !gemm_ctrl_if.dma_flag.cmd_ready
+                  && !dma_issue_tag_reserved_q) begin
+          dma_issue_tag_reserved_q <= 1'b1;
+          dma_issue_tag_q <= dma_free_tag;
+        end
+      end
+    end
+
+    // Child-to-executor mapping. Non-DMA children retire in order; the DMA
+    // child returns a tag that selects its completion metadata slot.
     assign gemm_ctrl_if.input_read_ctrl.cmd = gemm_cqueue_out[0].ctrl.cmd;
     assign gemm_ctrl_if.input_read_ctrl.start = gemm_cqueue_out[0].ctrl.start;
     assign gemm_cqueue_out[0].flag.idle = gemm_ctrl_if.input_read_flag.idle;
@@ -314,10 +415,16 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_cqueue_out[3].flag.idle = gemm_ctrl_if.output_write_flag.idle;
     assign gemm_cqueue_out[3].flag.done = gemm_ctrl_if.output_write_flag.done;
 
-    assign gemm_ctrl_if.dma_ctrl.cmd = gemm_cqueue_out[4].ctrl.cmd;
-    assign gemm_ctrl_if.dma_ctrl.start = gemm_cqueue_out[4].ctrl.start;
-    assign gemm_cqueue_out[4].flag.idle = gemm_ctrl_if.dma_flag.idle;
-    assign gemm_cqueue_out[4].flag.done = gemm_ctrl_if.dma_flag.done;
+    assign gemm_ctrl_if.dma_ctrl.cmd = gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.cmd;
+    assign gemm_ctrl_if.dma_ctrl.start
+        = gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.start;
+    assign gemm_ctrl_if.dma_ctrl.cmd_valid
+        = gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.start;
+    assign gemm_ctrl_if.dma_ctrl.cmd_tag = dma_issue_tag;
+    assign gemm_cqueue_out[DMA_CHILD_INDEX].flag.idle
+        = gemm_ctrl_if.dma_flag.cmd_ready;
+    assign gemm_cqueue_out[DMA_CHILD_INDEX].flag.done
+        = gemm_ctrl_if.dma_flag.done;
 
     for (genvar n = 0; n < N_NODE; ++n) begin : g_unused_legacy_sync
       assign gemm_sync_slv_if[n].ready = 1'b1;
@@ -432,7 +539,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       ("VX_gemm_ctrl command schedule requires five completion sources"));
     `VX_STATIC_ASSERT(CHILD_QUEUE_DEPTH >= 2,
       ("VX_gemm_ctrl child queue depth must be at least two"));
-    `VX_STATIC_ASSERT(DMA_CHILD_QUEUE_DEPTH >= CHILD_QUEUE_DEPTH,
-      ("VX_gemm_ctrl DMA child queue must not be shallower than peers"));
+    `VX_STATIC_ASSERT(DMA_CHILD_QUEUE_DEPTH == DMA_INFLIGHT_DEPTH,
+      ("VX_gemm_ctrl DMA child queue and tag scoreboard must both have eight entries"));
 
 endmodule

@@ -1,7 +1,9 @@
 `include "VX_define.vh"
 
 module VX_gemm_fsm import VX_gpu_pkg::*; #(
-    parameter `STRING INSTANCE_ID = ""
+  parameter `STRING INSTANCE_ID = "",
+  parameter int DMA_STORE_MAX_CHUNK_BEATS =
+      `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     input  wire              clk,
     input  wire              reset,
@@ -324,6 +326,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   localparam logic [3:0] OP_DMA_LD        = 4'd1;
   localparam logic [3:0] OP_DMA_ST        = 4'd2;
+  localparam logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
+      DMA_STORE_MAX_CHUNK_LOG2P1
+          = GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH'(
+              $clog2(DMA_STORE_MAX_CHUNK_BEATS) + 1);
   localparam logic [3:0] OP_W_LDMA_MXU    = 4'd5;
   localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
   localparam logic [3:0] OP_SC_LDMA_MXU   = OP_SZ_LDMA_MXU;
@@ -417,6 +423,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.rs2_data = dram_src;
       c.bound    = 16'd1;
       c.stride   = '0;
+      c.dma_priority = 1'b1;
+      c.dma_max_chunk_log2p1 = '0;
       return c;
     end
   endfunction
@@ -439,6 +447,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.rs2_data = lmem_src;
       c.bound    = 16'd1;
       c.stride   = '0;
+      c.dma_priority = 1'b0;
+      c.dma_max_chunk_log2p1 = DMA_STORE_MAX_CHUNK_LOG2P1;
       return c;
     end
   endfunction
@@ -2577,5 +2587,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   end
 `endif
 `endif
+
+  `VX_STATIC_ASSERT(DMA_STORE_MAX_CHUNK_BEATS > 0,
+    ("DMA store chunk size must be positive"));
+  `VX_STATIC_ASSERT(`IS_POW2(DMA_STORE_MAX_CHUNK_BEATS),
+    ("DMA store chunk size must be a power of two"));
 
 endmodule

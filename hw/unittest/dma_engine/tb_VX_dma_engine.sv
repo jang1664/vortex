@@ -113,6 +113,39 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   logic [AXI_ADDR_W-1:0]       axi_aw_log_addr  [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
   logic [7:0]                  axi_aw_log_len   [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
 
+  bit protocol_stall_enable = 1'b0;
+  longint unsigned protocol_cycle = 0;
+  longint unsigned axi_ar_stalls [NUM_CHANNELS];
+  longint unsigned axi_r_throttles [NUM_CHANNELS];
+  longint unsigned axi_aw_stalls [NUM_CHANNELS];
+  longint unsigned axi_w_stalls [NUM_CHANNELS];
+  longint unsigned axi_b_throttles [NUM_CHANNELS];
+  longint unsigned tmem_req_stalls [NUM_CHANNELS];
+  longint unsigned tmem_rsp_throttles [NUM_CHANNELS];
+  integer axi_rd_outstanding [NUM_CHANNELS];
+  integer axi_wr_outstanding [NUM_CHANNELS];
+  integer tmem_rd_outstanding [NUM_CHANNELS];
+
+  function automatic logic protocol_open(
+    input int unsigned period,
+    input int unsigned closed_cycles,
+    input int unsigned phase,
+    input int unsigned channel
+  );
+    int unsigned slot;
+    begin
+      slot = int'((protocol_cycle + phase + channel) % period);
+      return slot >= closed_cycles;
+    end
+  endfunction
+
+  always @(posedge clk) begin
+    if (reset)
+      protocol_cycle <= 0;
+    else
+      protocol_cycle <= protocol_cycle + 1;
+  end
+
   function automatic longint unsigned remap_hbm_addr(input longint unsigned m_address);
     longint unsigned block_idx;
     longint unsigned byte_offset;
@@ -175,10 +208,19 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     logic                   wr_active_q;
     logic [AXI_ADDR_W-1:0] wr_addr_q;
     logic [AXI_ID_W-1:0]   wr_id_q;
+    logic                  b_pending_q;
+    logic [AXI_ID_W-1:0]   b_id_q;
 
-    assign axi_m[ch].aw_ready = 1'b1;
-    assign axi_m[ch].w_ready  = 1'b1;
-    assign axi_m[ch].ar_ready = 1'b1;
+    assign axi_m[ch].aw_ready = (!protocol_stall_enable
+                              || ((axi_aw_stalls[ch] >= 3)
+                               && protocol_open(7, 3, 1, ch)))
+                              && !b_pending_q && !axi_m[ch].b_valid;
+    assign axi_m[ch].w_ready  = !protocol_stall_enable
+                              || ((axi_w_stalls[ch] >= 3)
+                               && protocol_open(11, 4, 3, ch));
+    assign axi_m[ch].ar_ready = !protocol_stall_enable
+                              || ((axi_ar_stalls[ch] >= 3)
+                               && protocol_open(5, 2, 0, ch));
 
     always @(posedge clk) begin
       if (reset) begin
@@ -202,8 +244,17 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         wr_active_q       <= 1'b0;
         wr_addr_q         <= '0;
         wr_id_q           <= '0;
+        b_pending_q       <= 1'b0;
+        b_id_q            <= '0;
         axi_ar_log_count[ch]  <= '0;
         axi_aw_log_count[ch]  <= '0;
+        axi_ar_stalls[ch]     <= 0;
+        axi_r_throttles[ch]   <= 0;
+        axi_aw_stalls[ch]     <= 0;
+        axi_w_stalls[ch]      <= 0;
+        axi_b_throttles[ch]   <= 0;
+        axi_rd_outstanding[ch] <= 0;
+        axi_wr_outstanding[ch] <= 0;
       end else begin
         logic [AXI_RDQ_AW-1:0] read_head_n;
         logic [AXI_RDQ_AW-1:0] read_tail_n;
@@ -218,7 +269,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           axi_m[ch].r_valid <= 1'b0;
         end
 
-        if (!axi_m[ch].r_valid) begin
+        if (!axi_m[ch].r_valid
+            && (!protocol_stall_enable
+             || ((axi_r_throttles[ch] >= 3)
+              && protocol_open(13, 5, 2, ch)))) begin
           if (active_read_q) begin
             base = active_addr_q;
 
@@ -266,6 +320,11 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
             read_count_n = read_count_q - 1'b1;
           end
         end
+        if (protocol_stall_enable && !axi_m[ch].r_valid
+            && (active_read_q || (read_count_q != 0))
+            && ((axi_r_throttles[ch] < 3)
+             || !protocol_open(13, 5, 2, ch)))
+          axi_r_throttles[ch] <= axi_r_throttles[ch] + 1;
 
         if (ar_fire) begin
           if (read_count_n >= AXI_RDQ_DEPTH)
@@ -282,6 +341,18 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           axi_ar_log_count[ch] <= axi_ar_log_count[ch] + 1;
         end
 
+        if (protocol_stall_enable && axi_m[ch].ar_valid && !axi_m[ch].ar_ready)
+          axi_ar_stalls[ch] <= axi_ar_stalls[ch] + 1;
+        unique case ({ar_fire, (r_fire && axi_m[ch].r_last)})
+          2'b10: axi_rd_outstanding[ch] <= axi_rd_outstanding[ch] + 1;
+          2'b01: begin
+            if (axi_rd_outstanding[ch] == 0)
+              $fatal(1, "protocol stall: RLAST without outstanding AR ch=%0d", ch);
+            axi_rd_outstanding[ch] <= axi_rd_outstanding[ch] - 1;
+          end
+          default: begin end
+        endcase
+
         read_head_q  <= read_head_n;
         read_tail_q  <= read_tail_n;
         read_count_q <= read_count_n;
@@ -289,6 +360,16 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         // B channel handshake
         if (axi_m[ch].b_valid && axi_m[ch].b_ready)
           axi_m[ch].b_valid <= 1'b0;
+
+        if (b_pending_q && (!protocol_stall_enable
+                         || ((axi_b_throttles[ch] >= 3)
+                          && protocol_open(17, 6, 7, ch)))) begin
+          b_pending_q       <= 1'b0;
+          axi_m[ch].b_valid <= 1'b1;
+          axi_m[ch].b_id    <= b_id_q;
+        end else if (protocol_stall_enable && b_pending_q) begin
+          axi_b_throttles[ch] <= axi_b_throttles[ch] + 1;
+        end
 
         // AW logging
         if (aw_fire) begin
@@ -300,6 +381,19 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           $display("%0t [tb_VX_dma_engine] aw_fire ch=%0d addr=0x%0h len=%0d",
                    $time, ch, axi_m[ch].aw_addr, axi_m[ch].aw_len);
         end
+        if (protocol_stall_enable && axi_m[ch].aw_valid && !axi_m[ch].aw_ready)
+          axi_aw_stalls[ch] <= axi_aw_stalls[ch] + 1;
+        if (protocol_stall_enable && axi_m[ch].w_valid && !axi_m[ch].w_ready)
+          axi_w_stalls[ch] <= axi_w_stalls[ch] + 1;
+        unique case ({aw_fire, (axi_m[ch].b_valid && axi_m[ch].b_ready)})
+          2'b10: axi_wr_outstanding[ch] <= axi_wr_outstanding[ch] + 1;
+          2'b01: begin
+            if (axi_wr_outstanding[ch] == 0)
+              $fatal(1, "protocol stall: B without outstanding AW ch=%0d", ch);
+            axi_wr_outstanding[ch] <= axi_wr_outstanding[ch] - 1;
+          end
+          default: begin end
+        endcase
 
         // Write data handling (supports both single-beat AW+W and burst AW then W)
         if (w_fire) begin
@@ -317,8 +411,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
           if (axi_m[ch].w_last) begin
             wr_active_q       <= 1'b0;
-            axi_m[ch].b_valid <= 1'b1;
-            axi_m[ch].b_id    <= aw_fire ? axi_m[ch].aw_id : wr_id_q;
+            b_pending_q       <= 1'b1;
+            b_id_q            <= aw_fire ? axi_m[ch].aw_id : wr_id_q;
           end else begin
             wr_active_q <= 1'b1;
             wr_addr_q   <= wbase + AXI_ADDR_W'(DATA_SIZE);
@@ -351,7 +445,9 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     wire req_fire = tmem_bus_if[ch].req_valid && tmem_bus_if[ch].req_ready;
     wire rsp_fire = tmem_bus_if[ch].rsp_valid && tmem_bus_if[ch].rsp_ready;
 
-    assign tmem_bus_if[ch].req_ready = 1'b1;
+    assign tmem_bus_if[ch].req_ready = !protocol_stall_enable
+                                    || ((tmem_req_stalls[ch] >= 3)
+                                     && protocol_open(19, 6, 5, ch));
 
     always @(posedge clk) begin
       if (reset) begin
@@ -360,6 +456,9 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         rd_head_q                 <= '0;
         rd_tail_q                 <= '0;
         rd_count_q                <= '0;
+        tmem_req_stalls[ch]       <= 0;
+        tmem_rsp_throttles[ch]    <= 0;
+        tmem_rd_outstanding[ch]   <= 0;
       end else begin
         logic [TMEM_RDQ_AW-1:0] rd_head_n;
         logic [TMEM_RDQ_AW-1:0] rd_tail_n;
@@ -373,7 +472,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           tmem_bus_if[ch].rsp_valid <= 1'b0;
         end
 
-        if (!tmem_bus_if[ch].rsp_valid && (rd_count_q != 0)) begin
+        if (!tmem_bus_if[ch].rsp_valid && (rd_count_q != 0)
+            && (!protocol_stall_enable
+             || ((tmem_rsp_throttles[ch] >= 3)
+              && protocol_open(23, 7, 9, ch)))) begin
           int unsigned base;
           base = int'(rd_addr_q[rd_head_q]) << DATA_LG2;
 
@@ -389,6 +491,11 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           rd_head_n  = rd_head_q + TMEM_RDQ_AW'(1);
           rd_count_n = rd_count_q - 1'b1;
         end
+        if (protocol_stall_enable && !tmem_bus_if[ch].rsp_valid
+            && (rd_count_q != 0)
+            && ((tmem_rsp_throttles[ch] < 3)
+             || !protocol_open(23, 7, 9, ch)))
+          tmem_rsp_throttles[ch] <= tmem_rsp_throttles[ch] + 1;
 
         if (req_fire) begin
           int unsigned base;
@@ -408,6 +515,18 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
             rd_count_n = rd_count_n + 1'b1;
           end
         end
+        if (protocol_stall_enable && tmem_bus_if[ch].req_valid
+            && !tmem_bus_if[ch].req_ready)
+          tmem_req_stalls[ch] <= tmem_req_stalls[ch] + 1;
+        unique case ({(req_fire && !tmem_bus_if[ch].req_data.rw), rsp_fire})
+          2'b10: tmem_rd_outstanding[ch] <= tmem_rd_outstanding[ch] + 1;
+          2'b01: begin
+            if (tmem_rd_outstanding[ch] == 0)
+              $fatal(1, "protocol stall: TMEM response without outstanding read ch=%0d", ch);
+            tmem_rd_outstanding[ch] <= tmem_rd_outstanding[ch] - 1;
+          end
+          default: begin end
+        endcase
 
         rd_head_q  <= rd_head_n;
         rd_tail_q  <= rd_tail_n;
@@ -632,9 +751,6 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                  dut.g_channel[0].wr_aw_done_r,
                  dut.g_channel[0].aw_outstanding_r,
                  dut.g_channel[0].b_drained_r);
-        $display("%0t [tb_VX_dma_engine] %s timeout dma: out_off=%0d",
-                 $time, msg,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.out_off);
         dump_axi_ar_log(0, {msg, "_timeout"});
       end
       $fatal(1, "%s: done timeout (ch=%0d)", msg, ch);
@@ -1211,6 +1327,78 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     end
   endtask
 
+  task automatic check_protocol_drained(input string msg);
+    begin
+      repeat (2) @(posedge clk);
+      if (axi_rd_outstanding[0] != 0 || axi_wr_outstanding[0] != 0
+          || tmem_rd_outstanding[0] != 0
+          || axi_m[0].r_valid || axi_m[0].b_valid
+          || tmem_bus_if[0].rsp_valid)
+        $fatal(1, "%s: response path not drained axi_rd=%0d axi_wr=%0d tmem_rd=%0d r=%0b b=%0b trsp=%0b",
+               msg, axi_rd_outstanding[0], axi_wr_outstanding[0],
+               tmem_rd_outstanding[0], axi_m[0].r_valid,
+               axi_m[0].b_valid, tmem_bus_if[0].rsp_valid);
+    end
+  endtask
+
+  task automatic run_case_protocol_stalls;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+    begin
+      protocol_stall_enable = 1'b1;
+      src_base = 64'h0000_0000_0000_0000;
+      dst_base = 64'h0000_0000_0000_3000;
+      seed_axi_mem(0, 8'h5a, 8'h03);
+      seed_tmem_mem(0, 8'h00, 8'h00);
+
+      build_desc(
+        d, src_base, dst_base,
+        32'd2048, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+        32'd8, 32'd1, 32'd1, 32'd64, 32'd0, 1'b0
+      );
+      run_desc_and_check_done_hold(0, d, 32'h0000_0800, 3,
+                                   "protocol_stall_g2l");
+      check_g2l_layout(
+        0, src_base, dst_base,
+        32'd2048, 32'd64, 0, 0, 0, 0,
+        8, 1, 1, 64, 0, "protocol_stall_g2l_check"
+      );
+      check_protocol_drained("protocol_stall_before_next_descriptor");
+
+      src_base = 64'h0000_0000_0000_3000;
+      dst_base = 64'h0000_0000_0000_1000;
+      build_desc(
+        d, src_base, dst_base,
+        32'd64, 32'd2048, 32'd0, 32'd0, 32'd0, 32'd0,
+        32'd8, 32'd1, 32'd1, 32'd64, 32'd0, 1'b1
+      );
+      run_desc_and_check_done_hold(0, d, 32'h0000_0801, 3,
+                                   "protocol_stall_l2g");
+      check_l2g_layout(
+        0, src_base, dst_base,
+        32'd64, 32'd2048, 0, 0, 0, 0,
+        8, 1, 1, 64, 0, "protocol_stall_l2g_check"
+      );
+      check_protocol_drained("protocol_stall_final_drain");
+
+      if (axi_ar_stalls[0] == 0 || axi_r_throttles[0] == 0
+          || axi_aw_stalls[0] == 0 || axi_w_stalls[0] == 0
+          || axi_b_throttles[0] == 0 || tmem_req_stalls[0] == 0
+          || tmem_rsp_throttles[0] == 0)
+        $fatal(1, "protocol stall coverage missing AR/R/AW/W/B/TREQ/TRSP=%0d/%0d/%0d/%0d/%0d/%0d/%0d",
+               axi_ar_stalls[0], axi_r_throttles[0], axi_aw_stalls[0],
+               axi_w_stalls[0], axi_b_throttles[0], tmem_req_stalls[0],
+               tmem_rsp_throttles[0]);
+
+      $display("DMA_ENGINE_PROTOCOL_STALL_PASS descriptors=2 boundary_drain=1 final_drain=1 numerical=1 AXI_AR_AW_W_ready_stalls=%0d/%0d/%0d AXI_R_B_response_throttles=%0d/%0d TMEM_req_ready_rsp_response_throttles=%0d/%0d",
+               axi_ar_stalls[0], axi_aw_stalls[0], axi_w_stalls[0],
+               axi_r_throttles[0], axi_b_throttles[0],
+               tmem_req_stalls[0], tmem_rsp_throttles[0]);
+      protocol_stall_enable = 1'b0;
+    end
+  endtask
+
 `ifdef PERF_ENABLE
   task automatic check_perf_aggregate;
     dma_perf_t expected;
@@ -1289,6 +1477,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_case_remap_burst_write();
     run_case_multiwin_burst_read();
     run_case_multiwin_burst_write();
+    run_case_protocol_stalls();
 `endif
     // Non-burst test cases removed: burst-only DMA engine
     // run_case_ch0_g2l();

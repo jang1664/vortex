@@ -146,6 +146,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   endfunction
 
   gemm_unified_cmd_t cmd_q;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] cmd_tag_q;
   wire logic [3:0] cmd_op = cmd_q.instr[3:0];
 
   // ============================================================
@@ -264,7 +265,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   logic [CTRL_GEN_W-1:0]   alloc_gen_q, alloc_gen_d;
 
   assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
+  assign gemm_dma_ctrl_if.cmd_ready = (state_q == S_IDLE);
   assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
+  assign gemm_dma_ctrl_if.done_tag = cmd_tag_q;
 
   // ============================================================
   // Comb
@@ -508,6 +511,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       poll_gap_q    <= 0;
       alloc_gap_q   <= 0;
       cmd_q         <= '0;
+      cmd_tag_q     <= '0;
       entry_id_q    <= '0;
       alloc_owner_q <= '0;
       alloc_gen_q   <= '0;
@@ -522,6 +526,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         cmd_q        <= gemm_dma_ctrl_if.cmd;
+        cmd_tag_q    <= gemm_dma_ctrl_if.cmd_tag;
       end
     end
   end

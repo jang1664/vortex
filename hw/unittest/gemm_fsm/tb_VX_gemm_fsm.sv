@@ -2,7 +2,10 @@
 `timescale 1ns/1ps
 `include "VX_define.vh"
 
-module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
+module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
+  parameter int TB_DMA_STORE_MAX_CHUNK_BEATS =
+      `GEMM_DMA_STORE_MAX_CHUNK_BEATS
+) ();
 
   parameter string TB_NAME  = "tb_VX_gemm_fsm";
   parameter real   PERIOD   = 10.0;
@@ -52,7 +55,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   // DUT
   // -----------------------------
   VX_gemm_fsm #(
-    .INSTANCE_ID("gemm_fsm")
+    .INSTANCE_ID("gemm_fsm"),
+    .DMA_STORE_MAX_CHUNK_BEATS(TB_DMA_STORE_MAX_CHUNK_BEATS)
   ) dut (
     .clk        (clk),
     .reset      (reset),
@@ -121,6 +125,9 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
     logic [4:0]  rd;
     gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
     gemm_notify_meta_t notify;
+    logic dma_priority;
+    logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
+      dma_max_chunk_log2p1;
   } cmd_rec_t;
 
   cmd_rec_t cmd_log[$];
@@ -136,6 +143,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       r.rd    = c.rd;
       r.waits = c.waits;
       r.notify = c.notify;
+      r.dma_priority = c.dma_priority;
+      r.dma_max_chunk_log2p1 = c.dma_max_chunk_log2p1;
       cmd_log.push_back(r);
 
       $display("[%0t] CMD #%0d op=0x%02h flags=0x%02h size=%0d rs1=0x%016h rs2=0x%016h",
@@ -378,6 +387,20 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
         if (cmd_log[i].notify.valid && cmd_log[i].notify.reg_id >= 11)
           $fatal(1, "Command %0d notify has invalid RID %0d",
                  i, cmd_log[i].notify.reg_id);
+        if (cmd_log[i].op == OP_DMA_LD
+            && (!cmd_log[i].dma_priority
+                || cmd_log[i].dma_max_chunk_log2p1 != 0))
+          $fatal(1, "DMA load #%0d priority/chunk mismatch got=%0d/%0d expected=1/0",
+                 i, cmd_log[i].dma_priority,
+                 cmd_log[i].dma_max_chunk_log2p1);
+        if (cmd_log[i].op == OP_DMA_ST
+            && (cmd_log[i].dma_priority
+                || cmd_log[i].dma_max_chunk_log2p1
+                   != ($clog2(TB_DMA_STORE_MAX_CHUNK_BEATS) + 1)))
+          $fatal(1, "DMA store #%0d priority/chunk mismatch got=%0d/%0d expected=0/%0d",
+                 i, cmd_log[i].dma_priority,
+                 cmd_log[i].dma_max_chunk_log2p1,
+                 $clog2(TB_DMA_STORE_MAX_CHUNK_BEATS) + 1);
       end
 
       $display("---- Sanity summary ----");
@@ -706,6 +729,9 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
                owner_count[0], owner_count[1],
                dma_prior_g_count, w_prior_g_count,
                sz_prior_g_count, arm_prior_g_count);
+      $display("FSM_DMA_CHUNK_ENCODING_PASS beats=%0d store_log2p1=%0d load_log2p1=0 priorities=store0_load1",
+               TB_DMA_STORE_MAX_CHUNK_BEATS,
+               $clog2(TB_DMA_STORE_MAX_CHUNK_BEATS) + 1);
     end
   endtask
 

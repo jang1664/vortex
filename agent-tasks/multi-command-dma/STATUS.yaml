@@ -1,0 +1,120 @@
+task: multi-command-dma
+state: complete
+source_spec: docs/future_optim/gemv/gemm_improve/multi_cmd_dma.md
+confirmed_spec: agent-tasks/multi-command-dma/multi-command-dma-spec.md
+updated_at: "2026-08-07 15:27"
+phase: complete
+iterations:
+  - iteration: 1
+    status: pass
+    error_summary: "None. All directed controller, scoreboard, and node integration tests passed."
+    root_cause: "Not applicable."
+    fix_applied: "Testbench-only interface/hierarchy adaptations were made before the passing run; no RTL fix was required."
+    lesson: "Tagged completion, chunk address-set equivalence, fallback preservation, and queue boundary semantics are independently testable at controller level before blackbox execution."
+  - iteration: 2
+    status: pass
+    error_summary: "None. Compile-define parameter threading, explicit override precedence, scheduler performance counters, and all requested regressions passed."
+    root_cause: "Not applicable. No RTL failure was observed."
+    fix_applied: "Extended only the gemm_fsm and gemm_tmem_dma_ctrl testbenches/Makefiles for chunk-encoding and performance-counter assertions; no RTL design fix was required."
+    lesson: "The compile-time chunk macro maps 4/8/16/32 beats to encodings 3/4/5/6, explicit module parameters override the macro, and final-idle scheduler counters can be reconciled exactly with directed descriptor and completion events."
+    commands:
+      - "CONFIGS=-DGEMM_DMA_STORE_MAX_CHUNK_BEATS=4 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_fsm --sim vcs --timeout 600 => pass (store=3, load=0)"
+      - "CONFIGS=-DGEMM_DMA_STORE_MAX_CHUNK_BEATS=8 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_fsm --sim vcs --timeout 600 => pass (store=4, load=0)"
+      - "CONFIGS=-DGEMM_DMA_STORE_MAX_CHUNK_BEATS=16 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_fsm --sim vcs --timeout 600 => pass (store=5, load=0)"
+      - "CONFIGS=-DGEMM_DMA_STORE_MAX_CHUNK_BEATS=32 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_fsm --sim vcs --timeout 600 => pass (store=6, load=0)"
+      - "CONFIGS=-DGEMM_DMA_STORE_MAX_CHUNK_BEATS=32 TB_DMA_STORE_MAX_CHUNK_BEATS=4 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_fsm --sim vcs --timeout 600 => pass (explicit override store=3)"
+      - "TB_PENDING_DEPTH=1 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 600 => pass"
+      - "TB_PENDING_DEPTH=2 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 600 => pass"
+      - "TB_PENDING_DEPTH=4 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 600 => pass"
+      - "python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_ctrl --sim vcs --timeout 600 => pass"
+      - "python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER2_BASELINE_M2 M=2 N=32 K=32 QBLK=32' --timeout 1200 => pass (64 elements)"
+      - "python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER2_M4_FALLBACK M=4 N=32 K=64 QBLK=32' --timeout 1200 => pass (128 elements)"
+  - iteration: 3
+    status: pass
+    error_summary: "None in design RTL. Directed scheduler ordering/fallback-drain tests and the real VX_dma_engine protocol-stall test passed with numerical parity and exact response drain."
+    root_cause: "Not applicable. Experimental hierarchical ready forcing in the full-node testbench was discarded because it could override DUT-owned handshake state; protocol stalls were moved to the existing dma_engine testbench, which directly owns both slave models."
+    fix_applied: "Testbench-only additions: queued low-store FIFO ordering; non-chunkable store plus pending high-load/later-low-store drain ordering; direct AXI/TMEM ready and response throttling with outstanding scoreboards in the dma_engine unittest. No RTL design fix was required."
+    lesson: "Protocol backpressure must be driven at an interface owned by the testbench. Scheduler-level done-channel hold and engine-level AXI/TMEM drain checks together prove no descriptor re-arbitration before active response drain."
+    commands:
+      - "TB_PENDING_DEPTH=4 GEMM_TRACE=1 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 600 => pass; MULTI_LOW_STORE_ORDER queued=3 tags=1,2,3; NONCHUNK_PENDING_LOAD fallback=256 response_hold=4 tags=4,5,6; final accepted/logical=30/30 descriptors=62/62 store_chunks=46/46 pending_max=4 switch_latency=4 input_load/compute/overlap=33/0/0"
+      - "python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/dma_engine --sim vcs --timeout 600 => pass; descriptors=2 boundary_drain=1 final_drain=1 numerical=1; AXI AR/AW/W ready stalls=3/4/6; AXI R/B response throttles=12/7; TMEM request-ready/response throttles=3/9"
+preflight_verification:
+  iteration: 1
+  status: not_run_coverage_gap
+  test_name: gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign
+  reason: "The existing testbench has 512-byte and 64-byte stores but no 256-byte store; the confirmed violation is directly derivable from the RTL equations."
+log:
+  - timestamp: "2026-08-07 13:22"
+    attempted: "Loaded the confirmed multi-command DMA specification, repository rules, RTL improvement workflow, and GEMM DMA architecture references."
+    result: "The requested document is already explicit and confirmed, so implementation may proceed without a scope clarification."
+    learned: "The work must preserve the existing descriptor-execution model and add scheduling only above VX_dma_engine in the HBM tile DMA path."
+  - timestamp: "2026-08-07 13:24"
+    attempted: "Derived the output-store descriptor geometry for the repository's fixed target workload before changing RTL."
+    result: "Potential hard-rule stop: M=4 emits a 256-byte output store, which decomposes into one beat on four channels and selects the existing fallback descriptor with BND2=1 instead of the required burst-mode descriptor with orig_bnd2=4. Independent RTL and verification preflight checks are in progress."
+    learned: "The host pads allocation layout but explicitly states that compute and DMA use real M, so the fixed M=4 target does not satisfy the confirmed store-chunking premise."
+  - timestamp: "2026-08-07 13:27"
+    attempted: "Completed an independent verification preflight without modifying RTL or test infrastructure."
+    result: "HARD-RULE STOP confirmed. A 256-byte output store has num_words=4, words_quot=0, words_rem=4, four active channels with one beat each, and fallback BND0/BND1/BND2=1/1/1. The confirmed plan requires equal eight-channel burst-mode descriptors with orig_bnd2=4 and explicitly forbids fallback stores in the chunk stage."
+    learned: "The specification must be revised before implementation: either define behavior for fallback/mixed-channel stores or restrict and document the supported store/workload geometry."
+  - timestamp: "2026-08-07 13:29"
+    attempted: "Waited through three consecutive goal turns for approval of a specification change after the mandatory hard-rule stop."
+    result: "Blocked: no approved behavior exists for real fallback/mixed-channel output-store descriptors, and the source specification forbids continuing with an inferred workaround."
+    learned: "Resume only after the user selects the fallback-store behavior or explicitly changes the supported workload geometry."
+  - timestamp: "2026-08-07 13:31"
+    attempted: "Applied the user's approved option 1 to the source specification and workflow specification."
+    result: "Resumed. Only uniform all-channel burst-form stores are chunkable; fallback and mixed-channel stores execute their captured full descriptor once and arbitrate afterward."
+    learned: "Small-M correctness remains supported, while preemption-based overlap measurements must use a chunkable-store workload."
+  - timestamp: "2026-08-07 13:51"
+    attempted: "Implemented Phases 1-3: tagged DMA acceptance/completion, the DMA-only eight-slot controller scoreboard, the depth-four priority scheduler, full descriptor capture, burst-form store chunking, and exact unchunked fallback/mixed stores."
+    result: "RTL implementation complete. git diff --check and standalone Verilator elaboration/lint passed; no simulation has run yet."
+    learned: "The implementation can retain legacy start/idle adapters for non-TMEM users while the HBM tile DMA path uses cmd_valid/cmd_ready and tagged completion."
+  - timestamp: "2026-08-07 14:06"
+    attempted: "Ran rtl-improve verification iteration 1 through tools/verify_rtl.py using VCS."
+    result: "PASS: gemm_tmem_dma_ctrl depth 1/2/4 and chunk 4/8/16/32 directed suite; gemm_ctrl eight-tag scoreboard suite; gemm_node_improve M=2 baseline and M=4 fallback numerical integration."
+    learned: "The approved unchunked small-M path preserves exact results, while the burst-form chunk path preserves the full descriptor address set at every configured chunk size."
+  - timestamp: "2026-08-07 14:06"
+    attempted: "Audited readiness for the required 4/8/16/32 xrt-vcs tuning matrix after unit tests passed."
+    result: "Follow-up required: the chunk-size parameter is not yet selectable from blackbox CONFIGS, and scheduler-specific latency/context-switch/queue-occupancy metrics lack parseable simulation observability."
+    learned: "Existing performance classes already cover total cycles, DMA/MXU overlap, and HBM utilization; only the scheduler-specific metrics and compile-define hook need scoped additions."
+  - timestamp: "2026-08-07 14:17"
+    attempted: "Ran rtl-improve verification iteration 2 through tools/verify_rtl.py using VCS, including the compile-define chunk matrix, explicit parameter override, scheduler counter reconciliation, controller regression, and M=2/M=4 node regressions."
+    result: "PASS. FSM encodings were 3/4/5/6 for 4/8/16/32 beats and load encoding remained zero. The explicit 4-beat TB/DUT override won over a 32-beat macro. DMA depth 1/2/4 passed; depth 4 ended idle with accepted/logical=23, descriptor issue/complete=55, store chunk issue/complete=41, pending max=4, one store-to-load switch, and one 4-cycle latency sample. gemm_ctrl and both numerical node cases passed."
+    learned: "Structured scheduler traces and final-idle counters agree with directed observed events, so the performance tuning flow now has parseable scheduler-specific observability."
+  - timestamp: "2026-08-07 14:36"
+    attempted: "Ran the required xrt-vcs blackbox chunk-length tuning matrix through ci/run_black.sh in configured build_multi_cmd_dma with the sourced improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8 config. The common one-core workload was M=384,N=32,K=128,Q=32,WTRANS=0,QDIR=0; each chunk setting was run with performance classes 3 and 4."
+    result: "PASS for 4/8/16/32 beats with exact numerical output. Class-3 total cycles were 2569/2524/2501/2506 and DMA+MXU overlap was 76.561/77.517/77.962/77.801 percent. Store chunk counts were 12/6/3/3. The 4- and 8-beat cases each performed one store-to-load switch with four-cycle latency; 16/32 made the 16-beat-per-channel store a single chunk. HBM active-max bandwidth was 212.638/249.160/271.435/271.435 B/cycle."
+    learned: "Eight beats/channel is the selected default: it preserves the measured four-cycle preemption point, improves total cycles and AXI write efficiency over 4 beats, and gives up less than one percent total cycles versus 16/32, which have no intermediate preemption point for this representative store."
+  - timestamp: "2026-08-07 14:47"
+    attempted: "Audited Phase 4 item 14 and added simulation-only direct INPUT_LOAD/compute overlap observability without changing scheduling or the performance CSR ABI."
+    result: "VX_gemm_tmem_dma_ctrl now samples its exact load-descriptor in-flight state with VX_gemm_unit_v2's existing !pipeline_empty compute predicate and reports cumulative input_load_active_cycles, compute_active_cycles, and input_load_compute_overlap_cycles in TMEM_DMA_SCHED_PERF. Debug and SYNTHESIS standalone Verilator lint passed with no errors, latches, unoptflat, or multidriven diagnostics; no simulation was run."
+    learned: "The existing perf-class-3 DMA+MXU overlap is an all-DMA union and cannot close the direct INPUT_LOAD/compute coverage item. The same 4/8/16/32 blackbox matrix must be rerun to collect the new direct counters."
+  - timestamp: "2026-08-07 15:25"
+    attempted: "Ran rtl-improve verification iteration 3 using only tools/verify_rtl.py with VCS for the scheduler and real VX_dma_engine paths."
+    result: "PASS. Three queued low-priority stores preserved issue/completion order. A high-priority load arriving behind a 256-byte non-chunkable store remained pending through a four-cycle final-response hold, then issued before a later low store; tags 4/5/6 each completed exactly once. The dma_engine test applied deliberate AXI AR/AW/W ready stalls, AXI R/B response throttles, and TMEM request-ready/response throttles; both G2L and L2G descriptors were numerically correct and all outstanding responses drained before the second descriptor and final completion."
+    learned: "The controller and engine tests split the proof cleanly: scheduler ordering and no early re-arbitration are checked with staggered channel-done holds, while protocol-level AXI/TMEM backpressure is checked without unsafe hierarchical force overrides."
+  - timestamp: "2026-08-07 15:25"
+    attempted: "Collected the new direct input-load/compute overlap counters from the class-3 xrt-vcs 4/8/16/32 rerun and reconciled them with the earlier tuning evidence."
+    result: "PASS for all chunks. Direct counters load/compute/overlap were 401/1942/241, 400/1940/241, 400/1938/240, and 400/1938/240 for chunks 4/8/16/32. The original chunk-32 tuning run used by the selection table had raw pending occupancy 1417/2501=0.56657 (rounded 0.567); the later direct-observability rerun reported 1401/2497 and is recorded separately rather than replacing the original table evidence."
+    learned: "Direct input-load/compute intersection is positive for every chunk size and must remain distinct from the historical all-DMA-union overlap percentage."
+  - timestamp: "2026-08-07 15:27"
+    attempted: "Completed the final requirement audit against all seventeen Phase 4 items, including the approved option-1 fallback semantics."
+    result: "COMPLETE. RTL lint, controller/FSM/scheduler/node/dma_engine VCS tests, exact fallback and mixed-descriptor tests, direct overlap measurements, and the xrt-vcs 4/8/16/32 numerical/performance matrix all passed. No hard-rule violation or unresolved issue remains."
+    learned: "The final proof combines scheduler-level ordering and logical-drain checks with protocol-level engine backpressure and blackbox numerical/performance evidence."
+test_request:
+  status: fulfilled
+  test_type: blackbox
+  test_path: tests/regression/fpint_gemm_ffn_hw
+  test_params: "M=384 N=32 K=128 QBLK=32 WTRANS=0 QDIR=0; GEMM_DMA_STORE_MAX_CHUNK_BEATS=4/8/16/32; one core; DBG_TRACE_GEMM; DISABLE_FSDB"
+  sim_tool: vcs
+  changed_files:
+    - hw/rtl/core/gemm/VX_gemm_node.sv
+    - hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+    - docs/rtl/VX_gemm_tmem_dma_ctrl.md
+    - docs/future_optim/gemv/gemm_improve/multi_cmd_dma.md
+    - agent-tasks/multi-command-dma/STATUS.yaml
+  notes: "Use run-bb-common/ci/run_black.sh xrt-vcs-sim from configured build_multi_cmd_dma with the established config. For each chunk setting require numerical PASSED, parse the final-idle TMEM_DMA_SCHED_PERF summary, and record input_load_active_cycles, compute_active_cycles, and input_load_compute_overlap_cycles. Assert overlap <= each denominator, calculate overlap/input_load_active and overlap/compute_active, and retain perf-class-3 DMA-union overlap only as a separate historical comparison. Reconcile accepted/logical, descriptor issue/complete, store chunk issue/complete, and expected switch counts (4/8: one; 16/32: zero)."
+pitfalls:
+  - "The source specification is an existing user modification; preserve it and append performance results rather than replacing its content."
+  - "A released inflight tag is not eligible for same-cycle reallocation."
+  - "Chunk completion is not logical command completion."
+  - "Small-M output stores are real commands in the target flow and currently use fallback descriptors; the confirmed chunk algorithm explicitly excludes them."

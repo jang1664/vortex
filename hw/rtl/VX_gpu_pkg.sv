@@ -914,6 +914,8 @@ package VX_gpu_pkg;
    ////////////////////////// gemm related types    ///////////////////////////
    localparam int GEMM_MAX_WAIT_DEPS     = 4;
    localparam int GEMM_SYNC_REG_ID_WIDTH = 4;
+   localparam int GEMM_DMA_TAG_WIDTH     = 3;
+   localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
 
    typedef struct packed {
        logic                                      valid;
@@ -941,6 +943,9 @@ package VX_gpu_pkg;
        logic [31:0]              stride;
        logic [15:0]              bound;
        logic [7:0]               flags;
+       logic                     dma_priority;
+       logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
+                                 dma_max_chunk_log2p1;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
        gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;

@@ -18,7 +18,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
     parameter N_CHILDREN  = 5,
-    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS
+    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS,
+    parameter int DMA_STORE_MAX_CHUNK_BEATS =
+        `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     // Clock
     input wire              clk,
@@ -714,10 +716,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // External DMA control: VX_gemm_tmem_dma_ctrl translates GEMM DMA
     // commands into VX_config_reg_if writes for the DMA engine.
     assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
+    assign gemm_dma_ctrl_if.cmd_valid  = gemm_ctrl_if.dma_ctrl.cmd_valid;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
+    assign gemm_dma_ctrl_if.cmd_tag    = gemm_ctrl_if.dma_ctrl.cmd_tag;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
+    assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_ctrl_if.cmd_ready;
+    assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
 
     // Internal DMA config/done interfaces (driven by tmem_dma_ctrl)
     VX_config_reg_if #(
@@ -733,6 +739,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_tmem_dma_ctrl (
         .clk              (clk),
         .reset            (reset),
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
+        .compute_active_i (!gemm_unit_v2_if.pipeline_empty),
+`endif
+`endif
         .gemm_dma_ctrl_if (gemm_dma_ctrl_if),
         .store_done       (output_store_done),
         .gemm_sync_if     (gemm_sync_if[4]),
@@ -915,7 +926,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_ctrl #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_CHILDREN(N_CHILDREN),
-      .N_NODE(N_NODE)
+      .N_NODE(N_NODE),
+      .DMA_STORE_MAX_CHUNK_BEATS(DMA_STORE_MAX_CHUNK_BEATS)
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
