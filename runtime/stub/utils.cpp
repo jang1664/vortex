@@ -226,6 +226,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
   uint64_t mxu_mac_count = 0;
   uint64_t overlap_dma_mxu = 0;
+  uint64_t dma_union_active_cycles = 0;
   uint64_t mxu_accum_rd_accept = 0;
   uint64_t mxu_accum_wr_fire = 0;
   uint64_t mxu_scaler_valid = 0;
@@ -659,6 +660,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       READ_PERF(VX_CSR_MPM_MXU_OUTPUT_FIRE,   mxu_output_fire);
       READ_PERF(VX_CSR_MPM_MXU_OUTPUT_STALL,  mxu_output_stall);
       READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU,   overlap_dma_mxu);
+      READ_PERF(VX_CSR_MPM_DMA_UNION_ACTIVE_CYC, dma_union_active_cycles);
       READ_PERF(VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT, mxu_accum_rd_accept);
       READ_PERF(VX_CSR_MPM_MXU_ACCUM_WR_FIRE,   mxu_accum_wr_fire);
       READ_PERF(VX_CSR_MPM_MXU_SCALER_VALID,    mxu_scaler_valid);
@@ -838,8 +840,9 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     fprintf(stream, "PERF: compute_cycles=%ld stall_cycles=%ld mac_count=%ld\n",
             gemm_compute_cycles, gemm_stall_cycles, mxu_mac_count);
     fprintf(stream, "PERF: DMA+MXU overlap=%.3f%% (%ld / %ld)\n",
-            (gemm_total_cycles > 0) ? 100.0 * overlap_dma_mxu / gemm_total_cycles : 0.0,
-            overlap_dma_mxu, gemm_total_cycles);
+            (dma_union_active_cycles > 0)
+              ? 100.0 * overlap_dma_mxu / dma_union_active_cycles : 0.0,
+            overlap_dma_mxu, dma_union_active_cycles);
     // MXU raw fire/stall
     fprintf(stream, "PERF: --- MXU Raw Counters ---\n");
     fprintf(stream, "PERF: input:  fire=%ld stall=%ld\n", mxu_input_fire,  mxu_input_stall);

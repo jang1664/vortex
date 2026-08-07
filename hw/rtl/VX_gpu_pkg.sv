@@ -902,6 +902,9 @@ package VX_gpu_pkg;
         dma_perf_t                lmem_dma_sz;
         dma_perf_t                lmem_dma_output;
         logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
+        // Union of CPU DMA, HBM DMA, and all four LMEM DMA busy predicates.
+        // Concurrent DMA engines count once per cycle.
+        logic [PERF_CTR_BITS-1:0] dma_union_active_cycles;
         // Cycles where the Vortex core is busy (active kernel duration).
         // Common denominator for utilization metrics; exposed in every
         // ACCEL_* MPM class at CSR slot B03.

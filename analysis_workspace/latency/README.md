@@ -145,7 +145,8 @@ Important `mxu` metrics:
 | `mxu_mac_count` | MAC operations counted by MXU perf logic. |
 | `flops` | `mxu_mac_count * 2`. |
 | `achieved_flops_per_cycle_total` | `flops / gemm_total_cycles`. |
-| `overlap_dma_mxu_pct_total` | DMA/MXU overlap cycles divided by `gemm_total_cycles`. |
+| `dma_union_active_cycles` | Union of CPU, HBM, and four LMEM DMA busy cycles; concurrent engines count once. |
+| `overlap_dma_mxu_pct_dma_active` | DMA/MXU overlap cycles divided by `dma_union_active_cycles`. |
 | `{input,weight,psum,output}_fire` | Fire count for each MXU-side stream. |
 | `{input,weight,psum,output}_stall` | Stall count for each MXU-side stream. |
 | `{input,weight,psum,output}_util_pct_total` | Stream fire count divided by `gemm_total_cycles`. |
@@ -187,7 +188,7 @@ computed from MPM counters plus phase windows.
 | `mxu` | `compute_pct_gemm_total` | `gemm_compute_cycles / gemm_total_cycles`. |
 | `mxu` | `stall_pct_gemm_total` | `gemm_stall_cycles / gemm_total_cycles`. |
 | `mxu` | `flops_per_gemm_cycle` | `flops / gemm_total_cycles`. |
-| `mxu` | `overlap_dma_mxu_pct_total` | DMA/MXU overlap ratio during GEMM total cycles. |
+| `mxu` | `overlap_dma_mxu_pct_dma_active` | DMA/MXU overlap cycles / DMA union-active cycles. |
 | `mxu_port` | `{input,weight,psum,output}_util_pct_total` | Port fire count / `gemm_total_cycles`. |
 | `mxu_port` | `{input,weight,psum,output}_util_pct_compute` | Port fire count / `gemm_compute_cycles`. |
 | `mxu_port` | `{input,weight,psum,output}_stall_pct_activity` | Port stall ratio while active. |

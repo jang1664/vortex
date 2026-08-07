@@ -815,8 +815,8 @@ module VX_core import VX_gpu_pkg::*; #(
     assign pipeline_perf.ifetch_latency = perf_icache_lat;
     assign pipeline_perf.load_latency = perf_dcache_lat;
 
-    // Overlap counter: cycles where any DMA is busy AND the GEMM unit is computing.
-    // OR across cpu_dma + hbm_dma aggregate + all 4 per-LDMA busy bits.
+    // DMA union-active and overlap counters share the exact same union
+    // predicate. Concurrent DMA engines therefore count once per cycle.
     wire any_dma_busy = accel_perf.cpu_dma.busy
                       | accel_perf.hbm_dma.aggregate.busy
                       | accel_perf.lmem_dma_input.busy
@@ -824,13 +824,31 @@ module VX_core import VX_gpu_pkg::*; #(
                       | accel_perf.lmem_dma_sz.busy
                       | accel_perf.lmem_dma_output.busy;
     reg [PERF_CTR_BITS-1:0] perf_overlap_r;
+    reg [PERF_CTR_BITS-1:0] perf_dma_union_active_r;
     always @(posedge clk) begin
-        if (reset)
+        if (reset) begin
             perf_overlap_r <= '0;
-        else if (any_dma_busy && accel_perf.gemm_unit.computing)
-            perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
+            perf_dma_union_active_r <= '0;
+        end else begin
+            if (any_dma_busy)
+                perf_dma_union_active_r
+                    <= perf_dma_union_active_r + PERF_CTR_BITS'(1);
+            if (any_dma_busy && accel_perf.gemm_unit.computing)
+                perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
+        end
     end
     assign accel_perf.overlap_dma_mxu = perf_overlap_r;
+    assign accel_perf.dma_union_active_cycles = perf_dma_union_active_r;
+
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!reset) begin
+            assert (perf_overlap_r <= perf_dma_union_active_r)
+                else $fatal(1, "%s: DMA+MXU overlap exceeds DMA union-active cycles",
+                            INSTANCE_ID);
+        end
+    end
+`endif
 
     // Busy counter: cycles where this core has an active kernel
     // (active warps or pending instructions — VX_core.busy = VX_schedule.busy).
