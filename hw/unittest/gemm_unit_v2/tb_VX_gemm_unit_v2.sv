@@ -16,7 +16,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     localparam int RANDOM_COMMAND_LENGTH = 10;
     localparam int RANDOM_COMMAND_COUNT
         = RANDOM_PACKET_COUNT / RANDOM_COMMAND_LENGTH;
-    localparam int EXPECTED_LAST_WRITES = 22 + RANDOM_COMMAND_COUNT;
+    localparam int ARBITRATION_COMPUTE_PACKETS = 10;
+    localparam int EXPECTED_LAST_WRITES
+        = 22 + RANDOM_COMMAND_COUNT + ARBITRATION_COMPUTE_PACKETS;
 
     typedef logic [`MXU_ROW-1:0][`IFP_WIDTH-1:0] input_vector_t;
     typedef logic [`MXU_COL-1:0][FP32_WIDTH-1:0] psum_vector_t;
@@ -83,6 +85,20 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         group = address[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
         bank_offset = address[`CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)];
         return {group, bank_offset};
+    endfunction
+
+    function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]
+        directed_acc_address(
+            input logic group,
+            input logic bank_offset,
+            input int unsigned depth
+        );
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address;
+        address = `GEMM_ACC_MEM_ADDR_WIDTH'(
+            depth << `CLOG2(`GEMM_PSUM_DATA_SIZE));
+        address[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1] = group;
+        address[`CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)] = bank_offset;
+        return address;
     endfunction
 
     function automatic int unsigned next_random(input int unsigned state);
@@ -590,6 +606,81 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         @(posedge clk);
     endtask
 
+    task automatic drive_compute_request(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address
+    );
+        i_lmem_bus_if.req_valid = 1'b1;
+        i_lmem_bus_if.req_data.rw = 1'b0;
+        i_lmem_bus_if.req_data.addr = '0;
+        i_lmem_bus_if.req_data.data = '0;
+        i_lmem_bus_if.req_data.byteen = '1;
+        gemm_unit_v2_if.packet_ctrl = '0;
+        gemm_unit_v2_if.packet_ctrl.valid = 1'b1;
+        gemm_unit_v2_if.packet_ctrl.acc_rd_en = 1'b1;
+        gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
+        gemm_unit_v2_if.packet_ctrl.acc_rd_addr = address;
+        gemm_unit_v2_if.packet_ctrl.acc_wr_addr = address;
+        gemm_unit_v2_if.packet_ctrl.quant_dir = `QDIR_COL;
+        gemm_unit_v2_if.packet_ctrl.is_load = 1'b0;
+        gemm_unit_v2_if.packet_ctrl.notify_on_writeback = 1'b1;
+        gemm_unit_v2_if.packet_ctrl.last = 1'b1;
+    endtask
+
+    task automatic clear_compute_request();
+        i_lmem_bus_if.req_valid = 1'b0;
+        gemm_unit_v2_if.packet_ctrl = '0;
+    endtask
+
+    task automatic drive_output_request(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address,
+        input logic tag
+    );
+        o_lmem_bus_if.req_valid = 1'b1;
+        o_lmem_bus_if.req_data = '0;
+        o_lmem_bus_if.req_data.rw = 1'b0;
+        o_lmem_bus_if.req_data.addr
+            = address >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+        o_lmem_bus_if.req_data.tag = tag;
+    endtask
+
+    task automatic clear_output_request();
+        o_lmem_bus_if.req_valid = 1'b0;
+        o_lmem_bus_if.req_data = '0;
+    endtask
+
+    task automatic check_output_response_tag(input logic expected_tag);
+        int timeout;
+        timeout = 0;
+        while (!o_lmem_bus_if.rsp_valid && timeout < 100) begin
+            @(negedge clk);
+            timeout++;
+        end
+        if (timeout == 100) begin
+            $error("timeout waiting for output response tag=%0b", expected_tag);
+            test_failed = 1'b1;
+        end else if (o_lmem_bus_if.rsp_data.tag !== expected_tag) begin
+            $error("output response tag mismatch expected=%0b actual=%0b",
+                   expected_tag, o_lmem_bus_if.rsp_data.tag);
+            test_failed = 1'b1;
+        end
+        @(posedge clk);
+        @(negedge clk);
+        if (u_dut.output_read_valid !== 1'b0) begin
+            $error("output response did not retire after ready handshake");
+            test_failed = 1'b1;
+        end
+    endtask
+
+    task automatic check_output_bank_exclusion(input string context);
+        if ((u_dut.compute_bank_read_req & u_dut.output_bank_read_req) != 0
+         || (u_dut.acc_mem_wr_en & u_dut.output_bank_read_req) != 0) begin
+            $error("physical ACC bank conflict during %s compute_read=%b write=%b output=%b",
+                   context, u_dut.compute_bank_read_req,
+                   u_dut.acc_mem_wr_en, u_dut.output_bank_read_req);
+            test_failed = 1'b1;
+        end
+    endtask
+
     task automatic drive_packet_ctrl(
         input input_vector_t data,
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address,
@@ -714,6 +805,327 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 end
             end
         end
+    endtask
+
+    task automatic test_same_group_stage_block(
+        input logic compute_group,
+        input logic compute_bank_offset,
+        input int unsigned depth
+    );
+        input_vector_t zero_input;
+        psum_vector_t zero_psum;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] compute_address;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_address;
+        bit stage_seen [0:63];
+        bit final_write_block_seen;
+
+        zero_input = '0;
+        zero_psum = '0;
+        compute_address = directed_acc_address(
+            compute_group, compute_bank_offset, depth);
+        output_address = directed_acc_address(
+            compute_group, ~compute_bank_offset, depth + 32);
+        u_dut.initialize_acc_mem(compute_address, 1, zero_psum);
+        u_dut.initialize_acc_mem(output_address, 1, zero_psum);
+        for (int stage = 0; stage < 64; ++stage)
+            stage_seen[stage] = 1'b0;
+        final_write_block_seen = 1'b0;
+
+        @(negedge clk);
+        drive_compute_request(compute_address);
+        drive_output_request(output_address, compute_bank_offset);
+        #1;
+        if (!u_dut.compute_group_busy[compute_group]
+         || o_lmem_bus_if.req_ready
+         || u_dut.output_read_fire) begin
+            $error("same-group output was not blocked on incoming admission group=%0d bank_offset=%0d",
+                   compute_group, compute_bank_offset);
+            test_failed = 1'b1;
+        end
+        check_output_bank_exclusion("same-group incoming admission");
+
+        @(posedge clk);
+        #1;
+        @(negedge clk);
+        clear_compute_request();
+
+        while (u_dut.compute_group_busy[compute_group]) begin
+            for (int stage = 0; stage <= u_dut.WRITE_CTRL_IDX; ++stage) begin
+                if (u_dut.ctrl_pipe[stage].valid) begin
+                    stage_seen[stage] = 1'b1;
+                    if (u_dut.ctrl_pipe[stage].acc_rd_addr
+                          [`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1]
+                        != compute_group
+                     || u_dut.ctrl_pipe[stage].acc_wr_addr
+                          [`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1]
+                        != compute_group) begin
+                        $error("compute group changed in ctrl_pipe stage=%0d", stage);
+                        test_failed = 1'b1;
+                    end
+                end
+            end
+            if (o_lmem_bus_if.req_ready || u_dut.output_read_fire) begin
+                $error("same-group output escaped block while pipeline busy group=%0d stages=%b",
+                       compute_group, u_dut.compute_group_busy);
+                test_failed = 1'b1;
+            end
+            if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid) begin
+                if (!u_dut.acc_write_fire) begin
+                    $error("directed final ACC writeback was not valid");
+                    test_failed = 1'b1;
+                end
+                final_write_block_seen = !o_lmem_bus_if.req_ready
+                                      && !u_dut.output_read_fire;
+            end
+            check_output_bank_exclusion("same-group pipeline stage");
+            @(posedge clk);
+            #1;
+            if (u_dut.compute_group_busy[compute_group])
+                @(negedge clk);
+        end
+
+        for (int stage = 0; stage <= u_dut.WRITE_CTRL_IDX; ++stage) begin
+            if (!stage_seen[stage]) begin
+                $error("same-group block did not cover ctrl_pipe stage=%0d", stage);
+                test_failed = 1'b1;
+            end
+        end
+        if (!final_write_block_seen) begin
+            $error("same-group output was not proven blocked through final writeback");
+            test_failed = 1'b1;
+        end
+        if (!o_lmem_bus_if.req_ready || !u_dut.output_read_fire) begin
+            $error("same-group output did not release after final writeback");
+            test_failed = 1'b1;
+        end
+        @(posedge clk);
+        @(negedge clk);
+        clear_output_request();
+        check_output_response_tag(compute_bank_offset);
+        wait_for_empty();
+        check_scoreboard_empty("same-group stage block");
+    endtask
+
+    task automatic test_different_group_phase(
+        input logic compute_group,
+        input int unsigned phase,
+        input logic compute_bank_offset,
+        input logic output_bank_offset,
+        input int unsigned depth
+    );
+        input_vector_t zero_input;
+        psum_vector_t zero_psum;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] compute_address;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_address;
+        logic response_tag;
+        int timeout;
+
+        zero_input = '0;
+        zero_psum = '0;
+        response_tag = phase[0];
+        compute_address = directed_acc_address(
+            compute_group, compute_bank_offset, depth);
+        output_address = directed_acc_address(
+            ~compute_group, output_bank_offset, depth + 32);
+        u_dut.initialize_acc_mem(compute_address, 1, zero_psum);
+        u_dut.initialize_acc_mem(output_address, 1, zero_psum);
+
+        @(negedge clk);
+        drive_compute_request(compute_address);
+        if (phase == 0) begin
+            drive_output_request(output_address, response_tag);
+            #1;
+            if (!u_dut.compute_group_busy[compute_group]
+             || u_dut.compute_group_busy[~compute_group]
+             || !o_lmem_bus_if.req_ready
+             || !u_dut.output_read_fire) begin
+                $error("different-group output did not fire with incoming compute group=%0d",
+                       compute_group);
+                test_failed = 1'b1;
+            end
+            check_output_bank_exclusion("different-group incoming admission");
+            @(posedge clk);
+            @(negedge clk);
+            clear_compute_request();
+            clear_output_request();
+        end else begin
+            @(posedge clk);
+            @(negedge clk);
+            clear_compute_request();
+            timeout = 0;
+            while ((((phase == 1) && !(|u_dut.compute_bank_read_req))
+                  || ((phase == 2)
+                   && !(u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid
+                     && u_dut.acc_write_fire)))
+                && timeout < 100) begin
+                @(posedge clk);
+                @(negedge clk);
+                timeout++;
+            end
+            if (timeout == 100) begin
+                $error("timeout waiting for different-group phase=%0d", phase);
+                test_failed = 1'b1;
+            end
+            drive_output_request(output_address, response_tag);
+            #1;
+            if (!u_dut.compute_group_busy[compute_group]
+             || u_dut.compute_group_busy[~compute_group]
+             || !o_lmem_bus_if.req_ready
+             || !u_dut.output_read_fire) begin
+                $error("different-group output did not fire phase=%0d group=%0d",
+                       phase, compute_group);
+                test_failed = 1'b1;
+            end
+            if ((phase == 1) && !(|u_dut.compute_bank_read_req)) begin
+                $error("mid-pipeline overlap missed physical compute read");
+                test_failed = 1'b1;
+            end
+            if ((phase == 2) && !(|u_dut.acc_mem_wr_en)) begin
+                $error("final-writeback overlap missed physical ACC write");
+                test_failed = 1'b1;
+            end
+            check_output_bank_exclusion(
+                phase == 1 ? "different-group mid-pipeline"
+                           : "different-group final writeback");
+            @(posedge clk);
+            @(negedge clk);
+            clear_output_request();
+        end
+
+        check_output_response_tag(response_tag);
+        wait_for_empty();
+        check_scoreboard_empty("different-group overlap phase");
+    endtask
+
+    task automatic test_output_response_backpressure_order();
+        psum_vector_t value_a;
+        psum_vector_t value_b;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address_a;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address_b;
+        logic [`MXU_COL-1:0][FP16_WIDTH-1:0] held_data;
+        logic [`MXU_COL-1:0][FP16_WIDTH-1:0] second_data;
+        logic held_tag;
+        int timeout;
+
+        value_a = '{default: 32'h3f80_0000};
+        value_b = '{default: 32'h4000_0000};
+        address_a = directed_acc_address(1'b0, 1'b0, 900);
+        address_b = directed_acc_address(1'b1, 1'b1, 901);
+        u_dut.initialize_acc_mem(address_a, 1, value_a);
+        u_dut.initialize_acc_mem(address_b, 1, value_b);
+
+        @(negedge clk);
+        o_lmem_bus_if.rsp_ready = 1'b0;
+        drive_output_request(address_a, 1'b0);
+        #1;
+        if (!o_lmem_bus_if.req_ready || !u_dut.output_read_fire) begin
+            $error("first backpressure response request was not accepted");
+            test_failed = 1'b1;
+        end
+        @(posedge clk);
+        @(negedge clk);
+        clear_output_request();
+        timeout = 0;
+        while (!o_lmem_bus_if.rsp_valid && timeout < 100) begin
+            @(posedge clk);
+            @(negedge clk);
+            timeout++;
+        end
+        if (timeout == 100) begin
+            $error("timeout waiting for first backpressured output response");
+            test_failed = 1'b1;
+        end
+        held_data = o_lmem_bus_if.rsp_data.data;
+        held_tag = o_lmem_bus_if.rsp_data.tag;
+        for (int lane = 0; lane < `MXU_COL; ++lane) begin
+            if (held_data[lane] !== 16'h3c00) begin
+                $error("first output data mismatch lane=%0d expected=3c00 actual=%h",
+                       lane, held_data[lane]);
+                test_failed = 1'b1;
+            end
+        end
+        if (held_tag !== 1'b0) begin
+            $error("first output tag mismatch expected=0 actual=%0b", held_tag);
+            test_failed = 1'b1;
+        end
+
+        drive_output_request(address_b, 1'b1);
+        repeat (4) begin
+            #1;
+            if (o_lmem_bus_if.req_ready || u_dut.output_read_fire
+             || !o_lmem_bus_if.rsp_valid
+             || o_lmem_bus_if.rsp_data.data !== held_data
+             || o_lmem_bus_if.rsp_data.tag !== held_tag) begin
+                $error("outstanding response/order changed under backpressure");
+                test_failed = 1'b1;
+            end
+            @(posedge clk);
+            @(negedge clk);
+        end
+
+        o_lmem_bus_if.rsp_ready = 1'b1;
+        @(posedge clk);
+        #1;
+        if (!o_lmem_bus_if.req_ready || !u_dut.output_read_fire
+         || u_dut.output_read_valid) begin
+            $error("second request did not release after first response handshake");
+            test_failed = 1'b1;
+        end
+        @(posedge clk);
+        @(negedge clk);
+        clear_output_request();
+        timeout = 0;
+        while (!o_lmem_bus_if.rsp_valid && timeout < 100) begin
+            @(posedge clk);
+            @(negedge clk);
+            timeout++;
+        end
+        if (timeout == 100) begin
+            $error("timeout waiting for second ordered output response");
+            test_failed = 1'b1;
+        end else begin
+            second_data = o_lmem_bus_if.rsp_data.data;
+            for (int lane = 0; lane < `MXU_COL; ++lane) begin
+                if (second_data[lane] !== 16'h4000) begin
+                    $error("second output data mismatch lane=%0d expected=4000 actual=%h",
+                           lane, second_data[lane]);
+                    test_failed = 1'b1;
+                end
+            end
+            if (o_lmem_bus_if.rsp_data.tag !== 1'b1) begin
+                $error("second output tag mismatch expected=1 actual=%0b",
+                       o_lmem_bus_if.rsp_data.tag);
+                test_failed = 1'b1;
+            end
+        end
+        @(posedge clk);
+        @(negedge clk);
+        if (u_dut.output_read_valid) begin
+            $error("second output response did not retire");
+            test_failed = 1'b1;
+        end
+        $display("GEMM_UNIT_V2_GROUP_ARBITRATION_PASS same_group_stages=%0d different_group_phases=6 backpressure=1",
+                 u_dut.WRITE_CTRL_IDX + 1);
+    endtask
+
+    task automatic test_group_aware_output_arbitration();
+        int unsigned depth;
+        depth = 640;
+        for (int group = 0; group < 2; ++group) begin
+            for (int bank_offset = 0; bank_offset < 2; ++bank_offset) begin
+                test_same_group_stage_block(group[0], bank_offset[0], depth);
+                depth++;
+            end
+        end
+        for (int group = 0; group < 2; ++group) begin
+            test_different_group_phase(group[0], 0, 1'b0, 1'b1, depth);
+            depth++;
+            test_different_group_phase(group[0], 1, 1'b1, 1'b0, depth);
+            depth++;
+            test_different_group_phase(group[0], 2, 1'b0, 1'b0, depth);
+            depth++;
+        end
+        test_output_response_backpressure_order();
     endtask
 
     task automatic test_nonzero_reference(
@@ -1356,6 +1768,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         apply_reset();
         clear_weight_bank(1'b0);
         clear_weight_bank(1'b1);
+        test_group_aware_output_arbitration();
 
         test_nonzero_reference(`QDIR_COL, 1'b0,
             `GEMM_ACC_MEM_ADDR_WIDTH'(8 * ACC_ROW_BYTES));

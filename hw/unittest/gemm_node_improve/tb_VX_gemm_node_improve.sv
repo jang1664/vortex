@@ -215,11 +215,15 @@ module tb_VX_gemm_node_improve
   bit require_input_metadata = 1'b0;
   bit require_prior_raw_overlap = 1'b0;
   bit require_completion_endpoints = 1'b0;
+  bit require_output_double_buffer = 1'b0;
+  bit output_backpressure_enable = 1'b0;
   int input_gap_min         = 1;
   int input_gap_max         = 3;
   int input_stall_period    = 0;
   int input_stall_phase     = 0;
   int input_stall_cycles    = 1;
+  int output_stall_period   = 7;
+  int output_stall_cycles   = 3;
 
   task force_input_stall;
     force u_dut.i_gemm_bus_if.req_valid = 1'b0;
@@ -2730,6 +2734,204 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
+  // Phase-2 accumulator-group arbitration and output ordering scoreboard.
+  logic [GEMM_BASE_TAG_WIDTH-1:0] output_expected_tags[$];
+  longint unsigned output_req_count;
+  longint unsigned output_rsp_count;
+  longint unsigned different_group_fire_count;
+  longint unsigned different_group_active_cycles;
+  longint unsigned same_group_overlap_count;
+  longint unsigned output_stall_observed_cycles;
+  longint unsigned final_writeback_busy_count;
+  longint unsigned output_group_episode_count [2];
+  longint unsigned tb_cycle = 0;
+  logic output_group_seen;
+  logic output_last_group;
+  logic compute_tail_active;
+  logic compute_tail_group;
+  logic output_stall_forced;
+  logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] directed_compute_addr;
+
+  always @(negedge clk) begin : output_backpressure_driver
+    if (reset || !output_backpressure_enable) begin
+      // rsp_ready is an always_comb-driven variable in VX_dma_unit_align.
+      // Releasing it after forcing zero can leave the procedural variable at
+      // zero until its driver is reevaluated, deadlocking a held response.
+      // The production value is unconditionally one, so drive that value
+      // explicitly during open windows and release only after the test ends.
+      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b1;
+      output_stall_forced = 1'b0;
+    end else if ((tb_cycle % output_stall_period) < output_stall_cycles) begin
+      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b0;
+      output_stall_forced = 1'b1;
+    end else begin
+      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b1;
+      output_stall_forced = 1'b0;
+    end
+  end
+
+  always @(posedge clk) begin : output_double_buffer_scoreboard
+    logic output_group;
+    logic incoming_group;
+    if (reset) begin
+      output_expected_tags.delete();
+      output_req_count = 0;
+      output_rsp_count = 0;
+      different_group_fire_count = 0;
+      different_group_active_cycles = 0;
+      same_group_overlap_count = 0;
+      output_stall_observed_cycles = 0;
+      final_writeback_busy_count = 0;
+      output_group_episode_count[0] = 0;
+      output_group_episode_count[1] = 0;
+      output_group_seen = 1'b0;
+      output_last_group = 1'b0;
+      compute_tail_active = 1'b0;
+      compute_tail_group = 1'b0;
+    end else if (require_output_double_buffer) begin
+      if (u_dut.u_VX_gemm_unit_v2.output_read_fire) begin
+        output_group = u_dut.u_VX_gemm_unit_v2.output_read_bank[1];
+        output_expected_tags.push_back(u_dut.o_gemm_bus_if.req_data.tag);
+        output_req_count++;
+        if (!output_group_seen || (output_group != output_last_group)) begin
+          output_group_episode_count[output_group]++;
+          output_group_seen = 1'b1;
+          output_last_group = output_group;
+        end
+        if (u_dut.u_VX_gemm_unit_v2.compute_group_busy[output_group]) begin
+          same_group_overlap_count++;
+          $fatal(1, "OUTPUT_DBUF same-group output read fired during compute");
+        end
+        if (|u_dut.u_VX_gemm_unit_v2.compute_group_busy)
+          different_group_fire_count++;
+      end
+
+      if (u_dut.u_VX_gemm_unit_v2.output_read_valid
+          && (|u_dut.u_VX_gemm_unit_v2.compute_group_busy)
+          && !u_dut.u_VX_gemm_unit_v2.compute_group_busy[
+               u_dut.u_VX_gemm_unit_v2.output_read_bank_q[1]])
+        different_group_active_cycles++;
+
+      if (u_dut.o_gemm_bus_if.rsp_valid && u_dut.o_gemm_bus_if.rsp_ready) begin
+        if (output_expected_tags.size() == 0)
+          $fatal(1, "OUTPUT_DBUF response arrived without an accepted request");
+        if (u_dut.o_gemm_bus_if.rsp_data.tag !== output_expected_tags[0])
+          $fatal(1, "OUTPUT_DBUF response tag reordered: got=0x%0h expected=0x%0h",
+                 u_dut.o_gemm_bus_if.rsp_data.tag, output_expected_tags[0]);
+        output_expected_tags.pop_front();
+        output_rsp_count++;
+      end
+      if (output_stall_forced && u_dut.o_gemm_bus_if.rsp_valid
+          && !u_dut.o_gemm_bus_if.rsp_ready)
+        output_stall_observed_cycles++;
+
+      if (u_dut.i_gemm_bus_if.req_valid
+          && u_dut.gemm_unit_v2_if.packet_ctrl.last) begin
+        if (compute_tail_active)
+          $fatal(1, "OUTPUT_DBUF overlapping final-writeback tail models");
+        compute_tail_active = 1'b1;
+        compute_tail_group
+          = u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr[
+              `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
+      end
+      if (compute_tail_active
+          && !u_dut.u_VX_gemm_unit_v2.compute_group_busy[compute_tail_group])
+        $fatal(1, "OUTPUT_DBUF compute group released before final writeback");
+      if (u_dut.gemm_unit_v2_if.last_write) begin
+        incoming_group = u_dut.u_VX_gemm_unit_v2.ctrl_pipe[
+            u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr[
+              `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
+        if (!compute_tail_active || (incoming_group != compute_tail_group))
+          $fatal(1, "OUTPUT_DBUF final-writeback group/lifetime mismatch");
+        if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[incoming_group])
+          $fatal(1, "OUTPUT_DBUF group not busy on final writeback");
+        final_writeback_busy_count++;
+        compute_tail_active = 1'b0;
+      end
+    end
+  end
+
+  task automatic check_output_double_buffer_coverage(
+    input int test_m,
+    input int test_n,
+    input int test_k
+  );
+    begin
+      output_backpressure_enable = 1'b0;
+      @(negedge clk);
+      #1;
+      release u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready;
+      if ((((test_m + DMA_MT - 1) / DMA_MT)
+         * ((test_n + DMA_NT - 1) / DMA_NT)) < 3
+          || ((test_k + DMA_KT - 1) / DMA_KT) < 2
+          || (test_m % DMA_MT) == 0 || (test_n % DMA_NT) == 0)
+        $fatal(1, "OUTPUT_DBUF shape lacks >=3 tiles, multi-K, or M/N edge coverage");
+      // The current node has one global DMA engine. DMA_ST therefore delays
+      // the following output tile's input DMA_LD, so no concurrent producer
+      // demand may reach this arbiter even though it admits opposite groups.
+      // Record natural overlap without requiring it; the directed probe below
+      // proves the allow/block decision at the integrated node boundary.
+      $display("OUTPUT_DBUF_NATURAL_OVERLAP fire=%0d active=%0d KNOWN_SINGLE_DMA_LIMITATION=1",
+               different_group_fire_count, different_group_active_cycles);
+      if (same_group_overlap_count != 0)
+        $fatal(1, "OUTPUT_DBUF observed %0d same-group overlaps",
+               same_group_overlap_count);
+      if (output_group_episode_count[0] < 2
+          || output_group_episode_count[1] == 0)
+        $fatal(1, "OUTPUT_DBUF did not cover group-0 reuse episodes: g0=%0d g1=%0d",
+               output_group_episode_count[0], output_group_episode_count[1]);
+      if (output_req_count == 0 || output_req_count != output_rsp_count
+          || output_expected_tags.size() != 0)
+        $fatal(1, "OUTPUT_DBUF output ordering drain mismatch: req=%0d rsp=%0d pending=%0d",
+               output_req_count, output_rsp_count, output_expected_tags.size());
+      if (output_stall_observed_cycles == 0 || final_writeback_busy_count == 0
+          || compute_tail_active)
+        $fatal(1, "OUTPUT_DBUF missing backpressure/final-writeback coverage");
+
+      // Incoming compute must participate in the same-cycle group decision.
+      if (!u_dut.gemm_unit_v2_if.pipeline_empty
+          || u_dut.u_VX_gemm_unit_v2.output_read_valid)
+        $fatal(1, "OUTPUT_DBUF directed arbitration probe requires an idle unit");
+      directed_compute_addr = '0;
+      force u_dut.i_gemm_bus_if.req_valid = 1'b1;
+      force u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
+      force u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_en = 1'b0;
+      force u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr
+          = directed_compute_addr;
+      force u_dut.o_gemm_bus_if.req_valid = 1'b1;
+      force u_dut.o_gemm_bus_if.req_data.rw = 1'b0;
+      force u_dut.o_gemm_bus_if.req_data.addr = '0;
+      #1;
+      if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[0]
+          || !u_dut.u_VX_gemm_unit_v2.output_group_conflict
+          || u_dut.o_gemm_bus_if.req_ready
+          || u_dut.u_VX_gemm_unit_v2.output_read_fire)
+        $fatal(1, "OUTPUT_DBUF same-cycle incoming same-group compute was not blocked");
+
+      directed_compute_addr[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1] = 1'b1;
+      #1;
+      if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[1]
+          || u_dut.u_VX_gemm_unit_v2.compute_group_busy[0]
+          || u_dut.u_VX_gemm_unit_v2.output_group_conflict
+          || !u_dut.o_gemm_bus_if.req_ready
+          || !u_dut.u_VX_gemm_unit_v2.output_read_fire)
+        $fatal(1, "OUTPUT_DBUF same-cycle incoming different-group compute did not overlap");
+      release u_dut.i_gemm_bus_if.req_valid;
+      release u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_en;
+      release u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_en;
+      release u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr;
+      release u_dut.o_gemm_bus_if.req_valid;
+      release u_dut.o_gemm_bus_if.req_data.rw;
+      release u_dut.o_gemm_bus_if.req_data.addr;
+      #1;
+      $display("OUTPUT_DOUBLE_BUFFER_PASSED natural_overlap_fire=%0d natural_overlap_active=%0d same_group=0 group_episodes={%0d,%0d} req_rsp=%0d/%0d stall=%0d final_writeback=%0d directed_incoming=1 numerical_parity=1 single_dma_limitation=1",
+               different_group_fire_count, different_group_active_cycles,
+               output_group_episode_count[0], output_group_episode_count[1],
+               output_req_count, output_rsp_count,
+               output_stall_observed_cycles, final_writeback_busy_count);
+    end
+  endtask
+
   // =========================================================================
   // Main sim
   // =========================================================================
@@ -2777,6 +2979,14 @@ module tb_VX_gemm_node_improve
     require_input_metadata = $test$plusargs("REQUIRE_INPUT_METADATA");
     require_prior_raw_overlap = $test$plusargs("REQUIRE_PRIOR_RAW_OVERLAP");
     require_completion_endpoints = $test$plusargs("REQUIRE_COMPLETION_ENDPOINTS");
+    require_output_double_buffer = $test$plusargs("REQUIRE_OUTPUT_DBUF");
+    void'($value$plusargs("OUTPUT_STALL_PERIOD=%d", output_stall_period));
+    void'($value$plusargs("OUTPUT_STALL_CYCLES=%d", output_stall_cycles));
+    if (require_output_double_buffer
+        && (output_stall_period <= 0 || output_stall_cycles <= 0
+            || output_stall_cycles >= output_stall_period))
+      $fatal(1, "OUTPUT_DBUF invalid output stall configuration");
+    output_backpressure_enable = require_output_double_buffer;
     trace_input_speed_en = randomize_input_speed || $test$plusargs("TRACE_INPUT_SPEED");
     void'($value$plusargs("INPUT_GAP_MIN=%d", input_gap_min));
     void'($value$plusargs("INPUT_GAP_MAX=%d", input_gap_max));
@@ -2860,6 +3070,9 @@ module tb_VX_gemm_node_improve
     if (require_completion_endpoints)
       check_completion_endpoint_coverage();
 
+    if (require_output_double_buffer)
+      check_output_double_buffer_coverage(test_m, test_n, test_k);
+
     $display("[%0t] TB completed", $time);
 
 `ifdef VCS
@@ -2917,7 +3130,6 @@ module tb_VX_gemm_node_improve
     end
   end
 
-  longint unsigned tb_cycle = 0;
   always @(posedge clk) begin
     if (reset)
       tb_cycle <= 0;

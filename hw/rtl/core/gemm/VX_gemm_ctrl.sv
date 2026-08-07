@@ -25,6 +25,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 );
 
     localparam int NUM_SYNC_REGS = 11;
+    localparam int RID_O = 4;
     localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
     localparam int INFLIGHT_DATAW = $bits(gemm_notify_meta_t);
 
@@ -78,6 +79,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     ) u_VX_gemm_fsm (
       .clk          (clk),
       .reset        (reset),
+      .completed_output_store_count_i (effective_sync[RID_O]),
       .cfg_reg_if   (cfg_reg_if),
       .gemm_fsm_if  (gemm_fsm_if),
       .gemm_start_o (),

@@ -113,6 +113,12 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         return {group, bank_offset};
     endfunction
 
+    function automatic logic get_acc_group(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr
+    );
+        return addr[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
+    endfunction
+
     function automatic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0] get_acc_mem_bank_addr(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr
     );
@@ -309,6 +315,10 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_read_addr;
     logic output_read_fire;
     logic output_read_valid;
+    logic [1:0] compute_group_busy;
+    logic output_group_conflict;
+    logic [3:0] compute_bank_read_req;
+    logic [3:0] output_bank_read_req;
     logic [1:0] output_read_bank_q;
     logic [$bits(o_lmem_bus_if.req_data.tag)-1:0] output_read_tag_q;
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
@@ -401,18 +411,41 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         sreg_busy = '0;
         zreg_busy = '0;
         pipeline_busy = 1'b0;
+        compute_group_busy = '0;
         for (int i = 0; i <= WRITE_CTRL_IDX; ++i) begin
             if (ctrl_pipe[i].valid) begin
                 pipeline_busy = 1'b1;
                 wreg_busy[ctrl_pipe[i].wreg_use_idx] = 1'b1;
                 sreg_busy[ctrl_pipe[i].sreg_use_idx] = 1'b1;
                 zreg_busy[ctrl_pipe[i].zreg_use_idx] = 1'b1;
+                if (ctrl_pipe[i].acc_rd_en) begin
+                    compute_group_busy[
+                        get_acc_group(ctrl_pipe[i].acc_rd_addr)
+                    ] = 1'b1;
+                end
+                if (ctrl_pipe[i].acc_wr_en) begin
+                    compute_group_busy[
+                        get_acc_group(ctrl_pipe[i].acc_wr_addr)
+                    ] = 1'b1;
+                end
             end
         end
         if (input_fire) begin
             wreg_busy[gemm_unit_v2_if.packet_ctrl.wreg_use_idx] = 1'b1;
             sreg_busy[gemm_unit_v2_if.packet_ctrl.sreg_use_idx] = 1'b1;
             zreg_busy[gemm_unit_v2_if.packet_ctrl.zreg_use_idx] = 1'b1;
+            if (gemm_unit_v2_if.packet_ctrl.acc_rd_en) begin
+                compute_group_busy[
+                    get_acc_group(
+                        gemm_unit_v2_if.packet_ctrl.acc_rd_addr)
+                ] = 1'b1;
+            end
+            if (gemm_unit_v2_if.packet_ctrl.acc_wr_en) begin
+                compute_group_busy[
+                    get_acc_group(
+                        gemm_unit_v2_if.packet_ctrl.acc_wr_addr)
+                ] = 1'b1;
+            end
         end
     end
 
@@ -1167,11 +1200,17 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         = `GEMM_ACC_MEM_ADDR_WIDTH'(
             o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE));
     assign output_read_bank = get_acc_mem_idx(output_read_addr);
+    assign output_group_conflict
+        = o_lmem_bus_if.req_valid
+       && compute_group_busy[output_read_bank[1]];
     assign o_lmem_bus_if.req_ready
-        = gemm_unit_v2_if.pipeline_empty && !output_read_valid;
+        = !output_read_valid && !output_group_conflict;
     assign output_read_fire
         = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready
        && !o_lmem_bus_if.req_data.rw;
+    assign compute_bank_read_req = early_read_req | nominal_read_req;
+    assign output_bank_read_req
+        = output_read_fire ? (4'b0001 << output_read_bank) : '0;
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data = fp16_out_data;
     assign o_lmem_bus_if.rsp_data.tag = output_read_tag_q;
@@ -1315,8 +1354,24 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 else $fatal(1, "GEMM v2 same-bank read/read collision");
             assert ((acc_mem_wr_en & acc_mem_rd_en) == '0)
                 else $fatal(1, "GEMM v2 same-bank read/write collision");
+            assert ((compute_bank_read_req & output_bank_read_req) == '0)
+                else $fatal(1, "GEMM v2 compute/output selected the same ACC read bank");
+            assert ((acc_mem_wr_en & output_bank_read_req) == '0)
+                else $fatal(1, "GEMM v2 compute write/output read selected the same ACC bank");
             assert ((early_rsp_pending & early_hold_valid) == '0)
                 else $fatal(1, "GEMM v2 early hold overwrite");
+            if (output_read_fire === 1'b1) begin
+                assert (!compute_group_busy[output_read_bank[1]])
+                    else $fatal(1, "GEMM v2 same-group output read fired during compute");
+            end
+            if ((o_lmem_bus_if.req_valid === 1'b1)
+             && (o_lmem_bus_if.req_data.rw === 1'b0)
+             && (output_read_valid === 1'b0)
+             && ((|compute_group_busy) === 1'b1)
+             && (compute_group_busy[output_read_bank[1]] === 1'b0)) begin
+                assert (o_lmem_bus_if.req_ready && output_read_fire)
+                    else $fatal(1, "GEMM v2 different-group output read was over-constrained");
+            end
             if ((input_fire === 1'b1)
              && (stream_address_valid === 1'b1)) begin
                 assert ((gemm_unit_v2_if.packet_ctrl.acc_rd_addr

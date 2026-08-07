@@ -37,6 +37,9 @@ module tb_VX_gemm_ctrl;
   localparam logic [3:0] OP_O_ACC2LMEM  = 4'd8;
   localparam logic [3:0] OP_CLEAR       = 4'd9;
 
+  localparam logic [7:0] FSM_S_O_WAIT_LMEM2DRAM_FINAL = 8'd36;
+  localparam logic [7:0] FSM_S_FINAL_CLEAR             = 8'd37;
+
   // Fake execution latencies (cycles) for each child node (non-NOTIFY ops)
   localparam int LAT_I   = 60;
   localparam int LAT_W   = 30;
@@ -714,6 +717,66 @@ module tb_VX_gemm_ctrl;
     end
   endtask
 
+  task automatic wait_return_to_idle_check_final_drain(
+    input int unsigned max_cycles
+  );
+    int unsigned c;
+    bit returned_to_idle;
+    bit saw_counter_block;
+    bit saw_exact_counter_release;
+    bit saw_release_before_quiescence;
+    begin
+      returned_to_idle = 1'b0;
+      saw_counter_block = 1'b0;
+      saw_exact_counter_release = 1'b0;
+      saw_release_before_quiescence = 1'b0;
+
+      for (c = 0; c < max_cycles; c++) begin
+        @(negedge clk);
+        #1;
+
+        if (dut.u_VX_gemm_fsm.completed_output_store_count_i
+            !== dut.effective_sync[4])
+          $fatal(1, "FINAL_DRAIN completed-store input is not effective RID_O");
+
+        if (dut.u_VX_gemm_fsm.state_q
+            == FSM_S_O_WAIT_LMEM2DRAM_FINAL) begin
+          if (dut.u_VX_gemm_fsm.completed_output_store_count_i
+              < dut.u_VX_gemm_fsm.o_store_issue_q) begin
+            saw_counter_block = 1'b1;
+            if (dut.u_VX_gemm_fsm.state_d
+                != FSM_S_O_WAIT_LMEM2DRAM_FINAL)
+              $fatal(1, "FINAL_DRAIN advanced before all DMA stores completed");
+          end else begin
+            if (dut.u_VX_gemm_fsm.completed_output_store_count_i
+                !== dut.u_VX_gemm_fsm.o_store_issue_q)
+              $fatal(1, "FINAL_DRAIN completed-store count overshot issued count");
+            if (dut.u_VX_gemm_fsm.state_d != FSM_S_FINAL_CLEAR)
+              $fatal(1, "FINAL_DRAIN did not release on exact RID_O target");
+            saw_exact_counter_release = 1'b1;
+            if (!dut.scheduler_quiescent)
+              saw_release_before_quiescence = 1'b1;
+          end
+        end
+
+        if (cfg_reg_if.ready) begin
+          returned_to_idle = 1'b1;
+          break;
+        end
+      end
+
+      if (!returned_to_idle)
+        $fatal(1, "Timed out after %0d cycles waiting for final drain",
+               max_cycles);
+      if (!saw_counter_block || !saw_exact_counter_release)
+        $fatal(1, "FINAL_DRAIN coverage incomplete blocked=%0d released=%0d",
+               saw_counter_block, saw_exact_counter_release);
+      if (!saw_release_before_quiescence)
+        $fatal(1, "FINAL_DRAIN did not prove counter release separate from scheduler quiescence");
+      $display("SCHED_DIRECTED_EXACT_FINAL_DRAIN_PASS blocked=1 exact_release=1 quiescence_separate=1");
+    end
+  endtask
+
   function automatic gemm_unified_cmd_t make_directed_cmd(
     input logic [3:0] op,
     input logic notify_valid,
@@ -917,10 +980,10 @@ module tb_VX_gemm_ctrl;
       // The physical inflight FIFO remains two entries deep, but the executor
       // contract permits at most one active command.  Keep a second command
       // queued, then prove an oldest-complete/new-issue rollover in one cycle.
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd1);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd8, 1'b1, 32'd1);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b0, 32'd1);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd8, 1'b0, 32'd1);
       directed_inject(c, 1);
       if (dut.child_inflight_full_v[1]
           || dut.child_issue_fire_v[1]
@@ -938,45 +1001,115 @@ module tb_VX_gemm_ctrl;
       #1;
       directed_done[1] = 1'b0;
       if (dut.child_inflight_empty_v[1] || dut.child_inflight_full_v[1]
-          || dut.sync_regs_q[9] !== 32'd1)
+          || dut.sync_regs_q[8] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED rollover lost occupancy or reordered SET");
       directed_complete(1);
-      if (dut.sync_regs_q[9] !== 32'd2)
+      if (dut.sync_regs_q[8] !== 32'd2)
         $fatal(1, "SCHED_DIRECTED in-order PLUS completion mismatch");
       if (!dut.child_inflight_empty_v[1])
         $fatal(1, "SCHED_DIRECTED inflight drain incomplete");
       $display("SCHED_DIRECTED_SINGLE_ACTIVE_INORDER_PASS physical_depth=2 blocked_second=1 rollover=1 ordered=1");
 
-      // RID_O ordering: enqueue the store before ACC completion.  It must be
-      // visibly blocked until the same-cycle odd SET releases it.
+      // ACC ownership and output-LMEM reuse are independent lifetime domains.
+      // Keep group-0 ACC2LMEM active while the opposite group ARM proceeds,
+      // then prove same-cycle group release through effective_sync.  A delayed
+      // DMA store must not hold the freed ACC group, but it must hold the next
+      // ACC2LMEM that would overwrite the shared output LMEM.
       directed_set_sync(4'd4, 32'd0);
-      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd4, 1'b1, 32'd1);
+      if (dut.sync_regs_q[9] !== 32'd0 || dut.sync_regs_q[10] !== 32'd0)
+        $fatal(1, "SCHED_DIRECTED ACC release RIDs were not initially zero");
+
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd9, 1'b1, 32'd1);
       c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd0};
       directed_inject(c, 3);
       directed_accept_issue(3);
+
       c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd4, 1'b0, 32'd1);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      c.waits[0] = '{valid:1'b1, reg_id:4'd9, target:32'd1};
       directed_inject(c, 4);
       if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
           || dut.child_q_pop_v[4])
-        $fatal(1, "SCHED_DIRECTED RID_O store was not blocked before ACC completion");
+        $fatal(1, "SCHED_DIRECTED DMA store was not blocked on RID_ACC_FREE0");
+
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[3] = '{valid:1'b1, reg_id:4'd10, target:32'd0};
+      directed_inject(c, 0);
+      if (dut.child_inflight_empty_v[3]
+          || !dut.child_deps_ready_v[0]
+          || !dut.child_issue_fire_v[0])
+        $fatal(1, "SCHED_DIRECTED opposite-group ARM did not overlap delayed ACC2LMEM");
+      directed_accept_issue(0);
+      directed_complete(0);
+
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[3] = '{valid:1'b1, reg_id:4'd9, target:32'd1};
+      directed_inject(c, 0);
+      repeat (2) begin
+        if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0]
+            || dut.child_q_pop_v[0])
+          $fatal(1, "SCHED_DIRECTED same-group ARM escaped RID_ACC_FREE0 wait");
+        if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
+            || dut.child_q_pop_v[4])
+          $fatal(1, "SCHED_DIRECTED DMA store escaped RID_ACC_FREE0 wait");
+        @(posedge clk);
+        #1;
+      end
+
       @(negedge clk);
       directed_done[3] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[3]
+          || dut.effective_sync[9] !== 32'd1
+          || !dut.child_deps_ready_v[0]
+          || !dut.child_issue_fire_v[0]
+          || !dut.child_q_pop_v[0]
           || !dut.child_deps_ready_v[4]
           || !dut.child_issue_fire_v[4]
           || !dut.child_q_pop_v[4])
-        $fatal(1, "SCHED_DIRECTED RID_O store did not release with ACC SET");
+        $fatal(1, "SCHED_DIRECTED RID_ACC_FREE0 SET did not release ARM and DMA store in-cycle");
       @(posedge clk);
       #1;
       directed_done[3] = 1'b0;
-      if (dut.sync_regs_q[4] !== 32'd1 || dut.child_inflight_empty_v[4])
-        $fatal(1, "SCHED_DIRECTED RID_O release lost SET or store issue");
-      directed_complete(4);
-      if (dut.sync_regs_q[4] !== 32'd2)
-        $fatal(1, "SCHED_DIRECTED RID_O even PLUS mismatch");
-      $display("SCHED_DIRECTED_RID_O_QUEUED_STORE_PASS blocked_before_acc=1 released_on_acc=1 odd=1 even=2");
+      if (dut.sync_regs_q[9] !== 32'd1
+          || dut.child_inflight_empty_v[0]
+          || dut.child_inflight_empty_v[4]
+          || dut.sync_regs_q[4] !== 32'd0)
+        $fatal(1, "SCHED_DIRECTED ACC release lost SET or dependent issue");
+
+      directed_complete(0);
+      if (dut.child_inflight_empty_v[4] || dut.sync_regs_q[4] !== 32'd0)
+        $fatal(1, "SCHED_DIRECTED delayed DMA store blocked freed same-group ARM");
+
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd10, 1'b1, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      directed_inject(c, 3);
+      if (dut.child_deps_ready_v[3] || dut.child_issue_fire_v[3]
+          || dut.child_q_pop_v[3])
+        $fatal(1, "SCHED_DIRECTED next ACC2LMEM escaped RID_O wait");
+
+      @(negedge clk);
+      directed_done[4] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[4]
+          || dut.effective_sync[4] !== 32'd1
+          || dut.u_VX_gemm_fsm.completed_output_store_count_i !== 32'd1
+          || !dut.child_deps_ready_v[3]
+          || !dut.child_issue_fire_v[3]
+          || !dut.child_q_pop_v[3])
+        $fatal(1, "SCHED_DIRECTED RID_O PLUS did not release next ACC2LMEM in-cycle");
+      if (dut.scheduler_quiescent)
+        $fatal(1, "SCHED_DIRECTED exact store count incorrectly implied scheduler quiescence");
+      @(posedge clk);
+      #1;
+      directed_done[4] = 1'b0;
+      if (dut.sync_regs_q[4] !== 32'd1
+          || dut.child_inflight_empty_v[3]
+          || dut.sync_regs_q[10] !== 32'd0)
+        $fatal(1, "SCHED_DIRECTED output-LMEM release lost RID_O or ACC2LMEM issue");
+      directed_complete(3);
+      if (dut.sync_regs_q[10] !== 32'd1)
+        $fatal(1, "SCHED_DIRECTED RID_ACC_FREE1 completion mismatch");
+      $display("SCHED_DIRECTED_ACC_OWNERSHIP_PASS opposite_group=1 same_group_blocked=1 effective_set_release=1 dma_overlap=1 rid_o_block=1 rid9=1 rid10=1");
 
       // A notify-invalid inflight command prevents quiescence, config ready,
       // and invocation done until its architectural completion retires it.
@@ -1045,7 +1178,7 @@ module tb_VX_gemm_ctrl;
           $fatal(1, "SCHED_DIRECTED implicit clear failed rid=%0d value=%0d",
                  rid, dut.sync_regs_q[rid]);
       end
-      wait_return_to_idle(50000);
+      wait_return_to_idle_check_final_drain(50000);
       send_small_directed_config(32'd12);
       wait_return_to_idle(50000);
       // cfg readiness returns on architectural quiescence; the registered
@@ -1125,9 +1258,9 @@ module tb_VX_gemm_ctrl;
 
     expect_collision_fatal = $test$plusargs("EXPECT_COLLISION_FATAL");
     expect_stray_fatal = $test$plusargs("EXPECT_STRAY_FATAL");
-    sched_directed = $test$plusargs("SCHED_DIRECTED")
-                  || expect_collision_fatal
-                  || expect_stray_fatal;
+    // Always run the scheduler dependency suite before the natural lifecycle
+    // test.  +SCHED_DIRECTED keeps the historical directed-only mode.
+    sched_directed = 1'b1;
     reset_dut();
 
     if (expect_collision_fatal && expect_stray_fatal)
@@ -1138,8 +1271,9 @@ module tb_VX_gemm_ctrl;
       run_expected_stray_fatal();
     if (sched_directed) begin
       run_scheduler_directed();
-      $display("TEST PASSED: GEMM scheduler directed Phase-5 checks completed");
-      $finish;
+      $display("TEST PASSED: GEMM scheduler directed dependency checks completed");
+      if ($test$plusargs("SCHED_DIRECTED"))
+        $finish;
     end
 
     send_config(

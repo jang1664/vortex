@@ -5,6 +5,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 ) (
     input  wire              clk,
     input  wire              reset,
+    input  wire [31:0]       completed_output_store_count_i,
 
     VX_config_reg_if.slave   cfg_reg_if,
     VX_gemm_fsm_if.master    gemm_fsm_if,
@@ -336,6 +337,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int NUM_SYNC_REGS = 11;
   localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
+  localparam int RID_ACC_FREE0 = 9, RID_ACC_FREE1 = 10;
   // Global sync sequence stride per DMA tile.
   // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
   localparam int MXU_N_PER_TILE_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
@@ -346,9 +348,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   function automatic mm_rid_t rid_w_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
   function automatic mm_rid_t rid_sz_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SZ1 : RID_SZ0); endfunction
   function automatic mm_rid_t rid_g_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_G1  : RID_G0);  endfunction
+  function automatic mm_rid_t rid_acc_free(input logic acc_group);
+    return mm_rid_t'(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0);
+  endfunction
 
-  mm_rid_t rid_o = mm_rid_t'(RID_O);  // output sequencing (local to store stage only)
+  mm_rid_t rid_o = mm_rid_t'(RID_O);  // completed output DMA store count
   u32_t o_store_issue_q, o_store_issue_d;
+  u32_t acc_copy_issue_q [2];
+  u32_t acc_copy_issue_d [2];
+  logic tile_acc_group_q, tile_acc_group_d;
+  u32_t tile_acc_reuse_target_q, tile_acc_reuse_target_d;
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
@@ -769,6 +778,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       mxu_buf_q <= 1'b0;
       o_nt_mxu_q <= 0;
       o_store_issue_q <= '0;
+      acc_copy_issue_q[0] <= '0;
+      acc_copy_issue_q[1] <= '0;
+      tile_acc_group_q <= 1'b0;
+      tile_acc_reuse_target_q <= '0;
 
       mt_base_q <= '0;
       nt_base_q <= '0;
@@ -802,7 +815,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       kt_mxu_q  <= kt_mxu_d;
       mxu_buf_q <= mxu_buf_d;
       o_nt_mxu_q <= o_nt_mxu_d;
-      o_store_issue_q <= o_store_issue_d;
+      if (gemm_invocation_accept) begin
+        o_store_issue_q <= '0;
+        acc_copy_issue_q[0] <= '0;
+        acc_copy_issue_q[1] <= '0;
+        tile_acc_group_q <= 1'b0;
+        tile_acc_reuse_target_q <= '0;
+      end else begin
+        o_store_issue_q <= o_store_issue_d;
+        acc_copy_issue_q[0] <= acc_copy_issue_d[0];
+        acc_copy_issue_q[1] <= acc_copy_issue_d[1];
+        tile_acc_group_q <= tile_acc_group_d;
+        tile_acc_reuse_target_q <= tile_acc_reuse_target_d;
+      end
 
       if (state_q == S_IDLE && cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
         mm_dim_t mt_dim_n;
@@ -993,6 +1018,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t dma_nt_mxu_dim;
     u32_t acc_nb_stride;
     u32_t acc_group_base;
+    logic acc_group;
     u32_t acc_base_nb;
     u32_t output_nb_bytes;
     u32_t output_nb_stride_bytes;
@@ -1023,6 +1049,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     kt_mxu_d  = kt_mxu_q;
     mxu_buf_d = mxu_buf_q;
     o_nt_mxu_d = o_nt_mxu_q;
+    acc_copy_issue_d[0] = acc_copy_issue_q[0];
+    acc_copy_issue_d[1] = acc_copy_issue_q[1];
+    tile_acc_group_d = tile_acc_group_q;
+    tile_acc_reuse_target_d = tile_acc_reuse_target_q;
 
     out_cmd_d   = '0;
     out_start_d = 1'b0;
@@ -1117,8 +1147,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     dma_nt_mxu_dim   = u32_t'(NT_q) >> `CLOG2(MXU_NT);
     acc_nb_stride    = u32_t'(ACC_DBUF_STRIDE) >> (LOG2_NT_q - `CLOG2(MXU_NT));
-    acc_group_base   = ((u32_t'(tile_cur_nt_q) + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1)
-                     ? u32_t'(ACC_DBUF_STRIDE) : 32'd0;
+    acc_group = (u32_t'(tile_cur_nt_q)
+               + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1;
+    acc_group_base = acc_group ? u32_t'(ACC_DBUF_STRIDE) : 32'd0;
     acc_base_nb      = acc_group_base + (u32_t'(nt_mxu_q) * acc_nb_stride);
 
     // Accum/output slice base. Each 32-wide N microtile accumulates in its own
@@ -1215,6 +1246,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mxu_buf_d   = 1'b0;
         o_nt_mxu_d  = 0;
         o_store_issue_d = 0;
+        acc_copy_issue_d[0] = 0;
+        acc_copy_issue_d[1] = 0;
+        tile_acc_group_d = 1'b0;
+        tile_acc_reuse_target_d = 0;
 
         if (cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
           job_d.input_base  = cfg_get_u64(CFG_R_INPUT_BASE_LO,  CFG_R_INPUT_BASE_HI);
@@ -1538,6 +1573,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         kt_mxu_d  = 0;
         mxu_buf_d = 1'b0;
         o_nt_mxu_d = 0;
+        if (tile_cur_kt_q == 0) begin
+          tile_acc_group_d = acc_group;
+          tile_acc_reuse_target_d = acc_copy_issue_q[acc_group];
+        end
         state_d   = S_MXU_PRE_CUR_W;
       end
 
@@ -1812,6 +1851,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 = make_wait_meta(prior_g_wait_rid_q,
                                  prior_g_wait_target_q);
           end
+          out_cmd_d.waits[3]
+              = make_wait_meta(rid_acc_free(tile_acc_group_q),
+                               tile_acc_reuse_target_q);
           out_cmd_d.notify = make_notify_meta(rid_g_mxu(mxu_buf_q),
                                                32'd1, 1'b0);
           out_start_d = 1'b1;
@@ -1843,7 +1885,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       // ----------------------------------------------------------------------
       // Output (only at last-kt tile): acc->lmem then lmem->dram
-      // rid_o는 "이 store 2단계 순서"만 보장하는 용도로만 사용
+      // RID_O tracks completed DMA stores. RID_ACC_FREE tracks completed
+      // ACC2LMEM copies independently for each physical accumulator group.
       // ----------------------------------------------------------------------
       S_O_WAIT_LMEM2DRAM_DONE: begin
         state_d = S_O_ACC2LMEM;
@@ -1853,9 +1896,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           gemm_unified_cmd_t c;
           logic [7:0] flags;
+          u32_t copy_target;
 
           c = '0;
           flags      = {7'd0, buf_cur};
+          copy_target = acc_copy_issue_q[tile_acc_group_q] + 32'd1;
 
           c.flags    = flags;
           c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes);
@@ -1867,15 +1912,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = c;
           out_cmd_d.waits[0] = make_wait_meta(rid_o,
-                                               2*o_store_issue_q);
+                                               o_store_issue_q);
           if (prior_g_wait_valid_q) begin
             out_cmd_d.waits[1]
                 = make_wait_meta(prior_g_wait_rid_q,
                                  prior_g_wait_target_q);
           end
           out_cmd_d.notify = make_notify_meta(
-              rid_o, 2*o_store_issue_q + 1, 1'b1);
+              rid_acc_free(tile_acc_group_q), copy_target, 1'b1);
           out_start_d = 1'b1;
+          acc_copy_issue_d[tile_acc_group_q] = copy_target;
           state_d     = S_O_LMEM2DRAM;
         end
       end
@@ -1898,7 +1944,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           out_cmd_d.rs2 = o_nt_mxu_q;
           out_cmd_d.rd  = 4;
           out_cmd_d.waits[0]
-              = make_wait_meta(rid_o, 2*o_store_issue_q + 1);
+              = make_wait_meta(rid_acc_free(tile_acc_group_q),
+                               acc_copy_issue_q[tile_acc_group_q]);
           out_cmd_d.notify = make_notify_meta(rid_o, 32'd1, 1'b0);
           out_start_d = 1'b1;
           o_store_issue_d = o_store_issue_q + 1;
@@ -1955,7 +2002,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
 
       S_O_WAIT_LMEM2DRAM_FINAL: begin
-        state_d = S_FINAL_CLEAR;
+        if (completed_output_store_count_i >= o_store_issue_q) begin
+          state_d = S_FINAL_CLEAR;
+        end
       end
 
       S_FINAL_CLEAR: begin
@@ -2125,6 +2174,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           assert (gemm_expected_count_q[0] == 32'd0
                && gemm_expected_count_q[1] == 32'd0)
             else $fatal(1, "GEMM expected count did not reset on invocation accept");
+          assert (o_store_issue_q == 32'd0
+               && acc_copy_issue_q[0] == 32'd0
+               && acc_copy_issue_q[1] == 32'd0
+               && tile_acc_group_q == 1'b0
+               && tile_acc_reuse_target_q == 32'd0)
+            else $fatal(1, "GEMM output dependency state did not reset on invocation accept");
         end else begin
           assert (gemm_expected_count_q[0]
                == expected_count_prev_q[0]
@@ -2168,6 +2223,88 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
              && out_cmd_d.waits[1].reg_id
                 == GEMM_SYNC_REG_ID_WIDTH'(rid_sz_mxu(mxu_buf_q)))
           else $fatal(1, "GEMM ARM lacks W/SZ dependency metadata");
+        assert (out_cmd_d.waits[3].valid
+             && out_cmd_d.waits[3].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.waits[3].target == tile_acc_reuse_target_q)
+          else $fatal(1, "GEMM ARM lacks accumulator-group reuse dependency");
+        assert (tile_acc_group_q
+             == (out_cmd_d.rs1_data >= 64'(ACC_DBUF_STRIDE)))
+          else $fatal(1, "GEMM ARM accumulator address/group mismatch");
+        if ((u32_t'(tile_cur_nt_q)
+           + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) < 32'd2) begin
+          assert (tile_acc_reuse_target_q == 32'd0)
+            else $fatal(1, "GEMM first accumulator-group owner has nonzero reuse target");
+        end
+      end
+
+      if (state_q == S_WAIT_CUR_TILE_READY && tile_cur_kt_q == 0) begin
+        assert (tile_acc_group_d
+             == ((u32_t'(tile_cur_nt_q)
+                + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1))
+          else $fatal(1, "GEMM tile-local accumulator group capture mismatch");
+        assert (tile_acc_reuse_target_d
+             == acc_copy_issue_q[tile_acc_group_d])
+          else $fatal(1, "GEMM tile-local accumulator reuse target capture mismatch");
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_O_ACC2LMEM) begin
+        assert (acc_copy_issue_q[tile_acc_group_q] != 32'hffff_ffff)
+          else $fatal(1, "GEMM accumulator copy issue count overflow");
+        assert (out_cmd_d.waits[0].valid
+             && out_cmd_d.waits[0].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(RID_O)
+             && out_cmd_d.waits[0].target == o_store_issue_q)
+          else $fatal(1, "GEMM ACC2LMEM lacks output-store reuse dependency");
+        assert (out_cmd_d.notify.valid
+             && out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.notify.value
+                == acc_copy_issue_q[tile_acc_group_q] + 32'd1
+             && out_cmd_d.notify.value
+                > acc_copy_issue_q[tile_acc_group_q])
+          else $fatal(1, "GEMM ACC2LMEM copy target is not strictly increasing");
+        assert (acc_copy_issue_d[tile_acc_group_q]
+             == out_cmd_d.notify.value)
+          else $fatal(1, "GEMM accumulator copy issue count/notify mismatch");
+        assert (tile_acc_group_q
+             == (out_cmd_d.rs2_data >= (64'(ACC_DBUF_STRIDE) >> 1)))
+          else $fatal(1, "GEMM ACC2LMEM accumulator address/group mismatch");
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_O_LMEM2DRAM) begin
+        assert (o_store_issue_q != 32'hffff_ffff)
+          else $fatal(1, "GEMM output store issue count overflow");
+        assert (out_cmd_d.waits[0].valid
+             && out_cmd_d.waits[0].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.waits[0].target
+                == acc_copy_issue_q[tile_acc_group_q])
+          else $fatal(1, "GEMM DMA store lacks paired ACC2LMEM dependency");
+        assert (out_cmd_d.notify.valid
+             && !out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.reg_id == GEMM_SYNC_REG_ID_WIDTH'(RID_O)
+             && out_cmd_d.notify.value == 32'd1
+             && o_store_issue_d == o_store_issue_q + 32'd1)
+          else $fatal(1, "GEMM DMA store count/notify mismatch");
+      end
+
+      if (state_q == S_O_WAIT_LMEM2DRAM_FINAL) begin
+        assert ((completed_output_store_count_i >= o_store_issue_q)
+             == (state_d == S_FINAL_CLEAR))
+          else $fatal(1, "GEMM final output-store drain comparison mismatch");
+        if (state_d == S_FINAL_CLEAR) begin
+          assert (completed_output_store_count_i == o_store_issue_q)
+            else $fatal(1, "GEMM final output-store drain over-completed");
+        end
+      end
+
+      if (state_q != S_IDLE) begin
+        assert (completed_output_store_count_i <= o_store_issue_q)
+          else $fatal(1, "GEMM completed output-store count exceeded issued count");
       end
 
       if (out_start_d && state_child_ready) begin

@@ -40,6 +40,13 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   logic fsm_idle;
   logic pending_work;
   logic [2:0] pending_child;
+  logic [31:0] completed_output_store_count;
+
+  localparam int unsigned TB_ACC_DBUF_STRIDE
+      = `GEMM_ACC_MEM_DEPTH * (4 * 2 * `MXU_COL);
+  // Keep this value synchronized with the DUT state_t declaration.  The
+  // directed final-drain stimulus intentionally observes this internal state.
+  localparam logic [7:0] DUT_S_O_WAIT_LMEM2DRAM_FINAL = 8'd36;
 
   // -----------------------------
   // DUT
@@ -49,6 +56,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   ) dut (
     .clk        (clk),
     .reset      (reset),
+    .completed_output_store_count_i (completed_output_store_count),
     .cfg_reg_if (cfg_reg_if),
     .gemm_fsm_if(gemm_fsm_if),
     .gemm_start_o(gemm_start),
@@ -62,6 +70,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   // allow DUT to emit whenever it wants (after reset deassert)
   // -----------------------------
   initial begin
+    completed_output_store_count = 32'd0;
     gemm_fsm_if.flag.idle = 1'b0;
     gemm_fsm_if.flag.done = 1'b1;
     gemm_fsm_if.flag.child_ready = '0;
@@ -264,17 +273,30 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   // -----------------------------
   // Basic sanity checks
   // -----------------------------
-  task automatic sanity_check();
+  task automatic sanity_check(
+    input bit expect_three_tile_edge_reuse,
+    input int unsigned expected_output_tiles
+  );
     int n_dma_ld, n_dma_st, n_w, n_sc, n_zp;
     int n_arm, n_acc2lmem, n_wait, n_ntf;
     int unsigned expected_count [2];
     int unsigned tile_target [2];
     int unsigned w_target [2];
     int unsigned sz_target [2];
-    int unsigned o_even_target;
+    int unsigned output_store_issue;
+    int unsigned acc_copy_target [2];
+    bit first_arm_seen [2];
+    bit owner_valid [2];
+    int unsigned owner_target [2];
+    int unsigned owner_arm_count [2];
+    int unsigned owner_count [2];
+    bit owner_seen_nonaccum [2];
+    bit owner_seen_accum [2];
+    int unsigned directed_owner_arm_count [3];
+    bit pending_copy_valid;
+    int unsigned pending_copy_group;
+    int unsigned pending_copy_target;
     int final_arm_count;
-    int final_wait_index;
-    int first_acc2lmem_index;
     int dma_prior_g_count;
     int w_prior_g_count;
     int sz_prior_g_count;
@@ -297,10 +319,30 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       w_target[1] = 0;
       sz_target[0] = 0;
       sz_target[1] = 0;
-      o_even_target = 0;
+      output_store_issue = 0;
+      acc_copy_target[0] = 0;
+      acc_copy_target[1] = 0;
+      first_arm_seen[0] = 1'b0;
+      first_arm_seen[1] = 1'b0;
+      owner_valid[0] = 1'b0;
+      owner_valid[1] = 1'b0;
+      owner_target[0] = 0;
+      owner_target[1] = 0;
+      owner_arm_count[0] = 0;
+      owner_arm_count[1] = 0;
+      owner_count[0] = 0;
+      owner_count[1] = 0;
+      owner_seen_nonaccum[0] = 1'b0;
+      owner_seen_nonaccum[1] = 1'b0;
+      owner_seen_accum[0] = 1'b0;
+      owner_seen_accum[1] = 1'b0;
+      directed_owner_arm_count[0] = 0;
+      directed_owner_arm_count[1] = 0;
+      directed_owner_arm_count[2] = 0;
+      pending_copy_valid = 1'b0;
+      pending_copy_group = 0;
+      pending_copy_target = 0;
       final_arm_count = 0;
-      final_wait_index = -1;
-      first_acc2lmem_index = -1;
       dma_prior_g_count = 0;
       w_prior_g_count = 0;
       sz_prior_g_count = 0;
@@ -316,11 +358,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
             else                         n_sc++;
           end
           OP_I_LDMA_ARM: n_arm++;
-          OP_O_ACC2LMEM: begin
-            n_acc2lmem++;
-            if (first_acc2lmem_index < 0)
-              first_acc2lmem_index = i;
-          end
+          OP_O_ACC2LMEM: n_acc2lmem++;
           OP_WAIT:       n_wait++;
           OP_NOTIFY:     n_ntf++;
           default: ;
@@ -336,9 +374,6 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
               && cmd_log[i].waits[dep].reg_id >= 11)
             $fatal(1, "Command %0d wait %0d has invalid RID %0d",
                    i, dep, cmd_log[i].waits[dep].reg_id);
-          if ((dep > 0) && cmd_log[i].waits[dep].valid
-              && !cmd_log[i].waits[dep-1].valid)
-            $fatal(1, "Command %0d has non-contiguous wait slot %0d", i, dep);
         end
         if (cmd_log[i].notify.valid && cmd_log[i].notify.reg_id >= 11)
           $fatal(1, "Command %0d notify has invalid RID %0d",
@@ -478,7 +513,12 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
           end
 
           OP_I_LDMA_ARM: begin
+            int unsigned acc_group;
+            int unsigned reuse_target;
+
             cmd_buf = cmd_log[i].flags[2];
+            acc_group = (cmd_log[i].rs1 >= TB_ACC_DBUF_STRIDE);
+            reuse_target = cmd_log[i].waits[3].target;
             if (!cmd_log[i].flags[5])
               $fatal(1, "QDIR=1 ARM #%0d lost quant-direction metadata", i);
             if (!cmd_log[i].notify.valid
@@ -505,22 +545,73 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
                 $fatal(1, "ARM #%0d prior-compute target is not latest", i);
               arm_prior_g_count++;
             end
-            if (cmd_log[i].waits[3].valid)
-              $fatal(1, "ARM #%0d uses wait slot beyond expected count", i);
+            if (!cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[3].reg_id != (acc_group ? 10 : 9)
+                || reuse_target != acc_copy_target[acc_group])
+              $fatal(1, "ARM #%0d ACC group/reuse dependency mismatch group=%0d rid=%0d target=%0d expected=%0d",
+                     i, acc_group, cmd_log[i].waits[3].reg_id,
+                     reuse_target, acc_copy_target[acc_group]);
+
+            if (!first_arm_seen[acc_group]) begin
+              if (reuse_target != 0)
+                $fatal(1, "First owner of ACC group %0d has nonzero target %0d",
+                       acc_group, reuse_target);
+              first_arm_seen[acc_group] = 1'b1;
+            end
+
+            if (!owner_valid[acc_group]) begin
+              owner_valid[acc_group] = 1'b1;
+              owner_target[acc_group] = reuse_target;
+              owner_arm_count[acc_group] = 0;
+              owner_seen_nonaccum[acc_group] = 1'b0;
+              owner_seen_accum[acc_group] = 1'b0;
+              owner_count[acc_group]++;
+            end else if (reuse_target != owner_target[acc_group]) begin
+              if (!owner_seen_nonaccum[acc_group]
+                  || !owner_seen_accum[acc_group])
+                $fatal(1, "ACC group %0d owner target %0d did not preserve capture across K accumulation",
+                       acc_group, owner_target[acc_group]);
+              owner_target[acc_group] = reuse_target;
+              owner_arm_count[acc_group] = 0;
+              owner_seen_nonaccum[acc_group] = 1'b0;
+              owner_seen_accum[acc_group] = 1'b0;
+              owner_count[acc_group]++;
+            end
+            owner_arm_count[acc_group]++;
+            if (cmd_log[i].flags[3]) owner_seen_accum[acc_group] = 1'b1;
+            else                     owner_seen_nonaccum[acc_group] = 1'b1;
+
+            if (expect_three_tile_edge_reuse) begin
+              if (acc_group == 0 && reuse_target == 0)
+                directed_owner_arm_count[0]++;
+              else if (acc_group == 1 && reuse_target == 0)
+                directed_owner_arm_count[1]++;
+              else if (acc_group == 0 && reuse_target == 4)
+                directed_owner_arm_count[2]++;
+              else
+                $fatal(1, "Unexpected directed owner signature group=%0d target=%0d",
+                       acc_group, reuse_target);
+            end
             expected_count[cmd_buf]++;
             if (cmd_log[i].flags[4]) begin
               final_arm_count++;
-              final_wait_index = i;
             end
           end
 
           OP_O_ACC2LMEM: begin
+            int unsigned acc_group;
+            int unsigned copy_target;
+
+            acc_group = (cmd_log[i].rs2 >= (TB_ACC_DBUF_STRIDE >> 1));
+            copy_target = acc_copy_target[acc_group] + 1;
+            if (pending_copy_valid)
+              $fatal(1, "ACC2LMEM #%0d issued before prior copy was paired with DMA_ST", i);
             if (!cmd_log[i].waits[0].valid
                 || cmd_log[i].waits[0].reg_id != 4
-                || cmd_log[i].waits[0].target != o_even_target
+                || cmd_log[i].waits[0].target != output_store_issue
                 || !cmd_log[i].waits[1].valid
                 || !(cmd_log[i].waits[1].reg_id inside {4'd3, 4'd8}))
-              $fatal(1, "ACC2LMEM #%0d lacks RID_O-even/current-compute waits", i);
+              $fatal(1, "ACC2LMEM #%0d lacks issued-store/current-compute waits", i);
             wait_buf = (cmd_log[i].waits[1].reg_id == 8);
             if (cmd_log[i].waits[1].target != expected_count[wait_buf])
               $fatal(1, "ACC2LMEM #%0d current-compute target is not latest", i);
@@ -528,47 +619,140 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
               $fatal(1, "ACC2LMEM #%0d uses wait slot beyond expected count", i);
             if (!cmd_log[i].notify.valid
                 || !cmd_log[i].notify.set_mode
-                || cmd_log[i].notify.reg_id != 4
-                || cmd_log[i].notify.value != o_even_target + 1)
-              $fatal(1, "ACC2LMEM #%0d lacks RID_O odd SET", i);
+                || cmd_log[i].notify.reg_id != (acc_group ? 10 : 9)
+                || cmd_log[i].notify.value != copy_target
+                || cmd_log[i].notify.value <= acc_copy_target[acc_group])
+              $fatal(1, "ACC2LMEM #%0d lacks strictly increasing group-local SET", i);
+            acc_copy_target[acc_group] = copy_target;
+            pending_copy_valid = 1'b1;
+            pending_copy_group = acc_group;
+            pending_copy_target = copy_target;
           end
 
           OP_DMA_ST: begin
-            if (!cmd_log[i].waits[0].valid
-                || cmd_log[i].waits[0].reg_id != 4
-                || cmd_log[i].waits[0].target != o_even_target + 1
+            if (!pending_copy_valid
+                || !cmd_log[i].waits[0].valid
+                || cmd_log[i].waits[0].reg_id
+                   != (pending_copy_group ? 10 : 9)
+                || cmd_log[i].waits[0].target != pending_copy_target
                 || cmd_log[i].waits[1].valid
                 || cmd_log[i].waits[2].valid
                 || cmd_log[i].waits[3].valid)
-              $fatal(1, "DMA store #%0d lacks sole RID_O odd wait", i);
+              $fatal(1, "DMA store #%0d does not wait for its paired ACC group target", i);
             if (!cmd_log[i].notify.valid
                 || cmd_log[i].notify.set_mode
                 || cmd_log[i].notify.reg_id != 4
                 || cmd_log[i].notify.value != 1)
               $fatal(1, "DMA store #%0d lacks RID_O PLUS-1", i);
-            o_even_target += 2;
+            pending_copy_valid = 1'b0;
+            output_store_issue++;
           end
           default: ;
         endcase
       end
 
-      if (final_arm_count != 1)
-        $fatal(1, "Expected exactly one writeback-qualified ARM, got %0d",
-               final_arm_count);
-      if (first_acc2lmem_index <= final_wait_index)
-        $fatal(1, "ACC2LMEM issued before final paired NOTIFY/WAIT");
+      for (int group_idx = 0; group_idx < 2; group_idx++) begin
+        if (owner_valid[group_idx]
+            && (!owner_seen_nonaccum[group_idx]
+                || !owner_seen_accum[group_idx]))
+          $fatal(1, "ACC group %0d final owner target %0d did not preserve capture across K accumulation",
+                 group_idx, owner_target[group_idx]);
+      end
+      if (pending_copy_valid)
+        $fatal(1, "Final ACC2LMEM was not paired with a DMA store");
+      if (final_arm_count != expected_output_tiles)
+        $fatal(1, "Expected %0d writeback-qualified ARM commands, got %0d",
+               expected_output_tiles, final_arm_count);
       if (n_w == 0 || n_sc == 0 || n_zp == 0
-          || o_even_target != (2 * n_dma_st))
+          || output_store_issue != n_dma_st
+          || n_acc2lmem != n_dma_st)
         $fatal(1, "Full command matrix coverage counters are incomplete");
+      if (!first_arm_seen[0])
+        $fatal(1, "Invocation did not exercise ACC group 0 first-owner target");
+      if (expect_three_tile_edge_reuse) begin
+        int unsigned full_owner_arms;
+        int unsigned edge_owner_arms;
+
+        full_owner_arms = (128 / `MXU_COL) * (384 / `MXU_ROW);
+        edge_owner_arms = ((32 + `MXU_COL - 1) / `MXU_COL)
+                        * (384 / `MXU_ROW);
+        if (!first_arm_seen[1]
+            || (owner_count[0] + owner_count[1]) < 3
+            || owner_count[0] < 2
+            || acc_copy_target[0] != 5
+            || acc_copy_target[1] != 4
+            || output_store_issue != 9)
+          $fatal(1, "Three-tile edge/reuse coverage incomplete owners={%0d,%0d} copies={%0d,%0d} stores=%0d",
+                 owner_count[0], owner_count[1],
+                 acc_copy_target[0], acc_copy_target[1],
+                 output_store_issue);
+        if (directed_owner_arm_count[0] != full_owner_arms
+            || directed_owner_arm_count[1] != full_owner_arms
+            || directed_owner_arm_count[2] != edge_owner_arms)
+          $fatal(1, "Multi-K/edge ARM coverage mismatch got={%0d,%0d,%0d} expected={%0d,%0d,%0d}",
+                 directed_owner_arm_count[0], directed_owner_arm_count[1],
+                 directed_owner_arm_count[2], full_owner_arms,
+                 full_owner_arms, edge_owner_arms);
+      end
       if (dma_prior_g_count == 0 || w_prior_g_count == 0
           || sz_prior_g_count == 0 || arm_prior_g_count == 0)
         $fatal(1, "QDIR=1 did not exercise every required prior-G wait path dma=%0d w=%0d sz=%0d arm=%0d",
                dma_prior_g_count, w_prior_g_count,
                sz_prior_g_count, arm_prior_g_count);
-      $display("FSM_FULL_METADATA_MATRIX_PASS qdir=1 dma_ld=%0d w=%0d sc=%0d zp=%0d arm=%0d acc=%0d dma_st=%0d rid_o_even=%0d prior_g={dma:%0d,w:%0d,sz:%0d,arm:%0d}",
+      $display("FSM_FULL_METADATA_MATRIX_PASS qdir=1 dma_ld=%0d w=%0d sc=%0d zp=%0d arm=%0d acc=%0d dma_st=%0d store_issue=%0d acc_copy={%0d,%0d} owners={%0d,%0d} prior_g={dma:%0d,w:%0d,sz:%0d,arm:%0d}",
                n_dma_ld, n_w, n_sc, n_zp, n_arm, n_acc2lmem,
-               n_dma_st, o_even_target, dma_prior_g_count, w_prior_g_count,
+               n_dma_st, output_store_issue,
+               acc_copy_target[0], acc_copy_target[1],
+               owner_count[0], owner_count[1],
+               dma_prior_g_count, w_prior_g_count,
                sz_prior_g_count, arm_prior_g_count);
+    end
+  endtask
+
+  task automatic hold_and_release_final_drain(
+    output int unsigned issued_store_count
+  );
+    int unsigned timeout_cycles;
+    begin
+      timeout_cycles = 0;
+      while (dut.state_q != DUT_S_O_WAIT_LMEM2DRAM_FINAL) begin
+        @(posedge clk);
+        timeout_cycles++;
+        if (timeout_cycles > 200000)
+          $fatal(1, "TIMEOUT waiting for S_O_WAIT_LMEM2DRAM_FINAL");
+      end
+
+      issued_store_count = dut.o_store_issue_q;
+      if (issued_store_count == 0)
+        $fatal(1, "Final drain reached without an issued DMA store");
+
+      // Exercise the exact boundary: the FSM must remain in final wait at
+      // target-1, then leave only when the completed count reaches target.
+      @(negedge clk);
+      completed_output_store_count = issued_store_count - 1;
+      repeat (6) begin
+        @(posedge clk);
+        #1;
+        if (dut.state_q != DUT_S_O_WAIT_LMEM2DRAM_FINAL || fsm_idle)
+          $fatal(1, "Final drain released below target completed=%0d issued=%0d",
+                 completed_output_store_count, issued_store_count);
+      end
+
+      @(negedge clk);
+      completed_output_store_count = issued_store_count;
+      @(posedge clk);
+      #1;
+      if (dut.state_q == DUT_S_O_WAIT_LMEM2DRAM_FINAL)
+        $fatal(1, "Final drain did not release at exact equality target=%0d",
+               issued_store_count);
+
+      timeout_cycles = 0;
+      while (!fsm_idle) begin
+        @(posedge clk);
+        timeout_cycles++;
+        if (timeout_cycles > 4)
+          $fatal(1, "FSM did not return idle after final drain equality");
+      end
     end
   endtask
 
@@ -576,17 +760,24 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   // Run
   // -----------------------------
   initial begin : RUN
-    int unsigned quiet;
+    int unsigned first_store_count;
+    int unsigned second_store_count;
 
     $display("TB_NAME=%s starting...", TB_NAME);
 
     @(negedge reset);
     repeat (5) @(posedge clk);
 
-    // Small deterministic job
-    // M=N=128 => 1 tile in M,N
-    // K=384 => three DMA K tiles, covering the post-warmup buffer-reuse path.
-    // qblk=32 => groups = 4
+    if (dut.o_store_issue_q != 0
+        || dut.acc_copy_issue_q[0] != 0
+        || dut.acc_copy_issue_q[1] != 0
+        || dut.tile_acc_group_q != 0
+        || dut.tile_acc_reuse_target_q != 0)
+      $fatal(1, "Output dependency state did not reset to zero");
+
+    // Three output tiles: full N tiles 0/1 own groups 0/1, then the 32-wide
+    // edge tile reuses group 0.  K=384 creates three K tiles while the tile's
+    // captured accumulator reuse target must remain unchanged.
     drive_cfg_once(
       64'h1000_0000, // input_base
       64'h2000_0000, // weight_base
@@ -605,31 +796,49 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       64'hE000_0000, // lmem_obuf_base
 
       128,           // M
-      128,           // N
+      288,           // N = 128 + 128 + 32 edge
       384,           // K
       5              // log2(qblk=32)
     );
 
-    // Wait until no commands for a while
-    quiet = 0;
-    while (1) begin
-      @(posedge clk);
+    hold_and_release_final_drain(first_store_count);
+    sanity_check(1'b1, 3);
+    if (first_store_count != 9)
+      $fatal(1, "Directed three-tile invocation issued %0d stores, expected 9",
+             first_store_count);
 
-      if (gemm_fsm_if.ctrl.start) quiet = 0;
-      else                        quiet++;
+    // A new accepted invocation must restart all issue-side and captured
+    // dependency state.  Use another multi-K job so the reset metadata is
+    // checked through the same prior-G paths, not only by hierarchy.
+    cmd_log.delete();
+    @(negedge clk);
+    completed_output_store_count = 0;
+    drive_cfg_once(
+      64'h1100_0000, 64'h2100_0000, 64'h3100_0000,
+      64'h4100_0000, 64'h5100_0000,
+      64'h6100_0000, 64'h7100_0000,
+      64'h8100_0000, 64'h9100_0000,
+      64'hA100_0000, 64'hB100_0000,
+      64'hC100_0000, 64'hD100_0000,
+      64'hE100_0000,
+      64, 32, 384, 5
+    );
 
-      if ((cmd_log.size() > 0) && (quiet > 80)) begin
-        $display("[%0t] No cmds for %0d cycles -> done.", $time, quiet);
-        break;
-      end
+    if (dut.o_store_issue_q != 0
+        || dut.acc_copy_issue_q[0] != 0
+        || dut.acc_copy_issue_q[1] != 0
+        || dut.tile_acc_reuse_target_q != 0)
+      $fatal(1, "New invocation did not clear output dependency state");
 
-      if ($time > 2_000_000) begin
-        $fatal(1, "TIMEOUT: no completion");
-      end
-    end
+    hold_and_release_final_drain(second_store_count);
+    sanity_check(1'b0, 1);
+    if (second_store_count != 1)
+      $fatal(1, "Reset-check invocation issued %0d stores, expected 1",
+             second_store_count);
 
-    sanity_check();
-    $display("TEST PASSED: GEMM FSM command stream sanity checks completed");
+    $display("FSM_OUTPUT_DOUBLE_BUFFER_METADATA_PASS first_stores=%0d second_stores=%0d",
+             first_store_count, second_store_count);
+    $display("TEST PASSED: GEMM FSM output dependency checks completed");
     $finish;
   end
 
