@@ -20,6 +20,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     output wire                   progress_update_valid_o,
     output wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id_o,
     output wire [31:0]            progress_update_value_o
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+    ,input wire                   dbg_compute_active_i
+`endif
+`endif
 `ifdef PERF_ENABLE
     ,input  logic                 gemm_unit_computing
     ,output gemm_node_perf_t      perf
@@ -71,6 +76,24 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [31:0] done_entry_id_q;
     logic [31:0] output_progress_q;
 
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+    logic        dbg_fsm_meta_valid;
+    logic [7:0]  dbg_fsm_meta_state;
+    logic [3:0]  dbg_fsm_meta_phase;
+    logic [31:0] dbg_fsm_meta_tile;
+    logic [31:0] dbg_fsm_meta_nt;
+    logic [31:0] dbg_fsm_meta_mt;
+    logic [31:0] dbg_fsm_meta_kt;
+    logic [31:0] dbg_fsm_meta_mxu_nt;
+    logic [31:0] dbg_fsm_meta_mxu_kt;
+    logic        dbg_fsm_meta_tile_buf;
+    logic        dbg_fsm_meta_mxu_buf;
+    logic        dbg_fsm_meta_acc_group;
+    logic [31:0] dbg_fsm_meta_generation;
+`endif
+`endif
+
     wire scheduler_quiescent = (&child_q_empty_v)
                              && (&child_inflight_empty_v);
     wire new_invocation_ready = fsm_idle && scheduler_quiescent;
@@ -113,6 +136,23 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .fsm_idle_o   (fsm_idle),
       .pending_work_o (fsm_pending_work),
       .pending_child_o (fsm_pending_child)
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+      ,.dbg_cmd_meta_valid_o (dbg_fsm_meta_valid)
+      ,.dbg_cmd_meta_state_o (dbg_fsm_meta_state)
+      ,.dbg_cmd_meta_phase_o (dbg_fsm_meta_phase)
+      ,.dbg_cmd_meta_tile_o (dbg_fsm_meta_tile)
+      ,.dbg_cmd_meta_nt_o (dbg_fsm_meta_nt)
+      ,.dbg_cmd_meta_mt_o (dbg_fsm_meta_mt)
+      ,.dbg_cmd_meta_kt_o (dbg_fsm_meta_kt)
+      ,.dbg_cmd_meta_mxu_nt_o (dbg_fsm_meta_mxu_nt)
+      ,.dbg_cmd_meta_mxu_kt_o (dbg_fsm_meta_mxu_kt)
+      ,.dbg_cmd_meta_tile_buf_o (dbg_fsm_meta_tile_buf)
+      ,.dbg_cmd_meta_mxu_buf_o (dbg_fsm_meta_mxu_buf)
+      ,.dbg_cmd_meta_acc_group_o (dbg_fsm_meta_acc_group)
+      ,.dbg_cmd_meta_generation_o (dbg_fsm_meta_generation)
+`endif
+`endif
     );
 
     function automatic logic [2:0] command_child(
@@ -464,6 +504,726 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign progress_update_entry_id_o
         = active_entry_id_q[`JOB_MMIO_ENTRYID_W-1:0];
     assign progress_update_value_o = output_progress_q + 32'd1;
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+`ifdef DBG_GEMM_CMD_MAX
+    localparam int DBG_CMD_MAX = `DBG_GEMM_CMD_MAX;
+`else
+    localparam int DBG_CMD_MAX = 4096;
+`endif
+`ifdef DBG_GEMM_TILE_MAX
+    localparam int DBG_TILE_MAX = `DBG_GEMM_TILE_MAX;
+`else
+    localparam int DBG_TILE_MAX = 256;
+`endif
+    localparam int DBG_CLASS_COUNT = 10;
+    localparam int DBG_QUEUE_DEPTH = DMA_CHILD_QUEUE_DEPTH;
+    localparam logic [3:0] DBG_C_DRAM_INPUT_LOAD  = 4'd0;
+    localparam logic [3:0] DBG_C_DRAM_WEIGHT_LOAD = 4'd1;
+    localparam logic [3:0] DBG_C_DRAM_SCALE_LOAD  = 4'd2;
+    localparam logic [3:0] DBG_C_DRAM_ZP_LOAD     = 4'd3;
+    localparam logic [3:0] DBG_C_DRAM_OUTPUT_STORE = 4'd4;
+    localparam logic [3:0] DBG_C_MXU_WEIGHT_LOAD  = 4'd5;
+    localparam logic [3:0] DBG_C_MXU_SCALE_LOAD   = 4'd6;
+    localparam logic [3:0] DBG_C_MXU_ZP_LOAD      = 4'd7;
+    localparam logic [3:0] DBG_C_COMPUTE_ARM      = 4'd8;
+    localparam logic [3:0] DBG_C_ACCUM_TO_LMEM    = 4'd9;
+
+    typedef struct {
+      bit emitted;
+      bit issued;
+      bit completed;
+      logic [3:0] class_id;
+      logic [2:0] child;
+      logic [7:0] state;
+      logic [3:0] phase;
+      logic [31:0] tile;
+      logic [31:0] nt;
+      logic [31:0] mt;
+      logic [31:0] kt;
+      logic [31:0] mxu_nt;
+      logic [31:0] mxu_kt;
+      logic tile_buf;
+      logic mxu_buf;
+      logic acc_group;
+      logic [31:0] generation;
+      logic [GEMM_DMA_TAG_WIDTH-1:0] dma_tag;
+      gemm_unified_cmd_t cmd;
+      longint unsigned emit_cycle;
+      longint unsigned issue_cycle;
+      longint unsigned done_cycle;
+      longint unsigned dependency_blocked_cycles;
+      longint unsigned executor_blocked_cycles;
+      longint unsigned overlap_any_cycles;
+      longint unsigned overlap_compute_pipeline_cycles;
+      longint unsigned overlap_later_tile_load_cycles;
+      longint unsigned overlap_later_tile_compute_cycles;
+    } dbg_cmd_record_t;
+
+    dbg_cmd_record_t dbg_cmd_record[DBG_CMD_MAX];
+    longint unsigned dbg_overlap_class[DBG_CMD_MAX][DBG_CLASS_COUNT];
+    int unsigned dbg_q_uid[N_CHILDREN][DBG_QUEUE_DEPTH];
+    int unsigned dbg_q_head[N_CHILDREN];
+    int unsigned dbg_q_tail[N_CHILDREN];
+    int unsigned dbg_q_count[N_CHILDREN];
+    int unsigned dbg_active_uid[N_CHILDREN];
+    bit dbg_active_uid_valid[N_CHILDREN];
+    int unsigned dbg_dma_uid_by_tag[DMA_INFLIGHT_DEPTH];
+    bit dbg_dma_uid_valid[DMA_INFLIGHT_DEPTH];
+
+    longint unsigned dbg_cycle_q;
+    longint unsigned dbg_job_seq_q;
+    int unsigned dbg_record_count_q;
+    int unsigned dbg_issue_count_q;
+    int unsigned dbg_done_count_q;
+    int unsigned dbg_max_concurrent_q;
+    int unsigned dbg_max_tile_q;
+    longint unsigned dbg_compute_pipeline_cycles_q;
+    longint unsigned dbg_class_active_cycles_q[DBG_CLASS_COUNT];
+
+    bit dbg_preload_seen[DBG_TILE_MAX];
+    bit dbg_compute_seen[DBG_TILE_MAX];
+    bit dbg_store_seen[DBG_TILE_MAX];
+    longint unsigned dbg_preload_issue_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_preload_done_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_compute_issue_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_compute_done_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_store_issue_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_store_done_cycle[DBG_TILE_MAX];
+    longint unsigned dbg_tile_compute_pipeline_cycles[DBG_TILE_MAX];
+    longint unsigned dbg_tile_preload_compute_overlap[DBG_TILE_MAX];
+    longint unsigned dbg_tile_store_next_compute_overlap[DBG_TILE_MAX];
+    longint unsigned dbg_tile_store_next_load_overlap[DBG_TILE_MAX];
+    longint unsigned dbg_tile_store_later_load_overlap[DBG_TILE_MAX];
+
+    function automatic int unsigned dbg_child_depth(input int child);
+      return (child == DMA_CHILD_INDEX)
+          ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
+    endfunction
+
+    function automatic logic [3:0] dbg_command_class(
+        input gemm_unified_cmd_t cmd,
+        input logic [7:0] state
+    );
+      unique case (cmd.instr[3:0])
+        4'd1: begin
+          unique case (cmd.rd)
+            0: dbg_command_class = DBG_C_DRAM_INPUT_LOAD;
+            1: dbg_command_class = DBG_C_DRAM_WEIGHT_LOAD;
+            2: dbg_command_class = DBG_C_DRAM_SCALE_LOAD;
+            default: dbg_command_class = DBG_C_DRAM_ZP_LOAD;
+          endcase
+        end
+        4'd2: dbg_command_class = DBG_C_DRAM_OUTPUT_STORE;
+        4'd5: dbg_command_class = DBG_C_MXU_WEIGHT_LOAD;
+        4'd6: begin
+          // FSM states 16/23 issue scale; 17/24 issue zero point.
+          dbg_command_class = ((state == 8'd16) || (state == 8'd23))
+              ? DBG_C_MXU_SCALE_LOAD : DBG_C_MXU_ZP_LOAD;
+        end
+        4'd7: dbg_command_class = DBG_C_COMPUTE_ARM;
+        default: dbg_command_class = DBG_C_ACCUM_TO_LMEM;
+      endcase
+    endfunction
+
+    function automatic bit dbg_is_dram_load(input logic [3:0] class_id);
+      return class_id <= DBG_C_DRAM_ZP_LOAD;
+    endfunction
+
+    function automatic string dbg_class_name(input logic [3:0] class_id);
+      case (class_id)
+        DBG_C_DRAM_INPUT_LOAD:   return "DRAM_INPUT_LOAD";
+        DBG_C_DRAM_WEIGHT_LOAD:  return "DRAM_WEIGHT_LOAD";
+        DBG_C_DRAM_SCALE_LOAD:   return "DRAM_SCALE_LOAD";
+        DBG_C_DRAM_ZP_LOAD:      return "DRAM_ZP_LOAD";
+        DBG_C_DRAM_OUTPUT_STORE: return "DRAM_OUTPUT_STORE";
+        DBG_C_MXU_WEIGHT_LOAD:   return "MXU_WEIGHT_LOAD";
+        DBG_C_MXU_SCALE_LOAD:    return "MXU_SCALE_LOAD";
+        DBG_C_MXU_ZP_LOAD:       return "MXU_ZP_LOAD";
+        DBG_C_COMPUTE_ARM:       return "COMPUTE_ARM";
+        default:                 return "ACCUM_TO_LMEM";
+      endcase
+    endfunction
+
+    function automatic longint unsigned dbg_interval_overlap(
+        input longint unsigned start_a,
+        input longint unsigned end_a,
+        input longint unsigned start_b,
+        input longint unsigned end_b
+    );
+      longint unsigned overlap_start;
+      longint unsigned overlap_end;
+      begin
+        overlap_start = (start_a > start_b) ? start_a : start_b;
+        overlap_end = (end_a < end_b) ? end_a : end_b;
+        return (overlap_end > overlap_start)
+            ? (overlap_end - overlap_start) : 0;
+      end
+    endfunction
+
+    task automatic dbg_dump_invocation;
+      int incomplete;
+      longint unsigned class_count;
+      longint unsigned class_queue;
+      longint unsigned class_service;
+      longint unsigned pair_overlap;
+      longint unsigned preload_tail;
+      longint unsigned ready_slack;
+      longint unsigned store_tail;
+      longint unsigned final_store_drain;
+      begin
+        incomplete = 0;
+        for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+          if (!dbg_cmd_record[uid].completed)
+            incomplete++;
+        end
+
+        $display("GEMM_CMD_PERF_SUMMARY | {inst=%s, job=%0d, entry=%0d, cycles=%0d, emitted=%0d, issued=%0d, completed=%0d, incomplete=%0d, max_concurrent=%0d, compute_pipeline_cycles=%0d}",
+                 INSTANCE_ID, dbg_job_seq_q, active_entry_id_q,
+                 dbg_cycle_q, dbg_record_count_q, dbg_issue_count_q,
+                 dbg_done_count_q, incomplete, dbg_max_concurrent_q,
+                 dbg_compute_pipeline_cycles_q);
+
+        for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id) begin
+          class_count = 0;
+          class_queue = 0;
+          class_service = 0;
+          for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+            if (dbg_cmd_record[uid].class_id == class_id) begin
+              class_count++;
+              class_queue += dbg_cmd_record[uid].issue_cycle
+                           - dbg_cmd_record[uid].emit_cycle;
+              class_service += dbg_cmd_record[uid].done_cycle
+                             - dbg_cmd_record[uid].issue_cycle;
+            end
+          end
+          $display("GEMM_CMD_CLASS_SUMMARY | {inst=%s, job=%0d, class=%s, count=%0d, queue_cycles=%0d, service_cycles=%0d, class_active_cycles=%0d}",
+                   INSTANCE_ID, dbg_job_seq_q,
+                   dbg_class_name(4'(class_id)), class_count,
+                   class_queue, class_service,
+                   dbg_class_active_cycles_q[class_id]);
+        end
+
+        for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+          $display("GEMM_CMD_TIMELINE | {inst=%s, job=%0d, entry=%0d, uid=%0d, class=%s, child=%0d, op=0x%0h, state=%0d, phase=%0d, tile=%0d, nt=%0d, mt=%0d, kt=%0d, mxu_nt=%0d, mxu_kt=%0d, tile_buf=%0d, mxu_buf=%0d, acc_group=%0d, generation=%0d, dma_tag=%0d, size=%0d, src=0x%0h, dst=0x%0h, notify_valid=%0d, notify_rid=%0d, notify_value=%0d, emit=%0d, issue=%0d, done=%0d, queue=%0d, service=%0d, total=%0d, dependency_blocked=%0d, executor_blocked=%0d, overlap_any=%0d, overlap_compute=%0d, overlap_later_load=%0d, overlap_later_compute=%0d}",
+                   INSTANCE_ID, dbg_job_seq_q, active_entry_id_q, uid,
+                   dbg_class_name(dbg_cmd_record[uid].class_id),
+                   dbg_cmd_record[uid].child,
+                   dbg_cmd_record[uid].cmd.instr[3:0],
+                   dbg_cmd_record[uid].state,
+                   dbg_cmd_record[uid].phase,
+                   dbg_cmd_record[uid].tile,
+                   dbg_cmd_record[uid].nt,
+                   dbg_cmd_record[uid].mt,
+                   dbg_cmd_record[uid].kt,
+                   dbg_cmd_record[uid].mxu_nt,
+                   dbg_cmd_record[uid].mxu_kt,
+                   dbg_cmd_record[uid].tile_buf,
+                   dbg_cmd_record[uid].mxu_buf,
+                   dbg_cmd_record[uid].acc_group,
+                   dbg_cmd_record[uid].generation,
+                   dbg_cmd_record[uid].dma_tag,
+                   dbg_cmd_record[uid].cmd.instr[31:4],
+                   dbg_cmd_record[uid].cmd.rs2_data,
+                   dbg_cmd_record[uid].cmd.rs1_data,
+                   dbg_cmd_record[uid].cmd.notify.valid,
+                   dbg_cmd_record[uid].cmd.notify.reg_id,
+                   dbg_cmd_record[uid].cmd.notify.value,
+                   dbg_cmd_record[uid].emit_cycle,
+                   dbg_cmd_record[uid].issue_cycle,
+                   dbg_cmd_record[uid].done_cycle,
+                   dbg_cmd_record[uid].issue_cycle
+                     - dbg_cmd_record[uid].emit_cycle,
+                   dbg_cmd_record[uid].done_cycle
+                     - dbg_cmd_record[uid].issue_cycle,
+                   dbg_cmd_record[uid].done_cycle
+                     - dbg_cmd_record[uid].emit_cycle,
+                   dbg_cmd_record[uid].dependency_blocked_cycles,
+                   dbg_cmd_record[uid].executor_blocked_cycles,
+                   dbg_cmd_record[uid].overlap_any_cycles,
+                   dbg_cmd_record[uid].overlap_compute_pipeline_cycles,
+                   dbg_cmd_record[uid].overlap_later_tile_load_cycles,
+                   dbg_cmd_record[uid].overlap_later_tile_compute_cycles);
+          for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id) begin
+            if (dbg_overlap_class[uid][class_id] != 0) begin
+              $display("GEMM_CMD_OVERLAP_PAIR | {inst=%s, job=%0d, uid=%0d, peer_class=%s, cycles=%0d}",
+                       INSTANCE_ID, dbg_job_seq_q, uid,
+                       dbg_class_name(4'(class_id)),
+                       dbg_overlap_class[uid][class_id]);
+            end
+          end
+        end
+
+        for (int lhs = 0; lhs < dbg_record_count_q; ++lhs) begin
+          for (int rhs = lhs + 1; rhs < dbg_record_count_q; ++rhs) begin
+            pair_overlap = dbg_interval_overlap(
+                dbg_cmd_record[lhs].issue_cycle,
+                dbg_cmd_record[lhs].done_cycle,
+                dbg_cmd_record[rhs].issue_cycle,
+                dbg_cmd_record[rhs].done_cycle);
+            if (pair_overlap != 0) begin
+              $display("GEMM_CMD_OVERLAP_PAIR | {inst=%s, job=%0d, uid_a=%0d, class_a=%s, tile_a=%0d, uid_b=%0d, class_b=%s, tile_b=%0d, cycles=%0d}",
+                       INSTANCE_ID, dbg_job_seq_q, lhs,
+                       dbg_class_name(dbg_cmd_record[lhs].class_id),
+                       dbg_cmd_record[lhs].tile, rhs,
+                       dbg_class_name(dbg_cmd_record[rhs].class_id),
+                       dbg_cmd_record[rhs].tile, pair_overlap);
+            end
+          end
+        end
+
+        for (int tile = 0; tile <= dbg_max_tile_q; ++tile) begin
+          preload_tail = 0;
+          ready_slack = 0;
+          store_tail = 0;
+          final_store_drain = 0;
+          if ((tile + 1 < DBG_TILE_MAX)
+           && dbg_preload_seen[tile + 1]
+           && dbg_compute_seen[tile]) begin
+            if (dbg_preload_done_cycle[tile + 1]
+                > dbg_compute_done_cycle[tile])
+              preload_tail = dbg_preload_done_cycle[tile + 1]
+                           - dbg_compute_done_cycle[tile];
+            if (dbg_compute_seen[tile + 1]
+             && (dbg_compute_issue_cycle[tile + 1]
+                 > dbg_preload_done_cycle[tile + 1]))
+              ready_slack = dbg_compute_issue_cycle[tile + 1]
+                          - dbg_preload_done_cycle[tile + 1];
+          end
+          if ((tile + 1 < DBG_TILE_MAX)
+           && dbg_store_seen[tile]
+           && dbg_compute_seen[tile + 1]
+           && (dbg_store_done_cycle[tile]
+               > dbg_compute_done_cycle[tile + 1]))
+            store_tail = dbg_store_done_cycle[tile]
+                       - dbg_compute_done_cycle[tile + 1];
+          if ((tile == dbg_max_tile_q) && dbg_store_seen[tile]
+           && dbg_compute_seen[tile]
+           && (dbg_store_done_cycle[tile] > dbg_compute_done_cycle[tile]))
+            final_store_drain = dbg_store_done_cycle[tile]
+                              - dbg_compute_done_cycle[tile];
+
+          $display("GEMM_TILE_OVERLAP | {inst=%s, job=%0d, tile=%0d, preload_next_compute=%0d, preload_hidden=%0d, preload_tail=%0d, tile_ready_slack=%0d, store_next_compute=%0d, store_next_load=%0d, store_later_load=%0d, store_hidden=%0d, store_tail=%0d, compute_pipeline_cycles=%0d, final_store_drain=%0d}",
+                   INSTANCE_ID, dbg_job_seq_q, tile,
+                   dbg_tile_preload_compute_overlap[tile],
+                   dbg_tile_preload_compute_overlap[tile], preload_tail,
+                   ready_slack, dbg_tile_store_next_compute_overlap[tile],
+                   dbg_tile_store_next_load_overlap[tile],
+                   dbg_tile_store_later_load_overlap[tile],
+                   dbg_tile_store_next_compute_overlap[tile], store_tail,
+                   dbg_tile_compute_pipeline_cycles[tile], final_store_drain);
+        end
+      end
+    endtask
+
+    always @(posedge clk) begin : dbg_command_lifecycle_ledger
+      if (reset) begin
+        dbg_cycle_q = 0;
+        dbg_job_seq_q = 0;
+        dbg_record_count_q = 0;
+        dbg_issue_count_q = 0;
+        dbg_done_count_q = 0;
+        dbg_max_concurrent_q = 0;
+        dbg_max_tile_q = 0;
+        dbg_compute_pipeline_cycles_q = 0;
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          dbg_q_head[child] = 0;
+          dbg_q_tail[child] = 0;
+          dbg_q_count[child] = 0;
+          dbg_active_uid[child] = 0;
+          dbg_active_uid_valid[child] = 0;
+        end
+        for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag) begin
+          dbg_dma_uid_by_tag[tag] = 0;
+          dbg_dma_uid_valid[tag] = 0;
+        end
+        for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id)
+          dbg_class_active_cycles_q[class_id] = 0;
+        for (int tile = 0; tile < DBG_TILE_MAX; ++tile) begin
+          dbg_preload_seen[tile] = 0;
+          dbg_compute_seen[tile] = 0;
+          dbg_store_seen[tile] = 0;
+          dbg_tile_compute_pipeline_cycles[tile] = 0;
+          dbg_tile_preload_compute_overlap[tile] = 0;
+          dbg_tile_store_next_compute_overlap[tile] = 0;
+          dbg_tile_store_next_load_overlap[tile] = 0;
+          dbg_tile_store_later_load_overlap[tile] = 0;
+        end
+      end else if (cfg_fire) begin
+        dbg_cycle_q = 0;
+        dbg_record_count_q = 0;
+        dbg_issue_count_q = 0;
+        dbg_done_count_q = 0;
+        dbg_max_concurrent_q = 0;
+        dbg_max_tile_q = 0;
+        dbg_compute_pipeline_cycles_q = 0;
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          assert (dbg_q_count[child] == 0)
+            else $fatal(1, "%s: debug command FIFO child %0d not empty at config",
+                        INSTANCE_ID, child);
+          dbg_q_head[child] = 0;
+          dbg_q_tail[child] = 0;
+          dbg_q_count[child] = 0;
+          dbg_active_uid_valid[child] = 0;
+        end
+        for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag)
+          dbg_dma_uid_valid[tag] = 0;
+        for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id)
+          dbg_class_active_cycles_q[class_id] = 0;
+        for (int tile = 0; tile < DBG_TILE_MAX; ++tile) begin
+          dbg_preload_seen[tile] = 0;
+          dbg_compute_seen[tile] = 0;
+          dbg_store_seen[tile] = 0;
+          dbg_preload_issue_cycle[tile] = 0;
+          dbg_preload_done_cycle[tile] = 0;
+          dbg_compute_issue_cycle[tile] = 0;
+          dbg_compute_done_cycle[tile] = 0;
+          dbg_store_issue_cycle[tile] = 0;
+          dbg_store_done_cycle[tile] = 0;
+          dbg_tile_compute_pipeline_cycles[tile] = 0;
+          dbg_tile_preload_compute_overlap[tile] = 0;
+          dbg_tile_store_next_compute_overlap[tile] = 0;
+          dbg_tile_store_next_load_overlap[tile] = 0;
+          dbg_tile_store_later_load_overlap[tile] = 0;
+        end
+      end else begin
+        int active_count;
+        bit class_mask[DBG_CLASS_COUNT];
+        bit later_load;
+        bit later_compute;
+        bit preload_next_active;
+        bit compute_this_active;
+        bit compute_next_active;
+        bit store_this_active;
+        bit load_next_active;
+        bit load_later_active;
+
+        dbg_cycle_q++;
+
+        // Sample the pre-edge active set.  A completion at this edge therefore
+        // contributes the final cycle of [issue_cycle, done_cycle).
+        active_count = 0;
+        for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+          if (dbg_cmd_record[uid].issued
+           && !dbg_cmd_record[uid].completed)
+            active_count++;
+        end
+        if (active_count > dbg_max_concurrent_q)
+          dbg_max_concurrent_q = active_count;
+        if (dbg_compute_active_i === 1'b1)
+          dbg_compute_pipeline_cycles_q++;
+
+        for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id) begin
+          class_mask[class_id] = 0;
+          for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+            if (dbg_cmd_record[uid].issued
+             && !dbg_cmd_record[uid].completed
+             && (dbg_cmd_record[uid].class_id == class_id))
+              class_mask[class_id] = 1;
+          end
+          if (class_mask[class_id])
+            dbg_class_active_cycles_q[class_id]++;
+        end
+
+        for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+          if (dbg_cmd_record[uid].issued
+           && !dbg_cmd_record[uid].completed) begin
+            logic [DBG_CLASS_COUNT-1:0] peer_class_mask;
+            peer_class_mask = '0;
+            later_load = 0;
+            later_compute = 0;
+            for (int peer = 0; peer < dbg_record_count_q; ++peer) begin
+              if ((peer != uid)
+               && dbg_cmd_record[peer].issued
+               && !dbg_cmd_record[peer].completed) begin
+                peer_class_mask[dbg_cmd_record[peer].class_id] = 1'b1;
+                if ((dbg_cmd_record[peer].tile > dbg_cmd_record[uid].tile)
+                 && dbg_is_dram_load(dbg_cmd_record[peer].class_id))
+                  later_load = 1;
+                if ((dbg_cmd_record[peer].tile > dbg_cmd_record[uid].tile)
+                 && (dbg_cmd_record[peer].class_id == DBG_C_COMPUTE_ARM))
+                  later_compute = 1;
+              end
+            end
+            if (|peer_class_mask)
+              dbg_cmd_record[uid].overlap_any_cycles++;
+            for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id) begin
+              if (peer_class_mask[class_id])
+                dbg_overlap_class[uid][class_id]++;
+            end
+            if (dbg_compute_active_i === 1'b1)
+              dbg_cmd_record[uid].overlap_compute_pipeline_cycles++;
+            if (later_load)
+              dbg_cmd_record[uid].overlap_later_tile_load_cycles++;
+            if (later_compute && (dbg_compute_active_i === 1'b1))
+              dbg_cmd_record[uid].overlap_later_tile_compute_cycles++;
+          end
+        end
+
+        for (int tile = 0; tile <= dbg_max_tile_q; ++tile) begin
+          preload_next_active = 0;
+          compute_this_active = 0;
+          compute_next_active = 0;
+          store_this_active = 0;
+          load_next_active = 0;
+          load_later_active = 0;
+          for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+            if (dbg_cmd_record[uid].issued
+             && !dbg_cmd_record[uid].completed) begin
+              if (dbg_is_dram_load(dbg_cmd_record[uid].class_id)
+               && (dbg_cmd_record[uid].tile == tile + 1)) begin
+                preload_next_active = 1;
+                load_next_active = 1;
+              end
+              if (dbg_is_dram_load(dbg_cmd_record[uid].class_id)
+               && (dbg_cmd_record[uid].tile > tile))
+                load_later_active = 1;
+              if ((dbg_cmd_record[uid].class_id == DBG_C_COMPUTE_ARM)
+               && (dbg_cmd_record[uid].tile == tile))
+                compute_this_active = 1;
+              if ((dbg_cmd_record[uid].class_id == DBG_C_COMPUTE_ARM)
+               && (dbg_cmd_record[uid].tile == tile + 1))
+                compute_next_active = 1;
+              if ((dbg_cmd_record[uid].class_id == DBG_C_DRAM_OUTPUT_STORE)
+               && (dbg_cmd_record[uid].tile == tile))
+                store_this_active = 1;
+            end
+          end
+          if (compute_this_active && (dbg_compute_active_i === 1'b1)) begin
+            dbg_tile_compute_pipeline_cycles[tile]++;
+            if (preload_next_active)
+              dbg_tile_preload_compute_overlap[tile]++;
+          end
+          if (store_this_active && compute_next_active
+           && (dbg_compute_active_i === 1'b1))
+            dbg_tile_store_next_compute_overlap[tile]++;
+          if (store_this_active && load_next_active)
+            dbg_tile_store_next_load_overlap[tile]++;
+          if (store_this_active && load_later_active)
+            dbg_tile_store_later_load_overlap[tile]++;
+        end
+
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (!child_q_empty_v[child] && !child_issue_fire_v[child]) begin
+            int head_uid;
+            head_uid = dbg_q_uid[child][dbg_q_head[child]];
+            if (!child_deps_ready_v[child])
+              dbg_cmd_record[head_uid].dependency_blocked_cycles++;
+            else
+              dbg_cmd_record[head_uid].executor_blocked_cycles++;
+          end
+        end
+
+        // Retire first so a non-DMA child may complete and accept its next
+        // in-order command on the same edge without losing the old UID.
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (child_completion_pop_v[child]) begin
+            int uid;
+            if (child == DMA_CHILD_INDEX) begin
+              int tag;
+              tag = gemm_ctrl_if.dma_flag.done_tag;
+              assert (dbg_dma_uid_valid[tag])
+                else $fatal(1, "%s: command ledger missing DMA tag %0d",
+                            INSTANCE_ID, tag);
+              uid = dbg_dma_uid_by_tag[tag];
+              dbg_dma_uid_valid[tag] = 0;
+            end else begin
+              assert (dbg_active_uid_valid[child])
+                else $fatal(1, "%s: command ledger missing active child %0d",
+                            INSTANCE_ID, child);
+              uid = dbg_active_uid[child];
+              dbg_active_uid_valid[child] = 0;
+            end
+            assert (!dbg_cmd_record[uid].completed)
+              else $fatal(1, "%s: command UID %0d completed twice",
+                          INSTANCE_ID, uid);
+            dbg_cmd_record[uid].completed = 1;
+            dbg_cmd_record[uid].done_cycle = dbg_cycle_q;
+            dbg_done_count_q++;
+            if (dbg_is_dram_load(dbg_cmd_record[uid].class_id)) begin
+              dbg_preload_done_cycle[dbg_cmd_record[uid].tile]
+                  = dbg_cycle_q;
+            end else if (dbg_cmd_record[uid].class_id == DBG_C_COMPUTE_ARM) begin
+              dbg_compute_done_cycle[dbg_cmd_record[uid].tile]
+                  = dbg_cycle_q;
+            end else if (dbg_cmd_record[uid].class_id
+                         == DBG_C_DRAM_OUTPUT_STORE) begin
+              dbg_store_done_cycle[dbg_cmd_record[uid].tile]
+                  = dbg_cycle_q;
+            end
+          end
+        end
+
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (child_issue_fire_v[child]) begin
+            int uid;
+            uid = dbg_q_uid[child][dbg_q_head[child]];
+            assert (dbg_q_count[child] != 0)
+              else $fatal(1, "%s: debug command FIFO child %0d underflow",
+                          INSTANCE_ID, child);
+            assert (dbg_cmd_record[uid].emitted
+                 && !dbg_cmd_record[uid].issued)
+              else $fatal(1, "%s: command UID %0d issued twice or before emit",
+                          INSTANCE_ID, uid);
+            dbg_cmd_record[uid].issued = 1;
+            dbg_cmd_record[uid].issue_cycle = dbg_cycle_q;
+            dbg_issue_count_q++;
+            if (child == DMA_CHILD_INDEX) begin
+              int tag;
+              tag = dma_issue_tag;
+              assert (!dbg_dma_uid_valid[tag])
+                else $fatal(1, "%s: DMA tag %0d reused before completion",
+                            INSTANCE_ID, tag);
+              dbg_dma_uid_valid[tag] = 1;
+              dbg_dma_uid_by_tag[tag] = uid;
+              dbg_cmd_record[uid].dma_tag = GEMM_DMA_TAG_WIDTH'(tag);
+              $display("GEMM_CMD_DMA_MAP | {inst=%s, job=%0d, uid=%0d, tag=%0d, accept=%0d}",
+                       INSTANCE_ID, dbg_job_seq_q, uid, tag, dbg_cycle_q);
+            end else begin
+              assert (!dbg_active_uid_valid[child])
+                else $fatal(1, "%s: non-DMA child %0d has two active UIDs",
+                            INSTANCE_ID, child);
+              dbg_active_uid_valid[child] = 1;
+              dbg_active_uid[child] = uid;
+            end
+            if (dbg_is_dram_load(dbg_cmd_record[uid].class_id)) begin
+              if (!dbg_preload_seen[dbg_cmd_record[uid].tile]) begin
+                dbg_preload_seen[dbg_cmd_record[uid].tile] = 1;
+                dbg_preload_issue_cycle[dbg_cmd_record[uid].tile]
+                    = dbg_cycle_q;
+              end
+            end else if (dbg_cmd_record[uid].class_id == DBG_C_COMPUTE_ARM) begin
+              if (!dbg_compute_seen[dbg_cmd_record[uid].tile]) begin
+                dbg_compute_seen[dbg_cmd_record[uid].tile] = 1;
+                dbg_compute_issue_cycle[dbg_cmd_record[uid].tile]
+                    = dbg_cycle_q;
+              end
+            end else if (dbg_cmd_record[uid].class_id
+                         == DBG_C_DRAM_OUTPUT_STORE) begin
+              if (!dbg_store_seen[dbg_cmd_record[uid].tile]) begin
+                dbg_store_seen[dbg_cmd_record[uid].tile] = 1;
+                dbg_store_issue_cycle[dbg_cmd_record[uid].tile]
+                    = dbg_cycle_q;
+              end
+            end
+            dbg_q_head[child]
+                = (dbg_q_head[child] + 1 == dbg_child_depth(child))
+                ? 0 : dbg_q_head[child] + 1;
+          end
+        end
+
+        if (gemm_fsm_if.ctrl.start) begin
+          int uid;
+          int child;
+          uid = dbg_record_count_q;
+          child = fsm_target_child;
+          assert (dbg_fsm_meta_valid)
+            else $fatal(1, "%s: FSM command emitted without debug metadata",
+                        INSTANCE_ID);
+          assert (uid < DBG_CMD_MAX)
+            else $fatal(1, "%s: command ledger overflow at %0d records",
+                        INSTANCE_ID, uid);
+          assert (dbg_fsm_meta_tile < DBG_TILE_MAX)
+            else $fatal(1, "%s: tile metadata %0d exceeds DBG_TILE_MAX=%0d",
+                        INSTANCE_ID, dbg_fsm_meta_tile, DBG_TILE_MAX);
+          assert (dbg_q_count[child] < dbg_child_depth(child))
+            else $fatal(1, "%s: debug command FIFO child %0d overflow",
+                        INSTANCE_ID, child);
+
+          dbg_cmd_record[uid].emitted = 1;
+          dbg_cmd_record[uid].issued = 0;
+          dbg_cmd_record[uid].completed = 0;
+          dbg_cmd_record[uid].class_id
+              = dbg_command_class(gemm_fsm_if.ctrl.cmd, dbg_fsm_meta_state);
+          dbg_cmd_record[uid].child = 3'(child);
+          dbg_cmd_record[uid].state = dbg_fsm_meta_state;
+          dbg_cmd_record[uid].phase = dbg_fsm_meta_phase;
+          dbg_cmd_record[uid].tile = dbg_fsm_meta_tile;
+          dbg_cmd_record[uid].nt = dbg_fsm_meta_nt;
+          dbg_cmd_record[uid].mt = dbg_fsm_meta_mt;
+          dbg_cmd_record[uid].kt = dbg_fsm_meta_kt;
+          dbg_cmd_record[uid].mxu_nt = dbg_fsm_meta_mxu_nt;
+          dbg_cmd_record[uid].mxu_kt = dbg_fsm_meta_mxu_kt;
+          dbg_cmd_record[uid].tile_buf = dbg_fsm_meta_tile_buf;
+          dbg_cmd_record[uid].mxu_buf = dbg_fsm_meta_mxu_buf;
+          dbg_cmd_record[uid].acc_group = dbg_fsm_meta_acc_group;
+          dbg_cmd_record[uid].generation = dbg_fsm_meta_generation;
+          dbg_cmd_record[uid].dma_tag = '0;
+          dbg_cmd_record[uid].cmd = gemm_fsm_if.ctrl.cmd;
+          dbg_cmd_record[uid].emit_cycle = dbg_cycle_q;
+          dbg_cmd_record[uid].issue_cycle = 0;
+          dbg_cmd_record[uid].done_cycle = 0;
+          dbg_cmd_record[uid].dependency_blocked_cycles = 0;
+          dbg_cmd_record[uid].executor_blocked_cycles = 0;
+          dbg_cmd_record[uid].overlap_any_cycles = 0;
+          dbg_cmd_record[uid].overlap_compute_pipeline_cycles = 0;
+          dbg_cmd_record[uid].overlap_later_tile_load_cycles = 0;
+          dbg_cmd_record[uid].overlap_later_tile_compute_cycles = 0;
+          for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id)
+            dbg_overlap_class[uid][class_id] = 0;
+          dbg_q_uid[child][dbg_q_tail[child]] = uid;
+          dbg_q_tail[child]
+              = (dbg_q_tail[child] + 1 == dbg_child_depth(child))
+              ? 0 : dbg_q_tail[child] + 1;
+          dbg_record_count_q++;
+          if (dbg_fsm_meta_tile > dbg_max_tile_q)
+            dbg_max_tile_q = dbg_fsm_meta_tile;
+        end
+
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          unique case ({child_q_push_v[child], child_q_pop_v[child]})
+            2'b10: dbg_q_count[child]++;
+            2'b01: dbg_q_count[child]--;
+            default: begin
+            end
+          endcase
+        end
+
+        if (invocation_complete) begin
+          int incomplete;
+          incomplete = 0;
+          for (int uid = 0; uid < dbg_record_count_q; ++uid) begin
+            assert (dbg_cmd_record[uid].emitted
+                 && dbg_cmd_record[uid].issued
+                 && dbg_cmd_record[uid].completed)
+              else begin
+                incomplete++;
+                $error("%s: incomplete command UID %0d at invocation drain",
+                       INSTANCE_ID, uid);
+              end
+            assert (dbg_cmd_record[uid].emit_cycle
+                 <= dbg_cmd_record[uid].issue_cycle)
+              else $fatal(1, "%s: UID %0d issue preceded emit", INSTANCE_ID, uid);
+            assert (dbg_cmd_record[uid].issue_cycle
+                 <= dbg_cmd_record[uid].done_cycle)
+              else $fatal(1, "%s: UID %0d done preceded issue", INSTANCE_ID, uid);
+            assert (dbg_cmd_record[uid].overlap_any_cycles
+                 <= (dbg_cmd_record[uid].done_cycle
+                    - dbg_cmd_record[uid].issue_cycle))
+              else $fatal(1, "%s: UID %0d overlap exceeds service interval",
+                          INSTANCE_ID, uid);
+          end
+          for (int child = 0; child < N_CHILDREN; ++child) begin
+            assert ((dbg_q_count[child] == 0)
+                 && !dbg_active_uid_valid[child])
+              else $fatal(1, "%s: child %0d debug state not drained",
+                          INSTANCE_ID, child);
+          end
+          assert (dbg_record_count_q == dbg_issue_count_q)
+            else $fatal(1, "%s: emitted/issued count mismatch", INSTANCE_ID);
+          assert (dbg_record_count_q == dbg_done_count_q)
+            else $fatal(1, "%s: emitted/completed count mismatch", INSTANCE_ID);
+          assert (incomplete == 0)
+            else $fatal(1, "%s: invocation has %0d incomplete commands",
+                        INSTANCE_ID, incomplete);
+          dbg_dump_invocation();
+          dbg_job_seq_q++;
+        end
+      end
+    end
+`endif
+`endif
 
 `ifndef SYNTHESIS
     logic [31:0] dbg_invocation_active_cycles_q;

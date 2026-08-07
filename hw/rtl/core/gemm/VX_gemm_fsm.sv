@@ -15,6 +15,23 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output logic             fsm_idle_o,
     output logic             pending_work_o,
     output logic [2:0]       pending_child_o
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+    ,output logic            dbg_cmd_meta_valid_o
+    ,output logic [7:0]      dbg_cmd_meta_state_o
+    ,output logic [3:0]      dbg_cmd_meta_phase_o
+    ,output logic [31:0]     dbg_cmd_meta_tile_o
+    ,output logic [31:0]     dbg_cmd_meta_nt_o
+    ,output logic [31:0]     dbg_cmd_meta_mt_o
+    ,output logic [31:0]     dbg_cmd_meta_kt_o
+    ,output logic [31:0]     dbg_cmd_meta_mxu_nt_o
+    ,output logic [31:0]     dbg_cmd_meta_mxu_kt_o
+    ,output logic            dbg_cmd_meta_tile_buf_o
+    ,output logic            dbg_cmd_meta_mxu_buf_o
+    ,output logic            dbg_cmd_meta_acc_group_o
+    ,output logic [31:0]     dbg_cmd_meta_generation_o
+`endif
+`endif
 );
 
   /*
@@ -735,6 +752,85 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   mm_rid_t     prior_g_wait_rid_q;
   logic [31:0] prior_g_wait_target_q;
   mm_mxu_dim_t o_nt_mxu_q, o_nt_mxu_d;
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+  // Normalized command context is captured at the exact FSM-to-child FIFO
+  // handshake.  Keep it beside the synthesized command instead of encoding
+  // debug-only state in gemm_unified_cmd_t.
+  always_comb begin
+    logic [31:0] meta_kt_eff;
+    logic [31:0] meta_kt_mxu_dim;
+
+    dbg_cmd_meta_valid_o = out_start_d && state_child_ready;
+    dbg_cmd_meta_state_o = state_q;
+    dbg_cmd_meta_phase_o = 4'd1;
+    dbg_cmd_meta_tile_o = tile_cur_q;
+    dbg_cmd_meta_nt_o = 32'(tile_cur_nt_q);
+    dbg_cmd_meta_mt_o = 32'(tile_cur_mt_q);
+    dbg_cmd_meta_kt_o = 32'(tile_cur_kt_q);
+    dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q);
+    dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q);
+    dbg_cmd_meta_tile_buf_o = tile_cur_q[0];
+    dbg_cmd_meta_mxu_buf_o = mxu_buf_q;
+    dbg_cmd_meta_acc_group_o = tile_acc_group_q;
+    dbg_cmd_meta_generation_o = buf_gen(tile_cur_q);
+
+    unique case (state_q)
+      S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = 32'd0;
+        dbg_cmd_meta_nt_o = 32'd0;
+        dbg_cmd_meta_mt_o = 32'd0;
+        dbg_cmd_meta_kt_o = 32'd0;
+        dbg_cmd_meta_tile_buf_o = 1'b0;
+        dbg_cmd_meta_generation_o = 32'd1;
+      end
+      S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = 32'd1;
+        dbg_cmd_meta_nt_o = 32'(tile_pre_nt_q);
+        dbg_cmd_meta_mt_o = 32'(tile_pre_mt_q);
+        dbg_cmd_meta_kt_o = 32'(tile_pre_kt_q);
+        dbg_cmd_meta_tile_buf_o = 1'b1;
+        dbg_cmd_meta_generation_o = 32'd1;
+      end
+      S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W,
+      S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = tile_pre_q;
+        dbg_cmd_meta_nt_o = 32'(tile_pre_nt_q);
+        dbg_cmd_meta_mt_o = 32'(tile_pre_mt_q);
+        dbg_cmd_meta_kt_o = 32'(tile_pre_kt_q);
+        dbg_cmd_meta_tile_buf_o = tile_pre_q[0];
+        dbg_cmd_meta_generation_o = buf_gen(tile_pre_q);
+      end
+      S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
+        meta_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
+        meta_kt_mxu_dim = ceil_div_log2(meta_kt_eff, $clog2(MXU_KT));
+        dbg_cmd_meta_mxu_buf_o = ~mxu_buf_q;
+        if (32'(kt_mxu_q) + 1 < meta_kt_mxu_dim) begin
+          dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q) + 1;
+        end else begin
+          dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q) + 1;
+          dbg_cmd_meta_mxu_kt_o = 32'd0;
+        end
+      end
+      S_MXU_ARM_GEMM: dbg_cmd_meta_phase_o = 4'd2;
+      S_O_ACC2LMEM: begin
+        dbg_cmd_meta_phase_o = 4'd3;
+        dbg_cmd_meta_mxu_nt_o = 32'(o_nt_mxu_q);
+      end
+      S_O_LMEM2DRAM: begin
+        dbg_cmd_meta_phase_o = 4'd4;
+        dbg_cmd_meta_mxu_nt_o = 32'(o_nt_mxu_q);
+      end
+      default: begin
+      end
+    endcase
+  end
+`endif
+`endif
 
   // cfg only in idle
   always_comb begin

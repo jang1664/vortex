@@ -85,6 +85,11 @@ module tb_VX_gemm_ctrl;
     .progress_update_valid_o(),
     .progress_update_entry_id_o(),
     .progress_update_value_o()
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+    ,.dbg_compute_active_i(1'b0)
+`endif
+`endif
   );
 
   // --------------------------------------------------------------------------
@@ -1038,6 +1043,25 @@ module tb_VX_gemm_ctrl;
       directed_start = 1'b0;
       force dut.gemm_fsm_if.ctrl.start = directed_start;
       force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+      force dut.dbg_fsm_meta_valid = directed_start;
+      force dut.dbg_fsm_meta_state = 8'd0;
+      force dut.dbg_fsm_meta_phase = 4'd0;
+      force dut.dbg_fsm_meta_tile = 32'd0;
+      force dut.dbg_fsm_meta_nt = 32'd0;
+      force dut.dbg_fsm_meta_mt = 32'd0;
+      force dut.dbg_fsm_meta_kt = 32'd0;
+      force dut.dbg_fsm_meta_mxu_nt = 32'd0;
+      force dut.dbg_fsm_meta_mxu_kt = 32'd0;
+      force dut.dbg_fsm_meta_tile_buf = 1'b0;
+      force dut.dbg_fsm_meta_mxu_buf = 1'b0;
+      force dut.dbg_fsm_meta_acc_group = 1'b0;
+      force dut.dbg_fsm_meta_generation = 32'd0;
+`endif
+`endif
+
+      run_dma_tagged_scoreboard();
 
       // Seed four independent scoreboard registers with legal SET completions.
       directed_set_sync(4'd0, 32'd10);
@@ -1307,6 +1331,23 @@ module tb_VX_gemm_ctrl;
       @(negedge clk);
       release dut.gemm_fsm_if.ctrl.start;
       release dut.gemm_fsm_if.ctrl.cmd;
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+      release dut.dbg_fsm_meta_valid;
+      release dut.dbg_fsm_meta_state;
+      release dut.dbg_fsm_meta_phase;
+      release dut.dbg_fsm_meta_tile;
+      release dut.dbg_fsm_meta_nt;
+      release dut.dbg_fsm_meta_mt;
+      release dut.dbg_fsm_meta_kt;
+      release dut.dbg_fsm_meta_mxu_nt;
+      release dut.dbg_fsm_meta_mxu_kt;
+      release dut.dbg_fsm_meta_tile_buf;
+      release dut.dbg_fsm_meta_mxu_buf;
+      release dut.dbg_fsm_meta_acc_group;
+      release dut.dbg_fsm_meta_generation;
+`endif
+`endif
       sched_directed = 1'b0;
       cfg_count_before = total_cfg_accept_count;
       done_count_before = total_done_handshake_count;
@@ -1367,6 +1408,23 @@ module tb_VX_gemm_ctrl;
       directed_start = 1'b0;
       force dut.gemm_fsm_if.ctrl.start = directed_start;
       force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+      force dut.dbg_fsm_meta_valid = directed_start;
+      force dut.dbg_fsm_meta_state = 8'd0;
+      force dut.dbg_fsm_meta_phase = 4'd0;
+      force dut.dbg_fsm_meta_tile = 32'd0;
+      force dut.dbg_fsm_meta_nt = 32'd0;
+      force dut.dbg_fsm_meta_mt = 32'd0;
+      force dut.dbg_fsm_meta_kt = 32'd0;
+      force dut.dbg_fsm_meta_mxu_nt = 32'd0;
+      force dut.dbg_fsm_meta_mxu_kt = 32'd0;
+      force dut.dbg_fsm_meta_tile_buf = 1'b0;
+      force dut.dbg_fsm_meta_mxu_buf = 1'b0;
+      force dut.dbg_fsm_meta_acc_group = 1'b0;
+      force dut.dbg_fsm_meta_generation = 32'd0;
+`endif
+`endif
 
       c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd1);
       directed_inject(c, 1);

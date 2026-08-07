@@ -939,6 +939,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .progress_update_valid_o(progress_update_valid),
       .progress_update_entry_id_o(progress_update_entry_id),
       .progress_update_value_o(progress_update_value)
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+      ,.dbg_compute_active_i(!gemm_unit_v2_if.pipeline_empty)
+`endif
+`endif
 `ifdef PERF_ENABLE
       ,.gemm_unit_computing(gemm_unit_perf.computing)
       ,.perf(gemm_ctrl_perf)
