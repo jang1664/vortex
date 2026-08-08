@@ -9,6 +9,7 @@ CONFIG_FILE="${REPO_ROOT}/configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_big
 MODE="run"
 BUILD_DIR="${TARGET_GEMM_BUILD_DIR:-${REPO_ROOT}/build}"
 OUTPUT_ROOT=""
+M=4
 N=256
 K=256
 QBLK=32
@@ -27,7 +28,7 @@ usage() {
   cat <<'EOF'
 Usage: ci/run_target_gemm.sh [MODE] [OPTIONS]
 
-Run the fixed M=4 GEMM_IMPROVE xrt-vcs-sim target.
+Run the GEMM_IMPROVE xrt-vcs-sim target.
 
 Modes:
   run          No FSDB, no GEMM trace (default)
@@ -37,6 +38,7 @@ Modes:
   fsdb-trace   Full-design FSDB plus GEMM text traces
 
 Options:
+  --m M                    M dimension (default: 4)
   --n N                    N dimension (default: 256)
   --k K                    K dimension (default: 256)
   --qblk Q                 quantization block size (default: 32)
@@ -114,6 +116,8 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --m)
+      require_value "$@"; M="$2"; shift 2 ;;
     --n)
       require_value "$@"; N="$2"; shift 2 ;;
     --k)
@@ -158,6 +162,7 @@ case "${MODE}" in
   *) die "unknown mode '${MODE}' (expected run, trace, fsdb, fsdb-gemm, or fsdb-trace)" ;;
 esac
 
+is_positive_integer "${M}" || die "--m must be a positive integer"
 is_positive_integer "${N}" || die "--n must be a positive integer"
 is_positive_integer "${K}" || die "--k must be a positive integer"
 is_positive_integer "${QBLK}" || die "--qblk must be a positive integer"
@@ -169,13 +174,21 @@ is_positive_integer "${QBLK}" || die "--qblk must be a positive integer"
 is_positive_integer "${TIMEOUT_SEC}" || die "--timeout must be a positive integer"
 [[ -f "${CONFIG_FILE}" ]] || die "config not found: ${CONFIG_FILE}"
 if [[ "${EXTRA_APP_ARGS}" =~ (^|[[:space:]])-m ]]; then
-  die "--extra-app-args cannot override the fixed -m 4 target"
+  die "--extra-app-args cannot override --m (M=${M})"
 fi
 if [[ "${CONFIGS_EXTRA}" =~ (^|[[:space:]])-[DU]MXU_WLOAD_NUM($|=|[[:space:]]) ]]; then
   die "--configs-extra cannot override --wload (MXU_WLOAD_NUM=${WLOAD})"
 fi
 if [[ "${CONFIGS_EXTRA}" =~ (^|[[:space:]])-UGEMM_IMPROVE($|[[:space:]]) ]]; then
   die "--configs-extra cannot disable the fixed GEMM_IMPROVE target"
+fi
+
+# The runner executes from inside BUILD_DIR.  Canonicalize caller-supplied
+# paths first so a relative --build-dir is not resolved a second time there,
+# and so trace artifacts keep the caller-selected output location.
+BUILD_DIR="$(realpath -m -- "${BUILD_DIR}")"
+if [[ -n "${OUTPUT_ROOT}" ]]; then
+  OUTPUT_ROOT="$(realpath -m -- "${OUTPUT_ROOT}")"
 fi
 
 if [[ "${DO_CONFIGURE}" == 1 ]]; then
@@ -229,7 +242,7 @@ if [[ -n "${PERF_CLASS}" ]]; then
   COMPILE_CONFIGS="$(append_define_once "${COMPILE_CONFIGS}" -DPERF_ENABLE)"
 fi
 
-APP_ARGS="-m 4 -n ${N} -k ${K} -q ${QBLK} -t ${WTRANS} -d ${QDIR}"
+APP_ARGS="-m ${M} -n ${N} -k ${K} -q ${QBLK} -t ${WTRANS} -d ${QDIR}"
 if [[ -n "${EXTRA_APP_ARGS}" ]]; then
   APP_ARGS+=" ${EXTRA_APP_ARGS}"
 fi
@@ -237,7 +250,7 @@ fi
 if [[ -z "${OUTPUT_ROOT}" ]]; then
   OUTPUT_ROOT="${BUILD_DIR}/run_logs/target_gemm"
 fi
-RUN_TAG="$(date +%Y%m%d-%H%M%S)_${MODE}_wload${WLOAD}_m4_n${N}_k${K}_q${QBLK}_t${WTRANS}_d${QDIR}_pid$$"
+RUN_TAG="$(date +%Y%m%d-%H%M%S)_${MODE}_wload${WLOAD}_m${M}_n${N}_k${K}_q${QBLK}_t${WTRANS}_d${QDIR}_pid$$"
 RUN_DIR="${OUTPUT_ROOT}/${RUN_TAG}"
 SIM_DIR="${BUILD_DIR}/sim/xrtsim_vcs"
 SIMV="${SIM_DIR}/simv"
@@ -288,6 +301,7 @@ fi
   printf 'config_file=%s\n' "${CONFIG_FILE}"
   printf 'mode=%s\n' "${MODE}"
   printf 'wload=%s\n' "${WLOAD}"
+  printf 'm=%s\n' "${M}"
   printf 'app=fpint_gemm_ffn_hw\n'
   printf 'app_args=%s\n' "${APP_ARGS}"
   printf 'perf_class=%s\n' "${PERF_CLASS:-disabled}"

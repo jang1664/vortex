@@ -80,6 +80,15 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   ) dma_cfg_if ();
 
   VX_node_done_if dma_done_if ();
+  VX_dma_lookahead_if dma_lookahead_if ();
+
+  assign dma_lookahead_if.prepare_valid = 1'b0;
+  assign dma_lookahead_if.prepare_id = '0;
+  assign dma_lookahead_if.src_stride = '0;
+  assign dma_lookahead_if.dst_stride = '0;
+  assign dma_lookahead_if.bound = '0;
+  assign dma_lookahead_if.activate = 1'b0;
+  assign dma_lookahead_if.activate_id = '0;
 
   typedef enum logic [1:0] {
     S_IDLE,
@@ -239,6 +248,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     .clk           (clk),
     .reset         (reset),
     .cfg_reg_if    (dma_cfg_if),
+    .lookahead_if  (dma_lookahead_if),
     .dcache_bus_if (lmem_bus_if),
     .lmem_bus_if   (gemm_bus_if),
     .done_if       (dma_done_if)

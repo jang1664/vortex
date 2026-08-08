@@ -732,6 +732,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) dma_cfg_if [NUM_TMEM_BANKS] ();
 
     VX_node_done_if dma_done_if [NUM_TMEM_BANKS] ();
+    VX_dma_lookahead_if dma_lookahead_if [NUM_TMEM_BANKS] ();
 
     VX_gemm_tmem_dma_ctrl #(
         .INSTANCE_ID  ({INSTANCE_ID, "_tmem_dma_ctrl"}),
@@ -748,6 +749,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .store_done       (output_store_done),
         .gemm_sync_if     (gemm_sync_if[4]),
         .cfg_reg_if       (dma_cfg_if),
+        .lookahead_if     (dma_lookahead_if),
         .done_if          (dma_done_if)
     );
 
@@ -840,6 +842,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk            (clk),
       .reset          (reset),
       .dma_cfg_if     (dma_cfg_if),
+      .dma_lookahead_if (dma_lookahead_if),
       .dma_done_if    (dma_done_if),
       .ldma_ctrl_if   (tmem_ldma_ctrl_if),
       .axi_m          (dma_axi_m),

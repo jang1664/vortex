@@ -27,6 +27,7 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   input wire reset,
 
   VX_config_reg_if.slave cfg_reg_if,
+  VX_dma_lookahead_if.slave lookahead_if,
 
   VX_mem_bus_if.master   dcache_bus_if,
   VX_mem_bus_if.master   lmem_bus_if,
@@ -38,6 +39,17 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
 );
 
   if (ENABLE_MISALIGN) begin : g_misaligned
+    assign lookahead_if.prepare_ready = 1'b0;
+    assign lookahead_if.result_ready = '0;
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+      if (!reset && lookahead_if.prepare_valid)
+        assert (!lookahead_if.prepare_ready)
+          else $fatal(1, "%s: misaligned DMA accepted PREPARE", INSTANCE_ID);
+    end
+`endif
+
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
@@ -71,6 +83,7 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
       .clk            (clk),
       .reset          (reset),
       .cfg_reg_if     (cfg_reg_if),
+      .lookahead_if   (lookahead_if),
       .dcache_bus_if  (dcache_bus_if),
       .lmem_bus_if    (lmem_bus_if),
       .done_if        (done_if)

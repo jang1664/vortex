@@ -29,6 +29,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     VX_gemm_sync_if.master    gemm_sync_if,
     VX_config_reg_if.master   cfg_reg_if [NUM_CHANNELS],
+    VX_dma_lookahead_if.master lookahead_if [NUM_CHANNELS],
     VX_node_done_if.slave     done_if [NUM_CHANNELS]
 );
 
@@ -71,6 +72,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     localparam int PENDING_COUNT_W    = `CLOG2(PENDING_DEPTH + 1);
     localparam int PENDING_INDEX_W    = (PENDING_DEPTH > 1)
                                       ? `CLOG2(PENDING_DEPTH) : 1;
+    localparam int PREP_HIGH_ID       = 0;
+    localparam int PREP_FALLBACK_ID   = 1;
 
     typedef struct packed {
         gemm_unified_cmd_t cmd;
@@ -138,6 +141,40 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic pending_dequeue;
     logic [PENDING_INDEX_W-1:0] pending_select_idx;
 
+    // Controller-owned random-access candidate table.  Slot 0 is reserved
+    // for the oldest high-priority load; slot 1 owns either the next paused
+    // store chunk or the oldest low-priority command.  Full descriptors live
+    // only here; DMA channels receive only D0/D1 PREPARE operands.
+    logic [1:0] candidate_valid_q;
+    logic [1:0] candidate_prepared_q;
+    pending_cmd_t candidate_owner_q[2];
+    logic candidate_is_store_q[2];
+    logic candidate_store_new_q[2];
+    logic candidate_store_chunkable_q[2];
+    logic [31:0] candidate_chunk_beats_q[2];
+    logic [31:0] candidate_store_remaining_q[2];
+    channel_desc_t candidate_desc_q[2][NUM_CHANNELS];
+    channel_desc_t candidate_store_desc_q[2][NUM_CHANNELS];
+    logic [NUM_CHANNELS-1:0] candidate_prepare_accept_q[2];
+    logic [1:0] candidate_result_ready_q[2][NUM_CHANNELS];
+
+    logic candidate_capture;
+    logic candidate_capture_from_pending;
+    logic candidate_capture_store_cont;
+    logic candidate_capture_id;
+    logic [PENDING_INDEX_W-1:0] candidate_capture_idx;
+    logic issue_candidate_q;
+    logic issue_candidate_id_q;
+    logic candidate_select;
+    logic candidate_select_id;
+    logic [1:0] candidate_prepared_now;
+    logic chain_candidate_select;
+    logic chain_candidate_id;
+    logic chain_candidate_fire;
+
+    logic prepare_active_q;
+    logic prepare_active_id_q;
+
     gemm_unified_cmd_t work_cmd_q;
     logic [GEMM_DMA_TAG_WIDTH-1:0] work_tag_q;
     logic work_is_store_q;
@@ -163,13 +200,34 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [63:0] chunk_dst_base[NUM_CHANNELS];
     logic [63:0] chunk_src_offset[NUM_CHANNELS];
     logic [63:0] chunk_dst_offset[NUM_CHANNELS];
+    channel_desc_t builder_store_desc[NUM_CHANNELS];
+    channel_desc_t builder_default_desc[NUM_CHANNELS];
+    gemm_unified_cmd_t builder_store_cmd;
+    logic builder_is_store;
+    logic builder_store_chunkable;
+    logic [31:0] builder_store_cursor;
+    logic [31:0] builder_store_remaining;
 
     logic [NUM_CHANNELS-1:0] cfg_ready_or_inactive;
     logic [NUM_CHANNELS-1:0] done_or_inactive;
     logic [NUM_CHANNELS-1:0] done_sticky_q;
+    logic prepare_all_accepted;
+    logic prepare_all_results_ready;
+    logic [NUM_CHANNELS-1:0] lookahead_prepare_valid_s;
+    logic [NUM_CHANNELS-1:0] lookahead_prepare_ready_s;
+    logic [NUM_CHANNELS-1:0][1:0] lookahead_result_ready_s;
+    logic [NUM_CHANNELS-1:0] lookahead_activate_s;
+    logic [NUM_CHANNELS-1:0] lookahead_activate_id_s;
+    logic [1:0] candidate_reserved_logical_count;
+    logic [1:0] candidate_cfg_all_ready;
+    logic [NUM_CHANNELS-1:0] cfg_channel_ready_s;
+    logic [NUM_CHANNELS-1:0] cfg_valid_s;
+    logic [PENDING_COUNT_W:0] pending_capacity_used;
 
     wire cmd_accept = gemm_dma_ctrl_if.cmd_valid
                    && gemm_dma_ctrl_if.cmd_ready;
+    wire accepted_high_now = cmd_accept
+                           && gemm_dma_ctrl_if.cmd.dma_priority;
     wire cfg_all_ready = &cfg_ready_or_inactive;
     wire done_all_valid = &(done_sticky_q | done_or_inactive);
     wire store_chunk_last = !store_chunkable_q
@@ -179,19 +237,107 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                          && done_all_valid
                          && (!work_is_store_q || store_chunk_last);
 
+    // Candidate reservation transfers a logical command out of pending_q; it
+    // does not create additional queue capacity.  A speculative continuation
+    // descriptor for the already-owned paused store is not a new logical
+    // command.  Once a candidate is selected into the foreground issue path,
+    // it has the same capacity status as the legacy work_cmd_q owner.
+    always_comb begin
+        candidate_reserved_logical_count = 2'd0;
+        if (candidate_valid_q[PREP_HIGH_ID]
+         && !(issue_candidate_q
+           && (issue_candidate_id_q == PREP_HIGH_ID)))
+            candidate_reserved_logical_count += 2'd1;
+        if (candidate_valid_q[PREP_FALLBACK_ID]
+         && candidate_store_new_q[PREP_FALLBACK_ID]
+         && !(issue_candidate_q
+           && (issue_candidate_id_q == PREP_FALLBACK_ID)))
+            candidate_reserved_logical_count += 2'd1;
+        pending_capacity_used = (PENDING_COUNT_W+1)'(pending_count_q)
+                              + (PENDING_COUNT_W+1)'(
+                                  candidate_reserved_logical_count);
+    end
+
     assign gemm_dma_ctrl_if.cmd_ready =
-        (pending_count_q < PENDING_COUNT_W'(PENDING_DEPTH));
+        (pending_capacity_used < (PENDING_COUNT_W+1)'(PENDING_DEPTH));
     assign gemm_dma_ctrl_if.done = logical_complete;
     assign gemm_dma_ctrl_if.done_tag = work_is_store_q
                                      ? store_tag_q : work_tag_q;
     assign gemm_dma_ctrl_if.idle = (state_q == S_SELECT)
                                 && (pending_count_q == 0)
-                                && !store_context_valid_q;
+                                && !store_context_valid_q
+                                && !(|candidate_valid_q)
+                                && !prepare_active_q;
     assign store_done = logical_complete && work_is_store_q;
 
     assign gemm_sync_if.valid   = 1'b0;
     assign gemm_sync_if.reg_idx = 32'd0;
     assign gemm_sync_if.value   = 32'd0;
+
+    always_comb begin
+        prepare_all_accepted = prepare_active_q;
+        prepare_all_results_ready = prepare_active_q;
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+            if (candidate_desc_q[prepare_active_id_q][ch].active) begin
+                prepare_all_accepted &=
+                    candidate_prepare_accept_q[prepare_active_id_q][ch]
+                    || (lookahead_prepare_valid_s[ch]
+                     && lookahead_prepare_ready_s[ch]);
+                prepare_all_results_ready &=
+                    &(candidate_result_ready_q[prepare_active_id_q][ch]
+                    | lookahead_result_ready_s[ch]);
+            end
+        end
+    end
+
+    always_comb begin
+        candidate_prepared_now = candidate_prepared_q;
+        if (prepare_active_q
+         && prepare_all_accepted
+         && prepare_all_results_ready)
+            candidate_prepared_now[prepare_active_id_q] = 1'b1;
+    end
+
+    always_comb begin
+        candidate_cfg_all_ready = '1;
+        for (int id = 0; id < 2; ++id) begin
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                if (candidate_desc_q[id][ch].active)
+                    candidate_cfg_all_ready[id] &= cfg_channel_ready_s[ch];
+            end
+        end
+    end
+
+    // A completion edge may directly activate only a fully prepared
+    // candidate.  Any visible high-priority load, including one accepted on
+    // this edge, suppresses fallback chaining.  An unprepared high candidate
+    // is retained for the ordinary S_SELECT -> S_PROG slow path.
+    always_comb begin
+        chain_candidate_select = 1'b0;
+        chain_candidate_id = PREP_HIGH_ID;
+        if ((state_q == S_WAIT_DONE) && done_all_valid) begin
+            if (candidate_valid_q[PREP_HIGH_ID]) begin
+                if (candidate_prepared_now[PREP_HIGH_ID]) begin
+                    chain_candidate_select = 1'b1;
+                    chain_candidate_id = PREP_HIGH_ID;
+                end
+            end else if (!pending_high_found && !accepted_high_now
+                      && candidate_valid_q[PREP_FALLBACK_ID]
+             && candidate_prepared_now[PREP_FALLBACK_ID]) begin
+                chain_candidate_select = 1'b1;
+                chain_candidate_id = PREP_FALLBACK_ID;
+            end
+        end
+    end
+
+    // Scheduling selection is independent of channel readiness.  Only the
+    // fire qualifier consumes the old completion and presents the selected
+    // descriptor as one atomic cfg/ACTIVATE transaction.  Keeping readiness
+    // out of selection avoids a select -> active mask -> ready -> select loop.
+    always_comb begin
+        chain_candidate_fire = chain_candidate_select
+                            && candidate_cfg_all_ready[chain_candidate_id];
+    end
 
     always_comb begin
         pending_high_found = 1'b0;
@@ -219,13 +365,32 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         state_d = state_q;
         pending_dequeue = 1'b0;
         pending_select_idx = '0;
+        candidate_capture = 1'b0;
+        candidate_capture_from_pending = 1'b0;
+        candidate_capture_store_cont = 1'b0;
+        candidate_capture_id = 1'b0;
+        candidate_capture_idx = '0;
+        candidate_select = 1'b0;
+        candidate_select_id = 1'b0;
 
         unique case (state_q)
             S_SELECT: begin
-                if (pending_high_found) begin
+                if (candidate_valid_q[PREP_HIGH_ID]) begin
+                    candidate_select = 1'b1;
+                    candidate_select_id = 1'b0;
+                    state_d = S_PROG;
+                end else if (pending_high_found) begin
                     pending_dequeue = 1'b1;
                     pending_select_idx = pending_high_idx;
                     state_d = S_CAPTURE;
+                end else if (accepted_high_now) begin
+                    // The accepted load becomes visible in pending_q after
+                    // this edge.  Do not start fallback work in parallel.
+                    state_d = S_SELECT;
+                end else if (candidate_valid_q[PREP_FALLBACK_ID]) begin
+                    candidate_select = 1'b1;
+                    candidate_select_id = 1'b1;
+                    state_d = S_PROG;
                 end else if (store_context_valid_q) begin
                     state_d = S_BUILD;
                 end else if (pending_low_found) begin
@@ -249,8 +414,31 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
             S_WAIT_DONE: begin
-                if (done_all_valid)
-                    state_d = S_SELECT;
+                if (done_all_valid) begin
+                    state_d = chain_candidate_fire ? S_WAIT_DONE : S_SELECT;
+                end else if (!candidate_valid_q[PREP_HIGH_ID]
+                          && pending_high_found) begin
+                    candidate_capture = 1'b1;
+                    candidate_capture_from_pending = 1'b1;
+                    candidate_capture_id = 1'b0;
+                    candidate_capture_idx = pending_high_idx;
+                    pending_dequeue = 1'b1;
+                    pending_select_idx = pending_high_idx;
+                end else if (!candidate_valid_q[PREP_FALLBACK_ID]) begin
+                    if (store_context_valid_q
+                     && (!work_is_store_q || !store_chunk_last)) begin
+                        candidate_capture = 1'b1;
+                        candidate_capture_store_cont = 1'b1;
+                        candidate_capture_id = 1'b1;
+                    end else if (pending_low_found) begin
+                        candidate_capture = 1'b1;
+                        candidate_capture_from_pending = 1'b1;
+                        candidate_capture_id = 1'b1;
+                        candidate_capture_idx = pending_low_idx;
+                        pending_dequeue = 1'b1;
+                        pending_select_idx = pending_low_idx;
+                    end
+                end
             end
 
             default: begin
@@ -259,12 +447,22 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         endcase
     end
 
+    // The existing decoder is shared by the foreground slow path and the
+    // background candidate capture.  Capture is restricted to S_WAIT_DONE,
+    // so it never steals the decoder from S_CAPTURE.
+    gemm_unified_cmd_t decode_cmd;
+    always_comb begin
+        decode_cmd = work_cmd_q;
+        if (candidate_capture_from_pending)
+            decode_cmd = pending_q[candidate_capture_idx].cmd;
+    end
+
     // Decode the selected logical command into complete channel descriptors.
-    wire [3:0] decode_op = work_cmd_q.instr[3:0];
+    wire [3:0] decode_op = decode_cmd.instr[3:0];
     wire decode_is_store = (decode_op == OP_DMA_ST);
-    wire [63:0] decode_src_base = 64'(work_cmd_q.rs2_data);
-    wire [63:0] decode_dst_base = 64'(work_cmd_q.rs1_data);
-    wire [31:0] decode_seg_size = {4'd0, work_cmd_q.instr[31:4]};
+    wire [63:0] decode_src_base = 64'(decode_cmd.rs2_data);
+    wire [63:0] decode_dst_base = 64'(decode_cmd.rs1_data);
+    wire [31:0] decode_seg_size = {4'd0, decode_cmd.instr[31:4]};
     wire [NUM_CH_SHIFT-1:0] decode_start_ch = decode_is_store
         ? decode_src_base[BUS_WORD_SHIFT +: NUM_CH_SHIFT]
         : decode_dst_base[BUS_WORD_SHIFT +: NUM_CH_SHIFT];
@@ -374,47 +572,84 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         logic [31:0] rows_by_remaining;
         logic [31:0] rows_by_budget;
 
+        builder_is_store = work_is_store_q;
+        builder_store_chunkable = store_chunkable_q;
+        builder_store_cmd = store_cmd_q;
+        builder_store_cursor = store_bank_beat_cursor_q;
+        builder_store_remaining = store_remaining_beats_per_bank_q;
         for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-            built_desc[ch] = work_is_store_q
-                           ? store_desc_q[ch] : load_desc_q[ch];
+            builder_store_desc[ch] = store_desc_q[ch];
+            builder_default_desc[ch] = work_is_store_q
+                                     ? store_desc_q[ch] : load_desc_q[ch];
+        end
+
+        if (candidate_capture_store_cont) begin
+            builder_is_store = 1'b1;
+            builder_store_chunkable = store_chunkable_q;
+            builder_store_cmd = store_cmd_q;
+            builder_store_cursor = store_bank_beat_cursor_q;
+            builder_store_remaining = store_remaining_beats_per_bank_q;
+            if (work_is_store_q) begin
+                builder_store_cursor = store_bank_beat_cursor_q
+                                     + issued_chunk_beats_per_bank_q;
+                builder_store_remaining = store_remaining_beats_per_bank_q
+                                        - issued_chunk_beats_per_bank_q;
+            end
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                builder_default_desc[ch] = store_desc_q[ch];
+        end else if (candidate_capture_from_pending && decode_is_store) begin
+            builder_is_store = 1'b1;
+            builder_store_chunkable = decoded_chunkable;
+            builder_store_cmd = decode_cmd;
+            builder_store_cursor = 32'd0;
+            builder_store_remaining = decoded_desc[0].regs[DMA_R_BND0]
+                                    * decoded_desc[0].regs[DMA_R_BND1];
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                builder_store_desc[ch] = decoded_desc[ch];
+                builder_default_desc[ch] = decoded_desc[ch];
+            end
+        end
+
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+            built_desc[ch] = builder_default_desc[ch];
             chunk_src_base[ch] = {
-                store_desc_q[ch].regs[DMA_R_SRC_BASE_HI],
-                store_desc_q[ch].regs[DMA_R_SRC_BASE_LO]
+                builder_store_desc[ch].regs[DMA_R_SRC_BASE_HI],
+                builder_store_desc[ch].regs[DMA_R_SRC_BASE_LO]
             };
             chunk_dst_base[ch] = {
-                store_desc_q[ch].regs[DMA_R_DST_BASE_HI],
-                store_desc_q[ch].regs[DMA_R_DST_BASE_LO]
+                builder_store_desc[ch].regs[DMA_R_DST_BASE_HI],
+                builder_store_desc[ch].regs[DMA_R_DST_BASE_LO]
             };
-            chunk_src_offset[ch] = 64'(store_bank_beat_cursor_q)
-                * 64'(store_desc_q[ch].regs[DMA_R_SRC_ST0]);
-            chunk_dst_offset[ch] = 64'(store_bank_beat_cursor_q)
-                * 64'(store_desc_q[ch].regs[DMA_R_DST_ST0]);
+            chunk_src_offset[ch] = 64'(builder_store_cursor)
+                * 64'(builder_store_desc[ch].regs[DMA_R_SRC_ST0]);
+            chunk_dst_offset[ch] = 64'(builder_store_cursor)
+                * 64'(builder_store_desc[ch].regs[DMA_R_DST_ST0]);
         end
 
         built_chunk_beats_per_bank = 32'd0;
-        orig_bnd0 = store_desc_q[0].regs[DMA_R_BND0];
-        orig_bnd2 = store_desc_q[0].regs[DMA_R_BND2];
+        orig_bnd0 = builder_store_desc[0].regs[DMA_R_BND0];
+        orig_bnd2 = builder_store_desc[0].regs[DMA_R_BND2];
         max_chunk_beats = 32'd0;
         bank_budget = 32'd0;
         chunk_bnd0 = orig_bnd0;
-        chunk_bnd1 = store_desc_q[0].regs[DMA_R_BND1];
+        chunk_bnd1 = builder_store_desc[0].regs[DMA_R_BND1];
         rows_by_remaining = 32'd0;
         rows_by_budget = 32'd0;
 
-        if (work_is_store_q && store_chunkable_q) begin
-            if (store_cmd_q.dma_max_chunk_log2p1 == 0) begin
-                max_chunk_beats = store_desc_q[0].regs[DMA_R_BND0]
-                    * store_desc_q[0].regs[DMA_R_BND1]
+        if (builder_is_store && builder_store_chunkable) begin
+            if (builder_store_cmd.dma_max_chunk_log2p1 == 0) begin
+                max_chunk_beats = builder_store_desc[0].regs[DMA_R_BND0]
+                    * builder_store_desc[0].regs[DMA_R_BND1]
                     * orig_bnd2;
             end else begin
                 max_chunk_beats = 32'd1
-                    << (store_cmd_q.dma_max_chunk_log2p1 - 1'b1);
+                    << (builder_store_cmd.dma_max_chunk_log2p1 - 1'b1);
             end
 
             bank_budget = max_chunk_beats / orig_bnd2;
             if (bank_budget >= orig_bnd0) begin
                 rows_by_remaining =
-                    store_remaining_beats_per_bank_q / orig_bnd0;
+                    builder_store_remaining / orig_bnd0;
                 rows_by_budget = bank_budget / orig_bnd0;
                 chunk_bnd0 = orig_bnd0;
                 chunk_bnd1 = (rows_by_remaining <= rows_by_budget)
@@ -442,22 +677,68 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 built_desc[ch].regs[DMA_R_BND0] = chunk_bnd0;
                 built_desc[ch].regs[DMA_R_BND1] = chunk_bnd1;
                 built_desc[ch].regs[DMA_R_SRC_ST1] = chunk_bnd0
-                    * store_desc_q[ch].regs[DMA_R_SRC_ST0];
+                    * builder_store_desc[ch].regs[DMA_R_SRC_ST0];
                 built_desc[ch].regs[DMA_R_DST_ST1] = chunk_bnd0
-                    * store_desc_q[ch].regs[DMA_R_DST_ST0];
+                    * builder_store_desc[ch].regs[DMA_R_DST_ST0];
             end
-        end else if (work_is_store_q) begin
+        end else if (builder_is_store) begin
             built_chunk_beats_per_bank =
-                store_remaining_beats_per_bank_q;
+                builder_store_remaining;
         end
     end
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_issue_channels
-        assign cfg_reg_if[ch].regs = issue_desc_q[ch].regs;
+        assign cfg_channel_ready_s[ch] = cfg_reg_if[ch].ready;
+        wire chain_channel_active =
+            candidate_desc_q[chain_candidate_id][ch].active;
+        wire program_channel_active = chain_candidate_select
+                                    ? chain_channel_active
+                                    : issue_desc_q[ch].active;
+
+        assign cfg_reg_if[ch].regs = chain_candidate_select
+                                  ? candidate_desc_q[chain_candidate_id][ch].regs
+                                  : issue_desc_q[ch].regs;
         assign cfg_reg_if[ch].entry_id = 32'd0;
-        assign cfg_reg_if[ch].valid = (state_q == S_PROG)
-                                    && issue_desc_q[ch].active;
-        assign cfg_ready_or_inactive[ch] = issue_desc_q[ch].active
+        assign cfg_reg_if[ch].valid = ((state_q == S_PROG)
+                                    && cfg_all_ready
+                                    && issue_desc_q[ch].active)
+                                    || (chain_candidate_fire
+                                     && chain_channel_active);
+        assign cfg_valid_s[ch] = cfg_reg_if[ch].valid;
+        assign lookahead_if[ch].prepare_valid = prepare_active_q
+            && candidate_valid_q[prepare_active_id_q]
+            && candidate_desc_q[prepare_active_id_q][ch].active
+            && !candidate_prepare_accept_q[prepare_active_id_q][ch]
+            && !((state_q == S_PROG) && issue_candidate_q
+              && (issue_candidate_id_q == prepare_active_id_q));
+        assign lookahead_prepare_valid_s[ch] = lookahead_if[ch].prepare_valid;
+        assign lookahead_prepare_ready_s[ch] = lookahead_if[ch].prepare_ready;
+        assign lookahead_result_ready_s[ch] = lookahead_if[ch].result_ready;
+        assign lookahead_if[ch].prepare_id = prepare_active_id_q;
+        assign lookahead_if[ch].src_stride[0] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_SRC_ST0];
+        assign lookahead_if[ch].src_stride[1] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_SRC_ST1];
+        assign lookahead_if[ch].dst_stride[0] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_DST_ST0];
+        assign lookahead_if[ch].dst_stride[1] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_DST_ST1];
+        assign lookahead_if[ch].bound[0] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_BND0];
+        assign lookahead_if[ch].bound[1] =
+            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_BND1];
+        assign lookahead_if[ch].activate = ((state_q == S_PROG)
+                                         && cfg_all_ready
+                                         && issue_candidate_q
+                                         && issue_desc_q[ch].active)
+                                         || (chain_candidate_fire
+                                          && chain_channel_active);
+        assign lookahead_if[ch].activate_id = chain_candidate_select
+                                            ? chain_candidate_id
+                                            : issue_candidate_id_q;
+        assign lookahead_activate_s[ch] = lookahead_if[ch].activate;
+        assign lookahead_activate_id_s[ch] = lookahead_if[ch].activate_id;
+        assign cfg_ready_or_inactive[ch] = program_channel_active
             ? cfg_reg_if[ch].ready : 1'b1;
         assign done_or_inactive[ch] = issue_desc_q[ch].active
             ? done_if[ch].valid : 1'b1;
@@ -479,8 +760,28 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             store_remaining_beats_per_bank_q <= '0;
             issued_chunk_beats_per_bank_q <= '0;
             done_sticky_q <= '0;
+            candidate_valid_q <= '0;
+            candidate_prepared_q <= '0;
+            issue_candidate_q <= 1'b0;
+            issue_candidate_id_q <= 1'b0;
+            prepare_active_q <= 1'b0;
+            prepare_active_id_q <= 1'b0;
             for (int idx = 0; idx < PENDING_DEPTH; ++idx)
                 pending_q[idx] <= '0;
+            for (int id = 0; id < 2; ++id) begin
+                candidate_owner_q[id] <= '0;
+                candidate_is_store_q[id] <= 1'b0;
+                candidate_store_new_q[id] <= 1'b0;
+                candidate_store_chunkable_q[id] <= 1'b0;
+                candidate_chunk_beats_q[id] <= '0;
+                candidate_store_remaining_q[id] <= '0;
+                candidate_prepare_accept_q[id] <= '0;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    candidate_desc_q[id][ch] <= '0;
+                    candidate_store_desc_q[id][ch] <= '0;
+                    candidate_result_ready_q[id][ch] <= '0;
+                end
+            end
             for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
                 load_desc_q[ch] <= '0;
                 store_desc_q[ch] <= '0;
@@ -527,16 +828,46 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 end
             endcase
 
-            if ((state_q == S_SELECT) && pending_dequeue) begin
+            if ((state_q == S_SELECT) && candidate_select) begin
+                work_cmd_q <= candidate_owner_q[candidate_select_id].cmd;
+                work_tag_q <= candidate_owner_q[candidate_select_id].tag;
+                work_is_store_q <= candidate_is_store_q[candidate_select_id];
+                issued_chunk_beats_per_bank_q <=
+                    candidate_chunk_beats_q[candidate_select_id];
+                issue_candidate_q <= 1'b1;
+                issue_candidate_id_q <= candidate_select_id;
+                done_sticky_q <= '0;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    issue_desc_q[ch] <=
+                        candidate_desc_q[candidate_select_id][ch];
+
+                if (candidate_store_new_q[candidate_select_id]) begin
+                    store_context_valid_q <= 1'b1;
+                    store_chunkable_q <=
+                        candidate_store_chunkable_q[candidate_select_id];
+                    store_cmd_q <= candidate_owner_q[candidate_select_id].cmd;
+                    store_tag_q <= candidate_owner_q[candidate_select_id].tag;
+                    store_bank_beat_cursor_q <= 32'd0;
+                    store_remaining_beats_per_bank_q <=
+                        candidate_store_remaining_q[candidate_select_id];
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                        store_desc_q[ch] <=
+                            candidate_store_desc_q[candidate_select_id][ch];
+                end
+            end else if ((state_q == S_SELECT) && pending_dequeue) begin
                 work_cmd_q <= pending_q[pending_select_idx].cmd;
                 work_tag_q <= pending_q[pending_select_idx].tag;
                 work_is_store_q <=
                     (pending_q[pending_select_idx].cmd.instr[3:0]
                      == OP_DMA_ST);
+                issue_candidate_q <= 1'b0;
             end else if ((state_q == S_SELECT)
                       && !pending_high_found
+                      && !candidate_valid_q[PREP_HIGH_ID]
+                      && !candidate_valid_q[PREP_FALLBACK_ID]
                       && store_context_valid_q) begin
                 work_is_store_q <= 1'b1;
+                issue_candidate_q <= 1'b0;
             end
 
             if (state_q == S_CAPTURE) begin
@@ -567,6 +898,122 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 done_sticky_q <= done_sticky_q | done_or_inactive;
             end
 
+            // Background reservation transfers ownership out of pending_q
+            // (or snapshots the next paused-store cursor) into exactly one
+            // random-access candidate slot.  The committed store cursor is
+            // never changed here.
+            if (candidate_capture) begin
+                candidate_valid_q[candidate_capture_id] <= 1'b1;
+                candidate_prepared_q[candidate_capture_id] <= 1'b0;
+                candidate_prepare_accept_q[candidate_capture_id] <= '0;
+
+                if (candidate_capture_from_pending) begin
+                    candidate_owner_q[candidate_capture_id]
+                        <= pending_q[candidate_capture_idx];
+                    candidate_is_store_q[candidate_capture_id]
+                        <= decode_is_store;
+                    candidate_store_new_q[candidate_capture_id]
+                        <= decode_is_store;
+                    candidate_store_chunkable_q[candidate_capture_id]
+                        <= decoded_chunkable;
+                    candidate_chunk_beats_q[candidate_capture_id]
+                        <= decode_is_store
+                         ? built_chunk_beats_per_bank : 32'd0;
+                    candidate_store_remaining_q[candidate_capture_id]
+                        <= decode_is_store
+                         ? (decoded_desc[0].regs[DMA_R_BND0]
+                          * decoded_desc[0].regs[DMA_R_BND1]) : 32'd0;
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                        candidate_desc_q[candidate_capture_id][ch]
+                            <= decode_is_store ? built_desc[ch]
+                                               : decoded_desc[ch];
+                        candidate_store_desc_q[candidate_capture_id][ch]
+                            <= decoded_desc[ch];
+                        candidate_prepare_accept_q[candidate_capture_id][ch]
+                            <= decode_is_store ? !built_desc[ch].active
+                                               : !decoded_desc[ch].active;
+                        candidate_result_ready_q[candidate_capture_id][ch]
+                            <= (decode_is_store ? built_desc[ch].active
+                                                : decoded_desc[ch].active)
+                             ? 2'b00 : 2'b11;
+                    end
+                end else begin
+                    candidate_owner_q[candidate_capture_id].cmd <= store_cmd_q;
+                    candidate_owner_q[candidate_capture_id].tag <= store_tag_q;
+                    candidate_is_store_q[candidate_capture_id] <= 1'b1;
+                    candidate_store_new_q[candidate_capture_id] <= 1'b0;
+                    candidate_store_chunkable_q[candidate_capture_id]
+                        <= store_chunkable_q;
+                    candidate_chunk_beats_q[candidate_capture_id]
+                        <= built_chunk_beats_per_bank;
+                    candidate_store_remaining_q[candidate_capture_id]
+                        <= builder_store_remaining;
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                        candidate_desc_q[candidate_capture_id][ch]
+                            <= built_desc[ch];
+                        candidate_store_desc_q[candidate_capture_id][ch]
+                            <= store_desc_q[ch];
+                        candidate_prepare_accept_q[candidate_capture_id][ch]
+                            <= !built_desc[ch].active;
+                        candidate_result_ready_q[candidate_capture_id][ch]
+                            <= built_desc[ch].active ? 2'b00 : 2'b11;
+                    end
+                end
+            end
+
+            // Serialize PREPARE transactions globally so prepare_id and all
+            // operands stay stable through arbitrary per-channel skew.
+            if (!prepare_active_q) begin
+                if (candidate_valid_q[PREP_HIGH_ID]
+                 && !candidate_prepared_q[PREP_HIGH_ID]) begin
+                    prepare_active_q <= 1'b1;
+                    prepare_active_id_q <= 1'b0;
+                end else if (candidate_valid_q[PREP_FALLBACK_ID]
+                          && !candidate_prepared_q[PREP_FALLBACK_ID]) begin
+                    prepare_active_q <= 1'b1;
+                    prepare_active_id_q <= 1'b1;
+                end
+            end else begin
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    if (lookahead_prepare_valid_s[ch]
+                     && lookahead_prepare_ready_s[ch])
+                        candidate_prepare_accept_q[prepare_active_id_q][ch]
+                            <= 1'b1;
+                    if (candidate_desc_q[prepare_active_id_q][ch].active
+                     && (candidate_prepare_accept_q[prepare_active_id_q][ch]
+                      || (lookahead_prepare_valid_s[ch]
+                       && lookahead_prepare_ready_s[ch])))
+                        candidate_result_ready_q[prepare_active_id_q][ch]
+                            <= candidate_result_ready_q[prepare_active_id_q][ch]
+                             | lookahead_result_ready_s[ch];
+                end
+                if (prepare_all_accepted && prepare_all_results_ready) begin
+                    candidate_prepared_q[prepare_active_id_q] <= 1'b1;
+                    prepare_active_q <= 1'b0;
+                end
+            end
+
+            // ACTIVATE/retirement has priority over background PREPARE state.
+            // Since capture is allowed only in S_WAIT_DONE, the released ID
+            // cannot be reused on this edge.
+            if ((state_q == S_PROG) && cfg_all_ready
+             && issue_candidate_q) begin
+                candidate_valid_q[issue_candidate_id_q] <= 1'b0;
+                candidate_prepared_q[issue_candidate_id_q] <= 1'b0;
+                if (prepare_active_q
+                 && (prepare_active_id_q == issue_candidate_id_q))
+                    prepare_active_q <= 1'b0;
+                issue_candidate_q <= 1'b0;
+            end
+
+            if (chain_candidate_fire) begin
+                candidate_valid_q[chain_candidate_id] <= 1'b0;
+                candidate_prepared_q[chain_candidate_id] <= 1'b0;
+                if (prepare_active_q
+                 && (prepare_active_id_q == chain_candidate_id))
+                    prepare_active_q <= 1'b0;
+            end
+
             if ((state_q == S_WAIT_DONE) && done_all_valid
              && work_is_store_q) begin
                 if (store_chunk_last) begin
@@ -580,6 +1027,37 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                     store_remaining_beats_per_bank_q <=
                         store_remaining_beats_per_bank_q
                         - issued_chunk_beats_per_bank_q;
+                end
+            end
+
+            // Same-edge completion/ACTIVATE: old completion and any old-store
+            // cursor commit above use the pre-edge context.  The selected
+            // controller-owned descriptor then becomes the new foreground
+            // command without visiting S_IDLE/S_PROG.
+            if (chain_candidate_fire) begin
+                work_cmd_q <= candidate_owner_q[chain_candidate_id].cmd;
+                work_tag_q <= candidate_owner_q[chain_candidate_id].tag;
+                work_is_store_q <= candidate_is_store_q[chain_candidate_id];
+                issued_chunk_beats_per_bank_q <=
+                    candidate_chunk_beats_q[chain_candidate_id];
+                issue_candidate_q <= 1'b0;
+                issue_candidate_id_q <= chain_candidate_id;
+                done_sticky_q <= '0;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    issue_desc_q[ch] <= candidate_desc_q[chain_candidate_id][ch];
+
+                if (candidate_store_new_q[chain_candidate_id]) begin
+                    store_context_valid_q <= 1'b1;
+                    store_chunkable_q <=
+                        candidate_store_chunkable_q[chain_candidate_id];
+                    store_cmd_q <= candidate_owner_q[chain_candidate_id].cmd;
+                    store_tag_q <= candidate_owner_q[chain_candidate_id].tag;
+                    store_bank_beat_cursor_q <= 32'd0;
+                    store_remaining_beats_per_bank_q <=
+                        candidate_store_remaining_q[chain_candidate_id];
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                        store_desc_q[ch] <=
+                            candidate_store_desc_q[chain_candidate_id][ch];
                 end
             end
         end
@@ -619,10 +1097,107 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
             assert (!(pending_dequeue && (pending_count_q == 0)))
                 else $fatal(1, "%s: pending queue underflow", INSTANCE_ID);
-            assert (!(cmd_accept
-                   && (pending_count_q == PENDING_COUNT_W'(PENDING_DEPTH))
-                                  && !pending_dequeue))
-                else $fatal(1, "%s: pending queue overflow", INSTANCE_ID);
+            assert (pending_capacity_used
+                 <= (PENDING_COUNT_W+1)'(PENDING_DEPTH))
+                else $fatal(1, "%s: pending/candidate capacity overflow",
+                            INSTANCE_ID);
+            if (cmd_accept)
+                assert (pending_capacity_used
+                      < (PENDING_COUNT_W+1)'(PENDING_DEPTH))
+                    else $fatal(1, "%s: command accepted beyond capacity",
+                                INSTANCE_ID);
+
+            if (candidate_capture) begin
+                assert (!candidate_valid_q[candidate_capture_id])
+                    else $fatal(1, "%s: candidate ID reused before retirement",
+                                INSTANCE_ID);
+                if (candidate_capture_id == PREP_HIGH_ID) begin
+                    assert (candidate_capture_from_pending
+                         && pending_q[candidate_capture_idx].cmd.dma_priority)
+                        else $fatal(1, "%s: ID0 did not reserve a high load",
+                                    INSTANCE_ID);
+                end else if (candidate_capture_from_pending) begin
+                    assert (!pending_q[candidate_capture_idx].cmd.dma_priority)
+                        else $fatal(1, "%s: ID1 reserved a high load",
+                                    INSTANCE_ID);
+                end else begin
+                    assert (candidate_capture_store_cont)
+                        else $fatal(1, "%s: ID1 has no fallback owner",
+                                    INSTANCE_ID);
+                end
+            end
+
+            if (candidate_select
+             && (candidate_select_id == PREP_FALLBACK_ID)) begin
+                assert (!candidate_valid_q[PREP_HIGH_ID]
+                     && !pending_high_found
+                     && !accepted_high_now)
+                    else $fatal(1,
+                        "%s: fallback selected while a high load was visible",
+                        INSTANCE_ID);
+            end
+
+            if ((state_q == S_PROG) && cfg_all_ready
+             && issue_candidate_q) begin
+                assert (candidate_valid_q[issue_candidate_id_q])
+                    else $fatal(1, "%s: candidate retired before ACTIVATE",
+                                INSTANCE_ID);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    if (issue_desc_q[ch].active)
+                        assert (lookahead_activate_s[ch]
+                             && (lookahead_activate_id_s[ch]
+                              == issue_candidate_id_q))
+                            else $fatal(1,
+                                "%s: channel %0d ACTIVATE ID mismatch",
+                                INSTANCE_ID, ch);
+                end
+            end
+
+            if ((state_q == S_PROG) && !cfg_all_ready) begin
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    assert (!cfg_valid_s[ch]
+                         && !lookahead_activate_s[ch])
+                        else $fatal(1,
+                            "%s: channel %0d partially accepted ACTIVATE",
+                            INSTANCE_ID, ch);
+                end
+            end
+
+
+            if (chain_candidate_fire) begin
+                assert (done_all_valid
+                     && candidate_valid_q[chain_candidate_id]
+                     && candidate_prepared_now[chain_candidate_id])
+                    else $fatal(1,
+                        "%s: unsafe or unprepared same-edge ACTIVATE",
+                        INSTANCE_ID);
+                assert (cfg_all_ready)
+                    else $fatal(1,
+                        "%s: chained descriptor was not atomically accepted",
+                        INSTANCE_ID);
+                if (chain_candidate_id == PREP_FALLBACK_ID)
+                    assert (!candidate_valid_q[PREP_HIGH_ID]
+                         && !pending_high_found
+                         && !accepted_high_now)
+                        else $fatal(1,
+                            "%s: fallback chained while high load was visible",
+                            INSTANCE_ID);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    if (candidate_desc_q[chain_candidate_id][ch].active)
+                        assert (lookahead_activate_s[ch]
+                             && (lookahead_activate_id_s[ch]
+                              == chain_candidate_id))
+                            else $fatal(1,
+                                "%s: channel %0d missed chained ACTIVATE",
+                                INSTANCE_ID, ch);
+                end
+            end
+
+            if (prepare_active_q) begin
+                assert (candidate_valid_q[prepare_active_id_q])
+                    else $fatal(1, "%s: PREPARE lost candidate ownership",
+                                INSTANCE_ID);
+            end
 
             if ((state_q == S_CAPTURE) && work_is_store_q
              && decoded_chunkable) begin
@@ -698,7 +1273,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [GEMM_DMA_TAG_WIDTH-1:0] dbg_switch_load_tag_q;
     logic [PENDING_COUNT_W-1:0] dbg_pending_count_after;
 
-    wire dbg_descriptor_issue = (state_q == S_PROG) && cfg_all_ready;
+    wire dbg_descriptor_issue = ((state_q == S_PROG) && cfg_all_ready)
+                              || chain_candidate_fire;
+    wire dbg_descriptor_issue_is_store = chain_candidate_fire
+        ? candidate_is_store_q[chain_candidate_id] : work_is_store_q;
     wire dbg_descriptor_complete = (state_q == S_WAIT_DONE)
                                  && done_all_valid;
     wire dbg_intermediate_store_chunk_complete = dbg_descriptor_complete
@@ -713,14 +1291,22 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     wire dbg_store_to_load_select = (state_q == S_SELECT)
                                   && pending_high_found
                                   && store_context_valid_q;
+    wire dbg_capacity_release = (state_q == S_SELECT)
+        && ((pending_dequeue && !candidate_capture_from_pending)
+         || (candidate_select
+          && ((candidate_select_id == PREP_HIGH_ID)
+           || candidate_store_new_q[candidate_select_id])));
     wire [GEMM_DMA_TAG_WIDTH-1:0] dbg_active_tag = work_is_store_q
         ? store_tag_q : work_tag_q;
 
     always_comb begin
-        dbg_pending_count_after = pending_count_q;
-        unique case ({cmd_accept, pending_dequeue})
-            2'b10: dbg_pending_count_after = pending_count_q + 1'b1;
-            2'b01: dbg_pending_count_after = pending_count_q - 1'b1;
+        dbg_pending_count_after =
+            pending_capacity_used[PENDING_COUNT_W-1:0];
+        unique case ({cmd_accept, dbg_capacity_release})
+            2'b10: dbg_pending_count_after =
+                pending_capacity_used[PENDING_COUNT_W-1:0] + 1'b1;
+            2'b01: dbg_pending_count_after =
+                pending_capacity_used[PENDING_COUNT_W-1:0] - 1'b1;
             default: begin
             end
         endcase
@@ -869,7 +1455,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if (dbg_descriptor_issue) begin
                 dbg_descriptor_issue_count_q
                     <= dbg_descriptor_issue_count_q + 64'd1;
-                if (work_is_store_q) begin
+                if (dbg_descriptor_issue_is_store) begin
                     dbg_store_chunk_issue_count_q
                         <= dbg_store_chunk_issue_count_q + 64'd1;
                 end

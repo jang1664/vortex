@@ -46,6 +46,15 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   ) cfg_reg_if ();
 
   VX_node_done_if done_if ();
+  VX_dma_lookahead_if dma_lookahead_if ();
+
+  assign dma_lookahead_if.prepare_valid = 1'b0;
+  assign dma_lookahead_if.prepare_id = '0;
+  assign dma_lookahead_if.src_stride = '0;
+  assign dma_lookahead_if.dst_stride = '0;
+  assign dma_lookahead_if.bound = '0;
+  assign dma_lookahead_if.activate = 1'b0;
+  assign dma_lookahead_if.activate_id = '0;
 
   // VX_dma_unit operates on one aggregate local-memory beat. Split the
   // aggregate beat across physical LMEM ports so DMA bandwidth can scale
@@ -95,6 +104,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if.slave),
+    .lookahead_if (dma_lookahead_if.slave),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_wide_bus_if),
     .done_if      (done_if.master)

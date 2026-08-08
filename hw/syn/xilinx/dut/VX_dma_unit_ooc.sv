@@ -60,6 +60,15 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
     ) cfg_if ();
 
     VX_node_done_if done_if ();
+    VX_dma_lookahead_if lookahead_if ();
+
+    assign lookahead_if.prepare_valid = 1'b0;
+    assign lookahead_if.prepare_id = '0;
+    assign lookahead_if.src_stride = '0;
+    assign lookahead_if.dst_stride = '0;
+    assign lookahead_if.bound = '0;
+    assign lookahead_if.activate = 1'b0;
+    assign lookahead_if.activate_id = '0;
 
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_DATA_SIZE),
@@ -120,6 +129,7 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
         .clk           (clk),
         .reset         (reset),
         .cfg_reg_if    (cfg_if),
+        .lookahead_if  (lookahead_if),
         .dcache_bus_if (dcache_if),
         .lmem_bus_if   (lmem_if),
         .done_if       (done_if)

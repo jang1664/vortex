@@ -95,6 +95,15 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   ) lmem_bus_ifs [LMEM_PORTS](); // [0]=DMA only
 
   VX_node_done_if done_if();
+  VX_dma_lookahead_if dma_lookahead_if();
+
+  assign dma_lookahead_if.prepare_valid = 1'b0;
+  assign dma_lookahead_if.prepare_id = '0;
+  assign dma_lookahead_if.src_stride = '0;
+  assign dma_lookahead_if.dst_stride = '0;
+  assign dma_lookahead_if.bound = '0;
+  assign dma_lookahead_if.activate = 1'b0;
+  assign dma_lookahead_if.activate_id = '0;
   // -----------------------------
   // DUT
   // -----------------------------
@@ -113,6 +122,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
+    .lookahead_if (dma_lookahead_if),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_bus_ifs[0]),
     .done_if      (done_if)

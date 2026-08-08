@@ -1,7 +1,9 @@
 `timescale 1ns / 1ps
 `include "VX_define.vh"
 
-module tb_VX_dma_engine import VX_gpu_pkg::*; ();
+module tb_VX_dma_engine import VX_gpu_pkg::*; #(
+  parameter bit TB_ENABLE_MISALIGN = 1'b1
+) ();
 
   localparam int PERIOD       = 10;
   localparam int NUM_CHANNELS = `NUM_DMA_CHANNELS;
@@ -45,6 +47,25 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       .TAG_WIDTH (TAG_WIDTH)
   ) tmem_bus_if [NUM_CHANNELS] ();
 
+  VX_dma_lookahead_if dma_lookahead_if [NUM_CHANNELS] ();
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_valid_s;
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_id_s;
+  logic [NUM_CHANNELS-1:0][1:0][31:0] lookahead_src_stride_s;
+  logic [NUM_CHANNELS-1:0][1:0][31:0] lookahead_dst_stride_s;
+  logic [NUM_CHANNELS-1:0][1:0][31:0] lookahead_bound_s;
+  logic [NUM_CHANNELS-1:0] lookahead_activate_s;
+  logic [NUM_CHANNELS-1:0] lookahead_activate_id_s;
+
+  for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+    assign dma_lookahead_if[ch].prepare_valid = lookahead_prepare_valid_s[ch];
+    assign dma_lookahead_if[ch].prepare_id = lookahead_prepare_id_s[ch];
+    assign dma_lookahead_if[ch].src_stride = lookahead_src_stride_s[ch];
+    assign dma_lookahead_if[ch].dst_stride = lookahead_dst_stride_s[ch];
+    assign dma_lookahead_if[ch].bound = lookahead_bound_s[ch];
+    assign dma_lookahead_if[ch].activate = lookahead_activate_s[ch];
+    assign dma_lookahead_if[ch].activate_id = lookahead_activate_id_s[ch];
+  end
+
 `ifdef PERF_ENABLE
   hbm_dma_perf_t perf;
 `endif
@@ -61,11 +82,12 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       .AXI_ID_WIDTH    (AXI_ID_W),
       .AXI_USER_WIDTH  (AXI_USER_W),
       .TAG_WIDTH       (TAG_WIDTH),
-      .ENABLE_MISALIGN (1'b1)
+      .ENABLE_MISALIGN (TB_ENABLE_MISALIGN)
   ) dut (
       .clk        (clk),
       .reset      (reset),
       .cfg_reg_if (cfg_reg_if),
+      .lookahead_if(dma_lookahead_if),
       .done_if    (done_if),
       .axi_m      (axi_m),
       .tmem_bus_if(tmem_bus_if)
@@ -86,6 +108,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   logic [NUM_CHANNELS-1:0]                          done_valid_s;
   logic [NUM_CHANNELS-1:0][31:0]                    done_entry_id_s;
   logic [NUM_CHANNELS-1:0]                          done_ready_s;
+  logic [NUM_CHANNELS-1:0]                          phase7_hold_b_s;
 
   for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_cfg_done_bridge
     assign cfg_reg_if[ch].regs     = cfg_regs_s[ch];
@@ -361,7 +384,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         if (axi_m[ch].b_valid && axi_m[ch].b_ready)
           axi_m[ch].b_valid <= 1'b0;
 
-        if (b_pending_q && (!protocol_stall_enable
+        if (b_pending_q && !phase7_hold_b_s[ch]
+            && (!protocol_stall_enable
                          || ((axi_b_throttles[ch] >= 3)
                           && protocol_open(17, 6, 7, ch)))) begin
           b_pending_q       <= 1'b0;
@@ -545,6 +569,14 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       cfg_entry_id_s[ch] = '0;
       cfg_regs_s[ch]     = '0;
       done_ready_s[ch]   = 1'b1;
+      lookahead_prepare_valid_s[ch] = 1'b0;
+      lookahead_prepare_id_s[ch] = '0;
+      lookahead_src_stride_s[ch] = '0;
+      lookahead_dst_stride_s[ch] = '0;
+      lookahead_bound_s[ch] = '0;
+      lookahead_activate_s[ch] = 1'b0;
+      lookahead_activate_id_s[ch] = '0;
+      phase7_hold_b_s[ch] = 1'b0;
     end
   endtask
 
@@ -1395,7 +1427,124 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                axi_ar_stalls[0], axi_aw_stalls[0], axi_w_stalls[0],
                axi_r_throttles[0], axi_b_throttles[0],
                tmem_req_stalls[0], tmem_rsp_throttles[0]);
+      $display("DMA_ENGINE_PHASE6_B_DRAIN_PASS delayed_b=1 boundary_drain=1 final_drain=1 activate_gate=physical_done");
       protocol_stall_enable = 1'b0;
+    end
+  endtask
+
+  task automatic run_phase7_aligned_prepare_b_drain;
+    logic [31:0] current_d [0:CFG_NUM-1];
+    logic [31:0] next_d [0:CFG_NUM-1];
+    int unsigned aw_snapshot;
+    int unsigned b_snapshot;
+    int wait_cycles;
+    begin
+      if (TB_ENABLE_MISALIGN)
+        $fatal(1, "phase7 aligned PREPARE requested with misaligned backend");
+      seed_tmem_mem(0, 8'h29, 8'h03);
+      build_desc(current_d,
+        64'h0000_0000_0000_3000, 64'h0000_0000_0000_1000,
+        32'd64, 32'd2048, 32'd0, 32'd0, 32'd0, 32'd0,
+        32'd8, 32'd1, 32'd1, 32'd64, 32'd0, 1'b1);
+      build_desc(next_d,
+        64'h0000_0000_0000_3800, 64'h0000_0000_0000_1800,
+        32'd64, 32'd2048, 32'd0, 32'd0, 32'd0, 32'd0,
+        32'd8, 32'd1, 32'd1, 32'd64, 32'd0, 1'b1);
+
+      // Withhold the real AXI B response after the final write burst.  The
+      // aligned backend may accept PREPARE, but the engine must keep the old
+      // physical completion and ACTIVATE closed until B drain.
+      phase7_hold_b_s[0] = 1'b1;
+      cfg_push_desc(0, current_d, 32'h0000_0900);
+      wait_cycles = 0;
+      while (!(dut.g_channel[0].internal_done_if.valid
+            && (dut.g_channel[0].aw_outstanding_r
+              != dut.g_channel[0].b_drained_r))
+          && (wait_cycles < 500)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.g_channel[0].internal_done_if.valid
+       || (dut.g_channel[0].aw_outstanding_r
+        == dut.g_channel[0].b_drained_r))
+        $fatal(1, "phase7 did not establish internal done with delayed B");
+
+      aw_snapshot = dut.g_channel[0].aw_outstanding_r;
+      b_snapshot = dut.g_channel[0].b_drained_r;
+      @(negedge clk);
+      lookahead_prepare_id_s[0] = 1'b0;
+      lookahead_src_stride_s[0][0] = 32'd64;
+      lookahead_dst_stride_s[0][0] = 32'd2048;
+      lookahead_src_stride_s[0][1] = 32'd0;
+      lookahead_dst_stride_s[0][1] = 32'd0;
+      lookahead_bound_s[0][0] = 32'd8;
+      lookahead_bound_s[0][1] = 32'd1;
+      lookahead_prepare_valid_s[0] = 1'b1;
+      #1;
+      if (!dma_lookahead_if[0].prepare_ready)
+        $fatal(1, "phase7 aligned PREPARE not accepted during B drain");
+      @(posedge clk);
+      @(negedge clk);
+      lookahead_prepare_valid_s[0] = 1'b0;
+      if ((dut.g_channel[0].aw_outstanding_r != aw_snapshot)
+       || (dut.g_channel[0].b_drained_r != b_snapshot)
+       || cfg_ready_s[0] || done_valid_s[0])
+        $fatal(1, "phase7 PREPARE changed B bookkeeping/completion gate");
+      wait_cycles = 0;
+      while ((dma_lookahead_if[0].result_ready != 2'b11)
+          && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (dma_lookahead_if[0].result_ready != 2'b11)
+        $fatal(1, "phase7 aligned PREPARE result timeout");
+
+      @(negedge clk);
+      cfg_entry_id_s[0] = 32'h0000_0901;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_regs_s[0][r] = next_d[r];
+      cfg_valid_s[0] = 1'b1;
+      lookahead_activate_s[0] = 1'b1;
+      lookahead_activate_id_s[0] = 1'b0;
+      repeat (3) begin
+        #1;
+        if (cfg_ready_s[0] || done_valid_s[0])
+          $fatal(1, "phase7 ACTIVATE escaped while AXI B outstanding");
+        @(posedge clk);
+        @(negedge clk);
+      end
+
+      phase7_hold_b_s[0] = 1'b0;
+      wait_cycles = 0;
+      while (!cfg_ready_s[0] && (wait_cycles < 50)) begin
+        @(negedge clk);
+        wait_cycles++;
+      end
+      #1;
+      if (!cfg_ready_s[0] || !done_valid_s[0]
+       || (dut.g_channel[0].aw_outstanding_r
+        != dut.g_channel[0].b_drained_r))
+        $fatal(1, "phase7 ACTIVATE did not pair with drained old completion");
+      @(posedge clk);
+      #1;
+      if (!tmem_bus_if[0].req_valid) begin
+        @(posedge clk);
+        #1;
+        if (!tmem_bus_if[0].req_valid)
+          $fatal(1, "phase7 first aligned request missing after ACTIVATE");
+      end
+      @(negedge clk);
+      cfg_valid_s[0] = 1'b0;
+      lookahead_activate_s[0] = 1'b0;
+      done_ready_s[0] = 1'b0;
+      wait_done_seen(0, 500, "phase7_aligned_next");
+      if (dut.g_channel[0].aw_outstanding_r
+          != dut.g_channel[0].b_drained_r)
+        $fatal(1, "phase7 next descriptor completed before B drain");
+      @(negedge clk);
+      done_ready_s[0] = 1'b1;
+      @(posedge clk);
+      $display("DMA_ENGINE_PHASE7_PREPARE_B_DRAIN_PASS aligned=1 prepare_during_b=1 prepare_isolation=1 activate_blocked=1 b_drain=1 completion_to_activate=0 activate_to_first_request=1 cache=hit id=0");
     end
   endtask
 
@@ -1472,6 +1621,9 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     reset = 1'b0;
     repeat (6) @(posedge clk);
 
+    if (!TB_ENABLE_MISALIGN) begin
+      run_phase7_aligned_prepare_b_drain();
+    end else begin
     run_case_remap_burst_read();
 `ifndef PERF_ENABLE
     run_case_remap_burst_write();
@@ -1479,6 +1631,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_case_multiwin_burst_write();
     run_case_protocol_stalls();
 `endif
+    end
     // Non-burst test cases removed: burst-only DMA engine
     // run_case_ch0_g2l();
     // run_case_ch0_l2g();

@@ -21,6 +21,7 @@ AXI_DIR := $(THIRD_PARTY_DIR)/axi
 RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(AXI_DIR)/src/axi_intf.sv \
         $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \

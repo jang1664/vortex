@@ -18,6 +18,7 @@ TB_PENDING_DEPTH ?= 4
 
 TB   := $(SRC_DIR)/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/core/VX_dma_lookahead_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \

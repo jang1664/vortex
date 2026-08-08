@@ -28,6 +28,7 @@ TOP_MODULE := tb_VX_lmem_dma_misal
 
 TB   := $(SRC_DIR)/tb_VX_lmem_dma_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_gearbox.sv \
 				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \

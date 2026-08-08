@@ -49,6 +49,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 
     // Config register interface per channel (from gemm_dma_ctrl)
     VX_config_reg_if.slave  cfg_reg_if [NUM_CHANNELS],
+    VX_dma_lookahead_if.slave lookahead_if [NUM_CHANNELS],
 
     // Done interface per channel
     VX_node_done_if.master  done_if [NUM_CHANNELS],
@@ -163,6 +164,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             .clk            (clk),
             .reset          (reset),
             .cfg_reg_if     (cfg_reg_if[ch]),
+            .lookahead_if   (lookahead_if[ch]),
             .dcache_bus_if  (hbm_bus_if),
             .lmem_bus_if    (tmem_bus_if[ch]),
             .done_if        (internal_done_if)
@@ -216,6 +218,19 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // Descriptor latch — BND0 carries the AXI burst length (in beats).
         // --------------------------------------------------------
         wire cfg_fire = cfg_reg_if[ch].valid && cfg_reg_if[ch].ready;
+
+    `ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset && lookahead_if[ch].prepare_valid
+                && !cfg_reg_if[ch].valid)
+                assert (!cfg_fire)
+                    else $fatal(1, "%m: PREPARE caused cfg_fire on ch=%0d", ch);
+            if (!reset && lookahead_if[ch].activate
+                && !cfg_reg_if[ch].valid)
+                assert (!cfg_fire)
+                    else $fatal(1, "%m: ACTIVATE caused cfg_fire without cfg on ch=%0d", ch);
+        end
+    `endif
 
         logic [BURST_LEN_W-1:0] burst_len_r;
 
@@ -318,6 +333,16 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // Done gate — hold done until every outstanding B has drained.
         // --------------------------------------------------------
         wire wr_drain_complete = (aw_outstanding_r == b_drained_r);
+
+    `ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset && cfg_fire && lookahead_if[ch].activate)
+                assert (wr_drain_complete)
+                    else $fatal(1,
+                        "%m: chained ACTIVATE preceded AXI B drain on ch=%0d",
+                        ch);
+        end
+    `endif
 
         assign done_if[ch].valid      = internal_done_if.valid & wr_drain_complete;
         assign done_if[ch].entry_id   = internal_done_if.entry_id;

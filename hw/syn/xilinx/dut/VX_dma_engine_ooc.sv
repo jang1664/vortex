@@ -89,6 +89,17 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
     ) cfg_if [NUM_CHANNELS] ();
 
     VX_node_done_if done_if [NUM_CHANNELS] ();
+    VX_dma_lookahead_if lookahead_if [NUM_CHANNELS] ();
+
+    for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+        assign lookahead_if[ch].prepare_valid = 1'b0;
+        assign lookahead_if[ch].prepare_id = '0;
+        assign lookahead_if[ch].src_stride = '0;
+        assign lookahead_if[ch].dst_stride = '0;
+        assign lookahead_if[ch].bound = '0;
+        assign lookahead_if[ch].activate = 1'b0;
+        assign lookahead_if[ch].activate_id = '0;
+    end
 
     AXI_BUS #(
         .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
@@ -195,6 +206,7 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         .clk         (clk),
         .reset       (reset),
         .cfg_reg_if  (cfg_if),
+        .lookahead_if(lookahead_if),
         .done_if     (done_if),
         .axi_m       (axi_if),
         .tmem_bus_if (tmem_if)

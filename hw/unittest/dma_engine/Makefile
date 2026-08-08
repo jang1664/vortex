@@ -23,6 +23,7 @@ LIB_RTLS := $(filter-out %_tb.sv,$(wildcard $(RTL_DIR)/libs/*.sv))
 RTLS := $(AXI_DIR)/src/axi_pkg.sv \
 				$(AXI_DIR)/src/axi_intf.sv \
 				$(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/core/VX_mem_remap.sv \
@@ -60,7 +61,12 @@ empty :=
 space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS :=
+TB_ENABLE_MISALIGN ?= 1
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).TB_ENABLE_MISALIGN=$(TB_ENABLE_MISALIGN)
+else
+PARAMS := -GTB_ENABLE_MISALIGN=$(TB_ENABLE_MISALIGN)
+endif
 
 setup:
 	mkdir -p logs reports

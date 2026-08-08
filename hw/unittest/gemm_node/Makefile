@@ -17,6 +17,7 @@ TOP_MODULE := tb_VX_gemm_node
 
 TB   := $(SRC_DIR)/tb_VX_gemm_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \

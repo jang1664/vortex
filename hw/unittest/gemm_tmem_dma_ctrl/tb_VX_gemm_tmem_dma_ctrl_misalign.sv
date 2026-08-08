@@ -51,6 +51,23 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   ) cfg_reg_if [NUM_CHANNELS] ();
 
   VX_node_done_if done_if [NUM_CHANNELS] ();
+  VX_dma_lookahead_if dma_lookahead_if [NUM_CHANNELS] ();
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_ready_drive;
+  logic [NUM_CHANNELS-1:0][1:0] lookahead_result_ready_drive;
+  logic [NUM_CHANNELS-1:0] lookahead_activate_seen_s;
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_valid_seen_s;
+  for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+    // Model the Phase-5 channel cache contract at the controller boundary:
+    // accept each tagged PREPARE and report both source/destination groups
+    // ready.  Backend cache timing is covered by the aligned-unit test.
+    assign dma_lookahead_if[ch].prepare_ready =
+      lookahead_prepare_ready_drive[ch];
+    assign dma_lookahead_if[ch].result_ready =
+      lookahead_result_ready_drive[ch];
+    assign lookahead_activate_seen_s[ch] = dma_lookahead_if[ch].activate;
+    assign lookahead_prepare_valid_seen_s[ch] =
+      dma_lookahead_if[ch].prepare_valid;
+  end
   logic store_done;
 
   VX_gemm_tmem_dma_ctrl #(
@@ -65,6 +82,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
     .store_done(store_done),
     .gemm_sync_if(gemm_sync_if),
     .cfg_reg_if(cfg_reg_if),
+    .lookahead_if(dma_lookahead_if),
     .done_if(done_if)
   );
 
@@ -82,6 +100,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   integer dma_done_pulse_count;
   integer store_done_pulse_count;
   logic dma_done_prev;
+  integer last_done_issue_count;
   logic [GEMM_DMA_TAG_WIDTH-1:0] next_cmd_tag;
   integer descriptor_issue_count;
   logic [127:0][NUM_CHANNELS-1:0] descriptor_active;
@@ -321,6 +340,249 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
     end
   endtask
 
+  task automatic run_phase6_chain_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t next_cmd;
+    int first_issue;
+    int final_ch;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                                 64'h0000_0000_0000_0000,
+                                 64'h0000_0000_0060_0000, 4'd0);
+      next_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                              64'h0000_0000_0000_0200,
+                              64'h0000_0000_0061_0000, 4'd0);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h30));
+      wait_descriptor(first_issue + 1, "phase6_chain_current");
+      send_tagged_cmd(next_cmd, GEMM_DMA_TAG_WIDTH'(6'h31));
+
+      wait_cycles = 0;
+      while ((!dut.candidate_valid_q[0]
+           || !dut.candidate_prepared_q[0]) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || !dut.candidate_prepared_q[0])
+        $fatal(1, "[phase6_chain] prepared high candidate timeout");
+
+      final_ch = -1;
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (descriptor_active[first_issue][ch])
+          final_ch = ch;
+      end
+      if (final_ch < 0)
+        $fatal(1, "[phase6_chain] no active final channel");
+
+      // Retire early channels first.  They represent aligned units already in
+      // S_IDLE when the final channel reaches S_DONE.
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch]
+                         && (ch != final_ch);
+      @(posedge clk);
+
+      @(negedge clk);
+      clear_done_inputs();
+      done_valid_s[final_ch] = 1'b1;
+      #1;
+      if (!dut.chain_candidate_select || dut.chain_candidate_id != 1'b0)
+        $fatal(1, "[phase6_chain] prepared ID0 did not chain");
+      if (!gemm_dma_ctrl_if.done || !lookahead_activate_seen_s[final_ch])
+        $fatal(1, "[phase6_chain] completion and ACTIVATE were not paired");
+      @(posedge clk);
+      #1;
+      clear_done_inputs();
+      if (descriptor_issue_count != first_issue + 2)
+        $fatal(1, "[phase6_chain] chained descriptor was not accepted");
+
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h31),
+                          "phase6_chain_next");
+      wait_idle("phase6_chain_next");
+      $display("TMEM_DMA_PHASE6_CHAIN_PASS completion_to_activate=0 cache=hit id=0 early_channels=%0d last_channel=%0d atomic_cfg=1",
+               final_ch, final_ch);
+    end
+  endtask
+
+  task automatic run_phase6_unprepared_high_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t next_cmd;
+    int first_issue;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0400,
+                                 64'h0000_0000_0062_0000, 4'd0);
+      next_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                              64'h0000_0000_0000_0600,
+                              64'h0000_0000_0063_0000, 4'd0);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h32));
+      wait_descriptor(first_issue + 1, "phase6_miss_current");
+
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(next_cmd, GEMM_DMA_TAG_WIDTH'(6'h33));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[0] && (wait_cycles < 20)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || dut.candidate_prepared_q[0])
+        $fatal(1, "[phase6_miss] high candidate readiness model failed");
+
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (dut.chain_candidate_select)
+        $fatal(1, "[phase6_miss] unprepared high candidate chained");
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+
+      wait_cycles = 0;
+      while (!(|cfg_valid_s) && (wait_cycles < 20)) begin
+        @(negedge clk);
+        wait_cycles++;
+      end
+      #1;
+      if (!(|cfg_valid_s) || !(|lookahead_activate_seen_s)
+       || dut.candidate_prepared_q[0])
+        $fatal(1, "[phase6_miss] unprepared high did not use slow ACTIVATE");
+      @(posedge clk);
+      #1;
+      lookahead_result_ready_drive = '1;
+      wait_descriptor(first_issue + 2, "phase6_miss_next");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h33),
+                          "phase6_miss_next");
+      wait_idle("phase6_miss_next");
+      $display("TMEM_DMA_PHASE6_CACHE_MISS_PASS cache=miss id=0 late_high_suppressed_fallback=1 slow_path=1");
+    end
+  endtask
+
+  task automatic run_phase7_channel_skew_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t fallback_cmd;
+    gemm_unified_cmd_t high_cmd;
+    int first_issue;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                                 64'h0000_0000_0000_0800,
+                                 64'h0000_0000_0070_0000, 4'd0);
+      fallback_cmd = make_dma_cmd(OP_DMA_ST, 28'd512,
+                                  64'h0000_0000_0071_0000,
+                                  64'h0000_0000_0000_0c00, 4'd4);
+      high_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                              64'h0000_0000_0000_1000,
+                              64'h0000_0000_0072_0000, 4'd0);
+
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h34));
+      wait_descriptor(first_issue + 1, "phase7_skew_current");
+
+      // ID1 is a real fallback candidate.  Accept its per-channel PREPARE
+      // messages one channel at a time, then return the two result groups one
+      // channel at a time.  A channel which accepted must not be presented the
+      // same PREPARE again while the remaining channels catch up.
+      lookahead_prepare_ready_drive = '0;
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(fallback_cmd, GEMM_DMA_TAG_WIDTH'(6'h35));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[1] && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[1])
+        $fatal(1, "[phase7_skew] fallback candidate was not reserved");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        @(negedge clk);
+        lookahead_prepare_ready_drive[ch] = 1'b1;
+        @(posedge clk);
+        #1;
+        if (!dut.candidate_prepare_accept_q[1][ch])
+          $fatal(1, "[phase7_skew] ch%0d PREPARE was not accepted", ch);
+        for (int prev = 0; prev <= ch; ++prev) begin
+          if (lookahead_prepare_valid_seen_s[prev])
+            $fatal(1, "[phase7_skew] accepted ch%0d PREPARE repeated", prev);
+        end
+      end
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        @(negedge clk);
+        lookahead_result_ready_drive[ch] = 2'b11;
+        @(posedge clk);
+      end
+      #1;
+      if (!dut.candidate_prepared_q[1])
+        $fatal(1, "[phase7_skew] fallback did not collect skewed results");
+
+      // A later high-priority load is deliberately left unprepared.  It must
+      // suppress the fully prepared fallback at the completion boundary.
+      lookahead_prepare_ready_drive = '1;
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(high_cmd, GEMM_DMA_TAG_WIDTH'(6'h36));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[0] && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || dut.candidate_prepared_q[0])
+        $fatal(1, "[phase7_skew] late high readiness setup failed");
+
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (dut.chain_candidate_select)
+        $fatal(1, "[phase7_skew] prepared fallback bypassed late high");
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+
+      // The slow high ACTIVATE is one global transaction.  An early-ready
+      // channel must not consume cfg/ACTIVATE while the final channel blocks.
+      cfg_ready_drive = '1;
+      cfg_ready_drive[NUM_CHANNELS-1] = 1'b0;
+      wait_cycles = 0;
+      while ((dut.state_q != 3'd3) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (dut.state_q != 3'd3)
+        $fatal(1, "[phase7_skew] high candidate did not reach S_PROG");
+      repeat (3) begin
+        @(negedge clk);
+        #1;
+        if ((|cfg_valid_s) || (|lookahead_activate_seen_s))
+          $fatal(1, "[phase7_skew] partial cfg/ACTIVATE under ready skew");
+        @(posedge clk);
+      end
+      @(negedge clk);
+      cfg_ready_drive[NUM_CHANNELS-1] = 1'b1;
+      lookahead_result_ready_drive = '1;
+      wait_descriptor(first_issue + 2, "phase7_skew_high");
+      if (descriptor_regs[first_issue + 1][0][DMA_R_SRC_BASE_LO]
+          != high_cmd.rs2_data[31:0])
+        $fatal(1, "[phase7_skew] late high did not issue before fallback");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h36), "phase7_skew_high");
+
+      wait_descriptor(first_issue + 3, "phase7_skew_fallback");
+      if (descriptor_regs[first_issue + 2][0][DMA_R_DST_BASE_LO]
+          != fallback_cmd.rs1_data[31:0])
+        $fatal(1, "[phase7_skew] fallback descriptor ownership changed");
+      complete_descriptor(first_issue + 2, 1'b1, 1'b1,
+                          GEMM_DMA_TAG_WIDTH'(6'h35),
+                          "phase7_skew_fallback");
+      wait_idle("phase7_skew_fallback");
+      $display("TMEM_DMA_PHASE7_SKEW_PRIORITY_PASS prepare_accept_skew=%0d result_skew=%0d activate_ready_skew=1 late_high_blocks_prepared_fallback=1 no_partial_cfg=1",
+               NUM_CHANNELS, NUM_CHANNELS);
+    end
+  endtask
+
   task automatic check_chunk_address_set(
     input int first_issue,
     input int chunk_count,
@@ -553,8 +815,19 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
         send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
       end
       #1;
-      if (dut.pending_count_q != TB_PENDING_DEPTH || gemm_dma_ctrl_if.cmd_ready)
+      if ((dut.pending_count_q + dut.candidate_valid_q[0])
+            != TB_PENDING_DEPTH
+       || gemm_dma_ctrl_if.cmd_ready)
         $fatal(1, "[priority_pause] pending queue did not reach full");
+      if (!dut.candidate_valid_q[0] || !dut.candidate_prepared_q[0]
+       || !dut.candidate_valid_q[1] || !dut.candidate_prepared_q[1])
+        $fatal(1, "[priority_pause] high/fallback candidate table not ready");
+      if (dut.store_bank_beat_cursor_q != 0
+       || dut.candidate_desc_q[1][0].regs[DMA_R_SRC_BASE_LO] != 32'd512
+       || dut.candidate_desc_q[1][0].regs[DMA_R_DST_BASE_LO]
+            != 32'h0040_2000)
+        $fatal(1, "[priority_pause] speculative store cursor committed early or descriptor mismatch");
+      $display("TMEM_DMA_PREPARED_TABLE_PASS id0=oldest_high id1=paused_store accepted_all=1 ready_all=1 cursor_speculative=1");
 
       c = make_dma_cmd(OP_DMA_LD, 28'd64,
                        64'h0000_0000_0000_0a00,
@@ -614,14 +887,18 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                        64'h0000_0000_0000_0000,
                        64'h0000_0000_0060_0000, 4'd0);
       send_tagged_cmd(c, 3'd7);
-      while (!cfg_reg_if[0].valid) @(posedge clk);
+      // Atomic ACTIVATE intentionally keeps every channel valid low until all
+      // active channels are ready.  Wait for the held descriptor to reach the
+      // program state rather than waiting for a forbidden partial valid.
+      while (dut.state_q != 3'd3) @(posedge clk);
       held_regs = cfg_reg_if[0].regs;
       repeat (3) begin
         @(posedge clk);
         #1;
-        if (!cfg_reg_if[0].valid || cfg_reg_if[0].regs !== held_regs
+        if (cfg_reg_if[0].valid || (|lookahead_activate_seen_s)
+         || cfg_reg_if[0].regs !== held_regs
          || gemm_dma_ctrl_if.idle)
-          $fatal(1, "[cfg_backpressure] descriptor not stable or idle early");
+          $fatal(1, "[cfg_backpressure] partial valid/ACTIVATE, unstable descriptor, or idle early");
       end
       @(negedge clk);
       cfg_ready_drive = '1;
@@ -629,7 +906,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       complete_descriptor(issue_idx, 1'b1, 1'b0, 3'd7,
                           "cfg_backpressure");
       wait_idle("cfg_backpressure");
-      $display("TMEM_DMA_BACKPRESSURE_PASS cfg_stable_cycles=3 idle_drain=1");
+      $display("TMEM_DMA_BACKPRESSURE_PASS cfg_stable_cycles=3 atomic_valid=1 idle_drain=1");
     end
   endtask
 
@@ -649,9 +926,26 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                          64'h0000_0000_0070_0000 + j * 32'h1000, 4'd0);
         send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
       end
+      // At depth one, the sole queued load is accepted one edge before the
+      // background reservation transfers it from pending_q into ID0.  Wait
+      // for that ownership transfer, then check that total capacity stayed
+      // full throughout; this is not extra command capacity.
+      for (int wait_cycles = 0;
+           !dut.candidate_valid_q[0] && (wait_cycles < 10);
+           ++wait_cycles)
+        @(posedge clk);
       #1;
-      if (dut.pending_count_q != TB_PENDING_DEPTH || gemm_dma_ctrl_if.cmd_ready)
+      if ((dut.pending_count_q + dut.candidate_valid_q[0])
+            != TB_PENDING_DEPTH
+       || !dut.candidate_valid_q[0] || gemm_dma_ctrl_if.cmd_ready)
         $fatal(1, "[depth_%0d] queue full contract mismatch", TB_PENDING_DEPTH);
+      for (int wait_cycles = 0;
+           !dut.candidate_prepared_q[0] && (wait_cycles < 10);
+           ++wait_cycles)
+        @(posedge clk);
+      #1;
+      if (!dut.candidate_prepared_q[0])
+        $fatal(1, "[depth_%0d] high candidate was not prepared", TB_PENDING_DEPTH);
       complete_descriptor(first_issue, 1'b1, 1'b0, 3'd0, "depth_active");
       for (int j = 1; j <= TB_PENDING_DEPTH; ++j) begin
         wait_descriptor(first_issue + j + 1, "depth_fifo");
@@ -659,7 +953,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                             GEMM_DMA_TAG_WIDTH'(j), "depth_fifo");
       end
       wait_idle("depth_fifo");
-      $display("TMEM_DMA_DEPTH_PASS depth=%0d full=1 fifo=1 drain=1",
+      $display("TMEM_DMA_DEPTH_PASS depth=%0d high_slot=1 full=1 fifo=1 drain=1",
                TB_PENDING_DEPTH);
     end
   endtask
@@ -687,9 +981,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                          64'(j * 32'h200), 4'd4);
         send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
       end
-      if (dut.pending_count_q != 3)
-        $fatal(1, "[multi_low] expected three queued stores, got %0d",
-               dut.pending_count_q);
+      if ((dut.pending_count_q + dut.candidate_valid_q[1]) != 3)
+        $fatal(1, "[multi_low] expected three reserved/queued stores, got %0d+%0d",
+               dut.pending_count_q, dut.candidate_valid_q[1]);
 
       complete_descriptor(first_issue, 1'b1, 1'b0, 3'd0,
                           "multi_low_active_load");
@@ -739,8 +1033,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                        64'h0000_0000_0092_0000,
                        64'h0000_0000_0000_0400, 4'd4);
       send_tagged_cmd(c, 3'd6);
-      if (dut.pending_count_q != 2)
-        $fatal(1, "[nonchunk_pending] pending load/store count mismatch");
+      if ((dut.pending_count_q + dut.candidate_valid_q[0]
+           + dut.candidate_valid_q[1]) != 2)
+        $fatal(1, "[nonchunk_pending] reserved/pending count mismatch");
 
       // Retire all but the final active channel, then hold the final response.
       // The high load must remain queued and no descriptor may be reissued.
@@ -757,7 +1052,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
         @(posedge clk);
         #1;
         if (descriptor_issue_count != first_issue + 1
-         || dut.pending_count_q != 2
+         || (dut.pending_count_q + dut.candidate_valid_q[0]
+           + dut.candidate_valid_q[1]) != 2
          || gemm_dma_ctrl_if.done || store_done || gemm_dma_ctrl_if.idle)
           $fatal(1, "[nonchunk_pending] arbitration escaped before final response drain");
       end
@@ -889,14 +1185,17 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       dma_done_pulse_count = 0;
       store_done_pulse_count = 0;
       dma_done_prev = 1'b0;
+      last_done_issue_count = -1;
       descriptor_issue_count = 0;
       descriptor_active = '0;
       descriptor_regs = '0;
     end else begin
       if (gemm_dma_ctrl_if.done) begin
-        if (dma_done_prev)
-          $fatal(1, "DMA done remained asserted for more than one cycle");
+        if (dma_done_prev
+         && (descriptor_issue_count <= last_done_issue_count))
+          $fatal(1, "DMA done repeated without a chained descriptor");
         dma_done_pulse_count++;
+        last_done_issue_count = descriptor_issue_count;
       end
       if (store_done)
         store_done_pulse_count++;
@@ -942,6 +1241,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
 
     reset = 1'b1;
     cfg_ready_drive = '1;
+    lookahead_prepare_ready_drive = '1;
+    lookahead_result_ready_drive = '1;
     clear_done_inputs();
     clear_cfg_scoreboard();
     clear_notify_scoreboard();
@@ -1116,6 +1417,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
     run_pending_depth_smoke();
 
     if (TB_PENDING_DEPTH == 4) begin
+      run_phase6_chain_case();
+      run_phase6_unprepared_high_case();
+      run_phase7_channel_skew_case();
       run_chunk_case(4, 4'd3, 3'd0);
       run_chunk_case(8, 4'd4, 3'd1);
       run_chunk_case(16, 4'd5, 3'd2);

@@ -50,6 +50,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     // DMA config (from gemm_dma_ctrl, 8 channels for DMA engine)
     VX_config_reg_if.slave  dma_cfg_if [NUM_BANKS],
+    VX_dma_lookahead_if.slave dma_lookahead_if [NUM_BANKS],
     VX_node_done_if.master  dma_done_if [NUM_BANKS],
 
     // Local DMA control (from gemm_ctrl, 4 channels: input/weight/sz/output)
@@ -106,6 +107,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk            (clk),
         .reset          (reset),
         .cfg_reg_if     (dma_cfg_if),
+        .lookahead_if   (dma_lookahead_if),
         .done_if        (dma_done_if),
         .axi_m          (axi_m),
         .tmem_bus_if    (dma_to_tmem)
