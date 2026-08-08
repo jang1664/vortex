@@ -1001,6 +1001,124 @@ module tb_VX_gemm_node_improve
   int vector_weight_random_type = 3;
   int vector_scale_random_type  = 3;
   int vector_zp_random_type     = 3;
+  bit main_cpp_nonuniform       = 1'b0;
+
+  // IEEE-754 FP32 to FP16 round-to-nearest-even conversion.  The legacy
+  // cf_math_util_pkg helper truncates, while fpint_gemm_ffn_hw/main.cpp and
+  // the QROW input multiplier use RNE.
+  function automatic logic [15:0] fp32_to_fp16_rne(input shortreal value);
+    logic [31:0] bits;
+    logic [15:0] sign;
+    logic [31:0] mantissa;
+    logic [31:0] mantissa_top;
+    logic [31:0] round_bits;
+    logic [31:0] mantissa_24;
+    logic [31:0] round_mask;
+    logic [31:0] halfway;
+    logic [31:0] mantissa_10;
+    int exponent_32;
+    int exponent_16;
+    int shift;
+    begin
+      bits = $shortrealtobits(value);
+      sign = {bits[31], 15'b0};
+      exponent_32 = bits[30:23];
+      mantissa = bits & 32'h007f_ffff;
+
+      if (exponent_32 == 8'hff) begin
+        fp32_to_fp16_rne = sign | ((mantissa != 0) ? 16'h7e00 : 16'h7c00);
+      end else if (exponent_32 == 0) begin
+        fp32_to_fp16_rne = sign;
+      end else begin
+        exponent_16 = exponent_32 - 127 + 15;
+        if (exponent_16 >= 31) begin
+          fp32_to_fp16_rne = sign | 16'h7c00;
+        end else if (exponent_16 >= 1) begin
+          mantissa_top = mantissa >> 13;
+          round_bits = mantissa & 32'h0000_1fff;
+          if ((round_bits > 32'h0000_1000)
+           || ((round_bits == 32'h0000_1000) && mantissa_top[0])) begin
+            mantissa_top += 1;
+            if (mantissa_top == 32'h0000_0400) begin
+              mantissa_top = 0;
+              exponent_16 += 1;
+            end
+          end
+          if (exponent_16 >= 31)
+            fp32_to_fp16_rne = sign | 16'h7c00;
+          else
+            fp32_to_fp16_rne = sign
+                             | (exponent_16 << 10)
+                             | mantissa_top[9:0];
+        end else if (exponent_16 < -10) begin
+          fp32_to_fp16_rne = sign;
+        end else begin
+          mantissa_24 = mantissa | 32'h0080_0000;
+          shift = 14 - exponent_16;
+          round_mask = (32'd1 << shift) - 1;
+          halfway = 32'd1 << (shift - 1);
+          round_bits = mantissa_24 & round_mask;
+          mantissa_10 = mantissa_24 >> shift;
+          if ((round_bits > halfway)
+           || ((round_bits == halfway) && mantissa_10[0])) begin
+            mantissa_10 += 1;
+          end
+          if (mantissa_10 == 32'h0000_0400)
+            fp32_to_fp16_rne = sign | 16'h0400;
+          else
+            fp32_to_fp16_rne = sign | mantissa_10[9:0];
+        end
+      end
+    end
+  endfunction
+
+  task automatic build_main_cpp_reference(
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_qdir
+  );
+    int ng_total;
+    begin
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
+      for (int m = 0; m < test_m; m++) begin
+        for (int n = 0; n < test_n; n++) begin
+          shortreal acc;
+          acc = 0.0;
+          for (int k = 0; k < test_k; k++) begin
+            shortreal in_value;
+            shortreal weight_value;
+            shortreal scale_value;
+            shortreal zero_value;
+            shortreal product;
+            in_value = cf_math_util_pkg::fp16_bit_to_fp16_val(ref_input[m*test_k + k]);
+            weight_value = shortreal'($signed(ref_weight[k*test_n + n]));
+            if (test_qdir == 0) begin
+              int qindex;
+              qindex = (k / test_qblk) * test_n + n;
+              scale_value = cf_math_util_pkg::fp16_bit_to_fp16_val(ref_scale[qindex]);
+              zero_value = shortreal'($signed(ref_zero[qindex]));
+              product = in_value * (weight_value - zero_value);
+              product = product * scale_value;
+            end else begin
+              int qindex;
+              logic [15:0] scaled_input_bits;
+              shortreal scaled_input;
+              qindex = k * ng_total + n / test_qblk;
+              scale_value = cf_math_util_pkg::fp16_bit_to_fp16_val(ref_scale[qindex]);
+              zero_value = shortreal'($signed(ref_zero[qindex]));
+              scaled_input_bits = fp32_to_fp16_rne(in_value * scale_value);
+              scaled_input = cf_math_util_pkg::fp16_bit_to_fp16_val(scaled_input_bits);
+              product = scaled_input * (weight_value - zero_value);
+            end
+            acc += product;
+          end
+          ref_output[m*test_n + n] = fp32_to_fp16_rne(acc);
+        end
+      end
+    end
+  endtask
 
   task automatic build_test_vectors(
     input int test_m,
@@ -1026,11 +1144,17 @@ module tb_VX_gemm_node_improve
     if ((test_wtrans != 0) && (test_wtrans != 1))
       $fatal(1, "Invalid WTRANS=%0d", test_wtrans);
     groups_total = (test_k + test_qblk - 1) / test_qblk;
+    if (main_cpp_nonuniform && (test_qblk != 32))
+      $fatal(1, "MAIN_CPP_NONUNIFORM requires QBLK=32 (got %0d)", test_qblk);
+    if (main_cpp_nonuniform && (test_wtrans != 0))
+      $fatal(1, "MAIN_CPP_NONUNIFORM requires WTRANS=0 (got %0d)", test_wtrans);
 
     for (int m = 0; m < test_m; m++) begin
       for (int k = 0; k < test_k; k++) begin
         shortreal v;
-        if(input_random_type == 0) begin
+        if (main_cpp_nonuniform) begin
+          v = shortreal'(1.0 + shortreal'((m + k) % 3) / 100.0);
+        end else if(input_random_type == 0) begin
           v = shortreal'(1.0);
         end else if(input_random_type == 1) begin
           v = shortreal'(1.0 + ((m+k) % 7));
@@ -1041,14 +1165,18 @@ module tb_VX_gemm_node_improve
         end else begin
           v = shortreal'(1.0);
         end
-        input_mat[m*test_k + k] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
+        input_mat[m*test_k + k] = main_cpp_nonuniform
+                                ? fp32_to_fp16_rne(v)
+                                : cf_math_util_pkg::fp32_val_to_fp16_bit(v);
         ref_input[m*test_k + k] = input_mat[m*test_k + k];
       end
     end
     for (int k = 0; k < test_k; k++) begin
       for (int n = 0; n < test_n; n++) begin
         int w;
-        if(weight_random_type == 0) begin
+        if (main_cpp_nonuniform) begin
+          w = ((k*test_n + n) % 7) - 3;
+        end else if(weight_random_type == 0) begin
           w = 1;
         end else if(weight_random_type == 1) begin
           w = ((k*test_n + n) % 7) - 3; // -3..3
@@ -1066,7 +1194,9 @@ module tb_VX_gemm_node_improve
     for (int n = 0; n < test_n; n++) begin
       shortreal v;
       int       z;
-      if(scale_random_type == 0) begin
+      if (main_cpp_nonuniform) begin
+        v = shortreal'(1.0 + shortreal'(n % 3) / 100.0);
+      end else if(scale_random_type == 0) begin
         v = shortreal'(1.0);
       end else if(scale_random_type == 1) begin
         v = shortreal'(1.0 + (n % 7));
@@ -1078,7 +1208,9 @@ module tb_VX_gemm_node_improve
         v = shortreal'(1.0);
       end
 
-      if(zp_random_type == 0) begin
+      if (main_cpp_nonuniform) begin
+        z = (n % 7) - 3;
+      end else if(zp_random_type == 0) begin
         z = 2;
       end else if(zp_random_type == 1) begin
         z = (n % 7) - 3; // -3..3
@@ -1090,7 +1222,9 @@ module tb_VX_gemm_node_improve
         z = 2;
       end
 
-      scale_vec[n] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
+      scale_vec[n] = main_cpp_nonuniform
+                   ? fp32_to_fp16_rne(v)
+                   : cf_math_util_pkg::fp32_val_to_fp16_bit(v);
       zp_vec[n]    = z[15:0];
     end
 
@@ -1100,8 +1234,17 @@ module tb_VX_gemm_node_improve
         for (int n = 0; n < test_n; n++) begin
           int idx_kg_n;
           idx_kg_n = kg * test_n + n;
-          ref_scale[idx_kg_n] = scale_vec[n];
-          ref_zero[idx_kg_n]  = zp_vec[n];
+          if (main_cpp_nonuniform) begin
+            shortreal scale_value;
+            int zero_value;
+            scale_value = shortreal'(1.0 + shortreal'((n + kg) % 3) / 100.0);
+            zero_value = ((n + kg) % 7) - 3;
+            ref_scale[idx_kg_n] = fp32_to_fp16_rne(scale_value);
+            ref_zero[idx_kg_n]  = zero_value[15:0];
+          end else begin
+            ref_scale[idx_kg_n] = scale_vec[n];
+            ref_zero[idx_kg_n]  = zp_vec[n];
+          end
         end
       end
     end else begin
@@ -1113,26 +1256,39 @@ module tb_VX_gemm_node_improve
         for (int ng = 0; ng < ng_total; ng++) begin
           int idx_k_ng;
           idx_k_ng = k * ng_total + ng;
-          // Use scale_vec[ng] as all K rows share same per-group scale
-          ref_scale[idx_k_ng] = scale_vec[ng];
-          ref_zero[idx_k_ng]  = zp_vec[ng];
+          if (main_cpp_nonuniform) begin
+            shortreal scale_value;
+            int zero_value;
+            scale_value = shortreal'(1.0 + shortreal'((ng + k) % 3) / 100.0);
+            zero_value = ((ng + k) % 7) - 3;
+            ref_scale[idx_k_ng] = fp32_to_fp16_rne(scale_value);
+            ref_zero[idx_k_ng]  = zero_value[15:0];
+          end else begin
+            // Use scale_vec[ng] as all K rows share same per-group scale
+            ref_scale[idx_k_ng] = scale_vec[ng];
+            ref_zero[idx_k_ng]  = zp_vec[ng];
+          end
         end
       end
     end
 
-    fpint_emul::fpint_gemm_ref(
-        ref_input,
-        ref_weight,
-        ref_scale,
-        ref_zero,
-        test_m, test_n, test_k,
-        ref_output,
-        test_qdir ? `QDIR_ROW : `QDIR_COL,
-        test_wtrans,
-        1'b0,
-        '{default: '0},
-        test_qblk
-    );
+    if (main_cpp_nonuniform) begin
+      build_main_cpp_reference(test_m, test_n, test_k, test_qblk, test_qdir);
+    end else begin
+      fpint_emul::fpint_gemm_ref(
+          ref_input,
+          ref_weight,
+          ref_scale,
+          ref_zero,
+          test_m, test_n, test_k,
+          ref_output,
+          test_qdir ? `QDIR_ROW : `QDIR_COL,
+          test_wtrans,
+          1'b0,
+          '{default: '0},
+          test_qblk
+      );
+    end
 
     if ($test$plusargs("DUMP_TEST_VECTORS")) begin
       $display("Test Inputs:");
@@ -1170,6 +1326,63 @@ module tb_VX_gemm_node_improve
         end
         $write("\n");
       end
+    end
+  endtask
+
+  task automatic check_main_cpp_source_sentinels(
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_qdir
+  );
+    int groups_total;
+    int ng_total;
+    int qindex_a;
+    int qindex_b;
+    begin
+      if (!main_cpp_nonuniform)
+        $fatal(1, "MAIN_CPP_NONUNIFORM source check reached without active profile");
+      if ((test_m != 4) || (test_n != 256) || (test_k != 256) || (test_qblk != 32))
+        $fatal(1, "MAIN_CPP_NONUNIFORM source sentinels require M=4 N=256 K=256 QBLK=32");
+
+      if ((input_mat[0*test_k + 0] !== 16'h3c00)
+       || (input_mat[0*test_k + 1] !== 16'h3c0a)
+       || (input_mat[0*test_k + 2] !== 16'h3c14)
+       || (input_mat[3*test_k + 255] !== 16'h3c00))
+        $fatal(1, "MAIN_CPP_NONUNIFORM input source sentinel mismatch");
+      if (($signed(ref_weight[0*test_n + 0]) !== -3)
+       || ($signed(ref_weight[0*test_n + 1]) !== -2)
+       || ($signed(ref_weight[32*test_n + 0]) !== -1)
+       || ($signed(ref_weight[255*test_n + 255]) !== -2))
+        $fatal(1, "MAIN_CPP_NONUNIFORM weight source sentinel mismatch");
+
+      groups_total = (test_k + test_qblk - 1) / test_qblk;
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
+      if (test_qdir == 0) begin
+        qindex_a = 1 * test_n + 0;
+        qindex_b = (groups_total - 1) * test_n + 255;
+        if ((ref_scale[qindex_a] !== 16'h3c0a)
+         || ($signed(ref_zero[qindex_a]) !== -2)
+         || (ref_scale[qindex_b] !== 16'h3c0a)
+         || ($signed(ref_zero[qindex_b]) !== 0))
+          $fatal(1, "MAIN_CPP_NONUNIFORM QCOL source sentinel mismatch");
+      end else begin
+        qindex_a = 32 * ng_total + 0;
+        qindex_b = 255 * ng_total + 7;
+        if ((ref_scale[qindex_a] !== 16'h3c14)
+         || ($signed(ref_zero[qindex_a]) !== 1)
+         || (ref_scale[qindex_b] !== 16'h3c0a)
+         || ($signed(ref_zero[qindex_b]) !== 0))
+          $fatal(1, "MAIN_CPP_NONUNIFORM QROW source sentinel mismatch");
+      end
+
+      $display("[%0t] MAIN_CPP_NONUNIFORM_SOURCE_PASS | {qdir=%0d, A_0_0=0x%04h, A_0_1=0x%04h, A_0_2=0x%04h, W_0_0=%0d, W_0_1=%0d, qscale_a=0x%04h, qzero_a=%0d, ref_0_0=0x%04h, ref_0_9=0x%04h}",
+               $time, test_qdir,
+               input_mat[0], input_mat[1], input_mat[2],
+               $signed(ref_weight[0]), $signed(ref_weight[1]),
+               ref_scale[qindex_a], $signed(ref_zero[qindex_a]),
+               ref_output[0], ref_output[9]);
     end
   endtask
 
@@ -1449,20 +1662,25 @@ module tb_VX_gemm_node_improve
           slot_bytes = qparam_slot_bytes(cur_k, cur_n, test_qblk, test_qdir, 2);
 
           if (test_qdir == 0) begin
-            // QCOL: [groups_per_kt][MXU_NT]
+            // QCOL application/FSM contract: [nb][groups_per_kt][MXU_NT].
             int groups_per_kt;
+            int nb_per_nt;
             groups_per_kt = ceil_div_int(cur_k, test_qblk);
-            for (int g = 0; g < groups_per_kt; g++) begin
-              for (int n = 0; n < cur_n; n++) begin
-                logic [15:0] val;
-                int global_g;
-                int global_n;
-                global_g = (kt * DMA_KT) / test_qblk + g;
-                global_n = nt * DMA_NT + n;
-                val = ref_scale[global_g * test_n + global_n];
-                if ((dram_sc_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx]   = val[7:0];
-                if ((dram_sc_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx+1] = val[15:8];
-                slot_idx += 2;
+            nb_per_nt = ceil_div_int(cur_n, DMA_MXU_NT);
+            for (int nb = 0; nb < nb_per_nt; nb++) begin
+              for (int g = 0; g < groups_per_kt; g++) begin
+                for (int n = 0; n < DMA_MXU_NT; n++) begin
+                  logic [15:0] val;
+                  int global_g;
+                  int global_n;
+                  global_g = (kt * DMA_KT) / test_qblk + g;
+                  global_n = nt * DMA_NT + nb * DMA_MXU_NT + n;
+                  val = (global_n < test_n)
+                      ? ref_scale[global_g * test_n + global_n] : '0;
+                  if ((dram_sc_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx]   = val[7:0];
+                  if ((dram_sc_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx+1] = val[15:8];
+                  slot_idx += 2;
+                end
               end
             end
           end else begin
@@ -1526,18 +1744,23 @@ module tb_VX_gemm_node_improve
 
           if (test_qdir == 0) begin
             int groups_per_kt;
+            int nb_per_nt;
             groups_per_kt = ceil_div_int(cur_k, test_qblk);
-            for (int g = 0; g < groups_per_kt; g++) begin
-              for (int n = 0; n < cur_n; n++) begin
-                logic [15:0] val;
-                int global_g;
-                int global_n;
-                global_g = (kt * DMA_KT) / test_qblk + g;
-                global_n = nt * DMA_NT + n;
-                val = ref_zero[global_g * test_n + global_n];
-                if ((dram_zp_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx]   = val[7:0];
-                if ((dram_zp_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx+1] = val[15:8];
-                slot_idx += 2;
+            nb_per_nt = ceil_div_int(cur_n, DMA_MXU_NT);
+            for (int nb = 0; nb < nb_per_nt; nb++) begin
+              for (int g = 0; g < groups_per_kt; g++) begin
+                for (int n = 0; n < DMA_MXU_NT; n++) begin
+                  logic [15:0] val;
+                  int global_g;
+                  int global_n;
+                  global_g = (kt * DMA_KT) / test_qblk + g;
+                  global_n = nt * DMA_NT + nb * DMA_MXU_NT + n;
+                  val = (global_n < test_n)
+                      ? ref_zero[global_g * test_n + global_n] : '0;
+                  if ((dram_zp_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx]   = val[7:0];
+                  if ((dram_zp_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx+1] = val[15:8];
+                  slot_idx += 2;
+                end
               end
             end
           end else begin
@@ -1626,8 +1849,14 @@ module tb_VX_gemm_node_improve
 
       if (mismatch_count != 0)
         $fatal(1, "[%0t] TILED OUTPUT CHECK FAILED: mismatches=%0d / %0d", $time, mismatch_count, test_m * test_n);
-      else
+      else begin
         $display("[%0t] TILED OUTPUT CHECK PASSED: compared %0d elements", $time, test_m * test_n);
+        if (main_cpp_nonuniform)
+          $display("[%0t] MAIN_CPP_NONUNIFORM_OUTPUT_PASS | {compared=%0d, mismatches=0, got_0_0=0x%04h, ref_0_0=0x%04h, got_0_9=0x%04h, ref_0_9=0x%04h}",
+                   $time, test_m * test_n,
+                   dram_read_u16(dram_out_base), ref_output[0],
+                   dram_read_u16(dram_out_base + 18), ref_output[9]);
+      end
       $display("=========================================================");
     end
   endtask
@@ -1786,6 +2015,80 @@ module tb_VX_gemm_node_improve
       qparam_total_bytes = total;
     end
   endfunction
+
+  task automatic check_main_cpp_tiled_sentinels(
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_qdir,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base
+  );
+    longint unsigned input_bytes;
+    longint unsigned qparam_bytes;
+    longint unsigned output_bytes;
+    begin
+      if (!main_cpp_nonuniform)
+        $fatal(1, "MAIN_CPP_NONUNIFORM tiled check reached without active profile");
+      if ((test_m != 4) || (test_n != 256) || (test_k != 256)
+       || (test_qblk != 32))
+        $fatal(1, "MAIN_CPP_NONUNIFORM tiled sentinels require M=4 N=256 K=256 QBLK=32");
+
+      input_bytes = input_tiled_footprint_bytes(test_m, test_k);
+      qparam_bytes = qparam_total_bytes(test_n, test_k, test_qblk, test_qdir, 2);
+      output_bytes = output_tiled_footprint_bytes(test_m, test_n);
+      if ((input_bytes != 4096) || (qparam_bytes != 4096)
+       || (output_bytes != 4096))
+        $fatal(1, "MAIN_CPP_NONUNIFORM tiled footprint mismatch: input=%0d qparam=%0d output=%0d",
+               input_bytes, qparam_bytes, output_bytes);
+      if ((qparam_slot_bytes(128, 128, test_qblk, test_qdir, 2) != 1024)
+       || ((qparam_slot_bytes(128, 128, test_qblk, test_qdir, 2) % 512) != 0))
+        $fatal(1, "MAIN_CPP_NONUNIFORM qparam slot boundary mismatch");
+
+      if ((dram_read_u16(dram_in_base + 0) !== 16'h3c00)
+       || (dram_read_u16(dram_in_base + 2) !== 16'h3c0a)
+       || (dram_read_u16(dram_in_base + 62) !== 16'h3c0a)
+       || (dram_read_u16(dram_in_base + 256) !== 16'h3c14))
+        $fatal(1, "MAIN_CPP_NONUNIFORM tiled input sentinel mismatch");
+      if ((dram[dram_w_base + 0] !== 8'hed)
+       || (dram[dram_w_base + 512] !== 8'h0f)
+       || (dram[dram_w_base + 2048] !== 8'h21))
+        $fatal(1, "MAIN_CPP_NONUNIFORM tiled INT4 sentinel mismatch");
+
+      if (test_qdir == 0) begin
+        if ((dram_read_u16(dram_sc_base + 0) !== 16'h3c00)
+         || (dram_read_u16(dram_sc_base + 64) !== 16'h3c0a)
+         || (dram_read_u16(dram_sc_base + 256) !== 16'h3c14)
+         || (dram_read_u16(dram_sc_base + 4094) !== 16'h3c0a)
+         || (dram_read_u16(dram_zp_base + 0) !== 16'hfffd)
+         || (dram_read_u16(dram_zp_base + 64) !== 16'hfffe)
+         || (dram_read_u16(dram_zp_base + 256) !== 16'h0001)
+         || (dram_read_u16(dram_zp_base + 4094) !== 16'h0000))
+          $fatal(1, "MAIN_CPP_NONUNIFORM QCOL tiled qparam sentinel mismatch");
+      end else begin
+        if ((dram_read_u16(dram_sc_base + 0) !== 16'h3c00)
+         || (dram_read_u16(dram_sc_base + 254) !== 16'h3c0a)
+         || (dram_read_u16(dram_sc_base + 256) !== 16'h3c0a)
+         || (dram_read_u16(dram_sc_base + 2048) !== 16'h3c14)
+         || (dram_read_u16(dram_sc_base + 4094) !== 16'h3c0a)
+         || (dram_read_u16(dram_zp_base + 0) !== 16'hfffd)
+         || (dram_read_u16(dram_zp_base + 254) !== 16'hfffe)
+         || (dram_read_u16(dram_zp_base + 256) !== 16'hfffe)
+         || (dram_read_u16(dram_zp_base + 2048) !== 16'hffff)
+         || (dram_read_u16(dram_zp_base + 4094) !== 16'h0000))
+          $fatal(1, "MAIN_CPP_NONUNIFORM QROW tiled qparam sentinel mismatch");
+      end
+
+      $display("[%0t] MAIN_CPP_NONUNIFORM_TILED_PASS | {qdir=%0d, input_bytes=%0d, qparam_bytes=%0d, output_bytes=%0d, qslot_bytes=%0d, input_0=0x%04h, int4_0=0x%02h, scale_64=0x%04h, zero_64=0x%04h}",
+               $time, test_qdir, input_bytes, qparam_bytes, output_bytes,
+               qparam_slot_bytes(128, 128, test_qblk, test_qdir, 2),
+               dram_read_u16(dram_in_base), dram[dram_w_base],
+               dram_read_u16(dram_sc_base + 64), dram_read_u16(dram_zp_base + 64));
+    end
+  endtask
 
   task automatic compute_auto_layout(
     input int test_m,
@@ -1987,12 +2290,19 @@ module tb_VX_gemm_node_improve
         .input_random_type(vector_input_random_type), .weight_random_type(vector_weight_random_type),
         .scale_random_type(vector_scale_random_type), .zp_random_type(vector_zp_random_type)
       );
+      if (main_cpp_nonuniform)
+        check_main_cpp_source_sentinels(test_m, test_n, test_k, test_qblk, test_qdir);
 
       // Write tiled data to DRAM
       write_dram_tiled_input(test_m, test_k, dram_in_base);
       write_dram_tiled_weight(test_n, test_k, test_wtrans, dram_w_base);
       write_dram_tiled_scale(test_n, test_k, test_qblk, test_qdir, dram_sc_base);
       write_dram_tiled_zp(test_n, test_k, test_qblk, test_qdir, dram_zp_base);
+      if (main_cpp_nonuniform)
+        check_main_cpp_tiled_sentinels(
+          test_m, test_n, test_k, test_qblk, test_qdir,
+          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
+        );
 
       frontend_stream_alloc(alloc_ok);
       if (!alloc_ok) $fatal(1, "[%0t] stream alloc failed", $time);
@@ -2332,11 +2642,18 @@ module tb_VX_gemm_node_improve
         .input_random_type(vector_input_random_type), .weight_random_type(vector_weight_random_type),
         .scale_random_type(vector_scale_random_type), .zp_random_type(vector_zp_random_type)
       );
+      if (main_cpp_nonuniform)
+        check_main_cpp_source_sentinels(test_m, test_n, test_k, test_qblk, test_qdir);
 
       write_dram_tiled_input(test_m, test_k, dram_in_base);
       write_dram_tiled_weight(test_n, test_k, test_wtrans, dram_w_base);
       write_dram_tiled_scale(test_n, test_k, test_qblk, test_qdir, dram_sc_base);
       write_dram_tiled_zp(test_n, test_k, test_qblk, test_qdir, dram_zp_base);
+      if (main_cpp_nonuniform)
+        check_main_cpp_tiled_sentinels(
+          test_m, test_n, test_k, test_qblk, test_qdir,
+          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
+        );
 
       job_alloc(job_eid, job_generation);
       if ($test$plusargs("SINGLE_PARTITION_N")) begin
@@ -2969,6 +3286,7 @@ module tb_VX_gemm_node_improve
     void'($value$plusargs("WEIGHT_RANDOM_TYPE=%d", vector_weight_random_type));
     void'($value$plusargs("SCALE_RANDOM_TYPE=%d", vector_scale_random_type));
     void'($value$plusargs("ZP_RANDOM_TYPE=%d", vector_zp_random_type));
+    main_cpp_nonuniform = $test$plusargs("MAIN_CPP_NONUNIFORM");
     randomize_input_speed = $test$plusargs("RANDOMIZE_INPUT_SPEED");
     void'($value$plusargs("INPUT_STALL_PERIOD=%d", input_stall_period));
     void'($value$plusargs("INPUT_STALL_PHASE=%d", input_stall_phase));
@@ -3003,6 +3321,14 @@ module tb_VX_gemm_node_improve
     if (!$value$plusargs("TEST=%s", case_name)) begin
       $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
     end
+    if (((case_name == "MAINCPP_NONUNIFORM_QCOL")
+      || (case_name == "MAINCPP_NONUNIFORM_QROW"))
+      && !main_cpp_nonuniform)
+      $fatal(1, "TEST=%s requires +MAIN_CPP_NONUNIFORM", case_name);
+    if (main_cpp_nonuniform) begin
+      $display("[%0t] MAIN_CPP_NONUNIFORM_PROFILE | {active=1, name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
+               $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
+    end
 
     compute_auto_layout(
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
@@ -3011,8 +3337,9 @@ module tb_VX_gemm_node_improve
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
-    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d, input_type=%0d, weight_type=%0d, scale_type=%0d, zp_type=%0d, random_input_speed=%0d, input_gap_min=%0d, input_gap_max=%0d, stall_period=%0d, stall_phase=%0d, stall_cycles=%0d, strict_dual_bank=%0d, trace_rd_fifo=%0d}",
+    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d, main_cpp_nonuniform=%0d, input_type=%0d, weight_type=%0d, scale_type=%0d, zp_type=%0d, random_input_speed=%0d, input_gap_min=%0d, input_gap_max=%0d, stall_period=%0d, stall_phase=%0d, stall_cycles=%0d, strict_dual_bank=%0d, trace_rd_fifo=%0d}",
              $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+             main_cpp_nonuniform,
              vector_input_random_type, vector_weight_random_type, vector_scale_random_type, vector_zp_random_type,
              randomize_input_speed, input_gap_min, input_gap_max,
              input_stall_period, input_stall_phase, input_stall_cycles,
