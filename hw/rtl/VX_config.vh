@@ -322,10 +322,6 @@
 `define I_LMEM_DMA_RD_OUTSTANDING_SLOTS `LMEM_DMA_RD_OUTSTANDING_SLOTS
 `endif
 
-`ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
-`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `LMEM_DMA_RD_OUTSTANDING_SLOTS
-`endif
-
 `ifndef SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS
 `define SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS `LMEM_DMA_RD_OUTSTANDING_SLOTS
 `endif
@@ -1250,6 +1246,10 @@ for block_size in range(1, full_bitwidth+1):
 `define MXU_WLOAD_NUM 4           // Number of weight loads per cycle
 `endif
 `endif
+`endif
+
+`ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
+`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS (`MXU_ROW / `MXU_WLOAD_NUM)
 `endif
 
 // -------------------------------------------------------

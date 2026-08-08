@@ -18,6 +18,6 @@ compile: $(TB) $(RTLS) Makefile vcs.mk | setup
 	@touch $@
 
 run: compile
-	./simv -reportstats -l $(SIM_LOG)
+	./simv -reportstats $(EXTRA_SIM_ARGS) -l $(SIM_LOG)
 
 sim: run

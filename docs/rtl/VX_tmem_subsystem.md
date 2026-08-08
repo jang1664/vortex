@@ -18,6 +18,7 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 | `GEMM_DATA_SIZE` | 64 | GEMM 유닛 포트 폭 |
 | `TAG_WIDTH` | 8 | 태그 비트폭 |
 | `AXI_ADDR_WIDTH` | `PLATFORM_MEMORY_ADDR_WIDTH` | AXI 주소 폭 |
+| `W_RD_OUTSTANDING` | `MXU_ROW / MXU_WLOAD_NUM` | Weight read context 수 |
 
 ## 포트
 
@@ -54,6 +55,42 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 | `u_switch_output` | `ldma_to_switch[3]` | `out_switch_to_tmem[0..7]` | 출력 데이터 뱅크 분산 |
 
 스위치는 태그에 뱅크 선택 비트(`BANK_SEL_BITS`)를 추가하여, 응답 매핑에 사용한다.
+
+#### Weight wide-read switch
+
+`u_switch_weight`는 weight beat 하나를 임의의 sliding bank window가 아니라
+정렬된 bank group으로만 fan-out한다. `NUM_BANKS=8`, `DATA_SIZE=64B`일 때
+지원 설정의 mapping은 다음과 같다.
+
+| `MXU_WLOAD_NUM` | Weight beat | Banks per beat | Legal bank groups | Outstanding |
+|---:|---:|---:|---|---:|
+| 4 | 64B | 1 | `{0}`, `{1}`, ..., `{7}` | 8 |
+| 8 | 128B | 2 | `{0,1}`, `{2,3}`, `{4,5}`, `{6,7}` | 4 |
+| 16 | 256B | 4 | `{0,1,2,3}`, `{4,5,6,7}` | 2 |
+| 32 | 512B | 8 | `{0,1,2,3,4,5,6,7}` | 1 |
+
+따라서 WLOAD8에서 `{1,2}`와 같은 비정렬 bank pair는 생성되지 않는다.
+Weight outstanding 기본값은 `MXU_ROW / MXU_WLOAD_NUM`으로 유도되며,
+다음 두 관계가 elaboration 시 강제된다.
+
+```text
+MXU_WLOAD_NUM * W_RD_OUTSTANDING = MXU_ROW
+W_RD_OUTSTANDING = NUM_BANKS / BANKS_PER_BEAT
+```
+
+각 request의 local-DMA slot ID(`tag.value` 하위 비트)가 switch context ID로
+사용된다. Context는 원본 tag, 주소, byte enable, flags, target/issued/response
+bank mask와 조립 중인 response data를 저장한다. Issue FIFO head context가
+선택 bank 모두에 handshake할 때까지 issue ownership을 유지하므로 일부
+bank만 ready여도 이미 accept한 bank에 중복 request를 보내지 않는다.
+
+Bank response는 기존 `{bank_id, original_tag}`를 사용해 원래 context로
+수집된다. 여러 context와 여러 bank의 response가 같은 cycle에 도착할 수
+있지만, upstream response는 별도 accept-order FIFO 순서로만 retire한다.
+`rsp_valid` 상태에서 upstream backpressure가 발생하면 head context가
+유지되므로 response data와 tag도 안정적으로 유지된다. 모든 context가 찬
+cycle의 response retire과 request accept를 동시에 수행하는 fall-through는
+지원하지 않으며, `req_ready`는 retire 다음 cycle에 다시 올라간다.
 
 ### 3. TMEM Banks (`u_bank`, x8)
 

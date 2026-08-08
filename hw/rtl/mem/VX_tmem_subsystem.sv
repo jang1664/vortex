@@ -77,6 +77,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     localparam NUM_TMEM_PORTS   = 5;    // DMA + input + weight + sz + output
     localparam NUM_LDMA         = 4;    // input, weight, scale_zp, output
     localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
+    localparam WEIGHT_BANKS_PER_BEAT = GEMM_WEIGHT_DATA_SIZE / DATA_SIZE;
     // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
     // its own selector bits. The TMEM bank sees:
     //   TAG_WIDTH (original) + BANK_SEL_BITS (from switch)
@@ -84,6 +85,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_PARAM (AXI_USER_WIDTH)
+
+    initial begin
+        if ((`MXU_WLOAD_NUM < 1) || ((`MXU_ROW % `MXU_WLOAD_NUM) != 0))
+            $fatal(1, "%s: MXU_WLOAD_NUM(%0d) must be positive and divide MXU_ROW(%0d)",
+                   INSTANCE_ID, `MXU_WLOAD_NUM, `MXU_ROW);
+        if ((W_RD_OUTSTANDING < 1)
+         || ((`MXU_WLOAD_NUM * W_RD_OUTSTANDING) != `MXU_ROW))
+            $fatal(1, "%s: MXU_WLOAD_NUM(%0d) * W_RD_OUTSTANDING(%0d) must equal MXU_ROW(%0d)",
+                   INSTANCE_ID, `MXU_WLOAD_NUM, W_RD_OUTSTANDING, `MXU_ROW);
+        if ((WEIGHT_BANKS_PER_BEAT < 1)
+         || (W_RD_OUTSTANDING != (NUM_BANKS / WEIGHT_BANKS_PER_BEAT)))
+            $fatal(1, "%s: W_RD_OUTSTANDING(%0d) must equal NUM_BANKS(%0d) / WEIGHT_BANKS_PER_BEAT(%0d)",
+                   INSTANCE_ID, W_RD_OUTSTANDING, NUM_BANKS, WEIGHT_BANKS_PER_BEAT);
+    end
 
     // ================================================================
     // 1. DMA Engine: 8-channel HBM(AXI) <-> TMEM(membus)
@@ -194,7 +209,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .NUM_BANKS      (NUM_BANKS),
         .DATA_SIZE      (DATA_SIZE),
         .WIDE_DATA_SIZE (GEMM_WEIGHT_DATA_SIZE),
-        .TAG_WIDTH      (TAG_WIDTH)
+        .TAG_WIDTH      (TAG_WIDTH),
+        .OUTSTANDING    (W_RD_OUTSTANDING)
     ) u_switch_weight (
         .clk        (clk),
         .reset      (reset),
