@@ -8,12 +8,14 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   typedef struct packed {
     gemm_unified_cmd_t cmd;
     logic start;
+    logic prepare;
   } lmem_dma_ctrl_t;
 
   // Unified LMEM DMA flag structure
   typedef struct packed {
     logic idle;
     logic done;
+    logic prepare_ready;
   } lmem_dma_flag_t;
 
   // External DMA control (dcache <-> LMEM)
@@ -22,12 +24,15 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     logic start;
     logic cmd_valid;
     logic [GEMM_DMA_TAG_WIDTH-1:0] cmd_tag;
+    logic prepare_valid;
+    gemm_unified_cmd_t prepare_cmd;
   } dma_ctrl_t;
 
   typedef struct packed {
     logic idle;
     logic done;
     logic cmd_ready;
+    logic prepare_ready;
     logic [GEMM_DMA_TAG_WIDTH-1:0] done_tag;
   } dma_flag_t;
 
@@ -41,6 +46,14 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   lmem_dma_ctrl_t  output_write_ctrl;
   lmem_dma_flag_t  output_write_flag;
 
+  lmem_dma_ctrl_t  scale_read_ctrl;
+  lmem_dma_flag_t  scale_read_flag;
+
+  lmem_dma_ctrl_t  zero_point_read_ctrl;
+  lmem_dma_flag_t  zero_point_read_flag;
+
+  // Legacy combined-qparam pins retained for wrappers that do not instantiate
+  // the improve scheduler.  VX_gemm_ctrl does not drive or consume them.
   lmem_dma_ctrl_t  quant_param_read_ctrl;
   lmem_dma_flag_t  quant_param_read_flag;
 
@@ -55,6 +68,10 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  weight_read_flag,
     output output_write_ctrl,
     input  output_write_flag,
+    output scale_read_ctrl,
+    input  scale_read_flag,
+    output zero_point_read_ctrl,
+    input  zero_point_read_flag,
     output quant_param_read_ctrl,
     input  quant_param_read_flag,
     output dma_ctrl,
@@ -68,6 +85,10 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output weight_read_flag,
     input  output_write_ctrl,
     output output_write_flag,
+    input  scale_read_ctrl,
+    output scale_read_flag,
+    input  zero_point_read_ctrl,
+    output zero_point_read_flag,
     input  quant_param_read_ctrl,
     output quant_param_read_flag,
     input  dma_ctrl,

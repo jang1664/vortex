@@ -178,6 +178,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     gemm_unified_cmd_t work_cmd_q;
     logic [GEMM_DMA_TAG_WIDTH-1:0] work_tag_q;
     logic work_is_store_q;
+    logic work_data_prefetched_q;
+    logic work_data_released_q;
 
     channel_desc_t decoded_desc[NUM_CHANNELS];
     logic decoded_chunkable;
@@ -224,9 +226,22 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] cfg_valid_s;
     logic [PENDING_COUNT_W:0] pending_capacity_used;
 
+    wire prepared_release_match = work_data_prefetched_q
+                                && !work_data_released_q
+                                && (gemm_dma_ctrl_if.cmd == work_cmd_q);
     wire cmd_accept = gemm_dma_ctrl_if.cmd_valid
                    && gemm_dma_ctrl_if.cmd_ready;
-    wire accepted_high_now = cmd_accept
+    wire prepared_release_accept = cmd_accept
+                                 && work_data_prefetched_q
+                                 && !work_data_released_q;
+    wire cmd_enqueue = cmd_accept && !prepared_release_accept;
+    wire data_prepare_accept = gemm_dma_ctrl_if.prepare_valid
+                             && gemm_dma_ctrl_if.prepare_ready;
+    // Release is registered before destination commit is enabled.  This keeps
+    // a prepared completion strictly after the tag scoreboard insertion edge.
+    wire work_release_visible = !work_data_prefetched_q
+                              || work_data_released_q;
+    wire accepted_high_now = cmd_enqueue
                            && gemm_dma_ctrl_if.cmd.dma_priority;
     wire cfg_all_ready = &cfg_ready_or_inactive;
     wire done_all_valid = &(done_sticky_q | done_or_inactive);
@@ -235,6 +250,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                              >= store_remaining_beats_per_bank_q);
     wire logical_complete = (state_q == S_WAIT_DONE)
                          && done_all_valid
+                         && work_release_visible
                          && (!work_is_store_q || store_chunk_last);
 
     // Candidate reservation transfers a logical command out of pending_q; it
@@ -258,8 +274,17 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                                   candidate_reserved_logical_count);
     end
 
-    assign gemm_dma_ctrl_if.cmd_ready =
-        (pending_capacity_used < (PENDING_COUNT_W+1)'(PENDING_DEPTH));
+    assign gemm_dma_ctrl_if.cmd_ready = work_data_prefetched_q
+                                     && !work_data_released_q
+        ? prepared_release_match
+        : (pending_capacity_used < (PENDING_COUNT_W+1)'(PENDING_DEPTH));
+    assign gemm_dma_ctrl_if.prepare_ready = (state_q == S_SELECT)
+                                         && (pending_count_q == 0)
+                                         && !store_context_valid_q
+                                         && !(|candidate_valid_q)
+                                         && !prepare_active_q
+                                         && !work_data_prefetched_q
+                                         && !gemm_dma_ctrl_if.cmd_valid;
     assign gemm_dma_ctrl_if.done = logical_complete;
     assign gemm_dma_ctrl_if.done_tag = work_is_store_q
                                      ? store_tag_q : work_tag_q;
@@ -267,7 +292,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                                 && (pending_count_q == 0)
                                 && !store_context_valid_q
                                 && !(|candidate_valid_q)
-                                && !prepare_active_q;
+                                && !prepare_active_q
+                                && !work_data_prefetched_q;
     assign store_done = logical_complete && work_is_store_q;
 
     assign gemm_sync_if.valid   = 1'b0;
@@ -315,7 +341,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     always_comb begin
         chain_candidate_select = 1'b0;
         chain_candidate_id = PREP_HIGH_ID;
-        if ((state_q == S_WAIT_DONE) && done_all_valid) begin
+        if ((state_q == S_WAIT_DONE) && done_all_valid
+         && work_release_visible) begin
             if (candidate_valid_q[PREP_HIGH_ID]) begin
                 if (candidate_prepared_now[PREP_HIGH_ID]) begin
                     chain_candidate_select = 1'b1;
@@ -375,7 +402,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
         unique case (state_q)
             S_SELECT: begin
-                if (candidate_valid_q[PREP_HIGH_ID]) begin
+                if (data_prepare_accept) begin
+                    state_d = S_CAPTURE;
+                end else if (candidate_valid_q[PREP_HIGH_ID]) begin
                     candidate_select = 1'b1;
                     candidate_select_id = 1'b0;
                     state_d = S_PROG;
@@ -414,7 +443,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
             S_WAIT_DONE: begin
-                if (done_all_valid) begin
+                if (done_all_valid && work_release_visible) begin
                     state_d = chain_candidate_fire ? S_WAIT_DONE : S_SELECT;
                 end else if (!candidate_valid_q[PREP_HIGH_ID]
                           && pending_high_found) begin
@@ -736,6 +765,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         assign lookahead_if[ch].activate_id = chain_candidate_select
                                             ? chain_candidate_id
                                             : issue_candidate_id_q;
+        assign lookahead_if[ch].data_release = work_release_visible;
+        assign lookahead_if[ch].data_max_beats = work_data_prefetched_q
+            ? work_cmd_q.prepare.max_beats : '0;
         assign lookahead_activate_s[ch] = lookahead_if[ch].activate;
         assign lookahead_activate_id_s[ch] = lookahead_if[ch].activate_id;
         assign cfg_ready_or_inactive[ch] = program_channel_active
@@ -752,6 +784,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             work_cmd_q <= '0;
             work_tag_q <= '0;
             work_is_store_q <= 1'b0;
+            work_data_prefetched_q <= 1'b0;
+            work_data_released_q <= 1'b0;
             store_context_valid_q <= 1'b0;
             store_chunkable_q <= 1'b0;
             store_cmd_q <= '0;
@@ -790,7 +824,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         end else begin
             state_q <= state_d;
 
-            unique case ({cmd_accept, pending_dequeue})
+            unique case ({cmd_enqueue, pending_dequeue})
                 2'b10: begin
                     pending_q[PENDING_INDEX_W'(pending_count_q)].cmd
                         <= gemm_dma_ctrl_if.cmd;
@@ -828,10 +862,19 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 end
             endcase
 
-            if ((state_q == S_SELECT) && candidate_select) begin
+            if (data_prepare_accept) begin
+                work_cmd_q <= gemm_dma_ctrl_if.prepare_cmd;
+                work_tag_q <= '0;
+                work_is_store_q <= 1'b0;
+                work_data_prefetched_q <= 1'b1;
+                work_data_released_q <= 1'b0;
+                issue_candidate_q <= 1'b0;
+            end else if ((state_q == S_SELECT) && candidate_select) begin
                 work_cmd_q <= candidate_owner_q[candidate_select_id].cmd;
                 work_tag_q <= candidate_owner_q[candidate_select_id].tag;
                 work_is_store_q <= candidate_is_store_q[candidate_select_id];
+                work_data_prefetched_q <= 1'b0;
+                work_data_released_q <= 1'b1;
                 issued_chunk_beats_per_bank_q <=
                     candidate_chunk_beats_q[candidate_select_id];
                 issue_candidate_q <= 1'b1;
@@ -860,6 +903,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 work_is_store_q <=
                     (pending_q[pending_select_idx].cmd.instr[3:0]
                      == OP_DMA_ST);
+                work_data_prefetched_q <= 1'b0;
+                work_data_released_q <= 1'b1;
                 issue_candidate_q <= 1'b0;
             end else if ((state_q == S_SELECT)
                       && !pending_high_found
@@ -867,7 +912,14 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                       && !candidate_valid_q[PREP_FALLBACK_ID]
                       && store_context_valid_q) begin
                 work_is_store_q <= 1'b1;
+                work_data_prefetched_q <= 1'b0;
+                work_data_released_q <= 1'b1;
                 issue_candidate_q <= 1'b0;
+            end
+
+            if (prepared_release_accept) begin
+                work_tag_q <= gemm_dma_ctrl_if.cmd_tag;
+                work_data_released_q <= 1'b1;
             end
 
             if (state_q == S_CAPTURE) begin
@@ -1030,6 +1082,11 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 end
             end
 
+            if (logical_complete) begin
+                work_data_prefetched_q <= 1'b0;
+                work_data_released_q <= 1'b0;
+            end
+
             // Same-edge completion/ACTIVATE: old completion and any old-store
             // cursor commit above use the pre-edge context.  The selected
             // controller-owned descriptor then becomes the new foreground
@@ -1038,6 +1095,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 work_cmd_q <= candidate_owner_q[chain_candidate_id].cmd;
                 work_tag_q <= candidate_owner_q[chain_candidate_id].tag;
                 work_is_store_q <= candidate_is_store_q[chain_candidate_id];
+                work_data_prefetched_q <= 1'b0;
+                work_data_released_q <= 1'b1;
                 issued_chunk_beats_per_bank_q <=
                     candidate_chunk_beats_q[chain_candidate_id];
                 issue_candidate_q <= 1'b0;
@@ -1101,11 +1160,33 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                  <= (PENDING_COUNT_W+1)'(PENDING_DEPTH))
                 else $fatal(1, "%s: pending/candidate capacity overflow",
                             INSTANCE_ID);
-            if (cmd_accept)
+            if (cmd_enqueue)
                 assert (pending_capacity_used
                       < (PENDING_COUNT_W+1)'(PENDING_DEPTH))
                     else $fatal(1, "%s: command accepted beyond capacity",
                                 INSTANCE_ID);
+
+            if (data_prepare_accept) begin
+                assert (gemm_dma_ctrl_if.prepare_cmd.prepare.valid
+                     && (gemm_dma_ctrl_if.prepare_cmd.prepare.mode
+                         == GEMM_PREPARE_SOURCE_READ)
+                     && (gemm_dma_ctrl_if.prepare_cmd.prepare.max_beats != 0))
+                    else $fatal(1, "%s: invalid DMA data-prepare metadata",
+                                INSTANCE_ID);
+                assert ((gemm_dma_ctrl_if.prepare_cmd.instr[3:0]
+                         == OP_DMA_LD)
+                     && (gemm_dma_ctrl_if.prepare_cmd.rd <= 3))
+                    else $fatal(1,
+                        "%s: only input/weight/scale/ZP DMA loads may prepare",
+                        INSTANCE_ID);
+            end
+
+            if (prepared_release_accept) begin
+                assert (gemm_dma_ctrl_if.cmd == work_cmd_q)
+                    else $fatal(1,
+                        "%s: released DMA command does not match prepared owner",
+                        INSTANCE_ID);
+            end
 
             if (candidate_capture) begin
                 assert (!candidate_valid_q[candidate_capture_id])
@@ -1240,6 +1321,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 assert (done_all_valid)
                     else $fatal(1, "%s: logical done preceded channel drain",
                                 INSTANCE_ID);
+                assert (!work_data_prefetched_q || work_data_released_q)
+                    else $fatal(1,
+                        "%s: prepared DMA completed before architectural release",
+                        INSTANCE_ID);
             end
         end
     end
@@ -1302,7 +1387,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     always_comb begin
         dbg_pending_count_after =
             pending_capacity_used[PENDING_COUNT_W-1:0];
-        unique case ({cmd_accept, dbg_capacity_release})
+        unique case ({cmd_enqueue, dbg_capacity_release})
             2'b10: dbg_pending_count_after =
                 pending_capacity_used[PENDING_COUNT_W-1:0] + 1'b1;
             2'b01: dbg_pending_count_after =
@@ -1397,6 +1482,22 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if (dbg_input_load_active && dbg_compute_active)
                 dbg_input_load_compute_overlap_cycles_q
                     <= dbg_input_load_compute_overlap_cycles_q + 64'd1;
+
+            if (data_prepare_accept) begin
+                dbg_activity_seen_q <= 1'b1;
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_DATA_PREPARE | {inst=%s, op=0x%0h, rd=%0d, max_beats=%0d}\n",
+                          $time, INSTANCE_ID,
+                          gemm_dma_ctrl_if.prepare_cmd.instr[3:0],
+                          gemm_dma_ctrl_if.prepare_cmd.rd,
+                          gemm_dma_ctrl_if.prepare_cmd.prepare.max_beats))
+            end
+
+            if (prepared_release_accept) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_DATA_RELEASE | {inst=%s, tag=%0d, op=0x%0h, rd=%0d}\n",
+                          $time, INSTANCE_ID, gemm_dma_ctrl_if.cmd_tag,
+                          gemm_dma_ctrl_if.cmd.instr[3:0],
+                          gemm_dma_ctrl_if.cmd.rd))
+            end
 
             if (cmd_accept) begin
                 dbg_activity_seen_q <= 1'b1;

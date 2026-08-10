@@ -194,7 +194,7 @@ module tb_VX_gemm_node_improve
   VX_gemm_node #(
     .INSTANCE_ID("gemm_node_0"),
     .N_MASTER(N_MASTER),
-    .N_CHILDREN(5),
+    .N_CHILDREN(6),
     .NUM_TMEM_BANKS(NUM_TMEM_BANKS)
   ) u_dut (
     .clk         (clk),
@@ -216,6 +216,7 @@ module tb_VX_gemm_node_improve
   bit require_prior_raw_overlap = 1'b0;
   bit require_completion_endpoints = 1'b0;
   bit require_output_double_buffer = 1'b0;
+  bit require_prefetch_contract = 1'b0;
   bit output_backpressure_enable = 1'b0;
   int input_gap_min         = 1;
   int input_gap_max         = 3;
@@ -2967,16 +2968,16 @@ module tb_VX_gemm_node_improve
   // Exact architectural completion identity.  Wrapper-idle/done signals are
   // intentionally observed too, so a later pulse cannot accidentally retire
   // a scheduler entry after the true last-write endpoint already did.
-  longint unsigned completion_start_count [1:4];
-  longint unsigned completion_done_count [1:4];
+  longint unsigned completion_start_count [1:5];
+  longint unsigned completion_done_count [1:5];
   longint unsigned legacy_nonretire_count;
-  logic [4:1] completion_done_prev;
+  logic [5:1] completion_done_prev;
 
   always @(posedge clk) begin : exact_completion_endpoint_scoreboard
-    logic [4:1] start_now;
-    logic [4:1] done_now;
+    logic [5:1] start_now;
+    logic [5:1] done_now;
     if (reset) begin
-      for (int child = 1; child <= 4; child++) begin
+      for (int child = 1; child <= 5; child++) begin
         completion_start_count[child] = 0;
         completion_done_count[child] = 0;
       end
@@ -2984,21 +2985,24 @@ module tb_VX_gemm_node_improve
       completion_done_prev = '0;
     end else if (require_completion_endpoints) begin
       start_now[1] = u_dut.gemm_ctrl_if.weight_read_ctrl.start;
-      start_now[2] = u_dut.gemm_ctrl_if.quant_param_read_ctrl.start;
-      start_now[3] = u_dut.gemm_ctrl_if.output_write_ctrl.start;
-      start_now[4] = u_dut.gemm_ctrl_if.dma_ctrl.start;
+      start_now[2] = u_dut.gemm_ctrl_if.scale_read_ctrl.start;
+      start_now[3] = u_dut.gemm_ctrl_if.zero_point_read_ctrl.start;
+      start_now[4] = u_dut.gemm_ctrl_if.output_write_ctrl.start;
+      start_now[5] = u_dut.gemm_ctrl_if.dma_ctrl.start;
       done_now[1] = u_dut.weight_last_register_write;
-      done_now[2] = u_dut.quant_last_register_write;
-      done_now[3] = u_dut.output_dma_ctrl_if.write_done;
-      done_now[4] = u_dut.gemm_dma_ctrl_if.done;
+      done_now[2] = u_dut.scale_last_register_write;
+      done_now[3] = u_dut.zero_point_last_register_write;
+      done_now[4] = u_dut.output_dma_ctrl_if.write_done;
+      done_now[5] = u_dut.gemm_dma_ctrl_if.done;
 
       if (u_dut.gemm_ctrl_if.weight_read_flag.done !== done_now[1]
-          || u_dut.gemm_ctrl_if.quant_param_read_flag.done !== done_now[2]
-          || u_dut.gemm_ctrl_if.output_write_flag.done !== done_now[3]
-          || u_dut.gemm_ctrl_if.dma_flag.done !== done_now[4])
+          || u_dut.gemm_ctrl_if.scale_read_flag.done !== done_now[2]
+          || u_dut.gemm_ctrl_if.zero_point_read_flag.done !== done_now[3]
+          || u_dut.gemm_ctrl_if.output_write_flag.done !== done_now[4]
+          || u_dut.gemm_ctrl_if.dma_flag.done !== done_now[5])
         $fatal(1, "COMPLETION_ENDPOINTS child done is not the exact architectural endpoint");
 
-      for (int child = 1; child <= 4; child++) begin
+      for (int child = 1; child <= 5; child++) begin
         if (start_now[child])
           completion_start_count[child]++;
         if (done_now[child]) begin
@@ -3010,7 +3014,7 @@ module tb_VX_gemm_node_improve
         end
       end
 
-      if (done_now[4] && !u_dut.u_tmem_dma_ctrl.done_all_valid)
+      if (done_now[5] && !u_dut.u_tmem_dma_ctrl.done_all_valid)
         $fatal(1, "COMPLETION_ENDPOINTS global DMA did not include current-cycle all-channel completion");
 
       if (u_dut.weight_dma_ctrl_if.done && !done_now[1]) begin
@@ -3018,13 +3022,18 @@ module tb_VX_gemm_node_improve
           $fatal(1, "COMPLETION_ENDPOINTS legacy weight wrapper done retired scheduler");
         legacy_nonretire_count++;
       end
-      if (u_dut.quant_param_dma_ctrl_if.done && !done_now[2]) begin
+      if (u_dut.scale_dma_ctrl_if.done && !done_now[2]) begin
         if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[2])
-          $fatal(1, "COMPLETION_ENDPOINTS legacy quant wrapper done retired scheduler");
+          $fatal(1, "COMPLETION_ENDPOINTS legacy scale wrapper done retired scheduler");
         legacy_nonretire_count++;
       end
-      if (u_dut.output_dma_ctrl_if.done && !done_now[3]) begin
+      if (u_dut.zero_point_dma_ctrl_if.done && !done_now[3]) begin
         if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[3])
+          $fatal(1, "COMPLETION_ENDPOINTS legacy zero-point wrapper done retired scheduler");
+        legacy_nonretire_count++;
+      end
+      if (u_dut.output_dma_ctrl_if.done && !done_now[4]) begin
+        if (u_dut.u_VX_gemm_ctrl.child_completion_pop_v[4])
           $fatal(1, "COMPLETION_ENDPOINTS legacy output wrapper done retired scheduler");
         legacy_nonretire_count++;
       end
@@ -3034,7 +3043,7 @@ module tb_VX_gemm_node_improve
 
   task automatic check_completion_endpoint_coverage;
     begin
-      for (int child = 1; child <= 4; child++) begin
+      for (int child = 1; child <= 5; child++) begin
         if (completion_start_count[child] == 0
             || completion_done_count[child] != completion_start_count[child])
           $fatal(1, "COMPLETION_ENDPOINTS lifecycle mismatch child=%0d start=%0d done=%0d",
@@ -3042,12 +3051,124 @@ module tb_VX_gemm_node_improve
       end
       if (legacy_nonretire_count == 0)
         $fatal(1, "COMPLETION_ENDPOINTS did not observe a delayed wrapper-done non-retirement");
-      $display("COMPLETION_ENDPOINTS_PASSED weight={start=%0d,done=%0d} sz={start=%0d,done=%0d} output={start=%0d,done=%0d} global={start=%0d,done=%0d} legacy_nonretire=%0d",
+      $display("COMPLETION_ENDPOINTS_PASSED weight={start=%0d,done=%0d} scale={start=%0d,done=%0d} zp={start=%0d,done=%0d} output={start=%0d,done=%0d} global={start=%0d,done=%0d} legacy_nonretire=%0d",
                completion_start_count[1], completion_done_count[1],
                completion_start_count[2], completion_done_count[2],
                completion_start_count[3], completion_done_count[3],
                completion_start_count[4], completion_done_count[4],
+               completion_start_count[5], completion_done_count[5],
                legacy_nonretire_count);
+    end
+  endtask
+
+  // Integration-level prepare/release contract.  Module-level tests cover
+  // exact descriptor contents and bounded response storage; this scoreboard
+  // proves that the natural FSM/scheduler reaches local prepare before normal
+  // release and that no consumer-visible request escapes in between.
+  longint unsigned prefetch_prepare_count [0:4];
+  longint unsigned prefetch_release_count [0:4];
+  logic [3:0] local_prefetch_pending;
+
+  always @(posedge clk) begin : prefetch_contract_scoreboard
+    if (reset) begin
+      for (int path = 0; path < 5; ++path) begin
+        prefetch_prepare_count[path] = 0;
+        prefetch_release_count[path] = 0;
+      end
+      local_prefetch_pending = '0;
+    end else if (require_prefetch_contract) begin
+      if (u_dut.gemm_ctrl_if.output_write_ctrl.prepare)
+        $fatal(1, "PREFETCH_CONTRACT output/psum path asserted prepare");
+      if (u_dut.gemm_ctrl_if.dma_ctrl.prepare_valid
+          && ((u_dut.gemm_ctrl_if.dma_ctrl.prepare_cmd.instr[3:0] != 4'd1)
+           || (u_dut.gemm_ctrl_if.dma_ctrl.prepare_cmd.rd > 3)))
+        $fatal(1, "PREFETCH_CONTRACT forbidden tile DMA command prepared");
+
+      if (u_dut.input_dma_ctrl_if.prepare
+          && u_dut.input_dma_ctrl_if.prepare_ready) begin
+        local_prefetch_pending[0] = 1'b1;
+        prefetch_prepare_count[0]++;
+      end
+      if (u_dut.weight_dma_ctrl_if.prepare
+          && u_dut.weight_dma_ctrl_if.prepare_ready) begin
+        local_prefetch_pending[1] = 1'b1;
+        prefetch_prepare_count[1]++;
+      end
+      if (u_dut.scale_dma_ctrl_if.prepare
+          && u_dut.scale_dma_ctrl_if.prepare_ready) begin
+        local_prefetch_pending[2] = 1'b1;
+        prefetch_prepare_count[2]++;
+      end
+      if (u_dut.zero_point_dma_ctrl_if.prepare
+          && u_dut.zero_point_dma_ctrl_if.prepare_ready) begin
+        local_prefetch_pending[3] = 1'b1;
+        prefetch_prepare_count[3]++;
+      end
+      if (u_dut.gemm_dma_ctrl_if.prepare_valid
+          && u_dut.gemm_dma_ctrl_if.prepare_ready)
+        prefetch_prepare_count[4]++;
+
+      if (local_prefetch_pending[0]
+          && !u_dut.input_dma_ctrl_if.start
+          && u_dut.i_gemm_bus_if.req_valid)
+        $fatal(1, "PREFETCH_CONTRACT input request escaped before release");
+      if (local_prefetch_pending[1]
+          && !u_dut.weight_dma_ctrl_if.start
+          && u_dut.w_gemm_bus_if.req_valid)
+        $fatal(1, "PREFETCH_CONTRACT weight write escaped before release");
+      if (local_prefetch_pending[2]
+          && !u_dut.scale_dma_ctrl_if.start
+          && u_dut.sc_gemm_bus_if.req_valid)
+        $fatal(1, "PREFETCH_CONTRACT scale write escaped before release");
+      if (local_prefetch_pending[3]
+          && !u_dut.zero_point_dma_ctrl_if.start
+          && u_dut.zp_gemm_bus_if.req_valid)
+        $fatal(1, "PREFETCH_CONTRACT zero-point write escaped before release");
+
+      if (u_dut.input_dma_ctrl_if.start && local_prefetch_pending[0]) begin
+        local_prefetch_pending[0] = 1'b0;
+        prefetch_release_count[0]++;
+      end
+      if (u_dut.weight_dma_ctrl_if.start && local_prefetch_pending[1]) begin
+        local_prefetch_pending[1] = 1'b0;
+        prefetch_release_count[1]++;
+      end
+      if (u_dut.scale_dma_ctrl_if.start && local_prefetch_pending[2]) begin
+        local_prefetch_pending[2] = 1'b0;
+        prefetch_release_count[2]++;
+      end
+      if (u_dut.zero_point_dma_ctrl_if.start && local_prefetch_pending[3]) begin
+        local_prefetch_pending[3] = 1'b0;
+        prefetch_release_count[3]++;
+      end
+      if (u_dut.gemm_dma_ctrl_if.cmd_valid
+          && u_dut.gemm_dma_ctrl_if.cmd_ready
+          && u_dut.u_tmem_dma_ctrl.work_data_prefetched_q)
+        prefetch_release_count[4]++;
+    end
+  end
+
+  task automatic check_prefetch_contract_coverage;
+    begin
+      if (prefetch_prepare_count[0] == 0
+          || prefetch_release_count[0] != prefetch_prepare_count[0]
+          || local_prefetch_pending != 0)
+        $fatal(1,
+          "PREFETCH_CONTRACT input lifecycle missing/mismatch prepare=%0d release=%0d pending=0x%0h",
+          prefetch_prepare_count[0], prefetch_release_count[0],
+          local_prefetch_pending);
+      for (int path = 1; path < 5; ++path) begin
+        if (prefetch_release_count[path] != prefetch_prepare_count[path])
+          $fatal(1,
+            "PREFETCH_CONTRACT path=%0d lifecycle mismatch prepare=%0d release=%0d",
+            path, prefetch_prepare_count[path], prefetch_release_count[path]);
+      end
+      $display("PREFETCH_CONTRACT_PASSED local_prepare={i:%0d,w:%0d,sc:%0d,zp:%0d} local_release={i:%0d,w:%0d,sc:%0d,zp:%0d} tile={prepare:%0d,release:%0d} no_pre_release_consumer=1 output_prepare=0",
+               prefetch_prepare_count[0], prefetch_prepare_count[1],
+               prefetch_prepare_count[2], prefetch_prepare_count[3],
+               prefetch_release_count[0], prefetch_release_count[1],
+               prefetch_release_count[2], prefetch_release_count[3],
+               prefetch_prepare_count[4], prefetch_release_count[4]);
     end
   endtask
 
@@ -3298,6 +3419,7 @@ module tb_VX_gemm_node_improve
     require_prior_raw_overlap = $test$plusargs("REQUIRE_PRIOR_RAW_OVERLAP");
     require_completion_endpoints = $test$plusargs("REQUIRE_COMPLETION_ENDPOINTS");
     require_output_double_buffer = $test$plusargs("REQUIRE_OUTPUT_DBUF");
+    require_prefetch_contract = $test$plusargs("REQUIRE_PREFETCH_CONTRACT");
     void'($value$plusargs("OUTPUT_STALL_PERIOD=%d", output_stall_period));
     void'($value$plusargs("OUTPUT_STALL_CYCLES=%d", output_stall_cycles));
     if (require_output_double_buffer
@@ -3399,6 +3521,9 @@ module tb_VX_gemm_node_improve
 
     if (require_output_double_buffer)
       check_output_double_buffer_coverage(test_m, test_n, test_k);
+
+    if (require_prefetch_contract)
+      check_prefetch_contract_coverage();
 
     $display("[%0t] TB completed", $time);
 

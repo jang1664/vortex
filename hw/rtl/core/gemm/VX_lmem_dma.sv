@@ -117,6 +117,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   always_comb begin
     ctrl_if.idle = (state == S_IDLE);
     ctrl_if.done = (state == S_DONE);
+    ctrl_if.prepare_ready = 1'b0;
   end
 
   // ------------------------------------------------------------

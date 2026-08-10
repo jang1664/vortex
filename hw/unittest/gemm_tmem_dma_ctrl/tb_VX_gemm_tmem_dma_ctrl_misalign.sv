@@ -56,6 +56,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   logic [NUM_CHANNELS-1:0][1:0] lookahead_result_ready_drive;
   logic [NUM_CHANNELS-1:0] lookahead_activate_seen_s;
   logic [NUM_CHANNELS-1:0] lookahead_prepare_valid_seen_s;
+  logic [NUM_CHANNELS-1:0] lookahead_data_release_s;
+  logic [NUM_CHANNELS-1:0][GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0]
+    lookahead_data_max_beats_s;
   for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
     // Model the Phase-5 channel cache contract at the controller boundary:
     // accept each tagged PREPARE and report both source/destination groups
@@ -67,6 +70,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
     assign lookahead_activate_seen_s[ch] = dma_lookahead_if[ch].activate;
     assign lookahead_prepare_valid_seen_s[ch] =
       dma_lookahead_if[ch].prepare_valid;
+    assign lookahead_data_release_s[ch] = dma_lookahead_if[ch].data_release;
+    assign lookahead_data_max_beats_s[ch] =
+      dma_lookahead_if[ch].data_max_beats;
   end
   logic store_done;
 
@@ -103,9 +109,173 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   integer last_done_issue_count;
   logic [GEMM_DMA_TAG_WIDTH-1:0] next_cmd_tag;
   integer descriptor_issue_count;
+  integer data_prepare_accept_count;
+  integer invalid_data_prepare_count;
   logic [127:0][NUM_CHANNELS-1:0] descriptor_active;
   logic [127:0][NUM_CHANNELS-1:0][CFG_NUM-1:0][31:0]
     descriptor_regs;
+
+  task automatic run_data_prepare_release_case(input logic [2:0] rd);
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t mismatch;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] release_tag;
+    int wait_cycles;
+    begin
+      wait_idle("data_prepare_start");
+      clear_cfg_scoreboard();
+      clear_done_inputs();
+      c = '0;
+      c.instr = make_instr(OP_DMA_LD, 28'd1024);
+      c.rd = rd;
+      c.rs1_data = 64'h0000_0000_0000_1000 + (64'(rd) << 12);
+      c.rs2_data = 64'h0000_0000_0010_0000 + (64'(rd) << 16);
+      c.stride = {16'd512, 16'd64};
+      c.bound = 16'd1;
+      c.dma_priority = 1'b1;
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+          GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+
+      @(negedge clk);
+      if (!gemm_dma_ctrl_if.prepare_ready)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d controller not ready", rd);
+      gemm_dma_ctrl_if.prepare_cmd = c;
+      gemm_dma_ctrl_if.prepare_valid = 1'b1;
+      @(posedge clk);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_valid = 1'b0;
+
+      wait_cycles = 0;
+      while ((dut.state_q != 3'd4) && (wait_cycles < 40)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      #1;
+      if (dut.state_q != 3'd4 || !dut.work_data_prefetched_q
+       || dut.work_data_released_q)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d did not reach held WAIT_DONE", rd);
+      expect_cfg_count(8, "data_prepare_cfg");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (lookahead_data_release_s[ch]
+         || lookahead_data_max_beats_s[ch]
+            !== GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+                GEMM_TILE_DMA_PREFETCH_MAX_BEATS))
+          $fatal(1,
+            "TMEM_DATA_PREPARE rd=%0d ch=%0d gate/credit mismatch release=%0b max=%0d",
+            rd, ch, lookahead_data_release_s[ch],
+            lookahead_data_max_beats_s[ch]);
+      end
+
+      // Model every channel completing its prepared transfer.
+      // Completion may become sticky internally, but it must remain invisible
+      // until the exact architectural command is released with its real tag.
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        done_valid_s[ch] = 1'b1;
+        done_entry_s[ch] = 32'd0;
+      end
+      #1;
+      if (gemm_dma_ctrl_if.done || store_done)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d completed before release", rd);
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+      #1;
+      if (gemm_dma_ctrl_if.done || store_done
+       || dut.done_sticky_q !== {NUM_CHANNELS{1'b1}})
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d lost held responses", rd);
+
+      mismatch = c;
+      mismatch.rs2_data = c.rs2_data + 64'd64;
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd = mismatch;
+      gemm_dma_ctrl_if.cmd_tag = 3'd7;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      #1;
+      if (gemm_dma_ctrl_if.cmd_ready || gemm_dma_ctrl_if.done)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d accepted mismatched release", rd);
+      @(negedge clk);
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+
+      release_tag = GEMM_DMA_TAG_WIDTH'(rd + 1);
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd = c;
+      gemm_dma_ctrl_if.cmd_tag = release_tag;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      #1;
+      if (!gemm_dma_ctrl_if.cmd_ready)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d exact release not accepted", rd);
+      @(posedge clk);
+      #1;
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+      if (!dut.work_data_released_q || !gemm_dma_ctrl_if.done
+       || gemm_dma_ctrl_if.done_tag !== release_tag || store_done)
+        $fatal(1,
+          "TMEM_DATA_PREPARE rd=%0d release/tag completion mismatch done=%0b tag=%0d",
+          rd, gemm_dma_ctrl_if.done, gemm_dma_ctrl_if.done_tag);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (!lookahead_data_release_s[ch])
+          $fatal(1, "TMEM_DATA_PREPARE rd=%0d ch=%0d release gate stayed closed",
+                 rd, ch);
+      end
+      @(posedge clk);
+      #1;
+      if (gemm_dma_ctrl_if.done || dut.work_data_prefetched_q
+       || dut.work_data_released_q)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d did not retire cleanly", rd);
+      wait_idle("data_prepare_retire");
+      $display("TMEM_DATA_PREPARE_RD%0d_PASS max_beats_per_channel=%0d pre_release_commit=0 pre_release_done=0 exact_match=1 tag_bound=1 buffered_drain=1",
+               rd, GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+    end
+  endtask
+
+  task automatic run_data_prepare_reset_invalidate_case();
+    gemm_unified_cmd_t c;
+    int wait_cycles;
+    begin
+      wait_idle("data_prepare_reset_start");
+      c = '0;
+      c.instr = make_instr(OP_DMA_LD, 28'd64);
+      c.rd = 3'd0;
+      c.rs2_data = 64'h0020_0000;
+      c.stride = {16'd512, 16'd64};
+      c.bound = 16'd1;
+      c.dma_priority = 1'b1;
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+          GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_cmd = c;
+      gemm_dma_ctrl_if.prepare_valid = 1'b1;
+      @(posedge clk);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_valid = 1'b0;
+      wait_cycles = 0;
+      while (!dut.work_data_prefetched_q && (wait_cycles < 10)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.work_data_prefetched_q)
+        $fatal(1, "TMEM_DATA_PREPARE reset setup failed");
+      @(negedge clk);
+      reset = 1'b1;
+      repeat (3) @(posedge clk);
+      @(negedge clk);
+      reset = 1'b0;
+      repeat (2) @(posedge clk);
+      #1;
+      if (dut.work_data_prefetched_q || dut.work_data_released_q
+       || dut.state_q != 3'd0 || !gemm_dma_ctrl_if.prepare_ready)
+        $fatal(1, "TMEM_DATA_PREPARE reset did not invalidate owner/state");
+      $display("TMEM_DATA_PREPARE_RESET_INVALIDATE_PASS prefetched=0 released=0 tag_stale=0");
+    end
+  endtask
 
   function automatic logic [31:0] make_instr(input logic [3:0] op, input logic [27:0] size_bytes);
     return {size_bytes, op};
@@ -1187,9 +1357,18 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       dma_done_prev = 1'b0;
       last_done_issue_count = -1;
       descriptor_issue_count = 0;
+      data_prepare_accept_count = 0;
+      invalid_data_prepare_count = 0;
       descriptor_active = '0;
       descriptor_regs = '0;
     end else begin
+      if (gemm_dma_ctrl_if.prepare_valid
+       && gemm_dma_ctrl_if.prepare_ready) begin
+        data_prepare_accept_count++;
+        if ((gemm_dma_ctrl_if.prepare_cmd.instr[3:0] != OP_DMA_LD)
+         || (gemm_dma_ctrl_if.prepare_cmd.rd > 3))
+          invalid_data_prepare_count++;
+      end
       if (gemm_dma_ctrl_if.done) begin
         if (dma_done_prev
          && (descriptor_issue_count <= last_done_issue_count))
@@ -1237,6 +1416,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
     gemm_dma_ctrl_if.cmd_valid = 1'b0;
     gemm_dma_ctrl_if.cmd_tag = '0;
     gemm_dma_ctrl_if.cmd   = '0;
+    gemm_dma_ctrl_if.prepare_valid = 1'b0;
+    gemm_dma_ctrl_if.prepare_cmd = '0;
     next_cmd_tag = '0;
 
     reset = 1'b1;
@@ -1260,6 +1441,20 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       pulse_start();
       repeat (4) @(posedge clk);
       $fatal(1, "EXPECT_NOTIFY_FATAL intended assertion did not fire");
+    end
+
+    if (TB_PENDING_DEPTH == 4) begin
+      for (int rd = 0; rd < 4; ++rd)
+        run_data_prepare_release_case(3'(rd));
+      run_data_prepare_reset_invalidate_case();
+      if (data_prepare_accept_count != 0) begin
+        // The reset-invalidation case resets the cumulative monitor.  The
+        // per-rd PASS markers above prove the four accepted commands.
+        $fatal(1, "TMEM_DATA_PREPARE reset did not clear acceptance monitor");
+      end
+      if (invalid_data_prepare_count != 0)
+        $fatal(1, "TMEM_DATA_PREPARE observed forbidden ST/rd4 prepare");
+      $display("TMEM_DATA_PREPARE_FORBIDDEN_PASS dma_store=0 dma_rd4=0 invalid_accept=0 legacy_store_normal=1");
     end
 
     begin

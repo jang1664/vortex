@@ -8,7 +8,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if.slave     i_lmem_bus_if,
     VX_mem_bus_if.slave     w_lmem_bus_if,
-    VX_mem_bus_if.slave     sz_lmem_bus_if,
+    VX_mem_bus_if.slave     sc_lmem_bus_if,
+    VX_mem_bus_if.slave     zp_lmem_bus_if,
     VX_mem_bus_if.slave     o_lmem_bus_if,
 
     VX_gemm_unit_v2_if.slave gemm_unit_v2_if
@@ -139,11 +140,15 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic [1:0][`MAX(`MXU_ROW, `MXU_COL)-1:0][`SCALE_WIDTH-1:0] scale_regs;
     logic [1:0][`MAX(`MXU_ROW, `MXU_COL)-1:0][`ZP_WIDTH-1:0]    zero_regs;
 
-    // Scale/Zero write control signals
-    logic                                            sz_req_hs;
-    logic                                            sz_req_rw;
-    logic [`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE*4)-1:0] sz_req_addr;
-    logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0]         sz_req_data;
+    // Independent scale and zero-point write control signals.
+    logic                                            sc_req_hs;
+    logic                                            sc_req_rw;
+    logic [`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE*4)-1:0] sc_req_addr;
+    logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0]         sc_req_data;
+    logic                                            zp_req_hs;
+    logic                                            zp_req_rw;
+    logic [`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE*4)-1:0] zp_req_addr;
+    logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0]         zp_req_data;
     logic                                            scale_reg_wr_en;
     logic                                            scale_reg_wr_req;
     logic                                            scale_reg_idx;
@@ -368,6 +373,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     // after the unit's own acceptance/pipeline logic, at the cycles in which
     // the selected weight or scale/zero register is actually written.
     assign gemm_unit_v2_if.weight_register_write = mxu_ready_weight;
+    assign gemm_unit_v2_if.scale_register_write = scale_reg_wr_en;
+    assign gemm_unit_v2_if.zero_point_register_write = zp_reg_wr_en;
     assign gemm_unit_v2_if.quant_register_write
         = scale_reg_wr_en || zp_reg_wr_en;
     assign gemm_unit_v2_if.pipeline_empty
@@ -478,15 +485,21 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
 `endif
     assign w_lmem_bus_if.rsp_valid = 1'b0;
 
-    assign sz_req_hs = sz_lmem_bus_if.req_valid && sz_lmem_bus_if.req_ready;
-    assign sz_req_rw = sz_lmem_bus_if.req_data.rw;
-    assign sz_req_addr = $bits(sz_req_addr)'(sz_lmem_bus_if.req_data.addr);
-    assign sz_req_data = sz_lmem_bus_if.req_data.data;
-    assign sz_lmem_bus_if.req_ready
-        = zp_reg_wr_req ? !zreg_busy[zp_reg_idx]
-        : scale_reg_wr_req ? !sreg_busy[scale_reg_idx]
-        : 1'b1;
-    assign sz_lmem_bus_if.rsp_valid = 1'b0;
+    assign sc_req_hs = sc_lmem_bus_if.req_valid && sc_lmem_bus_if.req_ready;
+    assign sc_req_rw = sc_lmem_bus_if.req_data.rw;
+    assign sc_req_addr = $bits(sc_req_addr)'(sc_lmem_bus_if.req_data.addr);
+    assign sc_req_data = sc_lmem_bus_if.req_data.data;
+    assign sc_lmem_bus_if.req_ready
+        = scale_reg_wr_req ? !sreg_busy[scale_reg_idx] : 1'b1;
+    assign sc_lmem_bus_if.rsp_valid = 1'b0;
+
+    assign zp_req_hs = zp_lmem_bus_if.req_valid && zp_lmem_bus_if.req_ready;
+    assign zp_req_rw = zp_lmem_bus_if.req_data.rw;
+    assign zp_req_addr = $bits(zp_req_addr)'(zp_lmem_bus_if.req_data.addr);
+    assign zp_req_data = zp_lmem_bus_if.req_data.data;
+    assign zp_lmem_bus_if.req_ready
+        = zp_reg_wr_req ? !zreg_busy[zp_reg_idx] : 1'b1;
+    assign zp_lmem_bus_if.rsp_valid = 1'b0;
 
     // =========================================================================
     // Scale/Zero Register Write Logic
@@ -504,29 +517,26 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         scale_reg_wr_req = 0;
         zp_reg_wr_req    = 0;
 
-        if(sz_lmem_bus_if.req_valid && sz_req_rw) begin
-            if (sz_req_addr >= SCALE_REG0_BASE && sz_req_addr < SCALE_REG1_BASE) begin
-                scale_reg_idx   = 1'b0;
-                scale_reg_wr_req = 1'b1;
-            end else if (sz_req_addr >= SCALE_REG1_BASE && sz_req_addr < ZP_REG0_BASE) begin
-                scale_reg_idx   = 1'b1;
-                scale_reg_wr_req = 1'b1;
-            end else if (sz_req_addr >= ZP_REG0_BASE && sz_req_addr < ZP_REG1_BASE) begin
-                zp_reg_idx      = 1'b0;
-                zp_reg_wr_req    = 1'b1;
-            end else if (sz_req_addr >= ZP_REG1_BASE) begin
-                zp_reg_idx      = 1'b1;
-                zp_reg_wr_req    = 1'b1;
-            end
+        if (sc_lmem_bus_if.req_valid && sc_req_rw) begin
+            scale_reg_idx = (sc_req_addr >= SCALE_REG1_BASE);
+            scale_reg_wr_req = (sc_req_addr < ZP_REG0_BASE);
+        end
+
+        if (zp_lmem_bus_if.req_valid && zp_req_rw) begin
+            zp_reg_idx = (zp_req_addr >= ZP_REG1_BASE);
+            zp_reg_wr_req = (zp_req_addr >= ZP_REG0_BASE);
         end
 
     end
 
-    assign scale_reg_wr_en = sz_req_hs && scale_reg_wr_req;
-    assign zp_reg_wr_en = sz_req_hs && zp_reg_wr_req;
+    assign scale_reg_wr_en = sc_req_hs && scale_reg_wr_req;
+    assign zp_reg_wr_en = zp_req_hs && zp_reg_wr_req;
 
     // ----- Write to scale registers (byte-enable masked) -----
-    wire [`GEMM_SCALE_ZERO_DATA_SIZE-1:0] sz_req_byteen = sz_lmem_bus_if.req_data.byteen;
+    wire [`GEMM_SCALE_ZERO_DATA_SIZE-1:0] sc_req_byteen
+        = sc_lmem_bus_if.req_data.byteen;
+    wire [`GEMM_SCALE_ZERO_DATA_SIZE-1:0] zp_req_byteen
+        = zp_lmem_bus_if.req_data.byteen;
 
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
@@ -534,8 +544,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         end else begin
             if (scale_reg_wr_en) begin
                 for (int i = 0; i < `MAX(`MXU_ROW, `MXU_COL); i++) begin
-                    if (sz_req_byteen[i * (`SCALE_WIDTH/8) +: (`SCALE_WIDTH/8)] != '0) begin
-                        scale_regs[scale_reg_idx][i] <= sz_req_data[i * `SCALE_WIDTH +: `SCALE_WIDTH];
+                    if (sc_req_byteen[i * (`SCALE_WIDTH/8) +: (`SCALE_WIDTH/8)] != '0) begin
+                        scale_regs[scale_reg_idx][i] <= sc_req_data[i * `SCALE_WIDTH +: `SCALE_WIDTH];
                     end
                 end
             end
@@ -549,8 +559,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         end else begin
             if (zp_reg_wr_en) begin
                 for (int i = 0; i < `MAX(`MXU_ROW, `MXU_COL); i++) begin
-                    if (sz_req_byteen[i * (`ZP_WIDTH/8) +: (`ZP_WIDTH/8)] != '0) begin
-                        zero_regs[zp_reg_idx][i] <= -1*signed'(sz_req_data[i*`ZP_WIDTH +: `ZP_WIDTH]);
+                    if (zp_req_byteen[i * (`ZP_WIDTH/8) +: (`ZP_WIDTH/8)] != '0) begin
+                        zero_regs[zp_reg_idx][i] <= -1*signed'(zp_req_data[i*`ZP_WIDTH +: `ZP_WIDTH]);
                     end
                 end
             end

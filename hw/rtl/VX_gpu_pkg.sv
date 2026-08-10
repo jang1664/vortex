@@ -902,7 +902,7 @@ package VX_gpu_pkg;
         dma_perf_t                lmem_dma_sz;
         dma_perf_t                lmem_dma_output;
         logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
-        // Union of CPU DMA, HBM DMA, and all four LMEM DMA busy predicates.
+        // Union of CPU DMA, HBM DMA, and all LMEM DMA busy predicates.
         // Concurrent DMA engines count once per cycle.
         logic [PERF_CTR_BITS-1:0] dma_union_active_cycles;
         // Cycles where the Vortex core is busy (active kernel duration).
@@ -913,15 +913,50 @@ package VX_gpu_pkg;
 
    ////////////////////////// gemm related types    ///////////////////////////
    localparam int GEMM_MAX_WAIT_DEPS     = 4;
+   localparam int GEMM_MAX_PREPARE_WAIT_DEPS = 1;
    localparam int GEMM_SYNC_REG_ID_WIDTH = 4;
    localparam int GEMM_DMA_TAG_WIDTH     = 3;
    localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
+   localparam int GEMM_NUM_SYNC_REGS     = 15;
+   localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
+   localparam int GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_TILE_DMA_PREFETCH_MAX_BEATS =
+       `GEMM_TILE_DMA_PREFETCH_MAX_BEATS;
+
+   localparam logic GEMM_PREPARE_NONE = 1'b0;
+   localparam logic GEMM_PREPARE_SOURCE_READ = 1'b1;
+
+   localparam logic [3:0] GEMM_OP_SC_LDMA_MXU = 4'd6;
+   localparam logic [3:0] GEMM_OP_ZP_LDMA_MXU = 4'd10;
+
+   // RID_SZ remains the logical dependency consumed by input commands.  The
+   // scheduler derives it from the two physical completion sequences.
+   localparam int GEMM_RID_SZ0 = 2;
+   localparam int GEMM_RID_SZ1 = 7;
+   localparam int GEMM_RID_SC0 = 11;
+   localparam int GEMM_RID_ZP0 = 12;
+   localparam int GEMM_RID_SC1 = 13;
+   localparam int GEMM_RID_ZP1 = 14;
 
    typedef struct packed {
        logic                                      valid;
        logic [GEMM_SYNC_REG_ID_WIDTH-1:0]         reg_id;
        logic [31:0]                               target;
    } gemm_wait_meta_t;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic                                      mode;
+       logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] max_beats;
+       gemm_wait_meta_t [GEMM_MAX_PREPARE_WAIT_DEPS-1:0] waits;
+   } gemm_prepare_meta_t;
 
    typedef struct packed {
        logic                                      valid;
@@ -949,6 +984,7 @@ package VX_gpu_pkg;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
        gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
+       gemm_prepare_meta_t       prepare;
        gemm_notify_meta_t        notify;
    } gemm_unified_cmd_t; // it can be union
 

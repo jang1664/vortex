@@ -1373,6 +1373,30 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_DMA_STORE_MAX_CHUNK_BEATS 8
 `endif
 
+// Maximum source-read beats issued before architectural release.  These
+// values are encoded in GEMM command metadata and may be overridden through
+// the normal CONFIGS flow.
+`ifndef GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS 4
+`endif
+
+`ifndef GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS 4
+`endif
+
+`ifndef GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS 1
+`endif
+
+`ifndef GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS 1
+`endif
+
+// Applied independently by every active channel of a tile-DMA load.
+`ifndef GEMM_TILE_DMA_PREFETCH_MAX_BEATS
+`define GEMM_TILE_DMA_PREFETCH_MAX_BEATS 4
+`endif
+
 `ifdef GEMM_NAIVE
 // Naive controller compile-time tile dimensions.
 `define GEMM_FSM_MT 128

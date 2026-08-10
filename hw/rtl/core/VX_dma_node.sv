@@ -55,6 +55,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   assign dma_lookahead_if.bound = '0;
   assign dma_lookahead_if.activate = 1'b0;
   assign dma_lookahead_if.activate_id = '0;
+  assign dma_lookahead_if.data_release = 1'b1;
+  assign dma_lookahead_if.data_max_beats = '0;
 
   // VX_dma_unit operates on one aggregate local-memory beat. Split the
   // aggregate beat across physical LMEM ports so DMA bandwidth can scale

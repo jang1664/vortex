@@ -370,6 +370,13 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic        precalc_pending_r;
   logic [3:0]  precalc_needed_r;
   logic [3:0]  precalc_ready_r;
+  logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] data_max_beats_r;
+  logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] pre_release_reads_r;
+
+  wire pre_release_source_credit = (data_max_beats_r != 0)
+      && (pre_release_reads_r < data_max_beats_r);
+  wire source_issue_enable = lookahead_if.data_release
+                          || pre_release_source_credit;
 
   // Two random-access look-ahead result slots.  Only multiplication operands,
   // dependency masks, and D0/D1 correction results are stored here; the full
@@ -1209,6 +1216,14 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       ram_wr_stall_valid_bytes_r <= '0;
       ram_wr_stall_slot_r <= '0;
     end else begin
+      if (dst_req_fire && !lookahead_if.data_release)
+        $fatal(1, "%s: destination request issued before data release",
+               INSTANCE_ID);
+      if (src_req_fire && !lookahead_if.data_release
+       && ((data_max_beats_r == 0)
+        || (pre_release_reads_r >= data_max_beats_r)))
+        $fatal(1, "%s: pre-release source-read credit exceeded",
+               INSTANCE_ID);
       if (src_rsp_fire && (slot_state_r[rsp_slot_idx] != SLOT_WAIT_RSP))
         $fatal(1, "%s: response wrote slot %0d in state %0d",
                INSTANCE_ID, rsp_slot_idx, slot_state_r[rsp_slot_idx]);
@@ -1611,6 +1626,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
         rd_can_issue = (rd_state == RD_RUN)
                     && (lmem_rd_ptr < lmem_rd_end)
+                    && source_issue_enable
                     && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING_EFF))
                     && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
 
@@ -1641,6 +1657,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         // Source and destination beats can have different widths, so require
         // the exact number of payload bytes consumed by this destination beat.
         wr_can_issue = (wr_state == WR_RUN)
+                    && lookahead_if.data_release
                     && (wr_nbytes != 0)
                     && (SAME_WIDTH_FAST
                         ? ((src_bytes == 0)
@@ -1714,6 +1731,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
         rd_can_issue = (rd_state == RD_RUN)
                     && (dcache_rd_ptr < dcache_rd_end)
+                    && source_issue_enable
                     && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING_EFF))
                     && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
 
@@ -1738,6 +1756,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         src_bytes  = wr_src_bytes_cur;
 
         wr_can_issue = (wr_state == WR_RUN)
+                    && lookahead_if.data_release
                     && (wr_nbytes != 0)
                     && (SAME_WIDTH_FAST
                         ? ((src_bytes == 0)
@@ -1856,6 +1875,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       rd_issue_slot_r  <= '0;
       wr_expect_slot_r <= '0;
       slot_occupancy_r <= '0;
+      data_max_beats_r <= '0;
+      pre_release_reads_r <= '0;
       wr_slot_pending_r <= 1'b0;
       dcache_req_buf_pending_r <= '0;
       lmem_req_buf_pending_r <= '0;
@@ -1878,6 +1899,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       //   reads and writes drain (see src_req_fire / dst_req_fire handlers).
       // -------------------------
       if (cmd_start) begin
+        data_max_beats_r <= lookahead_if.data_max_beats;
+        pre_release_reads_r <= '0;
         foreach (rd_i_dim[d]) begin
           rd_i_dim[d] <= 32'd0;
           wr_i_dim[d] <= 32'd0;
@@ -1987,6 +2010,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           end
         end
       end else if ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE)) begin
+        if (src_req_fire && !lookahead_if.data_release)
+          pre_release_reads_r <= pre_release_reads_r + 1'b1;
         // -------------------------
         // Source read issue bookkeeping
         //   When a read completes the current rd segment (next_ptr hits

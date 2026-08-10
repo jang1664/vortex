@@ -26,11 +26,12 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 |------|------|------|
 | `dma_cfg_if[8]` | 입력 | DMA 채널 설정 (gemm_dma_ctrl → DMA engine) |
 | `dma_done_if[8]` | 출력 | DMA 완료 통지 (DMA engine → gemm_dma_ctrl) |
-| `ldma_ctrl_if[4]` | 입력 | Local DMA 제어 (gemm_ctrl → local DMA) |
+| `ldma_ctrl_if[5]` | 입력 | Local DMA 제어 (gemm_ctrl → local DMA) |
 | `axi_m[8]` | AXI Master | HBM AXI 포트 (DMA engine이 구동) |
 | `gemm_input_if` | membus Master | GEMM 입력 데이터 포트 |
 | `gemm_weight_if` | membus Master | GEMM 가중치 포트 |
-| `gemm_sz_if` | membus Master | GEMM scale/zero-point 포트 |
+| `gemm_scale_if` | membus Master | GEMM scale 포트 |
+| `gemm_zp_if` | membus Master | GEMM zero-point 포트 |
 | `gemm_output_if` | membus Master | GEMM 출력 포트 |
 
 ## 내부 구성요소
@@ -43,7 +44,7 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 - `axi_m[ch]` ↔ `dma_to_tmem[ch]` 1:1 매핑
 - 각 채널이 독립적으로 동작하며, 완료 시 `dma_done_if[ch]`로 통지
 
-### 2. Switches (`u_switch_*`, x4)
+### 2. Switches (`u_switch_*`, x5)
 
 각 Local DMA의 TMEM 접근을 주소 기반으로 적절한 뱅크에 라우팅 (1:N).
 
@@ -51,8 +52,9 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 |----------|------|------|------|
 | `u_switch_input` | `ldma_to_switch[0]` | `in_switch_to_tmem[0..7]` | 입력 데이터 뱅크 분산 |
 | `u_switch_weight` | `ldma_to_switch[1]` | `wt_switch_to_tmem[0..7]` | 가중치 뱅크 분산 |
-| `u_switch_sz` | `ldma_to_switch[2]` | `sz_switch_to_tmem[0..7]` | scale/zp 뱅크 분산 |
-| `u_switch_output` | `ldma_to_switch[3]` | `out_switch_to_tmem[0..7]` | 출력 데이터 뱅크 분산 |
+| `u_switch_scale` | `ldma_to_switch[2]` | `sc_switch_to_tmem[0..7]` | scale 뱅크 분산 |
+| `u_switch_zero_point` | `ldma_to_switch[3]` | `zp_switch_to_tmem[0..7]` | zero-point 뱅크 분산 |
+| `u_switch_output` | `ldma_to_switch[4]` | `out_switch_to_tmem[0..7]` | 출력 데이터 뱅크 분산 |
 
 스위치는 태그에 뱅크 선택 비트(`BANK_SEL_BITS`)를 추가하여, 응답 매핑에 사용한다.
 
@@ -94,20 +96,21 @@ cycle의 response retire과 request accept를 동시에 수행하는 fall-throug
 
 ### 3. TMEM Banks (`u_bank`, x8)
 
-각 뱅크는 5포트 중재(arbitration)를 가진 SRAM.
+각 뱅크는 6포트 중재(arbitration)를 가진 SRAM.
 
 | 포트 | 접속 | 태그 폭 |
 |------|------|---------|
 | port[0] | DMA direct (ch b → bank b, 1:1) | `SWITCH_TAG_WIDTH` |
 | port[1] | input switch | `SWITCH_TAG_WIDTH` |
 | port[2] | weight switch | `SWITCH_TAG_WIDTH` |
-| port[3] | scale_zp switch | `SWITCH_TAG_WIDTH` |
-| port[4] | output switch | `SWITCH_TAG_WIDTH` |
+| port[3] | scale switch | `SWITCH_TAG_WIDTH` |
+| port[4] | zero-point switch | `SWITCH_TAG_WIDTH` |
+| port[5] | output switch | `SWITCH_TAG_WIDTH` |
 
 - DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춤
-- 스위치 포트(1-4)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
+- 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
 
-### 4. Local DMAs (`u_ldma_*`, x4)
+### 4. Local DMAs (`u_ldma_*`, x5)
 
 TMEM과 GEMM 유닛 간 실제 데이터 이동을 수행. 방향에 따라 읽기/쓰기 포트가 결정된다.
 
@@ -115,8 +118,35 @@ TMEM과 GEMM 유닛 간 실제 데이터 이동을 수행. 방향에 따라 읽�
 |----------|-----|------|-----------|-----------|
 | `u_ldma_input` | 0 | LMEM→GEMM | `ldma_to_switch[0]` | `ldma_gemm[0]` → `gemm_input_if` |
 | `u_ldma_weight` | 0 | LMEM→GEMM | `ldma_to_switch[1]` | `ldma_gemm[1]` → `gemm_weight_if` |
-| `u_ldma_sz` | 0 | LMEM→GEMM | `ldma_to_switch[2]` | `ldma_gemm[2]` → `gemm_sz_if` |
-| `u_ldma_output` | 1 | GEMM→LMEM | `ldma_to_switch[3]` | `ldma_gemm[3]` → `gemm_output_if` |
+| `u_ldma_scale` | 0 | LMEM→GEMM | `ldma_to_switch[2]` | `ldma_gemm[2]` → `gemm_scale_if` |
+| `u_ldma_zero_point` | 0 | LMEM→GEMM | `ldma_to_switch[3]` | `ldma_gemm[3]` → `gemm_zp_if` |
+| `u_ldma_output` | 1 | GEMM→LMEM | `ldma_to_switch[4]` | `ldma_gemm[4]` → `gemm_output_if` |
+
+Scale and zero point have independent switch request ports and local-DMA
+pipelines. Each physical TMEM bank is still single-port, so simultaneous
+requests to the same bank are serialized by that bank's arbiter.
+
+The four input-side local DMAs support a bounded prepare/release mode. Prepare
+starts only the TMEM source read and stores at most the command's
+`prepare_max_beats` in the DMA core response slots. It does not issue a GEMM
+port write, update a register bank, or report completion. A later start with
+the exact same descriptor releases the buffered beat(s), after which the
+remaining transfer continues without replay. The output local DMA rejects
+prepare and retains its original start-only behavior.
+
+`VX_gemm_fsm` selects the pre-release credit independently for each command
+class. The defaults and `CONFIGS` override macros are:
+
+| Command class | Macro | Default beats |
+|---|---|---:|
+| Input local DMA | `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS` | 4 |
+| Weight local DMA | `GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS` | 4 |
+| Scale local DMA | `GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS` | 1 |
+| Zero-point local DMA | `GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS` | 1 |
+
+The descriptor length and physical DMA response-slot count remain hard caps,
+so a configured credit does not create additional storage or issue requests
+beyond the transfer end.
 
 ## 데이터 흐름
 
@@ -128,11 +158,11 @@ HBM[0..7]
   → DMA Engine (8ch, AXI→membus 변환)
   → dma_to_tmem[0..7] (1:1, bank 직접 접근)
   → TMEM Bank[0..7] port[0]
-  → TMEM Bank[0..7] port[1..4]
+  → TMEM Bank[0..7] port[1..5]
   → switch_to_tmem 역방향
   → Local DMA (ctrl_if 제어)
-  → ldma_gemm[0..2]
-  → gemm_input_if / gemm_weight_if / gemm_sz_if
+  → ldma_gemm[0..3]
+  → gemm_input_if / gemm_weight_if / gemm_scale_if / gemm_zp_if
   → GEMM Unit
 ```
 
@@ -141,12 +171,12 @@ HBM[0..7]
 ```
 GEMM Unit
   → gemm_output_if
-  → ldma_gemm[3]
+  → ldma_gemm[4]
   → Local DMA output (DIR=1, GEMM→LMEM)
-  → ldma_to_switch[3]
+  → ldma_to_switch[4]
   → u_switch_output (1:N 뱅크 분산)
   → out_switch_to_tmem[0..7]
-  → TMEM Bank[0..7] port[4] (쓰기)
+  → TMEM Bank[0..7] port[5] (쓰기)
   → TMEM Bank[0..7] port[0] (DMA 읽기)
   → dma_to_tmem[0..7]
   → DMA Engine (membus→AXI 변환)

@@ -7,7 +7,7 @@
     - VX_tmem_subsystem (tensor memory with DMA engine, banks, local DMAs).
 
   Dataflow summary
-    - Load paths (i/w/sz):
+    - Load paths (i/w/scale/zero-point):
         HBM -> DMA engine -> TMEM banks -> local DMAs -> GEMM unit
     - Output path:
         GEMM unit -> local DMA -> TMEM banks -> DMA engine -> HBM
@@ -17,7 +17,7 @@
 module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
-    parameter N_CHILDREN  = 5,
+    parameter N_CHILDREN  = 6,
     parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
         `GEMM_DMA_STORE_MAX_CHUNK_BEATS
@@ -49,7 +49,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
 
     // Number of child nodes synchronized by gemm_ctrl.
-    localparam N_NODE   = 5;
+    localparam N_NODE   = 6;
 
     // Use GEMM-specific base tag width so adapter split tags stay valid even
     // when LMEM_TAG_WIDTH is reduced in NDEBUG builds.
@@ -88,7 +88,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
       .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
-    ) sz_gemm_bus_if ();
+    ) sc_gemm_bus_if ();
+    VX_mem_bus_if # (
+      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
+      .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
+    ) zp_gemm_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -106,7 +110,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) tmem_sz_gemm_bus_if ();
+    ) tmem_sc_gemm_bus_if ();
+    VX_mem_bus_if # (
+      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) tmem_zp_gemm_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -138,39 +146,57 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // LMEM DMA control interfaces (issued by gemm_ctrl)
     VX_lmem_dma_ctrl_if input_dma_ctrl_if ();
     VX_lmem_dma_ctrl_if weight_dma_ctrl_if ();
-    VX_lmem_dma_ctrl_if quant_param_dma_ctrl_if ();
+    VX_lmem_dma_ctrl_if scale_dma_ctrl_if ();
+    VX_lmem_dma_ctrl_if zero_point_dma_ctrl_if ();
     VX_lmem_dma_ctrl_if output_dma_ctrl_if ();
     VX_gemm_dma_ctrl_if gemm_dma_ctrl_if ();
 
     logic [7:0]  weight_cmd_flags_r;
     logic        weight_write_active_r;
     logic [63:0] weight_writes_remaining_r;
-    logic        quant_write_active_r;
-    logic [63:0] quant_writes_remaining_r;
+    logic        scale_write_active_r;
+    logic [63:0] scale_writes_remaining_r;
+    logic        zero_point_write_active_r;
+    logic [63:0] zero_point_writes_remaining_r;
     logic        output_write_active_r;
 
     wire weight_dma_start = gemm_ctrl_if.weight_read_ctrl.start;
-    wire quant_dma_start = gemm_ctrl_if.quant_param_read_ctrl.start;
+    wire scale_dma_start = gemm_ctrl_if.scale_read_ctrl.start;
+    wire zero_point_dma_start = gemm_ctrl_if.zero_point_read_ctrl.start;
     wire [63:0] weight_command_bytes
         = 64'(gemm_ctrl_if.weight_read_ctrl.cmd.bound)
         * 64'(MXU_KT * (MXU_NT >> 1));
     wire [63:0] weight_command_writes
         = (weight_command_bytes + 64'(`GEMM_WEIGHT_DATA_SIZE) - 1)
         / 64'(`GEMM_WEIGHT_DATA_SIZE);
-    wire [63:0] quant_command_bytes
-        = 64'(gemm_ctrl_if.quant_param_read_ctrl.cmd.bound)
+    wire [63:0] scale_command_bytes
+        = 64'(gemm_ctrl_if.scale_read_ctrl.cmd.bound)
         * 64'(MXU_NT * 2);
-    wire [63:0] quant_command_writes
-        = (quant_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
+    wire [63:0] scale_command_writes
+        = (scale_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
+        / 64'(`GEMM_SCALE_ZERO_DATA_SIZE);
+    wire [63:0] zero_point_command_bytes
+        = 64'(gemm_ctrl_if.zero_point_read_ctrl.cmd.bound)
+        * 64'(MXU_NT * 2);
+    wire [63:0] zero_point_command_writes
+        = (zero_point_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
         / 64'(`GEMM_SCALE_ZERO_DATA_SIZE);
     wire weight_last_register_write
         = gemm_unit_v2_if.weight_register_write
-       && weight_write_active_r
-       && (weight_writes_remaining_r == 64'd1);
-    wire quant_last_register_write
-        = gemm_unit_v2_if.quant_register_write
-       && quant_write_active_r
-       && (quant_writes_remaining_r == 64'd1);
+       && ((weight_write_active_r
+         && (weight_writes_remaining_r == 64'd1))
+        || (weight_dma_start && (weight_command_writes == 64'd1)));
+    wire scale_last_register_write
+        = gemm_unit_v2_if.scale_register_write
+       && ((scale_write_active_r
+         && (scale_writes_remaining_r == 64'd1))
+        || (scale_dma_start && (scale_command_writes == 64'd1)));
+    wire zero_point_last_register_write
+        = gemm_unit_v2_if.zero_point_register_write
+       && ((zero_point_write_active_r
+         && (zero_point_writes_remaining_r == 64'd1))
+        || (zero_point_dma_start
+         && (zero_point_command_writes == 64'd1)));
     // wire weight_wtrans      = weight_cmd_flags_r[1];
 
 `ifndef SYNTHESIS
@@ -465,6 +491,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = input_cmd_start;
+    assign input_dma_ctrl_if.prepare         = gemm_ctrl_if.input_read_ctrl.prepare;
+    assign input_dma_ctrl_if.prepare_max_beats
+        = gemm_ctrl_if.input_read_ctrl.cmd.prepare.max_beats;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
     assign input_dma_ctrl_if.src_strides[0]  = gemm_ctrl_if.input_read_ctrl.cmd.stride;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
@@ -483,6 +512,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.input_read_flag.idle
         = !input_cmd_ctx_r.active && input_dma_ctrl_if.idle;
     assign gemm_ctrl_if.input_read_flag.done = input_cmd_done;
+    assign gemm_ctrl_if.input_read_flag.prepare_ready
+        = input_dma_ctrl_if.prepare_ready;
 
     assign gemm_sync_if[0].valid   = 1'b0;
     assign gemm_sync_if[0].reg_idx = 32'd0;
@@ -490,6 +521,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Weight load DMA command mapping.
     assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start;
+    assign weight_dma_ctrl_if.prepare        = gemm_ctrl_if.weight_read_ctrl.prepare;
+    assign weight_dma_ctrl_if.prepare_max_beats
+        = gemm_ctrl_if.weight_read_ctrl.cmd.prepare.max_beats;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
     assign weight_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.weight_read_ctrl.cmd.stride;
     assign weight_dma_ctrl_if.src_strides[1] = 0;
@@ -508,6 +542,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.weight_read_flag.idle
         = weight_dma_ctrl_if.idle && !weight_write_active_r;
     assign gemm_ctrl_if.weight_read_flag.done = weight_last_register_write;
+    assign gemm_ctrl_if.weight_read_flag.prepare_ready
+        = weight_dma_ctrl_if.prepare_ready;
 
     assign gemm_sync_if[1].valid   = 1'b0;
     assign gemm_sync_if[1].reg_idx = 32'd0;
@@ -523,8 +559,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         // changes next cycle), and count writes at the GEMM register endpoint.
         if (weight_dma_start) begin
           weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
-          weight_write_active_r <= 1'b1;
-          weight_writes_remaining_r <= weight_command_writes;
+          weight_write_active_r
+              <= !gemm_unit_v2_if.weight_register_write
+              || (weight_command_writes != 64'd1);
+          weight_writes_remaining_r
+              <= weight_command_writes
+               - 64'(gemm_unit_v2_if.weight_register_write);
         end else if (gemm_unit_v2_if.weight_register_write) begin
           weight_writes_remaining_r <= weight_writes_remaining_r - 1'b1;
           if (weight_writes_remaining_r == 64'd1)
@@ -582,42 +622,99 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 	    end
 `endif
 
-	    // Quant parameter load DMA command mapping.
-    assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start;
-    assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
+    // Independent scale and zero-point local DMA command mappings.
+    assign scale_dma_ctrl_if.start = gemm_ctrl_if.scale_read_ctrl.start;
+    assign scale_dma_ctrl_if.prepare = gemm_ctrl_if.scale_read_ctrl.prepare;
+    assign scale_dma_ctrl_if.prepare_max_beats
+        = gemm_ctrl_if.scale_read_ctrl.cmd.prepare.max_beats;
+    assign scale_dma_ctrl_if.src_base_addr
+        = gemm_ctrl_if.scale_read_ctrl.cmd.rs2_data;
+    assign scale_dma_ctrl_if.src_strides[0]
+        = gemm_ctrl_if.scale_read_ctrl.cmd.stride[31:16];
+    assign scale_dma_ctrl_if.src_strides[1] = 0;
+    assign scale_dma_ctrl_if.src_strides[2] = 0;
+    assign scale_dma_ctrl_if.dst_base_addr
+        = gemm_ctrl_if.scale_read_ctrl.cmd.rs1_data;
+    assign scale_dma_ctrl_if.dst_strides[0]
+        = gemm_ctrl_if.scale_read_ctrl.cmd.stride[15:0];
+    assign scale_dma_ctrl_if.dst_strides[1] = 0;
+    assign scale_dma_ctrl_if.dst_strides[2] = 0;
+    assign scale_dma_ctrl_if.bounds[0]
+        = gemm_ctrl_if.scale_read_ctrl.cmd.bound;
+    assign scale_dma_ctrl_if.bounds[1] = 32'd1;
+    assign scale_dma_ctrl_if.bounds[2] = 32'd1;
+    assign scale_dma_ctrl_if.seg_size = MXU_NT * 2;
+    assign gemm_ctrl_if.scale_read_flag.idle
+        = scale_dma_ctrl_if.idle && !scale_write_active_r;
+    assign gemm_ctrl_if.scale_read_flag.done = scale_last_register_write;
+    assign gemm_ctrl_if.scale_read_flag.prepare_ready
+        = scale_dma_ctrl_if.prepare_ready;
 
-    assign quant_param_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.quant_param_read_ctrl.cmd.stride[31:16];
-    assign quant_param_dma_ctrl_if.src_strides[1] = 0;
-    assign quant_param_dma_ctrl_if.src_strides[2] = 0;
-
-    assign quant_param_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
-
-    assign quant_param_dma_ctrl_if.dst_strides[0] = gemm_ctrl_if.quant_param_read_ctrl.cmd.stride[15:0];
-    assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
-    assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
-
-    assign quant_param_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.quant_param_read_ctrl.cmd.bound;
-    assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
-
-    assign quant_param_dma_ctrl_if.seg_size        = MXU_NT * 2; // MXU_NT == MXU_KT 의 가정 하에
-    assign gemm_ctrl_if.quant_param_read_flag.idle
-        = quant_param_dma_ctrl_if.idle && !quant_write_active_r;
-    assign gemm_ctrl_if.quant_param_read_flag.done
-        = quant_last_register_write;
+    assign zero_point_dma_ctrl_if.start
+        = gemm_ctrl_if.zero_point_read_ctrl.start;
+    assign zero_point_dma_ctrl_if.prepare
+        = gemm_ctrl_if.zero_point_read_ctrl.prepare;
+    assign zero_point_dma_ctrl_if.prepare_max_beats
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.prepare.max_beats;
+    assign zero_point_dma_ctrl_if.src_base_addr
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.rs2_data;
+    assign zero_point_dma_ctrl_if.src_strides[0]
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.stride[31:16];
+    assign zero_point_dma_ctrl_if.src_strides[1] = 0;
+    assign zero_point_dma_ctrl_if.src_strides[2] = 0;
+    assign zero_point_dma_ctrl_if.dst_base_addr
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.rs1_data;
+    assign zero_point_dma_ctrl_if.dst_strides[0]
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.stride[15:0];
+    assign zero_point_dma_ctrl_if.dst_strides[1] = 0;
+    assign zero_point_dma_ctrl_if.dst_strides[2] = 0;
+    assign zero_point_dma_ctrl_if.bounds[0]
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.bound;
+    assign zero_point_dma_ctrl_if.bounds[1] = 32'd1;
+    assign zero_point_dma_ctrl_if.bounds[2] = 32'd1;
+    assign zero_point_dma_ctrl_if.seg_size = MXU_NT * 2;
+    assign gemm_ctrl_if.zero_point_read_flag.idle
+        = zero_point_dma_ctrl_if.idle && !zero_point_write_active_r;
+    assign gemm_ctrl_if.zero_point_read_flag.done
+        = zero_point_last_register_write;
+    assign gemm_ctrl_if.zero_point_read_flag.prepare_ready
+        = zero_point_dma_ctrl_if.prepare_ready;
+    assign gemm_ctrl_if.quant_param_read_flag.idle = 1'b1;
+    assign gemm_ctrl_if.quant_param_read_flag.done = 1'b0;
+    assign gemm_ctrl_if.quant_param_read_flag.prepare_ready = 1'b0;
 
     always_ff @(posedge clk) begin
       if (reset) begin
-        quant_write_active_r <= 1'b0;
-        quant_writes_remaining_r <= '0;
+        scale_write_active_r <= 1'b0;
+        scale_writes_remaining_r <= '0;
+        zero_point_write_active_r <= 1'b0;
+        zero_point_writes_remaining_r <= '0;
       end else begin
-        if (quant_dma_start) begin
-          quant_write_active_r <= 1'b1;
-          quant_writes_remaining_r <= quant_command_writes;
-        end else if (gemm_unit_v2_if.quant_register_write) begin
-          quant_writes_remaining_r <= quant_writes_remaining_r - 1'b1;
-          if (quant_writes_remaining_r == 64'd1)
-            quant_write_active_r <= 1'b0;
+        if (scale_dma_start) begin
+          scale_write_active_r
+              <= !gemm_unit_v2_if.scale_register_write
+              || (scale_command_writes != 64'd1);
+          scale_writes_remaining_r
+              <= scale_command_writes
+               - 64'(gemm_unit_v2_if.scale_register_write);
+        end else if (gemm_unit_v2_if.scale_register_write) begin
+          scale_writes_remaining_r <= scale_writes_remaining_r - 1'b1;
+          if (scale_writes_remaining_r == 64'd1)
+            scale_write_active_r <= 1'b0;
+        end
+
+        if (zero_point_dma_start) begin
+          zero_point_write_active_r
+              <= !gemm_unit_v2_if.zero_point_register_write
+              || (zero_point_command_writes != 64'd1);
+          zero_point_writes_remaining_r
+              <= zero_point_command_writes
+               - 64'(gemm_unit_v2_if.zero_point_register_write);
+        end else if (gemm_unit_v2_if.zero_point_register_write) begin
+          zero_point_writes_remaining_r
+              <= zero_point_writes_remaining_r - 1'b1;
+          if (zero_point_writes_remaining_r == 64'd1)
+            zero_point_write_active_r <= 1'b0;
         end
       end
     end
@@ -625,9 +722,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_sync_if[2].valid   = 1'b0;
     assign gemm_sync_if[2].reg_idx = 32'd0;
     assign gemm_sync_if[2].value   = 32'd0;
+    assign gemm_sync_if[3].valid   = 1'b0;
+    assign gemm_sync_if[3].reg_idx = 32'd0;
+    assign gemm_sync_if[3].value   = 32'd0;
 
     // Output store DMA command mapping.
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start;
+    assign output_dma_ctrl_if.prepare       = 1'b0;
+    assign output_dma_ctrl_if.prepare_max_beats = '0;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
     assign output_dma_ctrl_if.src_strides[0] = 0;
     assign output_dma_ctrl_if.src_strides[1] = 0;
@@ -646,6 +748,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.output_write_flag.idle
         = output_dma_ctrl_if.idle && !output_write_active_r;
     assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.write_done;
+    assign gemm_ctrl_if.output_write_flag.prepare_ready = 1'b0;
 
     always_ff @(posedge clk) begin
       if (reset) begin
@@ -657,9 +760,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       end
     end
 
-    assign gemm_sync_if[3].valid   = 1'b0;
-    assign gemm_sync_if[3].reg_idx = 32'd0;
-    assign gemm_sync_if[3].value   = 32'd0;
+    assign gemm_sync_if[4].valid   = 1'b0;
+    assign gemm_sync_if[4].reg_idx = 32'd0;
+    assign gemm_sync_if[4].value   = 32'd0;
 
 `ifndef SYNTHESIS
     // The scheduler completion pulses must coincide with the exact terminal
@@ -671,29 +774,46 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             else $fatal(1, "%s: overlapping/empty weight command", INSTANCE_ID);
         end
         if (gemm_unit_v2_if.weight_register_write) begin
-          assert (weight_write_active_r && (weight_writes_remaining_r != 0))
+          assert ((weight_write_active_r
+                && (weight_writes_remaining_r != 0))
+               || (weight_dma_start && (weight_command_writes != 0)))
             else $fatal(1, "%s: early or duplicate weight register write", INSTANCE_ID);
         end
         if (gemm_ctrl_if.weight_read_flag.done) begin
-          assert (gemm_unit_v2_if.weight_register_write
-               && weight_write_active_r
-               && (weight_writes_remaining_r == 1))
+          assert (weight_last_register_write)
             else $fatal(1, "%s: weight done is not the final register write", INSTANCE_ID);
         end
 
-        if (quant_dma_start) begin
-          assert (!quant_write_active_r && (quant_command_writes != 0))
-            else $fatal(1, "%s: overlapping/empty quant command", INSTANCE_ID);
+        if (scale_dma_start) begin
+          assert (!scale_write_active_r && (scale_command_writes != 0))
+            else $fatal(1, "%s: overlapping/empty scale command", INSTANCE_ID);
         end
-        if (gemm_unit_v2_if.quant_register_write) begin
-          assert (quant_write_active_r && (quant_writes_remaining_r != 0))
-            else $fatal(1, "%s: early or duplicate SC/ZP register write", INSTANCE_ID);
+        if (gemm_unit_v2_if.scale_register_write) begin
+          assert ((scale_write_active_r
+                && (scale_writes_remaining_r != 0))
+               || (scale_dma_start && (scale_command_writes != 0)))
+            else $fatal(1, "%s: early or duplicate scale register write", INSTANCE_ID);
         end
-        if (gemm_ctrl_if.quant_param_read_flag.done) begin
-          assert (gemm_unit_v2_if.quant_register_write
-               && quant_write_active_r
-               && (quant_writes_remaining_r == 1))
-            else $fatal(1, "%s: SC/ZP done is not the final register write", INSTANCE_ID);
+        if (gemm_ctrl_if.scale_read_flag.done) begin
+          assert (scale_last_register_write)
+            else $fatal(1, "%s: scale done is not the final register write", INSTANCE_ID);
+        end
+
+        if (zero_point_dma_start) begin
+          assert (!zero_point_write_active_r
+               && (zero_point_command_writes != 0))
+            else $fatal(1, "%s: overlapping/empty zero-point command", INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.zero_point_register_write) begin
+          assert ((zero_point_write_active_r
+                && (zero_point_writes_remaining_r != 0))
+               || (zero_point_dma_start
+                && (zero_point_command_writes != 0)))
+            else $fatal(1, "%s: early or duplicate zero-point register write", INSTANCE_ID);
+        end
+        if (gemm_ctrl_if.zero_point_read_flag.done) begin
+          assert (zero_point_last_register_write)
+            else $fatal(1, "%s: zero-point done is not the final register write", INSTANCE_ID);
         end
 
         if (gemm_ctrl_if.output_write_ctrl.start) begin
@@ -719,11 +839,16 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_dma_ctrl_if.cmd_valid  = gemm_ctrl_if.dma_ctrl.cmd_valid;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
     assign gemm_dma_ctrl_if.cmd_tag    = gemm_ctrl_if.dma_ctrl.cmd_tag;
+    assign gemm_dma_ctrl_if.prepare_valid
+        = gemm_ctrl_if.dma_ctrl.prepare_valid;
+    assign gemm_dma_ctrl_if.prepare_cmd = gemm_ctrl_if.dma_ctrl.prepare_cmd;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
     assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_ctrl_if.cmd_ready;
     assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
+    assign gemm_ctrl_if.dma_flag.prepare_ready
+        = gemm_dma_ctrl_if.prepare_ready;
 
     // Internal DMA config/done interfaces (driven by tmem_dma_ctrl)
     VX_config_reg_if #(
@@ -747,7 +872,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 `endif
         .gemm_dma_ctrl_if (gemm_dma_ctrl_if),
         .store_done       (output_store_done),
-        .gemm_sync_if     (gemm_sync_if[4]),
+        .gemm_sync_if     (gemm_sync_if[5]),
         .cfg_reg_if       (dma_cfg_if),
         .lookahead_if     (dma_lookahead_if),
         .done_if          (dma_done_if)
@@ -783,10 +908,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Replaces: LMEM arbiter, width adapters, LMEM DMAs, VX_gemm_dma_ctrl.
     // Contains: DMA engine (8ch AXI<->TMEM), TMEM banks, switches, local DMAs.
 
-    VX_lmem_dma_ctrl_if tmem_ldma_ctrl_if [4] ();
+    VX_lmem_dma_ctrl_if tmem_ldma_ctrl_if [5] ();
 
     // Wire local DMA ctrl interfaces to the array expected by VX_tmem_subsystem
     assign tmem_ldma_ctrl_if[0].start          = input_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[0].prepare        = input_dma_ctrl_if.prepare;
+    assign tmem_ldma_ctrl_if[0].prepare_max_beats
+        = input_dma_ctrl_if.prepare_max_beats;
     assign tmem_ldma_ctrl_if[0].src_base_addr  = input_dma_ctrl_if.src_base_addr;
     assign tmem_ldma_ctrl_if[0].src_strides    = input_dma_ctrl_if.src_strides;
     assign tmem_ldma_ctrl_if[0].dst_base_addr  = input_dma_ctrl_if.dst_base_addr;
@@ -796,8 +924,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.idle              = tmem_ldma_ctrl_if[0].idle;
     assign input_dma_ctrl_if.done              = tmem_ldma_ctrl_if[0].done;
     assign input_dma_ctrl_if.write_done        = tmem_ldma_ctrl_if[0].write_done;
+    assign input_dma_ctrl_if.prepare_ready     = tmem_ldma_ctrl_if[0].prepare_ready;
 
     assign tmem_ldma_ctrl_if[1].start          = weight_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[1].prepare        = weight_dma_ctrl_if.prepare;
+    assign tmem_ldma_ctrl_if[1].prepare_max_beats
+        = weight_dma_ctrl_if.prepare_max_beats;
     assign tmem_ldma_ctrl_if[1].src_base_addr  = weight_dma_ctrl_if.src_base_addr;
     assign tmem_ldma_ctrl_if[1].src_strides    = weight_dma_ctrl_if.src_strides;
     assign tmem_ldma_ctrl_if[1].dst_base_addr  = weight_dma_ctrl_if.dst_base_addr;
@@ -807,28 +939,51 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[1].idle;
     assign weight_dma_ctrl_if.done             = tmem_ldma_ctrl_if[1].done;
     assign weight_dma_ctrl_if.write_done       = tmem_ldma_ctrl_if[1].write_done;
+    assign weight_dma_ctrl_if.prepare_ready    = tmem_ldma_ctrl_if[1].prepare_ready;
 
-    assign tmem_ldma_ctrl_if[2].start          = quant_param_dma_ctrl_if.start;
-    assign tmem_ldma_ctrl_if[2].src_base_addr  = quant_param_dma_ctrl_if.src_base_addr;
-    assign tmem_ldma_ctrl_if[2].src_strides    = quant_param_dma_ctrl_if.src_strides;
-    assign tmem_ldma_ctrl_if[2].dst_base_addr  = quant_param_dma_ctrl_if.dst_base_addr;
-    assign tmem_ldma_ctrl_if[2].dst_strides    = quant_param_dma_ctrl_if.dst_strides;
-    assign tmem_ldma_ctrl_if[2].bounds         = quant_param_dma_ctrl_if.bounds;
-    assign tmem_ldma_ctrl_if[2].seg_size       = quant_param_dma_ctrl_if.seg_size;
-    assign quant_param_dma_ctrl_if.idle        = tmem_ldma_ctrl_if[2].idle;
-    assign quant_param_dma_ctrl_if.done        = tmem_ldma_ctrl_if[2].done;
-    assign quant_param_dma_ctrl_if.write_done  = tmem_ldma_ctrl_if[2].write_done;
+    assign tmem_ldma_ctrl_if[2].start          = scale_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[2].prepare        = scale_dma_ctrl_if.prepare;
+    assign tmem_ldma_ctrl_if[2].prepare_max_beats
+        = scale_dma_ctrl_if.prepare_max_beats;
+    assign tmem_ldma_ctrl_if[2].src_base_addr  = scale_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[2].src_strides    = scale_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[2].dst_base_addr  = scale_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[2].dst_strides    = scale_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[2].bounds         = scale_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[2].seg_size       = scale_dma_ctrl_if.seg_size;
+    assign scale_dma_ctrl_if.idle              = tmem_ldma_ctrl_if[2].idle;
+    assign scale_dma_ctrl_if.done              = tmem_ldma_ctrl_if[2].done;
+    assign scale_dma_ctrl_if.write_done        = tmem_ldma_ctrl_if[2].write_done;
+    assign scale_dma_ctrl_if.prepare_ready     = tmem_ldma_ctrl_if[2].prepare_ready;
 
-    assign tmem_ldma_ctrl_if[3].start          = output_dma_ctrl_if.start;
-    assign tmem_ldma_ctrl_if[3].src_base_addr  = output_dma_ctrl_if.src_base_addr;
-    assign tmem_ldma_ctrl_if[3].src_strides    = output_dma_ctrl_if.src_strides;
-    assign tmem_ldma_ctrl_if[3].dst_base_addr  = output_dma_ctrl_if.dst_base_addr;
-    assign tmem_ldma_ctrl_if[3].dst_strides    = output_dma_ctrl_if.dst_strides;
-    assign tmem_ldma_ctrl_if[3].bounds         = output_dma_ctrl_if.bounds;
-    assign tmem_ldma_ctrl_if[3].seg_size       = output_dma_ctrl_if.seg_size;
-    assign output_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[3].idle;
-    assign output_dma_ctrl_if.done             = tmem_ldma_ctrl_if[3].done;
-    assign output_dma_ctrl_if.write_done       = tmem_ldma_ctrl_if[3].write_done;
+    assign tmem_ldma_ctrl_if[3].start          = zero_point_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[3].prepare        = zero_point_dma_ctrl_if.prepare;
+    assign tmem_ldma_ctrl_if[3].prepare_max_beats
+        = zero_point_dma_ctrl_if.prepare_max_beats;
+    assign tmem_ldma_ctrl_if[3].src_base_addr  = zero_point_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[3].src_strides    = zero_point_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[3].dst_base_addr  = zero_point_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[3].dst_strides    = zero_point_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[3].bounds         = zero_point_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[3].seg_size       = zero_point_dma_ctrl_if.seg_size;
+    assign zero_point_dma_ctrl_if.idle         = tmem_ldma_ctrl_if[3].idle;
+    assign zero_point_dma_ctrl_if.done         = tmem_ldma_ctrl_if[3].done;
+    assign zero_point_dma_ctrl_if.write_done   = tmem_ldma_ctrl_if[3].write_done;
+    assign zero_point_dma_ctrl_if.prepare_ready = tmem_ldma_ctrl_if[3].prepare_ready;
+
+    assign tmem_ldma_ctrl_if[4].start          = output_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[4].prepare        = 1'b0;
+    assign tmem_ldma_ctrl_if[4].prepare_max_beats = '0;
+    assign tmem_ldma_ctrl_if[4].src_base_addr  = output_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[4].src_strides    = output_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[4].dst_base_addr  = output_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[4].dst_strides    = output_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[4].bounds         = output_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[4].seg_size       = output_dma_ctrl_if.seg_size;
+    assign output_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[4].idle;
+    assign output_dma_ctrl_if.done             = tmem_ldma_ctrl_if[4].done;
+    assign output_dma_ctrl_if.write_done       = tmem_ldma_ctrl_if[4].write_done;
+    assign output_dma_ctrl_if.prepare_ready    = tmem_ldma_ctrl_if[4].prepare_ready;
 
     VX_tmem_subsystem #(
       .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),
@@ -848,7 +1003,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .axi_m          (dma_axi_m),
       .gemm_input_if  (tmem_i_gemm_bus_if),
       .gemm_weight_if (tmem_w_gemm_bus_if),
-      .gemm_sz_if     (tmem_sz_gemm_bus_if),
+      .gemm_scale_if  (tmem_sc_gemm_bus_if),
+      .gemm_zp_if     (tmem_zp_gemm_bus_if),
       .gemm_output_if (tmem_o_gemm_bus_if)
 `ifdef PERF_ENABLE
       ,.hbm_dma_perf         (hbm_dma_perf)
@@ -871,7 +1027,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .reset(reset),
       .i_lmem_bus_if(i_gemm_bus_if),
       .w_lmem_bus_if(w_gemm_bus_if),
-      .sz_lmem_bus_if(sz_gemm_bus_if),
+      .sc_lmem_bus_if(sc_gemm_bus_if),
+      .zp_lmem_bus_if(zp_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_v2_if(gemm_unit_v2_if)
 `ifdef ENABLE_HW_DEBUG_GEMM
@@ -904,19 +1061,35 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign w_gemm_bus_if.req_data.flags  = tmem_w_gemm_bus_if.req_data.flags;
     assign w_gemm_bus_if.req_data.tag    = tmem_w_gemm_bus_if.req_data.tag;
 
-    // Scale/zero: addr shifted left to convert beat address to byte address
-    assign sz_gemm_bus_if.req_valid  = tmem_sz_gemm_bus_if.req_valid;
-    assign tmem_sz_gemm_bus_if.req_ready  = sz_gemm_bus_if.req_ready;
-    assign tmem_sz_gemm_bus_if.rsp_valid  = sz_gemm_bus_if.rsp_valid;
-    assign tmem_sz_gemm_bus_if.rsp_data   = sz_gemm_bus_if.rsp_data;
-    assign sz_gemm_bus_if.rsp_ready  = tmem_sz_gemm_bus_if.rsp_ready;
+    // Scale and zero-point use independent ingress paths.  Both convert the
+    // local DMA beat address back to the GEMM register byte address.
+    assign sc_gemm_bus_if.req_valid = tmem_sc_gemm_bus_if.req_valid;
+    assign tmem_sc_gemm_bus_if.req_ready = sc_gemm_bus_if.req_ready;
+    assign tmem_sc_gemm_bus_if.rsp_valid = sc_gemm_bus_if.rsp_valid;
+    assign tmem_sc_gemm_bus_if.rsp_data = sc_gemm_bus_if.rsp_data;
+    assign sc_gemm_bus_if.rsp_ready = tmem_sc_gemm_bus_if.rsp_ready;
+    assign sc_gemm_bus_if.req_data.rw = tmem_sc_gemm_bus_if.req_data.rw;
+    assign sc_gemm_bus_if.req_data.addr
+        = tmem_sc_gemm_bus_if.req_data.addr
+       << `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE);
+    assign sc_gemm_bus_if.req_data.data = tmem_sc_gemm_bus_if.req_data.data;
+    assign sc_gemm_bus_if.req_data.byteen = tmem_sc_gemm_bus_if.req_data.byteen;
+    assign sc_gemm_bus_if.req_data.flags = tmem_sc_gemm_bus_if.req_data.flags;
+    assign sc_gemm_bus_if.req_data.tag = tmem_sc_gemm_bus_if.req_data.tag;
 
-    assign sz_gemm_bus_if.req_data.rw     = tmem_sz_gemm_bus_if.req_data.rw;
-    assign sz_gemm_bus_if.req_data.addr   = (tmem_sz_gemm_bus_if.req_data.addr) << (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)); // beat 단위 주소 -> byte 단위 주소
-    assign sz_gemm_bus_if.req_data.data   = tmem_sz_gemm_bus_if.req_data.data;
-    assign sz_gemm_bus_if.req_data.byteen = tmem_sz_gemm_bus_if.req_data.byteen;
-    assign sz_gemm_bus_if.req_data.flags  = tmem_sz_gemm_bus_if.req_data.flags;
-    assign sz_gemm_bus_if.req_data.tag    = tmem_sz_gemm_bus_if.req_data.tag;
+    assign zp_gemm_bus_if.req_valid = tmem_zp_gemm_bus_if.req_valid;
+    assign tmem_zp_gemm_bus_if.req_ready = zp_gemm_bus_if.req_ready;
+    assign tmem_zp_gemm_bus_if.rsp_valid = zp_gemm_bus_if.rsp_valid;
+    assign tmem_zp_gemm_bus_if.rsp_data = zp_gemm_bus_if.rsp_data;
+    assign zp_gemm_bus_if.rsp_ready = tmem_zp_gemm_bus_if.rsp_ready;
+    assign zp_gemm_bus_if.req_data.rw = tmem_zp_gemm_bus_if.req_data.rw;
+    assign zp_gemm_bus_if.req_data.addr
+        = tmem_zp_gemm_bus_if.req_data.addr
+       << `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE);
+    assign zp_gemm_bus_if.req_data.data = tmem_zp_gemm_bus_if.req_data.data;
+    assign zp_gemm_bus_if.req_data.byteen = tmem_zp_gemm_bus_if.req_data.byteen;
+    assign zp_gemm_bus_if.req_data.flags = tmem_zp_gemm_bus_if.req_data.flags;
+    assign zp_gemm_bus_if.req_data.tag = tmem_zp_gemm_bus_if.req_data.tag;
 
     // Output: direct connection
     `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, tmem_o_gemm_bus_if);
@@ -958,8 +1131,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     //   total_cycles  : forwarded from gemm_ctrl
     //   lmem_rd_bytes : deferred (tied to '0). The original 78ca77 design tapped
     //                   a single shared lmem_bus_if at the gemm_node boundary.
-    //                   On fpint_improve that bus has been split into four
-    //                   separate GEMM-unit-facing buses (i/w/sz/o_gemm_bus_if)
+    //                   On fpint_improve that bus has been split into five
+    //                   separate GEMM-unit-facing buses (i/w/sc/zp/o).
     //                   that flow through the TMEM subsystem's local DMAs. The
     //                   per-LDMA byte counts are already aggregated in
     //                   lmem_dma_agg_perf (rd_bytes/wr_bytes), and the per-port

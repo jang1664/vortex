@@ -1,6 +1,6 @@
 `include "VX_define.vh"
 
-interface VX_dma_lookahead_if ();
+interface VX_dma_lookahead_if import VX_gpu_pkg::*; ();
 
   logic                 prepare_valid;
   logic [0:0]           prepare_id;
@@ -9,6 +9,8 @@ interface VX_dma_lookahead_if ();
   logic [1:0][31:0]     bound;
   logic                 activate;
   logic [0:0]           activate_id;
+  logic                 data_release;
+  logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] data_max_beats;
   logic                 prepare_ready;
   logic [1:0]           result_ready;
 
@@ -20,6 +22,8 @@ interface VX_dma_lookahead_if ();
     output bound,
     output activate,
     output activate_id,
+    output data_release,
+    output data_max_beats,
     input  prepare_ready,
     input  result_ready
   );
@@ -32,6 +36,8 @@ interface VX_dma_lookahead_if ();
     input  bound,
     input  activate,
     input  activate_id,
+    input  data_release,
+    input  data_max_beats,
     output prepare_ready,
     output result_ready
   );

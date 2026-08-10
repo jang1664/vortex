@@ -80,7 +80,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     gemm_fsm_if.flag.child_ready = '0;
     wait (reset == 1'b0);
     gemm_fsm_if.flag.idle = 1'b1;
-    gemm_fsm_if.flag.child_ready = 5'b1_1111;
+    gemm_fsm_if.flag.child_ready = '1;
   end
 
   // -----------------------------
@@ -111,7 +111,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam logic [3:0] OP_NOTIFY      = 4'd3;
   localparam logic [3:0] OP_WAIT        = 4'd4;
   localparam logic [3:0] OP_W_LDMA_MXU  = 4'd5;
-  localparam logic [3:0] OP_SZ_LDMA_MXU = 4'd6;
+  localparam logic [3:0] OP_SC_LDMA_MXU = GEMM_OP_SC_LDMA_MXU;
+  localparam logic [3:0] OP_ZP_LDMA_MXU = GEMM_OP_ZP_LDMA_MXU;
   localparam logic [3:0] OP_I_LDMA_ARM  = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM  = 4'd8;
   localparam logic [3:0] OP_CLEAR       = 4'd9;
@@ -125,6 +126,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     logic [4:0]  rd;
     gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
     gemm_notify_meta_t notify;
+    gemm_prepare_meta_t prepare;
     logic dma_priority;
     logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
       dma_max_chunk_log2p1;
@@ -143,6 +145,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       r.rd    = c.rd;
       r.waits = c.waits;
       r.notify = c.notify;
+      r.prepare = c.prepare;
       r.dma_priority = c.dma_priority;
       r.dma_max_chunk_log2p1 = c.dma_max_chunk_log2p1;
       cmd_log.push_back(r);
@@ -362,10 +365,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
           OP_DMA_LD:     n_dma_ld++;
           OP_DMA_ST:     n_dma_st++;
           OP_W_LDMA_MXU: n_w++;
-          OP_SZ_LDMA_MXU: begin
-            if (cmd_log[i].notify.valid) n_zp++;
-            else                         n_sc++;
-          end
+          OP_SC_LDMA_MXU: n_sc++;
+          OP_ZP_LDMA_MXU: n_zp++;
           OP_I_LDMA_ARM: n_arm++;
           OP_O_ACC2LMEM: n_acc2lmem++;
           OP_WAIT:       n_wait++;
@@ -374,19 +375,73 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
         endcase
 
         if (!(cmd_log[i].op inside {OP_DMA_LD, OP_DMA_ST,
-                                     OP_W_LDMA_MXU, OP_SZ_LDMA_MXU,
+                                     OP_W_LDMA_MXU, OP_SC_LDMA_MXU,
+                                     OP_ZP_LDMA_MXU,
                                      OP_I_LDMA_ARM, OP_O_ACC2LMEM}))
           $fatal(1, "Removed or invalid opcode emitted at command %0d: op=%0d",
                  i, cmd_log[i].op);
         for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; dep++) begin
           if (cmd_log[i].waits[dep].valid
-              && cmd_log[i].waits[dep].reg_id >= 11)
+              && cmd_log[i].waits[dep].reg_id >= GEMM_NUM_SYNC_REGS)
             $fatal(1, "Command %0d wait %0d has invalid RID %0d",
                    i, dep, cmd_log[i].waits[dep].reg_id);
         end
-        if (cmd_log[i].notify.valid && cmd_log[i].notify.reg_id >= 11)
+        if (cmd_log[i].notify.valid
+            && cmd_log[i].notify.reg_id >= GEMM_NUM_SYNC_REGS)
           $fatal(1, "Command %0d notify has invalid RID %0d",
                  i, cmd_log[i].notify.reg_id);
+        unique case (cmd_log[i].op)
+          OP_DMA_LD: begin
+            if (!cmd_log[i].prepare.valid
+                || cmd_log[i].prepare.mode != GEMM_PREPARE_SOURCE_READ
+                || cmd_log[i].prepare.max_beats
+                   != GEMM_TILE_DMA_PREFETCH_MAX_BEATS)
+              $fatal(1, "DMA load #%0d prepare credit mismatch got=%0d expected=%0d",
+                     i, cmd_log[i].prepare.max_beats,
+                     GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+          end
+          OP_W_LDMA_MXU: begin
+            if (!cmd_log[i].prepare.valid
+                || cmd_log[i].prepare.mode != GEMM_PREPARE_SOURCE_READ
+                || cmd_log[i].prepare.max_beats
+                   != GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS)
+              $fatal(1, "Weight load #%0d prepare credit mismatch got=%0d expected=%0d",
+                     i, cmd_log[i].prepare.max_beats,
+                     GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
+          end
+          OP_SC_LDMA_MXU: begin
+            if (!cmd_log[i].prepare.valid
+                || cmd_log[i].prepare.mode != GEMM_PREPARE_SOURCE_READ
+                || cmd_log[i].prepare.max_beats
+                   != GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS)
+              $fatal(1, "Scale load #%0d prepare credit mismatch got=%0d expected=%0d",
+                     i, cmd_log[i].prepare.max_beats,
+                     GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
+          end
+          OP_ZP_LDMA_MXU: begin
+            if (!cmd_log[i].prepare.valid
+                || cmd_log[i].prepare.mode != GEMM_PREPARE_SOURCE_READ
+                || cmd_log[i].prepare.max_beats
+                   != GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS)
+              $fatal(1, "Zero-point load #%0d prepare credit mismatch got=%0d expected=%0d",
+                     i, cmd_log[i].prepare.max_beats,
+                     GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
+          end
+          OP_I_LDMA_ARM: begin
+            if (!cmd_log[i].prepare.valid
+                || cmd_log[i].prepare.mode != GEMM_PREPARE_SOURCE_READ
+                || cmd_log[i].prepare.max_beats
+                   != GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS)
+              $fatal(1, "Input load #%0d prepare credit mismatch got=%0d expected=%0d",
+                     i, cmd_log[i].prepare.max_beats,
+                     GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);
+          end
+          OP_DMA_ST, OP_O_ACC2LMEM: begin
+            if (cmd_log[i].prepare.valid)
+              $fatal(1, "Output/store command #%0d unexpectedly enables prepare", i);
+          end
+          default: ;
+        endcase
         if (cmd_log[i].op == OP_DMA_LD
             && (!cmd_log[i].dma_priority
                 || cmd_log[i].dma_max_chunk_log2p1 != 0))
@@ -494,7 +549,11 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             w_target[cmd_buf] = cmd_log[i].notify.value;
           end
 
-          OP_SZ_LDMA_MXU: begin
+          OP_SC_LDMA_MXU, OP_ZP_LDMA_MXU: begin
+            bit is_scale;
+            logic [3:0] expected_qparam_rid;
+
+            is_scale = (cmd_log[i].op == OP_SC_LDMA_MXU);
             cmd_buf = cmd_log[i].flags[1];
             if (!cmd_log[i].waits[0].valid
                 || !(cmd_log[i].waits[0].reg_id inside {4'd0, 4'd5}))
@@ -519,18 +578,27 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             if (cmd_log[i].waits[2].valid || cmd_log[i].waits[3].valid)
               $fatal(1, "SC/ZP load #%0d uses wait slot beyond expected count", i);
 
-            if (!cmd_log[i].notify.valid) begin
+            expected_qparam_rid = is_scale
+                                ? (cmd_buf ? GEMM_RID_SC1 : GEMM_RID_SC0)
+                                : (cmd_buf ? GEMM_RID_ZP1 : GEMM_RID_ZP0);
+            if (!cmd_log[i].notify.valid
+                || !cmd_log[i].notify.set_mode
+                || cmd_log[i].notify.reg_id != expected_qparam_rid)
+              $fatal(1,
+                     "SC/ZP load #%0d has incoherent physical RID notification",
+                     i);
+
+            if (is_scale) begin
               if ((i + 1) >= cmd_log.size()
-                  || cmd_log[i+1].op != OP_SZ_LDMA_MXU
+                  || cmd_log[i+1].op != OP_ZP_LDMA_MXU
                   || !cmd_log[i+1].notify.valid
                   || cmd_log[i+1].flags != cmd_log[i].flags
-                  || cmd_log[i+1].waits != cmd_log[i].waits)
+                  || cmd_log[i+1].waits != cmd_log[i].waits
+                  || cmd_log[i+1].notify.value != cmd_log[i].notify.value)
                 $fatal(1, "SC load #%0d is not followed by matching ZP load", i);
             end else begin
-              if (!cmd_log[i].notify.set_mode
-                  || cmd_log[i].notify.reg_id != (cmd_buf ? 7 : 2)
-                  || cmd_log[i].notify.value <= sz_target[cmd_buf])
-                $fatal(1, "ZP load #%0d has incoherent RID_SZ SET", i);
+              if (cmd_log[i].notify.value <= sz_target[cmd_buf])
+                $fatal(1, "ZP load #%0d has non-monotonic qparam sequence", i);
               sz_target[cmd_buf] = cmd_log[i].notify.value;
             end
           end
@@ -732,6 +800,12 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       $display("FSM_DMA_CHUNK_ENCODING_PASS beats=%0d store_log2p1=%0d load_log2p1=0 priorities=store0_load1",
                TB_DMA_STORE_MAX_CHUNK_BEATS,
                $clog2(TB_DMA_STORE_MAX_CHUNK_BEATS) + 1);
+      $display("FSM_PREFETCH_CREDIT_POLICY_PASS input=%0d weight=%0d scale=%0d zp=%0d tile=%0d output_store_disabled=1",
+               GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS,
+               GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS,
+               GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS,
+               GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS,
+               GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
     end
   endtask
 

@@ -348,19 +348,20 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           = GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH'(
               $clog2(DMA_STORE_MAX_CHUNK_BEATS) + 1);
   localparam logic [3:0] OP_W_LDMA_MXU    = 4'd5;
-  localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
-  localparam logic [3:0] OP_SC_LDMA_MXU   = OP_SZ_LDMA_MXU;
-  localparam logic [3:0] OP_ZP_LDMA_MXU   = OP_SZ_LDMA_MXU;
+  localparam logic [3:0] OP_SC_LDMA_MXU   = GEMM_OP_SC_LDMA_MXU;
+  localparam logic [3:0] OP_ZP_LDMA_MXU   = GEMM_OP_ZP_LDMA_MXU;
   localparam logic [3:0] OP_I_LDMA_ARM    = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM    = 4'd8;
 
   // --------------------------------------------------------------------------
   // Sync register assignment
   // --------------------------------------------------------------------------
-  localparam int NUM_SYNC_REGS = 11;
+  localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
   localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
   localparam int RID_ACC_FREE0 = 9, RID_ACC_FREE1 = 10;
+  localparam int RID_SC0 = GEMM_RID_SC0, RID_ZP0 = GEMM_RID_ZP0;
+  localparam int RID_SC1 = GEMM_RID_SC1, RID_ZP1 = GEMM_RID_ZP1;
   // Global sync sequence stride per DMA tile.
   // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
   localparam int MXU_N_PER_TILE_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
@@ -370,6 +371,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   function automatic mm_rid_t rid_tile   (input logic buf_sel);  return mm_rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
   function automatic mm_rid_t rid_w_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
   function automatic mm_rid_t rid_sz_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SZ1 : RID_SZ0); endfunction
+  function automatic mm_rid_t rid_sc_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SC1 : RID_SC0); endfunction
+  function automatic mm_rid_t rid_zp_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_ZP1 : RID_ZP0); endfunction
   function automatic mm_rid_t rid_g_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_G1  : RID_G0);  endfunction
   function automatic mm_rid_t rid_acc_free(input logic acc_group);
     return mm_rid_t'(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0);
@@ -402,6 +405,32 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       t.valid  = 1'b1;
       t.reg_id = GEMM_SYNC_REG_ID_WIDTH'(reg_id);
       t.target = target;
+      return t;
+    end
+  endfunction
+
+  function automatic gemm_prepare_meta_t make_source_prepare(
+    input int unsigned max_beats
+  );
+    gemm_prepare_meta_t t;
+    begin
+      t = '0;
+      t.valid = 1'b1;
+      t.mode = GEMM_PREPARE_SOURCE_READ;
+      t.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(max_beats);
+      return t;
+    end
+  endfunction
+
+  function automatic gemm_prepare_meta_t make_source_prepare_wait(
+    input mm_rid_t reg_id,
+    input u32_t target,
+    input int unsigned max_beats
+  );
+    gemm_prepare_meta_t t;
+    begin
+      t = make_source_prepare(max_beats);
+      t.waits[0] = make_wait_meta(reg_id, target);
       return t;
     end
   endfunction
@@ -442,6 +471,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.stride   = '0;
       c.dma_priority = 1'b1;
       c.dma_max_chunk_log2p1 = '0;
+      c.prepare = make_source_prepare(GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
       return c;
     end
   endfunction
@@ -707,12 +737,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_CUR_W,
       S_MXU_PRE_NEXT_W: state_child = 3'd1;
       S_MXU_PRE_CUR_SC,
+      S_MXU_PRE_NEXT_SC: state_child = 3'd2;
       S_MXU_PRE_CUR_ZP,
-      S_MXU_PRE_NEXT_SC,
-      S_MXU_PRE_NEXT_ZP: state_child = 3'd2;
+      S_MXU_PRE_NEXT_ZP: state_child = 3'd3;
       S_MXU_ARM_GEMM: state_child = 3'd0;
-      S_O_ACC2LMEM: state_child = 3'd3;
-      default: state_child = 3'd4;
+      S_O_ACC2LMEM: state_child = 3'd4;
+      default: state_child = 3'd5;
     endcase
   endfunction
 
@@ -1704,6 +1734,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound    = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
           if (prior_g_wait_valid_q) begin
@@ -1743,6 +1776,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
           if (prior_g_wait_valid_q) begin
@@ -1750,6 +1786,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 = make_wait_meta(prior_g_wait_rid_q,
                                  prior_g_wait_target_q);
           end
+          out_cmd_d.notify = make_notify_meta(rid_sc_mxu(mxu_buf_q),
+                                               global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_CUR_ZP;
         end
@@ -1773,6 +1811,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
           if (prior_g_wait_valid_q) begin
@@ -1780,7 +1821,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 = make_wait_meta(prior_g_wait_rid_q,
                                  prior_g_wait_target_q);
           end
-          out_cmd_d.notify = make_notify_meta(rid_sz_mxu(mxu_buf_q),
+          out_cmd_d.notify = make_notify_meta(rid_zp_mxu(mxu_buf_q),
                                                global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_W;
@@ -1821,6 +1862,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             c.bound     = 16'd1;
 
             out_cmd_d   = c;
+            out_cmd_d.prepare = make_source_prepare_wait(
+                rid_tile(buf_cur), in_ready_target_cur,
+                GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
             out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                  in_ready_target_cur);
             if (prior_g_wait_valid_q) begin
@@ -1866,6 +1910,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             c.bound     = 16'd1;
 
             out_cmd_d   = c;
+            out_cmd_d.prepare = make_source_prepare_wait(
+                rid_tile(buf_cur), in_ready_target_cur,
+                GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
             out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                  in_ready_target_cur);
             if (prior_g_wait_valid_q) begin
@@ -1873,6 +1920,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                   = make_wait_meta(prior_g_wait_rid_q,
                                    prior_g_wait_target_q);
             end
+            out_cmd_d.notify = make_notify_meta(
+                rid_sc_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
             out_start_d = 1'b1;
             state_d     = S_MXU_PRE_NEXT_ZP;
           end else begin
@@ -1901,6 +1950,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
           if (prior_g_wait_valid_q) begin
@@ -1909,7 +1961,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                  prior_g_wait_target_q);
           end
           out_cmd_d.notify = make_notify_meta(
-              rid_sz_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
+              rid_zp_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_ARM_GEMM;
         end
@@ -1948,6 +2000,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.stride   = MXU_KT * FP16_BYTES;
 
           out_cmd_d   = c;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_w_mxu(mxu_buf_q),
                                                global_mxu_seq);
           out_cmd_d.waits[1] = make_wait_meta(rid_sz_mxu(mxu_buf_q),
@@ -2417,7 +2472,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         assert (out_cmd_d.instr[3:0] == OP_DMA_LD
              || out_cmd_d.instr[3:0] == OP_DMA_ST
              || out_cmd_d.instr[3:0] == OP_W_LDMA_MXU
-             || out_cmd_d.instr[3:0] == OP_SZ_LDMA_MXU
+             || out_cmd_d.instr[3:0] == OP_SC_LDMA_MXU
+             || out_cmd_d.instr[3:0] == OP_ZP_LDMA_MXU
              || out_cmd_d.instr[3:0] == OP_I_LDMA_ARM
              || out_cmd_d.instr[3:0] == OP_O_ACC2LMEM)
           else $fatal(1, "GEMM FSM emitted a removed sync opcode");
@@ -2574,7 +2630,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       OP_DMA_LD:        return "DMA_LD";
       OP_DMA_ST:        return "DMA_ST";
       OP_W_LDMA_MXU:    return "W_LDMA_MXU";
-      OP_SZ_LDMA_MXU:   return "SZ_LDMA_MXU";
+      OP_SC_LDMA_MXU:   return "SC_LDMA_MXU";
+      OP_ZP_LDMA_MXU:   return "ZP_LDMA_MXU";
       OP_I_LDMA_ARM:    return "I_LDMA_ARM";
       OP_O_ACC2LMEM:    return "O_ACC2LMEM";
       default:          return "UNKNOWN";
@@ -2630,7 +2687,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                     $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0], cmd_i.flags[7:1], cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
         end
 
-        OP_W_LDMA_MXU, OP_SZ_LDMA_MXU: begin
+        OP_W_LDMA_MXU, OP_SC_LDMA_MXU, OP_ZP_LDMA_MXU: begin
           `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_MXU_LD | {inst=%s, state=%0d, op=%s, lmem_src=0x%0h, data_sel=0x%0h, qdir=%0d, wtrans=%0d, mxu_buf=%0d, tile_buf=%0d}\n",
                     $time, INSTANCE_ID, state_i, op_to_str(op), cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[2], cmd_i.flags[1], cmd_i.flags[0]))
         end
@@ -2688,5 +2745,25 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     ("DMA store chunk size must be positive"));
   `VX_STATIC_ASSERT(`IS_POW2(DMA_STORE_MAX_CHUNK_BEATS),
     ("DMA store chunk size must be a power of two"));
+  `VX_STATIC_ASSERT((GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Input local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Weight local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Scale local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Zero-point local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_TILE_DMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_TILE_DMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Tile-DMA prefetch credit is out of range"));
 
 endmodule

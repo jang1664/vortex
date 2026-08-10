@@ -123,7 +123,12 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     VX_mem_bus_if #(
         .DATA_SIZE (`GEMM_SCALE_ZERO_DATA_SIZE),
         .TAG_WIDTH (1)
-    ) sz_lmem_bus_if ();
+    ) sc_lmem_bus_if ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (`GEMM_SCALE_ZERO_DATA_SIZE),
+        .TAG_WIDTH (1)
+    ) zp_lmem_bus_if ();
 
     VX_mem_bus_if #(
         .DATA_SIZE (`GEMM_OUTPUT_DATA_SIZE),
@@ -139,7 +144,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         .reset           (reset),
         .i_lmem_bus_if   (i_lmem_bus_if),
         .w_lmem_bus_if   (w_lmem_bus_if),
-        .sz_lmem_bus_if  (sz_lmem_bus_if),
+        .sc_lmem_bus_if  (sc_lmem_bus_if),
+        .zp_lmem_bus_if  (zp_lmem_bus_if),
         .o_lmem_bus_if   (o_lmem_bus_if),
         .gemm_unit_v2_if (gemm_unit_v2_if)
     );
@@ -490,9 +496,12 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         w_lmem_bus_if.req_valid = 1'b0;
         w_lmem_bus_if.req_data = '0;
         w_lmem_bus_if.rsp_ready = 1'b1;
-        sz_lmem_bus_if.req_valid = 1'b0;
-        sz_lmem_bus_if.req_data = '0;
-        sz_lmem_bus_if.rsp_ready = 1'b1;
+        sc_lmem_bus_if.req_valid = 1'b0;
+        sc_lmem_bus_if.req_data = '0;
+        sc_lmem_bus_if.rsp_ready = 1'b1;
+        zp_lmem_bus_if.req_valid = 1'b0;
+        zp_lmem_bus_if.req_data = '0;
+        zp_lmem_bus_if.rsp_ready = 1'b1;
         o_lmem_bus_if.req_valid = 1'b0;
         o_lmem_bus_if.req_data = '0;
         o_lmem_bus_if.rsp_ready = 1'b1;
@@ -535,15 +544,15 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] value
     );
         @(negedge clk);
-        sz_lmem_bus_if.req_valid = 1'b1;
-        sz_lmem_bus_if.req_data.rw = 1'b1;
-        sz_lmem_bus_if.req_data.addr
+        sc_lmem_bus_if.req_valid = 1'b1;
+        sc_lmem_bus_if.req_data.rw = 1'b1;
+        sc_lmem_bus_if.req_data.addr
             = bank * (`MXU_MAX_DIM * `SCALE_WIDTH / 8);
-        sz_lmem_bus_if.req_data.data = value;
-        sz_lmem_bus_if.req_data.byteen = '1;
-        do @(posedge clk); while (!sz_lmem_bus_if.req_ready);
+        sc_lmem_bus_if.req_data.data = value;
+        sc_lmem_bus_if.req_data.byteen = '1;
+        do @(posedge clk); while (!sc_lmem_bus_if.req_ready);
         @(negedge clk);
-        sz_lmem_bus_if.req_valid = 1'b0;
+        sc_lmem_bus_if.req_valid = 1'b0;
     endtask
 
     task automatic write_zero_reg(
@@ -551,16 +560,135 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] value
     );
         @(negedge clk);
-        sz_lmem_bus_if.req_valid = 1'b1;
-        sz_lmem_bus_if.req_data.rw = 1'b1;
-        sz_lmem_bus_if.req_data.addr
+        zp_lmem_bus_if.req_valid = 1'b1;
+        zp_lmem_bus_if.req_data.rw = 1'b1;
+        zp_lmem_bus_if.req_data.addr
             = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8)
             + bank * (`MXU_MAX_DIM * `ZP_WIDTH / 8);
-        sz_lmem_bus_if.req_data.data = value;
-        sz_lmem_bus_if.req_data.byteen = '1;
-        do @(posedge clk); while (!sz_lmem_bus_if.req_ready);
+        zp_lmem_bus_if.req_data.data = value;
+        zp_lmem_bus_if.req_data.byteen = '1;
+        do @(posedge clk); while (!zp_lmem_bus_if.req_ready);
         @(negedge clk);
-        sz_lmem_bus_if.req_valid = 1'b0;
+        zp_lmem_bus_if.req_valid = 1'b0;
+    endtask
+
+    task automatic test_parallel_qparam_ports();
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_reg0_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_reg1_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg0_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg1_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg0_expected;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg1_expected;
+        logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0] held_scale_data;
+        begin
+            for (int i = 0; i < `MXU_MAX_DIM; ++i) begin
+                scale_reg0_data[i] = `SCALE_WIDTH'(16'h3000 + i);
+                scale_reg1_data[i] = `SCALE_WIDTH'(16'h3800 + i);
+                zero_reg0_data[i] = `ZP_WIDTH'(i + 1);
+                zero_reg1_data[i] = `ZP_WIDTH'(i + 33);
+                zero_reg0_expected[i] = -$signed(zero_reg0_data[i]);
+                zero_reg1_expected[i] = -$signed(zero_reg1_data[i]);
+            end
+
+            // Scale REG0 and ZP REG1 must accept and write in the same cycle.
+            @(negedge clk);
+            sc_lmem_bus_if.req_valid = 1'b1;
+            sc_lmem_bus_if.req_data = '0;
+            sc_lmem_bus_if.req_data.rw = 1'b1;
+            sc_lmem_bus_if.req_data.addr = 0;
+            sc_lmem_bus_if.req_data.data = scale_reg0_data;
+            sc_lmem_bus_if.req_data.byteen = '1;
+            zp_lmem_bus_if.req_valid = 1'b1;
+            zp_lmem_bus_if.req_data = '0;
+            zp_lmem_bus_if.req_data.rw = 1'b1;
+            zp_lmem_bus_if.req_data.addr
+                = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8)
+                + (`MXU_MAX_DIM * `ZP_WIDTH / 8);
+            zp_lmem_bus_if.req_data.data = zero_reg1_data;
+            zp_lmem_bus_if.req_data.byteen = '1;
+            #1;
+            if (!sc_lmem_bus_if.req_ready || !zp_lmem_bus_if.req_ready)
+                $fatal(1, "parallel qparam REG0/REG1 requests were not both ready");
+            @(posedge clk);
+            #1;
+            if (!gemm_unit_v2_if.scale_register_write
+             || !gemm_unit_v2_if.zero_point_register_write
+             || !gemm_unit_v2_if.quant_register_write)
+                $fatal(1, "parallel qparam REG0/REG1 write pulses were not simultaneous");
+            if (u_dut.scale_regs[0] !== scale_reg0_data
+             || u_dut.zero_regs[1] !== zero_reg1_expected)
+                $fatal(1, "parallel qparam REG0/REG1 data mismatch");
+            @(negedge clk);
+            sc_lmem_bus_if.req_valid = 1'b0;
+            zp_lmem_bus_if.req_valid = 1'b0;
+
+            // Exercise the opposite register pair in another simultaneous beat.
+            sc_lmem_bus_if.req_valid = 1'b1;
+            sc_lmem_bus_if.req_data.addr
+                = `MXU_MAX_DIM * `SCALE_WIDTH / 8;
+            sc_lmem_bus_if.req_data.data = scale_reg1_data;
+            zp_lmem_bus_if.req_valid = 1'b1;
+            zp_lmem_bus_if.req_data.addr
+                = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8);
+            zp_lmem_bus_if.req_data.data = zero_reg0_data;
+            @(posedge clk);
+            #1;
+            if (!gemm_unit_v2_if.scale_register_write
+             || !gemm_unit_v2_if.zero_point_register_write
+             || u_dut.scale_regs[1] !== scale_reg1_data
+             || u_dut.zero_regs[0] !== zero_reg0_expected)
+                $fatal(1, "parallel qparam REG1/REG0 write mismatch");
+            @(negedge clk);
+            sc_lmem_bus_if.req_valid = 1'b0;
+            zp_lmem_bus_if.req_valid = 1'b0;
+
+            // Admit a no-write packet that uses scale REG0 and ZP REG1.  While
+            // it is live, scale REG0 must stall but the unused ZP REG0 remains
+            // independently writable.
+            i_lmem_bus_if.req_valid = 1'b1;
+            i_lmem_bus_if.req_data = '0;
+            gemm_unit_v2_if.packet_ctrl = '0;
+            gemm_unit_v2_if.packet_ctrl.valid = 1'b1;
+            gemm_unit_v2_if.packet_ctrl.sreg_use_idx = 1'b0;
+            gemm_unit_v2_if.packet_ctrl.zreg_use_idx = 1'b1;
+            gemm_unit_v2_if.packet_ctrl.last = 1'b1;
+            @(posedge clk);
+            @(negedge clk);
+            i_lmem_bus_if.req_valid = 1'b0;
+            gemm_unit_v2_if.packet_ctrl = '0;
+            sc_lmem_bus_if.req_valid = 1'b1;
+            sc_lmem_bus_if.req_data.addr = 0;
+            sc_lmem_bus_if.req_data.data = scale_reg1_data;
+            held_scale_data = sc_lmem_bus_if.req_data.data;
+            zp_lmem_bus_if.req_valid = 1'b1;
+            zp_lmem_bus_if.req_data.addr
+                = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8);
+            zp_lmem_bus_if.req_data.data = zero_reg1_data;
+            #1;
+            if (sc_lmem_bus_if.req_ready || !zp_lmem_bus_if.req_ready)
+                $fatal(1, "qparam ports were not independently backpressured");
+            @(posedge clk);
+            #1;
+            if (gemm_unit_v2_if.scale_register_write
+             || !gemm_unit_v2_if.zero_point_register_write)
+                $fatal(1, "stalled scale request blocked or merged with ZP write");
+            @(negedge clk);
+            zp_lmem_bus_if.req_valid = 1'b0;
+            while (!sc_lmem_bus_if.req_ready) begin
+                if (sc_lmem_bus_if.req_data.data !== held_scale_data)
+                    $fatal(1, "stalled scale request changed before ready");
+                @(posedge clk);
+                #1;
+            end
+            @(posedge clk);
+            #1;
+            if (!gemm_unit_v2_if.scale_register_write
+             || gemm_unit_v2_if.zero_point_register_write)
+                $fatal(1, "released scale request did not write independently");
+            @(negedge clk);
+            sc_lmem_bus_if.req_valid = 1'b0;
+            $display("QPARAM_PARALLEL_PORTS_PASS simultaneous_64B=1 reg0_reg1=1 independent_backpressure=1");
+        end
     endtask
 
     task automatic write_weight_matrix(
@@ -1768,6 +1896,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         apply_reset();
         clear_weight_bank(1'b0);
         clear_weight_bank(1'b1);
+        test_parallel_qparam_ports();
         test_group_aware_output_arbitration();
 
         test_nonzero_reference(`QDIR_COL, 1'b0,

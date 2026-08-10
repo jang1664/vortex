@@ -14,14 +14,14 @@
 `include "VX_define.vh"
 
 // Single tensor memory bank for the GEMM unit's dedicated memory subsystem.
-// Arbitrates multiple requestors (DMA, input_read, weight_read, sz_read,
-// output_write) into a single-port SRAM via VX_mem_arb.
+// Arbitrates multiple requestors (DMA, input_read, weight_read, scale_read,
+// zero_point_read, output_write) into a single-port SRAM via VX_mem_arb.
 
 module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter SIZE       = 4*1024,   // Bank size in bytes (4KB default)
     parameter DATA_SIZE  = 64,       // Data width in bytes (512-bit = 64 bytes)
-    parameter NUM_PORTS  = 5,        // Number of requestors
+    parameter NUM_PORTS  = 6,        // Number of requestors
     parameter TAG_WIDTH  = 8,
     parameter `STRING ARBITER = "R"  // Round-robin arbitration
 ) (

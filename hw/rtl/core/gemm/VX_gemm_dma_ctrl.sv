@@ -49,6 +49,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam logic [3:0] OP_DMA_LD  = 4'd1;
   localparam logic [3:0] OP_DMA_ST  = 4'd2;
   localparam logic [3:0] OP_NOTIFY  = 4'd3;
+  // Local zero-point loads use this opcode in the unified command stream.
+  // This external-DMA executor intentionally does not consume it.
+  localparam logic [3:0] OP_ZP_LDMA_MXU = GEMM_OP_ZP_LDMA_MXU;
+  `UNUSED_PARAM (OP_ZP_LDMA_MXU)
 
   // ============================================================
   // 엔트리 내부 레지스터 인덱스 (32-bit regs)
@@ -266,6 +270,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
   assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
   assign gemm_dma_ctrl_if.cmd_ready = (state_q == S_IDLE);
+  assign gemm_dma_ctrl_if.prepare_ready = 1'b0;
   assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
   assign gemm_dma_ctrl_if.done_tag = cmd_tag_q;
 

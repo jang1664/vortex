@@ -101,6 +101,42 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic [31:0] reg_idx_r;
   logic [31:0] reg_value_r;
   logic [63:0] write_bytes_remaining_r;
+  logic prepared_r;
+  logic released_r;
+  logic [63:0] prepared_src_base_r;
+  logic [63:0] prepared_dst_base_r;
+  logic [31:0] prepared_src_strides_r[NDIM];
+  logic [31:0] prepared_dst_strides_r[NDIM];
+  logic [31:0] prepared_bounds_r[NDIM];
+  logic [31:0] prepared_seg_size_r;
+
+  logic prepared_descriptor_match;
+  wire prepare_supported = (DIR == 0) && !ENABLE_MISALIGN;
+  always_comb begin
+    prepared_descriptor_match = prepared_r
+        && (ctrl_if.src_base_addr == prepared_src_base_r)
+        && (ctrl_if.dst_base_addr == prepared_dst_base_r)
+        && (ctrl_if.seg_size == prepared_seg_size_r);
+    for (int d = 0; d < NDIM; ++d) begin
+      prepared_descriptor_match &=
+          (ctrl_if.src_strides[d] == prepared_src_strides_r[d])
+       && (ctrl_if.dst_strides[d] == prepared_dst_strides_r[d])
+       && (ctrl_if.bounds[d] == prepared_bounds_r[d]);
+    end
+  end
+
+  wire prepare_fire = ctrl_if.prepare && ctrl_if.prepare_ready;
+  wire release_fire = ctrl_if.start && ctrl_if.idle;
+
+  // Unsupported and ordinary start-only transfers always use normal release
+  // semantics.  Only a supported prepare transaction may close the commit
+  // gate; release is registered before reopening it so completion cannot race
+  // the scheduler's same-edge inflight metadata insertion.
+  assign dma_lookahead_if.data_release = !prepare_supported
+      || released_r || (!prepared_r && !ctrl_if.prepare);
+  assign dma_lookahead_if.data_max_beats
+      = (prepare_supported && ctrl_if.prepare)
+      ? ctrl_if.prepare_max_beats : '0;
 
   wire cfg_fire = dma_cfg_if.valid && dma_cfg_if.ready;
   wire [63:0] descriptor_write_bytes
@@ -133,7 +169,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     dma_cfg_if.regs[15] = 32'd0;
     dma_cfg_if.regs[16][0] = (DIR != 0);
     dma_cfg_if.entry_id = 32'd0;
-    dma_cfg_if.valid = (state == S_IDLE) && ctrl_if.start;
+    dma_cfg_if.valid = (state == S_IDLE)
+                    && (ctrl_if.start
+                     || (ctrl_if.prepare && prepare_supported));
   end
 
   always_comb begin
@@ -173,21 +211,52 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       reg_idx_r <= '0;
       reg_value_r <= '0;
       write_bytes_remaining_r <= '0;
+      prepared_r <= 1'b0;
+      released_r <= 1'b0;
+      prepared_src_base_r <= '0;
+      prepared_dst_base_r <= '0;
+      prepared_seg_size_r <= '0;
+      for (int d = 0; d < NDIM; ++d) begin
+        prepared_src_strides_r[d] <= '0;
+        prepared_dst_strides_r[d] <= '0;
+        prepared_bounds_r[d] <= '0;
+      end
     end else begin
       state <= state_n;
       if (cfg_fire) begin
         reg_idx_r <= ctrl_if.reg_idx;
         reg_value_r <= ctrl_if.reg_value;
         write_bytes_remaining_r <= descriptor_write_bytes;
+        prepared_r <= ctrl_if.prepare && !ctrl_if.start;
+        released_r <= ctrl_if.start;
+        prepared_src_base_r <= ctrl_if.src_base_addr;
+        prepared_dst_base_r <= ctrl_if.dst_base_addr;
+        prepared_seg_size_r <= ctrl_if.seg_size;
+        for (int d = 0; d < NDIM; ++d) begin
+          prepared_src_strides_r[d] <= ctrl_if.src_strides[d];
+          prepared_dst_strides_r[d] <= ctrl_if.dst_strides[d];
+          prepared_bounds_r[d] <= ctrl_if.bounds[d];
+        end
+      end else if (release_fire && prepared_r) begin
+        prepared_r <= 1'b0;
+        released_r <= 1'b1;
       end else if (dst_write_fire) begin
         write_bytes_remaining_r
             <= write_bytes_remaining_r - 64'(dst_write_bytes);
+      end
+      if (state == S_DONE) begin
+        prepared_r <= 1'b0;
+        released_r <= 1'b0;
       end
     end
   end
 
   always_comb begin
-    ctrl_if.idle = (state == S_IDLE);
+    ctrl_if.prepare_ready = prepare_supported
+                         && (state == S_IDLE) && dma_cfg_if.ready;
+    ctrl_if.idle = ((state == S_IDLE) && dma_cfg_if.ready)
+                || ((state == S_COPY) && prepared_descriptor_match
+                 && !released_r);
     ctrl_if.done = (state == S_DONE);
     ctrl_if.write_done = dst_write_fire
                       && (write_bytes_remaining_r != 0)
@@ -209,7 +278,20 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
     if (!reset) begin
+      if (prepare_fire) begin
+        assert (prepare_supported && !ctrl_if.start
+             && (ctrl_if.prepare_max_beats != 0))
+          else $fatal(1, "%s: invalid local-DMA prepare request", INSTANCE_ID);
+      end
+      if (release_fire && prepared_r) begin
+        assert (prepared_descriptor_match)
+          else $fatal(1, "%s: local-DMA release descriptor mismatch",
+                      INSTANCE_ID);
+      end
       if (dst_write_fire) begin
+        assert (released_r || release_fire)
+          else $fatal(1, "%s: prepared local-DMA wrote before release",
+                      INSTANCE_ID);
         assert ((write_bytes_remaining_r != 0)
              && (64'(dst_write_bytes) <= write_bytes_remaining_r))
           else $fatal(1, "%s: destination write exceeded descriptor byte count",
@@ -260,7 +342,18 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 `ifdef DBG_TRACE_GEMM
   always_ff @(posedge clk) begin
     if (!reset) begin
-      if (cfg_fire) begin
+      if (prepare_fire) begin
+        `TRACE(1, ("%m : [%0t] | LMEM_DMA_PREPARE | {inst=%s, dir=%0d, src=0x%0h, dst=0x%0h, seg_size=%0d, max_beats=%0d}\n",
+                   $time, INSTANCE_ID, DIR, ctrl_if.src_base_addr,
+                   ctrl_if.dst_base_addr, ctrl_if.seg_size,
+                   ctrl_if.prepare_max_beats))
+      end
+      if (release_fire && prepared_r) begin
+        `TRACE(1, ("%m : [%0t] | LMEM_DMA_RELEASE | {inst=%s, dir=%0d, src=0x%0h, dst=0x%0h}\n",
+                   $time, INSTANCE_ID, DIR, ctrl_if.src_base_addr,
+                   ctrl_if.dst_base_addr))
+      end
+      if (cfg_fire && !ctrl_if.prepare) begin
         `TRACE(1, ("%m : [%0t] | LMEM_DMA_START | {inst=%s, dir=%0d, src=0x%0h, dst=0x%0h, seg_size=%0d}\n",
                    $time, INSTANCE_ID, DIR, ctrl_if.src_base_addr,
                    ctrl_if.dst_base_addr, ctrl_if.seg_size))

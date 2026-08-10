@@ -2,8 +2,8 @@
 
 module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
-    parameter int N_CHILDREN = 5,
-    parameter int N_NODE     = 5,
+    parameter int N_CHILDREN = 6,
+    parameter int N_NODE     = 6,
     parameter int CHILD_QUEUE_DEPTH = 4,
     parameter int DMA_CHILD_QUEUE_DEPTH = 8,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
@@ -31,9 +31,18 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 `endif
 );
 
-    localparam int NUM_SYNC_REGS = 11;
+    localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
     localparam int RID_O = 4;
-    localparam int DMA_CHILD_INDEX = 4;
+    localparam int RID_SZ0 = GEMM_RID_SZ0;
+    localparam int RID_SZ1 = GEMM_RID_SZ1;
+    localparam int RID_SC0 = GEMM_RID_SC0;
+    localparam int RID_ZP0 = GEMM_RID_ZP0;
+    localparam int RID_SC1 = GEMM_RID_SC1;
+    localparam int RID_ZP1 = GEMM_RID_ZP1;
+    localparam int SCALE_CHILD_INDEX = 2;
+    localparam int ZP_CHILD_INDEX = 3;
+    localparam int OUTPUT_CHILD_INDEX = 4;
+    localparam int DMA_CHILD_INDEX = 5;
     localparam int DMA_INFLIGHT_DEPTH = 1 << GEMM_DMA_TAG_WIDTH;
     localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
     localparam int INFLIGHT_DATAW = $bits(gemm_notify_meta_t);
@@ -46,6 +55,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0] child_q_push_v;
     logic [N_CHILDREN-1:0] child_q_pop_v;
     logic [N_CHILDREN-1:0] child_deps_ready_v;
+    logic [N_CHILDREN-1:0] child_prepare_deps_ready_v;
+    logic [N_CHILDREN-1:0] child_prepare_valid_v;
+    logic [N_CHILDREN-1:0] child_prepare_ready_v;
+    logic [N_CHILDREN-1:0] child_prepare_fire_v;
+    logic [N_CHILDREN-1:0] child_prepare_sent_q;
     logic [N_CHILDREN-1:0] child_dependency_eligible_v;
     logic [N_CHILDREN-1:0] child_issue_fire_v;
     logic [N_CHILDREN-1:0] child_inflight_empty_v;
@@ -161,10 +175,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       unique case (cmd.instr[3:0])
         4'd7: command_child = 3'd0;
         4'd5: command_child = 3'd1;
-        4'd6: command_child = 3'd2;
-        4'd8: command_child = 3'd3;
+        GEMM_OP_SC_LDMA_MXU: command_child = 3'd2;
+        GEMM_OP_ZP_LDMA_MXU: command_child = 3'd3;
+        4'd8: command_child = 3'd4;
         4'd1,
-        4'd2: command_child = 3'd4;
+        4'd2: command_child = 3'd5;
         default: command_child = 3'd7;
       endcase
     endfunction
@@ -197,6 +212,16 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           end
         end
       end
+
+      // RID_SZ is the logical qparam readiness contract consumed by input
+      // commands.  Derive it after applying all completion bypasses so SC/ZP
+      // completions in the current cycle can release input in that same cycle.
+      effective_sync[RID_SZ0]
+          = (effective_sync[RID_SC0] < effective_sync[RID_ZP0])
+          ? effective_sync[RID_SC0] : effective_sync[RID_ZP0];
+      effective_sync[RID_SZ1]
+          = (effective_sync[RID_SC1] < effective_sync[RID_ZP1])
+          ? effective_sync[RID_SC1] : effective_sync[RID_ZP1];
     end
 
     always_ff @(posedge clk) begin
@@ -216,6 +241,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         localparam int THIS_CHILD_QUEUE_DEPTH
             = (i == DMA_CHILD_INDEX) ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
         logic deps_ready;
+        logic prepare_deps_ready;
 
         assign child_q_cmd[i] = child_q_dout;
 
@@ -233,6 +259,29 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         end
 
         assign child_deps_ready_v[i] = deps_ready;
+        always_comb begin
+          prepare_deps_ready = 1'b1;
+          for (int dep = 0; dep < GEMM_MAX_PREPARE_WAIT_DEPS; ++dep) begin
+            if (child_q_cmd[i].prepare.waits[dep].valid) begin
+              prepare_deps_ready
+                  &= (child_q_cmd[i].prepare.waits[dep].reg_id
+                      < NUM_SYNC_REGS)
+                  && (effective_sync[
+                        child_q_cmd[i].prepare.waits[dep].reg_id]
+                      >= child_q_cmd[i].prepare.waits[dep].target);
+            end
+          end
+        end
+        assign child_prepare_deps_ready_v[i] = prepare_deps_ready;
+        assign child_prepare_valid_v[i]
+            = !child_q_empty_v[i]
+           && child_q_cmd[i].prepare.valid
+           && (child_q_cmd[i].prepare.mode == GEMM_PREPARE_SOURCE_READ)
+           && prepare_deps_ready
+           && !child_deps_ready_v[i]
+           && !child_prepare_sent_q[i];
+        assign child_prepare_fire_v[i]
+            = child_prepare_valid_v[i] && child_prepare_ready_v[i];
         assign child_dependency_eligible_v[i]
             = !child_q_empty_v[i] && deps_ready;
         assign gemm_cqueue_out[i].ctrl.cmd = child_q_cmd[i];
@@ -357,6 +406,40 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
         always_ff @(posedge clk) begin
           if (!reset) begin
+            if (child_prepare_fire_v[i]) begin
+              assert (!child_q_pop_v[i]
+                   && !child_issue_fire_v[i]
+                   && !gemm_cqueue_out[i].ctrl.start)
+                else $fatal(1,
+                    "%s: child %0d prepare changed architectural issue state",
+                    INSTANCE_ID, i);
+              assert (child_q_cmd[i].prepare.valid
+                   && (child_q_cmd[i].prepare.mode
+                       == GEMM_PREPARE_SOURCE_READ)
+                   && (child_q_cmd[i].prepare.max_beats != 0))
+                else $fatal(1, "%s: child %0d invalid prepare metadata",
+                            INSTANCE_ID, i);
+              if (i == 0)
+                assert (child_q_cmd[i].instr[3:0] == 4'd7)
+                  else $fatal(1, "%s: non-input command prepared on child 0",
+                              INSTANCE_ID);
+              else if (i == 1)
+                assert (child_q_cmd[i].instr[3:0] == 4'd5)
+                  else $fatal(1, "%s: non-weight command prepared on child 1",
+                              INSTANCE_ID);
+              else if (i == SCALE_CHILD_INDEX)
+                assert (child_q_cmd[i].instr[3:0] == GEMM_OP_SC_LDMA_MXU)
+                  else $fatal(1, "%s: non-scale command prepared", INSTANCE_ID);
+              else if (i == ZP_CHILD_INDEX)
+                assert (child_q_cmd[i].instr[3:0] == GEMM_OP_ZP_LDMA_MXU)
+                  else $fatal(1, "%s: non-zero-point command prepared", INSTANCE_ID);
+              else if (i == DMA_CHILD_INDEX)
+                assert ((child_q_cmd[i].instr[3:0] == 4'd1)
+                     && (child_q_cmd[i].rd <= 3))
+                  else $fatal(1, "%s: non-pure tile load prepared", INSTANCE_ID);
+              else
+                $fatal(1, "%s: output child must never prepare", INSTANCE_ID);
+            end
             if (i == DMA_CHILD_INDEX) begin
               assert (!(gemm_cqueue_out[i].flag.done
                      && !dma_inflight_valid_q[
@@ -406,6 +489,19 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     always_ff @(posedge clk) begin
       if (reset || cfg_fire) begin
+        child_prepare_sent_q <= '0;
+      end else begin
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (child_q_pop_v[child])
+            child_prepare_sent_q[child] <= 1'b0;
+          else if (child_prepare_fire_v[child])
+            child_prepare_sent_q[child] <= 1'b1;
+        end
+      end
+    end
+
+    always_ff @(posedge clk) begin
+      if (reset || cfg_fire) begin
         dma_inflight_valid_q <= '0;
         dma_issue_tag_reserved_q <= 1'b0;
         dma_issue_tag_q <= '0;
@@ -437,23 +533,58 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // child returns a tag that selects its completion metadata slot.
     assign gemm_ctrl_if.input_read_ctrl.cmd = gemm_cqueue_out[0].ctrl.cmd;
     assign gemm_ctrl_if.input_read_ctrl.start = gemm_cqueue_out[0].ctrl.start;
+    assign gemm_ctrl_if.input_read_ctrl.prepare = child_prepare_valid_v[0];
+    assign child_prepare_ready_v[0]
+        = gemm_ctrl_if.input_read_flag.prepare_ready;
     assign gemm_cqueue_out[0].flag.idle = gemm_ctrl_if.input_read_flag.idle;
     assign gemm_cqueue_out[0].flag.done = gemm_ctrl_if.input_read_flag.done;
 
     assign gemm_ctrl_if.weight_read_ctrl.cmd = gemm_cqueue_out[1].ctrl.cmd;
     assign gemm_ctrl_if.weight_read_ctrl.start = gemm_cqueue_out[1].ctrl.start;
+    assign gemm_ctrl_if.weight_read_ctrl.prepare = child_prepare_valid_v[1];
+    assign child_prepare_ready_v[1]
+        = gemm_ctrl_if.weight_read_flag.prepare_ready;
     assign gemm_cqueue_out[1].flag.idle = gemm_ctrl_if.weight_read_flag.idle;
     assign gemm_cqueue_out[1].flag.done = gemm_ctrl_if.weight_read_flag.done;
 
-    assign gemm_ctrl_if.quant_param_read_ctrl.cmd = gemm_cqueue_out[2].ctrl.cmd;
-    assign gemm_ctrl_if.quant_param_read_ctrl.start = gemm_cqueue_out[2].ctrl.start;
-    assign gemm_cqueue_out[2].flag.idle = gemm_ctrl_if.quant_param_read_flag.idle;
-    assign gemm_cqueue_out[2].flag.done = gemm_ctrl_if.quant_param_read_flag.done;
+    assign gemm_ctrl_if.scale_read_ctrl.cmd
+        = gemm_cqueue_out[SCALE_CHILD_INDEX].ctrl.cmd;
+    assign gemm_ctrl_if.scale_read_ctrl.start
+        = gemm_cqueue_out[SCALE_CHILD_INDEX].ctrl.start;
+    assign gemm_ctrl_if.scale_read_ctrl.prepare
+        = child_prepare_valid_v[SCALE_CHILD_INDEX];
+    assign child_prepare_ready_v[SCALE_CHILD_INDEX]
+        = gemm_ctrl_if.scale_read_flag.prepare_ready;
+    assign gemm_cqueue_out[SCALE_CHILD_INDEX].flag.idle
+        = gemm_ctrl_if.scale_read_flag.idle;
+    assign gemm_cqueue_out[SCALE_CHILD_INDEX].flag.done
+        = gemm_ctrl_if.scale_read_flag.done;
 
-    assign gemm_ctrl_if.output_write_ctrl.cmd = gemm_cqueue_out[3].ctrl.cmd;
-    assign gemm_ctrl_if.output_write_ctrl.start = gemm_cqueue_out[3].ctrl.start;
-    assign gemm_cqueue_out[3].flag.idle = gemm_ctrl_if.output_write_flag.idle;
-    assign gemm_cqueue_out[3].flag.done = gemm_ctrl_if.output_write_flag.done;
+    assign gemm_ctrl_if.zero_point_read_ctrl.cmd
+        = gemm_cqueue_out[ZP_CHILD_INDEX].ctrl.cmd;
+    assign gemm_ctrl_if.zero_point_read_ctrl.start
+        = gemm_cqueue_out[ZP_CHILD_INDEX].ctrl.start;
+    assign gemm_ctrl_if.zero_point_read_ctrl.prepare
+        = child_prepare_valid_v[ZP_CHILD_INDEX];
+    assign child_prepare_ready_v[ZP_CHILD_INDEX]
+        = gemm_ctrl_if.zero_point_read_flag.prepare_ready;
+    assign gemm_cqueue_out[ZP_CHILD_INDEX].flag.idle
+        = gemm_ctrl_if.zero_point_read_flag.idle;
+    assign gemm_cqueue_out[ZP_CHILD_INDEX].flag.done
+        = gemm_ctrl_if.zero_point_read_flag.done;
+
+    assign gemm_ctrl_if.quant_param_read_ctrl = '0;
+
+    assign gemm_ctrl_if.output_write_ctrl.cmd
+        = gemm_cqueue_out[OUTPUT_CHILD_INDEX].ctrl.cmd;
+    assign gemm_ctrl_if.output_write_ctrl.start
+        = gemm_cqueue_out[OUTPUT_CHILD_INDEX].ctrl.start;
+    assign gemm_ctrl_if.output_write_ctrl.prepare = 1'b0;
+    assign child_prepare_ready_v[OUTPUT_CHILD_INDEX] = 1'b0;
+    assign gemm_cqueue_out[OUTPUT_CHILD_INDEX].flag.idle
+        = gemm_ctrl_if.output_write_flag.idle;
+    assign gemm_cqueue_out[OUTPUT_CHILD_INDEX].flag.done
+        = gemm_ctrl_if.output_write_flag.done;
 
     assign gemm_ctrl_if.dma_ctrl.cmd = gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.cmd;
     assign gemm_ctrl_if.dma_ctrl.start
@@ -461,6 +592,12 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.dma_ctrl.cmd_valid
         = gemm_cqueue_out[DMA_CHILD_INDEX].ctrl.start;
     assign gemm_ctrl_if.dma_ctrl.cmd_tag = dma_issue_tag;
+    assign gemm_ctrl_if.dma_ctrl.prepare_valid
+        = child_prepare_valid_v[DMA_CHILD_INDEX];
+    assign gemm_ctrl_if.dma_ctrl.prepare_cmd
+        = child_q_cmd[DMA_CHILD_INDEX];
+    assign child_prepare_ready_v[DMA_CHILD_INDEX]
+        = gemm_ctrl_if.dma_flag.prepare_ready;
     assign gemm_cqueue_out[DMA_CHILD_INDEX].flag.idle
         = gemm_ctrl_if.dma_flag.cmd_ready;
     assign gemm_cqueue_out[DMA_CHILD_INDEX].flag.done
@@ -603,8 +740,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     endfunction
 
     function automatic logic [3:0] dbg_command_class(
-        input gemm_unified_cmd_t cmd,
-        input logic [7:0] state
+        input gemm_unified_cmd_t cmd
     );
       unique case (cmd.instr[3:0])
         4'd1: begin
@@ -617,11 +753,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         end
         4'd2: dbg_command_class = DBG_C_DRAM_OUTPUT_STORE;
         4'd5: dbg_command_class = DBG_C_MXU_WEIGHT_LOAD;
-        4'd6: begin
-          // FSM states 16/23 issue scale; 17/24 issue zero point.
-          dbg_command_class = ((state == 8'd16) || (state == 8'd23))
-              ? DBG_C_MXU_SCALE_LOAD : DBG_C_MXU_ZP_LOAD;
-        end
+        GEMM_OP_SC_LDMA_MXU: dbg_command_class = DBG_C_MXU_SCALE_LOAD;
+        GEMM_OP_ZP_LDMA_MXU: dbg_command_class = DBG_C_MXU_ZP_LOAD;
         4'd7: dbg_command_class = DBG_C_COMPUTE_ARM;
         default: dbg_command_class = DBG_C_ACCUM_TO_LMEM;
       endcase
@@ -1135,7 +1268,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           dbg_cmd_record[uid].issued = 0;
           dbg_cmd_record[uid].completed = 0;
           dbg_cmd_record[uid].class_id
-              = dbg_command_class(gemm_fsm_if.ctrl.cmd, dbg_fsm_meta_state);
+              = dbg_command_class(gemm_fsm_if.ctrl.cmd);
           dbg_cmd_record[uid].child = 3'(child);
           dbg_cmd_record[uid].state = dbg_fsm_meta_state;
           dbg_cmd_record[uid].phase = dbg_fsm_meta_phase;
@@ -1293,10 +1426,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign perf.lmem_wr_bytes = '0;
 `endif
 
-    `VX_STATIC_ASSERT(N_CHILDREN == 5,
-      ("VX_gemm_ctrl command schedule requires five children"));
-    `VX_STATIC_ASSERT(N_NODE == 5,
-      ("VX_gemm_ctrl command schedule requires five completion sources"));
+    `VX_STATIC_ASSERT(N_CHILDREN == 6,
+      ("VX_gemm_ctrl command schedule requires six children"));
+    `VX_STATIC_ASSERT(N_NODE == 6,
+      ("VX_gemm_ctrl command schedule requires six completion sources"));
     `VX_STATIC_ASSERT(CHILD_QUEUE_DEPTH >= 2,
       ("VX_gemm_ctrl child queue depth must be at least two"));
     `VX_STATIC_ASSERT(DMA_CHILD_QUEUE_DEPTH == DMA_INFLIGHT_DEPTH,

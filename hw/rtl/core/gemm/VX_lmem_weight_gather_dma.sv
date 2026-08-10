@@ -56,6 +56,7 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
 
     assign ctrl_if.idle = !active_r;
     assign ctrl_if.done = done_r;
+    assign ctrl_if.prepare_ready = 1'b0;
     assign ctrl_if.write_done = retire_fire
                              && ((retired_groups_r + 1'b1)
                                  == total_groups_r);

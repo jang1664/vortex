@@ -13,6 +13,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
 
   // Control signals (master -> slave)
   logic        start;
+  logic        prepare;
+  logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] prepare_max_beats;
   logic [63:0] src_base_addr;
   logic [63:0] dst_base_addr;
   logic [31:0] src_strides [NDIM];
@@ -24,6 +26,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
 
   // Status signals (slave -> master)
   logic        idle;
+  logic        prepare_ready;
   logic        done;
   // Pulses on acceptance of the descriptor's final destination write.
   // This is the architectural transfer completion, before wrapper lifecycle
@@ -32,6 +35,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
 
   modport master (
     output start,
+    output prepare,
+    output prepare_max_beats,
     output src_base_addr,
     output dst_base_addr,
     output src_strides,
@@ -41,12 +46,15 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     output reg_idx,
     output reg_value,
     input  idle,
+    input  prepare_ready,
     input  done,
     input  write_done
   );
 
   modport slave (
     input  start,
+    input  prepare,
+    input  prepare_max_beats,
     input  src_base_addr,
     input  dst_base_addr,
     input  src_strides,
@@ -56,6 +64,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     input  reg_idx,
     input  reg_value,
     output idle,
+    output prepare_ready,
     output done,
     output write_done
   );

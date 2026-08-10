@@ -47,6 +47,10 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
       if (!reset && lookahead_if.prepare_valid)
         assert (!lookahead_if.prepare_ready)
           else $fatal(1, "%s: misaligned DMA accepted PREPARE", INSTANCE_ID);
+      if (!reset)
+        assert (lookahead_if.data_release)
+          else $fatal(1, "%s: misaligned DMA does not support data prepare",
+                      INSTANCE_ID);
     end
 `endif
 

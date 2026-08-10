@@ -19,6 +19,13 @@ does not contain a command FSM, input FIFO, credit counter, or round-robin
 scheduler. Command lifetime and address generation belong to
 `VX_gemm_node`.
 
+Scale and zero-point register writes use independent 64-byte ingress ports.
+Each port applies backpressure only when its selected register is live in the
+compute pipeline, so both writes may be accepted in the same cycle. Separate
+`scale_register_write` and `zero_point_register_write` pulses identify the
+architectural write endpoints; `quant_register_write` remains their OR for
+legacy observability.
+
 `last_write` pulses on the actual accumulator write of a packet marked
 `last`. `pipeline_empty` is asserted only after all packet sidebands and any
 early-read response held inside the unit have drained. Output-memory reads

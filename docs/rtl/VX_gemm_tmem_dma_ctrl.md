@@ -7,8 +7,10 @@ for the eight HBM-to-TMEM DMA channels. It accepts logical GEMM DMA commands,
 orders them by priority, converts them into complete per-channel DMA register
 sets, and drives the existing single-context `VX_dma_engine` instances.
 
-The underlying DMA engines remain unchanged. Preemption occurs only between
-fully drained descriptors.
+The DMA engines remain single-context. Their aligned path additionally exposes
+a bounded source-read credit and destination commit gate for pure-load
+prepare/release. Preemption still occurs only between fully drained
+descriptors.
 
 ```text
 VX_gemm_ctrl
@@ -42,6 +44,28 @@ completion, not a descriptor-chunk completion.
 The legacy `start` signal remains on the shared interface for the older
 single-command adapter, but this module performs acceptance exclusively with
 the valid/ready handshake.
+
+## Pure-load prepare and release
+
+An `OP_DMA_LD` targeting logical destination `rd=0..3` may be presented first
+through `prepare_valid/prepare_ready`. Prepare is accepted only when the tile
+DMA controller is fully idle. The exact command becomes the single foreground
+owner and its channel descriptors start the normal HBM read path, but each DMA
+engine limits pre-release source traffic to `prepare.max_beats` and retains the
+responses in its existing bounded response slots. TMEM writes, completion, and
+consumer visibility remain disabled.
+
+The later architectural `cmd_valid/cmd_ready` transfer must carry the exact
+same command. It supplies the completion tag and opens the destination commit
+gate; already buffered beats drain first and the DMA engines then issue any
+remaining source reads normally. The release is not inserted into the pending
+queue and cannot launch a duplicate descriptor. If prepare was not accepted,
+the command follows the unchanged pending-queue path. Stores and `rd=4` output
+loads are never eligible for data prepare.
+
+`GEMM_TILE_DMA_PREFETCH_MAX_BEATS` configures the encoded credit and defaults
+to four beats per active DMA channel. Each channel still stops at its descriptor
+end and cannot exceed its physical response-slot capacity.
 
 ## Pending scheduler
 
@@ -194,7 +218,8 @@ one descriptor so channels may finish on different cycles.
   `store_done`
 - a load produces one `done` and `done_tag` after its full descriptor drains
 - `idle` is high only when the pending queue is empty, no store context is
-  paused, no descriptor is active, and all channel completions have drained
+  paused, no prepared owner or descriptor is active, and all channel
+  completions have drained
 
 The returned tag allows `VX_gemm_ctrl` to update only the notify/RID metadata
 belonging to the completed logical command, even when a load completes before
@@ -206,6 +231,8 @@ When `DBG_TRACE_GEMM` is enabled, simulation-only counters and structured
 events expose scheduler behavior without adding synthesized state. Event
 markers include:
 
+- `TMEM_DMA_DATA_PREPARE` / `TMEM_DMA_DATA_RELEASE`: bounded source-read
+  preparation and the later exact tagged release
 - `TMEM_DMA_CMD_ACCEPT`: tag, priority, chunk encoding, and pending occupancy
 - `TMEM_DMA_SELECT`: pending or paused-store selection
 - `TMEM_DMA_STORE_CAPTURE`: chunkable versus exact-descriptor bypass mode

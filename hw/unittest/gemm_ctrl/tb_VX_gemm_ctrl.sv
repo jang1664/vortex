@@ -24,18 +24,26 @@ module tb_VX_gemm_ctrl;
   localparam string TB_NAME     = "tb_VX_gemm_ctrl";
   localparam string INSTANCE_ID = "tb_gemm_ctrl";
 
-  localparam int N_CHILDREN = 5;
-  localparam int N_NODE     = 5;
+  localparam int N_CHILDREN = 6;
+  localparam int N_NODE     = 6;
 
   localparam logic [3:0] OP_DMA_LD      = 4'd1;
   localparam logic [3:0] OP_DMA_ST      = 4'd2;
   localparam logic [3:0] OP_NOTIFY      = 4'd3;
   localparam logic [3:0] OP_WAIT        = 4'd4;
   localparam logic [3:0] OP_W_LDMA_MXU  = 4'd5;
-  localparam logic [3:0] OP_SZ_LDMA_MXU = 4'd6;
+  localparam logic [3:0] OP_SC_LDMA_MXU = 4'd6;
   localparam logic [3:0] OP_I_LDMA_ARM  = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM  = 4'd8;
   localparam logic [3:0] OP_CLEAR       = 4'd9;
+  localparam logic [3:0] OP_ZP_LDMA_MXU = 4'd10;
+
+  localparam logic [3:0] RID_SZ0 = GEMM_RID_SZ0;
+  localparam logic [3:0] RID_SZ1 = GEMM_RID_SZ1;
+  localparam logic [3:0] RID_SC0 = GEMM_RID_SC0;
+  localparam logic [3:0] RID_ZP0 = GEMM_RID_ZP0;
+  localparam logic [3:0] RID_SC1 = GEMM_RID_SC1;
+  localparam logic [3:0] RID_ZP1 = GEMM_RID_ZP1;
 
   localparam logic [7:0] FSM_S_O_WAIT_LMEM2DRAM_FINAL = 8'd36;
   localparam logic [7:0] FSM_S_FINAL_CLEAR             = 8'd37;
@@ -57,6 +65,7 @@ module tb_VX_gemm_ctrl;
   bit expect_stray_fatal;
   logic [N_CHILDREN-1:0] directed_idle;
   logic [N_CHILDREN-1:0] directed_done;
+  logic [N_CHILDREN-1:0] directed_prepare_ready;
   logic directed_start;
   gemm_unified_cmd_t directed_cmd;
   logic [GEMM_DMA_TAG_WIDTH-1:0] directed_dma_done_tag;
@@ -139,6 +148,7 @@ module tb_VX_gemm_ctrl;
 
       directed_idle = '1;
       directed_done = '0;
+      directed_prepare_ready = '1;
       directed_start = 1'b0;
       directed_cmd = '0;
       directed_dma_done_tag = '0;
@@ -307,10 +317,11 @@ module tb_VX_gemm_ctrl;
         OP_NOTIFY:      op_name = "NOTIFY";
         OP_WAIT:        op_name = "WAIT";
         OP_W_LDMA_MXU:  op_name = "W_LDMA_MXU";
-        OP_SZ_LDMA_MXU: op_name = "SZ_LDMA_MXU";
+        OP_SC_LDMA_MXU: op_name = "SC_LDMA_MXU";
         OP_I_LDMA_ARM:  op_name = "I_LDMA_ARM";
         OP_O_ACC2LMEM:  op_name = "O_ACC2LMEM";
         OP_CLEAR:       op_name = "CLEAR";
+        OP_ZP_LDMA_MXU: op_name = "ZP_LDMA_MXU";
         default: op_name = "OP_??";
       endcase
     end
@@ -380,8 +391,9 @@ module tb_VX_gemm_ctrl;
           0: exec_lat_for_child = LAT_I;
           1: exec_lat_for_child = LAT_W;
           2: exec_lat_for_child = LAT_QP;
-          3: exec_lat_for_child = LAT_O;
-          4: exec_lat_for_child = LAT_DMA;
+          3: exec_lat_for_child = LAT_QP;
+          4: exec_lat_for_child = LAT_O;
+          5: exec_lat_for_child = LAT_DMA;
           default: exec_lat_for_child = 5;
         endcase
       end
@@ -440,26 +452,32 @@ module tb_VX_gemm_ctrl;
         else $display("[%0t] ERROR: CH1 start while busy!", $time);
       end
 
-      if (gemm_ctrl_if.quant_param_read_ctrl.start) begin
-        print_cmd("CH2_QP", gemm_ctrl_if.quant_param_read_ctrl.cmd);
-        if (!nb[2].busy) start_node_busy(2, gemm_ctrl_if.quant_param_read_ctrl.cmd);
+      if (gemm_ctrl_if.scale_read_ctrl.start) begin
+        print_cmd("CH2_SC", gemm_ctrl_if.scale_read_ctrl.cmd);
+        if (!nb[2].busy) start_node_busy(2, gemm_ctrl_if.scale_read_ctrl.cmd);
         else $display("[%0t] ERROR: CH2 start while busy!", $time);
       end
 
-      if (gemm_ctrl_if.output_write_ctrl.start) begin
-        print_cmd("CH3_OUT", gemm_ctrl_if.output_write_ctrl.cmd);
-        if (!nb[3].busy) start_node_busy(3, gemm_ctrl_if.output_write_ctrl.cmd);
+      if (gemm_ctrl_if.zero_point_read_ctrl.start) begin
+        print_cmd("CH3_ZP", gemm_ctrl_if.zero_point_read_ctrl.cmd);
+        if (!nb[3].busy) start_node_busy(3, gemm_ctrl_if.zero_point_read_ctrl.cmd);
         else $display("[%0t] ERROR: CH3 start while busy!", $time);
+      end
+
+      if (gemm_ctrl_if.output_write_ctrl.start) begin
+        print_cmd("CH4_OUT", gemm_ctrl_if.output_write_ctrl.cmd);
+        if (!nb[4].busy) start_node_busy(4, gemm_ctrl_if.output_write_ctrl.cmd);
+        else $display("[%0t] ERROR: CH4 start while busy!", $time);
       end
 
       if (gemm_ctrl_if.dma_ctrl.cmd_valid
        && gemm_ctrl_if.dma_flag.cmd_ready) begin
-        print_cmd("CH4_DMA", gemm_ctrl_if.dma_ctrl.cmd);
-        if (!nb[4].busy) begin
-          start_node_busy(4, gemm_ctrl_if.dma_ctrl.cmd);
+        print_cmd("CH5_DMA", gemm_ctrl_if.dma_ctrl.cmd);
+        if (!nb[5].busy) begin
+          start_node_busy(5, gemm_ctrl_if.dma_ctrl.cmd);
           natural_dma_done_tag <= gemm_ctrl_if.dma_ctrl.cmd_tag;
         end
-        else $display("[%0t] ERROR: CH4 start while busy!", $time);
+        else $display("[%0t] ERROR: CH5 start while busy!", $time);
       end
 
       // Countdown + completion
@@ -512,8 +530,10 @@ module tb_VX_gemm_ctrl;
 
       if ((gemm_ctrl_if.weight_read_ctrl.start
            && (op_of(gemm_ctrl_if.weight_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
-          || (gemm_ctrl_if.quant_param_read_ctrl.start
-           && (op_of(gemm_ctrl_if.quant_param_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
+          || (gemm_ctrl_if.scale_read_ctrl.start
+           && (op_of(gemm_ctrl_if.scale_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
+          || (gemm_ctrl_if.zero_point_read_ctrl.start
+           && (op_of(gemm_ctrl_if.zero_point_read_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
           || (gemm_ctrl_if.output_write_ctrl.start
            && (op_of(gemm_ctrl_if.output_write_ctrl.cmd) inside {OP_WAIT, OP_NOTIFY, OP_CLEAR}))
           || (gemm_ctrl_if.dma_ctrl.start
@@ -527,35 +547,53 @@ module tb_VX_gemm_ctrl;
     if (sched_directed) begin
       gemm_ctrl_if.input_read_flag.idle       = directed_idle[0];
       gemm_ctrl_if.weight_read_flag.idle      = directed_idle[1];
-      gemm_ctrl_if.quant_param_read_flag.idle = directed_idle[2];
-      gemm_ctrl_if.output_write_flag.idle     = directed_idle[3];
-      gemm_ctrl_if.dma_flag.idle              = directed_idle[4];
+      gemm_ctrl_if.scale_read_flag.idle       = directed_idle[2];
+      gemm_ctrl_if.zero_point_read_flag.idle  = directed_idle[3];
+      gemm_ctrl_if.output_write_flag.idle     = directed_idle[4];
+      gemm_ctrl_if.dma_flag.idle              = directed_idle[5];
       gemm_ctrl_if.input_read_flag.done       = directed_done[0];
       gemm_ctrl_if.weight_read_flag.done      = directed_done[1];
-      gemm_ctrl_if.quant_param_read_flag.done = directed_done[2];
-      gemm_ctrl_if.output_write_flag.done     = directed_done[3];
-      gemm_ctrl_if.dma_flag.done              = directed_done[4];
-      gemm_ctrl_if.dma_flag.cmd_ready         = directed_idle[4];
+      gemm_ctrl_if.scale_read_flag.done       = directed_done[2];
+      gemm_ctrl_if.zero_point_read_flag.done  = directed_done[3];
+      gemm_ctrl_if.output_write_flag.done     = directed_done[4];
+      gemm_ctrl_if.dma_flag.done              = directed_done[5];
+      gemm_ctrl_if.dma_flag.cmd_ready         = directed_idle[5];
       gemm_ctrl_if.dma_flag.done_tag          = directed_dma_done_tag;
+      gemm_ctrl_if.input_read_flag.prepare_ready      = directed_prepare_ready[0];
+      gemm_ctrl_if.weight_read_flag.prepare_ready     = directed_prepare_ready[1];
+      gemm_ctrl_if.scale_read_flag.prepare_ready      = directed_prepare_ready[2];
+      gemm_ctrl_if.zero_point_read_flag.prepare_ready = directed_prepare_ready[3];
+      gemm_ctrl_if.output_write_flag.prepare_ready    = directed_prepare_ready[4];
+      gemm_ctrl_if.dma_flag.prepare_ready             = directed_prepare_ready[5];
     end else begin
       gemm_ctrl_if.input_read_flag.idle       = ~nb[0].busy;
       gemm_ctrl_if.weight_read_flag.idle      = ~nb[1].busy;
-      gemm_ctrl_if.quant_param_read_flag.idle = ~nb[2].busy;
-      gemm_ctrl_if.output_write_flag.idle     = ~nb[3].busy;
-      gemm_ctrl_if.dma_flag.idle              = ~nb[4].busy;
+      gemm_ctrl_if.scale_read_flag.idle       = ~nb[2].busy;
+      gemm_ctrl_if.zero_point_read_flag.idle  = ~nb[3].busy;
+      gemm_ctrl_if.output_write_flag.idle     = ~nb[4].busy;
+      gemm_ctrl_if.dma_flag.idle              = ~nb[5].busy;
       gemm_ctrl_if.input_read_flag.done
           = nb[0].busy && (nb[0].cnt == 0);
       gemm_ctrl_if.weight_read_flag.done
           = nb[1].busy && (nb[1].cnt == 0);
-      gemm_ctrl_if.quant_param_read_flag.done
+      gemm_ctrl_if.scale_read_flag.done
           = nb[2].busy && (nb[2].cnt == 0);
-      gemm_ctrl_if.output_write_flag.done
+      gemm_ctrl_if.zero_point_read_flag.done
           = nb[3].busy && (nb[3].cnt == 0);
-      gemm_ctrl_if.dma_flag.done
+      gemm_ctrl_if.output_write_flag.done
           = nb[4].busy && (nb[4].cnt == 0);
-      gemm_ctrl_if.dma_flag.cmd_ready = ~nb[4].busy;
+      gemm_ctrl_if.dma_flag.done
+          = nb[5].busy && (nb[5].cnt == 0);
+      gemm_ctrl_if.dma_flag.cmd_ready = ~nb[5].busy;
       gemm_ctrl_if.dma_flag.done_tag = natural_dma_done_tag;
+      gemm_ctrl_if.input_read_flag.prepare_ready      = 1'b1;
+      gemm_ctrl_if.weight_read_flag.prepare_ready     = 1'b1;
+      gemm_ctrl_if.scale_read_flag.prepare_ready      = 1'b1;
+      gemm_ctrl_if.zero_point_read_flag.prepare_ready = 1'b1;
+      gemm_ctrl_if.output_write_flag.prepare_ready    = 1'b0;
+      gemm_ctrl_if.dma_flag.prepare_ready             = 1'b1;
     end
+    gemm_ctrl_if.quant_param_read_flag = '0;
   end
 
   always_ff @(posedge clk) begin
@@ -587,6 +625,8 @@ module tb_VX_gemm_ctrl;
         $display("[%0t] SYNC_EVT node3 rid=%0d val=0x%08h", $time, gemm_sync_slv_if[3].reg_idx[7:0], gemm_sync_slv_if[3].value);
       if (gemm_sync_slv_if[4].valid)
         $display("[%0t] SYNC_EVT node4 rid=%0d val=0x%08h", $time, gemm_sync_slv_if[4].reg_idx[7:0], gemm_sync_slv_if[4].value);
+      if (gemm_sync_slv_if[5].valid)
+        $display("[%0t] SYNC_EVT node5 rid=%0d val=0x%08h", $time, gemm_sync_slv_if[5].reg_idx[7:0], gemm_sync_slv_if[5].value);
     end
   end
 
@@ -634,6 +674,7 @@ module tb_VX_gemm_ctrl;
       gemm_sync_slv_if[2].valid   <= 1'b0; gemm_sync_slv_if[2].reg_idx <= '0; gemm_sync_slv_if[2].value <= '0;
       gemm_sync_slv_if[3].valid   <= 1'b0; gemm_sync_slv_if[3].reg_idx <= '0; gemm_sync_slv_if[3].value <= '0;
       gemm_sync_slv_if[4].valid   <= 1'b0; gemm_sync_slv_if[4].reg_idx <= '0; gemm_sync_slv_if[4].value <= '0;
+      gemm_sync_slv_if[5].valid   <= 1'b0; gemm_sync_slv_if[5].reg_idx <= '0; gemm_sync_slv_if[5].value <= '0;
 
     end else begin
       // default deassert
@@ -642,6 +683,7 @@ module tb_VX_gemm_ctrl;
       gemm_sync_slv_if[2].valid <= 1'b0;
       gemm_sync_slv_if[3].valid <= 1'b0;
       gemm_sync_slv_if[4].valid <= 1'b0;
+      gemm_sync_slv_if[5].valid <= 1'b0;
 
       // ------------------------------------------------------------
       // Accept evt_req (ONLY place that writes comp[] / dropped_events)
@@ -707,6 +749,15 @@ module tb_VX_gemm_ctrl;
           gemm_sync_slv_if[4].valid   <= 1'b1;
           comp[4].pend <= 1'b0;
         end else comp[4].cnt <= comp[4].cnt - 1;
+      end
+
+      if (comp[5].pend) begin
+        if (comp[5].cnt == 0) begin
+          gemm_sync_slv_if[5].reg_idx <= comp[5].rid;
+          gemm_sync_slv_if[5].value   <= comp[5].val;
+          gemm_sync_slv_if[5].valid   <= 1'b1;
+          comp[5].pend <= 1'b0;
+        end else comp[5].cnt <= comp[5].cnt - 1;
       end
     end
   end
@@ -848,7 +899,7 @@ module tb_VX_gemm_ctrl;
   task automatic directed_complete(input int child);
     begin
       @(negedge clk);
-      if (child == 4) begin
+      if (child == 5) begin
         for (int slot = 0; slot < 8; ++slot) begin
           if (dut.dma_inflight_valid_q[slot])
             directed_dma_done_tag = GEMM_DMA_TAG_WIDTH'(slot);
@@ -871,15 +922,30 @@ module tb_VX_gemm_ctrl;
     begin
       @(negedge clk);
       directed_dma_done_tag = tag;
-      directed_done[4] = 1'b1;
+      directed_done[5] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[4])
+      if (!dut.child_completion_pop_v[5])
         $fatal(1, "DMA_TAGGED completion tag %0d was not accepted", tag);
       @(posedge clk);
       #1;
-      directed_done[4] = 1'b0;
+      directed_done[5] = 1'b0;
     end
   endtask
+
+  function automatic logic [3:0] dma_scoreboard_rid(input int slot);
+    begin
+      unique case (slot)
+        0: dma_scoreboard_rid = 4'd0;
+        1: dma_scoreboard_rid = 4'd1;
+        2: dma_scoreboard_rid = 4'd3;
+        3: dma_scoreboard_rid = 4'd4;
+        4: dma_scoreboard_rid = 4'd5;
+        5: dma_scoreboard_rid = 4'd6;
+        6: dma_scoreboard_rid = 4'd8;
+        default: dma_scoreboard_rid = 4'd9;
+      endcase
+    end
+  endfunction
 
   task automatic run_dma_tagged_scoreboard;
     gemm_unified_cmd_t c;
@@ -897,9 +963,9 @@ module tb_VX_gemm_ctrl;
 
       // Reserve an issue tag while the executor applies backpressure.  Both
       // the command and its sideband tag must remain stable until acceptance.
-      directed_idle[4] = 1'b0;
+      directed_idle[5] = 1'b0;
       c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'd10, 1'b1, 32'd77);
-      directed_inject(c, 4);
+      directed_inject(c, 5);
       #1;
       if (!gemm_ctrl_if.dma_ctrl.cmd_valid)
         $fatal(1, "DMA_TAGGED backpressured command was not presented");
@@ -911,13 +977,13 @@ module tb_VX_gemm_ctrl;
         if (!gemm_ctrl_if.dma_ctrl.cmd_valid
          || gemm_ctrl_if.dma_ctrl.cmd !== held_cmd
          || gemm_ctrl_if.dma_ctrl.cmd_tag !== held_tag
-         || dut.child_issue_fire_v[4])
+         || dut.child_issue_fire_v[5])
           $fatal(1, "DMA_TAGGED cmd/tag changed under backpressure");
       end
       @(negedge clk);
-      directed_idle[4] = 1'b1;
+      directed_idle[5] = 1'b1;
       #1;
-      if (!dut.child_issue_fire_v[4])
+      if (!dut.child_issue_fire_v[5])
         $fatal(1, "DMA_TAGGED retained command did not handshake");
       @(posedge clk);
       #1;
@@ -930,37 +996,38 @@ module tb_VX_gemm_ctrl;
       // Fill all eight slots with distinct SET notifications and prove that
       // their direct tag identity permits out-of-order retirement.
       for (int slot = 0; slot < 8; ++slot) begin
-        c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'(slot),
+        c = make_directed_cmd(OP_DMA_LD, 1'b1,
+                              dma_scoreboard_rid(slot),
                               1'b1, 32'(100 + slot));
-        directed_inject(c, 4);
+        directed_inject(c, 5);
         if (!gemm_ctrl_if.dma_ctrl.cmd_valid
          || gemm_ctrl_if.dma_ctrl.cmd_tag !== GEMM_DMA_TAG_WIDTH'(slot))
           $fatal(1, "DMA_TAGGED allocation mismatch slot=%0d tag=%0d",
                  slot, gemm_ctrl_if.dma_ctrl.cmd_tag);
-        directed_accept_issue(4);
+        directed_accept_issue(5);
       end
-      if (!dut.child_inflight_full_v[4]
+      if (!dut.child_inflight_full_v[5]
        || dut.dma_inflight_valid_q !== 8'hff)
         $fatal(1, "DMA_TAGGED scoreboard did not become full");
 
       // Queue a ninth command.  A completion in this cycle must not allow
       // same-cycle allocation; the released tag becomes usable next cycle.
-      c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd8, 1'b1, 32'd208);
-      directed_inject(c, 4);
-      if (gemm_ctrl_if.dma_ctrl.cmd_valid || dut.child_issue_fire_v[4])
+      c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd10, 1'b1, 32'd208);
+      directed_inject(c, 5);
+      if (gemm_ctrl_if.dma_ctrl.cmd_valid || dut.child_issue_fire_v[5])
         $fatal(1, "DMA_TAGGED ninth command escaped full scoreboard");
       @(negedge clk);
       directed_dma_done_tag = 3'd7;
-      directed_done[4] = 1'b1;
+      directed_done[5] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[4]
+      if (!dut.child_completion_pop_v[5]
        || gemm_ctrl_if.dma_ctrl.cmd_valid
-       || dut.child_issue_fire_v[4])
+       || dut.child_issue_fire_v[5])
         $fatal(1, "DMA_TAGGED same-cycle released slot was reused");
       @(posedge clk);
       #1;
-      directed_done[4] = 1'b0;
-      if (dut.sync_regs_q[7] !== 32'd107)
+      directed_done[5] = 1'b0;
+      if (dut.sync_regs_q[dma_scoreboard_rid(7)] !== 32'd107)
         $fatal(1, "DMA_TAGGED boundary completion mapped wrong RID");
       if (!gemm_ctrl_if.dma_ctrl.cmd_valid
        || gemm_ctrl_if.dma_ctrl.cmd_tag !== 3'd7)
@@ -968,35 +1035,41 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       if (!dut.dma_inflight_valid_q[7]
-       || dut.dma_inflight_meta_q[7].reg_id !== 4'd8)
+       || dut.dma_inflight_meta_q[7].reg_id !== 4'd10)
         $fatal(1, "DMA_TAGGED released slot did not capture ninth metadata");
 
       for (int n = 0; n < 7; ++n) begin
         int tag;
         tag = completion_order[n];
         directed_dma_complete_tag(GEMM_DMA_TAG_WIDTH'(tag));
-        if (dut.sync_regs_q[tag] !== 32'(100 + tag))
+        if (dut.sync_regs_q[dma_scoreboard_rid(tag)] !== 32'(100 + tag))
           $fatal(1, "DMA_TAGGED OOO completion tag=%0d mapped wrong notify",
                  tag);
       end
       directed_dma_complete_tag(3'd7);
-      if (dut.sync_regs_q[8] !== 32'd208
+      if (dut.sync_regs_q[10] !== 32'd208
        || dut.dma_inflight_valid_q !== '0
-       || !dut.child_inflight_empty_v[4])
+       || !dut.child_inflight_empty_v[5])
         $fatal(1, "DMA_TAGGED final drain or reused-tag metadata mismatch");
       $display("DMA_TAGGED_SCOREBOARD_PASS tags=8 stable_backpressure=1 ooo=1 full_boundary=1 no_same_cycle_reuse=1 reused_tag=7");
 
       // Leave the legacy dependency suite with its original all-zero
       // scoreboard precondition.
-      for (int rid = 0; rid < 11; ++rid) begin
+      for (int slot = 0; slot < 8; ++slot) begin
         logic [GEMM_DMA_TAG_WIDTH-1:0] tag;
-        c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'(rid),
+        c = make_directed_cmd(OP_DMA_LD, 1'b1,
+                              dma_scoreboard_rid(slot),
                               1'b1, 32'd0);
-        directed_inject(c, 4);
+        directed_inject(c, 5);
         tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
-        directed_accept_issue(4);
+        directed_accept_issue(5);
         directed_dma_complete_tag(tag);
       end
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, 4'd10, 1'b1, 32'd0);
+      directed_inject(c, 5);
+      held_tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
+      directed_accept_issue(5);
+      directed_dma_complete_tag(held_tag);
     end
   endtask
 
@@ -1007,12 +1080,153 @@ module tb_VX_gemm_ctrl;
     gemm_unified_cmd_t c;
     begin
       c = make_directed_cmd(OP_DMA_LD, 1'b1, rid, 1'b1, value);
-      directed_inject(c, 4);
-      directed_accept_issue(4);
-      directed_complete(4);
+      directed_inject(c, 5);
+      directed_accept_issue(5);
+      directed_complete(5);
       if (dut.sync_regs_q[rid] !== value)
         $fatal(1, "SCHED_DIRECTED SET rid=%0d got=%0d expected=%0d",
                rid, dut.sync_regs_q[rid], value);
+    end
+  endtask
+
+  task automatic run_prepare_release_case(
+    input logic [3:0] op,
+    input int child,
+    input logic [2:0] rd,
+    input logic [31:0] release_target
+  );
+    gemm_unified_cmd_t producer;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    begin
+      // Child 4 models the prior owner whose completion releases the tested
+      // command.  Prepare may read the immutable source while that owner is
+      // still active, but it must not consume the queue head or allocate any
+      // architectural inflight/completion state.
+      producer = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd6,
+                                   1'b1, release_target);
+      directed_inject(producer, 4);
+      directed_accept_issue(4);
+
+      c = make_directed_cmd(op, 1'b0, '0, 1'b0, '0);
+      c.rd = rd;
+      c.waits[0] = '{valid:1'b1, reg_id:4'd6, target:release_target};
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(1);
+      if (child != 5) begin
+        c.prepare.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
+      end
+      directed_inject(c, child);
+      held_cmd = dut.child_q_cmd[child];
+      #1;
+      if (!dut.child_prepare_deps_ready_v[child]
+       || dut.child_deps_ready_v[child]
+       || !dut.child_prepare_valid_v[child]
+       || !dut.child_prepare_fire_v[child])
+        $fatal(1,
+          "PREPARE_RELEASE op=%0d child=%0d did not prepare while release blocked",
+          op, child);
+      if (dut.child_issue_fire_v[child]
+       || dut.child_q_pop_v[child]
+       || !dut.child_inflight_empty_v[child]
+       || dut.child_q_cmd[child] !== held_cmd)
+        $fatal(1,
+          "PREPARE_RELEASE op=%0d child=%0d changed architectural issue state",
+          op, child);
+
+      @(posedge clk);
+      #1;
+      if (!dut.child_prepare_sent_q[child]
+       || dut.child_prepare_valid_v[child]
+       || dut.child_issue_fire_v[child]
+       || dut.child_q_pop_v[child]
+       || !dut.child_inflight_empty_v[child]
+       || dut.child_q_cmd[child] !== held_cmd)
+        $fatal(1,
+          "PREPARE_RELEASE op=%0d child=%0d did not retain prepared queue head",
+          op, child);
+
+      @(negedge clk);
+      directed_done[4] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[4]
+       || !dut.child_deps_ready_v[child]
+       || !dut.child_issue_fire_v[child]
+       || !dut.child_q_pop_v[child]
+       || dut.child_inflight_empty_v[child]) begin
+        // inflight occupancy changes at the edge; before the edge it must
+        // still be empty, so check it separately below.
+        if (!dut.child_completion_pop_v[4]
+         || !dut.child_deps_ready_v[child]
+         || !dut.child_issue_fire_v[child]
+         || !dut.child_q_pop_v[child])
+          $fatal(1,
+            "PREPARE_RELEASE op=%0d child=%0d did not issue on release",
+            op, child);
+      end
+      @(posedge clk);
+      #1;
+      directed_done[4] = 1'b0;
+      if (dut.sync_regs_q[6] !== release_target
+       || !dut.child_q_empty_v[child]
+       || dut.child_inflight_empty_v[child]
+       || dut.child_prepare_sent_q[child])
+        $fatal(1,
+          "PREPARE_RELEASE op=%0d child=%0d release bookkeeping mismatch",
+          op, child);
+      directed_complete(child);
+      $display("PREPARE_RELEASE_PASS op=%0d child=%0d rd=%0d target=%0d queue_retained=1 no_early_issue=1 exact_release=1",
+               op, child, rd, release_target);
+    end
+  endtask
+
+  task automatic run_nonprefetch_case(
+    input logic [3:0] op,
+    input int child,
+    input logic [2:0] rd,
+    input logic [31:0] release_target
+  );
+    gemm_unified_cmd_t producer;
+    gemm_unified_cmd_t c;
+    begin
+      producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd6,
+                                   1'b1, release_target);
+      directed_inject(producer, 1);
+      directed_accept_issue(1);
+
+      c = make_directed_cmd(op, 1'b0, '0, 1'b0, '0);
+      c.rd = rd;
+      c.waits[0] = '{valid:1'b1, reg_id:4'd6, target:release_target};
+      directed_inject(c, child);
+      repeat (2) begin
+        #1;
+        if (dut.child_prepare_valid_v[child]
+         || dut.child_prepare_fire_v[child]
+         || dut.child_prepare_sent_q[child]
+         || dut.child_issue_fire_v[child]
+         || dut.child_q_pop_v[child])
+          $fatal(1,
+            "NONPREFETCH op=%0d child=%0d rd=%0d produced an early event",
+            op, child, rd);
+        @(posedge clk);
+      end
+
+      @(negedge clk);
+      directed_done[1] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[1]
+       || !dut.child_issue_fire_v[child]
+       || !dut.child_q_pop_v[child])
+        $fatal(1,
+          "NONPREFETCH op=%0d child=%0d rd=%0d failed normal release",
+          op, child, rd);
+      @(posedge clk);
+      #1;
+      directed_done[1] = 1'b0;
+      directed_complete(child);
+      $display("NONPREFETCH_PASS op=%0d child=%0d rd=%0d prepare=0 normal_release=1",
+               op, child, rd);
     end
   endtask
 
@@ -1064,16 +1278,37 @@ module tb_VX_gemm_ctrl;
       run_dma_tagged_scoreboard();
 
       // Seed four independent scoreboard registers with legal SET completions.
+      // RID_SZ0/1 are derived from the physical SC/ZP completion pairs and
+      // therefore must not be seeded directly.
       directed_set_sync(4'd0, 32'd10);
       directed_set_sync(4'd1, 32'd20);
-      directed_set_sync(4'd2, 32'd30);
+      directed_set_sync(4'd5, 32'd30);
       directed_set_sync(4'd3, 32'd40);
+
+      // Two-phase command contract.  Local pure loads and tile DMA loads for
+      // input/weight/scale/ZP prepare once while their architectural release
+      // wait is blocked.  The FIFO head, inflight metadata, notify state, and
+      // normal start remain untouched until the exact dependency completion.
+      run_prepare_release_case(OP_I_LDMA_ARM,  0, 3'd0, 32'd101);
+      run_prepare_release_case(OP_W_LDMA_MXU, 1, 3'd0, 32'd102);
+      run_prepare_release_case(OP_SC_LDMA_MXU, 2, 3'd0, 32'd103);
+      run_prepare_release_case(OP_ZP_LDMA_MXU, 3, 3'd0, 32'd104);
+      for (int rd = 0; rd < 4; ++rd) begin
+        run_prepare_release_case(OP_DMA_LD, 5, 3'(rd), 32'(105 + rd));
+      end
+
+      // Psum/output and store paths retain their one-phase behavior.  rd=4 is
+      // also excluded from the pure tile-load prepare class.
+      run_nonprefetch_case(OP_O_ACC2LMEM, 4, 3'd0, 32'd109);
+      run_nonprefetch_case(OP_DMA_ST,     5, 3'd4, 32'd110);
+      run_nonprefetch_case(OP_DMA_LD,     5, 3'd4, 32'd111);
+      $display("PREPARE_RELEASE_MATRIX_PASS local=I,W,SC,ZP dma_rd=0,1,2,3 forbidden=ACC2LMEM,DMA_ST,DMA_RD4");
 
       // Four waits, all ready.
       c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
-      c.waits[2] = '{valid:1'b1, reg_id:4'd2, target:32'd30};
+      c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
       c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd40};
       directed_inject(c, 0);
       if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
@@ -1090,7 +1325,7 @@ module tb_VX_gemm_ctrl;
       c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
-      c.waits[2] = '{valid:1'b1, reg_id:4'd2, target:32'd30};
+      c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
       c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd41};
       directed_inject(c, 0);
       if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
@@ -1107,7 +1342,7 @@ module tb_VX_gemm_ctrl;
       $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SAME_CYCLE_SET_PASS blocked=1 resolved=1");
 
       // PLUS completion also participates in the same-cycle effective view.
-      c = make_directed_cmd(OP_SZ_LDMA_MXU, 1'b1, 4'd4, 1'b0, 32'd1);
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, 4'd4, 1'b0, 32'd1);
       directed_inject(c, 2);
       directed_accept_issue(2);
       c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
@@ -1127,6 +1362,112 @@ module tb_VX_gemm_ctrl;
       if (dut.sync_regs_q[4] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED PLUS scoreboard update mismatch");
       $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[4]);
+
+      // Physical scale and zero-point completions independently update their
+      // scoreboards.  The logical RID_SZ dependency follows the minimum and
+      // may release the input child only when the slower producer completes.
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC0,
+                            1'b1, 32'd1);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, RID_ZP0,
+                            1'b1, 32'd1);
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_SZ0, target:32'd1};
+      directed_inject(c, 0);
+      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN SC-first input escaped before either completion");
+      @(negedge clk);
+      directed_done[2] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[2]
+          || dut.effective_sync[RID_SC0] !== 32'd1
+          || dut.effective_sync[RID_ZP0] !== 32'd0
+          || dut.effective_sync[RID_SZ0] !== 32'd0
+          || dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN SC-first released before ZP completion");
+      @(posedge clk);
+      #1;
+      directed_done[2] = 1'b0;
+      @(negedge clk);
+      directed_done[3] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[3]
+          || dut.effective_sync[RID_SZ0] !== 32'd1
+          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN SC-first did not release on ZP completion");
+      @(posedge clk);
+      #1;
+      directed_done[3] = 1'b0;
+      directed_complete(0);
+      $display("QPARAM_JOIN_SC_FIRST_PASS rid_sz0=1");
+
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC1,
+                            1'b1, 32'd2);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, RID_ZP1,
+                            1'b1, 32'd2);
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_SZ1, target:32'd2};
+      directed_inject(c, 0);
+      @(negedge clk);
+      directed_done[3] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[3]
+          || dut.effective_sync[RID_SC1] !== 32'd0
+          || dut.effective_sync[RID_ZP1] !== 32'd2
+          || dut.effective_sync[RID_SZ1] !== 32'd0
+          || dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN ZP-first released before scale completion");
+      @(posedge clk);
+      #1;
+      directed_done[3] = 1'b0;
+      @(negedge clk);
+      directed_done[2] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[2]
+          || dut.effective_sync[RID_SZ1] !== 32'd2
+          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN ZP-first did not release on scale completion");
+      @(posedge clk);
+      #1;
+      directed_done[2] = 1'b0;
+      directed_complete(0);
+      $display("QPARAM_JOIN_ZP_FIRST_PASS rid_sz1=2");
+
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC0,
+                            1'b1, 32'd3);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, RID_ZP0,
+                            1'b1, 32'd3);
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_SZ0, target:32'd3};
+      directed_inject(c, 0);
+      @(negedge clk);
+      directed_done[2] = 1'b1;
+      directed_done[3] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[2]
+          || !dut.child_completion_pop_v[3]
+          || dut.effective_sync[RID_SC0] !== 32'd3
+          || dut.effective_sync[RID_ZP0] !== 32'd3
+          || dut.effective_sync[RID_SZ0] !== 32'd3
+          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+        $fatal(1, "QPARAM_JOIN same-cycle bypass did not release input");
+      @(posedge clk);
+      #1;
+      directed_done[2] = 1'b0;
+      directed_done[3] = 1'b0;
+      directed_complete(0);
+      $display("QPARAM_JOIN_SAME_CYCLE_PASS rid_sz0=3");
 
       // Ready-low retention: eligibility remains set, FIFO head and metadata
       // remain stable, and pop occurs only when start is finally asserted.
@@ -1198,20 +1539,20 @@ module tb_VX_gemm_ctrl;
 
       c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd9, 1'b1, 32'd1);
       c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd0};
-      directed_inject(c, 3);
-      directed_accept_issue(3);
+      directed_inject(c, 4);
+      directed_accept_issue(4);
 
       c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd4, 1'b0, 32'd1);
       c.waits[0] = '{valid:1'b1, reg_id:4'd9, target:32'd1};
-      directed_inject(c, 4);
-      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
-          || dut.child_q_pop_v[4])
+      directed_inject(c, 5);
+      if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5]
+          || dut.child_q_pop_v[5])
         $fatal(1, "SCHED_DIRECTED DMA store was not blocked on RID_ACC_FREE0");
 
       c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
       c.waits[3] = '{valid:1'b1, reg_id:4'd10, target:32'd0};
       directed_inject(c, 0);
-      if (dut.child_inflight_empty_v[3]
+      if (dut.child_inflight_empty_v[4]
           || !dut.child_deps_ready_v[0]
           || !dut.child_issue_fire_v[0])
         $fatal(1, "SCHED_DIRECTED opposite-group ARM did not overlap delayed ACC2LMEM");
@@ -1225,65 +1566,65 @@ module tb_VX_gemm_ctrl;
         if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0]
             || dut.child_q_pop_v[0])
           $fatal(1, "SCHED_DIRECTED same-group ARM escaped RID_ACC_FREE0 wait");
-        if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
-            || dut.child_q_pop_v[4])
+        if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5]
+            || dut.child_q_pop_v[5])
           $fatal(1, "SCHED_DIRECTED DMA store escaped RID_ACC_FREE0 wait");
         @(posedge clk);
         #1;
       end
 
       @(negedge clk);
-      directed_done[3] = 1'b1;
+      directed_done[4] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[3]
+      if (!dut.child_completion_pop_v[4]
           || dut.effective_sync[9] !== 32'd1
           || !dut.child_deps_ready_v[0]
           || !dut.child_issue_fire_v[0]
           || !dut.child_q_pop_v[0]
-          || !dut.child_deps_ready_v[4]
-          || !dut.child_issue_fire_v[4]
-          || !dut.child_q_pop_v[4])
+          || !dut.child_deps_ready_v[5]
+          || !dut.child_issue_fire_v[5]
+          || !dut.child_q_pop_v[5])
         $fatal(1, "SCHED_DIRECTED RID_ACC_FREE0 SET did not release ARM and DMA store in-cycle");
       @(posedge clk);
       #1;
-      directed_done[3] = 1'b0;
+      directed_done[4] = 1'b0;
       if (dut.sync_regs_q[9] !== 32'd1
           || dut.child_inflight_empty_v[0]
-          || dut.child_inflight_empty_v[4]
+          || dut.child_inflight_empty_v[5]
           || dut.sync_regs_q[4] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED ACC release lost SET or dependent issue");
 
       directed_complete(0);
-      if (dut.child_inflight_empty_v[4] || dut.sync_regs_q[4] !== 32'd0)
+      if (dut.child_inflight_empty_v[5] || dut.sync_regs_q[4] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED delayed DMA store blocked freed same-group ARM");
 
       c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd10, 1'b1, 32'd1);
       c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
-      directed_inject(c, 3);
-      if (dut.child_deps_ready_v[3] || dut.child_issue_fire_v[3]
-          || dut.child_q_pop_v[3])
+      directed_inject(c, 4);
+      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
+          || dut.child_q_pop_v[4])
         $fatal(1, "SCHED_DIRECTED next ACC2LMEM escaped RID_O wait");
 
       @(negedge clk);
-      directed_done[4] = 1'b1;
+      directed_done[5] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[4]
+      if (!dut.child_completion_pop_v[5]
           || dut.effective_sync[4] !== 32'd1
           || dut.u_VX_gemm_fsm.completed_output_store_count_i !== 32'd1
-          || !dut.child_deps_ready_v[3]
-          || !dut.child_issue_fire_v[3]
-          || !dut.child_q_pop_v[3])
+          || !dut.child_deps_ready_v[4]
+          || !dut.child_issue_fire_v[4]
+          || !dut.child_q_pop_v[4])
         $fatal(1, "SCHED_DIRECTED RID_O PLUS did not release next ACC2LMEM in-cycle");
       if (dut.scheduler_quiescent)
         $fatal(1, "SCHED_DIRECTED exact store count incorrectly implied scheduler quiescence");
       @(posedge clk);
       #1;
-      directed_done[4] = 1'b0;
+      directed_done[5] = 1'b0;
       if (dut.sync_regs_q[4] !== 32'd1
-          || dut.child_inflight_empty_v[3]
+          || dut.child_inflight_empty_v[4]
           || dut.sync_regs_q[10] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED output-LMEM release lost RID_O or ACC2LMEM issue");
-      directed_complete(3);
+      directed_complete(4);
       if (dut.sync_regs_q[10] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED RID_ACC_FREE1 completion mismatch");
       $display("SCHED_DIRECTED_ACC_OWNERSHIP_PASS opposite_group=1 same_group_blocked=1 effective_set_release=1 dma_overlap=1 rid_o_block=1 rid9=1 rid10=1");
@@ -1367,7 +1708,7 @@ module tb_VX_gemm_ctrl;
       if (!saw_done)
         $fatal(1, "SCHED_DIRECTED did not observe non-idle/quiescent ready gate");
       $display("SCHED_DIRECTED_CFG_READY_EXACT_PASS fsm_nonidle_quiescent_blocked=1");
-      for (int rid = 0; rid < 11; rid++) begin
+      for (int rid = 0; rid < GEMM_NUM_SYNC_REGS; rid++) begin
         if (dut.sync_regs_q[rid] !== 32'd0)
           $fatal(1, "SCHED_DIRECTED implicit clear failed rid=%0d value=%0d",
                  rid, dut.sync_regs_q[rid]);
@@ -1429,7 +1770,7 @@ module tb_VX_gemm_ctrl;
       c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd1);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_SZ_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd2);
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, 4'd9, 1'b1, 32'd2);
       directed_inject(c, 2);
       directed_accept_issue(2);
       if (dut.child_inflight_empty_v[1] || dut.child_inflight_empty_v[2])
