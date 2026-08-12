@@ -12,19 +12,45 @@ Every accepted input beat carries a `gemm_input_ctrl_t` sideband through
 enables and byte addresses, quantization direction, weight/scale/zero
 register selectors, load/accumulate mode, and final-packet marker.
 
-The input request channel is non-blocking: `i_lmem_bus_if.req_ready` is tied
-high. A valid request is therefore committed to the fixed pipeline and must
-produce its enabled accumulator write after the configured latency. The unit
-does not contain a command FSM, input FIFO, credit counter, or round-robin
-scheduler. Command lifetime and address generation belong to
-`VX_gemm_node`.
+The input request channel is admitted by `input_admission_ready`, which the
+node derives from the writer-head command's exact W/S/Z load-completion and
+ACC-free fences. A request enters the fixed pipeline only on
+`req_valid && req_ready`; a stalled request must keep its data and writer-head
+context stable. The unit does not contain a command FSM, input FIFO, credit
+counter, or round-robin scheduler. Command lifetime, address generation, and
+the ordered admission fence belong to `VX_gemm_node`.
 
 Scale and zero-point register writes use independent 64-byte ingress ports.
 Each port applies backpressure only when its selected register is live in the
-compute pipeline, so both writes may be accepted in the same cycle. Separate
+input-admission snapshot cycle, so both writes may be accepted in the same
+cycle after the old values have been captured. QROW scale, QROW zero point,
+QCOL zero point, and QCOL scale use immutable snapshot paths ending at their
+respective consumer stages; later register overwrites cannot affect admitted
+packets. Separate
 `scale_register_write` and `zero_point_register_write` pulses identify the
 architectural write endpoints; `quant_register_write` remains their OR for
 legacy observability.
+
+The unit also reports per-command resource lifetime endpoints. Scale and
+zero-point consume pulses occur when the final input packet captures its
+qparams. Weight consume occurs when that packet reaches
+`PREALIGN_CTRL_IDX`, where the GEMM tree performs its final weight read. The
+weight write-ready mask scans only the current admission and control stages
+through `PREALIGN_CTRL_IDX`, inclusive; stages after the GEMM-tree read no
+longer keep the weight register busy.
+
+Weight storage has four physical banks selected by a two-bit index. The FSM
+allocates these banks circularly, while scale and zero-point storage remain
+independent two-bank resources selected by their own one-bit indices. There is
+no requirement that the W/S/Z indices in an input packet be equal.
+
+When the only remaining user of a Weight bank is the final consumer at
+`PREALIGN_CTRL_IDX`, the unit may capture the old Weight value and accept the
+matching new-bank write on the same edge. This exception is rejected if an
+incoming packet or any earlier pipeline stage still names that bank. The
+upstream Weight executor independently enforces the command's exact consume
+RID and target, covering the interval before an accepted packet becomes
+visible in the unit's local busy scan.
 
 `last_write` pulses on the actual accumulator write of a packet marked
 `last`. `pipeline_empty` is asserted only after all packet sidebands and any
@@ -91,10 +117,11 @@ nominal read.
 This contract is intentionally limited to `L_R=1`, `L_A=1`, and `L_P=0`.
 Elaboration rejects a different accumulator timing instead of silently
 generalizing the history window. Both forwarding dependency bits travel with
-the packet sideband, so the input remains always-ready and every enabled write
-keeps its fixed latency.
+the packet sideband, so every accepted input keeps its fixed write latency even
+when admission inserts bubbles between commands.
 
-Simulation assertions check always-ready behavior, control/data alignment,
+Simulation assertions check valid-ready stability, fire-only input state
+updates, control/data alignment,
 single-port read/write exclusion, early-response availability, both forwarding
 sources' validity/address equality, and legal sequential or same-address
 dependencies within a command stream. Load packets are checked at the scaler

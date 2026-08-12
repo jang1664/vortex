@@ -82,43 +82,79 @@ Scope:
 
 ### 4.1 Input local DMA
 
-input path는 `VX_lmem_dma_misal(DIR=0)`로 동작한다.
+Input uses `VX_lmem_dma_input_overlap`, not the single-context generic DMA.
+The executor accepts four ordered variable-length descriptors and shares eight
+tagged response slots across them. Its read head may issue TMEM requests for a
+later command while the writer head is stalled at GEMM admission; its writer
+head and completion remain command-granular and in order.
 
-- source: `rs2_data`
-- stride: `cmd.stride`
-- bound[0]: `cmd.bound`
-- seg_size: `MXU_KT * 2`
-- done source: 실제로는 `gemm_unit_if.done`
+The node keeps a matching depth-four context FIFO. Each entry stores the full
+packet-control context, independent W/S/Z indices, four exact admission waits,
+accumulator base/count/progress, flags, and a sequence number. The admission
+head alone drives `packet_ctrl`; no later enqueue may replace the context of a
+stalled writer beat. Admission begins only when the selected Weight, Scale,
+and zero-point LOAD completion levels and the selected ACC-free level reach
+their exact targets. Scale and zero-point intentionally use registered
+completion levels so a same-cycle LOAD completion cannot release a snapshot
+without an explicit data bypass.
 
-관련 코드:
-- [`VX_gemm_node.sv:174`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L174)
-- [`VX_gemm_node.sv:189`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L189)
-- [`VX_gemm_node.sv:190`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L190)
-
-중요한 점은 local DMA 완료가 아니라 GEMM 연산 완료를 input read done으로 본다는 점이다. input load와 GEMM start를 사실상 같은 시작점으로 다루는 구조다.
+Normal Input completion is sourced by the final actual GEMM admission
+handshake. That handshake sets the context's registered `ingress_complete`
+bit, and controller retirement occurs in the following cycle; this registered
+cut prevents an admission/completion/effective-sync combinational loop. For
+`notify_on_writeback`, the admitted entry remains at the separate ordered
+completion head until its tagged final accumulator writeback. This separates
+source prefetch, irreversible GEMM admission, and architectural completion
+without reintroducing `prior_g_wait` on the next Input command.
 
 ### 4.2 Weight local DMA
 
-weight path도 `DIR=0`이지만, GEMM unit으로 넘길 때 주소를 TMEM address가 아니라 `{weight_cmd_flags_r[1], weight_cmd_flags_r[0]}`로 강제 치환한다 ([`VX_gemm_node.sv:486`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L486)).
+The Weight path uses a dedicated two-command overlap executor. The node
+encodes `{load_dir, wreg_idx}` above the Weight-beat alignment bits in
+`dst_base_addr`; each command FIFO entry stores that aligned byte address.
+The executor's writer head converts it back to the GEMM beat-address selector,
+so accepting or reading command N+1 cannot overwrite command N's destination
+metadata.
 
-이 로직의 의미:
+The executor shares one response RAM across both commands and maintains
+independent read-command and write-command heads. Source reads for N+1 may run
+while N writes, while source requests, destination writes, and completion are
+each command-granular and in order. The node keeps a matching ordered boundary
+queue so controller notification waits for the actual final Weight register
+write rather than the earlier local-DMA bus handshake.
 
-- weight DMA가 TMEM에서 읽어 오는 실제 주소와,
-- GEMM unit이 weight register bank/double-buffer selector로 해석하는 주소는
-
-서로 다르다.
-
-즉 weight path의 주소는 "메모리 위치"가 아니라 "어느 weight buffer를 쓸지"로 재해석된다. 이 플래그는 DMA start 시점에 래치된다 ([`VX_gemm_node.sv:251`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L251)).
+Weight has four physical destination banks. The selector encoding is
+`{load_dir, wreg_idx[1:0]}`, and each command carries a separate W0..W3 consume
+RID/target fence. Scale and zero-point remain two-bank resources and use their
+own independent indices. Input ARM metadata therefore carries the tuple
+`{wreg_idx[1:0], sreg_idx, zreg_idx}`; the node does not require these indices
+to match.
 
 ### 4.3 Scale/zero local DMA
 
-scale/zero path는 `DIR=0`이며 TMEM subsystem에서 나온 beat address를 GEMM unit 쪽 byte address로 left shift해서 넘긴다 ([`VX_gemm_node.sv:493`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_gemm_node.sv#L493)).
+Scale and zero point use separate `VX_lmem_dma_qparam_overlap` instances. Each
+resource owns a depth-four ordered descriptor FIFO and a private eight-slot
+tagged response ring. The source head may read later commands after exact TMEM
+tile readiness, even when the destination head is waiting to overwrite its
+two-bank qparam register. Responses carry command sequence and beat ownership,
+so an out-of-order source return cannot overtake the writer head.
 
-핵심은 다음 한 줄이다.
+Each descriptor stores its destination bank and exact resource-specific
+consume RID/target. The destination head may assert its GEMM write request only
+after the registered SC_CONSUME or ZP_CONSUME level reaches that target and the
+GEMM register port is ready. Registered consume levels intentionally prohibit
+a final snapshot and replacement write from bypassing one another on the same
+edge. Scale and zero point retain independent bank pointers and independent
+fences.
 
-- `sz_gemm_bus_if.req_data.addr = tmem_sz_gemm_bus_if.req_data.addr << log2(GEMM_SCALE_ZERO_DATA_SIZE)`
-
-즉 TMEM/LDMA 쪽은 beat 단위, GEMM scale/zp register 쪽은 byte 단위로 해석하고 있다.
+The node tracks four issued command boundaries per resource. It removes an
+entry only on the final actual Scale or Zero-point register write. That write
+causes a registered one-cycle completion pulse to the controller; the causal
+register cut prevents GEMM `req_ready`, scheduler issue, and completion from
+forming a delta-cycle loop. A full qparam descriptor FIFO similarly becomes
+available from its registered count on the following cycle instead of using a
+same-cycle final-write capacity bypass. These registered boundaries do not
+change command order or allow a write before its exact consume fence.
 
 ### 4.4 Output local DMA
 
@@ -135,7 +171,7 @@ output path는 `DIR=1`로 GEMM -> TMEM write 경로다 ([`VX_tmem_subsystem.sv:3
 - `VX_dma_engine`
 - `VX_tmem_switch` x4
 - `VX_tensor_mem_bank` x8
-- `VX_lmem_dma_misal` x4
+- `VX_lmem_dma_misal` x3 plus dedicated Input and Weight overlap executors
 
 정의는 [`VX_tmem_subsystem.sv:16`](/home/jaeyongjang/project.local/vortex/hw/rtl/mem/VX_tmem_subsystem.sv#L16)부터 보인다.
 
