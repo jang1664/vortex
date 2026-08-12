@@ -106,7 +106,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         input int transaction
     );
         return transaction_local_addr(batch, transaction) * NUM_BANK_GROUPS
-             + transaction;
+             + (transaction % NUM_BANK_GROUPS);
     endfunction
 
     function automatic logic [WIDE_DATA_SIZE-1:0] transaction_byteen(
@@ -152,7 +152,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         logic [WIDE_DATA_SIZE*8-1:0] value;
         int bank_base;
         value = '0;
-        bank_base = transaction * BANKS_PER_BEAT;
+        bank_base = (transaction % NUM_BANK_GROUPS) * BANKS_PER_BEAT;
         for (int lane = 0; lane < BANKS_PER_BEAT; ++lane) begin
             value[lane*DATA_WIDTH +: DATA_WIDTH] =
                 response_pattern(batch, transaction, bank_base + lane);
@@ -163,7 +163,8 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
     function automatic logic [NUM_BANKS-1:0] transaction_bank_mask(
         input int transaction
     );
-        return BASE_MASK << (transaction * BANKS_PER_BEAT);
+        return BASE_MASK
+            << ((transaction % NUM_BANK_GROUPS) * BANKS_PER_BEAT);
     endfunction
 
     task automatic drive_request(input int batch, input int transaction);
@@ -317,7 +318,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         input int first_lane
     );
         int bank_base;
-        bank_base = transaction * BANKS_PER_BEAT;
+        bank_base = (transaction % NUM_BANK_GROUPS) * BANKS_PER_BEAT;
         @(negedge clk);
         bank_rsp_valid = '0;
         for (int lane = first_lane; lane < BANKS_PER_BEAT; ++lane) begin
@@ -339,43 +340,12 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         bank_rsp_valid = '0;
     endtask
 
-    task automatic send_lane_all_contexts(input int batch, input int lane);
-        @(negedge clk);
-        bank_rsp_valid = '0;
-        for (int t = 0; t < OUTSTANDING; ++t) begin
-            int b;
-            b = t * BANKS_PER_BEAT + lane;
-            bank_rsp_valid[b] = 1'b1;
-            bank_rsp_data[b] = response_pattern(batch, t, b);
-            bank_rsp_tag[b] = OUT_TAG_WIDTH'(
-                {BANK_SEL_BITS'(b), transaction_tag(batch, t)});
-        end
-        #1;
-        for (int t = 0; t < OUTSTANDING; ++t) begin
-            int b;
-            b = t * BANKS_PER_BEAT + lane;
-            if (!bank_rsp_ready[b])
-                $fatal(1, "case%0d tx%0d bank%0d: simultaneous response not ready",
-                       CASE_ID, t, b);
-        end
-        @(posedge clk);
-        @(negedge clk);
-        bank_rsp_valid = '0;
-    endtask
-
     task automatic respond_reversed_skewed(input int batch);
-        // With multiple lanes, the first lane of every context returns on the
-        // same clock. Remaining lanes then complete contexts in reverse order.
-        if (BANKS_PER_BEAT > 1) begin
-            send_lane_all_contexts(batch, 0);
-            for (int t = OUTSTANDING - 1; t >= 0; --t)
-                send_context_lanes(batch, t, 1);
-        end else begin
-            // WLOAD4 has one lane per context, so reverse completion itself is
-            // the meaningful response-order stress for this variant.
-            for (int t = OUTSTANDING - 1; t >= 0; --t)
-                send_context_lanes(batch, t, 0);
-        end
+        // Complete contexts in reverse order. Contexts may reuse a physical
+        // bank group when context depth exceeds NUM_BANK_GROUPS, so each
+        // context owns a separate response cycle even with a distinct slot tag.
+        for (int t = OUTSTANDING - 1; t >= 0; --t)
+            send_context_lanes(batch, t, 0);
     endtask
 
     task automatic respond_ordered(input int batch);
@@ -576,7 +546,7 @@ module tb_VX_tmem_wide_read_switch;
         .CASE_ID(0), .WIDE_DATA_SIZE(64), .OUTSTANDING(8)
     ) case_wload4 (.clk(clk), .reset(reset), .done(done[0]));
     tmem_wide_read_case #(
-        .CASE_ID(1), .WIDE_DATA_SIZE(128), .OUTSTANDING(4)
+        .CASE_ID(1), .WIDE_DATA_SIZE(128), .OUTSTANDING(8)
     ) case_wload8 (.clk(clk), .reset(reset), .done(done[1]));
     tmem_wide_read_case #(
         .CASE_ID(2), .WIDE_DATA_SIZE(256), .OUTSTANDING(2)
@@ -591,7 +561,7 @@ module tb_VX_tmem_wide_read_switch;
         fork
             begin
                 wait (&done);
-                $display("PASSED: TMEM wide-read multi-outstanding 8/4/2/1 cases");
+                $display("PASSED: TMEM wide-read multi-outstanding 8/8/2/1 cases");
                 $finish;
             end
             begin

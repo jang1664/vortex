@@ -16,16 +16,16 @@ signalSpacing 5
 
 ; windowTimeUnit is used for zoom, cursor & marker
 ; waveform viewport range
-zoom 56909218.750000 58280781.250000
-cursor 57595000.000000
+zoom 57113906.250000 58396093.750000
+cursor 57755000.000000
 marker 0.000000
 
 ; user define markers
 ; userMarker time_pos marker_name color linestyle
 ; visible top row signal index
-top 0
+top 4
 ; marker line index
-markerPos 1
+markerPos 35
 
 ; event list
 ; addEvent event_name event_expression
@@ -61,13 +61,6 @@ addSignal -h 15 -holdScope req_valid
 addSignal -h 15 -holdScope rsp_data
 addSignal -h 15 -holdScope rsp_ready
 addSignal -h 15 -holdScope rsp_valid
-addGroup "sz_lmem_bus_if"
-addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit_v2/sz_lmem_bus_if/req_data
-addSignal -h 15 -holdScope req_ready
-addSignal -h 15 -holdScope req_valid
-addSignal -h 15 -holdScope rsp_data
-addSignal -h 15 -holdScope rsp_ready
-addSignal -h 15 -holdScope rsp_valid
 addGroup "o_lmem_bus_if"
 addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit_v2/o_lmem_bus_if/req_data
 addSignal -h 15 -holdScope req_ready
@@ -75,7 +68,38 @@ addSignal -h 15 -holdScope req_valid
 addSignal -h 15 -holdScope rsp_data
 addSignal -h 15 -holdScope rsp_ready
 addSignal -h 15 -holdScope rsp_valid
+addSubGroup "zp_gemm_bus_if"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/zp_gemm_bus_if/req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope req_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+addSignal -h 15 -holdScope rsp_valid
+addSubGroup "sc_gemm_bus_if"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/sc_gemm_bus_if/req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope req_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+addSignal -h 15 -holdScope rsp_valid
+endSubGroup "sc_gemm_bus_if"
+endSubGroup "zp_gemm_bus_if"
 addGroup "G5"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_v2_if/last_write
+addSignal -h 15 -holdScope packet_ctrl
+addSignal -h 15 -holdScope pipeline_empty
+addSignal -h 15 -holdScope quant_register_write
+addSignal -h 15 -holdScope scale_consume_idx
+addSignal -h 15 -holdScope scale_consume_valid
+addSignal -h 15 -holdScope scale_register_write
+addSignal -h 15 -holdScope tagged_final_writeback
+addSignal -h 15 -holdScope weight_consume_idx
+addSignal -h 15 -holdScope weight_consume_valid
+addSignal -h 15 -holdScope weight_register_write
+addSignal -h 15 -holdScope zero_point_register_write
+addSignal -h 15 -holdScope zp_consume_idx
+addSignal -h 15 -holdScope zp_consume_valid
+addGroup "G6"
 
 ; getSignalForm Scope Hierarchy Status
 ; active file of getSignalForm
@@ -95,8 +119,9 @@ getSignalForm close
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node"
-"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit_v2"
-"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit_v2/o_lmem_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_v2_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/sc_gemm_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/zp_gemm_bus_if"
 
 SCOPE_LIST_BEGIN
 "/tb_vcs_xrtsim"
@@ -117,6 +142,9 @@ SCOPE_LIST_BEGIN
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket"
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
 "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_v2_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/zp_gemm_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/sc_gemm_bus_if"
 SCOPE_LIST_END
 
 GETSIGNALFORM_SCOPE_HIERARCHY_END

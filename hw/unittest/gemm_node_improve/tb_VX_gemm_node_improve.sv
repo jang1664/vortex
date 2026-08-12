@@ -2727,12 +2727,15 @@ module tb_VX_gemm_node_improve
     logic             is_accum;
     logic             notify_on_writeback;
     logic             quant_dir;
-    logic             wreg_use_idx;
+    gemm_wreg_idx_t   wreg_use_idx;
     logic             sreg_use_idx;
     logic             zreg_use_idx;
   } input_metadata_model_t;
 
-  input_metadata_model_t input_metadata_model;
+  input_metadata_model_t input_metadata_model[1024];
+  int unsigned input_metadata_admit_idx;
+  int unsigned input_metadata_complete_idx;
+  int unsigned input_metadata_tail_idx;
   longint unsigned input_metadata_cmd_count;
   longint unsigned input_metadata_packet_count;
   longint unsigned input_metadata_last_admission_count;
@@ -2768,7 +2771,11 @@ module tb_VX_gemm_node_improve
     non_notify_done = u_dut.gemm_ctrl_if.input_read_flag.done;
 
     if (reset) begin
-      input_metadata_model = '0;
+      for (int ctx = 0; ctx < 1024; ++ctx)
+        input_metadata_model[ctx] = '0;
+      input_metadata_admit_idx = 0;
+      input_metadata_complete_idx = 0;
+      input_metadata_tail_idx = 0;
       input_metadata_cmd_count = 0;
       input_metadata_packet_count = 0;
       input_metadata_last_admission_count = 0;
@@ -2780,7 +2787,8 @@ module tb_VX_gemm_node_improve
       input_scheduler_retire_count = 0;
       prior_raw_write_during_final_count = 0;
     end else begin
-      if (!input_metadata_model.active && u_dut.input_dma_ctrl_if.idle
+      if ((input_metadata_complete_idx == input_metadata_tail_idx)
+          && u_dut.input_dma_ctrl_if.idle
           && u_dut.gemm_ctrl_if.input_read_flag.done)
         $fatal(1, "[%0t] INPUT_METADATA initial/raw LDMA idle completed a command", $time);
 
@@ -2789,120 +2797,123 @@ module tb_VX_gemm_node_improve
                $time, u_dut.gemm_unit_v2_if.packet_ctrl.valid, input_fire);
 
       if (u_dut.input_cmd_start) begin
-        if (input_metadata_model.active)
-          $fatal(1, "[%0t] INPUT_METADATA command overwrote active model", $time);
-
-        input_metadata_model.active = 1'b1;
-        input_metadata_model.ingress_complete = 1'b0;
-        input_metadata_model.acc_base
+        if (input_metadata_tail_idx >= 1024)
+          $fatal(1, "[%0t] INPUT_METADATA model FIFO overflow", $time);
+        input_metadata_model[input_metadata_tail_idx].active = 1'b1;
+        input_metadata_model[input_metadata_tail_idx].ingress_complete = 1'b0;
+        input_metadata_model[input_metadata_tail_idx].acc_base
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-        input_metadata_model.packet_count
+        input_metadata_model[input_metadata_tail_idx].packet_count
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
-        input_metadata_model.packet_index = '0;
-        input_metadata_model.is_accum
-          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
-        input_metadata_model.notify_on_writeback
+        input_metadata_model[input_metadata_tail_idx].packet_index = '0;
+        input_metadata_model[input_metadata_tail_idx].is_accum
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[4];
-        input_metadata_model.quant_dir
+        input_metadata_model[input_metadata_tail_idx].notify_on_writeback
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[5];
-        input_metadata_model.wreg_use_idx
-          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
-        input_metadata_model.sreg_use_idx
+        input_metadata_model[input_metadata_tail_idx].quant_dir
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[6];
+        input_metadata_model[input_metadata_tail_idx].wreg_use_idx
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[3:2];
+        input_metadata_model[input_metadata_tail_idx].sreg_use_idx
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
-        input_metadata_model.zreg_use_idx
+        input_metadata_model[input_metadata_tail_idx].zreg_use_idx
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
         input_metadata_cmd_count++;
 
-        if (input_metadata_model.packet_count == 0)
+        if (input_metadata_model[input_metadata_tail_idx].packet_count == 0)
           $fatal(1, "[%0t] INPUT_METADATA captured zero packet count", $time);
-        if (input_metadata_model.packet_count
+        if (input_metadata_model[input_metadata_tail_idx].packet_count
             != {5'd0, u_dut.gemm_ctrl_if.input_read_ctrl.cmd.bound})
           $fatal(1, "[%0t] INPUT_METADATA eff_mt/bound mismatch: eff_mt=%0d bound=%0d",
-                 $time, input_metadata_model.packet_count,
+                 $time, input_metadata_model[input_metadata_tail_idx].packet_count,
                  u_dut.gemm_ctrl_if.input_read_ctrl.cmd.bound);
+        input_metadata_tail_idx++;
 
-      end else if (input_metadata_model.active) begin
+      end else if (input_metadata_model[input_metadata_admit_idx].active) begin
         // Compare registered DUT context against the independently captured
         // semantic context on every non-start cycle.  In particular, this
         // proves that LDMA bubbles cannot advance or corrupt metadata.
-        if (u_dut.input_cmd_ctx_r.active !== input_metadata_model.active
-            || u_dut.input_cmd_ctx_r.ingress_complete
-               !== input_metadata_model.ingress_complete
-            || u_dut.input_cmd_ctx_r.acc_base
-               !== input_metadata_model.acc_base
-            || u_dut.input_cmd_ctx_r.packet_count
-               !== input_metadata_model.packet_count
-            || u_dut.input_cmd_ctx_r.packet_index
-               !== input_metadata_model.packet_index
-            || u_dut.input_cmd_ctx_r.is_accum
-               !== input_metadata_model.is_accum
-            || u_dut.input_cmd_ctx_r.notify_on_writeback
-               !== input_metadata_model.notify_on_writeback
-            || u_dut.input_cmd_ctx_r.quant_dir
-               !== input_metadata_model.quant_dir
-            || u_dut.input_cmd_ctx_r.wreg_use_idx
-               !== input_metadata_model.wreg_use_idx
-            || u_dut.input_cmd_ctx_r.sreg_use_idx
-               !== input_metadata_model.sreg_use_idx
-            || u_dut.input_cmd_ctx_r.zreg_use_idx
-               !== input_metadata_model.zreg_use_idx)
+        if (u_dut.input_cmd_ctx.valid
+               !== input_metadata_model[input_metadata_admit_idx].active
+            || u_dut.input_cmd_ctx.ingress_complete
+               !== input_metadata_model[input_metadata_admit_idx].ingress_complete
+            || u_dut.input_cmd_ctx.acc_base
+               !== input_metadata_model[input_metadata_admit_idx].acc_base
+            || u_dut.input_cmd_ctx.packet_count
+               !== input_metadata_model[input_metadata_admit_idx].packet_count
+            || u_dut.input_cmd_ctx.packet_index
+               !== input_metadata_model[input_metadata_admit_idx].packet_index
+            || u_dut.input_cmd_ctx.is_accum
+               !== input_metadata_model[input_metadata_admit_idx].is_accum
+            || u_dut.input_cmd_ctx.notify_on_writeback
+               !== input_metadata_model[input_metadata_admit_idx].notify_on_writeback
+            || u_dut.input_cmd_ctx.quant_dir
+               !== input_metadata_model[input_metadata_admit_idx].quant_dir
+            || u_dut.input_cmd_ctx.wreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].wreg_use_idx
+            || u_dut.input_cmd_ctx.sreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].sreg_use_idx
+            || u_dut.input_cmd_ctx.zreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].zreg_use_idx)
           $fatal(1, "[%0t] INPUT_METADATA registered context mismatch during command",
                  $time);
 
-        if (!input_fire && !input_metadata_model.ingress_complete)
+        if (!input_fire
+            && !input_metadata_model[input_metadata_admit_idx].ingress_complete)
           input_metadata_bubble_count++;
       end
 
       if (input_fire) begin
-        if (!input_metadata_model.active
-            || input_metadata_model.ingress_complete)
+        if (!input_metadata_model[input_metadata_admit_idx].active
+            || input_metadata_model[input_metadata_admit_idx].ingress_complete)
           $fatal(1, "[%0t] INPUT_METADATA packet outside active ingress", $time);
 
         expected_addr = expected_input_metadata_addr(
-          input_metadata_model.acc_base,
-          input_metadata_model.packet_index
+          input_metadata_model[input_metadata_admit_idx].acc_base,
+          input_metadata_model[input_metadata_admit_idx].packet_index
         );
-        expected_last = input_metadata_model.packet_index
-                     == input_metadata_model.packet_count - 1'b1;
+        expected_last = input_metadata_model[input_metadata_admit_idx].packet_index
+                     == input_metadata_model[input_metadata_admit_idx].packet_count - 1'b1;
 
         if (u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_en
-              !== input_metadata_model.is_accum
+              !== input_metadata_model[input_metadata_admit_idx].is_accum
             || u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_en !== 1'b1
             || u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_addr
                !== expected_addr
             || u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr
                !== expected_addr
             || u_dut.gemm_unit_v2_if.packet_ctrl.quant_dir
-               !== input_metadata_model.quant_dir
+               !== input_metadata_model[input_metadata_admit_idx].quant_dir
             || u_dut.gemm_unit_v2_if.packet_ctrl.wreg_use_idx
-               !== input_metadata_model.wreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].wreg_use_idx
             || u_dut.gemm_unit_v2_if.packet_ctrl.sreg_use_idx
-               !== input_metadata_model.sreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].sreg_use_idx
             || u_dut.gemm_unit_v2_if.packet_ctrl.zreg_use_idx
-               !== input_metadata_model.zreg_use_idx
+               !== input_metadata_model[input_metadata_admit_idx].zreg_use_idx
             || u_dut.gemm_unit_v2_if.packet_ctrl.is_load
-               !== !input_metadata_model.is_accum
+               !== !input_metadata_model[input_metadata_admit_idx].is_accum
             || u_dut.gemm_unit_v2_if.packet_ctrl.notify_on_writeback
-               !== input_metadata_model.notify_on_writeback
+               !== input_metadata_model[input_metadata_admit_idx].notify_on_writeback
             || u_dut.gemm_unit_v2_if.packet_ctrl.last !== expected_last)
           $fatal(1, "[%0t] INPUT_METADATA packet mismatch: idx=%0d addr=0x%0h last=%0d",
-                 $time, input_metadata_model.packet_index,
+                 $time, input_metadata_model[input_metadata_admit_idx].packet_index,
                  expected_addr, expected_last);
 
         input_metadata_packet_count++;
 
         if (expected_last) begin
-          input_metadata_model.ingress_complete = 1'b1;
+          input_metadata_model[input_metadata_admit_idx].ingress_complete = 1'b1;
           input_metadata_last_admission_count++;
+          input_metadata_admit_idx++;
         end else begin
-          input_metadata_model.packet_index++;
+          input_metadata_model[input_metadata_admit_idx].packet_index++;
         end
       end
 
       if (u_dut.gemm_unit_v2_if.last_write) begin
         input_metadata_last_write_count++;
-        if (input_metadata_model.active
-            && input_metadata_model.notify_on_writeback
+        if (input_metadata_model[input_metadata_complete_idx].active
+            && input_metadata_model[input_metadata_complete_idx].notify_on_writeback
             && !u_dut.gemm_unit_v2_if.tagged_final_writeback) begin
           if (non_notify_done)
             $fatal(1, "[%0t] INPUT_METADATA prior raw writeback released final command", $time);
@@ -2911,16 +2922,16 @@ module tb_VX_gemm_node_improve
       end
 
       if (non_notify_done) begin
-        if (!input_metadata_model.active
-            || !input_metadata_model.ingress_complete)
+        if (!input_metadata_model[input_metadata_complete_idx].active
+            || !input_metadata_model[input_metadata_complete_idx].ingress_complete)
           $fatal(1, "[%0t] INPUT_METADATA done before qualified ingress", $time);
-        if (input_metadata_model.notify_on_writeback) begin
+        if (input_metadata_model[input_metadata_complete_idx].notify_on_writeback) begin
           if (!u_dut.gemm_unit_v2_if.tagged_final_writeback)
             $fatal(1, "[%0t] INPUT_METADATA final done without tagged writeback", $time);
           input_final_done_count++;
         end else begin
-          if (!u_dut.qualified_input_dma_idle)
-            $fatal(1, "[%0t] INPUT_METADATA non-final done without qualified LDMA idle", $time);
+          if (!u_dut.normal_input_complete)
+            $fatal(1, "[%0t] INPUT_METADATA non-final done before final admission", $time);
           if (u_dut.gemm_unit_v2_if.tagged_final_writeback)
             $fatal(1, "[%0t] INPUT_METADATA non-final done used tagged writeback", $time);
           input_nonfinal_done_count++;
@@ -2929,14 +2940,16 @@ module tb_VX_gemm_node_improve
           $fatal(1, "[%0t] INPUT_METADATA scheduler did not retire input metadata on done", $time);
         input_scheduler_retire_count++;
         input_metadata_done_count++;
-        input_metadata_model = '0;
+        input_metadata_model[input_metadata_complete_idx] = '0;
+        input_metadata_complete_idx++;
       end
     end
   end
 
   task automatic check_input_metadata_coverage;
     begin
-      if (input_metadata_model.active)
+      if ((input_metadata_admit_idx != input_metadata_tail_idx)
+          || (input_metadata_complete_idx != input_metadata_tail_idx))
         $fatal(1, "INPUT_METADATA command still active at completion");
       if (input_metadata_cmd_count == 0
           || input_metadata_packet_count == 0)
@@ -2972,10 +2985,12 @@ module tb_VX_gemm_node_improve
   longint unsigned completion_done_count [1:5];
   longint unsigned legacy_nonretire_count;
   logic [5:1] completion_done_prev;
+  logic [3:2] qparam_endpoint_prev;
 
   always @(posedge clk) begin : exact_completion_endpoint_scoreboard
     logic [5:1] start_now;
     logic [5:1] done_now;
+    logic [5:1] endpoint_now;
     if (reset) begin
       for (int child = 1; child <= 5; child++) begin
         completion_start_count[child] = 0;
@@ -2983,30 +2998,41 @@ module tb_VX_gemm_node_improve
       end
       legacy_nonretire_count = 0;
       completion_done_prev = '0;
+      qparam_endpoint_prev = '0;
     end else if (require_completion_endpoints) begin
       start_now[1] = u_dut.gemm_ctrl_if.weight_read_ctrl.start;
       start_now[2] = u_dut.gemm_ctrl_if.scale_read_ctrl.start;
       start_now[3] = u_dut.gemm_ctrl_if.zero_point_read_ctrl.start;
       start_now[4] = u_dut.gemm_ctrl_if.output_write_ctrl.start;
       start_now[5] = u_dut.gemm_ctrl_if.dma_ctrl.start;
-      done_now[1] = u_dut.weight_last_register_write;
-      done_now[2] = u_dut.scale_last_register_write;
-      done_now[3] = u_dut.zero_point_last_register_write;
-      done_now[4] = u_dut.output_dma_ctrl_if.write_done;
-      done_now[5] = u_dut.gemm_dma_ctrl_if.done;
+      endpoint_now[1] = u_dut.weight_last_register_write;
+      endpoint_now[2] = u_dut.scale_last_register_write;
+      endpoint_now[3] = u_dut.zero_point_last_register_write;
+      endpoint_now[4] = u_dut.output_dma_ctrl_if.write_done;
+      endpoint_now[5] = u_dut.gemm_dma_ctrl_if.done;
+      done_now[1] = endpoint_now[1];
+      done_now[2] = u_dut.gemm_ctrl_if.scale_read_flag.done;
+      done_now[3] = u_dut.gemm_ctrl_if.zero_point_read_flag.done;
+      done_now[4] = endpoint_now[4];
+      done_now[5] = endpoint_now[5];
 
       if (u_dut.gemm_ctrl_if.weight_read_flag.done !== done_now[1]
-          || u_dut.gemm_ctrl_if.scale_read_flag.done !== done_now[2]
-          || u_dut.gemm_ctrl_if.zero_point_read_flag.done !== done_now[3]
           || u_dut.gemm_ctrl_if.output_write_flag.done !== done_now[4]
           || u_dut.gemm_ctrl_if.dma_flag.done !== done_now[5])
         $fatal(1, "COMPLETION_ENDPOINTS child done is not the exact architectural endpoint");
+      if (done_now[2] !== qparam_endpoint_prev[2]
+          || done_now[3] !== qparam_endpoint_prev[3])
+        $fatal(1, "COMPLETION_ENDPOINTS qparam done is not the registered final-write endpoint");
 
       for (int child = 1; child <= 5; child++) begin
         if (start_now[child])
           completion_start_count[child]++;
         if (done_now[child]) begin
-          if (completion_done_prev[child])
+          // Independent qparam overlap executors may retire distinct ordered
+          // one-beat commands on consecutive cycles.  Other child protocols
+          // retain the legacy single-cycle-pulse separation check.
+          if ((child != 2) && (child != 3)
+              && completion_done_prev[child])
             $fatal(1, "COMPLETION_ENDPOINTS child %0d emitted a multi-cycle done", child);
           if (!u_dut.u_VX_gemm_ctrl.child_completion_pop_v[child])
             $fatal(1, "COMPLETION_ENDPOINTS child %0d endpoint did not retire scheduler", child);
@@ -3038,6 +3064,7 @@ module tb_VX_gemm_node_improve
         legacy_nonretire_count++;
       end
       completion_done_prev = done_now;
+      qparam_endpoint_prev = endpoint_now[3:2];
     end
   end
 

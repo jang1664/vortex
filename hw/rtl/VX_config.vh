@@ -1248,8 +1248,21 @@ for block_size in range(1, full_bitwidth+1):
 `endif
 `endif
 
+// A Weight LDMA command always covers one complete MXU K dimension.  Keep
+// that layout invariant separate from the shared response capacity used to
+// overlap the next command's source reads with the current command's writes.
+`ifndef W_LMEM_DMA_CMD_BEATS
+`define W_LMEM_DMA_CMD_BEATS (`MXU_ROW / `MXU_WLOAD_NUM)
+`endif
+
+`ifndef W_LMEM_DMA_RESPONSE_SLOTS
+`define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
+`endif
+
+// Legacy single-command DMA capacity remains one command.  The improve TMEM
+// Weight path selects W_LMEM_DMA_RESPONSE_SLOTS explicitly.
 `ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
-`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS (`MXU_ROW / `MXU_WLOAD_NUM)
+`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `W_LMEM_DMA_CMD_BEATS
 `endif
 
 // -------------------------------------------------------

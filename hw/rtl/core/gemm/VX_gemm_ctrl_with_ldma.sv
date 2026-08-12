@@ -172,7 +172,15 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .output_store_done_i(1'b0),
     .progress_update_valid_o(),
     .progress_update_entry_id_o(),
-    .progress_update_value_o()
+    .progress_update_value_o(),
+    .weight_consume_value0_o(),
+    .weight_consume_value1_o(),
+    .weight_consume_value2_o(),
+    .weight_consume_value3_o(),
+    .scale_consume_value0_o(),
+    .scale_consume_value1_o(),
+    .zero_point_consume_value0_o(),
+    .zero_point_consume_value1_o()
   );
 
   VX_gemm_dma_ctrl #(

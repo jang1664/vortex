@@ -125,6 +125,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     logic [63:0] rs2;
     logic [4:0]  rd;
     gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
+    gemm_wait_meta_t [3:0] input_admit_waits;
+    gemm_wait_meta_t writer_wait;
     gemm_notify_meta_t notify;
     gemm_prepare_meta_t prepare;
     logic dma_priority;
@@ -144,6 +146,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       r.rs2   = c.rs2_data[`XLEN-1:0];
       r.rd    = c.rd;
       r.waits = c.waits;
+      r.input_admit_waits = c.input_admit_waits;
+      r.writer_wait = c.writer_wait;
       r.notify = c.notify;
       r.prepare = c.prepare;
       r.dma_priority = c.dma_priority;
@@ -291,10 +295,14 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
   );
     int n_dma_ld, n_dma_st, n_w, n_sc, n_zp;
     int n_arm, n_acc2lmem, n_wait, n_ntf;
-    int unsigned expected_count [2];
+    int unsigned g_expected_count [2];
+    int unsigned w_consume_count [4];
+    int unsigned sc_consume_count [2];
+    int unsigned zp_consume_count [2];
     int unsigned tile_target [2];
-    int unsigned w_target [2];
-    int unsigned sz_target [2];
+    int unsigned w_target [4];
+    int unsigned sc_target [2];
+    int unsigned zp_target [2];
     int unsigned output_store_issue;
     int unsigned acc_copy_target [2];
     bit first_arm_seen [2];
@@ -310,9 +318,10 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     int unsigned pending_copy_target;
     int final_arm_count;
     int dma_prior_g_count;
-    int w_prior_g_count;
-    int sz_prior_g_count;
-    int arm_prior_g_count;
+    int w_consume_wait_count;
+    int sc_consume_wait_count;
+    int zp_consume_wait_count;
+    int arm_split_wait_count;
     begin
       n_dma_ld   = 0;
       n_dma_st   = 0;
@@ -323,14 +332,19 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       n_acc2lmem = 0;
       n_wait     = 0;
       n_ntf      = 0;
-      expected_count[0] = 0;
-      expected_count[1] = 0;
+      for (int bank = 0; bank < 2; bank++) begin
+        g_expected_count[bank] = 0;
+        sc_consume_count[bank] = 0;
+        zp_consume_count[bank] = 0;
+        sc_target[bank] = 0;
+        zp_target[bank] = 0;
+      end
+      for (int bank = 0; bank < 4; bank++) begin
+        w_consume_count[bank] = 0;
+        w_target[bank] = 0;
+      end
       tile_target[0] = 0;
       tile_target[1] = 0;
-      w_target[0] = 0;
-      w_target[1] = 0;
-      sz_target[0] = 0;
-      sz_target[1] = 0;
       output_store_issue = 0;
       acc_copy_target[0] = 0;
       acc_copy_target[1] = 0;
@@ -356,9 +370,10 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       pending_copy_target = 0;
       final_arm_count = 0;
       dma_prior_g_count = 0;
-      w_prior_g_count = 0;
-      sz_prior_g_count = 0;
-      arm_prior_g_count = 0;
+      w_consume_wait_count = 0;
+      sc_consume_wait_count = 0;
+      zp_consume_wait_count = 0;
+      arm_split_wait_count = 0;
 
       foreach (cmd_log[i]) begin
         unique case (cmd_log[i].op)
@@ -390,6 +405,10 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             && cmd_log[i].notify.reg_id >= GEMM_NUM_SYNC_REGS)
           $fatal(1, "Command %0d notify has invalid RID %0d",
                  i, cmd_log[i].notify.reg_id);
+        if (cmd_log[i].writer_wait.valid
+            && cmd_log[i].writer_wait.reg_id >= GEMM_NUM_SYNC_REGS)
+          $fatal(1, "Command %0d writer wait has invalid RID %0d",
+                 i, cmd_log[i].writer_wait.reg_id);
         unique case (cmd_log[i].op)
           OP_DMA_LD: begin
             if (!cmd_log[i].prepare.valid
@@ -499,15 +518,15 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
               $fatal(1, "Non-final tile DMA role rd=%0d unexpectedly notifies", cmd_log[i].rd);
             end
 
-            if (cmd_log[i].rd == 0 && expected_count[cmd_buf] != 0
+            if (cmd_log[i].rd == 0 && g_expected_count[cmd_buf] != 0
                 && !cmd_log[i].waits[0].valid)
               $fatal(1, "Post-warmup input DMA #%0d lacks required prior-G wait", i);
             if (cmd_log[i].rd == 0 && cmd_log[i].waits[0].valid) begin
               if (!(cmd_log[i].waits[0].reg_id inside {4'd3, 4'd8}))
                 $fatal(1, "Buffer-reuse DMA #%0d waits on non-G RID", i);
               wait_buf = (cmd_log[i].waits[0].reg_id == 8);
-              if (expected_count[wait_buf] == 0
-                  || cmd_log[i].waits[0].target != expected_count[wait_buf])
+              if (g_expected_count[wait_buf] == 0
+                  || cmd_log[i].waits[0].target != g_expected_count[wait_buf])
                 $fatal(1, "Buffer-reuse DMA #%0d has stale compute target", i);
               dma_prior_g_count++;
             end else if (cmd_log[i].waits[0].valid) begin
@@ -515,12 +534,33 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             end
             if (cmd_log[i].waits[1].valid
                 || cmd_log[i].waits[2].valid
-                || cmd_log[i].waits[3].valid)
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
               $fatal(1, "DMA load #%0d uses wait slot beyond expected count", i);
           end
 
           OP_W_LDMA_MXU: begin
-            cmd_buf = cmd_log[i].flags[0];
+            logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_rid;
+            logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_consume_rid;
+            cmd_buf = cmd_log[i].flags[1:0];
+            unique case (cmd_buf)
+              0: begin
+                expected_w_rid = 5'(1);
+                expected_w_consume_rid = GEMM_RID_W_CONSUME0;
+              end
+              1: begin
+                expected_w_rid = 5'(6);
+                expected_w_consume_rid = GEMM_RID_W_CONSUME1;
+              end
+              2: begin
+                expected_w_rid = GEMM_RID_W2;
+                expected_w_consume_rid = GEMM_RID_W_CONSUME2;
+              end
+              default: begin
+                expected_w_rid = GEMM_RID_W3;
+                expected_w_consume_rid = GEMM_RID_W_CONSUME3;
+              end
+            endcase
             if (!cmd_log[i].waits[0].valid
                 || !(cmd_log[i].waits[0].reg_id inside {4'd0, 4'd5}))
               $fatal(1, "W load #%0d lacks tile-ready wait", i);
@@ -528,22 +568,25 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             if (tile_target[wait_buf] == 0
                 || cmd_log[i].waits[0].target != tile_target[wait_buf])
               $fatal(1, "W load #%0d tile target is not latest SET", i);
-            if (expected_count[cmd_buf] != 0 && !cmd_log[i].waits[1].valid)
-              $fatal(1, "W load #%0d lacks required prior-G wait", i);
-            if (cmd_log[i].waits[1].valid) begin
-              if (!(cmd_log[i].waits[1].reg_id inside {4'd3, 4'd8}))
-                $fatal(1, "W load #%0d prior-compute wait has wrong RID", i);
-              wait_buf = (cmd_log[i].waits[1].reg_id == 8);
-              if (expected_count[wait_buf] == 0
-                  || cmd_log[i].waits[1].target != expected_count[wait_buf])
-                $fatal(1, "W load #%0d prior-compute target is not latest", i);
-              w_prior_g_count++;
+            if (w_consume_count[cmd_buf] != 0
+                && !cmd_log[i].writer_wait.valid)
+              $fatal(1, "W load #%0d lacks required writer consume wait", i);
+            if (cmd_log[i].writer_wait.valid) begin
+              if (cmd_log[i].writer_wait.reg_id != expected_w_consume_rid
+                  || w_consume_count[cmd_buf] == 0
+                  || cmd_log[i].writer_wait.target
+                     != w_consume_count[cmd_buf])
+                $fatal(1, "W load #%0d writer RID/target mismatch", i);
+              w_consume_wait_count++;
             end
-            if (cmd_log[i].waits[2].valid || cmd_log[i].waits[3].valid)
-              $fatal(1, "W load #%0d uses wait slot beyond expected count", i);
+            if (cmd_log[i].waits[1].valid
+                || cmd_log[i].waits[2].valid
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
+              $fatal(1, "W load #%0d consume dependency remained in issue waits", i);
             if (!cmd_log[i].notify.valid
                 || !cmd_log[i].notify.set_mode
-                || cmd_log[i].notify.reg_id != (cmd_buf ? 6 : 1)
+                || cmd_log[i].notify.reg_id != expected_w_rid
                 || cmd_log[i].notify.value <= w_target[cmd_buf])
               $fatal(1, "W load #%0d has incoherent RID_W SET", i);
             w_target[cmd_buf] = cmd_log[i].notify.value;
@@ -551,7 +594,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           OP_SC_LDMA_MXU, OP_ZP_LDMA_MXU: begin
             bit is_scale;
-            logic [3:0] expected_qparam_rid;
+            logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_qparam_rid;
+            logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_consume_rid;
 
             is_scale = (cmd_log[i].op == OP_SC_LDMA_MXU);
             cmd_buf = cmd_log[i].flags[1];
@@ -564,19 +608,31 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
               $fatal(1, "SC/ZP load #%0d tile target is not latest SET", i);
             if (!cmd_log[i].flags[2])
               $fatal(1, "QDIR=1 SC/ZP load #%0d lost quant-direction metadata", i);
-            if (expected_count[cmd_buf] != 0 && !cmd_log[i].waits[1].valid)
-              $fatal(1, "SC/ZP load #%0d lacks required prior-G wait", i);
-            if (cmd_log[i].waits[1].valid) begin
-              if (!(cmd_log[i].waits[1].reg_id inside {4'd3, 4'd8}))
-                $fatal(1, "SC/ZP load #%0d prior-compute wait has wrong RID", i);
-              wait_buf = (cmd_log[i].waits[1].reg_id == 8);
-              if (expected_count[wait_buf] == 0
-                  || cmd_log[i].waits[1].target != expected_count[wait_buf])
-                $fatal(1, "SC/ZP load #%0d prior-compute target is not latest", i);
-              sz_prior_g_count++;
+            if ((is_scale ? sc_consume_count[cmd_buf]
+                          : zp_consume_count[cmd_buf]) != 0
+                && !cmd_log[i].writer_wait.valid)
+              $fatal(1, "SC/ZP load #%0d lacks required writer consume wait", i);
+            expected_consume_rid = is_scale
+                ? (cmd_buf ? GEMM_RID_SC_CONSUME1
+                           : GEMM_RID_SC_CONSUME0)
+                : (cmd_buf ? GEMM_RID_ZP_CONSUME1
+                           : GEMM_RID_ZP_CONSUME0);
+            if (cmd_log[i].writer_wait.valid) begin
+              if (cmd_log[i].writer_wait.reg_id != expected_consume_rid
+                  || (is_scale ? sc_consume_count[cmd_buf]
+                               : zp_consume_count[cmd_buf]) == 0
+                  || cmd_log[i].writer_wait.target
+                     != (is_scale ? sc_consume_count[cmd_buf]
+                                  : zp_consume_count[cmd_buf]))
+                $fatal(1, "SC/ZP load #%0d writer RID/target mismatch", i);
+              if (is_scale) sc_consume_wait_count++;
+              else          zp_consume_wait_count++;
             end
-            if (cmd_log[i].waits[2].valid || cmd_log[i].waits[3].valid)
-              $fatal(1, "SC/ZP load #%0d uses wait slot beyond expected count", i);
+            if (cmd_log[i].waits[1].valid
+                || cmd_log[i].waits[2].valid
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
+              $fatal(1, "SC/ZP load #%0d consume dependency remained in issue waits", i);
 
             expected_qparam_rid = is_scale
                                 ? (cmd_buf ? GEMM_RID_SC1 : GEMM_RID_SC0)
@@ -593,55 +649,82 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                   || cmd_log[i+1].op != OP_ZP_LDMA_MXU
                   || !cmd_log[i+1].notify.valid
                   || cmd_log[i+1].flags != cmd_log[i].flags
-                  || cmd_log[i+1].waits != cmd_log[i].waits
                   || cmd_log[i+1].notify.value != cmd_log[i].notify.value)
                 $fatal(1, "SC load #%0d is not followed by matching ZP load", i);
             end else begin
-              if (cmd_log[i].notify.value <= sz_target[cmd_buf])
+              if (cmd_log[i].notify.value <= zp_target[cmd_buf])
                 $fatal(1, "ZP load #%0d has non-monotonic qparam sequence", i);
-              sz_target[cmd_buf] = cmd_log[i].notify.value;
+              zp_target[cmd_buf] = cmd_log[i].notify.value;
             end
+            if (is_scale)
+              sc_target[cmd_buf] = cmd_log[i].notify.value;
           end
 
           OP_I_LDMA_ARM: begin
             int unsigned acc_group;
             int unsigned reuse_target;
+            int unsigned w_bank;
+            int unsigned s_bank;
+            int unsigned z_bank;
+            int unsigned g_bank;
+            logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_rid;
 
-            cmd_buf = cmd_log[i].flags[2];
+            w_bank = cmd_log[i].flags[3:2];
+            s_bank = cmd_log[i].flags[1];
+            z_bank = cmd_log[i].flags[0];
+            unique case (w_bank)
+              0: expected_w_rid = 5'(1);
+              1: expected_w_rid = 5'(6);
+              2: expected_w_rid = GEMM_RID_W2;
+              default: expected_w_rid = GEMM_RID_W3;
+            endcase
             acc_group = (cmd_log[i].rs1 >= TB_ACC_DBUF_STRIDE);
-            reuse_target = cmd_log[i].waits[3].target;
-            if (!cmd_log[i].flags[5])
+            reuse_target = cmd_log[i].input_admit_waits[3].target;
+            if (!cmd_log[i].flags[6])
               $fatal(1, "QDIR=1 ARM #%0d lost quant-direction metadata", i);
             if (!cmd_log[i].notify.valid
-                || cmd_log[i].notify.reg_id != (cmd_buf ? 8 : 3)
+                || !(cmd_log[i].notify.reg_id inside {5'd3, 5'd8})
                 || cmd_log[i].notify.set_mode
                 || cmd_log[i].notify.value != 32'd1)
               $fatal(1, "ARM #%0d lacks embedded RID_G PLUS-1", i);
+            g_bank = (cmd_log[i].notify.reg_id == 5'd8);
             if (!cmd_log[i].waits[0].valid
-                || cmd_log[i].waits[0].reg_id != (cmd_buf ? 6 : 1)
-                || cmd_log[i].waits[0].target != w_target[cmd_buf]
-                || !cmd_log[i].waits[1].valid
-                || cmd_log[i].waits[1].reg_id != (cmd_buf ? 7 : 2)
-                || cmd_log[i].waits[1].target != sz_target[cmd_buf]
-                || w_target[cmd_buf] != sz_target[cmd_buf])
-              $fatal(1, "ARM #%0d W/SZ dependencies are incoherent", i);
-            if (expected_count[cmd_buf] != 0 && !cmd_log[i].waits[2].valid)
-              $fatal(1, "ARM #%0d lacks required prior-G wait", i);
-            if (cmd_log[i].waits[2].valid) begin
-              if (!(cmd_log[i].waits[2].reg_id inside {4'd3, 4'd8}))
-                $fatal(1, "ARM #%0d prior-compute wait has wrong RID", i);
-              wait_buf = (cmd_log[i].waits[2].reg_id == 8);
-              if (expected_count[wait_buf] == 0
-                  || cmd_log[i].waits[2].target != expected_count[wait_buf])
-                $fatal(1, "ARM #%0d prior-compute target is not latest", i);
-              arm_prior_g_count++;
-            end
-            if (!cmd_log[i].waits[3].valid
-                || cmd_log[i].waits[3].reg_id != (acc_group ? 10 : 9)
+                || !(cmd_log[i].waits[0].reg_id inside {5'd0, 5'd5}))
+              $fatal(1, "ARM #%0d lacks exact tile-ready source wait", i);
+            wait_buf = (cmd_log[i].waits[0].reg_id == 5'd5);
+            if (tile_target[wait_buf] == 0
+                || cmd_log[i].waits[0].target != tile_target[wait_buf])
+              $fatal(1, "ARM #%0d tile-ready source target is not latest", i);
+            if (cmd_log[i].waits[1].valid
+                || cmd_log[i].waits[2].valid
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
+              $fatal(1, "ARM #%0d retained a non-tile source dependency", i);
+
+            if (!cmd_log[i].input_admit_waits[0].valid
+                || cmd_log[i].input_admit_waits[0].reg_id != expected_w_rid
+                || cmd_log[i].input_admit_waits[0].target
+                   != w_target[w_bank]
+                || !cmd_log[i].input_admit_waits[1].valid
+                || cmd_log[i].input_admit_waits[1].reg_id
+                   != (s_bank ? GEMM_RID_SC1 : GEMM_RID_SC0)
+                || cmd_log[i].input_admit_waits[1].target
+                   != sc_target[s_bank]
+                || !cmd_log[i].input_admit_waits[2].valid
+                || cmd_log[i].input_admit_waits[2].reg_id
+                   != (z_bank ? GEMM_RID_ZP1 : GEMM_RID_ZP0)
+                || cmd_log[i].input_admit_waits[2].target
+                   != zp_target[z_bank])
+              $fatal(1, "ARM #%0d independent W/SC/Z admission dependencies are incoherent", i);
+            if (!cmd_log[i].input_admit_waits[3].valid
+                || cmd_log[i].input_admit_waits[3].reg_id
+                   != (acc_group ? 10 : 9)
                 || reuse_target != acc_copy_target[acc_group])
-              $fatal(1, "ARM #%0d ACC group/reuse dependency mismatch group=%0d rid=%0d target=%0d expected=%0d",
-                     i, acc_group, cmd_log[i].waits[3].reg_id,
+              $fatal(1, "ARM #%0d ACC admission group/reuse dependency mismatch group=%0d rid=%0d target=%0d expected=%0d",
+                     i, acc_group,
+                     cmd_log[i].input_admit_waits[3].reg_id,
                      reuse_target, acc_copy_target[acc_group]);
+            arm_split_wait_count++;
 
             if (!first_arm_seen[acc_group]) begin
               if (reuse_target != 0)
@@ -669,7 +752,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
               owner_count[acc_group]++;
             end
             owner_arm_count[acc_group]++;
-            if (cmd_log[i].flags[3]) owner_seen_accum[acc_group] = 1'b1;
+            if (cmd_log[i].flags[4]) owner_seen_accum[acc_group] = 1'b1;
             else                     owner_seen_nonaccum[acc_group] = 1'b1;
 
             if (expect_three_tile_edge_reuse) begin
@@ -683,8 +766,11 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                 $fatal(1, "Unexpected directed owner signature group=%0d target=%0d",
                        acc_group, reuse_target);
             end
-            expected_count[cmd_buf]++;
-            if (cmd_log[i].flags[4]) begin
+            g_expected_count[g_bank]++;
+            w_consume_count[w_bank]++;
+            sc_consume_count[s_bank]++;
+            zp_consume_count[z_bank]++;
+            if (cmd_log[i].flags[5]) begin
               final_arm_count++;
             end
           end
@@ -704,9 +790,11 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                 || !(cmd_log[i].waits[1].reg_id inside {4'd3, 4'd8}))
               $fatal(1, "ACC2LMEM #%0d lacks issued-store/current-compute waits", i);
             wait_buf = (cmd_log[i].waits[1].reg_id == 8);
-            if (cmd_log[i].waits[1].target != expected_count[wait_buf])
+            if (cmd_log[i].waits[1].target != g_expected_count[wait_buf])
               $fatal(1, "ACC2LMEM #%0d current-compute target is not latest", i);
-            if (cmd_log[i].waits[2].valid || cmd_log[i].waits[3].valid)
+            if (cmd_log[i].waits[2].valid
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
               $fatal(1, "ACC2LMEM #%0d uses wait slot beyond expected count", i);
             if (!cmd_log[i].notify.valid
                 || !cmd_log[i].notify.set_mode
@@ -728,7 +816,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                 || cmd_log[i].waits[0].target != pending_copy_target
                 || cmd_log[i].waits[1].valid
                 || cmd_log[i].waits[2].valid
-                || cmd_log[i].waits[3].valid)
+                || cmd_log[i].waits[3].valid
+                || cmd_log[i].waits[4].valid)
               $fatal(1, "DMA store #%0d does not wait for its paired ACC group target", i);
             if (!cmd_log[i].notify.valid
                 || cmd_log[i].notify.set_mode
@@ -785,18 +874,21 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                  directed_owner_arm_count[2], full_owner_arms,
                  full_owner_arms, edge_owner_arms);
       end
-      if (dma_prior_g_count == 0 || w_prior_g_count == 0
-          || sz_prior_g_count == 0 || arm_prior_g_count == 0)
-        $fatal(1, "QDIR=1 did not exercise every required prior-G wait path dma=%0d w=%0d sz=%0d arm=%0d",
-               dma_prior_g_count, w_prior_g_count,
-               sz_prior_g_count, arm_prior_g_count);
-      $display("FSM_FULL_METADATA_MATRIX_PASS qdir=1 dma_ld=%0d w=%0d sc=%0d zp=%0d arm=%0d acc=%0d dma_st=%0d store_issue=%0d acc_copy={%0d,%0d} owners={%0d,%0d} prior_g={dma:%0d,w:%0d,sz:%0d,arm:%0d}",
+      if (dma_prior_g_count == 0 || w_consume_wait_count == 0
+          || sc_consume_wait_count == 0 || zp_consume_wait_count == 0
+          || arm_split_wait_count == 0)
+        $fatal(1, "QDIR=1 did not exercise retained waits and split Input admission dma_prior_g=%0d w=%0d sc=%0d zp=%0d input_split=%0d",
+               dma_prior_g_count, w_consume_wait_count,
+               sc_consume_wait_count, zp_consume_wait_count,
+               arm_split_wait_count);
+      $display("FSM_FULL_METADATA_MATRIX_PASS qdir=1 dma_ld=%0d w=%0d sc=%0d zp=%0d arm=%0d acc=%0d dma_st=%0d store_issue=%0d acc_copy={%0d,%0d} owners={%0d,%0d} prior_g={dma:%0d,acc2lmem:%0d} input_split=%0d consume={w:%0d,sc:%0d,zp:%0d}",
                n_dma_ld, n_w, n_sc, n_zp, n_arm, n_acc2lmem,
                n_dma_st, output_store_issue,
                acc_copy_target[0], acc_copy_target[1],
                owner_count[0], owner_count[1],
-               dma_prior_g_count, w_prior_g_count,
-               sz_prior_g_count, arm_prior_g_count);
+               dma_prior_g_count, n_acc2lmem, arm_split_wait_count,
+               w_consume_wait_count, sc_consume_wait_count,
+               zp_consume_wait_count);
       $display("FSM_DMA_CHUNK_ENCODING_PASS beats=%0d store_log2p1=%0d load_log2p1=0 priorities=store0_load1",
                TB_DMA_STORE_MAX_CHUNK_BEATS,
                $clog2(TB_DMA_STORE_MAX_CHUNK_BEATS) + 1);

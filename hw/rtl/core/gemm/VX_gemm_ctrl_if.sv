@@ -61,6 +61,15 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   dma_ctrl_t  dma_ctrl;
   dma_flag_t  dma_flag;
 
+  // Exact Input-admission dependency levels.  Weight and ACC expose the
+  // same-cycle effective view; Scale/ZP intentionally expose only the
+  // registered view so a LOAD completion cannot race the admission-edge
+  // snapshot without an explicit data bypass.
+  logic [31:0] input_w_load_value [4];
+  logic [31:0] input_sc_load_value[2];
+  logic [31:0] input_zp_load_value[2];
+  logic [31:0] input_acc_free_value[2];
+
   modport master (
     output input_read_ctrl,
     input  input_read_flag,
@@ -75,7 +84,11 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output quant_param_read_ctrl,
     input  quant_param_read_flag,
     output dma_ctrl,
-    input  dma_flag
+    input  dma_flag,
+    output input_w_load_value,
+    output input_sc_load_value,
+    output input_zp_load_value,
+    output input_acc_free_value
   );
 
   modport slave (
@@ -92,7 +105,11 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  quant_param_read_ctrl,
     output quant_param_read_flag,
     input  dma_ctrl,
-    output dma_flag
+    output dma_flag,
+    input  input_w_load_value,
+    input  input_sc_load_value,
+    input  input_zp_load_value,
+    input  input_acc_free_value
   );
 
 endinterface

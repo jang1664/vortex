@@ -19,7 +19,20 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     input  wire                   output_store_done_i,
     output wire                   progress_update_valid_o,
     output wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id_o,
-    output wire [31:0]            progress_update_value_o
+    output wire [31:0]            progress_update_value_o,
+    // Same-cycle architectural Weight-consume levels.  Each Weight executor
+    // FIFO entry compares its own writer_wait RID/target against these levels;
+    // they are not untagged head-release pulses.
+    output wire [31:0]            weight_consume_value0_o,
+    output wire [31:0]            weight_consume_value1_o,
+    output wire [31:0]            weight_consume_value2_o,
+    output wire [31:0]            weight_consume_value3_o,
+    // Scale/ZP intentionally use the registered consume view.  This forbids
+    // a final qparam snapshot and same-bank overwrite on the same edge.
+    output wire [31:0]            scale_consume_value0_o,
+    output wire [31:0]            scale_consume_value1_o,
+    output wire [31:0]            zero_point_consume_value0_o,
+    output wire [31:0]            zero_point_consume_value1_o
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,input wire                   dbg_compute_active_i
@@ -33,12 +46,25 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
     localparam int RID_O = 4;
+    localparam int RID_W0 = GEMM_RID_W0;
+    localparam int RID_W1 = GEMM_RID_W1;
+    localparam int RID_ACC_FREE0 = GEMM_RID_ACC_FREE0;
+    localparam int RID_ACC_FREE1 = GEMM_RID_ACC_FREE1;
     localparam int RID_SZ0 = GEMM_RID_SZ0;
     localparam int RID_SZ1 = GEMM_RID_SZ1;
     localparam int RID_SC0 = GEMM_RID_SC0;
     localparam int RID_ZP0 = GEMM_RID_ZP0;
     localparam int RID_SC1 = GEMM_RID_SC1;
     localparam int RID_ZP1 = GEMM_RID_ZP1;
+    localparam int RID_W_CONSUME0 = GEMM_RID_W_CONSUME0;
+    localparam int RID_W_CONSUME1 = GEMM_RID_W_CONSUME1;
+    localparam int RID_W_CONSUME2 = GEMM_RID_W_CONSUME2;
+    localparam int RID_W_CONSUME3 = GEMM_RID_W_CONSUME3;
+    localparam int RID_SC_CONSUME0 = GEMM_RID_SC_CONSUME0;
+    localparam int RID_SC_CONSUME1 = GEMM_RID_SC_CONSUME1;
+    localparam int RID_ZP_CONSUME0 = GEMM_RID_ZP_CONSUME0;
+    localparam int RID_ZP_CONSUME1 = GEMM_RID_ZP_CONSUME1;
+    localparam int WEIGHT_CHILD_INDEX = 1;
     localparam int SCALE_CHILD_INDEX = 2;
     localparam int ZP_CHILD_INDEX = 3;
     localparam int OUTPUT_CHILD_INDEX = 4;
@@ -116,6 +142,30 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                             && fsm_idle
                             && scheduler_quiescent;
     wire done_fire = done_if.valid && done_if.ready;
+
+    function automatic logic is_consume_rid(
+        input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] rid
+    );
+      return (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME2))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME3))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0))
+          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1));
+    endfunction
+
+    function automatic int rid_w_consume_for_idx(
+        input gemm_wreg_idx_t idx
+    );
+      unique case (idx)
+        2'd0: return RID_W_CONSUME0;
+        2'd1: return RID_W_CONSUME1;
+        2'd2: return RID_W_CONSUME2;
+        default: return RID_W_CONSUME3;
+      endcase
+    endfunction
 
     always_comb begin
       dma_free_tag_valid = 1'b0;
@@ -213,6 +263,27 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         end
       end
 
+      // External resource-consume events are architectural increments.  Fold
+      // them into the same-cycle dependency view before evaluating waits.
+      if (gemm_sync_slv_if[1].valid
+       && (gemm_sync_slv_if[1].reg_idx < NUM_SYNC_REGS)) begin
+        effective_sync[gemm_sync_slv_if[1].reg_idx]
+            = effective_sync[gemm_sync_slv_if[1].reg_idx]
+            + gemm_sync_slv_if[1].value;
+      end
+      if (gemm_sync_slv_if[2].valid
+       && (gemm_sync_slv_if[2].reg_idx < NUM_SYNC_REGS)) begin
+        effective_sync[gemm_sync_slv_if[2].reg_idx]
+            = effective_sync[gemm_sync_slv_if[2].reg_idx]
+            + gemm_sync_slv_if[2].value;
+      end
+      if (gemm_sync_slv_if[3].valid
+       && (gemm_sync_slv_if[3].reg_idx < NUM_SYNC_REGS)) begin
+        effective_sync[gemm_sync_slv_if[3].reg_idx]
+            = effective_sync[gemm_sync_slv_if[3].reg_idx]
+            + gemm_sync_slv_if[3].value;
+      end
+
       // RID_SZ is the logical qparam readiness contract consumed by input
       // commands.  Derive it after applying all completion bypasses so SC/ZP
       // completions in the current cycle can release input in that same cycle.
@@ -233,6 +304,32 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           sync_regs_q[rid] <= effective_sync[rid];
       end
     end
+
+    assign weight_consume_value0_o = effective_sync[RID_W_CONSUME0];
+    assign weight_consume_value1_o = effective_sync[RID_W_CONSUME1];
+    assign weight_consume_value2_o = effective_sync[RID_W_CONSUME2];
+    assign weight_consume_value3_o = effective_sync[RID_W_CONSUME3];
+    assign scale_consume_value0_o = sync_regs_q[RID_SC_CONSUME0];
+    assign scale_consume_value1_o = sync_regs_q[RID_SC_CONSUME1];
+    assign zero_point_consume_value0_o = sync_regs_q[RID_ZP_CONSUME0];
+    assign zero_point_consume_value1_o = sync_regs_q[RID_ZP_CONSUME1];
+
+    assign gemm_ctrl_if.input_w_load_value[0] = effective_sync[RID_W0];
+    assign gemm_ctrl_if.input_w_load_value[1] = effective_sync[RID_W1];
+    assign gemm_ctrl_if.input_w_load_value[2]
+        = effective_sync[GEMM_RID_W2];
+    assign gemm_ctrl_if.input_w_load_value[3]
+        = effective_sync[GEMM_RID_W3];
+    // Registered qparam completion prevents same-edge register write and
+    // immutable snapshot capture from observing an ambiguous version.
+    assign gemm_ctrl_if.input_sc_load_value[0] = sync_regs_q[RID_SC0];
+    assign gemm_ctrl_if.input_sc_load_value[1] = sync_regs_q[RID_SC1];
+    assign gemm_ctrl_if.input_zp_load_value[0] = sync_regs_q[RID_ZP0];
+    assign gemm_ctrl_if.input_zp_load_value[1] = sync_regs_q[RID_ZP1];
+    assign gemm_ctrl_if.input_acc_free_value[0]
+        = effective_sync[RID_ACC_FREE0];
+    assign gemm_ctrl_if.input_acc_free_value[1]
+        = effective_sync[RID_ACC_FREE1];
 
     generate
       for (genvar i = 0; i < N_CHILDREN; ++i) begin : g_child_scheduler
@@ -333,10 +430,15 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
              && !child_inflight_empty_v[i];
           assign child_inflight_can_accept_v[i]
               = !child_inflight_full_v[i] || child_completion_pop_v[i];
-          // Non-DMA executors retain their single-active, in-order completion
-          // contract and two-entry metadata FIFO.
+          // Input, Weight, Scale, and Zero-point have ordered multi-command
+          // executors.  Their metadata FIFOs still retire notify records
+          // strictly in issue order.  Other local executors retain their
+          // single-active contract.
           assign child_single_active_ready_v[i]
-              = child_inflight_empty_v[i] || child_completion_pop_v[i];
+              = ((i == 0) || (i == WEIGHT_CHILD_INDEX)
+              || (i == SCALE_CHILD_INDEX) || (i == ZP_CHILD_INDEX))
+              ? 1'b1
+              : (child_inflight_empty_v[i] || child_completion_pop_v[i]);
           assign gemm_cqueue_out[i].ctrl.start
               = child_dependency_eligible_v[i]
              && child_inflight_can_accept_v[i]
@@ -347,7 +449,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
           VX_fifo_queue #(
             .DATAW (INFLIGHT_DATAW),
-            .DEPTH (2)
+            .DEPTH (((i == 0) || (i == SCALE_CHILD_INDEX)
+                  || (i == ZP_CHILD_INDEX)) ? 4 : 2)
           ) u_child_inflight_queue (
             .clk       (clk),
             .reset     (reset),
@@ -379,7 +482,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                  >= gemm_fsm_if.ctrl.cmd.waits[2].target) : 1'b1)
           && (gemm_fsm_if.ctrl.cmd.waits[3].valid
               ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[3].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[3].target) : 1'b1);
+                 >= gemm_fsm_if.ctrl.cmd.waits[3].target) : 1'b1)
+          && (gemm_fsm_if.ctrl.cmd.waits[4].valid
+              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[4].reg_id]
+                 >= gemm_fsm_if.ctrl.cmd.waits[4].target) : 1'b1);
 
         always_ff @(posedge clk) begin
           if (reset || cfg_fire) begin
@@ -475,11 +581,139 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               assert (child_q_pop_v[i] == child_issue_fire_v[i])
                 else $fatal(1, "%s: child %0d pop/start mismatch",
                             INSTANCE_ID, i);
-              assert (!(child_issue_fire_v[i]
-                     && !child_inflight_empty_v[i]
-                     && !child_completion_pop_v[i]))
-                else $fatal(1, "%s: child %0d accepted multiple active commands",
-                            INSTANCE_ID, i);
+              if ((i != 0) && (i != WEIGHT_CHILD_INDEX)
+               && (i != SCALE_CHILD_INDEX) && (i != ZP_CHILD_INDEX)) begin
+                assert (!(child_issue_fire_v[i]
+                       && !child_inflight_empty_v[i]
+                       && !child_completion_pop_v[i]))
+                  else $fatal(1, "%s: child %0d accepted multiple active commands",
+                              INSTANCE_ID, i);
+              end else if ((i == 0) && child_issue_fire_v[i]) begin
+                assert ((child_q_cmd[i].instr[3:0] == 4'd7)
+                     && child_q_cmd[i].waits[0].valid
+                     && ((child_q_cmd[i].waits[0].reg_id == 5'd0)
+                      || (child_q_cmd[i].waits[0].reg_id == 5'd5))
+                     && !child_q_cmd[i].waits[1].valid
+                     && !child_q_cmd[i].waits[2].valid
+                     && !child_q_cmd[i].waits[3].valid
+                     && !child_q_cmd[i].waits[4].valid)
+                  else $fatal(1,
+                      "%s: Input source issue is not tile-ready-only",
+                      INSTANCE_ID);
+                assert (child_q_cmd[i].input_admit_waits[0].valid
+                     && child_q_cmd[i].input_admit_waits[1].valid
+                     && child_q_cmd[i].input_admit_waits[2].valid
+                     && child_q_cmd[i].input_admit_waits[3].valid
+                     && (((child_q_cmd[i].flags[3:2] == 2'd0)
+                       && (child_q_cmd[i].input_admit_waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W0)))
+                      || ((child_q_cmd[i].flags[3:2] == 2'd1)
+                       && (child_q_cmd[i].input_admit_waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W1)))
+                      || ((child_q_cmd[i].flags[3:2] == 2'd2)
+                       && (child_q_cmd[i].input_admit_waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W2)))
+                      || ((child_q_cmd[i].flags[3:2] == 2'd3)
+                       && (child_q_cmd[i].input_admit_waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W3))))
+                     && (child_q_cmd[i].input_admit_waits[1].reg_id
+                         == GEMM_SYNC_REG_ID_WIDTH'(
+                              child_q_cmd[i].flags[1]
+                              ? RID_SC1 : RID_SC0))
+                     && (child_q_cmd[i].input_admit_waits[2].reg_id
+                         == GEMM_SYNC_REG_ID_WIDTH'(
+                              child_q_cmd[i].flags[0]
+                              ? RID_ZP1 : RID_ZP0))
+                     && ((child_q_cmd[i].input_admit_waits[3].reg_id
+                          == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0))
+                      || (child_q_cmd[i].input_admit_waits[3].reg_id
+                          == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1))))
+                  else $fatal(1,
+                      "%s: Input command admission metadata is invalid",
+                      INSTANCE_ID);
+              end else if ((i == WEIGHT_CHILD_INDEX)
+                        && child_issue_fire_v[i]) begin
+                assert (child_q_cmd[i].instr[3:0] == 4'd5)
+                  else $fatal(1, "%s: non-Weight command entered Weight overlap FIFO",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
+                          && (child_q_cmd[i].flags[1:0] == 2'd0))
+                      || ((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
+                          && (child_q_cmd[i].flags[1:0] == 2'd1))
+                      || ((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME2))
+                          && (child_q_cmd[i].flags[1:0] == 2'd2))
+                      || ((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME3))
+                          && (child_q_cmd[i].flags[1:0] == 2'd3))))
+                  else $fatal(1,
+                      "%s: Weight command writer RID/buffer mismatch",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (child_q_cmd[i].writer_wait.target != 0))
+                  else $fatal(1, "%s: Weight command has zero writer target",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].waits[1].valid
+                     && !child_q_cmd[i].waits[2].valid
+                     && !child_q_cmd[i].waits[3].valid
+                     && !child_q_cmd[i].waits[4].valid)
+                  else $fatal(1,
+                      "%s: Weight consume dependency remained in issue waits",
+                      INSTANCE_ID);
+              end else if ((i == SCALE_CHILD_INDEX)
+                        && child_issue_fire_v[i]) begin
+                assert (child_q_cmd[i].instr[3:0] == GEMM_OP_SC_LDMA_MXU)
+                  else $fatal(1, "%s: non-Scale command entered Scale overlap FIFO",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
+                          && !child_q_cmd[i].flags[1])
+                      || ((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1))
+                          && child_q_cmd[i].flags[1])))
+                  else $fatal(1, "%s: Scale writer RID/buffer mismatch",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (child_q_cmd[i].writer_wait.target != 0))
+                  else $fatal(1, "%s: Scale command has zero writer target",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].waits[1].valid
+                     && !child_q_cmd[i].waits[2].valid
+                     && !child_q_cmd[i].waits[3].valid
+                     && !child_q_cmd[i].waits[4].valid)
+                  else $fatal(1,
+                      "%s: Scale consume dependency remained in issue waits",
+                      INSTANCE_ID);
+              end else if ((i == ZP_CHILD_INDEX)
+                        && child_issue_fire_v[i]) begin
+                assert (child_q_cmd[i].instr[3:0] == GEMM_OP_ZP_LDMA_MXU)
+                  else $fatal(1, "%s: non-ZP command entered ZP overlap FIFO",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0))
+                          && !child_q_cmd[i].flags[1])
+                      || ((child_q_cmd[i].writer_wait.reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1))
+                          && child_q_cmd[i].flags[1])))
+                  else $fatal(1, "%s: ZP writer RID/buffer mismatch",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].writer_wait.valid
+                     || (child_q_cmd[i].writer_wait.target != 0))
+                  else $fatal(1, "%s: ZP command has zero writer target",
+                              INSTANCE_ID);
+                assert (!child_q_cmd[i].waits[1].valid
+                     && !child_q_cmd[i].waits[2].valid
+                     && !child_q_cmd[i].waits[3].valid
+                     && !child_q_cmd[i].waits[4].valid)
+                  else $fatal(1,
+                      "%s: ZP consume dependency remained in issue waits",
+                      INSTANCE_ID);
+              end
             end
           end
         end
@@ -1361,11 +1595,20 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
     logic [31:0] dbg_invocation_active_cycles_q;
     logic [31:0] dbg_fifo_full_blocks_ready_other_child_q;
+    logic [31:0] dbg_w_arm_issued_q [4];
+    logic [31:0] dbg_sc_arm_issued_q [2];
+    logic [31:0] dbg_zp_arm_issued_q [2];
 
     always_ff @(posedge clk) begin
       if (reset || cfg_fire) begin
         dbg_invocation_active_cycles_q <= '0;
         dbg_fifo_full_blocks_ready_other_child_q <= '0;
+        for (int bank = 0; bank < 4; ++bank)
+          dbg_w_arm_issued_q[bank] <= 32'd0;
+        for (int bank = 0; bank < 2; ++bank) begin
+          dbg_sc_arm_issued_q[bank] <= 32'd0;
+          dbg_zp_arm_issued_q[bank] <= 32'd0;
+        end
       end else if (invocation_active_q) begin
         dbg_invocation_active_cycles_q
             <= dbg_invocation_active_cycles_q + 1;
@@ -1374,6 +1617,15 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
          && (|(child_q_empty_v & ~child_q_full_v))) begin
           dbg_fifo_full_blocks_ready_other_child_q
               <= dbg_fifo_full_blocks_ready_other_child_q + 1;
+        end
+        if (child_issue_fire_v[0]
+         && (child_q_cmd[0].instr[3:0] == 4'd7)) begin
+          dbg_w_arm_issued_q[child_q_cmd[0].flags[3:2]]
+              <= dbg_w_arm_issued_q[child_q_cmd[0].flags[3:2]] + 32'd1;
+          dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]]
+              <= dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]] + 32'd1;
+          dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]]
+              <= dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]] + 32'd1;
         end
       end
     end
@@ -1407,6 +1659,139 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               else $fatal(1, "%s: simultaneous sync collision children %0d/%0d rid=%0d",
                           INSTANCE_ID, lhs, rhs,
                           child_inflight_head[lhs].reg_id);
+          end
+        end
+
+
+        if (gemm_sync_slv_if[1].valid) begin
+          assert (gemm_sync_slv_if[1].ready)
+            else $fatal(1, "%s: consume event node 1 backpressured",
+                        INSTANCE_ID);
+          assert (gemm_sync_slv_if[1].reg_idx < NUM_SYNC_REGS)
+            else $fatal(1, "%s: consume event node 1 RID out of range: %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[1].reg_idx);
+          assert (gemm_sync_slv_if[1].value == 32'd1)
+            else $fatal(1, "%s: consume event node 1 value is not one",
+                        INSTANCE_ID);
+        end
+        if (gemm_sync_slv_if[2].valid) begin
+          assert (gemm_sync_slv_if[2].ready)
+            else $fatal(1, "%s: consume event node 2 backpressured",
+                        INSTANCE_ID);
+          assert (gemm_sync_slv_if[2].reg_idx < NUM_SYNC_REGS)
+            else $fatal(1, "%s: consume event node 2 RID out of range: %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[2].reg_idx);
+          assert (gemm_sync_slv_if[2].value == 32'd1)
+            else $fatal(1, "%s: consume event node 2 value is not one",
+                        INSTANCE_ID);
+        end
+        if (gemm_sync_slv_if[3].valid) begin
+          assert (gemm_sync_slv_if[3].ready)
+            else $fatal(1, "%s: consume event node 3 backpressured",
+                        INSTANCE_ID);
+          assert (gemm_sync_slv_if[3].reg_idx < NUM_SYNC_REGS)
+            else $fatal(1, "%s: consume event node 3 RID out of range: %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[3].reg_idx);
+          assert (gemm_sync_slv_if[3].value == 32'd1)
+            else $fatal(1, "%s: consume event node 3 value is not one",
+                        INSTANCE_ID);
+        end
+
+        if (gemm_sync_slv_if[1].valid) begin
+          assert ((gemm_sync_slv_if[1].reg_idx == RID_W_CONSUME0)
+               || (gemm_sync_slv_if[1].reg_idx == RID_W_CONSUME1)
+               || (gemm_sync_slv_if[1].reg_idx == RID_W_CONSUME2)
+               || (gemm_sync_slv_if[1].reg_idx == RID_W_CONSUME3))
+            else $fatal(1, "%s: weight consume event used RID %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[1].reg_idx);
+        end
+        if (gemm_sync_slv_if[2].valid) begin
+          assert ((gemm_sync_slv_if[2].reg_idx == RID_SC_CONSUME0)
+               || (gemm_sync_slv_if[2].reg_idx == RID_SC_CONSUME1))
+            else $fatal(1, "%s: scale consume event used RID %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[2].reg_idx);
+        end
+        if (gemm_sync_slv_if[3].valid) begin
+          assert ((gemm_sync_slv_if[3].reg_idx == RID_ZP_CONSUME0)
+               || (gemm_sync_slv_if[3].reg_idx == RID_ZP_CONSUME1))
+            else $fatal(1, "%s: zero-point consume event used RID %0d",
+                        INSTANCE_ID, gemm_sync_slv_if[3].reg_idx);
+        end
+
+        assert (!(gemm_sync_slv_if[1].valid
+               && gemm_sync_slv_if[2].valid
+               && (gemm_sync_slv_if[1].reg_idx
+                   == gemm_sync_slv_if[2].reg_idx)))
+          else $fatal(1, "%s: simultaneous consume collision nodes 1/2 rid=%0d",
+                      INSTANCE_ID, gemm_sync_slv_if[1].reg_idx);
+        assert (!(gemm_sync_slv_if[1].valid
+               && gemm_sync_slv_if[3].valid
+               && (gemm_sync_slv_if[1].reg_idx
+                   == gemm_sync_slv_if[3].reg_idx)))
+          else $fatal(1, "%s: simultaneous consume collision nodes 1/3 rid=%0d",
+                      INSTANCE_ID, gemm_sync_slv_if[1].reg_idx);
+        assert (!(gemm_sync_slv_if[2].valid
+               && gemm_sync_slv_if[3].valid
+               && (gemm_sync_slv_if[2].reg_idx
+                   == gemm_sync_slv_if[3].reg_idx)))
+          else $fatal(1, "%s: simultaneous consume collision nodes 2/3 rid=%0d",
+                      INSTANCE_ID, gemm_sync_slv_if[2].reg_idx);
+
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (child_completion_pop_v[child]
+           && child_inflight_head[child].valid) begin
+            assert (!is_consume_rid(child_inflight_head[child].reg_id))
+              else $fatal(1, "%s: child %0d notified consume RID %0d",
+                          INSTANCE_ID, child,
+                          child_inflight_head[child].reg_id);
+          end
+        end
+        assert (!(cfg_fire
+               && (gemm_sync_slv_if[1].valid
+                || gemm_sync_slv_if[2].valid
+                || gemm_sync_slv_if[3].valid)))
+          else $fatal(1, "%s: invocation clear overlapped consume event",
+                      INSTANCE_ID);
+
+        for (int bank = 0; bank < 4; ++bank) begin
+          assert (effective_sync[rid_w_consume_for_idx(gemm_wreg_idx_t'(bank))]
+               <= dbg_w_arm_issued_q[bank]
+                + ((child_issue_fire_v[0]
+                 && (child_q_cmd[0].instr[3:0] == 4'd7)
+                 && (child_q_cmd[0].flags[3:2] == bank)) ? 32'd1 : 32'd0))
+            else $fatal(1, "%s: weight consume count exceeded issued count for buffer %0d",
+                        INSTANCE_ID, bank);
+          if (invocation_complete) begin
+            assert (effective_sync[
+                     rid_w_consume_for_idx(gemm_wreg_idx_t'(bank))]
+                    == dbg_w_arm_issued_q[bank])
+              else $fatal(1,
+                  "%s: invocation ended with incomplete Weight consume count for bank %0d",
+                  INSTANCE_ID, bank);
+          end
+        end
+        for (int bank = 0; bank < 2; ++bank) begin
+          assert (effective_sync[bank ? RID_SC_CONSUME1 : RID_SC_CONSUME0]
+               <= dbg_sc_arm_issued_q[bank]
+                + ((child_issue_fire_v[0]
+                 && (child_q_cmd[0].instr[3:0] == 4'd7)
+                 && (child_q_cmd[0].flags[1] == bank)) ? 32'd1 : 32'd0))
+            else $fatal(1, "%s: scale consume count exceeded issued count for buffer %0d",
+                        INSTANCE_ID, bank);
+          assert (effective_sync[bank ? RID_ZP_CONSUME1 : RID_ZP_CONSUME0]
+               <= dbg_zp_arm_issued_q[bank]
+                + ((child_issue_fire_v[0]
+                 && (child_q_cmd[0].instr[3:0] == 4'd7)
+                 && (child_q_cmd[0].flags[0] == bank)) ? 32'd1 : 32'd0))
+            else $fatal(1, "%s: zero-point consume count exceeded issued count for buffer %0d",
+                        INSTANCE_ID, bank);
+          if (invocation_complete) begin
+            assert ((effective_sync[bank ? RID_SC_CONSUME1 : RID_SC_CONSUME0]
+                     == dbg_sc_arm_issued_q[bank])
+                 && (effective_sync[bank ? RID_ZP_CONSUME1 : RID_ZP_CONSUME0]
+                     == dbg_zp_arm_issued_q[bank]))
+              else $fatal(1, "%s: invocation ended with incomplete consume counts for buffer %0d",
+                          INSTANCE_ID, bank);
           end
         end
       end

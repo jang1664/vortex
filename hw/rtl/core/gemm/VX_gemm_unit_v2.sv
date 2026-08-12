@@ -139,6 +139,14 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     logic [1:0][`MAX(`MXU_ROW, `MXU_COL)-1:0][`SCALE_WIDTH-1:0] scale_regs;
     logic [1:0][`MAX(`MXU_ROW, `MXU_COL)-1:0][`ZP_WIDTH-1:0]    zero_regs;
+    typedef logic [`MAX(`MXU_ROW, `MXU_COL)-1:0][`SCALE_WIDTH-1:0]
+        scale_vector_t;
+    typedef logic [`MAX(`MXU_ROW, `MXU_COL)-1:0][`ZP_WIDTH-1:0]
+        zero_vector_t;
+    scale_vector_t qrow_scale_snapshot_q;
+    scale_vector_t qcol_scale_snapshot_pipe [0:INT2FP_CTRL_IDX];
+    zero_vector_t qrow_zero_snapshot_pipe [0:PREALIGN_CTRL_IDX];
+    zero_vector_t qcol_zero_snapshot_pipe [0:QCOL_REDUCE_CTRL_IDX];
 
     // Independent scale and zero-point write control signals.
     logic                                            sc_req_hs;
@@ -212,10 +220,10 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
 `ifdef WLOAD_AT_ONCE
-    (* max_fanout = 32 *) logic wreg_wr_idx;
+    (* max_fanout = 32 *) gemm_wreg_idx_t wreg_wr_idx;
     (* max_fanout = 32 *) logic wreg_load_dir;
 `else
-    logic wreg_wr_idx;
+    gemm_wreg_idx_t wreg_wr_idx;
     logic wreg_load_dir;
 `endif
 
@@ -328,12 +336,14 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic [$bits(o_lmem_bus_if.req_data.tag)-1:0] output_read_tag_q;
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
     logic [`MXU_COL-1:0] fp16_out_valid;
-    logic [1:0] wreg_busy;
+    logic [3:0] wreg_busy;
+    logic [3:0] wreg_preconsume_busy;
     logic [1:0] sreg_busy;
     logic [1:0] zreg_busy;
     logic pipeline_busy;
 
-    wire input_fire = i_lmem_bus_if.req_valid;
+    wire input_fire = i_lmem_bus_if.req_valid
+                    && i_lmem_bus_if.req_ready;
     wire admission_forward
         = input_fire
        && gemm_unit_v2_if.packet_ctrl.acc_rd_en
@@ -362,7 +372,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     wire scaler_stage_is_qcol
         = ctrl_pipe[SCALER_CTRL_IDX].quant_dir == `QDIR_COL;
 
-    assign i_lmem_bus_if.req_ready = 1'b1;
+    assign i_lmem_bus_if.req_ready
+        = gemm_unit_v2_if.input_admission_ready;
     assign i_lmem_bus_if.rsp_valid = 1'b0;
     assign gemm_unit_v2_if.last_write = acc_write_fire
                                       && ctrl_pipe[WRITE_CTRL_IDX].last;
@@ -377,6 +388,20 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     assign gemm_unit_v2_if.zero_point_register_write = zp_reg_wr_en;
     assign gemm_unit_v2_if.quant_register_write
         = scale_reg_wr_en || zp_reg_wr_en;
+    assign gemm_unit_v2_if.scale_consume_valid
+        = input_fire && gemm_unit_v2_if.packet_ctrl.last;
+    assign gemm_unit_v2_if.scale_consume_idx
+        = gemm_unit_v2_if.packet_ctrl.sreg_use_idx;
+    assign gemm_unit_v2_if.zp_consume_valid
+        = input_fire && gemm_unit_v2_if.packet_ctrl.last;
+    assign gemm_unit_v2_if.zp_consume_idx
+        = gemm_unit_v2_if.packet_ctrl.zreg_use_idx;
+    assign gemm_unit_v2_if.weight_consume_valid
+        = prealigner_out_valid
+       && ctrl_pipe[PREALIGN_CTRL_IDX].valid
+       && ctrl_pipe[PREALIGN_CTRL_IDX].last;
+    assign gemm_unit_v2_if.weight_consume_idx
+        = ctrl_pipe[PREALIGN_CTRL_IDX].wreg_use_idx;
     assign gemm_unit_v2_if.pipeline_empty
         = !(i_lmem_bus_if.req_valid
           || (|early_rsp_pending)
@@ -413,8 +438,50 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         end
     end
 
+    // Capture immutable qparam values at input admission.  Separate paths
+    // carry each vector only as far as its QDIR-specific consumer.
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            qrow_scale_snapshot_q <= '0;
+            for (int i = 0; i <= INT2FP_CTRL_IDX; ++i)
+                qcol_scale_snapshot_pipe[i] <= '0;
+            for (int i = 0; i <= PREALIGN_CTRL_IDX; ++i)
+                qrow_zero_snapshot_pipe[i] <= '0;
+            for (int i = 0; i <= QCOL_REDUCE_CTRL_IDX; ++i)
+                qcol_zero_snapshot_pipe[i] <= '0;
+        end else begin
+            qrow_scale_snapshot_q
+                <= (input_fire
+                 && (gemm_unit_v2_if.packet_ctrl.quant_dir == `QDIR_ROW))
+                 ? scale_regs[gemm_unit_v2_if.packet_ctrl.sreg_use_idx] : '0;
+            qcol_scale_snapshot_pipe[0]
+                <= (input_fire
+                 && (gemm_unit_v2_if.packet_ctrl.quant_dir == `QDIR_COL))
+                 ? scale_regs[gemm_unit_v2_if.packet_ctrl.sreg_use_idx] : '0;
+            qrow_zero_snapshot_pipe[0]
+                <= (input_fire
+                 && (gemm_unit_v2_if.packet_ctrl.quant_dir == `QDIR_ROW))
+                 ? zero_regs[gemm_unit_v2_if.packet_ctrl.zreg_use_idx] : '0;
+            qcol_zero_snapshot_pipe[0]
+                <= (input_fire
+                 && (gemm_unit_v2_if.packet_ctrl.quant_dir == `QDIR_COL))
+                 ? zero_regs[gemm_unit_v2_if.packet_ctrl.zreg_use_idx] : '0;
+
+            for (int i = 1; i <= INT2FP_CTRL_IDX; ++i)
+                qcol_scale_snapshot_pipe[i]
+                    <= qcol_scale_snapshot_pipe[i-1];
+            for (int i = 1; i <= PREALIGN_CTRL_IDX; ++i)
+                qrow_zero_snapshot_pipe[i]
+                    <= qrow_zero_snapshot_pipe[i-1];
+            for (int i = 1; i <= QCOL_REDUCE_CTRL_IDX; ++i)
+                qcol_zero_snapshot_pipe[i]
+                    <= qcol_zero_snapshot_pipe[i-1];
+        end
+    end
+
     always_comb begin
         wreg_busy = '0;
+        wreg_preconsume_busy = '0;
         sreg_busy = '0;
         zreg_busy = '0;
         pipeline_busy = 1'b0;
@@ -422,9 +489,6 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         for (int i = 0; i <= WRITE_CTRL_IDX; ++i) begin
             if (ctrl_pipe[i].valid) begin
                 pipeline_busy = 1'b1;
-                wreg_busy[ctrl_pipe[i].wreg_use_idx] = 1'b1;
-                sreg_busy[ctrl_pipe[i].sreg_use_idx] = 1'b1;
-                zreg_busy[ctrl_pipe[i].zreg_use_idx] = 1'b1;
                 if (ctrl_pipe[i].acc_rd_en) begin
                     compute_group_busy[
                         get_acc_group(ctrl_pipe[i].acc_rd_addr)
@@ -437,31 +501,42 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 end
             end
         end
+        for (int i = 0; i <= PREALIGN_CTRL_IDX; ++i) begin
+            if (ctrl_pipe[i].valid) begin
+                wreg_busy[ctrl_pipe[i].wreg_use_idx] = 1'b1;
+                if (i < PREALIGN_CTRL_IDX)
+                    wreg_preconsume_busy[ctrl_pipe[i].wreg_use_idx] = 1'b1;
+            end
+        end
         if (input_fire) begin
-            wreg_busy[gemm_unit_v2_if.packet_ctrl.wreg_use_idx] = 1'b1;
+            // Do not make a newly admitted Input beat combinationally busy for
+            // Weight or ACC ownership.  The beat is captured into ctrl_pipe
+            // on this edge and cannot consume either resource until a later
+            // pipeline stage, so a final Weight write or ACC output read on
+            // the same edge is a safe old-owner/new-owner handoff.  Starting
+            // with ctrl_pipe[0] on the following cycle, the normal resource
+            // fences remain active.  This cuts the otherwise circular paths
+            // from input_fire via W/ACC completion/effective_sync back to
+            // admission_ready.
             sreg_busy[gemm_unit_v2_if.packet_ctrl.sreg_use_idx] = 1'b1;
             zreg_busy[gemm_unit_v2_if.packet_ctrl.zreg_use_idx] = 1'b1;
-            if (gemm_unit_v2_if.packet_ctrl.acc_rd_en) begin
-                compute_group_busy[
-                    get_acc_group(
-                        gemm_unit_v2_if.packet_ctrl.acc_rd_addr)
-                ] = 1'b1;
-            end
-            if (gemm_unit_v2_if.packet_ctrl.acc_wr_en) begin
-                compute_group_busy[
-                    get_acc_group(
-                        gemm_unit_v2_if.packet_ctrl.acc_wr_addr)
-                ] = 1'b1;
-            end
         end
     end
 
 `ifdef WLOAD_AT_ONCE
     wire mxu_w_pipe_valid_out;
-    wire mxu_w_pipe_ready_out = !wreg_busy[wreg_wr_idx];
+    // The PREALIGN final consumer captures the old Weight value on this edge.
+    // A matching staged writer may update the same bank on the edge only when
+    // no incoming or earlier pipeline entry can still consume that version.
+    wire same_cycle_weight_release
+        = gemm_unit_v2_if.weight_consume_valid
+       && (gemm_unit_v2_if.weight_consume_idx == wreg_wr_idx)
+       && !wreg_preconsume_busy[wreg_wr_idx];
+    wire mxu_w_pipe_ready_out = !wreg_busy[wreg_wr_idx]
+                              || same_cycle_weight_release;
 
     VX_pipe_buffer #(
-        .DATAW (`MXU_WLOAD_NUM * `MXU_COL * `W_BIT_WIDTH + 2),
+        .DATAW (`MXU_WLOAD_NUM * `MXU_COL * `W_BIT_WIDTH + 3),
         .DEPTH (1)
     ) u_mxu_weight_pipe (
         .clk       (clk),
@@ -469,7 +544,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         .valid_in  (w_lmem_bus_if.req_valid),
         .ready_in  (w_lmem_bus_if.req_ready),
         .data_in   ({w_lmem_bus_if.req_data.data,
-                     w_lmem_bus_if.req_data.addr[1:0]}),
+                     w_lmem_bus_if.req_data.addr[2:0]}),
         .ready_out (mxu_w_pipe_ready_out),
         .data_out  ({mxu_weight, wreg_load_dir, wreg_wr_idx}),
         .valid_out (mxu_w_pipe_valid_out)
@@ -477,9 +552,14 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     assign mxu_ready_weight = mxu_w_pipe_valid_out && mxu_w_pipe_ready_out;
 `else
     assign mxu_weight = w_lmem_bus_if.req_data.data;
-    assign wreg_wr_idx = w_lmem_bus_if.req_data.addr[0];
-    assign wreg_load_dir = w_lmem_bus_if.req_data.addr[1];
-    assign w_lmem_bus_if.req_ready = !wreg_busy[wreg_wr_idx];
+    assign wreg_wr_idx = w_lmem_bus_if.req_data.addr[1:0];
+    assign wreg_load_dir = w_lmem_bus_if.req_data.addr[2];
+    wire same_cycle_weight_release
+        = gemm_unit_v2_if.weight_consume_valid
+       && (gemm_unit_v2_if.weight_consume_idx == wreg_wr_idx)
+       && !wreg_preconsume_busy[wreg_wr_idx];
+    assign w_lmem_bus_if.req_ready = !wreg_busy[wreg_wr_idx]
+                                   || same_cycle_weight_release;
     assign mxu_ready_weight = w_lmem_bus_if.req_valid
                             && w_lmem_bus_if.req_ready;
 `endif
@@ -629,7 +709,7 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
             assign a_valid   = in_pipe_valid_out & activated;
             assign b_valid   = a_valid;
             assign a_data    = activated ? in_pipe_data_out[`IFP_WIDTH*i +: `IFP_WIDTH] : '0;
-            assign b_data    = activated ? scale_regs[ctrl_pipe[INPUT_CTRL_IDX].sreg_use_idx][i] : '0;
+            assign b_data    = activated ? qrow_scale_snapshot_q[i] : '0;
 
             VX_fp16_mul #(
                 .LATENCY        (FP16_MUL_LATENCY),
@@ -724,10 +804,10 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 <<< (`BLOCK_SIZE * prealigner_blk_idx[i]);
             assign qrow_zp_mul_data[i]
                 = signed'(prealigner_int_data[i])
-                * signed'(zero_regs[ctrl_pipe[PREALIGN_CTRL_IDX].zreg_use_idx][i]);
+                * signed'(qrow_zero_snapshot_pipe[PREALIGN_CTRL_IDX][i]);
             assign qcol_zp_mul_data[i]
                 = signed'(qcol_reduce_data_out)
-                * signed'(zero_regs[ctrl_pipe[QCOL_REDUCE_CTRL_IDX].zreg_use_idx][i]);
+                * signed'(qcol_zero_snapshot_pipe[QCOL_REDUCE_CTRL_IDX][i]);
         end
     endgenerate
 
@@ -940,17 +1020,17 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
             assign a_data  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? int2fp_out_data[i] : '0;
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
-            assign b_data  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? scale_regs[ctrl_pipe[INT2FP_CTRL_IDX].sreg_use_idx][i] : '0;
+            assign b_data  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? qcol_scale_snapshot_pipe[INT2FP_CTRL_IDX][i] : '0;
 `else
-            assign b_data[31]  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? scale_regs[ctrl_pipe[INT2FP_CTRL_IDX].sreg_use_idx][i][15] : '0;
-            assign exp = scale_regs[ctrl_pipe[INT2FP_CTRL_IDX].sreg_use_idx][i][14:10];
+            assign b_data[31]  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? qcol_scale_snapshot_pipe[INT2FP_CTRL_IDX][i][15] : '0;
+            assign exp = qcol_scale_snapshot_pipe[INT2FP_CTRL_IDX][i][14:10];
             assign b_data[30:23]
                 = (int2fp_output_valid[i] & int2fp_stage_is_qcol)
                 ? (&exp == 1'b1
                  ? '1
                  : FP32_EXP_WIDTH'(exp) + FP32_EXP_WIDTH'(FP32_EXP_BIAS - FP16_EXP_BIAS))
                 : '0;
-            assign b_data[22:0]  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? {scale_regs[ctrl_pipe[INT2FP_CTRL_IDX].sreg_use_idx][i][9:0], 13'b0} : '0;
+            assign b_data[22:0]  = (int2fp_output_valid[i] & int2fp_stage_is_qcol) ? {qcol_scale_snapshot_pipe[INT2FP_CTRL_IDX][i][9:0], 13'b0} : '0;
 `endif
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
@@ -1355,10 +1435,8 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
 
     always @(posedge clk) begin
         if (reset === 1'b0) begin
-            assert (i_lmem_bus_if.req_ready === 1'b1)
-                else $fatal(1, "GEMM v2 input ready deasserted");
             assert (gemm_unit_v2_if.packet_ctrl.valid
-                 == i_lmem_bus_if.req_valid)
+                 == input_fire)
                 else $fatal(1, "GEMM v2 packet valid mismatch");
             assert ((early_read_req & nominal_read_req) == '0)
                 else $fatal(1, "GEMM v2 same-bank read/read collision");
@@ -1370,6 +1448,47 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                 else $fatal(1, "GEMM v2 compute write/output read selected the same ACC bank");
             assert ((early_rsp_pending & early_hold_valid) == '0)
                 else $fatal(1, "GEMM v2 early hold overwrite");
+            if (input_fire === 1'b1) begin
+                assert (!(scale_reg_wr_en
+                       && (scale_reg_idx
+                           == gemm_unit_v2_if.packet_ctrl.sreg_use_idx)))
+                    else $fatal(1, "GEMM v2 scale snapshot overlapped same-buffer write");
+                assert (!(zp_reg_wr_en
+                       && (zp_reg_idx
+                           == gemm_unit_v2_if.packet_ctrl.zreg_use_idx)))
+                    else $fatal(1, "GEMM v2 zero snapshot overlapped same-buffer write");
+            end
+            assert (gemm_unit_v2_if.scale_consume_valid
+                 == (input_fire && gemm_unit_v2_if.packet_ctrl.last))
+                else $fatal(1, "GEMM v2 scale consume pulse misaligned");
+            assert (gemm_unit_v2_if.zp_consume_valid
+                 == (input_fire && gemm_unit_v2_if.packet_ctrl.last))
+                else $fatal(1, "GEMM v2 zero-point consume pulse misaligned");
+            assert (gemm_unit_v2_if.weight_consume_valid
+                 == (prealigner_out_valid
+                  && ctrl_pipe[PREALIGN_CTRL_IDX].valid
+                  && ctrl_pipe[PREALIGN_CTRL_IDX].last))
+                else $fatal(1, "GEMM v2 weight consume pulse misaligned");
+            if (mxu_ready_weight) begin
+                assert (!wreg_busy[wreg_wr_idx]
+                    || same_cycle_weight_release)
+                    else $fatal(1, "GEMM v2 accepted a busy weight-register write");
+                if (wreg_busy[wreg_wr_idx]) begin
+                    assert (gemm_unit_v2_if.weight_consume_valid
+                         && (gemm_unit_v2_if.weight_consume_idx == wreg_wr_idx)
+                         && !wreg_preconsume_busy[wreg_wr_idx])
+                      else $fatal(1,
+                          "GEMM v2 invalid same-cycle Weight overwrite");
+                end
+            end
+            if (scale_reg_wr_en) begin
+                assert (!sreg_busy[scale_reg_idx])
+                    else $fatal(1, "GEMM v2 accepted a busy scale-register write");
+            end
+            if (zp_reg_wr_en) begin
+                assert (!zreg_busy[zp_reg_idx])
+                    else $fatal(1, "GEMM v2 accepted a busy zero-register write");
+            end
             if (output_read_fire === 1'b1) begin
                 assert (!compute_group_busy[output_read_bank[1]])
                     else $fatal(1, "GEMM v2 same-group output read fired during compute");
@@ -1484,6 +1603,21 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
                     ctrl_pipe[WRITE_CTRL_IDX].acc_wr_addr,
                     ctrl_pipe[WRITE_CTRL_IDX].is_load,
                     ctrl_pipe[WRITE_CTRL_IDX].last))
+            end
+            if (gemm_unit_v2_if.scale_consume_valid) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_SCALE_CONSUME | {inst=%s, buf=%0d}\n",
+                    $time, INSTANCE_ID,
+                    gemm_unit_v2_if.scale_consume_idx))
+            end
+            if (gemm_unit_v2_if.zp_consume_valid) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_ZP_CONSUME | {inst=%s, buf=%0d}\n",
+                    $time, INSTANCE_ID,
+                    gemm_unit_v2_if.zp_consume_idx))
+            end
+            if (gemm_unit_v2_if.weight_consume_valid) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_V2_WEIGHT_CONSUME | {inst=%s, buf=%0d}\n",
+                    $time, INSTANCE_ID,
+                    gemm_unit_v2_if.weight_consume_idx))
             end
         end
     end

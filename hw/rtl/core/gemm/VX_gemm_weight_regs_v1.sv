@@ -8,7 +8,7 @@
   - Supports both row direction and column direction weight loading
 */
 
-module VX_gemm_weight_regs_v1 #(
+module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
     parameter int ROW_SIZE            = 32,
     parameter int COL_SIZE            = 32,
     parameter int WEIGHT_DW           = 4,
@@ -21,8 +21,8 @@ module VX_gemm_weight_regs_v1 #(
     input  logic [WEIGHT_LOAD_ROW_NUM-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,
     input  logic ready_weight_i,
     input  logic weight_load_dir_i,  // 0: row direction, 1: column direction
-    input  logic in_weight_sel_i,    // Which buffer to load into
-    input  logic out_weight_sel_i,   // Which buffer to read from
+    input  gemm_wreg_idx_t in_weight_sel_i,   // Which bank to load into
+    input  gemm_wreg_idx_t out_weight_sel_i,  // Which bank to read from
     
     // Weight output to PEs
     output logic [ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weight_o
@@ -37,8 +37,8 @@ module VX_gemm_weight_regs_v1 #(
     end
   end
 
-  // Dual-buffer weight memory: [row][col][buffer_select]
-  logic [ROW_SIZE-1:0][COL_SIZE-1:0][1:0][WEIGHT_DW-1:0] mem;
+  // Four-bank weight memory: [row][col][bank_select]
+  logic [ROW_SIZE-1:0][COL_SIZE-1:0][3:0][WEIGHT_DW-1:0] mem;
 
   // Weight loading logic
   generate

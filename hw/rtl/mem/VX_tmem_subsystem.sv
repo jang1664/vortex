@@ -18,7 +18,7 @@
 //  - VX_dma_engine:        8-channel HBM(AXI) <-> TMEM(membus) DMA
 //  - VX_tensor_mem_bank:   8 TMEM banks with 6-port arbitration each
 //  - VX_tmem_switch:       Address-based 1:N bank routing (x5)
-//  - VX_lmem_dma_misal:    Local DMA for TMEM <-> GEMM data movement (x5)
+//  - Local DMA executors:  resource-specific TMEM <-> GEMM movement
 //
 //  Data flow:
 //    HBM <-> DMA engine <-> TMEM banks <-> switches <-> local DMAs <-> GEMM unit
@@ -40,7 +40,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int I_RD_OUTSTANDING = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
-    parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+    parameter int W_CMD_BEATS = `W_LMEM_DMA_CMD_BEATS,
+    parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RESPONSE_SLOTS,
     parameter int SZ_RD_OUTSTANDING = `SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int O_RD_OUTSTANDING = `O_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT
@@ -55,6 +56,21 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     // Local DMA control (input/weight/scale/zero-point/output)
     VX_lmem_dma_ctrl_if.slave ldma_ctrl_if [5],
+
+    // Weight destination-commit fence.  The descriptor-associated wait is
+    // sampled when ldma_ctrl_if[1].start is accepted; the two consume levels
+    // are the controller's same-cycle authoritative dependency view.
+    input gemm_wait_meta_t weight_writer_wait_i,
+    input wire [31:0] weight_consume_value0_i,
+    input wire [31:0] weight_consume_value1_i,
+    input wire [31:0] weight_consume_value2_i,
+    input wire [31:0] weight_consume_value3_i,
+    input gemm_wait_meta_t scale_writer_wait_i,
+    input wire [31:0] scale_consume_value0_i,
+    input wire [31:0] scale_consume_value1_i,
+    input gemm_wait_meta_t zero_point_writer_wait_i,
+    input wire [31:0] zero_point_consume_value0_i,
+    input wire [31:0] zero_point_consume_value1_i,
 
     // HBM side: AXI master ports (pass through to DMA engine)
     AXI_BUS.Master axi_m [NUM_BANKS],
@@ -86,19 +102,26 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_PARAM (AXI_USER_WIDTH)
+    `UNUSED_PARAM (I_RD_PREFETCH_DEPTH)
+    `UNUSED_PARAM (W_RD_PREFETCH_DEPTH)
+    `UNUSED_PARAM (SZ_RD_PREFETCH_DEPTH)
 
     initial begin
         if ((`MXU_WLOAD_NUM < 1) || ((`MXU_ROW % `MXU_WLOAD_NUM) != 0))
             $fatal(1, "%s: MXU_WLOAD_NUM(%0d) must be positive and divide MXU_ROW(%0d)",
                    INSTANCE_ID, `MXU_WLOAD_NUM, `MXU_ROW);
-        if ((W_RD_OUTSTANDING < 1)
-         || ((`MXU_WLOAD_NUM * W_RD_OUTSTANDING) != `MXU_ROW))
-            $fatal(1, "%s: MXU_WLOAD_NUM(%0d) * W_RD_OUTSTANDING(%0d) must equal MXU_ROW(%0d)",
-                   INSTANCE_ID, `MXU_WLOAD_NUM, W_RD_OUTSTANDING, `MXU_ROW);
+        if ((W_CMD_BEATS < 1)
+         || ((`MXU_WLOAD_NUM * W_CMD_BEATS) != `MXU_ROW))
+            $fatal(1, "%s: MXU_WLOAD_NUM(%0d) * W_CMD_BEATS(%0d) must equal MXU_ROW(%0d)",
+                   INSTANCE_ID, `MXU_WLOAD_NUM, W_CMD_BEATS, `MXU_ROW);
         if ((WEIGHT_BANKS_PER_BEAT < 1)
-         || (W_RD_OUTSTANDING != (NUM_BANKS / WEIGHT_BANKS_PER_BEAT)))
-            $fatal(1, "%s: W_RD_OUTSTANDING(%0d) must equal NUM_BANKS(%0d) / WEIGHT_BANKS_PER_BEAT(%0d)",
-                   INSTANCE_ID, W_RD_OUTSTANDING, NUM_BANKS, WEIGHT_BANKS_PER_BEAT);
+         || ((NUM_BANKS % WEIGHT_BANKS_PER_BEAT) != 0))
+            $fatal(1, "%s: invalid Weight bank grouping NUM_BANKS(%0d), WEIGHT_BANKS_PER_BEAT(%0d)",
+                   INSTANCE_ID, NUM_BANKS, WEIGHT_BANKS_PER_BEAT);
+        if ((W_RD_OUTSTANDING != (2 * W_CMD_BEATS))
+         || ((W_RD_OUTSTANDING & (W_RD_OUTSTANDING - 1)) != 0))
+            $fatal(1, "%s: Weight shared response slots(%0d) must equal two commands x %0d beats",
+                   INSTANCE_ID, W_RD_OUTSTANDING, W_CMD_BEATS);
     end
 
     // ================================================================
@@ -399,20 +422,22 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 `endif
 
     // Input local DMA
-    VX_lmem_dma_misal #(
+    VX_lmem_dma_input_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
-        .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(I_RD_OUTSTANDING)
+        .CMD_FIFO_DEPTH(4),
+        .RESPONSE_SLOTS(I_RD_OUTSTANDING)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[0]),
+        .writer_wait_i ('0),
+        .writer_consume_value0_i ('0),
+        .writer_consume_value1_i ('0),
         .gemm_sync_if(ldma_sync_if[0]),
         .lmem_bus_if (ldma_to_switch[0]),
         .gemm_bus_if (ldma_gemm[0])
@@ -422,20 +447,24 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     );
 
     // Weight local DMA
-    VX_lmem_dma_misal #(
+    VX_lmem_dma_weight_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
-        .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(W_RD_OUTSTANDING)
+        .CMD_BEATS   (W_CMD_BEATS),
+        .RESPONSE_SLOTS(W_RD_OUTSTANDING)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[1]),
+        .writer_wait_i(weight_writer_wait_i),
+        .weight_consume_value0_i(weight_consume_value0_i),
+        .weight_consume_value1_i(weight_consume_value1_i),
+        .weight_consume_value2_i(weight_consume_value2_i),
+        .weight_consume_value3_i(weight_consume_value3_i),
         .gemm_sync_if(ldma_sync_if[1]),
         .lmem_bus_if (ldma_weight_to_tmem),
         .gemm_bus_if (ldma_gemm_weight)
@@ -447,20 +476,24 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     `INIT_VX_MEM_BUS_IF (ldma_to_switch[1])
 
     // Scale local DMA
-    VX_lmem_dma_misal #(
+    VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sc"}),
-        .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .CMD_FIFO_DEPTH(4),
+        .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
+        .WRITER_RID0 (GEMM_RID_SC_CONSUME0),
+        .WRITER_RID1 (GEMM_RID_SC_CONSUME1),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
-        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(SZ_RD_OUTSTANDING)
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH)
     ) u_ldma_scale (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[2]),
+        .writer_wait_i(scale_writer_wait_i),
+        .writer_consume_value0_i(scale_consume_value0_i),
+        .writer_consume_value1_i(scale_consume_value1_i),
         .gemm_sync_if(ldma_sync_if[2]),
         .lmem_bus_if (ldma_to_switch[2]),
         .gemm_bus_if (ldma_gemm[2])
@@ -470,20 +503,24 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     );
 
     // Zero-point local DMA
-    VX_lmem_dma_misal #(
+    VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_zp"}),
-        .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .CMD_FIFO_DEPTH(4),
+        .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
+        .WRITER_RID0 (GEMM_RID_ZP_CONSUME0),
+        .WRITER_RID1 (GEMM_RID_ZP_CONSUME1),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
-        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(SZ_RD_OUTSTANDING)
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH)
     ) u_ldma_zero_point (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[3]),
+        .writer_wait_i(zero_point_writer_wait_i),
+        .writer_consume_value0_i(zero_point_consume_value0_i),
+        .writer_consume_value1_i(zero_point_consume_value1_i),
         .gemm_sync_if(ldma_sync_if[3]),
         .lmem_bus_if (ldma_to_switch[3]),
         .gemm_bus_if (ldma_gemm[3])

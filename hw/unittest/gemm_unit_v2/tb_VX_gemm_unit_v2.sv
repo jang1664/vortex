@@ -16,7 +16,10 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     localparam int RANDOM_COMMAND_LENGTH = 10;
     localparam int RANDOM_COMMAND_COUNT
         = RANDOM_PACKET_COUNT / RANDOM_COMMAND_LENGTH;
-    localparam int ARBITRATION_COMPUTE_PACKETS = 10;
+    // Same-group: 2 groups * 2 bank offsets * 2 packets (admission handoff
+    // and registered fence). Different-group: 2 groups * 3 phases.
+    localparam int ARBITRATION_COMPUTE_PACKETS
+        = (2 * 2 * 2) + (2 * 3);
     localparam int EXPECTED_LAST_WRITES
         = 22 + RANDOM_COMMAND_COUNT + ARBITRATION_COMPUTE_PACKETS;
 
@@ -64,6 +67,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     int forward_count;
     int history_forward_count;
     int last_write_count;
+    int weight_consume_count [4];
+    int scale_consume_count [2];
+    int zp_consume_count [2];
     bit test_failed;
     longint unsigned scoreboard_cycle;
     int scoreboard_admission_count;
@@ -136,6 +142,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     ) o_lmem_bus_if ();
 
     VX_gemm_unit_v2_if gemm_unit_v2_if ();
+    assign gemm_unit_v2_if.input_admission_ready = 1'b1;
 
     VX_gemm_unit_v2 #(
         .INSTANCE_ID ("gemm_unit_v2_ut")
@@ -163,6 +170,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             coincident_read_count <= 0;
             forward_count <= 0;
             history_forward_count <= 0;
+            weight_consume_count[0] <= 0;
+            weight_consume_count[1] <= 0;
+            weight_consume_count[2] <= 0;
+            weight_consume_count[3] <= 0;
+            scale_consume_count[0] <= 0;
+            scale_consume_count[1] <= 0;
+            zp_consume_count[0] <= 0;
+            zp_consume_count[1] <= 0;
         end else begin
             cycle_count <= cycle_count + 1;
             if (i_lmem_bus_if.req_valid) begin
@@ -188,6 +203,18 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 history_forward_count <= history_forward_count + 1;
             if (gemm_unit_v2_if.last_write)
                 last_write_count <= last_write_count + 1;
+            if (gemm_unit_v2_if.weight_consume_valid)
+                weight_consume_count[gemm_unit_v2_if.weight_consume_idx]
+                    <= weight_consume_count[
+                        gemm_unit_v2_if.weight_consume_idx] + 1;
+            if (gemm_unit_v2_if.scale_consume_valid)
+                scale_consume_count[gemm_unit_v2_if.scale_consume_idx]
+                    <= scale_consume_count[
+                        gemm_unit_v2_if.scale_consume_idx] + 1;
+            if (gemm_unit_v2_if.zp_consume_valid)
+                zp_consume_count[gemm_unit_v2_if.zp_consume_idx]
+                    <= zp_consume_count[
+                        gemm_unit_v2_if.zp_consume_idx] + 1;
         end
     end
 
@@ -524,7 +551,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end
     endtask
 
-    task automatic clear_weight_bank(input logic bank);
+    task automatic clear_weight_bank(input gemm_wreg_idx_t bank);
         for (int beat = 0; beat < (`MXU_ROW / `MXU_WLOAD_NUM); ++beat) begin
             @(negedge clk);
             w_lmem_bus_if.req_valid = 1'b1;
@@ -579,7 +606,6 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg1_data;
         logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg0_expected;
         logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_reg1_expected;
-        logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0] held_scale_data;
         begin
             for (int i = 0; i < `MXU_MAX_DIM; ++i) begin
                 scale_reg0_data[i] = `SCALE_WIDTH'(16'h3000 + i);
@@ -642,9 +668,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             sc_lmem_bus_if.req_valid = 1'b0;
             zp_lmem_bus_if.req_valid = 1'b0;
 
-            // Admit a no-write packet that uses scale REG0 and ZP REG1.  While
-            // it is live, scale REG0 must stall but the unused ZP REG0 remains
-            // independently writable.
+            // Admit a no-write packet with independent qparam indices.  Once
+            // the final packet snapshots both values, both physical registers
+            // must be immediately reusable even while the packet is in flight.
             i_lmem_bus_if.req_valid = 1'b1;
             i_lmem_bus_if.req_data = '0;
             gemm_unit_v2_if.packet_ctrl = '0;
@@ -653,46 +679,39 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             gemm_unit_v2_if.packet_ctrl.zreg_use_idx = 1'b1;
             gemm_unit_v2_if.packet_ctrl.last = 1'b1;
             @(posedge clk);
+            #1;
+            if (!gemm_unit_v2_if.scale_consume_valid
+             || gemm_unit_v2_if.scale_consume_idx != 1'b0
+             || !gemm_unit_v2_if.zp_consume_valid
+             || gemm_unit_v2_if.zp_consume_idx != 1'b1)
+                $fatal(1, "independent qparam consume metadata mismatch");
             @(negedge clk);
             i_lmem_bus_if.req_valid = 1'b0;
             gemm_unit_v2_if.packet_ctrl = '0;
             sc_lmem_bus_if.req_valid = 1'b1;
             sc_lmem_bus_if.req_data.addr = 0;
             sc_lmem_bus_if.req_data.data = scale_reg1_data;
-            held_scale_data = sc_lmem_bus_if.req_data.data;
             zp_lmem_bus_if.req_valid = 1'b1;
             zp_lmem_bus_if.req_data.addr
                 = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8);
             zp_lmem_bus_if.req_data.data = zero_reg1_data;
             #1;
-            if (sc_lmem_bus_if.req_ready || !zp_lmem_bus_if.req_ready)
-                $fatal(1, "qparam ports were not independently backpressured");
-            @(posedge clk);
-            #1;
-            if (gemm_unit_v2_if.scale_register_write
-             || !gemm_unit_v2_if.zero_point_register_write)
-                $fatal(1, "stalled scale request blocked or merged with ZP write");
-            @(negedge clk);
-            zp_lmem_bus_if.req_valid = 1'b0;
-            while (!sc_lmem_bus_if.req_ready) begin
-                if (sc_lmem_bus_if.req_data.data !== held_scale_data)
-                    $fatal(1, "stalled scale request changed before ready");
-                @(posedge clk);
-                #1;
-            end
+            if (!sc_lmem_bus_if.req_ready || !zp_lmem_bus_if.req_ready)
+                $fatal(1, "qparam register did not release after final snapshot");
             @(posedge clk);
             #1;
             if (!gemm_unit_v2_if.scale_register_write
-             || gemm_unit_v2_if.zero_point_register_write)
-                $fatal(1, "released scale request did not write independently");
+             || !gemm_unit_v2_if.zero_point_register_write)
+                $fatal(1, "post-snapshot qparam writes were not simultaneous");
             @(negedge clk);
             sc_lmem_bus_if.req_valid = 1'b0;
-            $display("QPARAM_PARALLEL_PORTS_PASS simultaneous_64B=1 reg0_reg1=1 independent_backpressure=1");
+            zp_lmem_bus_if.req_valid = 1'b0;
+            $display("QPARAM_PARALLEL_PORTS_PASS simultaneous_64B=1 reg0_reg1=1 post_snapshot_release=1");
         end
     endtask
 
     task automatic write_weight_matrix(
-        input logic bank,
+        input gemm_wreg_idx_t bank,
         input logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
             value
     );
@@ -799,11 +818,11 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end
     endtask
 
-    task automatic check_output_bank_exclusion(input string context);
+    task automatic check_output_bank_exclusion(input string check_name);
         if ((u_dut.compute_bank_read_req & u_dut.output_bank_read_req) != 0
          || (u_dut.acc_mem_wr_en & u_dut.output_bank_read_req) != 0) begin
             $error("physical ACC bank conflict during %s compute_read=%b write=%b output=%b",
-                   context, u_dut.compute_bank_read_req,
+                   check_name, u_dut.compute_bank_read_req,
                    u_dut.acc_mem_wr_en, u_dut.output_bank_read_req);
             test_failed = 1'b1;
         end
@@ -816,7 +835,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic acc_rd_en,
         input logic acc_wr_en,
         input logic quant_dir,
-        input logic wreg_idx,
+        input gemm_wreg_idx_t wreg_idx,
         input logic sreg_idx,
         input logic zreg_idx,
         input logic notify_on_writeback,
@@ -853,7 +872,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] address,
         input logic is_load,
         input logic quant_dir,
-        input logic wreg_idx,
+        input gemm_wreg_idx_t wreg_idx,
         input logic sreg_idx,
         input logic zreg_idx,
         input logic last
@@ -874,6 +893,237 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         @(negedge clk);
         i_lmem_bus_if.req_valid = 1'b0;
         gemm_unit_v2_if.packet_ctrl = '0;
+    endtask
+
+    task automatic test_resource_consume_and_snapshot(
+        input logic bank,
+        input logic quant_dir,
+        input int bubble_cycles
+    );
+        input_vector_t input_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] old_scale;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] new_scale;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] old_zero;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] new_zero;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] old_zero_snapshot;
+        int weight_count_start;
+        int scale_count_start;
+        int zp_count_start;
+        int zero_snapshot_seen;
+        int scale_snapshot_seen;
+        int timeout;
+        bit weight_consume_seen;
+        bit weight_ready_after_consume_seen;
+        begin
+            input_data = '0;
+            for (int lane = 0; lane < `MXU_MAX_DIM; ++lane) begin
+                old_scale[lane] = `SCALE_WIDTH'(16'h3400 + lane + bank * 16);
+                new_scale[lane] = `SCALE_WIDTH'(16'h3c00 + lane + bank * 16);
+                old_zero[lane] = `ZP_WIDTH'(lane + 3 + bank * 32);
+                new_zero[lane] = `ZP_WIDTH'(lane + 67 + bank * 32);
+                old_zero_snapshot[lane] = -$signed(old_zero[lane]);
+            end
+
+            write_scale_reg(bank, old_scale);
+            write_zero_reg(bank, old_zero);
+            weight_count_start = weight_consume_count[bank];
+            scale_count_start = scale_consume_count[bank];
+            zp_count_start = zp_consume_count[bank];
+
+            // Two packets exercise continuous admission for QROW and an
+            // explicit bubble for QCOL.  Only the second packet is final.
+            drive_packet_ctrl(input_data, '0, 1'b0, 1'b0, 1'b0,
+                              quant_dir, bank, bank, bank,
+                              1'b0, 1'b0);
+            #1;
+            if ((quant_dir == `QDIR_ROW)
+             && (u_dut.qrow_scale_snapshot_q !== old_scale))
+                $fatal(1, "QROW first-packet scale snapshot mismatch");
+            if (bubble_cycles != 0)
+                drive_bubble(bubble_cycles);
+            drive_packet_ctrl(
+                              input_data,
+                              `GEMM_ACC_MEM_ADDR_WIDTH'(ACC_ROW_BYTES),
+                              1'b0, 1'b0, 1'b0,
+                              quant_dir, bank, bank, bank,
+                              1'b0, 1'b1);
+            #1;
+            if (!gemm_unit_v2_if.scale_consume_valid
+             || gemm_unit_v2_if.scale_consume_idx != bank
+             || !gemm_unit_v2_if.zp_consume_valid
+             || gemm_unit_v2_if.zp_consume_idx != bank)
+                $fatal(1, "final qparam consume metadata mismatch bank=%0d qdir=%0d",
+                       bank, quant_dir);
+            if ((quant_dir == `QDIR_ROW)
+             && (u_dut.qrow_scale_snapshot_q !== old_scale))
+                $fatal(1, "QROW final-packet scale snapshot mismatch");
+            end_stream();
+
+            // Same-buffer qparam writes are legal immediately after the final
+            // admission edge.  The in-flight packets must retain old values.
+            sc_lmem_bus_if.req_valid = 1'b1;
+            sc_lmem_bus_if.req_data = '0;
+            sc_lmem_bus_if.req_data.rw = 1'b1;
+            sc_lmem_bus_if.req_data.addr
+                = bank * (`MXU_MAX_DIM * `SCALE_WIDTH / 8);
+            sc_lmem_bus_if.req_data.data = new_scale;
+            sc_lmem_bus_if.req_data.byteen = '1;
+            zp_lmem_bus_if.req_valid = 1'b1;
+            zp_lmem_bus_if.req_data = '0;
+            zp_lmem_bus_if.req_data.rw = 1'b1;
+            zp_lmem_bus_if.req_data.addr
+                = 2 * (`MXU_MAX_DIM * `SCALE_WIDTH / 8)
+                + bank * (`MXU_MAX_DIM * `ZP_WIDTH / 8);
+            zp_lmem_bus_if.req_data.data = new_zero;
+            zp_lmem_bus_if.req_data.byteen = '1;
+            #1;
+            if (!sc_lmem_bus_if.req_ready || !zp_lmem_bus_if.req_ready)
+                $fatal(1, "same-buffer qparam write blocked after final snapshot");
+            @(posedge clk);
+            #1;
+            if (!gemm_unit_v2_if.scale_register_write
+             || !gemm_unit_v2_if.zero_point_register_write)
+                $fatal(1, "same-buffer qparam overwrite did not fire");
+            @(negedge clk);
+            sc_lmem_bus_if.req_valid = 1'b0;
+            zp_lmem_bus_if.req_valid = 1'b0;
+
+            // Hold a same-bank weight write request across the final tree read.
+            w_lmem_bus_if.req_valid = 1'b1;
+            w_lmem_bus_if.req_data = '0;
+            w_lmem_bus_if.req_data.rw = 1'b1;
+            // Weight address bits [1:0] select the register bank; bit 2 is
+            // QDIR.  Set the fields explicitly so upper banks cannot be hidden by a
+            // concat/cast width change in this lifetime check.
+            w_lmem_bus_if.req_data.addr[1:0] = bank;
+            w_lmem_bus_if.req_data.addr[2] = 1'b0;
+            w_lmem_bus_if.req_data.byteen = '1;
+
+            zero_snapshot_seen = 0;
+            scale_snapshot_seen = 0;
+            timeout = 0;
+            weight_consume_seen = 1'b0;
+            weight_ready_after_consume_seen = 1'b0;
+            while ((!weight_ready_after_consume_seen
+                 || (zero_snapshot_seen != 2)
+                 || ((quant_dir == `QDIR_COL)
+                  && (scale_snapshot_seen != 2)))
+                && (timeout < 100)) begin
+                #1;
+                if ((quant_dir == `QDIR_ROW)
+                 && u_dut.ctrl_pipe[u_dut.PREALIGN_CTRL_IDX].valid) begin
+                    if (u_dut.qrow_zero_snapshot_pipe[
+                            u_dut.PREALIGN_CTRL_IDX] !== old_zero_snapshot)
+                        $fatal(1, "QROW zero snapshot changed after overwrite");
+                    zero_snapshot_seen++;
+                end
+                if ((quant_dir == `QDIR_COL)
+                 && u_dut.ctrl_pipe[u_dut.QCOL_REDUCE_CTRL_IDX].valid) begin
+                    if (u_dut.qcol_zero_snapshot_pipe[
+                            u_dut.QCOL_REDUCE_CTRL_IDX] !== old_zero_snapshot)
+                        $fatal(1, "QCOL zero snapshot changed after overwrite");
+                    zero_snapshot_seen++;
+                end
+                if ((quant_dir == `QDIR_COL)
+                 && u_dut.ctrl_pipe[u_dut.INT2FP_CTRL_IDX].valid) begin
+                    if (u_dut.qcol_scale_snapshot_pipe[
+                            u_dut.INT2FP_CTRL_IDX] !== old_scale)
+                        $fatal(1, "QCOL scale snapshot changed after overwrite");
+                    scale_snapshot_seen++;
+                end
+
+                if (gemm_unit_v2_if.weight_consume_valid) begin
+                    if (gemm_unit_v2_if.weight_consume_idx != bank
+                     || !u_dut.wreg_busy[bank]
+                     || !w_lmem_bus_if.req_ready
+                     || !gemm_unit_v2_if.weight_register_write)
+                        $fatal(1, "weight consume/tree-read lifetime mismatch");
+                    weight_consume_seen = 1'b1;
+                end else if (!weight_consume_seen
+                          && w_lmem_bus_if.req_ready) begin
+                    $fatal(1, "weight register became ready before final consume");
+                end
+
+                if (gemm_unit_v2_if.weight_consume_valid
+                 && w_lmem_bus_if.req_ready) begin
+                    weight_ready_after_consume_seen = 1'b1;
+                    w_lmem_bus_if.req_valid = 1'b0;
+                end
+                @(posedge clk);
+                @(negedge clk);
+                timeout++;
+            end
+            w_lmem_bus_if.req_valid = 1'b0;
+            if (timeout == 100)
+                $fatal(1, "timeout waiting for resource consume/snapshot checks");
+            wait_for_empty();
+            @(negedge clk);
+            if ((weight_consume_count[bank] - weight_count_start) != 1
+             || (scale_consume_count[bank] - scale_count_start) != 1
+             || (zp_consume_count[bank] - zp_count_start) != 1)
+                $fatal(1, "resource consume pulse count mismatch bank=%0d W=%0d SC=%0d ZP=%0d",
+                       bank,
+                       weight_consume_count[bank] - weight_count_start,
+                       scale_consume_count[bank] - scale_count_start,
+                       zp_consume_count[bank] - zp_count_start);
+            $display("RESOURCE_CONSUME_SNAPSHOT_PASS bank=%0d qdir=%0d bubbles=%0d",
+                     bank, quant_dir, bubble_cycles);
+        end
+    endtask
+
+    task automatic test_independent_resource_indices();
+        input_vector_t input_data;
+        gemm_wreg_idx_t expected_wreg;
+        logic expected_sreg;
+        logic expected_zreg;
+        int weight_count_start [2];
+        int timeout;
+        begin
+            input_data = '0;
+            weight_count_start[0] = weight_consume_count[2];
+            weight_count_start[1] = weight_consume_count[3];
+
+            for (int tuple = 0; tuple < 2; ++tuple) begin
+                expected_wreg = gemm_wreg_idx_t'(tuple + 2);
+                expected_sreg = logic'(tuple);
+                expected_zreg = ~expected_sreg;
+                drive_packet_ctrl(input_data, '0, 1'b0, 1'b0, 1'b0,
+                                  `QDIR_COL, expected_wreg,
+                                  expected_sreg, expected_zreg,
+                                  1'b0, 1'b1);
+                #1;
+                if (!gemm_unit_v2_if.scale_consume_valid
+                 || gemm_unit_v2_if.scale_consume_idx != expected_sreg
+                 || !gemm_unit_v2_if.zp_consume_valid
+                 || gemm_unit_v2_if.zp_consume_idx != expected_zreg)
+                    $fatal(1,
+                        "independent W/S/Z admission tuple mismatch W=%0d S=%0d Z=%0d",
+                        expected_wreg, expected_sreg, expected_zreg);
+                end_stream();
+
+                timeout = 0;
+                while (!gemm_unit_v2_if.weight_consume_valid
+                    && timeout < 100) begin
+                    @(posedge clk);
+                    ++timeout;
+                end
+                if (timeout == 100
+                 || gemm_unit_v2_if.weight_consume_idx != expected_wreg)
+                    $fatal(1,
+                        "independent W/S/Z Weight consume mismatch W=%0d",
+                        expected_wreg);
+                wait_for_empty();
+            end
+
+            @(negedge clk);
+            if ((weight_consume_count[2] - weight_count_start[0]) != 1
+             || (weight_consume_count[3] - weight_count_start[1]) != 1)
+                $fatal(1,
+                    "upper Weight bank consume count mismatch W2=%0d W3=%0d",
+                    weight_consume_count[2] - weight_count_start[0],
+                    weight_consume_count[3] - weight_count_start[1]);
+            $display("INDEPENDENT_RESOURCE_INDICES_PASS tuples=W2_S0_Z1,W3_S1_Z0");
+        end
     endtask
 
     task automatic wait_for_last_write();
@@ -903,13 +1153,13 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end
     endtask
 
-    task automatic check_scoreboard_empty(input string context);
+    task automatic check_scoreboard_empty(input string check_name);
         @(negedge clk);
         if ((write_expect_q.size() != 0)
          || (read_expect_q.size() != 0)
          || (forward_expect_q.size() != 0)) begin
             $error("scoreboard not empty after %s: writes=%0d reads=%0d forwards=%0d",
-                   context, write_expect_q.size(), read_expect_q.size(),
+                   check_name, write_expect_q.size(), read_expect_q.size(),
                    forward_expect_q.size());
             test_failed = 1'b1;
         end
@@ -959,14 +1209,19 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             stage_seen[stage] = 1'b0;
         final_write_block_seen = 1'b0;
 
+        // Admission-edge handoff is legal: the incoming packet does not
+        // access ACC until after it has entered ctrl_pipe[0], so the old owner
+        // may complete an output read on the same edge.  Accept this transfer
+        // as a real handshake before testing the registered-pipeline fence
+        // with a second packet below.
         @(negedge clk);
         drive_compute_request(compute_address);
         drive_output_request(output_address, compute_bank_offset);
         #1;
-        if (!u_dut.compute_group_busy[compute_group]
-         || o_lmem_bus_if.req_ready
-         || u_dut.output_read_fire) begin
-            $error("same-group output was not blocked on incoming admission group=%0d bank_offset=%0d",
+        if ((|u_dut.compute_group_busy)
+         || !o_lmem_bus_if.req_ready
+         || !u_dut.output_read_fire) begin
+            $error("same-group admission-edge output handoff was not accepted group=%0d bank_offset=%0d",
                    compute_group, compute_bank_offset);
             test_failed = 1'b1;
         end
@@ -974,8 +1229,40 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
 
         @(posedge clk);
         #1;
+        if (!u_dut.ctrl_pipe[0].valid
+         || !u_dut.compute_group_busy[compute_group]
+         || !u_dut.output_group_conflict) begin
+            $error("same-group fence did not begin at ctrl_pipe[0] group=%0d",
+                   compute_group);
+            test_failed = 1'b1;
+        end
         @(negedge clk);
         clear_compute_request();
+        clear_output_request();
+        check_output_response_tag(compute_bank_offset);
+        wait_for_empty();
+        check_scoreboard_empty("same-group admission-edge handoff");
+
+        // A registered packet owns its ACC group from ctrl_pipe[0] through
+        // final writeback.  Hold a second output request against every stage
+        // and require release only after the complete pipeline drains.
+        @(negedge clk);
+        drive_compute_request(compute_address);
+        @(posedge clk);
+        #1;
+        @(negedge clk);
+        clear_compute_request();
+        drive_output_request(output_address, compute_bank_offset);
+        #1;
+        if (!u_dut.ctrl_pipe[0].valid
+         || !u_dut.compute_group_busy[compute_group]
+         || o_lmem_bus_if.req_ready
+         || u_dut.output_read_fire) begin
+            $error("same-group output was not blocked from ctrl_pipe[0] group=%0d bank_offset=%0d",
+                   compute_group, compute_bank_offset);
+            test_failed = 1'b1;
+        end
+        check_output_bank_exclusion("same-group ctrl_pipe[0]");
 
         while (u_dut.compute_group_busy[compute_group]) begin
             for (int stage = 0; stage <= u_dut.WRITE_CTRL_IDX; ++stage) begin
@@ -1063,16 +1350,23 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         if (phase == 0) begin
             drive_output_request(output_address, response_tag);
             #1;
-            if (!u_dut.compute_group_busy[compute_group]
-             || u_dut.compute_group_busy[~compute_group]
+            if ((|u_dut.compute_group_busy)
              || !o_lmem_bus_if.req_ready
              || !u_dut.output_read_fire) begin
-                $error("different-group output did not fire with incoming compute group=%0d",
+                $error("different-group admission-edge output handoff did not fire group=%0d",
                        compute_group);
                 test_failed = 1'b1;
             end
             check_output_bank_exclusion("different-group incoming admission");
             @(posedge clk);
+            #1;
+            if (!u_dut.ctrl_pipe[0].valid
+             || !u_dut.compute_group_busy[compute_group]
+             || u_dut.compute_group_busy[~compute_group]) begin
+                $error("different-group registered ownership was not visible at ctrl_pipe[0] group=%0d",
+                       compute_group);
+                test_failed = 1'b1;
+            end
             @(negedge clk);
             clear_compute_request();
             clear_output_request();
@@ -1364,14 +1658,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         int expected_reads;
         int expected_immediate_forwards;
         int expected_history_forwards;
-        string context;
+        string check_name;
 
         input_data = '{default: 16'h3c00};
         weight_data = '{default: `W_BIT_WIDTH'(1)};
         scale_data = '{default: 16'h3c00};
         zero_data = '0;
         initial_value = '{default: 32'h3f80_0000};
-        context = $sformatf("same-address d=%0d boundary=%0b",
+        check_name = $sformatf("same-address d=%0d boundary=%0b",
                             distance, command_boundary);
 
         if ((distance < 1) || (distance > 3)) begin
@@ -1404,7 +1698,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end_stream();
         wait_for_last_write();
         wait_for_empty();
-        check_scoreboard_empty(context);
+        check_scoreboard_empty(check_name);
 
         expected_reads = (distance == 3) ? 2 : 1;
         expected_immediate_forwards = (distance == 1) ? 1 : 0;
@@ -1412,7 +1706,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         if ((early_read_count - early_before) != 0
          || (nominal_read_count - nominal_before) != expected_reads) begin
             $error("%s read count mismatch expected_early=0 expected_nominal=%0d actual_early=%0d actual_nominal=%0d",
-                   context, expected_reads,
+                   check_name, expected_reads,
                    early_read_count - early_before,
                    nominal_read_count - nominal_before);
             test_failed = 1'b1;
@@ -1420,20 +1714,20 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         if ((forward_count - forwards_before)
             != expected_immediate_forwards) begin
             $error("%s immediate forwarding count mismatch expected=%0d actual=%0d",
-                   context, expected_immediate_forwards,
+                   check_name, expected_immediate_forwards,
                    forward_count - forwards_before);
             test_failed = 1'b1;
         end
         if ((history_forward_count - history_forwards_before)
             != expected_history_forwards) begin
             $error("%s history forwarding count mismatch expected=%0d actual=%0d",
-                   context, expected_history_forwards,
+                   check_name, expected_history_forwards,
                    history_forward_count - history_forwards_before);
             test_failed = 1'b1;
         end
         if ((write_count - writes_before) != 2) begin
             $error("%s write count mismatch expected=2 actual=%0d",
-                   context, write_count - writes_before);
+                   check_name, write_count - writes_before);
             test_failed = 1'b1;
         end
         // Initial 1.0 plus two dot products of 32.0 = 65.0.
@@ -1760,7 +2054,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic quant_dir;
         logic acc_wr_en;
         logic is_last;
-        logic [1:0] wreg_seen;
+        logic [3:0] wreg_seen;
         logic [1:0] sreg_seen;
         logic [1:0] zreg_seen;
         logic [1:0] group_seen;
@@ -1807,7 +2101,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             disabled_write_count += !acc_wr_en;
             bubble_cycle_count += bubble_count;
             expected_write_count += acc_wr_en;
-            wreg_seen[random_word[2]] = 1'b1;
+            wreg_seen[random_word[3:2]] = 1'b1;
             sreg_seen[random_word[3]] = 1'b1;
             zreg_seen[random_word[7]] = 1'b1;
             group_seen[address[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1]] = 1'b1;
@@ -1818,7 +2112,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
 
             drive_packet_ctrl(
                 zero_input, address, is_load, !is_load, acc_wr_en,
-                quant_dir, random_word[2], random_word[3], random_word[7],
+                quant_dir, random_word[3:2], random_word[10], random_word[7],
                 is_last && ((i / RANDOM_COMMAND_LENGTH) & 1), is_last);
             if (bubble_count != 0)
                 drive_bubble(bubble_count);
@@ -1836,7 +2130,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         if ((load_count == 0) || (accum_count == 0)
          || (qcol_count == 0) || (qrow_count == 0)
          || (disabled_write_count == 0) || (bubble_cycle_count == 0)
-         || (wreg_seen != 2'b11) || (sreg_seen != 2'b11)
+         || (wreg_seen != 4'b1111) || (sreg_seen != 2'b11)
          || (zreg_seen != 2'b11) || (group_seen != 2'b11)
          || (bank_seen != 4'b1111)) begin
             $error("random coverage gap load=%0d accum=%0d qcol=%0d qrow=%0d wr_disabled=%0d bubbles=%0d wreg=%b sreg=%b zreg=%b groups=%b banks=%b",
@@ -1894,9 +2188,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         reset = 1'b0;
         init_signals();
         apply_reset();
-        clear_weight_bank(1'b0);
-        clear_weight_bank(1'b1);
+        clear_weight_bank(2'd0);
+        clear_weight_bank(2'd1);
+        clear_weight_bank(2'd2);
+        clear_weight_bank(2'd3);
         test_parallel_qparam_ports();
+        test_resource_consume_and_snapshot(1'b0, `QDIR_ROW, 0);
+        test_resource_consume_and_snapshot(1'b1, `QDIR_COL, 1);
+        test_independent_resource_indices();
         test_group_aware_output_arbitration();
 
         test_nonzero_reference(`QDIR_COL, 1'b0,

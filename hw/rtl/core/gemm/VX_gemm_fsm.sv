@@ -242,7 +242,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   typedef logic [31:0] u32_t;
   localparam int MM_DIM_W           = `MM_MAX_LOG_DIM + 1;
   localparam int MM_TILE_SZ_W       = `MM_MAX_LOG_TILEDIM + 1;
-  localparam int MM_RID_W           = 4;
+  localparam int MM_RID_W           = GEMM_SYNC_REG_ID_WIDTH;
   localparam int MM_MXU_NT_DIM_MAX  = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
   localparam int MM_MXU_KT_DIM_MAX  = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_KT - 1) >> `CLOG2(MXU_KT);
   localparam int MM_MXU_DIM_W       = `CLOG2(`MAX(MM_MXU_NT_DIM_MAX, MM_MXU_KT_DIM_MAX) + 1);
@@ -362,6 +362,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int RID_ACC_FREE0 = 9, RID_ACC_FREE1 = 10;
   localparam int RID_SC0 = GEMM_RID_SC0, RID_ZP0 = GEMM_RID_ZP0;
   localparam int RID_SC1 = GEMM_RID_SC1, RID_ZP1 = GEMM_RID_ZP1;
+  localparam int RID_W_CONSUME0 = GEMM_RID_W_CONSUME0;
+  localparam int RID_W_CONSUME1 = GEMM_RID_W_CONSUME1;
+  localparam int RID_W2 = GEMM_RID_W2, RID_W3 = GEMM_RID_W3;
+  localparam int RID_W_CONSUME2 = GEMM_RID_W_CONSUME2;
+  localparam int RID_W_CONSUME3 = GEMM_RID_W_CONSUME3;
+  localparam int RID_SC_CONSUME0 = GEMM_RID_SC_CONSUME0;
+  localparam int RID_SC_CONSUME1 = GEMM_RID_SC_CONSUME1;
+  localparam int RID_ZP_CONSUME0 = GEMM_RID_ZP_CONSUME0;
+  localparam int RID_ZP_CONSUME1 = GEMM_RID_ZP_CONSUME1;
   // Global sync sequence stride per DMA tile.
   // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
   localparam int MXU_N_PER_TILE_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
@@ -369,11 +378,37 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int MXU_PER_TILE_MAX   = MXU_N_PER_TILE_MAX * MXU_K_PER_TILE_MAX;
 
   function automatic mm_rid_t rid_tile   (input logic buf_sel);  return mm_rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
-  function automatic mm_rid_t rid_w_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
-  function automatic mm_rid_t rid_sz_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SZ1 : RID_SZ0); endfunction
-  function automatic mm_rid_t rid_sc_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SC1 : RID_SC0); endfunction
-  function automatic mm_rid_t rid_zp_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_ZP1 : RID_ZP0); endfunction
-  function automatic mm_rid_t rid_g_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_G1  : RID_G0);  endfunction
+  function automatic mm_rid_t rid_w_mxu(input gemm_wreg_idx_t w_buf);
+    unique case (w_buf)
+      2'd0: return mm_rid_t'(RID_W0);
+      2'd1: return mm_rid_t'(RID_W1);
+      2'd2: return mm_rid_t'(RID_W2);
+      default: return mm_rid_t'(RID_W3);
+    endcase
+  endfunction
+  function automatic mm_rid_t rid_sc_mxu(input gemm_qreg_idx_t s_buf);
+    return mm_rid_t'(s_buf ? RID_SC1 : RID_SC0);
+  endfunction
+  function automatic mm_rid_t rid_zp_mxu(input gemm_qreg_idx_t z_buf);
+    return mm_rid_t'(z_buf ? RID_ZP1 : RID_ZP0);
+  endfunction
+  function automatic mm_rid_t rid_g_mxu(input logic g_buf);
+    return mm_rid_t'(g_buf ? RID_G1 : RID_G0);
+  endfunction
+  function automatic mm_rid_t rid_w_consume(input gemm_wreg_idx_t w_buf);
+    unique case (w_buf)
+      2'd0: return mm_rid_t'(RID_W_CONSUME0);
+      2'd1: return mm_rid_t'(RID_W_CONSUME1);
+      2'd2: return mm_rid_t'(RID_W_CONSUME2);
+      default: return mm_rid_t'(RID_W_CONSUME3);
+    endcase
+  endfunction
+  function automatic mm_rid_t rid_sc_consume(input gemm_qreg_idx_t s_buf);
+    return mm_rid_t'(s_buf ? RID_SC_CONSUME1 : RID_SC_CONSUME0);
+  endfunction
+  function automatic mm_rid_t rid_zp_consume(input gemm_qreg_idx_t z_buf);
+    return mm_rid_t'(z_buf ? RID_ZP_CONSUME1 : RID_ZP_CONSUME0);
+  endfunction
   function automatic mm_rid_t rid_acc_free(input logic acc_group);
     return mm_rid_t'(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0);
   endfunction
@@ -776,8 +811,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // mxu loop regs for current tile
   mm_mxu_dim_t nt_mxu_q, nt_mxu_d;
   mm_mxu_dim_t kt_mxu_q, kt_mxu_d;
-  logic        mxu_buf_q, mxu_buf_d;
+  gemm_wreg_idx_t w_buf_q, w_buf_d;
+  gemm_qreg_idx_t s_buf_q, s_buf_d;
+  gemm_qreg_idx_t z_buf_q, z_buf_d;
+  logic        g_buf_q, g_buf_d;
   logic [31:0] gemm_expected_count_q [2];
+  logic [31:0] w_consume_issued_q [4];
+  logic [31:0] sc_consume_issued_q [2];
+  logic [31:0] zp_consume_issued_q [2];
   logic        prior_g_wait_valid_q;
   mm_rid_t     prior_g_wait_rid_q;
   logic [31:0] prior_g_wait_target_q;
@@ -802,7 +843,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q);
     dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q);
     dbg_cmd_meta_tile_buf_o = tile_cur_q[0];
-    dbg_cmd_meta_mxu_buf_o = mxu_buf_q;
+    dbg_cmd_meta_mxu_buf_o = w_buf_q[0];
     dbg_cmd_meta_acc_group_o = tile_acc_group_q;
     dbg_cmd_meta_generation_o = buf_gen(tile_cur_q);
 
@@ -838,7 +879,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
         meta_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
         meta_kt_mxu_dim = ceil_div_log2(meta_kt_eff, $clog2(MXU_KT));
-        dbg_cmd_meta_mxu_buf_o = ~mxu_buf_q;
+        dbg_cmd_meta_mxu_buf_o = ~w_buf_q[0];
         if (32'(kt_mxu_q) + 1 < meta_kt_mxu_dim) begin
           dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q) + 1;
         end else begin
@@ -911,7 +952,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       nt_mxu_q <= 0;
       kt_mxu_q <= 0;
-      mxu_buf_q <= 1'b0;
+      w_buf_q <= '0;
+      s_buf_q <= '0;
+      z_buf_q <= '0;
+      g_buf_q <= 1'b0;
       o_nt_mxu_q <= 0;
       o_store_issue_q <= '0;
       acc_copy_issue_q[0] <= '0;
@@ -949,7 +993,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       nt_mxu_q  <= nt_mxu_d;
       kt_mxu_q  <= kt_mxu_d;
-      mxu_buf_q <= mxu_buf_d;
+      w_buf_q <= w_buf_d;
+      s_buf_q <= s_buf_d;
+      z_buf_q <= z_buf_d;
+      g_buf_q <= g_buf_d;
       o_nt_mxu_q <= o_nt_mxu_d;
       if (gemm_invocation_accept) begin
         o_store_issue_q <= '0;
@@ -1051,16 +1098,28 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     if (reset || gemm_invocation_accept) begin
       gemm_expected_count_q[0] <= 32'd0;
       gemm_expected_count_q[1] <= 32'd0;
+      for (int bank = 0; bank < 4; ++bank)
+        w_consume_issued_q[bank] <= 32'd0;
+      sc_consume_issued_q[0] <= 32'd0;
+      sc_consume_issued_q[1] <= 32'd0;
+      zp_consume_issued_q[0] <= 32'd0;
+      zp_consume_issued_q[1] <= 32'd0;
       prior_g_wait_valid_q <= 1'b0;
       prior_g_wait_rid_q <= '0;
       prior_g_wait_target_q <= '0;
     end else if (gemm_arm_parent_accept) begin
-      gemm_expected_count_q[mxu_buf_q]
-          <= gemm_expected_count_q[mxu_buf_q] + 32'd1;
+      gemm_expected_count_q[g_buf_q]
+          <= gemm_expected_count_q[g_buf_q] + 32'd1;
+      w_consume_issued_q[w_buf_q]
+          <= w_consume_issued_q[w_buf_q] + 32'd1;
+      sc_consume_issued_q[s_buf_q]
+          <= sc_consume_issued_q[s_buf_q] + 32'd1;
+      zp_consume_issued_q[z_buf_q]
+          <= zp_consume_issued_q[z_buf_q] + 32'd1;
       prior_g_wait_valid_q <= 1'b1;
-      prior_g_wait_rid_q <= rid_g_mxu(mxu_buf_q);
+      prior_g_wait_rid_q <= rid_g_mxu(g_buf_q);
       prior_g_wait_target_q
-          <= gemm_expected_count_q[mxu_buf_q] + 32'd1;
+          <= gemm_expected_count_q[g_buf_q] + 32'd1;
     end
   end
 
@@ -1183,7 +1242,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     nt_mxu_d  = nt_mxu_q;
     kt_mxu_d  = kt_mxu_q;
-    mxu_buf_d = mxu_buf_q;
+    w_buf_d = w_buf_q;
+    s_buf_d = s_buf_q;
+    z_buf_d = z_buf_q;
+    g_buf_d = g_buf_q;
     o_nt_mxu_d = o_nt_mxu_q;
     acc_copy_issue_d[0] = acc_copy_issue_q[0];
     acc_copy_issue_d[1] = acc_copy_issue_q[1];
@@ -1379,7 +1441,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         pre_valid_d = 1'b0;
         nt_mxu_d    = 0;
         kt_mxu_d    = 0;
-        mxu_buf_d   = 1'b0;
+        w_buf_d     = '0;
+        s_buf_d     = '0;
+        z_buf_d     = '0;
+        g_buf_d     = 1'b0;
         o_nt_mxu_d  = 0;
         o_store_issue_d = 0;
         acc_copy_issue_d[0] = 0;
@@ -1707,7 +1772,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_WAIT_CUR_TILE_READY: begin
         nt_mxu_d  = 0;
         kt_mxu_d  = 0;
-        mxu_buf_d = 1'b0;
+        w_buf_d = '0;
+        s_buf_d = '0;
+        z_buf_d = '0;
+        g_buf_d = 1'b0;
         o_nt_mxu_d = 0;
         if (tile_cur_kt_q == 0) begin
           tile_acc_group_d = acc_group;
@@ -1725,11 +1793,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic [7:0] flags;
           c = '0;
 
-          // VX_gemm_node maps weight flags[1:0] to {load_dir, wr_idx}.
-          flags      = {6'd0, job_q.wtrans, mxu_buf_q};
+          // VX_gemm_node maps weight flags[2:0] to
+          // {load_dir, wreg_idx[1:0]}.
+          flags      = {5'd0, job_q.wtrans, w_buf_q};
           c.flags    = flags;
           c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
-          c.rs1_data = {63'd0, mxu_buf_q};
+          c.rs1_data = {62'd0, w_buf_q};
           c.rs2_data = lmem_w_mxu;
           c.bound    = 16'd1;
 
@@ -1739,12 +1808,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
               GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
-          if (prior_g_wait_valid_q) begin
-            out_cmd_d.waits[1]
-                = make_wait_meta(prior_g_wait_rid_q,
-                                 prior_g_wait_target_q);
+          if (w_consume_issued_q[w_buf_q] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_w_consume(w_buf_q),
+                                 w_consume_issued_q[w_buf_q]);
           end
-          out_cmd_d.notify = make_notify_meta(rid_w_mxu(mxu_buf_q),
+          out_cmd_d.notify = make_notify_meta(rid_w_mxu(w_buf_q),
                                                global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_CUR_SC;
@@ -1768,10 +1837,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
                                 : (groups_mxu * MXU_NT * FP16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, mxu_buf_q, buf_cur};
+          flags      = {5'd0, job_q.qdir, s_buf_q, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-          c.rs1_data  = mxu_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
+          c.rs1_data  = s_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
           c.rs2_data  = lmem_sc_mxu;
           c.bound     = 16'd1;
 
@@ -1781,12 +1850,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
               GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
-          if (prior_g_wait_valid_q) begin
-            out_cmd_d.waits[1]
-                = make_wait_meta(prior_g_wait_rid_q,
-                                 prior_g_wait_target_q);
+          if (sc_consume_issued_q[s_buf_q] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_sc_consume(s_buf_q),
+                                 sc_consume_issued_q[s_buf_q]);
           end
-          out_cmd_d.notify = make_notify_meta(rid_sc_mxu(mxu_buf_q),
+          out_cmd_d.notify = make_notify_meta(rid_sc_mxu(s_buf_q),
                                                global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_CUR_ZP;
@@ -1803,10 +1872,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
                                 : (groups_mxu * MXU_NT * INT16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, mxu_buf_q, buf_cur};
+          flags      = {5'd0, job_q.qdir, z_buf_q, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = mxu_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
+          c.rs1_data  = z_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu;
           c.bound     = 16'd1;
 
@@ -1816,12 +1885,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
               GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
-          if (prior_g_wait_valid_q) begin
-            out_cmd_d.waits[1]
-                = make_wait_meta(prior_g_wait_rid_q,
-                                 prior_g_wait_target_q);
+          if (zp_consume_issued_q[z_buf_q] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_zp_consume(z_buf_q),
+                                 zp_consume_issued_q[z_buf_q]);
           end
-          out_cmd_d.notify = make_notify_meta(rid_zp_mxu(mxu_buf_q),
+          out_cmd_d.notify = make_notify_meta(rid_zp_mxu(z_buf_q),
                                                global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_W;
@@ -1846,18 +1915,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_NEXT_W: begin
         if (can_emit) begin
           if (has_next_mxu) begin
-            logic next_mxu_buf;
+            gemm_wreg_idx_t next_w_buf;
             gemm_unified_cmd_t c;
             logic [7:0] flags;
 
-            next_mxu_buf = ~mxu_buf_q;
+            next_w_buf = w_buf_q + gemm_wreg_idx_t'(1);
             c = '0;
 
-            // VX_gemm_node maps weight flags[1:0] to {load_dir, wr_idx}.
-            flags      = {6'd0, job_q.wtrans, next_mxu_buf};
+            // VX_gemm_node maps weight flags[2:0] to
+            // {load_dir, wreg_idx[1:0]}.
+            flags      = {5'd0, job_q.wtrans, next_w_buf};
             c.flags    = flags;
             c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
-            c.rs1_data  = {63'd0, next_mxu_buf};
+            c.rs1_data  = {62'd0, next_w_buf};
             c.rs2_data  = lmem_w_mxu_next;
             c.bound     = 16'd1;
 
@@ -1867,13 +1937,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
             out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                  in_ready_target_cur);
-            if (prior_g_wait_valid_q) begin
-              out_cmd_d.waits[1]
-                  = make_wait_meta(prior_g_wait_rid_q,
-                                   prior_g_wait_target_q);
+            if (w_consume_issued_q[next_w_buf] != 0) begin
+              out_cmd_d.writer_wait
+                  = make_wait_meta(rid_w_consume(next_w_buf),
+                                   w_consume_issued_q[next_w_buf]);
             end
             out_cmd_d.notify = make_notify_meta(
-                rid_w_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
+                rid_w_mxu(next_w_buf), next_global_mxu_seq, 1'b1);
             out_start_d = 1'b1;
             state_d     = S_MXU_PRE_NEXT_SC;
           end else begin
@@ -1892,20 +1962,20 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_NEXT_SC: begin
         if (can_emit) begin
           if (has_next_mxu) begin
-            logic next_mxu_buf;
+            gemm_qreg_idx_t next_s_buf;
             gemm_unified_cmd_t c;
             logic [7:0] flags;
             mm_bytecnt_t sc_bytes;
 
-            next_mxu_buf = ~mxu_buf_q;
+            next_s_buf = ~s_buf_q;
             c = '0;
             sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
                                   : (groups_mxu * MXU_NT * FP16_BYTES);
 
-            flags      = {5'd0, job_q.qdir, next_mxu_buf, buf_cur};
+            flags      = {5'd0, job_q.qdir, next_s_buf, buf_cur};
             c.flags    = flags;
             c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-            c.rs1_data  = next_mxu_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
+            c.rs1_data  = next_s_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
             c.rs2_data  = lmem_sc_mxu_next;
             c.bound     = 16'd1;
 
@@ -1915,13 +1985,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
             out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                  in_ready_target_cur);
-            if (prior_g_wait_valid_q) begin
-              out_cmd_d.waits[1]
-                  = make_wait_meta(prior_g_wait_rid_q,
-                                   prior_g_wait_target_q);
+            if (sc_consume_issued_q[next_s_buf] != 0) begin
+              out_cmd_d.writer_wait
+                  = make_wait_meta(rid_sc_consume(next_s_buf),
+                                   sc_consume_issued_q[next_s_buf]);
             end
             out_cmd_d.notify = make_notify_meta(
-                rid_sc_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
+                rid_sc_mxu(next_s_buf), next_global_mxu_seq, 1'b1);
             out_start_d = 1'b1;
             state_d     = S_MXU_PRE_NEXT_ZP;
           end else begin
@@ -1932,20 +2002,20 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_NEXT_ZP: begin
         if (can_emit) begin
-          logic next_mxu_buf;
+          gemm_qreg_idx_t next_z_buf;
           gemm_unified_cmd_t c;
           logic [7:0] flags;
           mm_bytecnt_t zp_bytes;
 
-          next_mxu_buf = ~mxu_buf_q;
+          next_z_buf = ~z_buf_q;
           c = '0;
           zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
                                 : (groups_mxu * MXU_NT * INT16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, next_mxu_buf, buf_cur};
+          flags      = {5'd0, job_q.qdir, next_z_buf, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = next_mxu_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
+          c.rs1_data  = next_z_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu_next;
           c.bound     = 16'd1;
 
@@ -1955,13 +2025,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
               GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
-          if (prior_g_wait_valid_q) begin
-            out_cmd_d.waits[1]
-                = make_wait_meta(prior_g_wait_rid_q,
-                                 prior_g_wait_target_q);
+          if (zp_consume_issued_q[next_z_buf] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_zp_consume(next_z_buf),
+                                 zp_consume_issued_q[next_z_buf]);
           end
           out_cmd_d.notify = make_notify_meta(
-              rid_zp_mxu(next_mxu_buf), next_global_mxu_seq, 1'b1);
+              rid_zp_mxu(next_z_buf), next_global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_ARM_GEMM;
         end
@@ -1982,11 +2052,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           c = '0;
 
-          // VX_gemm_node consumes flags[5]=quant_dir,
-          // flags[4]=notify_on_writeback, flags[3]=is_accum, and
-          // flags[2:0]=w/s/z register indices.
-          flags     = {2'd0, job_q.qdir, notify_on_writeback,
-                       is_accum, mxu_buf_q, mxu_buf_q, mxu_buf_q};
+          // VX_gemm_node consumes flags[6]=quant_dir,
+          // flags[5]=notify_on_writeback, flags[4]=is_accum, and
+          // flags[3:0]={wreg_idx[1:0], sreg_idx, zreg_idx}.
+          flags     = {1'b0, job_q.qdir, notify_on_writeback,
+                       is_accum, w_buf_q, s_buf_q, z_buf_q};
           in_bytes  = mt_eff_cur * MXU_KT * FP16_BYTES;
 
           c.flags   = flags;
@@ -2003,19 +2073,21 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);
-          out_cmd_d.waits[0] = make_wait_meta(rid_w_mxu(mxu_buf_q),
-                                               global_mxu_seq);
-          out_cmd_d.waits[1] = make_wait_meta(rid_sz_mxu(mxu_buf_q),
-                                               global_mxu_seq);
-          if (prior_g_wait_valid_q) begin
-            out_cmd_d.waits[2]
-                = make_wait_meta(prior_g_wait_rid_q,
-                                 prior_g_wait_target_q);
-          end
-          out_cmd_d.waits[3]
+          // Source issue waits only for the producer tile.  Exact operand
+          // versions and accumulator ownership are checked at the ordered
+          // GEMM-admission boundary after the payload has been prefetched.
+          out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                               in_ready_target_cur);
+          out_cmd_d.input_admit_waits[0]
+              = make_wait_meta(rid_w_mxu(w_buf_q), global_mxu_seq);
+          out_cmd_d.input_admit_waits[1]
+              = make_wait_meta(rid_sc_mxu(s_buf_q), global_mxu_seq);
+          out_cmd_d.input_admit_waits[2]
+              = make_wait_meta(rid_zp_mxu(z_buf_q), global_mxu_seq);
+          out_cmd_d.input_admit_waits[3]
               = make_wait_meta(rid_acc_free(tile_acc_group_q),
                                tile_acc_reuse_target_q);
-          out_cmd_d.notify = make_notify_meta(rid_g_mxu(mxu_buf_q),
+          out_cmd_d.notify = make_notify_meta(rid_g_mxu(g_buf_q),
                                                32'd1, 1'b0);
           out_start_d = 1'b1;
 
@@ -2031,7 +2103,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (has_next_mxu) begin
           nt_mxu_d  = n_nt_mxu;
           kt_mxu_d  = n_kt_mxu;
-          mxu_buf_d = ~mxu_buf_q;
+          w_buf_d = w_buf_q + gemm_wreg_idx_t'(1);
+          s_buf_d = ~s_buf_q;
+          z_buf_d = ~z_buf_q;
+          g_buf_d = ~g_buf_q;
           state_d   = S_MXU_PRE_NEXT_W;
         end else begin
           // Completion ordering is now carried by the next work command.
@@ -2129,7 +2204,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_ADVANCE_TILES: begin
         nt_mxu_d  = 0;
         kt_mxu_d  = 0;
-        mxu_buf_d = 1'b0;
+        w_buf_d = '0;
+        s_buf_d = '0;
+        z_buf_d = '0;
+        g_buf_d = 1'b0;
         o_nt_mxu_d = 0;
 
         if (pre_valid_q) begin
@@ -2317,7 +2395,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   logic        expected_count_shadow_valid_q;
   logic        expected_count_prev_arm_accept_q;
-  logic        expected_count_prev_arm_buf_q;
+  logic        expected_count_prev_arm_g_buf_q;
   logic        expected_count_prev_invocation_accept_q;
   logic [31:0] expected_count_prev_q [2];
 
@@ -2325,7 +2403,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     if (reset) begin
       expected_count_shadow_valid_q <= 1'b0;
       expected_count_prev_arm_accept_q <= 1'b0;
-      expected_count_prev_arm_buf_q <= 1'b0;
+      expected_count_prev_arm_g_buf_q <= 1'b0;
       expected_count_prev_invocation_accept_q <= 1'b0;
       expected_count_prev_q[0] <= 32'd0;
       expected_count_prev_q[1] <= 32'd0;
@@ -2345,19 +2423,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           assert (gemm_expected_count_q[0]
                == expected_count_prev_q[0]
                 + ((expected_count_prev_arm_accept_q
-                 && !expected_count_prev_arm_buf_q) ? 32'd1 : 32'd0))
+                 && !expected_count_prev_arm_g_buf_q) ? 32'd1 : 32'd0))
             else $fatal(1, "GEMM buffer-0 expected count changed outside one ARM acceptance");
           assert (gemm_expected_count_q[1]
                == expected_count_prev_q[1]
                 + ((expected_count_prev_arm_accept_q
-                 && expected_count_prev_arm_buf_q) ? 32'd1 : 32'd0))
+                 && expected_count_prev_arm_g_buf_q) ? 32'd1 : 32'd0))
             else $fatal(1, "GEMM buffer-1 expected count changed outside one ARM acceptance");
         end
       end
 
       expected_count_shadow_valid_q <= 1'b1;
       expected_count_prev_arm_accept_q <= gemm_arm_parent_accept;
-      expected_count_prev_arm_buf_q <= mxu_buf_q;
+      expected_count_prev_arm_g_buf_q <= g_buf_q;
       expected_count_prev_invocation_accept_q <= gemm_invocation_accept;
       expected_count_prev_q[0] <= gemm_expected_count_q[0];
       expected_count_prev_q[1] <= gemm_expected_count_q[1];
@@ -2367,8 +2445,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   always @(posedge clk) begin
     if (reset === 1'b0) begin
       if (gemm_arm_parent_accept) begin
-        assert (gemm_expected_count_q[mxu_buf_q] != 32'hffff_ffff)
+        assert (gemm_expected_count_q[g_buf_q] != 32'hffff_ffff)
           else $fatal(1, "GEMM expected completion count overflow");
+        assert ((w_consume_issued_q[w_buf_q] != 32'hffff_ffff)
+             && (sc_consume_issued_q[s_buf_q] != 32'hffff_ffff)
+             && (zp_consume_issued_q[z_buf_q] != 32'hffff_ffff))
+          else $fatal(1, "GEMM resource consume target overflow");
+        assert ((out_cmd_d.flags[3:2] == w_buf_q)
+             && (out_cmd_d.flags[1] == s_buf_q)
+             && (out_cmd_d.flags[0] == z_buf_q))
+          else $fatal(1, "GEMM ARM independent W/S/Z index encoding failed");
       end
 
       if (out_start_d && state_child_ready
@@ -2378,17 +2464,37 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
              && out_cmd_d.notify.value == 32'd1)
           else $fatal(1, "GEMM input completion must be a PLUS-1 event");
         assert (out_cmd_d.waits[0].valid
-             && out_cmd_d.waits[1].valid
-             && out_cmd_d.waits[0].reg_id
-                == GEMM_SYNC_REG_ID_WIDTH'(rid_w_mxu(mxu_buf_q))
-             && out_cmd_d.waits[1].reg_id
-                == GEMM_SYNC_REG_ID_WIDTH'(rid_sz_mxu(mxu_buf_q)))
-          else $fatal(1, "GEMM ARM lacks W/SZ dependency metadata");
-        assert (out_cmd_d.waits[3].valid
-             && out_cmd_d.waits[3].reg_id
+             && ((out_cmd_d.waits[0].reg_id
+                  == GEMM_SYNC_REG_ID_WIDTH'(RID_T0))
+              || (out_cmd_d.waits[0].reg_id
+                  == GEMM_SYNC_REG_ID_WIDTH'(RID_T1)))
+             && (out_cmd_d.waits[0].target != 0)
+             && !out_cmd_d.waits[1].valid
+             && !out_cmd_d.waits[2].valid
+             && !out_cmd_d.waits[3].valid
+             && !out_cmd_d.waits[4].valid)
+          else $fatal(1, "GEMM ARM source issue is not tile-ready-only");
+        assert (out_cmd_d.input_admit_waits[0].valid
+             && out_cmd_d.input_admit_waits[1].valid
+             && out_cmd_d.input_admit_waits[2].valid
+             && (out_cmd_d.input_admit_waits[0].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_w_mxu(w_buf_q)))
+             && (out_cmd_d.input_admit_waits[1].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_mxu(s_buf_q)))
+             && (out_cmd_d.input_admit_waits[2].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_mxu(z_buf_q)))
+             && (out_cmd_d.input_admit_waits[0].target != 0)
+             && (out_cmd_d.input_admit_waits[0].target
+                 == out_cmd_d.input_admit_waits[1].target)
+             && (out_cmd_d.input_admit_waits[0].target
+                 == out_cmd_d.input_admit_waits[2].target))
+          else $fatal(1, "GEMM ARM lacks independent W/SC/Z admission fences");
+        assert (out_cmd_d.input_admit_waits[3].valid
+             && out_cmd_d.input_admit_waits[3].reg_id
                 == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
-             && out_cmd_d.waits[3].target == tile_acc_reuse_target_q)
-          else $fatal(1, "GEMM ARM lacks accumulator-group reuse dependency");
+             && out_cmd_d.input_admit_waits[3].target
+                == tile_acc_reuse_target_q)
+          else $fatal(1, "GEMM ARM lacks accumulator admission fence");
         assert (tile_acc_group_q
              == (out_cmd_d.rs1_data >= 64'(ACC_DBUF_STRIDE)))
           else $fatal(1, "GEMM ARM accumulator address/group mismatch");
@@ -2397,6 +2503,122 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           assert (tile_acc_reuse_target_q == 32'd0)
             else $fatal(1, "GEMM first accumulator-group owner has nonzero reuse target");
         end
+        if (prior_g_wait_valid_q)
+          assert (!out_cmd_d.waits[3].valid)
+            else $fatal(1, "GEMM ARM retained prior-GEMM issue dependency");
+      end
+
+      if (out_start_d && state_child_ready) begin
+        unique case (state_q)
+          S_MXU_PRE_CUR_W: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (w_consume_issued_q[w_buf_q] != 0))
+              else $fatal(1, "Current W LOAD writer-wait validity mismatch");
+            if (w_consume_issued_q[w_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_w_consume(w_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == w_consume_issued_q[w_buf_q]))
+                else $fatal(1, "Current W LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current W LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_CUR_SC: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (sc_consume_issued_q[s_buf_q] != 0))
+              else $fatal(1, "Current SC LOAD writer-wait validity mismatch");
+            if (sc_consume_issued_q[s_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_consume(s_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == sc_consume_issued_q[s_buf_q]))
+                else $fatal(1, "Current SC LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current SC LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_CUR_ZP: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (zp_consume_issued_q[z_buf_q] != 0))
+              else $fatal(1, "Current ZP LOAD writer-wait validity mismatch");
+            if (zp_consume_issued_q[z_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_consume(z_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == zp_consume_issued_q[z_buf_q]))
+                else $fatal(1, "Current ZP LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current ZP LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_W: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (w_consume_issued_q[
+                       w_buf_q + gemm_wreg_idx_t'(1)] != 0))
+              else $fatal(1, "Next W LOAD writer-wait validity mismatch");
+            if (w_consume_issued_q[
+                  w_buf_q + gemm_wreg_idx_t'(1)] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(
+                            rid_w_consume(w_buf_q + gemm_wreg_idx_t'(1))))
+                   && (out_cmd_d.writer_wait.target
+                       == w_consume_issued_q[
+                            w_buf_q + gemm_wreg_idx_t'(1)]))
+                else $fatal(1, "Next W LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next W LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_SC: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (sc_consume_issued_q[~s_buf_q] != 0))
+              else $fatal(1, "Next SC LOAD writer-wait validity mismatch");
+            if (sc_consume_issued_q[~s_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_consume(~s_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == sc_consume_issued_q[~s_buf_q]))
+                else $fatal(1, "Next SC LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next SC LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_ZP: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (zp_consume_issued_q[~z_buf_q] != 0))
+              else $fatal(1, "Next ZP LOAD writer-wait validity mismatch");
+            if (zp_consume_issued_q[~z_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_consume(~z_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == zp_consume_issued_q[~z_buf_q]))
+                else $fatal(1, "Next ZP LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next ZP LOAD consume leaked into issue waits");
+          end
+          default: begin
+          end
+        endcase
       end
 
       if (state_q == S_WAIT_CUR_TILE_READY && tile_cur_kt_q == 0) begin
@@ -2433,6 +2655,24 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         assert (tile_acc_group_q
              == (out_cmd_d.rs2_data >= (64'(ACC_DBUF_STRIDE) >> 1)))
           else $fatal(1, "GEMM ACC2LMEM accumulator address/group mismatch");
+        if (prior_g_wait_valid_q) begin
+          assert (out_cmd_d.waits[1].valid
+               && (out_cmd_d.waits[1].reg_id
+                   == GEMM_SYNC_REG_ID_WIDTH'(prior_g_wait_rid_q))
+               && (out_cmd_d.waits[1].target
+                   == prior_g_wait_target_q))
+            else $fatal(1, "GEMM ACC2LMEM lost prior-GEMM dependency");
+        end
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_PRE_NEXT_LD_I
+       && prior_g_wait_valid_q) begin
+        assert (out_cmd_d.waits[0].valid
+             && (out_cmd_d.waits[0].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(prior_g_wait_rid_q))
+             && (out_cmd_d.waits[0].target == prior_g_wait_target_q))
+          else $fatal(1, "Next-tile input LOAD lost prior-GEMM dependency");
       end
 
       if (out_start_d && state_child_ready
@@ -2487,6 +2727,36 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
               else $fatal(1, "GEMM wait register id out of range");
           end
         end
+        for (int dep = 0; dep < 4; ++dep) begin
+          if (out_cmd_d.input_admit_waits[dep].valid) begin
+            assert ((out_cmd_d.instr[3:0] == OP_I_LDMA_ARM)
+                 && (out_cmd_d.input_admit_waits[dep].reg_id < NUM_SYNC_REGS))
+              else $fatal(1, "GEMM invalid/non-Input admission wait metadata");
+          end
+        end
+        if (out_cmd_d.writer_wait.valid) begin
+          assert ((((out_cmd_d.instr[3:0] == OP_W_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME2))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME3))))
+                || ((out_cmd_d.instr[3:0] == OP_SC_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1))))
+                || ((out_cmd_d.instr[3:0] == OP_ZP_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1)))))
+               && (out_cmd_d.writer_wait.target != 0))
+            else $fatal(1, "GEMM invalid resource writer wait metadata");
+        end
       end
     end
   end
@@ -2539,7 +2809,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       gemm_fsm_if.flag.idle,
       gemm_fsm_if.flag.done,
       pre_valid_q,
-      mxu_buf_q,
+      w_buf_q[0],
       state_q,
       state_d,
       out_cmd_d.instr[7:0],
@@ -2765,5 +3035,24 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                  && (GEMM_TILE_DMA_PREFETCH_MAX_BEATS
                      < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
     ("Tile-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT(GEMM_SYNC_REG_ID_WIDTH >= $clog2(GEMM_NUM_SYNC_REGS),
+    ("GEMM sync RID width is too small"));
+  `VX_STATIC_ASSERT((RID_W_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_W_CONSUME1 < NUM_SYNC_REGS)
+                 && (RID_W_CONSUME2 < NUM_SYNC_REGS)
+                 && (RID_W_CONSUME3 < NUM_SYNC_REGS)
+                 && (RID_SC_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_SC_CONSUME1 < NUM_SYNC_REGS)
+                 && (RID_ZP_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_ZP_CONSUME1 < NUM_SYNC_REGS),
+    ("GEMM consume RID is out of range"));
+  `VX_STATIC_ASSERT((RID_W_CONSUME0 != RID_W_CONSUME1)
+                 && (RID_W_CONSUME1 != RID_W_CONSUME2)
+                 && (RID_W_CONSUME2 != RID_W_CONSUME3)
+                 && (RID_W_CONSUME3 != RID_SC_CONSUME0)
+                 && (RID_SC_CONSUME0 != RID_SC_CONSUME1)
+                 && (RID_SC_CONSUME1 != RID_ZP_CONSUME0)
+                 && (RID_ZP_CONSUME0 != RID_ZP_CONSUME1),
+    ("GEMM consume RIDs must be unique"));
 
 endmodule

@@ -912,12 +912,12 @@ package VX_gpu_pkg;
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////
-   localparam int GEMM_MAX_WAIT_DEPS     = 4;
+   localparam int GEMM_MAX_WAIT_DEPS     = 5;
    localparam int GEMM_MAX_PREPARE_WAIT_DEPS = 1;
-   localparam int GEMM_SYNC_REG_ID_WIDTH = 4;
+   localparam int GEMM_SYNC_REG_ID_WIDTH = 5;
    localparam int GEMM_DMA_TAG_WIDTH     = 3;
    localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
-   localparam int GEMM_NUM_SYNC_REGS     = 15;
+   localparam int GEMM_NUM_SYNC_REGS     = 25;
    localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
    localparam int GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS =
        `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS;
@@ -940,10 +940,29 @@ package VX_gpu_pkg;
    // scheduler derives it from the two physical completion sequences.
    localparam int GEMM_RID_SZ0 = 2;
    localparam int GEMM_RID_SZ1 = 7;
+   localparam int GEMM_RID_W0 = 1;
+   localparam int GEMM_RID_W1 = 6;
+   localparam int GEMM_RID_ACC_FREE0 = 9;
+   localparam int GEMM_RID_ACC_FREE1 = 10;
    localparam int GEMM_RID_SC0 = 11;
    localparam int GEMM_RID_ZP0 = 12;
    localparam int GEMM_RID_SC1 = 13;
    localparam int GEMM_RID_ZP1 = 14;
+   localparam int GEMM_RID_W_CONSUME0  = 15;
+   localparam int GEMM_RID_W_CONSUME1  = 16;
+   localparam int GEMM_RID_SC_CONSUME0 = 17;
+   localparam int GEMM_RID_SC_CONSUME1 = 18;
+   localparam int GEMM_RID_ZP_CONSUME0 = 19;
+   localparam int GEMM_RID_ZP_CONSUME1 = 20;
+   // Keep every legacy RID stable.  Four-bank Weight versioning appends the
+   // two new LOAD-completion registers and their matching consume registers.
+   localparam int GEMM_RID_W2           = 21;
+   localparam int GEMM_RID_W3           = 22;
+   localparam int GEMM_RID_W_CONSUME2   = 23;
+   localparam int GEMM_RID_W_CONSUME3   = 24;
+
+   typedef logic [1:0] gemm_wreg_idx_t;
+   typedef logic       gemm_qreg_idx_t;
 
    typedef struct packed {
        logic                                      valid;
@@ -984,6 +1003,16 @@ package VX_gpu_pkg;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
        gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
+       // Input-only GEMM-admission fences.  These waits are intentionally
+       // excluded from child issue eligibility so the pure source-read phase
+       // can execute early; the node applies them to the ordered writer head.
+       gemm_wait_meta_t [3:0] input_admit_waits;
+       // Resource-local destination commit fence for Weight, Scale, and
+       // Zero-point LOADs.  Unlike waits[], this metadata does not participate
+       // in child issue eligibility: the pure source phase may execute early,
+       // while the selected executor holds destination writes until this exact
+       // resource-consume target is reached.
+       gemm_wait_meta_t          writer_wait;
        gemm_prepare_meta_t       prepare;
        gemm_notify_meta_t        notify;
    } gemm_unified_cmd_t; // it can be union
@@ -995,9 +1024,9 @@ package VX_gpu_pkg;
       logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_mem_stride;
       logic [`GEMM_ACC_MAX_CNT-1:0] acc_cnt;
 
-      logic wreg_use_idx;
-      logic sreg_use_idx;
-      logic zreg_use_idx;
+      gemm_wreg_idx_t wreg_use_idx;
+      gemm_qreg_idx_t sreg_use_idx;
+      gemm_qreg_idx_t zreg_use_idx;
 
       logic is_load;
       logic is_last;
@@ -1012,9 +1041,9 @@ package VX_gpu_pkg;
       logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_rd_addr;
       logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_wr_addr;
       logic quant_dir;
-      logic wreg_use_idx;
-      logic sreg_use_idx;
-      logic zreg_use_idx;
+      gemm_wreg_idx_t wreg_use_idx;
+      gemm_qreg_idx_t sreg_use_idx;
+      gemm_qreg_idx_t zreg_use_idx;
       logic is_load;
       logic notify_on_writeback;
       logic last;
@@ -1081,7 +1110,7 @@ package VX_gpu_pkg;
     // Shared local-DMA tags must hold the largest independently configured
     // input/weight/scale-zero/output response-slot index.
     localparam LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS = `MAX(
-        `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RD_OUTSTANDING_SLOTS),
+        `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RESPONSE_SLOTS),
         `MAX(`SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS, `O_LMEM_DMA_RD_OUTSTANDING_SLOTS));
     localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS);
     localparam LMEM_TAG_WIDTH = `MAX(

@@ -8,10 +8,9 @@
 //  - Each child node becomes BUSY when it POPs a command (ctrl.start).
 //  - While BUSY, its flag.idle=0 so DUT cannot pop the next cmd for that node.
 //  - When BUSY completes, flag.idle returns to 1.
-//  - NOTIFY semantics modeled as:
-//      * NOTIFY pops only when node idle (because node busy blocks pop)
-//      * Sync event (gemm_sync_slv_if[node]) is emitted AFTER NOTIFY completes
-//        (optionally with LAT_NOTIFY_TO_SYNC delay)
+//  - ARM completion models the downstream final-packet resource consumes:
+//      * weight, scale, and zero point emit on independent sync channels
+//      * each event uses the ARM packet's corresponding physical buffer index
 //
 // IMPORTANT single-driver discipline:
 //  - comp[] and dropped_events are driven ONLY in ONE always_ff (sync-event driver).
@@ -38,12 +37,38 @@ module tb_VX_gemm_ctrl;
   localparam logic [3:0] OP_CLEAR       = 4'd9;
   localparam logic [3:0] OP_ZP_LDMA_MXU = 4'd10;
 
-  localparam logic [3:0] RID_SZ0 = GEMM_RID_SZ0;
-  localparam logic [3:0] RID_SZ1 = GEMM_RID_SZ1;
-  localparam logic [3:0] RID_SC0 = GEMM_RID_SC0;
-  localparam logic [3:0] RID_ZP0 = GEMM_RID_ZP0;
-  localparam logic [3:0] RID_SC1 = GEMM_RID_SC1;
-  localparam logic [3:0] RID_ZP1 = GEMM_RID_ZP1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SZ0 = GEMM_RID_SZ0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SZ1 = GEMM_RID_SZ1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SC0 = GEMM_RID_SC0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ZP0 = GEMM_RID_ZP0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SC1 = GEMM_RID_SC1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ZP1 = GEMM_RID_ZP1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W_CONSUME0
+      = GEMM_RID_W_CONSUME0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W_CONSUME1
+      = GEMM_RID_W_CONSUME1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W_CONSUME2
+      = GEMM_RID_W_CONSUME2;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W_CONSUME3
+      = GEMM_RID_W_CONSUME3;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SC_CONSUME0
+      = GEMM_RID_SC_CONSUME0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_SC_CONSUME1
+      = GEMM_RID_SC_CONSUME1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ZP_CONSUME0
+      = GEMM_RID_ZP_CONSUME0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ZP_CONSUME1
+      = GEMM_RID_ZP_CONSUME1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE0 = 5'd0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE1 = 5'd5;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W0
+      = GEMM_RID_W0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W1
+      = GEMM_RID_W1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ACC_FREE0
+      = GEMM_RID_ACC_FREE0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ACC_FREE1
+      = GEMM_RID_ACC_FREE1;
 
   localparam logic [7:0] FSM_S_O_WAIT_LMEM2DRAM_FINAL = 8'd36;
   localparam logic [7:0] FSM_S_FINAL_CLEAR             = 8'd37;
@@ -72,6 +97,7 @@ module tb_VX_gemm_ctrl;
   logic [GEMM_DMA_TAG_WIDTH-1:0] natural_dma_done_tag;
   int unsigned total_cfg_accept_count;
   int unsigned total_done_handshake_count;
+  int unsigned consume_event_count [3][4];
   logic [31:0] done_entry_ids [0:15];
 
   VX_config_reg_if #(.NUM(`GEMM_CFG_REG_NUM), .DW(32)) cfg_reg_if();
@@ -93,13 +119,42 @@ module tb_VX_gemm_ctrl;
     .output_store_done_i(1'b0),
     .progress_update_valid_o(),
     .progress_update_entry_id_o(),
-    .progress_update_value_o()
+    .progress_update_value_o(),
+    .weight_consume_value0_o(),
+    .weight_consume_value1_o(),
+    .weight_consume_value2_o(),
+    .weight_consume_value3_o(),
+    .scale_consume_value0_o(),
+    .scale_consume_value1_o(),
+    .zero_point_consume_value0_o(),
+    .zero_point_consume_value1_o()
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,.dbg_compute_active_i(1'b0)
 `endif
 `endif
   );
+
+  function automatic logic [GEMM_SYNC_REG_ID_WIDTH-1:0]
+      weight_consume_rid(input gemm_wreg_idx_t idx);
+    case (idx)
+      2'd0: return RID_W_CONSUME0;
+      2'd1: return RID_W_CONSUME1;
+      2'd2: return RID_W_CONSUME2;
+      default: return RID_W_CONSUME3;
+    endcase
+  endfunction
+
+  function automatic gemm_wreg_idx_t weight_consume_idx(
+      input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] rid
+  );
+    case (rid)
+      RID_W_CONSUME0: return 2'd0;
+      RID_W_CONSUME1: return 2'd1;
+      RID_W_CONSUME2: return 2'd2;
+      default: return 2'd3;
+    endcase
+  endfunction
 
   // --------------------------------------------------------------------------
   // Clock
@@ -358,6 +413,7 @@ module tb_VX_gemm_ctrl;
     logic        last_is_notify;
     logic [31:0] last_rid;
     logic [31:0] last_val;
+    logic [7:0]  last_flags;
   } node_busy_t;
 
   node_busy_t nb[N_CHILDREN];
@@ -410,6 +466,7 @@ module tb_VX_gemm_ctrl;
       nb[child].last_is_notify<= (op_of(c) == OP_NOTIFY);
       nb[child].last_rid      <= notify_reg_id(c);
       nb[child].last_val      <= notify_value_for_sync(c);
+      nb[child].last_flags    <= c.flags;
 
       $display("[%0t] NODE%0d start -> busy for %0d cycles (op=%s)",
                $time, child, lat, op_name(op_of(c)));
@@ -426,6 +483,7 @@ module tb_VX_gemm_ctrl;
         nb[i].last_is_notify <= 1'b0;
         nb[i].last_rid       <= '0;
         nb[i].last_val       <= '0;
+        nb[i].last_flags     <= '0;
       end
       for (int n = 0; n < N_NODE; n++) begin
         evt_req[n].v   <= 1'b0;
@@ -483,11 +541,35 @@ module tb_VX_gemm_ctrl;
       // Countdown + completion
       for (int i = 0; i < N_CHILDREN; i++) begin
         if (nb[i].busy) begin
+          // Launch the modeled final-packet consumes early enough that the
+          // registered sync driver presents them on the ARM retirement edge.
+          // This mirrors the production pipeline, where consume completion
+          // precedes or coincides with LDMA-I architectural completion.
+          if ((i == 0) && (nb[i].cnt == 2)
+           && !nb[i].last_is_notify) begin
+            evt_req[1].v   <= 1'b1;
+            evt_req[1].rid <= weight_consume_rid(
+                gemm_wreg_idx_t'(nb[i].last_flags[3:2]));
+            evt_req[1].val <= 32'd1;
+            evt_req[1].lat <= 0;
+            evt_req[2].v   <= 1'b1;
+            evt_req[2].rid <= nb[i].last_flags[1]
+                ? RID_SC_CONSUME1 : RID_SC_CONSUME0;
+            evt_req[2].val <= 32'd1;
+            evt_req[2].lat <= 0;
+            evt_req[3].v   <= 1'b1;
+            evt_req[3].rid <= nb[i].last_flags[0]
+                ? RID_ZP_CONSUME1 : RID_ZP_CONSUME0;
+            evt_req[3].val <= 32'd1;
+            evt_req[3].lat <= 0;
+          end
+
           if (nb[i].cnt == 0) begin
             nb[i].busy <= 1'b0;
             $display("[%0t] NODE%0d done -> idle", $time, i);
 
-            // If the completed command was NOTIFY, emit request pulse (to be accepted by sync-driver)
+            // Retain the legacy helper for expected-fatal/directed plumbing;
+            // production command streams no longer emit NOTIFY opcodes.
             if (nb[i].last_is_notify) begin
               evt_req[i].v   <= 1'b1;
               evt_req[i].rid <= nb[i].last_rid;
@@ -600,6 +682,10 @@ module tb_VX_gemm_ctrl;
     if (reset) begin
       total_cfg_accept_count <= 0;
       total_done_handshake_count <= 0;
+      for (int resource = 0; resource < 3; ++resource) begin
+        for (int bank = 0; bank < 4; ++bank)
+          consume_event_count[resource][bank] <= 0;
+      end
     end else begin
       if (cfg_reg_if.valid && cfg_reg_if.ready)
         total_cfg_accept_count <= total_cfg_accept_count + 1;
@@ -607,6 +693,34 @@ module tb_VX_gemm_ctrl;
         done_entry_ids[total_done_handshake_count] <= done_if.entry_id;
       if (done_if.valid && done_if.ready)
         total_done_handshake_count <= total_done_handshake_count + 1;
+
+      if (gemm_sync_slv_if[1].valid) begin
+        consume_event_count[0][weight_consume_idx(
+            gemm_sync_slv_if[1].reg_idx)]
+            <= consume_event_count[0][weight_consume_idx(
+                gemm_sync_slv_if[1].reg_idx)] + 1;
+        assert (dut.effective_sync[gemm_sync_slv_if[1].reg_idx]
+             == dut.sync_regs_q[gemm_sync_slv_if[1].reg_idx] + 32'd1)
+          else $fatal(1, "weight consume missing same-cycle effective fold");
+      end
+      if (gemm_sync_slv_if[2].valid) begin
+        consume_event_count[1][gemm_sync_slv_if[2].reg_idx
+            == RID_SC_CONSUME1]
+            <= consume_event_count[1][gemm_sync_slv_if[2].reg_idx
+                == RID_SC_CONSUME1] + 1;
+        assert (dut.effective_sync[gemm_sync_slv_if[2].reg_idx]
+             == dut.sync_regs_q[gemm_sync_slv_if[2].reg_idx] + 32'd1)
+          else $fatal(1, "scale consume missing same-cycle effective fold");
+      end
+      if (gemm_sync_slv_if[3].valid) begin
+        consume_event_count[2][gemm_sync_slv_if[3].reg_idx
+            == RID_ZP_CONSUME1]
+            <= consume_event_count[2][gemm_sync_slv_if[3].reg_idx
+                == RID_ZP_CONSUME1] + 1;
+        assert (dut.effective_sync[gemm_sync_slv_if[3].reg_idx]
+             == dut.sync_regs_q[gemm_sync_slv_if[3].reg_idx] + 32'd1)
+          else $fatal(1, "zero-point consume missing same-cycle effective fold");
+      end
     end
   end
 
@@ -848,7 +962,7 @@ module tb_VX_gemm_ctrl;
   function automatic gemm_unified_cmd_t make_directed_cmd(
     input logic [3:0] op,
     input logic notify_valid,
-    input logic [3:0] notify_rid,
+    input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] notify_rid,
     input logic notify_set_mode,
     input logic [31:0] notify_value
   );
@@ -862,6 +976,46 @@ module tb_VX_gemm_ctrl;
       c.notify.reg_id = notify_rid;
       c.notify.set_mode = notify_set_mode;
       c.notify.value = notify_value;
+      return c;
+    end
+  endfunction
+
+  function automatic gemm_unified_cmd_t make_directed_input_cmd(
+    input logic tile_buf,
+    input logic [31:0] tile_target,
+    input gemm_wreg_idx_t wreg_idx,
+    input logic sreg_idx,
+    input logic zreg_idx,
+    input logic acc_group,
+    input logic [31:0] acc_target
+  );
+    gemm_unified_cmd_t c;
+    begin
+      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c.flags[3:2] = wreg_idx;
+      c.flags[1] = sreg_idx;
+      c.flags[0] = zreg_idx;
+      c.waits[0] = '{valid:1'b1,
+                     reg_id:(tile_buf ? RID_TILE1 : RID_TILE0),
+                     target:tile_target};
+      unique case (wreg_idx)
+        2'd0: c.input_admit_waits[0].reg_id = RID_W0;
+        2'd1: c.input_admit_waits[0].reg_id = RID_W1;
+        2'd2: c.input_admit_waits[0].reg_id = GEMM_RID_W2;
+        default: c.input_admit_waits[0].reg_id = GEMM_RID_W3;
+      endcase
+      c.input_admit_waits[0].valid = 1'b1;
+      c.input_admit_waits[0].target = 32'h0000_1000 + 32'(wreg_idx);
+      c.input_admit_waits[1]
+          = '{valid:1'b1, reg_id:(sreg_idx ? RID_SC1 : RID_SC0),
+              target:(32'h0000_2000 + 32'(sreg_idx))};
+      c.input_admit_waits[2]
+          = '{valid:1'b1, reg_id:(zreg_idx ? RID_ZP1 : RID_ZP0),
+              target:(32'h0000_3000 + 32'(zreg_idx))};
+      c.input_admit_waits[3]
+          = '{valid:1'b1,
+              reg_id:(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0),
+              target:acc_target};
       return c;
     end
   endfunction
@@ -1074,7 +1228,7 @@ module tb_VX_gemm_ctrl;
   endtask
 
   task automatic directed_set_sync(
-    input logic [3:0] rid,
+    input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] rid,
     input logic [31:0] value
   );
     gemm_unified_cmd_t c;
@@ -1181,6 +1335,118 @@ module tb_VX_gemm_ctrl;
     end
   endtask
 
+  task automatic run_input_source_admission_case;
+    gemm_unified_cmd_t producer;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    begin
+      // The source producer owns RID_TILE0.  W2/SC1/ZP0/ACC1 targets remain
+      // deliberately unresolved: they are downstream admission fences and
+      // must not prevent the controller from issuing the Input source command.
+      producer = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, RID_TILE0,
+                                   1'b1, 32'd11);
+      directed_inject(producer, 4);
+      directed_accept_issue(4);
+
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd2,
+                                  1'b1, 1'b0, 1'b1, 32'd77);
+      directed_inject(c, 0);
+      held_cmd = dut.child_q_cmd[0];
+      repeat (2) begin
+        #1;
+        if (dut.child_deps_ready_v[0]
+         || dut.child_issue_fire_v[0]
+         || dut.child_q_pop_v[0]
+         || dut.child_prepare_valid_v[0]
+         || dut.child_prepare_fire_v[0]
+         || dut.child_q_cmd[0] !== held_cmd)
+          $fatal(1, "INPUT_SPLIT tile-unready command changed or issued early");
+        @(posedge clk);
+      end
+
+      @(negedge clk);
+      directed_done[4] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[4]
+       || !dut.child_deps_ready_v[0]
+       || !dut.child_issue_fire_v[0]
+       || !dut.child_q_pop_v[0]
+       || gemm_ctrl_if.input_read_ctrl.cmd !== held_cmd
+       || gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits
+          !== c.input_admit_waits)
+        $fatal(1, "INPUT_SPLIT tile completion did not issue intact metadata");
+      if (gemm_ctrl_if.input_w_load_value[2]
+            >= c.input_admit_waits[0].target
+       || gemm_ctrl_if.input_sc_load_value[1]
+            >= c.input_admit_waits[1].target
+       || gemm_ctrl_if.input_zp_load_value[0]
+            >= c.input_admit_waits[2].target
+       || gemm_ctrl_if.input_acc_free_value[1]
+            >= c.input_admit_waits[3].target)
+        $fatal(1, "INPUT_SPLIT admission fences were not deliberately blocked");
+      @(posedge clk);
+      #1;
+      directed_done[4] = 1'b0;
+      if (dut.child_inflight_empty_v[0])
+        $fatal(1, "INPUT_SPLIT issued command did not enter Input inflight FIFO");
+      directed_complete(0);
+      $display("SCHED_DIRECTED_INPUT_SOURCE_ADMISSION_SPLIT_PASS tile_block=1 admission_block_does_not_gate_source=1 metadata_intact=1");
+    end
+  endtask
+
+  task automatic run_input_depth_four_case;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    begin
+      for (int n = 0; n < 4; ++n) begin
+        c = make_directed_input_cmd(1'b0, 32'd11,
+                                    gemm_wreg_idx_t'(n), n[0], ~n[0],
+                                    n[0], 32'(80 + n));
+        c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
+                     value:32'(301 + n)};
+        directed_inject(c, 0);
+        directed_accept_issue(0);
+      end
+      if (!dut.child_inflight_full_v[0]
+       || dut.g_child_scheduler[0].g_inorder_child.u_child_inflight_queue.DEPTH
+          != 4)
+        $fatal(1, "INPUT_DEPTH4 four issues did not fill depth-four inflight FIFO");
+
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+                                  1'b0, 1'b0, 1'b0, 32'd84);
+      c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
+                   value:32'd305};
+      directed_inject(c, 0);
+      held_cmd = dut.child_q_cmd[0];
+      if (dut.child_issue_fire_v[0] || dut.child_q_pop_v[0])
+        $fatal(1, "INPUT_DEPTH4 fifth command escaped full inflight FIFO");
+
+      @(negedge clk);
+      directed_done[0] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[0]
+       || !dut.child_issue_fire_v[0]
+       || !dut.child_q_pop_v[0]
+       || gemm_ctrl_if.input_read_ctrl.cmd !== held_cmd)
+        $fatal(1, "INPUT_DEPTH4 completion did not permit ordered same-cycle pop/push");
+      @(posedge clk);
+      #1;
+      directed_done[0] = 1'b0;
+      if (!dut.child_inflight_full_v[0] || dut.sync_regs_q[11] !== 32'd301)
+        $fatal(1, "INPUT_DEPTH4 rollover lost occupancy or first notification");
+
+      for (int expected = 302; expected <= 305; ++expected) begin
+        directed_complete(0);
+        if (dut.sync_regs_q[11] !== 32'(expected))
+          $fatal(1, "INPUT_DEPTH4 ordered notification mismatch expected=%0d got=%0d",
+                 expected, dut.sync_regs_q[11]);
+      end
+      if (!dut.child_inflight_empty_v[0])
+        $fatal(1, "INPUT_DEPTH4 final drain left inflight metadata");
+      $display("SCHED_DIRECTED_INPUT_DEPTH4_PASS issues=5 depth=4 same_cycle_pop_push=1 ordered_notify=301..305");
+    end
+  endtask
+
   task automatic run_nonprefetch_case(
     input logic [3:0] op,
     input int child,
@@ -1248,6 +1514,10 @@ module tb_VX_gemm_ctrl;
   task automatic run_scheduler_directed();
     gemm_unified_cmd_t c;
     gemm_unified_cmd_t held_cmd;
+    logic [31:0] arm_issue_target;
+    logic [31:0] weight_consume_target;
+    logic [31:0] scale_consume_target;
+    logic [31:0] zp_consume_target;
     int unsigned cfg_count_before;
     int unsigned done_count_before;
     bit saw_done;
@@ -1285,12 +1555,14 @@ module tb_VX_gemm_ctrl;
       directed_set_sync(4'd5, 32'd30);
       directed_set_sync(4'd3, 32'd40);
 
-      // Two-phase command contract.  Local pure loads and tile DMA loads for
-      // input/weight/scale/ZP prepare once while their architectural release
-      // wait is blocked.  The FIFO head, inflight metadata, notify state, and
-      // normal start remain untouched until the exact dependency completion.
-      run_prepare_release_case(OP_I_LDMA_ARM,  0, 3'd0, 32'd101);
-      run_prepare_release_case(OP_W_LDMA_MXU, 1, 3'd0, 32'd102);
+      // Input has a tile-ready source phase and independent W/S/Z/ACC
+      // admission fences.  It no longer uses passive prepare.  Other pure
+      // local/tile loads retain their prepare/release coverage below.
+      run_input_source_admission_case();
+      run_input_depth_four_case();
+      // Weight no longer uses passive prepare for its consume lifetime.  Its
+      // tile-ready wait remains a normal issue dependency and W_CONSUME is
+      // carried separately as writer_wait.
       run_prepare_release_case(OP_SC_LDMA_MXU, 2, 3'd0, 32'd103);
       run_prepare_release_case(OP_ZP_LDMA_MXU, 3, 3'd0, 32'd104);
       for (int rd = 0; rd < 4; ++rd) begin
@@ -1302,70 +1574,76 @@ module tb_VX_gemm_ctrl;
       run_nonprefetch_case(OP_O_ACC2LMEM, 4, 3'd0, 32'd109);
       run_nonprefetch_case(OP_DMA_ST,     5, 3'd4, 32'd110);
       run_nonprefetch_case(OP_DMA_LD,     5, 3'd4, 32'd111);
-      $display("PREPARE_RELEASE_MATRIX_PASS local=I,W,SC,ZP dma_rd=0,1,2,3 forbidden=ACC2LMEM,DMA_ST,DMA_RD4");
+      $display("PREPARE_RELEASE_MATRIX_PASS local=SC,ZP dma_rd=0,1,2,3 forbidden=I,ACC2LMEM,DMA_ST,DMA_RD4 weight=writer_fence");
 
-      // Four waits, all ready.
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      // Five general issue waits, all ready.  This remains controller coverage
+      // on a non-Input child; Input now has a tile-only source wait.
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
       c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
       c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd40};
-      directed_inject(c, 0);
-      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
-        $fatal(1, "SCHED_DIRECTED four-wait all-ready command did not start");
-      directed_accept_issue(0);
-      directed_complete(0);
-      $display("SCHED_DIRECTED_FOUR_WAIT_ALL_READY_PASS count=4");
+      c.waits[4] = '{valid:1'b1, reg_id:4'd6,
+                     target:dut.sync_regs_q[6]};
+      directed_inject(c, 4);
+      if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+        $fatal(1, "SCHED_DIRECTED five-wait all-ready command did not start");
+      directed_accept_issue(4);
+      directed_complete(4);
+      $display("SCHED_DIRECTED_FIVE_WAIT_ALL_READY_PASS count=5");
 
       // One of four blocked, then a producer SET completion resolves it in
       // the same cycle and the dependent command starts immediately.
       c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd3, 1'b1, 32'd41);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
       c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
       c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd41};
-      directed_inject(c, 0);
-      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+      c.waits[4] = '{valid:1'b1, reg_id:4'd6,
+                     target:dut.sync_regs_q[6]};
+      directed_inject(c, 4);
+      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED one-blocked wait was not masked");
       @(negedge clk);
       directed_done[1] = 1'b1;
       #1;
-      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+      if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED same-cycle SET did not start dependent head");
       @(posedge clk);
       #1;
       directed_done[1] = 1'b0;
-      directed_complete(0);
+      directed_complete(4);
       $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SAME_CYCLE_SET_PASS blocked=1 resolved=1");
 
       // PLUS completion also participates in the same-cycle effective view.
       c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, 4'd4, 1'b0, 32'd1);
       directed_inject(c, 2);
       directed_accept_issue(2);
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
-      directed_inject(c, 0);
-      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+      directed_inject(c, 4);
+      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED PLUS dependent unexpectedly ready before completion");
       @(negedge clk);
       directed_done[2] = 1'b1;
       #1;
-      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+      if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED same-cycle PLUS did not start dependent head");
       @(posedge clk);
       #1;
       directed_done[2] = 1'b0;
-      directed_complete(0);
+      directed_complete(4);
       if (dut.sync_regs_q[4] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED PLUS scoreboard update mismatch");
       $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[4]);
 
       // Physical scale and zero-point completions independently update their
-      // scoreboards.  The logical RID_SZ dependency follows the minimum and
-      // may release the input child only when the slower producer completes.
+      // scoreboards.  Retain logical RID_SZ minimum/bypass coverage on a
+      // general dependent child; Input admission now consumes exact SC/ZP
+      // levels downstream instead of RID_SZ at controller issue.
       c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC0,
                             1'b1, 32'd1);
       directed_inject(c, 2);
@@ -1374,11 +1652,11 @@ module tb_VX_gemm_ctrl;
                             1'b1, 32'd1);
       directed_inject(c, 3);
       directed_accept_issue(3);
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:RID_SZ0, target:32'd1};
-      directed_inject(c, 0);
-      if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
-        $fatal(1, "QPARAM_JOIN SC-first input escaped before either completion");
+      directed_inject(c, 4);
+      if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
+        $fatal(1, "QPARAM_JOIN SC-first dependent escaped before either completion");
       @(negedge clk);
       directed_done[2] = 1'b1;
       #1;
@@ -1386,7 +1664,7 @@ module tb_VX_gemm_ctrl;
           || dut.effective_sync[RID_SC0] !== 32'd1
           || dut.effective_sync[RID_ZP0] !== 32'd0
           || dut.effective_sync[RID_SZ0] !== 32'd0
-          || dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+          || dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "QPARAM_JOIN SC-first released before ZP completion");
       @(posedge clk);
       #1;
@@ -1396,12 +1674,12 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[3]
           || dut.effective_sync[RID_SZ0] !== 32'd1
-          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "QPARAM_JOIN SC-first did not release on ZP completion");
       @(posedge clk);
       #1;
       directed_done[3] = 1'b0;
-      directed_complete(0);
+      directed_complete(4);
       $display("QPARAM_JOIN_SC_FIRST_PASS rid_sz0=1");
 
       c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC1,
@@ -1412,9 +1690,9 @@ module tb_VX_gemm_ctrl;
                             1'b1, 32'd2);
       directed_inject(c, 3);
       directed_accept_issue(3);
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:RID_SZ1, target:32'd2};
-      directed_inject(c, 0);
+      directed_inject(c, 4);
       @(negedge clk);
       directed_done[3] = 1'b1;
       #1;
@@ -1422,7 +1700,7 @@ module tb_VX_gemm_ctrl;
           || dut.effective_sync[RID_SC1] !== 32'd0
           || dut.effective_sync[RID_ZP1] !== 32'd2
           || dut.effective_sync[RID_SZ1] !== 32'd0
-          || dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0])
+          || dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "QPARAM_JOIN ZP-first released before scale completion");
       @(posedge clk);
       #1;
@@ -1432,12 +1710,12 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[2]
           || dut.effective_sync[RID_SZ1] !== 32'd2
-          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
+          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "QPARAM_JOIN ZP-first did not release on scale completion");
       @(posedge clk);
       #1;
       directed_done[2] = 1'b0;
-      directed_complete(0);
+      directed_complete(4);
       $display("QPARAM_JOIN_ZP_FIRST_PASS rid_sz1=2");
 
       c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC0,
@@ -1448,9 +1726,9 @@ module tb_VX_gemm_ctrl;
                             1'b1, 32'd3);
       directed_inject(c, 3);
       directed_accept_issue(3);
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:RID_SZ0, target:32'd3};
-      directed_inject(c, 0);
+      directed_inject(c, 4);
       @(negedge clk);
       directed_done[2] = 1'b1;
       directed_done[3] = 1'b1;
@@ -1460,20 +1738,20 @@ module tb_VX_gemm_ctrl;
           || dut.effective_sync[RID_SC0] !== 32'd3
           || dut.effective_sync[RID_ZP0] !== 32'd3
           || dut.effective_sync[RID_SZ0] !== 32'd3
-          || !dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0])
-        $fatal(1, "QPARAM_JOIN same-cycle bypass did not release input");
+          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+        $fatal(1, "QPARAM_JOIN same-cycle bypass did not release dependent");
       @(posedge clk);
       #1;
       directed_done[2] = 1'b0;
       directed_done[3] = 1'b0;
-      directed_complete(0);
+      directed_complete(4);
       $display("QPARAM_JOIN_SAME_CYCLE_PASS rid_sz0=3");
 
       // Ready-low retention: eligibility remains set, FIFO head and metadata
       // remain stable, and pop occurs only when start is finally asserted.
       directed_idle[0] = 1'b0;
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd1,
+                                  1'b0, 1'b1, 1'b0, 32'd0);
       directed_inject(c, 0);
       held_cmd = dut.child_q_cmd[0];
       repeat (3) begin
@@ -1495,44 +1773,162 @@ module tb_VX_gemm_ctrl;
       directed_complete(0);
       $display("SCHED_DIRECTED_RETENTION_HANDSHAKE_POP_PASS held_cycles=3");
 
-      // The physical inflight FIFO remains two entries deep, but the executor
-      // contract permits at most one active command.  Keep a second command
-      // queued, then prove an oldest-complete/new-issue rollover in one cycle.
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd8, 1'b1, 32'd1);
+      // Weight owns two true inflight entries. Issue two dependency-ready
+      // commands before either completes, retain a third command behind an
+      // unresolved physical-buffer consume dependency, then prove that the
+      // consume update plus oldest completion permits an ordered same-cycle
+      // pop/push. Notifications must retire in issue order, never queue order.
+      // First reserve one architecturally legal buffer-0 consume target with
+      // an accepted ARM command.  Keep that ARM inflight throughout this
+      // directed sequence so the invocation cannot become quiescent before
+      // its matching W/SC/ZP consumer events have all retired.
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+                                  1'b0, 1'b0, 1'b0, 32'd0);
+      directed_inject(c, 0);
+      arm_issue_target = dut.dbg_w_arm_issued_q[0] + 32'd1;
+      force dut.invocation_active_q = 1'b1;
+      directed_accept_issue(0);
+      if (dut.dbg_w_arm_issued_q[0] !== arm_issue_target)
+        $fatal(1, "SCHED_DIRECTED ARM issue bookkeeping was not recorded");
+
+      // The natural executor emits all three physical-resource consume
+      // events for an ARM command.  Directed mode replaces that executor, so
+      // model the SC/ZP events explicitly here; the W event remains delayed
+      // below because it is the dependency release under test.
+      scale_consume_target = dut.sync_regs_q[RID_SC_CONSUME0] + 32'd1;
+      zp_consume_target = dut.sync_regs_q[RID_ZP_CONSUME0] + 32'd1;
+      @(negedge clk);
+      force gemm_sync_slv_if[2].valid = 1'b1;
+      force gemm_sync_slv_if[2].reg_idx = RID_SC_CONSUME0;
+      force gemm_sync_slv_if[2].value = 32'd1;
+      force gemm_sync_slv_if[3].valid = 1'b1;
+      force gemm_sync_slv_if[3].reg_idx = RID_ZP_CONSUME0;
+      force gemm_sync_slv_if[3].value = 32'd1;
+      #1;
+      if (dut.effective_sync[RID_SC_CONSUME0] !== scale_consume_target
+       || dut.effective_sync[RID_ZP_CONSUME0] !== zp_consume_target)
+        $fatal(1, "SCHED_DIRECTED ARM qparam consume bookkeeping mismatch");
+      @(posedge clk);
+      #1;
+      force gemm_sync_slv_if[2].valid = 1'b0;
+      force gemm_sync_slv_if[3].valid = 1'b0;
+      @(posedge clk);
+      #1;
+      release gemm_sync_slv_if[2].valid;
+      release gemm_sync_slv_if[2].reg_idx;
+      release gemm_sync_slv_if[2].value;
+      release gemm_sync_slv_if[3].valid;
+      release gemm_sync_slv_if[3].reg_idx;
+      release gemm_sync_slv_if[3].value;
+      if (dut.sync_regs_q[RID_SC_CONSUME0] !== scale_consume_target
+       || dut.sync_regs_q[RID_ZP_CONSUME0] !== zp_consume_target)
+        $fatal(1, "SCHED_DIRECTED ARM qparam consume event was not committed");
+
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b1, 32'd11);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd8, 1'b0, 32'd1);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd7);
       directed_inject(c, 1);
-      if (dut.child_inflight_full_v[1]
-          || dut.child_issue_fire_v[1]
-          || dut.child_q_pop_v[1])
-        $fatal(1, "SCHED_DIRECTED second command escaped max-one-active gate");
+      if (!dut.child_issue_fire_v[1] || !dut.child_q_pop_v[1])
+        $fatal(1, "SCHED_DIRECTED second ready Weight command did not issue before completion");
+      directed_accept_issue(1);
+      if (!dut.child_inflight_full_v[1])
+        $fatal(1, "SCHED_DIRECTED two Weight issues did not fill inflight FIFO");
       if (dut.g_child_scheduler[1].g_inorder_child.u_child_inflight_queue.DEPTH != 2)
         $fatal(1, "SCHED_DIRECTED physical inflight FIFO depth changed from two");
+
+      weight_consume_target = dut.sync_regs_q[RID_W_CONSUME0] + 32'd1;
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd5);
+      c.waits[0] = '{valid:1'b1, reg_id:5'd4, target:32'd0};
+      c.writer_wait = '{valid:1'b1, reg_id:RID_W_CONSUME0,
+                        target:weight_consume_target};
+      directed_inject(c, 1);
+      repeat (2) begin
+        if (!dut.child_deps_ready_v[1]
+         || dut.child_issue_fire_v[1]
+         || dut.child_q_pop_v[1])
+          $fatal(1,
+              "SCHED_DIRECTED Weight source-ready/full gating mismatch before consume");
+        @(posedge clk);
+        #1;
+      end
+
+      // Model the external weight last-consumer event. It resolves the exact
+      // dependency in-cycle, but the third command remains blocked while both
+      // inflight entries are occupied.
+      @(negedge clk);
+      force gemm_sync_slv_if[1].valid = 1'b1;
+      force gemm_sync_slv_if[1].reg_idx = RID_W_CONSUME0;
+      force gemm_sync_slv_if[1].value = 32'd1;
+      #1;
+      if (dut.effective_sync[RID_W_CONSUME0] !== weight_consume_target
+       || dut.weight_consume_value0_o !== weight_consume_target
+       || !dut.child_deps_ready_v[1]
+       || dut.child_issue_fire_v[1]
+       || dut.child_q_pop_v[1])
+        $fatal(1, "SCHED_DIRECTED Weight consume release/full gating mismatch");
+      @(posedge clk);
+      #1;
+      force gemm_sync_slv_if[1].valid = 1'b0;
+      @(posedge clk);
+      #1;
+      release gemm_sync_slv_if[1].valid;
+      release gemm_sync_slv_if[1].reg_idx;
+      release gemm_sync_slv_if[1].value;
+      if (dut.sync_regs_q[RID_W_CONSUME0] !== weight_consume_target)
+        $fatal(1, "SCHED_DIRECTED Weight consume event was not committed");
+
+      // Retire command 0 while command 2 issues into the same physical FIFO
+      // edge. The notification folded this cycle must still belong to command
+      // 0; commands 1 and 2 remain in order behind it.
       @(negedge clk);
       directed_done[1] = 1'b1;
       #1;
       if (!dut.child_issue_fire_v[1]
-          || !dut.child_completion_pop_v[1])
-        $fatal(1, "SCHED_DIRECTED completion did not permit same-cycle rollover");
+          || !dut.child_completion_pop_v[1]
+          || !dut.child_q_pop_v[1])
+        $fatal(1, "SCHED_DIRECTED Weight completion did not permit same-cycle pop/push");
       @(posedge clk);
       #1;
       directed_done[1] = 1'b0;
-      if (dut.child_inflight_empty_v[1] || dut.child_inflight_full_v[1]
-          || dut.sync_regs_q[8] !== 32'd1)
-        $fatal(1, "SCHED_DIRECTED rollover lost occupancy or reordered SET");
+      if (!dut.child_inflight_full_v[1]
+          || dut.sync_regs_q[8] !== 32'd11)
+        $fatal(1, "SCHED_DIRECTED Weight rollover lost occupancy or reordered SET");
+
       directed_complete(1);
-      if (dut.sync_regs_q[8] !== 32'd2)
-        $fatal(1, "SCHED_DIRECTED in-order PLUS completion mismatch");
+      if (dut.sync_regs_q[8] !== 32'd18)
+        $fatal(1, "SCHED_DIRECTED second Weight notification retired out of order");
+      directed_complete(1);
+      if (dut.sync_regs_q[8] !== 32'd23)
+        $fatal(1, "SCHED_DIRECTED third Weight notification retired out of order");
       if (!dut.child_inflight_empty_v[1])
         $fatal(1, "SCHED_DIRECTED inflight drain incomplete");
-      $display("SCHED_DIRECTED_SINGLE_ACTIVE_INORDER_PASS physical_depth=2 blocked_second=1 rollover=1 ordered=1");
 
-      // ACC ownership and output-LMEM reuse are independent lifetime domains.
-      // Keep group-0 ACC2LMEM active while the opposite group ARM proceeds,
-      // then prove same-cycle group release through effective_sync.  A delayed
-      // DMA store must not hold the freed ACC group, but it must hold the next
-      // ACC2LMEM that would overwrite the shared output LMEM.
+      // Retire the held ARM only after its W/SC/ZP consume accounting is
+      // complete.  The following edge exercises the real invocation-complete
+      // assertions with a legal, fully balanced resource lifetime.
+      if (dut.sync_regs_q[RID_W_CONSUME0] !== arm_issue_target
+       || dut.sync_regs_q[RID_SC_CONSUME0] !== arm_issue_target
+       || dut.sync_regs_q[RID_ZP_CONSUME0] !== arm_issue_target)
+        $fatal(1, "SCHED_DIRECTED ARM consume counts incomplete before drain");
+      directed_complete(0);
+      @(posedge clk);
+      #1;
+      if (!done_if.valid)
+        $fatal(1, "SCHED_DIRECTED balanced invocation did not complete");
+      release dut.invocation_active_q;
+      // Releasing a forced state register exposes the previously scheduled
+      // clear on the first edge; the registered done handshake retires on the
+      // following edge.
+      repeat (2) @(posedge clk);
+      #1;
+      if (done_if.valid)
+        $fatal(1, "SCHED_DIRECTED balanced invocation done did not retire");
+      $display("SCHED_DIRECTED_WEIGHT_TWO_INFLIGHT_PASS ready_issues=2 consume_block=1 same_cycle_pop_push=1 ordered_notify=11,18,23");
+
+      // ACC ownership is an Input admission fence, not a controller issue
+      // dependency.  Both opposite- and same-group Input source commands may
+      // issue while group 0 is blocked; the DMA store still waits on ACC_FREE0.
       directed_set_sync(4'd4, 32'd0);
       if (dut.sync_regs_q[9] !== 32'd0 || dut.sync_regs_q[10] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED ACC release RIDs were not initially zero");
@@ -1549,23 +1945,31 @@ module tb_VX_gemm_ctrl;
           || dut.child_q_pop_v[5])
         $fatal(1, "SCHED_DIRECTED DMA store was not blocked on RID_ACC_FREE0");
 
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
-      c.waits[3] = '{valid:1'b1, reg_id:4'd10, target:32'd0};
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+                                  1'b0, 1'b0, 1'b1, 32'd0);
       directed_inject(c, 0);
       if (dut.child_inflight_empty_v[4]
           || !dut.child_deps_ready_v[0]
-          || !dut.child_issue_fire_v[0])
+          || !dut.child_issue_fire_v[0]
+          || gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[3].reg_id
+             != RID_ACC_FREE1)
         $fatal(1, "SCHED_DIRECTED opposite-group ARM did not overlap delayed ACC2LMEM");
       directed_accept_issue(0);
       directed_complete(0);
 
-      c = make_directed_cmd(OP_I_LDMA_ARM, 1'b0, '0, 1'b0, '0);
-      c.waits[3] = '{valid:1'b1, reg_id:4'd9, target:32'd1};
+      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+                                  1'b0, 1'b0, 1'b0, 32'd1);
       directed_inject(c, 0);
+      if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0]
+          || gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[3].reg_id
+             != RID_ACC_FREE0
+          || gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[3].target
+             != 32'd1
+          || gemm_ctrl_if.input_acc_free_value[0] >= 32'd1)
+        $fatal(1, "SCHED_DIRECTED same-group admission fence gated Input source issue");
+      directed_accept_issue(0);
+      directed_complete(0);
       repeat (2) begin
-        if (dut.child_deps_ready_v[0] || dut.child_issue_fire_v[0]
-            || dut.child_q_pop_v[0])
-          $fatal(1, "SCHED_DIRECTED same-group ARM escaped RID_ACC_FREE0 wait");
         if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5]
             || dut.child_q_pop_v[5])
           $fatal(1, "SCHED_DIRECTED DMA store escaped RID_ACC_FREE0 wait");
@@ -1578,25 +1982,21 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[4]
           || dut.effective_sync[9] !== 32'd1
-          || !dut.child_deps_ready_v[0]
-          || !dut.child_issue_fire_v[0]
-          || !dut.child_q_pop_v[0]
           || !dut.child_deps_ready_v[5]
           || !dut.child_issue_fire_v[5]
           || !dut.child_q_pop_v[5])
-        $fatal(1, "SCHED_DIRECTED RID_ACC_FREE0 SET did not release ARM and DMA store in-cycle");
+        $fatal(1, "SCHED_DIRECTED RID_ACC_FREE0 SET did not release DMA store in-cycle");
       @(posedge clk);
       #1;
       directed_done[4] = 1'b0;
       if (dut.sync_regs_q[9] !== 32'd1
-          || dut.child_inflight_empty_v[0]
+          || !dut.child_inflight_empty_v[0]
           || dut.child_inflight_empty_v[5]
           || dut.sync_regs_q[4] !== 32'd0)
-        $fatal(1, "SCHED_DIRECTED ACC release lost SET or dependent issue");
+        $fatal(1, "SCHED_DIRECTED ACC release lost SET or DMA issue");
 
-      directed_complete(0);
       if (dut.child_inflight_empty_v[5] || dut.sync_regs_q[4] !== 32'd0)
-        $fatal(1, "SCHED_DIRECTED delayed DMA store blocked freed same-group ARM");
+        $fatal(1, "SCHED_DIRECTED delayed DMA store state was lost");
 
       c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd10, 1'b1, 32'd1);
       c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
@@ -1627,7 +2027,7 @@ module tb_VX_gemm_ctrl;
       directed_complete(4);
       if (dut.sync_regs_q[10] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED RID_ACC_FREE1 completion mismatch");
-      $display("SCHED_DIRECTED_ACC_OWNERSHIP_PASS opposite_group=1 same_group_blocked=1 effective_set_release=1 dma_overlap=1 rid_o_block=1 rid9=1 rid10=1");
+      $display("SCHED_DIRECTED_ACC_OWNERSHIP_PASS opposite_group_source=1 same_group_source_before_admission=1 effective_set_release_dma=1 rid_o_block=1 rid9=1 rid10=1");
 
       // A notify-invalid inflight command prevents quiescence, config ready,
       // and invocation done until its architectural completion retires it.
@@ -1865,6 +2265,19 @@ module tb_VX_gemm_ctrl;
              input_notify_start_count, removed_opcode_count);
     if (dropped_events != 0)
       $fatal(1, "Controller TB dropped %0d modeled sync events", dropped_events);
+    for (int wreg_idx = 0; wreg_idx < 4; ++wreg_idx) begin
+      if (consume_event_count[0][wreg_idx] == 0)
+        $fatal(1, "Controller TB missed Weight consume buffer=%0d",
+               wreg_idx);
+    end
+    for (int resource = 1; resource < 3; ++resource) begin
+      for (int qreg_idx = 0; qreg_idx < 2; ++qreg_idx) begin
+        if (consume_event_count[resource][qreg_idx] == 0)
+          $fatal(1, "Controller TB missed qparam consume resource=%0d buffer=%0d",
+                 resource, qreg_idx);
+      end
+    end
+    $display("CONSUME_EFFECTIVE_SYNC_PASS regs=25 width=5 weight_banks=4 qparam_banks=2");
 
     $display("====================================");
     $display("  TEST PASSED: GEMM controller lifecycle checks completed");
