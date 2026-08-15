@@ -155,8 +155,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_ctrl_if gemm_ctrl_if ();
     wire [31:0] weight_consume_value0;
     wire [31:0] weight_consume_value1;
-    wire [31:0] weight_consume_value2;
-    wire [31:0] weight_consume_value3;
     wire [31:0] scale_consume_value0;
     wire [31:0] scale_consume_value1;
     wire [31:0] zero_point_consume_value0;
@@ -170,7 +168,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lmem_dma_ctrl_if output_dma_ctrl_if ();
     VX_gemm_dma_ctrl_if gemm_dma_ctrl_if ();
 
-    localparam int WEIGHT_BOUNDARY_DEPTH = 2;
+    localparam int WEIGHT_BOUNDARY_DEPTH = 4;
     localparam int WEIGHT_BOUNDARY_PTR_BITS =
         $clog2(WEIGHT_BOUNDARY_DEPTH);
     localparam int WEIGHT_BOUNDARY_COUNT_BITS =
@@ -294,7 +292,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Retire normal Input commands from the registered final-admission state.
     // Folding the current input_fire directly into controller done creates a
     // hierarchy-wide combinational cycle through completion/effective_sync and
-    // the exact operand admission levels.  The registered cut preserves the
+    // the accumulator admission level.  The registered cut preserves the
     // final actual admission as the completion source while reporting it on
     // the following cycle.
     wire completion_head_ingress_complete
@@ -312,18 +310,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire input_context_can_accept = !input_context_full || input_cmd_done;
 
     wire input_w_wait_rid_matches
-        = ((input_cmd_ctx.wreg_use_idx == 2'd0)
+        = ((!input_cmd_ctx.wreg_use_idx)
         && (input_cmd_ctx.admit_waits[0].reg_id
             == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W0)))
-       || ((input_cmd_ctx.wreg_use_idx == 2'd1)
+       || ((input_cmd_ctx.wreg_use_idx)
         && (input_cmd_ctx.admit_waits[0].reg_id
-            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W1)))
-       || ((input_cmd_ctx.wreg_use_idx == 2'd2)
-        && (input_cmd_ctx.admit_waits[0].reg_id
-            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W2)))
-       || ((input_cmd_ctx.wreg_use_idx == 2'd3)
-        && (input_cmd_ctx.admit_waits[0].reg_id
-            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W3)));
+            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W1)));
     wire input_sc_wait_rid_matches
         = input_cmd_ctx.admit_waits[1].reg_id
        == GEMM_SYNC_REG_ID_WIDTH'(input_cmd_ctx.sreg_use_idx
@@ -337,32 +329,20 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_ACC_FREE0))
        || (input_cmd_ctx.admit_waits[3].reg_id
            == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_ACC_FREE1));
-    wire [31:0] input_w_load_value
-        = gemm_ctrl_if.input_w_load_value[input_cmd_ctx.wreg_use_idx];
-    wire [31:0] input_sc_load_value
-        = gemm_ctrl_if.input_sc_load_value[input_cmd_ctx.sreg_use_idx];
-    wire [31:0] input_zp_load_value
-        = gemm_ctrl_if.input_zp_load_value[input_cmd_ctx.zreg_use_idx];
     wire [31:0] input_acc_free_value
         = gemm_ctrl_if.input_acc_free_value[
             input_cmd_ctx.admit_waits[3].reg_id
             == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_ACC_FREE1)];
-    wire input_w_load_ready = input_cmd_ctx.admit_waits[0].valid
-        && input_w_wait_rid_matches
-        && (input_w_load_value >= input_cmd_ctx.admit_waits[0].target);
-    wire input_sc_load_ready = input_cmd_ctx.admit_waits[1].valid
-        && input_sc_wait_rid_matches
-        && (input_sc_load_value >= input_cmd_ctx.admit_waits[1].target);
-    wire input_zp_load_ready = input_cmd_ctx.admit_waits[2].valid
-        && input_zp_wait_rid_matches
-        && (input_zp_load_value >= input_cmd_ctx.admit_waits[2].target);
     wire input_acc_free_ready = input_cmd_ctx.admit_waits[3].valid
         && input_acc_wait_rid_matches
         && (input_acc_free_value >= input_cmd_ctx.admit_waits[3].target);
     wire input_admission_ready = input_admit_context_valid
-        && input_w_load_ready
-        && input_sc_load_ready
-        && input_zp_load_ready
+        && input_cmd_ctx.admit_waits[0].valid
+        && input_w_wait_rid_matches
+        && input_cmd_ctx.admit_waits[1].valid
+        && input_sc_wait_rid_matches
+        && input_cmd_ctx.admit_waits[2].valid
+        && input_zp_wait_rid_matches
         && input_acc_free_ready;
 
     wire [`XLEN-1:0] input_packet_addr_full
@@ -377,7 +357,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     always_comb begin
         gemm_unit_v2_if.packet_ctrl = '0;
-        gemm_unit_v2_if.packet_ctrl.valid = input_packet_fire;
+        // packet_ctrl is the control half of the input ready/valid request.
+        // Keep it valid and stable with the LDMA request until the GEMM unit
+        // accepts both halves on input_packet_fire.
+        gemm_unit_v2_if.packet_ctrl.valid = i_gemm_bus_if.req_valid;
         gemm_unit_v2_if.packet_ctrl.acc_rd_en = input_cmd_ctx.is_accum;
         gemm_unit_v2_if.packet_ctrl.acc_wr_en = 1'b1;
         gemm_unit_v2_if.packet_ctrl.acc_rd_addr = input_packet_addr;
@@ -389,6 +372,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             = input_cmd_ctx.sreg_use_idx;
         gemm_unit_v2_if.packet_ctrl.zreg_use_idx
             = input_cmd_ctx.zreg_use_idx;
+        gemm_unit_v2_if.packet_ctrl.w_load_target
+            = input_cmd_ctx.admit_waits[0].target;
+        gemm_unit_v2_if.packet_ctrl.s_load_target
+            = input_cmd_ctx.admit_waits[1].target;
+        gemm_unit_v2_if.packet_ctrl.z_load_target
+            = input_cmd_ctx.admit_waits[2].target;
         gemm_unit_v2_if.packet_ctrl.is_load = !input_cmd_ctx.is_accum;
         gemm_unit_v2_if.packet_ctrl.notify_on_writeback
             = input_cmd_ctx.notify_on_writeback;
@@ -397,6 +386,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
            && (input_cmd_ctx.packet_index
             == input_cmd_ctx.packet_count - 1'b1);
         gemm_unit_v2_if.input_admission_ready = input_admission_ready;
+        gemm_unit_v2_if.w_load_value = gemm_ctrl_if.input_w_load_value;
+        gemm_unit_v2_if.s_load_value = gemm_ctrl_if.input_sc_load_value;
+        gemm_unit_v2_if.z_load_value = gemm_ctrl_if.input_zp_load_value;
     end
 
     always_ff @(posedge clk or posedge reset) begin
@@ -457,7 +449,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                 input_cmd_ctx_r[input_context_tail_r].quant_dir
                     <= gemm_ctrl_if.input_read_ctrl.cmd.flags[6];
                 input_cmd_ctx_r[input_context_tail_r].wreg_use_idx
-                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[3:2];
+                    <= gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
                 input_cmd_ctx_r[input_context_tail_r].sreg_use_idx
                     <= gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
                 input_cmd_ctx_r[input_context_tail_r].zreg_use_idx
@@ -535,8 +527,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     always @(posedge clk) begin
         if (reset === 1'b0) begin
-            assert (gemm_unit_v2_if.packet_ctrl.valid == input_packet_fire)
-                else $fatal(1, "GEMM node V2 packet valid/admission mismatch");
+            assert (gemm_unit_v2_if.packet_ctrl.valid
+                 == i_gemm_bus_if.req_valid)
+                else $fatal(1, "GEMM node V2 packet/request valid mismatch");
 
             if (input_cmd_start) begin
                 assert (input_context_can_accept)
@@ -567,6 +560,16 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                      == (input_cmd_ctx.packet_index
                       == input_cmd_ctx.packet_count - 1'b1))
                     else $fatal(1, "GEMM node V2 last metadata mismatch");
+                assert ((gemm_unit_v2_if.packet_ctrl.w_load_target
+                          == input_cmd_ctx.admit_waits[0].target)
+                     && (gemm_unit_v2_if.packet_ctrl.s_load_target
+                          == input_cmd_ctx.admit_waits[1].target)
+                     && (gemm_unit_v2_if.packet_ctrl.z_load_target
+                          == input_cmd_ctx.admit_waits[2].target)
+                     && (gemm_unit_v2_if.packet_ctrl.w_load_target != 0)
+                     && (gemm_unit_v2_if.packet_ctrl.s_load_target != 0)
+                     && (gemm_unit_v2_if.packet_ctrl.z_load_target != 0))
+                    else $fatal(1, "GEMM node V2 lost exact W/S/Z generation metadata");
             end
 
             if (input_last_admission) begin
@@ -662,11 +665,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    // Encode {load_dir, wreg_idx[1:0]} above the Weight beat
+    // Encode {load_dir, wreg_idx} above the Weight beat
     // alignment.  The Weight overlap executor stores this aligned byte address
     // per command and converts it back to the writer-head bus address.
     assign weight_dma_ctrl_if.dst_base_addr
-        = 64'(gemm_ctrl_if.weight_read_ctrl.cmd.flags[2:0])
+        = 64'(gemm_ctrl_if.weight_read_ctrl.cmd.flags[1:0])
        << `CLOG2(`GEMM_WEIGHT_DATA_SIZE);
     assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
@@ -694,14 +697,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         = weight_dma_ctrl_if.prepare_ready;
 
     assign gemm_sync_if[1].valid = gemm_unit_v2_if.weight_consume_valid;
-    always_comb begin
-      unique case (gemm_unit_v2_if.weight_consume_idx)
-        2'd0: gemm_sync_if[1].reg_idx = 32'(GEMM_RID_W_CONSUME0);
-        2'd1: gemm_sync_if[1].reg_idx = 32'(GEMM_RID_W_CONSUME1);
-        2'd2: gemm_sync_if[1].reg_idx = 32'(GEMM_RID_W_CONSUME2);
-        default: gemm_sync_if[1].reg_idx = 32'(GEMM_RID_W_CONSUME3);
-      endcase
-    end
+    assign gemm_sync_if[1].reg_idx
+        = gemm_unit_v2_if.weight_consume_idx
+        ? 32'(GEMM_RID_W_CONSUME1) : 32'(GEMM_RID_W_CONSUME0);
     assign gemm_sync_if[1].value = 32'd1;
 
     always_ff @(posedge clk) begin
@@ -1334,8 +1332,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                        (gemm_ctrl_if.weight_read_ctrl.cmd.writer_wait),
       .weight_consume_value0_i (weight_consume_value0),
       .weight_consume_value1_i (weight_consume_value1),
-      .weight_consume_value2_i (weight_consume_value2),
-      .weight_consume_value3_i (weight_consume_value3),
       .scale_writer_wait_i
                        (gemm_ctrl_if.scale_read_ctrl.cmd.writer_wait),
       .scale_consume_value0_i (scale_consume_value0),
@@ -1449,9 +1445,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .progress_update_entry_id_o(progress_update_entry_id),
       .progress_update_value_o(progress_update_value),
       .weight_consume_value0_o(weight_consume_value0),
-      .weight_consume_value1_o(weight_consume_value1),
-      .weight_consume_value2_o(weight_consume_value2),
-      .weight_consume_value3_o(weight_consume_value3)
+      .weight_consume_value1_o(weight_consume_value1)
       ,.scale_consume_value0_o(scale_consume_value0)
       ,.scale_consume_value1_o(scale_consume_value1)
       ,.zero_point_consume_value0_o(zero_point_consume_value0)

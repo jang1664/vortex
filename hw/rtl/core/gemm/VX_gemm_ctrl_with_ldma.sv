@@ -175,8 +175,6 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .progress_update_value_o(),
     .weight_consume_value0_o(),
     .weight_consume_value1_o(),
-    .weight_consume_value2_o(),
-    .weight_consume_value3_o(),
     .scale_consume_value0_o(),
     .scale_consume_value1_o(),
     .zero_point_consume_value0_o(),

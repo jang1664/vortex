@@ -211,7 +211,7 @@ module tb_VX_gemm_sync import VX_gpu_pkg::*; ();
 
     for (int i = 0; i < NUM_SYNC_REGS; ++i)
       expect_reg(i, 32'd0, "reset");
-    if (NUM_SYNC_REGS != 25 || GEMM_SYNC_REG_ID_WIDTH != 5)
+    if (NUM_SYNC_REGS != 21 || GEMM_SYNC_REG_ID_WIDTH != 5)
       $fatal(1, "consume RID contract mismatch regs=%0d width=%0d",
              NUM_SYNC_REGS, GEMM_SYNC_REG_ID_WIDTH);
 
@@ -263,24 +263,11 @@ module tb_VX_gemm_sync import VX_gpu_pkg::*; ();
     expect_reg(GEMM_RID_ZP_CONSUME1, 32'd6, "zero consume buffer 1");
     expect_reg(GEMM_RID_SC0, 32'd0, "preserved scale-load RID no alias");
     expect_reg(GEMM_RID_ZP1, 32'd0, "preserved zero-load RID no alias");
-    // The four appended Weight RIDs must occupy distinct storage after the
-    // legacy map, without changing or aliasing any pre-existing RID.
-    drive_updates(1, GEMM_RID_W2, 32'd21,
-                  1, GEMM_RID_W3, 32'd22,
-                  1, GEMM_RID_W_CONSUME2, 32'd23,
-                  1, GEMM_RID_W_CONSUME3, 32'd24,
-                  0, 0, 0, 0, 0, 0);
-    expect_reg(GEMM_RID_W2, 32'd21, "weight load buffer 2");
-    expect_reg(GEMM_RID_W3, 32'd22, "weight load buffer 3");
-    expect_reg(GEMM_RID_W_CONSUME2, 32'd23,
-               "weight consume buffer 2");
-    expect_reg(GEMM_RID_W_CONSUME3, 32'd24,
-               "weight consume buffer 3");
     expect_reg(GEMM_RID_W_CONSUME0, 32'd1,
                "legacy weight consume buffer 0 no alias");
     expect_reg(GEMM_RID_ZP_CONSUME1, 32'd6,
                "legacy zero consume buffer 1 no alias");
-    $display("CONSUME_RID_NO_ALIAS_PASS regs=25 width=5 appended=21,22,23,24");
+    $display("CONSUME_RID_NO_ALIAS_PASS regs=21 width=5");
 
     drive_updates(1, 4, 32'hffff_ffff, 0, 0, 0, 0, 0, 0,
                   0, 0, 0, 0, 0, 0, 0, 0, 0);

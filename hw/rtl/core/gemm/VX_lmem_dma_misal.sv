@@ -1230,19 +1230,22 @@ endmodule
 
 //==============================================================================
 // VX_lmem_dma_weight_overlap
-//  Weight-only TMEM-to-register DMA with two in-order command contexts.
+//  Weight-only TMEM-to-register DMA with four in-order command contexts and
+//  an independent two-bank destination register resource.
 //
 //  Source requests and destination writes are each command-granular and
 //  ordered, but their command heads advance independently.  This permits the
-//  source reads of command N+1 to fill the shared response RAM while command N
-//  drains to the GEMM weight register.
+//  source reads of command N+1 to fill the shared eight-slot response RAM
+//  while command N drains to the GEMM weight register.  The response RAM holds
+//  two complete four-beat payloads; the other contexts remain descriptor-only
+//  until slots become free.
 //==============================================================================
 
 module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int NDIM = 3,
   parameter int TAG_WIDTH = 1,
-  parameter int CMD_FIFO_DEPTH = 2,
+  parameter int CMD_FIFO_DEPTH = 4,
   parameter int CMD_BEATS = `W_LMEM_DMA_CMD_BEATS,
   parameter int RESPONSE_SLOTS = `W_LMEM_DMA_RESPONSE_SLOTS,
   parameter int LMEM_ADDR_WIDTH_P = 1,
@@ -1257,8 +1260,6 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   input gemm_wait_meta_t     writer_wait_i,
   input wire [31:0]          weight_consume_value0_i,
   input wire [31:0]          weight_consume_value1_i,
-  input wire [31:0]          weight_consume_value2_i,
-  input wire [31:0]          weight_consume_value3_i,
   VX_gemm_sync_if.master    gemm_sync_if,
 
   VX_mem_bus_if.master      lmem_bus_if,
@@ -1355,18 +1356,10 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
       == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0);
   wire writer_wait_rid_is_w1 = cmd_writer_wait_r[wr_cmd_ptr_r].reg_id
       == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME1);
-  wire writer_wait_rid_is_w2 = cmd_writer_wait_r[wr_cmd_ptr_r].reg_id
-      == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME2);
-  wire writer_wait_rid_is_w3 = cmd_writer_wait_r[wr_cmd_ptr_r].reg_id
-      == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME3);
   wire writer_wait_rid_valid = writer_wait_rid_is_w0
-                            || writer_wait_rid_is_w1
-                            || writer_wait_rid_is_w2
-                            || writer_wait_rid_is_w3;
-  wire [31:0] writer_consume_value = writer_wait_rid_is_w3
-      ? weight_consume_value3_i
-      : writer_wait_rid_is_w2 ? weight_consume_value2_i
-      : writer_wait_rid_is_w1 ? weight_consume_value1_i
+                            || writer_wait_rid_is_w1;
+  wire [31:0] writer_consume_value = writer_wait_rid_is_w1
+      ? weight_consume_value1_i
       : weight_consume_value0_i;
   wire writer_released = !cmd_writer_wait_r[wr_cmd_ptr_r].valid
       || (writer_wait_rid_valid
@@ -1414,8 +1407,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
                                && writer_released;
   assign gemm_bus_if.req_data.rw = 1'b1;
   // ctrl_if.dst_base_addr is a byte address aligned to one Weight beat.  The
-  // node encodes {load_dir, wreg_idx[1:0]} above the alignment bits, so
-  // conversion back to the bus beat address reproduces those three bits.
+  // node encodes {load_dir, wreg_idx} above the alignment bits, so
+  // conversion back to the bus beat address reproduces those two bits.
   assign gemm_bus_if.req_data.addr = GEMM_ADDR_WIDTH_P'(
       cmd_dst_base_r[wr_cmd_ptr_r] >> BUS_ADDR_BITS);
   assign gemm_bus_if.req_data.data = drain_payload;
@@ -1448,8 +1441,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: Weight overlap DMA requires NDIM=3", INSTANCE_ID);
-    if (CMD_FIFO_DEPTH != 2)
-      $fatal(1, "%s: Weight overlap DMA requires two command entries, got %0d",
+    if (CMD_FIFO_DEPTH != 4)
+      $fatal(1, "%s: Weight overlap DMA requires four command entries, got %0d",
              INSTANCE_ID, CMD_FIFO_DEPTH);
     if ((CMD_BEATS < 1) || ((CMD_BEATS & (CMD_BEATS - 1)) != 0))
       $fatal(1, "%s: CMD_BEATS must be a positive power of two, got %0d",
@@ -1733,16 +1726,10 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         assert (!writer_wait_i.valid
              || (((writer_wait_i.reg_id
                     == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0))
-                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS +: 2] == 2'd0))
+                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS] == 1'b0))
               || ((writer_wait_i.reg_id
                     == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME1))
-                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS +: 2] == 2'd1))
-              || ((writer_wait_i.reg_id
-                    == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME2))
-                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS +: 2] == 2'd2))
-              || ((writer_wait_i.reg_id
-                    == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME3))
-                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS +: 2] == 2'd3))))
+                   && (ctrl_if.dst_base_addr[BUS_ADDR_BITS] == 1'b1))))
           else $fatal(1,
               "%s: Weight writer wait RID does not match destination buffer",
               INSTANCE_ID);

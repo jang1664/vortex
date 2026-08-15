@@ -63,8 +63,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     input gemm_wait_meta_t weight_writer_wait_i,
     input wire [31:0] weight_consume_value0_i,
     input wire [31:0] weight_consume_value1_i,
-    input wire [31:0] weight_consume_value2_i,
-    input wire [31:0] weight_consume_value3_i,
     input gemm_wait_meta_t scale_writer_wait_i,
     input wire [31:0] scale_consume_value0_i,
     input wire [31:0] scale_consume_value1_i,
@@ -454,6 +452,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
+        .CMD_FIFO_DEPTH(4),
         .CMD_BEATS   (W_CMD_BEATS),
         .RESPONSE_SLOTS(W_RD_OUTSTANDING)
     ) u_ldma_weight (
@@ -463,8 +462,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .writer_wait_i(weight_writer_wait_i),
         .weight_consume_value0_i(weight_consume_value0_i),
         .weight_consume_value1_i(weight_consume_value1_i),
-        .weight_consume_value2_i(weight_consume_value2_i),
-        .weight_consume_value3_i(weight_consume_value3_i),
         .gemm_sync_if(ldma_sync_if[1]),
         .lmem_bus_if (ldma_weight_to_tmem),
         .gemm_bus_if (ldma_gemm_weight)

@@ -364,9 +364,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int RID_SC1 = GEMM_RID_SC1, RID_ZP1 = GEMM_RID_ZP1;
   localparam int RID_W_CONSUME0 = GEMM_RID_W_CONSUME0;
   localparam int RID_W_CONSUME1 = GEMM_RID_W_CONSUME1;
-  localparam int RID_W2 = GEMM_RID_W2, RID_W3 = GEMM_RID_W3;
-  localparam int RID_W_CONSUME2 = GEMM_RID_W_CONSUME2;
-  localparam int RID_W_CONSUME3 = GEMM_RID_W_CONSUME3;
   localparam int RID_SC_CONSUME0 = GEMM_RID_SC_CONSUME0;
   localparam int RID_SC_CONSUME1 = GEMM_RID_SC_CONSUME1;
   localparam int RID_ZP_CONSUME0 = GEMM_RID_ZP_CONSUME0;
@@ -379,12 +376,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   function automatic mm_rid_t rid_tile   (input logic buf_sel);  return mm_rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
   function automatic mm_rid_t rid_w_mxu(input gemm_wreg_idx_t w_buf);
-    unique case (w_buf)
-      2'd0: return mm_rid_t'(RID_W0);
-      2'd1: return mm_rid_t'(RID_W1);
-      2'd2: return mm_rid_t'(RID_W2);
-      default: return mm_rid_t'(RID_W3);
-    endcase
+    return mm_rid_t'(w_buf ? RID_W1 : RID_W0);
   endfunction
   function automatic mm_rid_t rid_sc_mxu(input gemm_qreg_idx_t s_buf);
     return mm_rid_t'(s_buf ? RID_SC1 : RID_SC0);
@@ -396,12 +388,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     return mm_rid_t'(g_buf ? RID_G1 : RID_G0);
   endfunction
   function automatic mm_rid_t rid_w_consume(input gemm_wreg_idx_t w_buf);
-    unique case (w_buf)
-      2'd0: return mm_rid_t'(RID_W_CONSUME0);
-      2'd1: return mm_rid_t'(RID_W_CONSUME1);
-      2'd2: return mm_rid_t'(RID_W_CONSUME2);
-      default: return mm_rid_t'(RID_W_CONSUME3);
-    endcase
+    return mm_rid_t'(w_buf ? RID_W_CONSUME1 : RID_W_CONSUME0);
   endfunction
   function automatic mm_rid_t rid_sc_consume(input gemm_qreg_idx_t s_buf);
     return mm_rid_t'(s_buf ? RID_SC_CONSUME1 : RID_SC_CONSUME0);
@@ -816,7 +803,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   gemm_qreg_idx_t z_buf_q, z_buf_d;
   logic        g_buf_q, g_buf_d;
   logic [31:0] gemm_expected_count_q [2];
-  logic [31:0] w_consume_issued_q [4];
+  logic [31:0] w_consume_issued_q [2];
   logic [31:0] sc_consume_issued_q [2];
   logic [31:0] zp_consume_issued_q [2];
   logic        prior_g_wait_valid_q;
@@ -1098,7 +1085,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     if (reset || gemm_invocation_accept) begin
       gemm_expected_count_q[0] <= 32'd0;
       gemm_expected_count_q[1] <= 32'd0;
-      for (int bank = 0; bank < 4; ++bank)
+      for (int bank = 0; bank < 2; ++bank)
         w_consume_issued_q[bank] <= 32'd0;
       sc_consume_issued_q[0] <= 32'd0;
       sc_consume_issued_q[1] <= 32'd0;
@@ -1793,9 +1780,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic [7:0] flags;
           c = '0;
 
-          // VX_gemm_node maps weight flags[2:0] to
-          // {load_dir, wreg_idx[1:0]}.
-          flags      = {5'd0, job_q.wtrans, w_buf_q};
+          // VX_gemm_node maps weight flags[1:0] to
+          // {load_dir, wreg_idx}.
+          flags      = {6'd0, job_q.wtrans, w_buf_q};
           c.flags    = flags;
           c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
           c.rs1_data = {62'd0, w_buf_q};
@@ -1919,12 +1906,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             gemm_unified_cmd_t c;
             logic [7:0] flags;
 
-            next_w_buf = w_buf_q + gemm_wreg_idx_t'(1);
+            next_w_buf = ~w_buf_q;
             c = '0;
 
-            // VX_gemm_node maps weight flags[2:0] to
-            // {load_dir, wreg_idx[1:0]}.
-            flags      = {5'd0, job_q.wtrans, next_w_buf};
+            // VX_gemm_node maps weight flags[1:0] to
+            // {load_dir, wreg_idx}.
+            flags      = {6'd0, job_q.wtrans, next_w_buf};
             c.flags    = flags;
             c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
             c.rs1_data  = {62'd0, next_w_buf};
@@ -2054,9 +2041,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           // VX_gemm_node consumes flags[6]=quant_dir,
           // flags[5]=notify_on_writeback, flags[4]=is_accum, and
-          // flags[3:0]={wreg_idx[1:0], sreg_idx, zreg_idx}.
+          // flags[3] is reserved; flags[2:0] carry independent W/S/Z banks.
           flags     = {1'b0, job_q.qdir, notify_on_writeback,
-                       is_accum, w_buf_q, s_buf_q, z_buf_q};
+                       is_accum, 1'b0, w_buf_q, s_buf_q, z_buf_q};
           in_bytes  = mt_eff_cur * MXU_KT * FP16_BYTES;
 
           c.flags   = flags;
@@ -2073,9 +2060,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);
-          // Source issue waits only for the producer tile.  Exact operand
-          // versions and accumulator ownership are checked at the ordered
-          // GEMM-admission boundary after the payload has been prefetched.
+          // Source issue waits only for the producer tile.  Accumulator
+          // ownership is checked at ordered GEMM admission; exact W/S/Z
+          // versions travel as metadata and stall only at their consumers.
           out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
                                                in_ready_target_cur);
           out_cmd_d.input_admit_waits[0]
@@ -2103,7 +2090,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (has_next_mxu) begin
           nt_mxu_d  = n_nt_mxu;
           kt_mxu_d  = n_kt_mxu;
-          w_buf_d = w_buf_q + gemm_wreg_idx_t'(1);
+          w_buf_d = ~w_buf_q;
           s_buf_d = ~s_buf_q;
           z_buf_d = ~z_buf_q;
           g_buf_d = ~g_buf_q;
@@ -2451,7 +2438,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
              && (sc_consume_issued_q[s_buf_q] != 32'hffff_ffff)
              && (zp_consume_issued_q[z_buf_q] != 32'hffff_ffff))
           else $fatal(1, "GEMM resource consume target overflow");
-        assert ((out_cmd_d.flags[3:2] == w_buf_q)
+        assert (!out_cmd_d.flags[3]
+             && (out_cmd_d.flags[2] == w_buf_q)
              && (out_cmd_d.flags[1] == s_buf_q)
              && (out_cmd_d.flags[0] == z_buf_q))
           else $fatal(1, "GEMM ARM independent W/S/Z index encoding failed");
@@ -2563,17 +2551,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           end
           S_MXU_PRE_NEXT_W: begin
             assert (out_cmd_d.writer_wait.valid
-                 == (w_consume_issued_q[
-                       w_buf_q + gemm_wreg_idx_t'(1)] != 0))
+                 == (w_consume_issued_q[~w_buf_q] != 0))
               else $fatal(1, "Next W LOAD writer-wait validity mismatch");
-            if (w_consume_issued_q[
-                  w_buf_q + gemm_wreg_idx_t'(1)] != 0) begin
+            if (w_consume_issued_q[~w_buf_q] != 0) begin
               assert ((out_cmd_d.writer_wait.reg_id
                        == GEMM_SYNC_REG_ID_WIDTH'(
-                            rid_w_consume(w_buf_q + gemm_wreg_idx_t'(1))))
+                            rid_w_consume(~w_buf_q)))
                    && (out_cmd_d.writer_wait.target
-                       == w_consume_issued_q[
-                            w_buf_q + gemm_wreg_idx_t'(1)]))
+                       == w_consume_issued_q[~w_buf_q]))
                 else $fatal(1, "Next W LOAD writer-wait mismatch");
             end
             assert (!out_cmd_d.waits[1].valid
@@ -2740,10 +2725,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                      == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
                   || (out_cmd_d.writer_wait.reg_id
                      == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
-                  || (out_cmd_d.writer_wait.reg_id
-                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME2))
-                  || (out_cmd_d.writer_wait.reg_id
-                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME3))))
+                  ))
                 || ((out_cmd_d.instr[3:0] == OP_SC_LDMA_MXU)
                  && ((out_cmd_d.writer_wait.reg_id
                      == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
@@ -3039,17 +3021,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     ("GEMM sync RID width is too small"));
   `VX_STATIC_ASSERT((RID_W_CONSUME0 < NUM_SYNC_REGS)
                  && (RID_W_CONSUME1 < NUM_SYNC_REGS)
-                 && (RID_W_CONSUME2 < NUM_SYNC_REGS)
-                 && (RID_W_CONSUME3 < NUM_SYNC_REGS)
                  && (RID_SC_CONSUME0 < NUM_SYNC_REGS)
                  && (RID_SC_CONSUME1 < NUM_SYNC_REGS)
                  && (RID_ZP_CONSUME0 < NUM_SYNC_REGS)
                  && (RID_ZP_CONSUME1 < NUM_SYNC_REGS),
     ("GEMM consume RID is out of range"));
   `VX_STATIC_ASSERT((RID_W_CONSUME0 != RID_W_CONSUME1)
-                 && (RID_W_CONSUME1 != RID_W_CONSUME2)
-                 && (RID_W_CONSUME2 != RID_W_CONSUME3)
-                 && (RID_W_CONSUME3 != RID_SC_CONSUME0)
+                 && (RID_W_CONSUME1 != RID_SC_CONSUME0)
                  && (RID_SC_CONSUME0 != RID_SC_CONSUME1)
                  && (RID_SC_CONSUME1 != RID_ZP_CONSUME0)
                  && (RID_ZP_CONSUME0 != RID_ZP_CONSUME1),

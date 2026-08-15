@@ -18,8 +18,6 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   gemm_wait_meta_t writer_wait_i;
   logic [31:0] weight_consume_value0_i;
   logic [31:0] weight_consume_value1_i;
-  logic [31:0] weight_consume_value2_i;
-  logic [31:0] weight_consume_value3_i;
   always #5 clk = ~clk;
 
   VX_lmem_dma_ctrl_if #(.NDIM(NDIM)) ctrl_if();
@@ -37,7 +35,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .INSTANCE_ID("weight_overlap_tb"),
     .NDIM(NDIM),
     .TAG_WIDTH(TAG_WIDTH),
-    .CMD_FIFO_DEPTH(2),
+    .CMD_FIFO_DEPTH(4),
     .CMD_BEATS(CMD_BEATS),
     .RESPONSE_SLOTS(RESPONSE_SLOTS),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
@@ -51,8 +49,6 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .writer_wait_i(writer_wait_i),
     .weight_consume_value0_i(weight_consume_value0_i),
     .weight_consume_value1_i(weight_consume_value1_i),
-    .weight_consume_value2_i(weight_consume_value2_i),
-    .weight_consume_value3_i(weight_consume_value3_i),
     .gemm_sync_if(sync_if),
     .lmem_bus_if(lmem_bus_if),
     .gemm_bus_if(gemm_bus_if)
@@ -78,19 +74,16 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   endfunction
 
   function automatic logic [63:0] command_dst_base(input int seq);
-    // Match the node's {load_dir, wreg_idx[1:0]} selector encoding.  This test
-    // uses load_dir=0 and walks all four physical Weight registers.
-    return 64'(seq & 3) << $clog2(BUS_BYTES);
+    // Match the node's {load_dir, wreg_idx} selector encoding.  This test uses
+    // load_dir=0 and alternates the two physical Weight registers.
+    return 64'(seq & 1) << $clog2(BUS_BYTES);
   endfunction
 
   function automatic logic [GEMM_SYNC_REG_ID_WIDTH-1:0]
       weight_consume_rid(input int seq);
-    case (seq & 3)
-      0: return GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0);
-      1: return GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME1);
-      2: return GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME2);
-      default: return GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME3);
-    endcase
+    return (seq & 1)
+         ? GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME1)
+         : GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0);
   endfunction
 
   function automatic logic [BUS_BYTES*8-1:0] response_payload(
@@ -112,7 +105,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     ctrl_if.reg_value = 32'(200 + seq);
     writer_wait_i = '0;
     // Commands 2..5 arrive after value 3 is already visible, covering
-    // consume-before-accept. Command 6 deliberately waits for a new buffer-2
+    // consume-before-accept. Command 6 deliberately waits for a new buffer-0
     // target so its complete source phase can be checked independently of the
     // destination writer fence.
     if ((seq >= 2) && (seq <= 5)) begin
@@ -302,8 +295,6 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     writer_wait_i = '0;
     weight_consume_value0_i = 32'd0;
     weight_consume_value1_i = 32'd0;
-    weight_consume_value2_i = 32'd0;
-    weight_consume_value3_i = 32'd0;
     for (int d = 0; d < NDIM; ++d) begin
       ctrl_if.src_strides[d] = '0;
       ctrl_if.dst_strides[d] = '0;
@@ -332,17 +323,21 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     reset = 1'b0;
     repeat (2) @(posedge clk);
 
-    // Fill both command entries before any source request can fire. Command 1
-    // is therefore enqueued while command 0 is still far from write complete.
+    // Fill all four command entries before any source request can fire.  The
+    // later two entries remain descriptor-resident once the eight slots hold
+    // the first two complete command payloads.
     enqueue_command(0);
     enqueue_command(1);
+    enqueue_command(2);
+    enqueue_command(3);
     @(negedge clk);
-    if (ctrl_if.idle !== 1'b0 || dut.cmd_count_r != 2)
-      $fatal(1, "Weight command FIFO did not report full after two enqueues");
-    $display("PASS marker: command N+1 enqueued while N active and FIFO full");
+    if (ctrl_if.idle !== 1'b0 || dut.cmd_count_r != 4)
+      $fatal(1, "Weight command FIFO did not report full after four enqueues");
+    $display("PASS marker: four Weight descriptors enqueued before any completion");
 
-    // Hold the first source request, then accept both commands' reads. The
-    // global tags must be exactly slots 0..7 and all slots must be occupied.
+    // Hold the first source request, then accept two commands' reads.  The
+    // global tags must be exactly slots 0..7, all slots must be occupied, and
+    // commands 2 and 3 must remain valid at the read head without issuing.
     repeat (3) @(posedge clk);
     @(negedge clk);
     lmem_req_ready_r = 1'b1;
@@ -352,7 +347,12 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (dut.slot_occupancy_r != RESPONSE_SLOTS)
       $fatal(1, "shared slot pool occupancy=%0d expected=%0d",
              dut.slot_occupancy_r, RESPONSE_SLOTS);
-    $display("PASS marker: in-order source commands used shared slots 0..7 and filled all slots");
+    if (dut.cmd_count_r != 4 || dut.cmd_valid_r !== 4'b1111
+     || dut.cmd_rd_done_r !== 4'b0011 || dut.rd_cmd_ptr_r != 2)
+      $fatal(1, "four-descriptor/eight-slot residency mismatch count=%0d valid=%0h rd_done=%0h rd_ptr=%0d",
+             dut.cmd_count_r, dut.cmd_valid_r, dut.cmd_rd_done_r,
+             dut.rd_cmd_ptr_r);
+    $display("PASS marker: eight slots hold two payloads while two later descriptors remain resident");
 
     // Return all eight source responses in reverse tag order. Slot zero is
     // deliberately last, proving tagged out-of-order capture and ordered drain.
@@ -372,14 +372,12 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     // current level at accept rather than wait for a new release pulse.
     weight_consume_value0_i = 32'd3;
     weight_consume_value1_i = 32'd3;
-    weight_consume_value2_i = 32'd3;
-    weight_consume_value3_i = 32'd3;
 
     // Keep the command FIFO full by enqueueing on command-boundary pop cycles.
     // In parallel, return later responses in request order as their slots wrap.
     fork
       begin
-        for (int seq = 2; seq < MAIN_COMMANDS; ++seq)
+        for (int seq = 4; seq < MAIN_COMMANDS; ++seq)
           enqueue_command(seq);
       end
       begin
@@ -406,7 +404,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (completion_count != MAIN_COMMANDS)
       $fatal(1, "completion count=%0d expected=%0d",
              completion_count, MAIN_COMMANDS);
-    if (enqueue_count != MAIN_COMMANDS || pop_push_count < 3)
+    if (enqueue_count != MAIN_COMMANDS || pop_push_count < 2)
       $fatal(1, "command wrap/pop-push coverage missing enq=%0d pop_push=%0d",
              enqueue_count, pop_push_count);
     if (source_stall_cycles == 0 || destination_stall_cycles == 0)
@@ -422,9 +420,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     $display("PASS marker: ready four-beat burst boundary idle cycles=%0d", first_boundary_gap);
     $display("PASS marker: source and destination backpressure held requests stable");
 
-    // A source-ready buffer-2 command may fill all four response slots while
+    // A source-ready buffer-0 command may fill all four response slots while
     // its exact consume target remains unresolved.  A stale target and a
-    // wrong-buffer newer target must not release the writer; only W2 target 4
+    // wrong-buffer newer target must not release the writer; only W0 target 4
     // permits destination traffic.
     enqueue_command(6);
     wait_source_count(MAIN_BEATS + CMD_BEATS);
@@ -440,17 +438,17 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
      || destination_req_count != MAIN_BEATS
      || gemm_bus_if.req_valid)
       $fatal(1, "unreleased writer was not held after complete source preload");
-    weight_consume_value3_i = 32'd4;
+    weight_consume_value1_i = 32'd4;
     repeat (2) @(posedge clk);
     @(negedge clk);
     if (destination_req_count != MAIN_BEATS || gemm_bus_if.req_valid)
-      $fatal(1, "wrong-buffer consume value released buffer-2 writer");
-    weight_consume_value2_i = 32'd3;
+      $fatal(1, "wrong-buffer consume value released buffer-0 writer");
+    weight_consume_value0_i = 32'd3;
     repeat (2) @(posedge clk);
     @(negedge clk);
     if (destination_req_count != MAIN_BEATS || gemm_bus_if.req_valid)
-      $fatal(1, "stale buffer-2 consume value released writer");
-    weight_consume_value2_i = 32'd4;
+      $fatal(1, "stale buffer-0 consume value released writer");
+    weight_consume_value0_i = 32'd4;
     lmem_req_ready_r = 1'b1;
     wait_destination_count(MAIN_BEATS + CMD_BEATS);
     if (completion_count != MAIN_COMMANDS + 1)
@@ -491,7 +489,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
       $fatal(1, "stale activity survived live reset");
     $display("PASS marker: live request/response/drain reset emitted no stale output");
 
-    $display("PASSED: Weight LDMA shared-slot two-head overlap directed test");
+    $display("PASSED: Weight LDMA four-command/eight-slot two-head overlap directed test");
     $finish;
   end
 

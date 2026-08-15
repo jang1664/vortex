@@ -61,11 +61,10 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   dma_ctrl_t  dma_ctrl;
   dma_flag_t  dma_flag;
 
-  // Exact Input-admission dependency levels.  Weight and ACC expose the
-  // same-cycle effective view; Scale/ZP intentionally expose only the
-  // registered view so a LOAD completion cannot race the admission-edge
-  // snapshot without an explicit data bypass.
-  logic [31:0] input_w_load_value [4];
+  // Exact operand-consumer dependency levels.  W/S/Z expose the registered
+  // view so a final register write becomes consumable only on the following
+  // cycle.  ACC retains its same-cycle effective admission view.
+  logic [31:0] input_w_load_value [2];
   logic [31:0] input_sc_load_value[2];
   logic [31:0] input_zp_load_value[2];
   logic [31:0] input_acc_free_value[2];

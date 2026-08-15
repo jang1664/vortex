@@ -2730,6 +2730,9 @@ module tb_VX_gemm_node_improve
     gemm_wreg_idx_t   wreg_use_idx;
     logic             sreg_use_idx;
     logic             zreg_use_idx;
+    logic [31:0]      w_load_target;
+    logic [31:0]      s_load_target;
+    logic [31:0]      z_load_target;
   } input_metadata_model_t;
 
   input_metadata_model_t input_metadata_model[1024];
@@ -2746,6 +2749,11 @@ module tb_VX_gemm_node_improve
   longint unsigned input_final_done_count;
   longint unsigned input_scheduler_retire_count;
   longint unsigned prior_raw_write_during_final_count;
+  logic input_metadata_stall_q;
+  logic [$bits(u_dut.i_gemm_bus_if.req_data)-1:0]
+    input_metadata_stall_req_q;
+  gemm_input_ctrl_t input_metadata_stall_ctrl_q;
+  longint unsigned input_metadata_stall_cycle_count;
 
   function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]
     expected_input_metadata_addr(
@@ -2786,15 +2794,49 @@ module tb_VX_gemm_node_improve
       input_final_done_count = 0;
       input_scheduler_retire_count = 0;
       prior_raw_write_during_final_count = 0;
+      input_metadata_stall_q = 1'b0;
+      input_metadata_stall_req_q = '0;
+      input_metadata_stall_ctrl_q = '0;
+      input_metadata_stall_cycle_count = 0;
     end else begin
       if ((input_metadata_complete_idx == input_metadata_tail_idx)
           && u_dut.input_dma_ctrl_if.idle
           && u_dut.gemm_ctrl_if.input_read_flag.done)
         $fatal(1, "[%0t] INPUT_METADATA initial/raw LDMA idle completed a command", $time);
 
-      if (u_dut.gemm_unit_v2_if.packet_ctrl.valid !== input_fire)
-        $fatal(1, "[%0t] INPUT_METADATA valid/fire mismatch: valid=%b fire=%b",
-               $time, u_dut.gemm_unit_v2_if.packet_ctrl.valid, input_fire);
+      // packet_ctrl.valid is the valid half of the held input request, not an
+      // acceptance pulse.  Only input_fire may advance the command model.
+      if (u_dut.gemm_unit_v2_if.packet_ctrl.valid
+            !== u_dut.i_gemm_bus_if.req_valid)
+        $fatal(1, "[%0t] INPUT_METADATA packet/request valid mismatch: metadata_valid=%b request_valid=%b",
+               $time, u_dut.gemm_unit_v2_if.packet_ctrl.valid,
+               u_dut.i_gemm_bus_if.req_valid);
+
+      // A request observed stalled on the preceding edge must still be
+      // presented unchanged on this edge, including the edge on which ready
+      // eventually rises and the request is accepted.
+      if (input_metadata_stall_q) begin
+        if (u_dut.i_gemm_bus_if.req_valid !== 1'b1
+            || u_dut.gemm_unit_v2_if.packet_ctrl.valid !== 1'b1
+            || u_dut.i_gemm_bus_if.req_data
+               !== input_metadata_stall_req_q
+            || u_dut.gemm_unit_v2_if.packet_ctrl
+               !== input_metadata_stall_ctrl_q)
+          $fatal(1, "[%0t] INPUT_METADATA stalled request/control changed before acceptance",
+                 $time);
+      end
+
+      input_metadata_stall_q = u_dut.i_gemm_bus_if.req_valid
+                            && !u_dut.i_gemm_bus_if.req_ready;
+      if (input_metadata_stall_q) begin
+        input_metadata_stall_req_q = u_dut.i_gemm_bus_if.req_data;
+        input_metadata_stall_ctrl_q = u_dut.gemm_unit_v2_if.packet_ctrl;
+        input_metadata_stall_cycle_count++;
+        if (u_dut.input_packet_fire !== 1'b0
+            || u_dut.u_VX_gemm_unit_v2.input_fire !== 1'b0)
+          $fatal(1, "[%0t] INPUT_METADATA stalled request advanced admission",
+                 $time);
+      end
 
       if (u_dut.input_cmd_start) begin
         if (input_metadata_tail_idx >= 1024)
@@ -2813,11 +2855,17 @@ module tb_VX_gemm_node_improve
         input_metadata_model[input_metadata_tail_idx].quant_dir
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[6];
         input_metadata_model[input_metadata_tail_idx].wreg_use_idx
-          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[3:2];
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
         input_metadata_model[input_metadata_tail_idx].sreg_use_idx
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
         input_metadata_model[input_metadata_tail_idx].zreg_use_idx
           = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.flags[0];
+        input_metadata_model[input_metadata_tail_idx].w_load_target
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[0].target;
+        input_metadata_model[input_metadata_tail_idx].s_load_target
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[1].target;
+        input_metadata_model[input_metadata_tail_idx].z_load_target
+          = u_dut.gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[2].target;
         input_metadata_cmd_count++;
 
         if (input_metadata_model[input_metadata_tail_idx].packet_count == 0)
@@ -2854,7 +2902,13 @@ module tb_VX_gemm_node_improve
             || u_dut.input_cmd_ctx.sreg_use_idx
                !== input_metadata_model[input_metadata_admit_idx].sreg_use_idx
             || u_dut.input_cmd_ctx.zreg_use_idx
-               !== input_metadata_model[input_metadata_admit_idx].zreg_use_idx)
+               !== input_metadata_model[input_metadata_admit_idx].zreg_use_idx
+            || u_dut.input_cmd_ctx.admit_waits[0].target
+               !== input_metadata_model[input_metadata_admit_idx].w_load_target
+            || u_dut.input_cmd_ctx.admit_waits[1].target
+               !== input_metadata_model[input_metadata_admit_idx].s_load_target
+            || u_dut.input_cmd_ctx.admit_waits[2].target
+               !== input_metadata_model[input_metadata_admit_idx].z_load_target)
           $fatal(1, "[%0t] INPUT_METADATA registered context mismatch during command",
                  $time);
 
@@ -2890,6 +2944,12 @@ module tb_VX_gemm_node_improve
                !== input_metadata_model[input_metadata_admit_idx].sreg_use_idx
             || u_dut.gemm_unit_v2_if.packet_ctrl.zreg_use_idx
                !== input_metadata_model[input_metadata_admit_idx].zreg_use_idx
+            || u_dut.gemm_unit_v2_if.packet_ctrl.w_load_target
+               !== input_metadata_model[input_metadata_admit_idx].w_load_target
+            || u_dut.gemm_unit_v2_if.packet_ctrl.s_load_target
+               !== input_metadata_model[input_metadata_admit_idx].s_load_target
+            || u_dut.gemm_unit_v2_if.packet_ctrl.z_load_target
+               !== input_metadata_model[input_metadata_admit_idx].z_load_target
             || u_dut.gemm_unit_v2_if.packet_ctrl.is_load
                !== !input_metadata_model[input_metadata_admit_idx].is_accum
             || u_dut.gemm_unit_v2_if.packet_ctrl.notify_on_writeback
@@ -2899,6 +2959,8 @@ module tb_VX_gemm_node_improve
                  $time, input_metadata_model[input_metadata_admit_idx].packet_index,
                  expected_addr, expected_last);
 
+        // Packet ownership and all associated indices/counts advance only on
+        // the ready/valid acceptance event.
         input_metadata_packet_count++;
 
         if (expected_last) begin
@@ -2968,13 +3030,14 @@ module tb_VX_gemm_node_improve
       if (require_prior_raw_overlap
           && prior_raw_write_during_final_count == 0)
         $fatal(1, "INPUT_METADATA did not cover prior raw writeback during final command");
-      $display("[%0t] INPUT_METADATA_PASSED | {commands=%0d, packets=%0d, last_admission=%0d, last_write=%0d, done=%0d, nonfinal_done=%0d, final_done=%0d, scheduler_retire=%0d, prior_raw_during_final=%0d, bubbles=%0d}",
+      $display("[%0t] INPUT_METADATA_PASSED | {commands=%0d, packets=%0d, last_admission=%0d, last_write=%0d, done=%0d, nonfinal_done=%0d, final_done=%0d, scheduler_retire=%0d, prior_raw_during_final=%0d, bubbles=%0d, stalled_valid_cycles=%0d}",
                $time, input_metadata_cmd_count, input_metadata_packet_count,
                input_metadata_last_admission_count,
                input_metadata_last_write_count, input_metadata_done_count,
                input_nonfinal_done_count, input_final_done_count,
                input_scheduler_retire_count, prior_raw_write_during_final_count,
-               input_metadata_bubble_count);
+               input_metadata_bubble_count,
+               input_metadata_stall_cycle_count);
     end
   endtask
 

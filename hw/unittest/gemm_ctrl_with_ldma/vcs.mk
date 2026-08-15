@@ -4,6 +4,7 @@ compile: setup
 	-kdb \
 	-sverilog \
 	-full64 \
+	-top $(TOP_MODULE) \
 	-debug_access+all \
 	-l $(COMPILE_LOG) \
 	-timescale=$(TIME_SCALE) \

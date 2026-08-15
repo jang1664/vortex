@@ -917,7 +917,7 @@ package VX_gpu_pkg;
    localparam int GEMM_SYNC_REG_ID_WIDTH = 5;
    localparam int GEMM_DMA_TAG_WIDTH     = 3;
    localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
-   localparam int GEMM_NUM_SYNC_REGS     = 25;
+   localparam int GEMM_NUM_SYNC_REGS     = 21;
    localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
    localparam int GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS =
        `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS;
@@ -954,14 +954,11 @@ package VX_gpu_pkg;
    localparam int GEMM_RID_SC_CONSUME1 = 18;
    localparam int GEMM_RID_ZP_CONSUME0 = 19;
    localparam int GEMM_RID_ZP_CONSUME1 = 20;
-   // Keep every legacy RID stable.  Four-bank Weight versioning appends the
-   // two new LOAD-completion registers and their matching consume registers.
-   localparam int GEMM_RID_W2           = 21;
-   localparam int GEMM_RID_W3           = 22;
-   localparam int GEMM_RID_W_CONSUME2   = 23;
-   localparam int GEMM_RID_W_CONSUME3   = 24;
+   // Keep every surviving RID value stable.  IDs 21-24, which were appended
+   // solely for the temporary four-bank Weight scheme, are intentionally
+   // removed when Weight returns to two-bank double buffering.
 
-   typedef logic [1:0] gemm_wreg_idx_t;
+   typedef logic       gemm_wreg_idx_t;
    typedef logic       gemm_qreg_idx_t;
 
    typedef struct packed {
@@ -1003,9 +1000,10 @@ package VX_gpu_pkg;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
        gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
-       // Input-only GEMM-admission fences.  These waits are intentionally
+       // Input-only resource metadata.  These waits are intentionally
        // excluded from child issue eligibility so the pure source-read phase
-       // can execute early; the node applies them to the ordered writer head.
+       // can execute early.  The node gates admission only on ACC ownership;
+       // exact W/S/Z bank/generation targets travel to their true consumers.
        gemm_wait_meta_t [3:0] input_admit_waits;
        // Resource-local destination commit fence for Weight, Scale, and
        // Zero-point LOADs.  Unlike waits[], this metadata does not participate
@@ -1044,6 +1042,12 @@ package VX_gpu_pkg;
       gemm_wreg_idx_t wreg_use_idx;
       gemm_qreg_idx_t sreg_use_idx;
       gemm_qreg_idx_t zreg_use_idx;
+      // Exact registered LOAD generations required by this transaction.
+      // Values, unlike bank/generation metadata, are never snapshotted into
+      // the GEMM pipeline.
+      logic [31:0] w_load_target;
+      logic [31:0] s_load_target;
+      logic [31:0] z_load_target;
       logic is_load;
       logic notify_on_writeback;
       logic last;

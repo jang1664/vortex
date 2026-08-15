@@ -37,8 +37,8 @@ module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
     end
   end
 
-  // Four-bank weight memory: [row][col][bank_select]
-  logic [ROW_SIZE-1:0][COL_SIZE-1:0][3:0][WEIGHT_DW-1:0] mem;
+  // Independent two-bank Weight double buffer: [row][col][bank_select].
+  logic [ROW_SIZE-1:0][COL_SIZE-1:0][1:0][WEIGHT_DW-1:0] mem;
 
   // Weight loading logic
   generate

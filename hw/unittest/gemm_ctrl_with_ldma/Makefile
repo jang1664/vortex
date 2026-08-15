@@ -23,6 +23,14 @@ TOP_MODULE := tb_VX_gemm_ctrl_with_ldma
 TB   := $(SRC_DIR)/tb_VX_gemm_ctrl_with_ldma.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
+				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_gearbox.sv \
+				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
+				$(RTL_DIR)/core/VX_dma_lane_assembler.sv \
+				$(RTL_DIR)/core/VX_dma_equal_realigner.sv \
+				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
+				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl_with_ldma.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \

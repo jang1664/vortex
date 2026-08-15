@@ -296,11 +296,11 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     int n_dma_ld, n_dma_st, n_w, n_sc, n_zp;
     int n_arm, n_acc2lmem, n_wait, n_ntf;
     int unsigned g_expected_count [2];
-    int unsigned w_consume_count [4];
+    int unsigned w_consume_count [2];
     int unsigned sc_consume_count [2];
     int unsigned zp_consume_count [2];
     int unsigned tile_target [2];
-    int unsigned w_target [4];
+    int unsigned w_target [2];
     int unsigned sc_target [2];
     int unsigned zp_target [2];
     int unsigned output_store_issue;
@@ -339,7 +339,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
         sc_target[bank] = 0;
         zp_target[bank] = 0;
       end
-      for (int bank = 0; bank < 4; bank++) begin
+      for (int bank = 0; bank < 2; bank++) begin
         w_consume_count[bank] = 0;
         w_target[bank] = 0;
       end
@@ -542,25 +542,11 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
           OP_W_LDMA_MXU: begin
             logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_rid;
             logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_consume_rid;
-            cmd_buf = cmd_log[i].flags[1:0];
-            unique case (cmd_buf)
-              0: begin
-                expected_w_rid = 5'(1);
-                expected_w_consume_rid = GEMM_RID_W_CONSUME0;
-              end
-              1: begin
-                expected_w_rid = 5'(6);
-                expected_w_consume_rid = GEMM_RID_W_CONSUME1;
-              end
-              2: begin
-                expected_w_rid = GEMM_RID_W2;
-                expected_w_consume_rid = GEMM_RID_W_CONSUME2;
-              end
-              default: begin
-                expected_w_rid = GEMM_RID_W3;
-                expected_w_consume_rid = GEMM_RID_W_CONSUME3;
-              end
-            endcase
+            cmd_buf = cmd_log[i].flags[0];
+            expected_w_rid = cmd_buf ? GEMM_RID_W1 : GEMM_RID_W0;
+            expected_w_consume_rid = cmd_buf
+                                   ? GEMM_RID_W_CONSUME1
+                                   : GEMM_RID_W_CONSUME0;
             if (!cmd_log[i].waits[0].valid
                 || !(cmd_log[i].waits[0].reg_id inside {4'd0, 4'd5}))
               $fatal(1, "W load #%0d lacks tile-ready wait", i);
@@ -669,15 +655,10 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
             int unsigned g_bank;
             logic [GEMM_SYNC_REG_ID_WIDTH-1:0] expected_w_rid;
 
-            w_bank = cmd_log[i].flags[3:2];
+            w_bank = cmd_log[i].flags[2];
             s_bank = cmd_log[i].flags[1];
             z_bank = cmd_log[i].flags[0];
-            unique case (w_bank)
-              0: expected_w_rid = 5'(1);
-              1: expected_w_rid = 5'(6);
-              2: expected_w_rid = GEMM_RID_W2;
-              default: expected_w_rid = GEMM_RID_W3;
-            endcase
+            expected_w_rid = w_bank ? GEMM_RID_W1 : GEMM_RID_W0;
             acc_group = (cmd_log[i].rs1 >= TB_ACC_DBUF_STRIDE);
             reuse_target = cmd_log[i].input_admit_waits[3].target;
             if (!cmd_log[i].flags[6])
