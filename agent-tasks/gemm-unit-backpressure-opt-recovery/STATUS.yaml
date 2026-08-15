@@ -1,0 +1,325 @@
+task: gemm-unit-backpressure-opt-recovery
+state: STOPPED
+updated: "2026-08-15"
+spec: agent-tasks/gemm-unit-backpressure-opt-recovery/gemm-unit-backpressure-opt-recovery-spec.md
+parent_status: agent-tasks/gemm-unit-backpressure-opt/STATUS.yaml
+source_plan: docs/future_optim/gemv/gemm_improve/gemm_unit_backpressure_opt.md
+current_phase: phase2_verification_incomplete
+iteration_limit: 10
+pitfalls:
+  - "Do not waive early/coincident ACC coverage; construct the required spacing at merged_fifo_pop/post-launch, not at source admission."
+  - "The Phase-1 production architecture and event-driven ownership scoreboards are already functionally clean; keep the initial recovery edit testbench-only."
+  - "Do not begin Phase 2 until legacy, focused, and both node QDIR gates pass."
+  - "Preserve the dirty worktree and all parent-task changes."
+iterations:
+  - timestamp: "2026-08-15"
+    iteration: 0
+    phase: recovery_specification
+    status: confirmed
+    test: "Legacy/focused/node Phase-1 VCS gates followed by the confirmed Phase-2 loop."
+    error_summary: "The parent loop reached 10/10 with functional queues clean but early-read and coincident nominal/early coverage both zero."
+    root_cause: "Alternating QDIR source spacing is not preserved through elastic branches, so the directed stimulus did not produce exact K_LOOKBACK spacing at post launch."
+    fix_applied: "Confirmed a same-QDIR, full-rate, post-launch-aware bank/address stimulus before resuming Phase 2."
+    verification: "Pending recovery implementation and VCS iteration 1."
+    lesson: "Latency-sensitive coverage must constrain the architectural classification boundary after elastic routing."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase1_coverage_recovery_implementation
+    status: implementation_ready
+    test: "Legacy gemm_unit_v2 VCS first; on PASS, focused gemm_unit_v2_backpressure and QCOL/QROW gemm_node_improve gates."
+    error_summary: "The alternating-QDIR accumulation stream did not preserve the two-cycle writer/reader relation at merged_fifo_pop, so early and cross-bank coincident coverage remained zero."
+    root_cause: "For the current 1/1/0 ACC read/add/post contract K_LOOKBACK is two, and a nominal launch followed one cycle later by an early launch is required for coincident requests. Alternating elastic QDIR branches changed that post-launch spacing."
+    fix_applied: "Changed only the legacy testbench scheduler stimulus to a same-QDIR QCOL full-rate sequential-address stream. At merged_fifo_pop it now requires W/N/E at consecutive cycles and addresses A, A+ROW, A+2*ROW, which map to banks B0/B1/B0. The E launch proves no exact immediate/history match and an exact K_LOOKBACK writer-bank match; the test also requires the B1 nominal and B0 early requests in the same cycle, early_hold as the selected PSUM source, ordered writes, exact event counts, and complete event-queue drain. Existing immediate/history and all other coverage remain required. Production RTL is unchanged."
+    verification: "Target-config Verilator lint parsed/elaborated the new TB and reported no syntax, hierarchy, select-range, or non-BLKANDNBLK error. It stopped only on the 25 known legacy mixed blocking/nonblocking assignments to test_failed. Diff whitespace and STATUS YAML checks passed; no VCS, simulation, blackbox, or FSDB run was performed by the implementation role."
+    lesson: "A deterministic ACC hazard test should construct and assert the writer/nominal/early relation at merged_fifo_pop, then follow that transaction through the physical read request and selected response source."
+    test_request:
+      test_type: unittest
+      test_path: hw/unittest/gemm_unit_v2
+      test_params: "default legacy full suite; then focused suite; then gemm_node_improve M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 for QDIR=0 and QDIR=1"
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+      notes: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Run the legacy suite first and require exact early=14, nominal=2, coincident=1, early-hold=14 deltas for the directed stream plus all queues empty. Only after legacy PASS run focused and node gates."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase1_coverage_recovery_verification
+    status: sim_fail
+    test: "Legacy gemm_unit_v2 VCS, focused gemm_unit_v2_backpressure VCS, then gemm_node_improve QCOL VCS."
+    error_summary: "Legacy passed with the exact directed deltas early=14, nominal=2, coincident=1, and early_hold=14 and with all event queues drained; focused passed. QCOL node stopped at 1895 ns in tb_VX_gemm_node_improve.sv on INPUT_METADATA valid/fire mismatch (valid=1, fire=0), so QROW was not run."
+    root_cause: "The node TB still treated packet_ctrl.valid as an acceptance pulse. Production intentionally drives packet_ctrl.valid from i_gemm_bus_if.req_valid and advances active packet state only on req_valid && req_ready; held valid during backpressure is legal."
+    fix_applied: "None during verification. Classified the failure as a stale node-TB ready/valid assertion and retained the passing legacy/focused evidence."
+    verification: "Legacy and focused VCS gates passed; QCOL node reproduced the stale TB assertion exactly; QROW remained pending behind QCOL."
+    lesson: "A ready/valid monitor must distinguish presentation (valid) from ownership transfer (fire), especially when the request may be held across multiple stalled cycles."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase1_node_ready_valid_tb_implementation
+    status: implementation_ready
+    test: "Rerun gemm_node_improve QCOL first and QROW second; preserve the prior legacy and focused PASS results because this iteration changes only the node TB."
+    error_summary: "The node TB rejected a legal held-valid cycle because it required packet_ctrl.valid == input_fire."
+    root_cause: "The TB contract predated the production ready/valid migration: packet_ctrl.valid mirrors request valid while input_packet_fire is the only admission event. Production RTL already obeys that contract and has no defect requiring an architecture change."
+    fix_applied: "Changed only tb_VX_gemm_node_improve.sv. Metadata valid must now equal request valid; a stalled request must retain its complete req_data and packet_ctrl through the accepting edge; input_packet_fire, unit input_fire, scale consume, and zero-point consume are forbidden while currently stalled. Packet ownership model indices and counts remain guarded solely by input_fire, and stalled-valid cycle coverage is reported. Production RTL is unchanged."
+    verification: "Target-config node Verilator lint completed successfully with exit code 0 and no %Error records; only pre-existing warning classes (including TB BLKSEQ and design LATCH/UNOPTFLAT) remain. Static source audit found no stale valid==fire check. Diff whitespace and STATUS YAML checks are requested below; no VCS, simulation, blackbox, or FSDB run was performed by the implementation role."
+    lesson: "Check request/control stability across a stall and update the scoreboard only on fire; valid may remain asserted for arbitrarily many cycles without duplicate admission."
+    test_request:
+      test_type: unittest
+      test_path: hw/unittest/gemm_node_improve
+      test_params: "TEST=GEMM_BP_PHASE1_QCOL_M4 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=0, then TEST=GEMM_BP_PHASE1_QROW_M4 with QDIR=1; WLOAD=8 comes from the sourced target config"
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv
+      notes: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. QCOL must pass before QROW. Require INPUT_METADATA_PASSED, including nonzero stalled_valid_cycles when the gate exercises input backpressure. The legacy and focused PASSes may be preserved because neither their TB nor production RTL changed in iteration 2."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase1_recovery_verification
+    status: pass
+    test: "Preserved legacy/focused VCS PASS plus gemm_node_improve QCOL and QROW M=4 N=K=256 QBLK=32 WTRANS=0 WLOAD=8 with required input-metadata coverage."
+    error_summary: "No failure. All Phase-1 recovery gates passed."
+    root_cause: "The stale node valid/fire assertion was fully migrated to the source-valid/acceptance-fire contract."
+    fix_applied: "No verification-time edit. The iteration-2 node TB change was sufficient."
+    verification: "Legacy directed coverage passed 16 ordered launches/writes with early=14, nominal=2, coincident=1, and early_hold=14. Focused stalls 1/2/6/7/random and occupied reset passed. QCOL and QROW each passed 1024 outputs with commands=64, packets=256, last_admission=64, last_write=64, done=64, scheduler_retire=64, bubbles=119, and stalled_valid_cycles=160; no assertion or deadlock."
+    lesson: "Phase 1 is complete only after forwarding coverage, arbitrary unit stalls, and node-level held-valid ownership all pass together."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_consumer_readiness_implementation
+    status: implementation_ready
+    test: "Static target-config RTL/TB lint and SCC audit only; hand off the ordered VCS unit/node/integration matrix to verification."
+    error_summary: "Phase 2 previously carried Scale/ZP values through snapshot pipelines, admitted Input against early aggregate operand readiness, used four Weight banks, and did not express exact independent W/S/Z generation lifetimes at their true consumers."
+    root_cause: "The old shared-buffer/snapshot contract coupled operand ownership to command admission instead of the physical register read. That both hid the true overwrite lifetime and made future-generation waiters capable of participating in writer fences. QCOL Scale additionally sits after a two-cycle always-accept int2fp island, so its consumer stall needs bounded result storage rather than combinational ready through the island."
+    fix_applied: "Added independent W/S/Z bank plus 32-bit exact LOAD targets to Input metadata; removed early W/S/Z node admission gating and every Scale/ZP value snapshot payload; placed exact registered-generation gates/direct reads at QROW Scale, common-fork Weight/QROW-Z/QCOL-Z readiness, aligned QCOL-Z multiply, and QCOL output Scale. Added a mathematically required depth-2 int2fp result FIFO/credit boundary. Converted W/S/Z to independent two-bank resources, removed W2/W3 storage/RIDs/routes without renumbering remaining 5-bit RIDs, preserved same-cycle final old read plus next-version write with next-cycle visibility, and kept QCOL-Z busy until its aligned direct read. Future waiters do not own a bank; writer_wait remains the overwrite fence. QCOL final consume wins a same-cycle resource-event collision and stalls the QROW final consumer for one cycle. Dedicated direct folds for writer consume and ACC_FREE child-4 completion preserve same-cycle semantics without feeding unrelated aggregate effective_sync SCCs. Assertions/debug and directed TB metadata/resource coverage were updated."
+    verification: "Focused Verilator lint passed for gemm_fsm, gemm_ctrl, gemm_sync, lmem_dma_weight_overlap, and the legacy gemm_unit_v2 RTL/TB with no %Error or Phase-2 consume/writer UNOPTFLAT path. Full gemm_node_improve target-config lint exited 0 with no %Error. Its SCC audit has no consume->writer release->qparam req_valid/ready->consumer path; residual warnings are the pre-existing controller/output-DMA scheduling packed-vector loop, DMA config-ready loop, generated reduce/prealign paths, and CVFPU/lzc paths. Residual source audit found no W2/W3 RID/route or Scale/ZP snapshot symbol, and git diff --check passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Generation readiness and resource ownership are different contracts: exact future readiness may stall at a consumer, but only an actual read lifetime may fence overwrite. A fixed-latency no-ready island must reserve enough downstream entries for every result already accepted when feedback is delayed."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_sync,gemm_fsm,gemm_ctrl,lmem_dma_weight_overlap,lmem_dma_qparam_overlap,gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Run VCS in the listed order. Node matrix: M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={QCOL,QROW}. Then run the matching xrt-vcs-sim target-GEMM numerical matrix."
+      sim_tool: vcs
+      changed_files:
+        - docs/future_optim/gemv/gemm_improve/gemm_unit_backpressure_opt.md
+        - hw/rtl/VX_gpu_pkg.sv
+        - hw/rtl/core/gemm/VX_gemm_ctrl.sv
+        - hw/rtl/core/gemm/VX_gemm_ctrl_if.sv
+        - hw/rtl/core/gemm/VX_gemm_ctrl_with_ldma.sv
+        - hw/rtl/core/gemm/VX_gemm_fsm.sv
+        - hw/rtl/core/gemm/VX_gemm_node.sv
+        - hw/rtl/core/gemm/VX_gemm_unit_v2.sv
+        - hw/rtl/core/gemm/VX_gemm_unit_v2_if.sv
+        - hw/rtl/core/gemm/VX_gemm_weight_regs_v1.sv
+        - hw/rtl/core/gemm/VX_lmem_dma_misal.sv
+        - hw/rtl/mem/VX_tmem_subsystem.sv
+        - hw/unittest/gemm_ctrl/tb_VX_gemm_ctrl.sv
+        - hw/unittest/gemm_fsm/tb_VX_gemm_fsm.sv
+        - hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv
+        - hw/unittest/gemm_sync/tb_VX_gemm_sync.sv
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+        - hw/unittest/gemm_unit_v2_backpressure/tb_VX_gemm_unit_v2_backpressure.sv
+        - hw/unittest/lmem_dma_weight_overlap/tb_VX_lmem_dma_weight_overlap.sv
+      notes: "Do not skip legacy gemm_unit_v2: it protects ACC forwarding. Require exact stale/other-bank rejection, next-cycle new-generation visibility, future-waiter non-ownership, same-cycle old-read/new-write, QCOL-Z fork-to-read lifetime, QCOL-S arbitrary-stall FIFO credit, consume-collision arbitration, complete ownership-queue drain, and no new qparam/writer SCC. Run QCOL before QROW at each node size; run xrt-vcs-sim only after all unit/node gates pass."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_consumer_readiness_verification
+    status: sim_fail
+    test: "Ordered VCS sequence: gemm_sync PASS, gemm_fsm PASS, then gemm_ctrl failed at 205 ns in the direct resource-fold equality assertion; later gates were not run."
+    error_summary: "run_dma_tagged_scoreboard completed a retained DMA child-5 command whose SET notification illegally targeted RID_ACC_FREE1=10 with value 77. effective_sync correctly accepted the generic child completion, while input_acc_free_value correctly folded only the architecturally owning child 4, so the ownership assertion detected the divergence. The slot-7 fallback independently used RID_ACC_FREE0=9."
+    root_cause: "The directed DMA-tag scoreboard predated ACC_FREE resource ownership and used RID 9/10 as arbitrary scratch registers. The failure timeline from reset through the DMA completion at the 205 ns edge exactly matched that stale stimulus; no Phase-2 RTL dataflow or direct-fold architecture defect was found."
+    fix_applied: "None during verification. Classified as a controller-TB stimulus ownership violation and requested a test-only RID remap plus a production ownership assertion."
+    verification: "gemm_sync and gemm_fsm VCS passed. gemm_ctrl reproduced the first illegal child-5 ACC_FREE notification deterministically at 205 ns; verification stopped at the first failure."
+    lesson: "A generic tagged-completion test must use only scratch/general or appropriately owned LOAD RIDs; ACC_FREE and consume RIDs are architectural resources, not scoreboard scratch space."
+  - timestamp: "2026-08-15"
+    iteration: 4
+    phase: phase2_ctrl_acc_free_ownership_recovery
+    status: implementation_ready
+    test: "Rerun gemm_ctrl VCS first; on PASS continue the remaining Phase-2 VCS sequence without rerunning the preserved gemm_sync/FSM PASS gates."
+    error_summary: "The DMA tagged-scoreboard used ACC_FREE0/1 as generic SET destinations, which is illegal now that same-cycle ACC admission directly folds only the ordered ACC2LMEM owner."
+    root_cause: "RID ownership was absent from the old controller test's arbitrary notification map. Child 5 therefore mutated the aggregate sync counter for an ACC resource that only child 4 may produce."
+    fix_applied: "Remapped all eight tagged-scoreboard slots to distinct non-derived general/LOAD RIDs {0,1,3,4,5,6,8,11} and moved retained/reused-tag SET coverage from RID_ACC_FREE1 to RID_ZP0=12. SET/tag stability, eight-slot fill, out-of-order completion, full-boundary no-same-cycle-reuse, tag-7 reuse, and zero cleanup remain unchanged. Added production assertions that any valid ACC_FREE completion must originate from child 4 and any valid child-4 notification must target ACC_FREE0/1. Two older controller-TB producer cases that used child 4 for non-ACC scratch notifications were moved to child 1 so the strengthened architectural assertion remains meaningful. The direct ACC fold was not changed."
+    verification: "Target-config manual Verilator --lint-only --timing completed with exit code 0 and no %Error, UNOPTFLAT, or circular-combinational warning for gemm_ctrl RTL/TB. Source audit leaves only the two intentional child-4 ACC_FREE0/1 directed notifications. git diff --check passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Encode resource ownership at both the producer test and the production completion boundary so an illegal RID reports its source directly instead of appearing as a derived-fold mismatch."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_ctrl,gemm_ctrl_with_ldma,lmem_dma_misal,lmem_dma_input_overlap,lmem_dma_weight_overlap,lmem_dma_qparam_overlap,gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve gemm_sync/FSM PASS. Start at gemm_ctrl with the same target config, then continue the iteration-3 sequence. Node matrix: M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={QCOL,QROW}; then matching xrt-vcs-sim numerical runs."
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/core/gemm/VX_gemm_ctrl.sv
+        - hw/unittest/gemm_ctrl/tb_VX_gemm_ctrl.sv
+      notes: "gemm_ctrl must pass DMA_TAGGED_SCOREBOARD coverage without touching RID9/10 or RID15-20. Require the new child/RID ownership assertions to remain enabled. After controller PASS resume at gemm_ctrl_with_ldma; do not rerun the already passing gemm_sync/FSM gates unless the verification environment changed."
+  - timestamp: "2026-08-15"
+    iteration: 4
+    phase: phase2_ctrl_acc_free_ownership_verification
+    status: sim_fail
+    test: "gemm_ctrl VCS rerun followed by gemm_ctrl_with_ldma VCS."
+    error_summary: "gemm_ctrl passed. gemm_ctrl_with_ldma then failed during compile/elaboration because VCS auto-selected uninstantiated VX_lmem_dma_qparam_overlap, VX_lmem_dma_weight_overlap, and VX_gemm_sync modules as additional tops and reported their interface ports as unconnected."
+    root_cause: "hw/unittest/gemm_ctrl_with_ldma/vcs.mk did not pass an explicit -top even though its Makefile defines TOP_MODULE=tb_VX_gemm_ctrl_with_ldma. The neighboring lmem_dma_misal VCS harness already uses the required option."
+    fix_applied: "None during verification. Classified as compile-only unittest harness drift; no RTL or Phase-2 architecture failure was observed."
+    verification: "gemm_ctrl VCS passed, including the remapped tagged scoreboard and ACC_FREE ownership assertions. gemm_ctrl_with_ldma stopped before simulation at VCS top selection/elaboration. Later gates were not run."
+    lesson: "A SystemVerilog unittest source list containing reusable uninstantiated modules must give VCS one explicit testbench top."
+  - timestamp: "2026-08-15"
+    iteration: 5
+    phase: phase2_ctrl_with_ldma_vcs_top_recovery
+    status: implementation_ready
+    test: "Rerun gemm_ctrl_with_ldma VCS first; on PASS continue at lmem_dma_misal and preserve the prior gemm_sync/FSM/gemm_ctrl PASS gates."
+    error_summary: "The gemm_ctrl_with_ldma VCS harness omitted its declared TOP_MODULE from the compile command."
+    root_cause: "vcs.mk lacked `-top $(TOP_MODULE)`, allowing every uninstantiated design module in RTLS to become a candidate top."
+    fix_applied: "Added only `-top $(TOP_MODULE)` to hw/unittest/gemm_ctrl_with_ldma/vcs.mk, matching the established lmem_dma_misal harness pattern. No RTL, TB, source list, define, parameter, or simulation behavior changed."
+    verification: "Target-config `make -n compile SIM_EXEC=vcs` emits exactly one `-top tb_VX_gemm_ctrl_with_ldma` and no auto-selected helper top on the command line. git diff --check passed. No compiler, VCS elaboration, simulation, blackbox, or FSDB run was performed by the implementation role."
+    lesson: "Keep TOP_MODULE definition and simulator invocation coupled in every unittest backend; declaring the variable alone does not constrain VCS elaboration."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_ctrl_with_ldma,lmem_dma_misal,lmem_dma_input_overlap,lmem_dma_weight_overlap,lmem_dma_qparam_overlap,gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve gemm_sync/FSM/gemm_ctrl PASS. Restart with gemm_ctrl_with_ldma under the same target config, then continue the iteration-4 sequence and node/XRT matrix unchanged."
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_ctrl_with_ldma/vcs.mk
+      notes: "Require VCS compile/elaboration to report only tb_VX_gemm_ctrl_with_ldma as top and then require the unittest to pass. On PASS resume at lmem_dma_misal; do not rerun preserved gates unless the build configuration changed."
+  - timestamp: "2026-08-15"
+    iteration: 5
+    phase: phase2_ctrl_with_ldma_vcs_top_verification
+    status: compile_error
+    test: "gemm_ctrl_with_ldma VCS rerun with explicit tb_VX_gemm_ctrl_with_ldma top."
+    error_summary: "The explicit top selection worked and removed the unintended helper tops, but VCS then reported four unresolved VX_dma_unit instances below VX_lmem_dma_misal."
+    root_cause: "hw/unittest/gemm_ctrl_with_ldma/Makefile had a stale RTLS list: it included VX_lmem_dma_misal but omitted the generic DMA core modules instantiated underneath it."
+    fix_applied: "None during verification. Classified as compile-only unittest source-list drift; no RTL or Phase-2 architectural failure was reached."
+    verification: "VCS selected only tb_VX_gemm_ctrl_with_ldma as intended, then stopped during compile/elaboration on missing VX_dma_unit definitions. Simulation did not start and later gates were not run."
+    lesson: "Fixing the top exposes the real dependency closure; a wrapper unittest must list the same generic DMA core sources as the standalone wrapper unittest."
+  - timestamp: "2026-08-15"
+    iteration: 6
+    phase: phase2_ctrl_with_ldma_dma_source_recovery
+    status: implementation_ready
+    test: "Rerun gemm_ctrl_with_ldma VCS first; on PASS continue at lmem_dma_misal while preserving gemm_sync/FSM/gemm_ctrl PASS."
+    error_summary: "The controller-with-LDMA harness compiled VX_lmem_dma_misal without its generic DMA implementation dependencies."
+    root_cause: "The RTLS list lacked the eight-module dependency chain already maintained by hw/unittest/lmem_dma_misal/Makefile."
+    fix_applied: "Copied the generic DMA dependency block, in established order and exactly once: VX_dma_unit_align, VX_dma_gearbox, VX_dma_lane_aligner, VX_dma_lane_assembler, VX_dma_equal_realigner, VX_dma_misal_gen_path, VX_dma_unit_misal, and VX_dma_unit. No RTL, testbench, defines, parameters, simulator options, or source behavior changed."
+    verification: "Target-config VCS `make -n compile` contains the explicit tb_VX_gemm_ctrl_with_ldma top and all eight generic DMA sources exactly once before VX_lmem_dma_misal. Source audit found no duplicate dependency entry and git diff --check passed. No compiler, VCS elaboration, simulation, blackbox, or FSDB run was performed by the implementation role."
+    lesson: "Treat a standalone wrapper unittest's source list as the reference dependency closure when embedding that wrapper into a larger compile-only harness."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_ctrl_with_ldma,lmem_dma_misal,lmem_dma_input_overlap,lmem_dma_weight_overlap,lmem_dma_qparam_overlap,gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve gemm_sync/FSM/gemm_ctrl PASS. Restart with gemm_ctrl_with_ldma under the same target config, then continue the iteration-5 sequence and node/XRT matrix unchanged."
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_ctrl_with_ldma/Makefile
+      notes: "Require compile/elaboration to resolve every VX_dma_unit instance and the controller-with-LDMA unittest to pass. On PASS resume at lmem_dma_misal; do not rerun preserved gates unless the build configuration changed."
+  - timestamp: "2026-08-15"
+    iteration: 6
+    phase: phase2_ctrl_with_ldma_dma_source_verification
+    status: compile_error
+    test: "gemm_ctrl_with_ldma VCS rerun with explicit top and complete generic DMA source chain."
+    error_summary: "The top and generic DMA source fixes worked and compilation progressed, then failed on broad legacy interface drift: qblk_tot, M_tot, N_tot, K_tot, wtrans_tot, and entry_id no longer exist on the current controller/DMA interfaces. The wrapper also still models five children with one combined Scale/ZP path, while production uses six children with independent Scale and Zero-point executors."
+    root_cause: "VX_gemm_ctrl_with_ldma is the preserved older monolithic cmd-stream variant, not the active FSM-based production integration. Repository architecture documentation explicitly classifies it as orphaned legacy RTL, and the confirmed GEMM-unit backpressure plan does not include its unittest as a verification gate."
+    fix_applied: "None. Modernizing the orphan would require a separate interface and architecture migration beyond this task. The earlier explicit-top and generic-DMA-source harness fixes remain in the worktree because they are locally correct and expose the true pre-existing drift; they were not reverted."
+    verification: "VCS passed top selection and resolved VX_dma_unit dependencies before stopping on the legacy wrapper/interface mismatch. No production RTL failure or Phase-2 behavior was exercised."
+    lesson: "Once a compile-only repair exposes architectural interface drift in a documented orphan, re-evaluate gate relevance instead of expanding the active optimization task into legacy-module modernization."
+  - timestamp: "2026-08-15"
+    iteration: 7
+    phase: phase2_legacy_wrapper_scope_reclassification
+    status: confirmed
+    test: "Exclude orphaned gemm_ctrl_with_ldma from the Phase-2 gate and continue the confirmed production sequence at lmem_dma_misal."
+    error_summary: "The previous recovery sequence had accidentally included an orphaned legacy monolithic wrapper that is neither instantiated by the active datapath nor listed by the confirmed Phase-2 plan."
+    root_cause: "Verification scope was broadened from the plan's production controller/FSM/sync and overlap executors to a preserved fallback module whose five-child combined-qparam contract predates the six-child split Scale/ZP architecture."
+    fix_applied: "Reclassified gemm_ctrl_with_ldma as out of scope for this task. No RTL, interface, TB, Makefile, or harness edit was made in iteration 7. The iteration-5 explicit VCS top and iteration-6 generic DMA dependency additions remain documented as mechanical partial harness repairs, but the wrapper remains noncompiling because of its pre-existing broad interface drift."
+    verification: "Documentation audit found VX_gemm_ctrl_with_ldma identified as an `older monolithic variant` and `legacy monolithic variant; orphaned`, with removal or migration deferred to a separate task. The parent specification and source plan contain no gemm_ctrl_with_ldma gate. STATUS YAML and git diff whitespace checks passed; no compile, simulation, blackbox, or FSDB run was performed in this scope-only iteration."
+    lesson: "Verification gates must follow the confirmed active datapath. Preserved orphan modules need an explicit modernization task and cannot silently become blockers for unrelated production RTL work."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{lmem_dma_misal,lmem_dma_input_overlap,lmem_dma_weight_overlap,lmem_dma_qparam_overlap,gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve gemm_sync/FSM/gemm_ctrl PASS. Exclude gemm_ctrl_with_ldma and resume at lmem_dma_misal under the same target config, then continue the Phase-2 unit/node/XRT matrix unchanged."
+      sim_tool: vcs
+      changed_files:
+        - agent-tasks/gemm-unit-backpressure-opt-recovery/STATUS.yaml
+      notes: "Do not modernize or require gemm_ctrl_with_ldma in this task. Its explicit-top and DMA-source-list edits may remain. Begin verification with lmem_dma_misal; only a failure on the active production path should re-enter the implementation loop."
+  - timestamp: "2026-08-15"
+    iteration: 7
+    phase: phase2_production_dma_and_unit_verification
+    status: sim_fail
+    test: "Production sequence from lmem_dma_misal through Input/Weight/qparam overlap, followed by legacy gemm_unit_v2 VCS."
+    error_summary: "lmem_dma_misal, Input overlap, Weight overlap, and actual split Scale/Zero-point overlap tests passed. Legacy gemm_unit_v2 then failed at 345 ns on `INT2FP metadata/data latency mismatch`; the converter launch occurred at 335 ns."
+    root_cause: "VX_pint2fp contains two registered always-accept VX_elastic_buffer stages, so valid_o appears two cycles after launch. Phase 2 incorrectly dimensioned int2fp_meta_pipe with POST_LAUNCH_TO_INT2FP_CTRL_DLY=1, a separate Phase-1 post-control retiming constant. Metadata therefore arrived one cycle before converter data. The downstream ctrl_pipe is injected only at int2fp_result_pop and correctly retains the one-cycle post-control index."
+    fix_applied: "None during verification. Classified as a localized converter metadata off-by-one, not a result-FIFO credit, ACC forwarding, or backpressure architecture defect."
+    verification: "All production DMA and overlap gates before gemm_unit_v2 passed. The first unit transaction deterministically reproduced launch at 335 ns, premature metadata at the following stage, and converter valid_o at 345 ns. Focused unit, node, and XRT gates were not run."
+    lesson: "A converter's launch-to-valid metadata latency must be derived from its physical registered stages, independently of control retiming that begins after a downstream FIFO pop."
+  - timestamp: "2026-08-15"
+    iteration: 8
+    phase: phase2_int2fp_converter_metadata_recovery
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then the node and XRT matrices. Preserve prior DMA/overlap PASS gates."
+    error_summary: "int2fp metadata used the one-cycle post-pop control latency instead of the converter's two-cycle launch-to-valid latency."
+    root_cause: "POST_LAUNCH_TO_INT2FP_CTRL_DLY describes ctrl_pipe timing after int2fp_result_pop and must remain one. It was accidentally reused to size, reset, shift, index, and check metadata launched into the two-stage VX_pint2fp."
+    fix_applied: "Introduced INT2FP_CONVERTER_META_DLY=INTTOFP_OUT_DLY and used it exclusively for int2fp_meta_pipe/int2fp_meta_valid_pipe dimensions, reset/shift loops, result data_in.ctrl selection, and the metadata/data valid assertion. Added static assertions separating converter metadata latency from the post-pop control latency. Kept POST_LAUNCH_TO_INT2FP_CTRL_DLY=1, every downstream scaler/ACC ctrl index, the depth-2 result FIFO, reservation credit, and pop behavior unchanged."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 and no %Error or new INT2FP/result SCC. Only the pre-existing generated reduce-tree/prealigner and CVFPU/lzc UNOPTFLAT warnings remain. Source audit confirms POST_LAUNCH_TO_INT2FP_CTRL_DLY is still used only for downstream ctrl index/static contract, while every converter metadata reference uses INT2FP_CONVERTER_META_DLY. git diff --check passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Name latency constants by their handshake boundary: launch-to-converter-valid and result-pop-to-post-control may have different values even when they describe adjacent datapath regions."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve lmem_dma_misal/Input/Weight/Scale/ZP overlap PASS. Restart with legacy gemm_unit_v2 under the same target config, then focused backpressure, node M={4,256} QDIR={QCOL,QROW} N=K=256 QBLK=32 WTRANS=0 WLOAD=8, and matching xrt-vcs-sim numerical runs."
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/core/gemm/VX_gemm_unit_v2.sv
+      notes: "At the former first-failure window require merged_fifo_pop at launch, metadata valid and all pint2fp lane valid_o together exactly two cycles later, then correct FIFO push/pop. Require existing depth-2 credit/count and downstream scaler/ACC latency assertions unchanged."
+  - timestamp: "2026-08-15"
+    iteration: 8
+    phase: phase2_int2fp_converter_metadata_verification
+    status: sim_fail
+    test: "Legacy gemm_unit_v2 VCS rerun after the converter metadata latency repair."
+    error_summary: "The previous INT2FP metadata/data mismatch was fixed. The next failure occurred at 365 ns on `scaler control/data latency mismatch`: PINT2FP_OUTPUT and all FP32_MUL_INPUT_HS occurred at 355 ns from int2fp_result_pop, and final_scaler_output_valid asserted at 365 ns while ctrl_pipe[INT2FP_CTRL_IDX=MERGER+1] was not valid."
+    root_cause: "Phase 2 moved post-control injection from the pre-converter merged launch to the post-converter result-FIFO pop at ctrl_pipe[MERGER_CTRL_IDX], but retained Phase-1 downstream indices. The one-cycle scaler/QROW bypass output aligns with that MERGER launch slot, not MERGER+1. The existing one-register common alignment then reaches MERGER+1, while the preserved ACC launch index is SCALER_CTRL_IDX=MERGER+2."
+    fix_applied: "None during verification. Classified as a fixed-post alignment detail. Reducing every index by one would remove the result-pop-cycle early-read slot and disturb the proven ACC forwarding schedule, so the safe recovery is to retain Phase-1 indices and add the missing bounded alignment stage."
+    verification: "INT2FP converter metadata and all lane valid_o signals aligned successfully at the former failure. The exact scaler input/output trace then exposed the next one-cycle control/data offset before any ACC numerical mismatch."
+    lesson: "When post control is re-anchored at a later handshake, preserve a proven forwarding schedule by explicitly filling the fixed datapath latency rather than mechanically shortening control indices."
+  - timestamp: "2026-08-15"
+    iteration: 9
+    phase: phase2_fixed_post_acc_alignment_recovery
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then node and XRT matrices. Preserve all earlier production gate PASS results."
+    error_summary: "Scaler output and common aligned data were each one control slot earlier than the retained Phase-1 scaler/ACC indices."
+    root_cause: "At int2fp_result_pop, transaction control is loaded into MERGER_CTRL_IDX. The one-cycle scaler or QROW bypass result is observed with that same slot at the assertion boundary. A depth-1 common pipe reaches MERGER+1, but ACC launch/read/forward logic intentionally consumes at MERGER+2 and writes at MERGER+3."
+    fix_applied: "Selected the bounded-alignment solution. Added SCALER_OUTPUT_CTRL_IDX=MERGER_CTRL_IDX and used it for QDIR mux selection, scaler-output assertion, and debug. Defined POST_SCALER_ALIGN_DLY=SCALER_CTRL_IDX-SCALER_OUTPUT_CTRL_IDX=2 and changed the common post-scaler pipe from depth 1 to depth 2. Kept INT2FP_CTRL_IDX, SCALER_CTRL_IDX, WRITE_CTRL_IDX, K_LOOKBACK, nominal/early request formulas, result FIFO, credit, and ACC forwarding logic unchanged. Added static proofs that early read issues at MERGER, nominal read at MERGER+1, ACC launch at MERGER+2, and existing writeback remains one cycle later. Added separate scaler-output and ACC-launch trace probes."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 and no %Error or new post/INT2FP SCC. Only the pre-existing reduce-tree/prealigner and CVFPU/lzc UNOPTFLAT warnings remain. Static index audit proves: result pop/early read=M, nominal read=M+1, aligned ACC launch=M+2, load/add result and writeback=M+3. git diff --check passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "The Phase-1 ACC schedule needs two post-pop data slots: one preserves the early-versus-nominal SRAM-read distinction and the second aligns the scaler result with accumulator launch."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve DMA and overlap PASS gates. Restart with legacy gemm_unit_v2 under the same target config, then focused backpressure, node M={4,256} QDIR={QCOL,QROW} N=K=256 QBLK=32 WTRANS=0 WLOAD=8, and matching xrt-vcs-sim runs."
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/core/gemm/VX_gemm_unit_v2.sv
+      notes: "Require the former trace to align final_scaler_output_valid with ctrl[M], scaled_fp32_aligned_valid with ctrl[M+2], and load_result_valid/acc_output_valid with ctrl[M+3]. Preserve nonzero immediate/history/early/nominal forwarding coverage and exact directed deltas/queue drain from Phase 1."
+  - timestamp: "2026-08-15"
+    iteration: 9
+    phase: phase2_fixed_post_acc_alignment_verification
+    status: sim_fail
+    test: "Legacy gemm_unit_v2 VCS rerun after the bounded two-cycle post-scaler alignment repair."
+    error_summary: "The fixed-post timing repair passed: final scaler output aligned at M (365 ns) and the ACC launch aligned at M+2 (385 ns). The next failure occurred at 795 ns on the QCOL Scale generation assertion."
+    root_cause: "scale_consumer_ctrl was a priority mux intended only to select metadata for a final Scale consume event. Every QCOL Scale direct-read assertion incorrectly reused it. A non-final QCOL consumer therefore selected unrelated input-stage metadata because qcol_scale_consume_last was false. The same false-assertion defect existed for QCOL ZP, and the ZP lifetime counter had a functional instance of the bug: its decrement bank was selected from the final-event mux rather than the ACT-reduce-aligned QCOL metadata."
+    fix_applied: "None during verification. Classified as a localized metadata-source aliasing error; the independent consumer-stage architecture, post alignment, ACC forwarding, and bounded FIFO credits remained coherent."
+    verification: "The previous scaler/control mismatch did not recur. Trace evidence confirmed scaler=M and ACC=M+2 before the first QCOL Scale metadata assertion at 795 ns stopped simulation."
+    lesson: "Metadata used by a physical direct read must come from that read's aligned transaction on every micro-op. A final-event arbitration mux may select only the externally reported last consume index."
+  - timestamp: "2026-08-15"
+    iteration: 10
+    phase: phase2_consumer_metadata_source_recovery
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then gemm_node_improve and the complete XRT matrix. Preserve all earlier controller, DMA, and overlap PASS gates."
+    error_summary: "Non-final QCOL Scale/ZP reads and the QCOL ZP lifetime decrement could observe the last-event mux instead of their own aligned transaction metadata."
+    root_cause: "One control structure had two incompatible meanings: actual consumer metadata and final consume-channel arbitration. On non-final QCOL operations the arbitration predicate was false by definition, so the mux chose an unrelated upstream QROW/input control."
+    fix_applied: "Added explicit QROW Scale, QCOL Scale, QROW ZP, and ACT-reduce-aligned QCOL ZP consumer controls. QCOL Scale readiness, direct register selection, same-cycle release, and generation assertion now use int2fp_result_data_out.ctrl exclusively. QCOL ZP direct register selection, same-cycle release, pending-lifetime decrement, and generation/ownership assertions now use tree_meta_pipe[ACT_REDUCE_OUT_DLY-1].ctrl exclusively. QROW consumers retain their input/pre-meta controls. Reduced each final-event mux to one bank index used only by scale_consume_idx or zp_consume_idx. Added assertions tying every final consume index to its actual QDIR consumer and requiring QCOL ZP reads to own a nonzero pending lifetime. Added a directed legacy-unit scenario that holds unrelated QROW bank-1 metadata at the input consumer while an older non-final QCOL bank-0 transaction reaches both later direct reads; it proves the actual QCOL controls differ from, and do not depend on, the final-event index muxes. No backpressure, FIFO, ACC, writer-fence, generation, or completion architecture changed."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 after the consumer-source RTL and directed TB change, with no %Error and no new writer/qparam SCC. The only RTL UNOPTFLAT paths remained the existing QCOL last-event retry/reduce path, prealigner, and CVFPU/lzc paths; none included qparam request/ready or register writer release. After the final mechanical narrowing of each full-struct last-event mux to one index bit, a second full lint passed parsing/elaboration and reached the same warning set with no %Error before it was stopped at the parent-requested finalization boundary; the first complete lint covers every functional source change. git diff --check and STATUS YAML validation passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Give physical consumer metadata and event-channel metadata different names, types, and fanout. Narrowing the event mux to an index prevents it from being reused as a datapath or lifetime source."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Preserve gemm_sync/FSM/gemm_ctrl and lmem_dma_misal/Input/Weight/Scale/ZP overlap PASS. Restart legacy gemm_unit_v2 with the same target config; then focused backpressure; node M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={QCOL,QROW}; finally matching xrt-vcs-sim numerical runs."
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/core/gemm/VX_gemm_unit_v2.sv
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+        - agent-tasks/gemm-unit-backpressure-opt-recovery/STATUS.yaml
+      notes: "At the former 795 ns window require QCOL Scale generation to use int2fp_result_data_out.ctrl. Require NONLAST_QCOL_CONSUMER_METADATA_PASS with QCOL bank 0 while held QROW bank 1 drives the final-event mux. For QCOL ZP require the aligned ACT-reduce control to select the register and decrement exactly its bank, pending count never underflow, final consume indices match the true last consumer, all ownership queues drain, and no new consume-to-writer/qparam SCC. Retain iteration-9 scaler=M, ACC=M+2, write=M+3 checks and all Phase-1 forwarding/read-order coverage."
+  - timestamp: "2026-08-15"
+    iteration: 10
+    phase: phase2_consumer_metadata_source_verification
+    status: sim_fail
+    test: "Final recovery-loop legacy gemm_unit_v2 VCS rerun after separating actual consumer metadata from last-event arbitration."
+    error_summary: "Compilation succeeded and the repaired scaler/ACC alignment plus QPARAM parallel-port marker passed. The newly added non-last-QCOL directed case then stopped at 405 ns on the production strict stream-address assertion before reaching its intended consumer metadata checks."
+    root_cause: "The directed case sent a non-final QCOL packet at ACC address 0 followed by a non-accumulating QROW packet at the same address. With stream_address_valid retained by the non-final first packet, the second packet must advance both ACC addresses by one 128-byte row; same-address reuse is legal only for an enabled accumulation. This is testbench stimulus drift, not evidence of a production metadata, FIFO, backpressure, or ACC datapath defect."
+    fix_applied: "None. The recovery loop reached its explicit 10-iteration limit, so no further edit or rerun was performed. The next correction is mechanical: drive the held QROW packet at ACC_ROW_BYTES (or another legal strict successor) while preserving the QCOL-bank0/QROW-bank1 metadata overlap intent."
+    verification: "Before the TB contract failure, VCS confirmed scaler control/data alignment at 365 ns, ACC launch alignment at 385 ns, and QPARAM_PARALLEL_PORTS_PASS. NONLAST_QCOL_CONSUMER_METADATA_PASS, M+3 writeback, full forwarding/drain, focused backpressure, node, XRT, and FSDB gates remain unverified for the final Phase-2 RTL."
+    lesson: "A metadata-overlap test must also remain a legal member of the architectural ACC address stream; independent register-bank choices do not waive rd/wr address progression."

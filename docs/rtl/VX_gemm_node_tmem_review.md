@@ -109,19 +109,22 @@ without reintroducing `prior_g_wait` on the next Input command.
 
 ### 4.2 Weight local DMA
 
-The Weight path uses a dedicated two-command overlap executor. The node
+The Weight path uses a dedicated four-command overlap executor. The node
 encodes `{load_dir, wreg_idx}` above the Weight-beat alignment bits in
 `dst_base_addr`; each command FIFO entry stores that aligned byte address.
 The executor's writer head converts it back to the GEMM beat-address selector,
 so accepting or reading command N+1 cannot overwrite command N's destination
 metadata.
 
-The executor shares one response RAM across both commands and maintains
-independent read-command and write-command heads. Source reads for N+1 may run
-while N writes, while source requests, destination writes, and completion are
-each command-granular and in order. The node keeps a matching ordered boundary
-queue so controller notification waits for the actual final Weight register
-write rather than the earlier local-DMA bus handshake.
+The executor shares one eight-slot response RAM across all four command
+contexts and maintains independent read-command and write-command heads. The
+RAM holds two complete four-beat payloads; the other commands may remain
+descriptor-resident and refill slots as older writes drain. Source reads for
+N+1 may run while N writes, while source requests, destination writes, and
+completion are each command-granular and in order. The node keeps a matching
+four-entry ordered boundary queue so controller notification waits for the
+actual final Weight register write rather than the earlier local-DMA bus
+handshake.
 
 Weight has four physical destination banks. The selector encoding is
 `{load_dir, wreg_idx[1:0]}`, and each command carries a separate W0..W3 consume

@@ -1,9 +1,9 @@
 task: wreg-db-opt
-state: BLOCKED
-updated: "2026-08-12 12:59"
+state: IN_PROGRESS
+updated: "2026-08-13 01:46"
 spec: agent-tasks/wreg-db-opt/wreg-db-opt-spec.md
 source_plan: docs/future_optim/gemv/gemm_improve/wreg_db_opt.md
-current_phase: design_review_required
+current_phase: weight_command_depth4_functional_pass_fsdb_pending
 iteration_limit: 10
 pitfalls:
   - "The source plan is authoritative; do not replace separate W/SC/Z consume RIDs with RID_G or one shared consumer event."
@@ -646,6 +646,39 @@ iterations:
     fix_applied: "No additional RTL change was made after the performance failure, per Hard Rule. QCOL metrics and artifacts were recorded; QROW waveform generation was not run."
     verification: "Scale/ZP each reached FIFO occupancy 4 and slot occupancy 4/8, prefetched the first four commands, overlapped next source before prior write in 62/63 and 61/63 boundaries, produced zero early writes, and completed exactly one cycle after final actual write. Input gap statistics are min/median/p75/max 0/2/5/77 with histogram {0:18,1:10,2:8,3:6,4:5,5:12,6:2,7:1,77:1}."
     lesson: "The qparam source/commit split removed its nine-cycle producer cadence; the next design discussion must address Weight readiness rather than further qparam buffering."
+  - timestamp: "2026-08-13 01:40"
+    iteration: 1
+    loop: weight_command_depth4
+    phase: implementation
+    status: pending_verification
+    test: "Focused Weight-overlap and controller VCS tests first, then GEMM node QCOL/QROW, preserved unit regressions, XRT-VCS M={4,256} x QDIR={0,1}, and M=4 FSDB timing analysis."
+    error_summary: "No Hard Rule blocker or focused static lint error; configured VCS and timing verification remain pending."
+    root_cause: "Four physical Weight banks were backed by only two executor descriptors, two controller inflight records, and two node actual-write boundaries. The third Weight command therefore could not become descriptor-resident until the oldest command retired, exposing TMEM response latency to Input admission."
+    fix_applied: "Increased only the Weight descriptor FIFO, controller Weight child inflight FIFO, and node actual-write boundary FIFO to four. Kept eight shared response slots, three-bit slot tags, eight TMEM wide-read contexts, command-granular ordered source/write issue, exact writer fences, final actual-write completion, and four WREG banks unchanged. Updated directed tests and RTL documentation for four resident descriptors with at most two complete payloads."
+    verification: "git diff --check passed. Focused Verilator lint passed for the Weight executor/TB and GEMM controller/TB with warnings and no errors. A configured full-node lint was started and emitted no design errors in the captured output, but was stopped before final completion to honor the requested handoff deadline. No VCS simulation was run by the implementation agent."
+    lesson: "Descriptor lookahead depth and payload residency are independent capacities: four commands can remain ordered and resident while an eight-slot pool bounds payload storage to two four-beat commands."
+  - timestamp: "2026-08-13 01:44"
+    iteration: 1
+    loop: weight_command_depth4
+    phase: verification
+    status: pass
+    test: "VCS Weight-overlap, GEMM controller, TMEM wide-read, GEMM node M=4 QCOL/QROW, and preserved GEMM unit/FSM/sync/generic-LDMA regressions."
+    error_summary: "No compile, simulation, production assertion, ordering, or numerical failure in the requested sequence."
+    root_cause: "Not applicable; the four-descriptor/eight-slot capacity change is functionally consistent across executor, controller metadata, node completion ownership, and integration."
+    fix_applied: "No verification-time fix was required."
+    verification: "The focused Weight test filled four descriptor entries while exactly eight slots held two complete payloads, retained two descriptor-only commands, and passed ordered refill/wrap/fence/completion coverage. gemm_ctrl proved four Weight inflight records, full blocking, same-cycle pop/push, and ordered notifications. TMEM kept eight contexts. Node QCOL/QROW each passed 1024 numerical outputs, and all preserved smoke suites passed."
+    lesson: "All three command-lifetime queues must grow together; retaining the eight-slot payload bound does not require a wider slot tag or more TMEM read contexts."
+  - timestamp: "2026-08-13 01:46"
+    iteration: 1
+    loop: weight_command_depth4_blackbox
+    phase: blackbox
+    status: pass
+    test: "XRT-VCS target GEMM M=4, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={0,1}."
+    error_summary: "Both quantization directions completed with exit status zero and numerical PASSED."
+    root_cause: "Not applicable; the depth-four Weight command experiment is functionally green in the target flow."
+    fix_applied: "No blackbox-time change was required."
+    verification: "QCOL and QROW each reported Input fire/stall=256/0 and Weight fire/stall=256/0. Artifacts are build/run_logs/target_gemm/20260813-014506_run_wload8_m4_n256_k256_q32_t0_d0_pid3159433 and build/run_logs/target_gemm/20260813-014627_run_wload8_m4_n256_k256_q32_t0_d1_pid3175379."
+    lesson: "Functional PASS establishes safety and progress; a new FSDB is still required to measure whether four descriptor contexts reduce Weight-ready and Input burst-boundary gaps."
 design_review:
   status: confirmed
   memo: agent-tasks/wreg-db-opt/design-review.md

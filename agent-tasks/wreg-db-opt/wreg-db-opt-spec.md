@@ -180,9 +180,25 @@ additional same-bank consumer keeps the writer blocked.
 
 ## Confirmed Weight LDMA command pipeline
 
+### Confirmed four-command/eight-slot experiment
+
+- Increase the Weight descriptor FIFO, controller Weight inflight metadata
+  FIFO, and node actual-write completion boundary FIFO from depth two to depth
+  four so the four circular Weight-bank commands may all be issued ahead.
+- Keep the shared Weight response payload RAM at eight slots. The experiment
+  intentionally holds only two complete four-beat payloads at once; later
+  commands remain descriptor-resident and refill slots as older writes free
+  them.
+- Keep the slot tag namespace at three bits and the TMEM Weight wide-read
+  context count at eight. Do not increase payload RAM or wide-read contexts to
+  sixteen in this change.
+- Preserve command-granular in-order source issue, destination write order,
+  exact per-command writer fences, and completion at the final actual WREG
+  write.
+
 ### Command FIFO and ownership
 
-- Add a Weight command FIFO with a minimum depth of two.
+- Use a depth-four Weight command FIFO.
 - Each FIFO entry stores the complete DMA descriptor, architectural command
   tag/entry ID, destination `wreg_idx`, and per-command read/write progress.
 - Maintain independent pointers:
@@ -333,12 +349,13 @@ command-layout and slot-capacity assertions.
 ## Required verification
 
 1. Directed VCS Weight LDMA tests:
-   - enqueue two commands while the first is active;
+   - enqueue four commands while the first is active and prove full only at
+     four resident descriptors;
    - enqueue/source-read a command before W_CONSUME and hold all destination
      writes until the matching release;
    - prove source-tile-not-ready still prevents enqueue;
    - cover consume-before-accept, consume-after-accept, stale/wrong-buffer
-     consume, and two inflight release ordering;
+     consume, and four-inflight release ordering;
    - four reads from command N followed immediately by four reads from N+1;
    - shared slots 0..7, delayed/out-of-order responses, and wraparound;
    - no N+1 destination write before N's last write;
@@ -366,7 +383,8 @@ command-layout and slot-capacity assertions.
 6. M=4 QCOL/QROW FSDB analysis proving:
    - correct W0/W1/W2/W3 circular destination ownership;
    - source-ready next-command reads occur before matching W_CONSUME and overlap
-     current-command destination writes up to the two-command/eight-slot bound;
+     current-command destination writes within the four-descriptor/eight-slot
+     bound, with at most two complete four-beat payloads resident at once;
    - no same-buffer write before matching consume;
    - consume and same-bank first write coincide when the final consumer is the
      only remaining same-bank user;

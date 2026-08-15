@@ -1,0 +1,165 @@
+task: gemm-unit-backpressure-opt-recovery-2
+state: IN_PROGRESS
+updated: "2026-08-15"
+spec: agent-tasks/gemm-unit-backpressure-opt-recovery-2/gemm-unit-backpressure-opt-recovery-2-spec.md
+parent_status: agent-tasks/gemm-unit-backpressure-opt/STATUS.yaml
+prior_recovery_status: agent-tasks/gemm-unit-backpressure-opt-recovery/STATUS.yaml
+source_plan: docs/future_optim/gemv/gemm_improve/gemm_unit_backpressure_opt.md
+current_phase: blocked_awaiting_design_discussion
+iteration_limit: 10
+pitfalls:
+  - "Preserve the confirmed Phase-2 production RTL and all prior PASS evidence; iteration 1 is testbench-only."
+  - "The first non-final packet retains strict stream-address ownership, so the following non-accumulating packet must advance both ACC addresses by exactly one row."
+  - "Do not weaken the QCOL-bank0/QROW-bank1 overlap, forced QROW consumer stall, non-last consumer checks, ACC forwarding coverage, or ownership-drain checks."
+  - "Keep the documented orphan gemm_ctrl_with_ldma outside the active Phase-2 gate."
+  - "Preserve the dirty worktree and all parent/prior-recovery changes."
+iterations:
+  - timestamp: "2026-08-15"
+    iteration: 0
+    phase: recovery_2_specification
+    status: confirmed
+    test: "Legacy gemm_unit_v2 VCS first, then focused backpressure, node M={4,256} QDIR={QCOL,QROW}, and matching XRT-VCS."
+    error_summary: "The prior recovery loop reached 10/10 after its new non-last-QCOL directed case violated strict ACC address progression before reaching the intended metadata checks."
+    root_cause: "A non-final QCOL packet used address zero and retained stream ownership, but the following non-accumulating held QROW packet also used zero. Same-address reuse is legal only for an enabled accumulation; this packet must advance by ACC_ROW_BYTES."
+    fix_applied: "Confirmed a TB-only second-packet address correction while preserving the bank/QDIR overlap and every production architecture contract."
+    verification: "Pending recovery-2 implementation iteration 1 and VCS handoff."
+    lesson: "Directed metadata overlap remains subject to the architectural address-stream contract even when ACC reads and writes are disabled."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase2_legacy_tb_address_recovery_implementation
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then gemm_node_improve QCOL/QROW for M=4 and M=256."
+    error_summary: "The non-last-QCOL metadata-overlap test reused address zero for its following non-accumulating held QROW packet and failed the strict address-stream assertion before either intended QCOL consumer check."
+    root_cause: "The first packet is non-final, so stream_address_valid remains set. The common packet driver presents both ACC addresses even with read/write disabled; the next non-accumulating packet must therefore use the strict successor address rather than same-address accumulation semantics."
+    fix_applied: "Changed only the held QROW packet's address argument from zero to `GEMM_ACC_MEM_ADDR_WIDTH'(ACC_ROW_BYTES). The common driver applies that value to both acc_rd_addr and acc_wr_addr. Preserved the first QCOL address, QCOL bank 0, held QROW bank 1, both QDIRs, last bits, forced QROW Scale-consumer stall, direct QCOL Scale/ZP metadata assertions, and NONLAST_QCOL_CONSUMER_METADATA_PASS marker. No production RTL changed."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 and no %Error. Warning/SCC classes are unchanged from recovery iteration 10: the existing QCOL consume-collision/reduce path, generated prealigner path, and CVFPU/lzc paths; the address-only TB edit adds no hardware path. Source audit confirms only the second packet address changed and the common driver still sets both ACC addresses. git diff --check and recovery-2 STATUS YAML validation passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Use the common packet driver's explicit row-sized successor for a disabled-ACC transaction; disabled enables do not make address identity fields exempt from stream progression checks."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Legacy full suite first, focused backpressure second, then node M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8 with QDIR order QCOL then QROW at each M; matching xrt-vcs-sim numerical matrix only after unit/node PASS."
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+        - agent-tasks/gemm-unit-backpressure-opt-recovery-2/gemm-unit-backpressure-opt-recovery-2-spec.md
+        - agent-tasks/gemm-unit-backpressure-opt-recovery-2/STATUS.yaml
+      notes: "Preserve gemm_sync/FSM/gemm_ctrl and lmem_dma_misal/Input/Weight/Scale/ZP overlap PASS evidence. In legacy VCS require the former 405 ns strict-address assertion to pass, then require NONLAST_QCOL_CONSUMER_METADATA_PASS with QCOL bank 0 and held QROW bank 1. Retain scaler=M, ACC=M+2, write=M+3, exact early/nominal/coincident forwarding coverage, QCOL-Z lifetime correctness, final consume-index assertions, and complete ownership/scoreboard drain. Do not run the documented orphan gemm_ctrl_with_ldma gate."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase2_legacy_tb_address_recovery_verification
+    status: sim_fail
+    test: "Legacy gemm_unit_v2 VCS rerun after correcting the held QROW packet to the strict successor ACC address."
+    error_summary: "The address-progression repair allowed verification to continue, but test_same_group_stage_block later hung after accepting a packet from drive_compute_request: accepted=1, pipeline_pending=1, pre_region=1, retired=0."
+    root_cause: "drive_compute_request clears packet_ctrl and rebuilds an otherwise valid QCOL compute packet but never assigns w_load_target, s_load_target, or z_load_target. Standalone load completion levels are 1, while all three requested targets remained zero. Phase-2 exact readiness therefore correctly held the packet at Weight/ZP compute readiness, and QCOL Scale would likewise reject its zero target downstream."
+    fix_applied: "None during verification. Classified as legacy TB helper metadata drift; production exact-generation gating behaved correctly."
+    verification: "The accepted transaction remained owned in pre-process rather than being lost or falsely retired. No production assertion, bounded-FIFO, ACC-forwarding, or resource-lifetime architecture contradiction was identified."
+    lesson: "Every direct packet producer must initialize exact generation targets; setting only bank indices is insufficient after consumer-stage version gating."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase2_legacy_tb_generation_target_recovery
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then gemm_node_improve QCOL/QROW for M=4 and M=256."
+    error_summary: "The same-group arbitration helper created an accepted QCOL compute packet whose exact W/S/Z target generations were all zero."
+    root_cause: "Unlike drive_packet_ctrl and the direct qparam producer, drive_compute_request predates Phase-2 exact generation metadata and rebuilt packet_ctrl after a whole-struct clear without restoring the three target fields."
+    fix_applied: "Added w_load_target=32'd1, s_load_target=32'd1, and z_load_target=32'd1 only in drive_compute_request, matching the standalone interface completion levels and the common packet driver. Preserved bank-0 defaults, QCOL direction, ACC addresses/enables, notification/last semantics, and every production signal. Audited every direct `packet_ctrl.valid=1` producer: the qparam producer and drive_packet_ctrl already set all three targets; init/clear/end paths have valid deasserted. No production RTL changed."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 and no %Error. Warning/SCC classes remain unchanged from iteration 1. Source audit finds exactly three direct valid producers and all three now assign W/S/Z target 32'd1 before acceptance. git diff --check and recovery-2 STATUS YAML validation passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Centralize packet generation where possible; when a directed helper must construct control directly, mirror the common helper's exact-version initialization explicitly."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Legacy full suite first, focused backpressure second, then node M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8 with QDIR order QCOL then QROW at each M; matching xrt-vcs-sim numerical matrix only after unit/node PASS."
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+        - agent-tasks/gemm-unit-backpressure-opt-recovery-2/STATUS.yaml
+      notes: "Preserve prior controller/DMA/overlap PASS evidence and exclude orphaned gemm_ctrl_with_ldma. In legacy VCS require test_same_group_stage_block's drive_compute_request to pass exact W/S/Z readiness, progress from pre-process to retirement, and leave pipeline_pending_count zero. Also retain the strict-address fix, NONLAST_QCOL_CONSUMER_METADATA_PASS, scaler=M/ACC=M+2/write=M+3, full forwarding coverage, QCOL-Z lifetime assertions, and complete ownership/scoreboard drain."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase2_legacy_tb_generation_target_recovery_verification
+    status: sim_fail
+    test: "Legacy gemm_unit_v2 VCS rerun after restoring exact W/S/Z generation targets in drive_compute_request."
+    error_summary: "The former same-group pre-process hang was fixed and the accepted packet fully retired, but the event scoreboard then reported zero control fields at its assumed launch boundary and later treated the corresponding early ACC read as unexpected. The directed accumulate scheduler used the same stale boundary assumption."
+    root_cause: "Phase 2 moved ACC dependency classification and post-control ownership to int2fp_result_pop with int2fp_result_data_out.ctrl, after the two-entry converter result FIFO. The legacy scoreboard and test_accumulate_scheduler still treated merged_fifo_pop/merged_fifo_data_out as the post launch, although that event now only reserves converter credit and launches conversion. Their ownership pop, address checks, dependency-history classification, counters, and consecutive-launch checks were therefore two converter cycles early."
+    fix_applied: "None during verification. Classified as localized legacy TB observation-boundary drift; production ACC scheduling, forwarding, and result-FIFO architecture were not implicated."
+    verification: "The generation-target repair passed its intended readiness and retirement behavior before the later scoreboard errors. No bounded-buffer, ACC ordering, or production resource-lifetime contradiction was identified."
+    lesson: "A pre-converter FIFO pop is not an architectural post launch after converter results acquire their own elastic storage; scoreboard ownership must follow the exact event used by production dependency classification."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_legacy_tb_post_launch_boundary_recovery
+    status: implementation_ready
+    test: "Rerun legacy gemm_unit_v2 VCS first; on PASS run focused gemm_unit_v2_backpressure, then gemm_node_improve QCOL/QROW for M=4 and M=256."
+    error_summary: "Legacy transaction ownership and directed accumulate checks consumed metadata at merged_fifo_pop, before conversion and the depth-2 result FIFO, instead of at the production post-launch boundary."
+    root_cause: "The scoreboard retained Phase-1 boundary naming after Phase-2 relocated ctrl_pipe[MERGER_CTRL_IDX] injection and post_launch_{forward,history_forward,early} classification to int2fp_result_pop. A direct signal substitution alone was insufficient because an early ACC read may be issued in the same cycle as int2fp_result_pop, while the old pre-converter observation had queued the expectation in advance."
+    fix_applied: "Changed only the legacy TB. The independent event scoreboard now pops accepted ownership, checks order/enables/addresses, classifies forwarding/history/early dependencies, and captures post history on int2fp_result_pop using int2fp_result_data_out.ctrl. Moved this expectation-generation block before nominal/early request consumption so a same-cycle early request sees its just-created expectation, while retaining nominal-before-early architectural ordering for coincident requests. Updated test_accumulate_scheduler's address/QDIR checks, launch counter, consecutive-cycle check, nominal classification, K_LOOKBACK early classification, and diagnostics to the same true post boundary. Audited the TB and removed every post-launch use of merged_fifo_pop/merged_fifo_data_out. Production RTL and ACC timing indices were not changed."
+    verification: "Target-config legacy gemm_unit_v2 Verilator lint completed with exit code 0 and no %Error. The six existing UNOPTFLAT warning roots remain the QCOL reduce valid/result paths, prealigner path, and CVFPU FMA/lzc paths; this TB-only event-order change adds no RTL SCC. Source audit finds no merged_fifo_pop or merged_fifo_data_out reference remaining in the legacy TB and confirms both scoreboards use int2fp_result_pop/int2fp_result_data_out.ctrl. git diff --check and recovery-2 STATUS YAML validation passed. No VCS, simulation, blackbox, or FSDB was run by the implementation role."
+    lesson: "Generate same-cycle early-read expectations before consuming request events, and bind all ownership/history/counter checks to the same post-launch event that injects production control."
+    test_request:
+      test_type: unittest_and_blackbox
+      test_path: "hw/unittest/{gemm_unit_v2,gemm_unit_v2_backpressure,gemm_node_improve}; ci/run_target_gemm.sh"
+      test_params: "Source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Legacy full suite first, focused backpressure second, then node M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8 with QDIR order QCOL then QROW at each M; matching xrt-vcs-sim numerical matrix only after unit/node PASS."
+      sim_tool: vcs
+      changed_files:
+        - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+        - agent-tasks/gemm-unit-backpressure-opt-recovery-2/STATUS.yaml
+      notes: "Preserve all gemm_sync/FSM/gemm_ctrl and Input/Weight/Scale/ZP overlap PASS evidence; exclude orphaned gemm_ctrl_with_ldma. In legacy VCS first require test_same_group_stage_block to remain fully retired, then require event scoreboard ownership/order at int2fp_result_pop, same-cycle early expectation handling, exact nominal-before-early coincident ordering, test_accumulate_scheduler one-post-launch-per-cycle behavior, nominal and K_LOOKBACK classification, scaler=M/ACC=M+2/write=M+3, strict-address and NONLAST_QCOL_CONSUMER_METADATA_PASS checks, QCOL-Z lifetime assertions, and complete queue/pipeline drain."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_unit_and_node_verification
+    status: pass
+    test: "Configured VCS verification in required order: legacy gemm_unit_v2 full suite, focused gemm_unit_v2_backpressure suite, then gemm_node_improve for M={4,256} and QDIR={QCOL,QROW}."
+    error_summary: "None. All recovery-2 unit and node verification gates passed after the post-launch scoreboard boundary correction."
+    root_cause: "The iteration-2 failures were entirely legacy TB boundary drift: production classified ACC dependencies at int2fp_result_pop, while the TB had observed merged_fifo_pop before conversion. Iteration 3 aligned TB ownership and history checks with the production post-launch event."
+    fix_applied: "Verified the iteration-3 TB-only correction without any further RTL or TB modification."
+    verification: "Legacy gemm_unit_v2 PASS. Focused gemm_unit_v2_backpressure PASS for deterministic stalls of 1, 2, 6, and 7 cycles, random stalls, and reset while occupied. gemm_node_improve numerical and INPUT_METADATA checks PASS for M=4/QDIR=QCOL, M=4/QDIR=QROW, M=256/QDIR=QCOL, and M=256/QDIR=QROW. Each M=256 direction completed 65536 outputs from 128 commands and 16384 input packets. The ordered unit/node gate is complete; matching XRT-VCS target-GEMM blackbox verification remains."
+    lesson: "Using the true post-converter launch boundary restores both dependency-scoreboard timing and full-rate directed scheduling without changing production ACC semantics."
+    test_request:
+      test_type: blackbox
+      test_path: "ci/run_target_gemm.sh"
+      test_params: "Use xrt-vcs-sim with M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, and WLOAD=8 under configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh."
+      sim_tool: xrt-vcs-sim
+      changed_files: []
+      notes: "Unit and node verification are PASS. Preserve prior gemm_sync/FSM/gemm_ctrl and DMA-overlap PASS evidence, keep orphaned gemm_ctrl_with_ldma excluded, and proceed only with the four matching target-GEMM numerical blackbox cases."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_blackbox_verification
+    status: infrastructure_fail
+    test: "Ordered xrt-vcs-sim target-GEMM matrix for M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, and WLOAD=8."
+    error_summary: "M=4 QDIR=QCOL PASS and M=4 QDIR=QROW PASS. M=256 QDIR=QCOL exited 1 at simulation time zero because the VCS co-simulation memory socket port was already bound. The first-failure rule stopped the matrix before M=256 QDIR=QROW was run."
+    root_cause: "Infrastructure-only socket collision in artifact build/run_logs/target_gemm/20260815-215404_run_wload8_m256_n256_k256_q32_t0_d0_pid1810050: the control socket began listening on port 46429, then the memory-socket bind reported `Address already in use`; the testbench reported `Failed to init socket server`. No RTL clocked execution or GEMM workload advancement occurred."
+    fix_applied: "None. Preserve both completed M=4 PASS results and retry only the unverified M=256 cases after ensuring the co-simulation ports are free. No source change is indicated."
+    verification: "The failing artifact manifest records exit_status=1. Its simv.log reaches only socket-server initialization at time zero and contains no RTL/workload progress. Consequently this result does not invalidate the complete unit/node PASS evidence or either M=4 blackbox PASS. M=256 QDIR=QCOL remains unverified, and M=256 QDIR=QROW was not run."
+    lesson: "Classify a time-zero co-simulation socket bind collision separately from RTL/workload behavior, retain earlier matrix PASS cases, and resume from the first unverified case."
+    test_request:
+      test_type: blackbox_retry
+      test_path: "ci/run_target_gemm.sh"
+      test_params: "Retry xrt-vcs-sim M=256 QDIR=QCOL first, then M=256 QDIR=QROW, with N=K=256, QBLK=32, WTRANS=0, WLOAD=8 under configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Ensure stale co-simulation processes/ports are clear before launch."
+      sim_tool: xrt-vcs-sim
+      changed_files: []
+      notes: "Do not rerun the already-PASS M=4 QCOL/QROW cases unless required by the verifier. Apply first-failure stop to the two remaining M=256 directions and distinguish any pre-workload infrastructure failure from an RTL or numerical failure."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_blackbox_verification_retry
+    status: pass
+    test: "Retried the two remaining xrt-vcs-sim target-GEMM cases in order: M=256 QDIR=QCOL, then M=256 QDIR=QROW, with N=K=256, QBLK=32, WTRANS=0, and WLOAD=8."
+    error_summary: "None. Both M=256 retries completed with numerical and runner PASS, completing the M={4,256} by QDIR={QCOL,QROW} blackbox matrix."
+    root_cause: "The prior M=256 QCOL exit was a transient time-zero socket bind collision, not an RTL or workload failure. Clean retry ports allowed both remaining cases to execute normally."
+    fix_applied: "Retried M=256 QCOL on control/memory ports 61000/61001 and M=256 QROW on ports 61010/61011. No source change was required."
+    verification: "M=256 QCOL artifact build/run_logs/target_gemm/20260815-215526_run_wload8_m256_n256_k256_q32_t0_d0_pid1823642 records exit_status=0, wrapper PASSED, and ports 61000/61001. M=256 QROW artifact build/run_logs/target_gemm/20260815-215809_run_wload8_m256_n256_k256_q32_t0_d1_pid1850718 records exit_status=0, wrapper PASSED, and ports 61010/61011. Together with the earlier M=4 QCOL and QROW PASS results, all four required blackbox cases pass. The excluded 20260815-215404 artifact remains classified solely as a time-zero infrastructure collision."
+    lesson: "A clean-port retry confirmed that the socket collision had no architectural significance; retain the failed artifact for provenance but exclude it from functional pass/fail conclusions."
+    test_request:
+      test_type: fsdb_waveform_analysis
+      test_path: "build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+      test_params: "Generate and preserve separate M=4, N=K=256, QBLK=32, WTRANS=0, WLOAD=8 FSDB captures in QDIR order QCOL then QROW under configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh. Analyze each capture with tools/fsdb_cli."
+      sim_tool: tools/fsdb_cli
+      changed_files: []
+      notes: "For QCOL first and QROW second, correlate input admission/fire, pre/compute/post valid-ready flow, merged FIFO and INT2FP result FIFO occupancy/credit, exact W/S/Z bank-generation readiness at their true consumers, consume/write lifetime boundaries, ACC early/nominal/forwarding events, output retirement, and pipeline_empty. Confirm bounded occupancy, no drop/duplication/reordering, no stale generation read, no overwrite before final old read, and no unexplained input-burst gap introduced by the new backpressure path. Preserve each direction's FSDB before launching the next run because vcs_cosim.fsdb may be overwritten."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase2_fsdb_verification
+    status: blocked
+    test: "M=4 QDIR=QCOL target-GEMM FSDB analysis with tools/fsdb_cli; artifact build/run_logs/target_gemm/20260815-220116_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid1881593/target_gemm.fsdb. QROW was scheduled second but was not run under the first-failure stop."
+    error_summary: "Numerical correctness and all 256 end-to-end transaction invariants passed, but the waveform contains four internal input gaps with valid=0 while ready=1, W/Z exact generations ready, and compute continuing. These source-absent bubbles violate the confirmed conditional back-to-back input target, so RTL work and downstream QROW verification stop under the Hard Rule pending design discussion."
+    root_cause: "The 99 internal valid=1/ready=0 stalls are fully explained by the required Weight exact-version arriving late and are legitimate consumer-stage backpressure. In contrast, the four target-violating internal gaps at 59,285,000 ps, 59,325,000 ps, 59,345,000 ps, and 59,365,000 ps occur with valid=0/ready=1 while Weight and Zero-point are ready and compute continues; their source-side cause is unresolved. Separate source-absent boundary gaps of 4, 1, and 80 cycles were also observed and are retained as boundary evidence rather than folded into the four internal violations."
+    fix_applied: "None. The Hard Rule requires stopping before any RTL, testbench, or plan change because the current design does not meet its conditional back-to-back target. No alternative design is proposed in this entry."
+    verification: "The QCOL run is numerically PASS. FSDB accounting reports 256 accepted inputs through end-to-end retirement with matching counts/order invariants, correct W/S/Z bank alternation, and zero unsafe overwrites. The waveform classifies 99 internal gaps as valid-held Weight-readiness stalls and four as unexplained source-absent gaps despite ready resources. QROW FSDB verification remains unrun because verification stopped at the first confirmed target violation."
+    lesson: "A numerically correct, overwrite-safe elastic pipeline can still miss its throughput contract; valid-low/ready-high bubbles must be separated from legitimate exact-version backpressure before declaring the backpressure optimization complete."
