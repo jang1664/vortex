@@ -20,7 +20,8 @@
 module VX_core import VX_gpu_pkg::*; #(
     parameter CORE_ID = 0,
     parameter `STRING INSTANCE_ID = "",
-    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS,
+    parameter NUM_TMEM_BANKS = `NUM_TMEM_BANKS,
+    parameter NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
         `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
@@ -41,7 +42,7 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    icache_bus_if,
 
     // DMA AXI ports (from GEMM node's TMEM subsystem)
-    AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS],
+    AXI_BUS.Master          dma_axi_m [NUM_DMA_CHANNELS],
 
 `ifdef GBAR_ENABLE
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -375,7 +376,7 @@ module VX_core import VX_gpu_pkg::*; #(
        ,.psum_wr_lmem_bus_if(gemm_psum_wr_if)
     );
 
-    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_naive_gemm_dma_axi
+    for (genvar i = 0; i < NUM_DMA_CHANNELS; ++i) begin : g_naive_gemm_dma_axi
         assign dma_axi_m[i].aw_id     = '0;
         assign dma_axi_m[i].aw_addr   = '0;
         assign dma_axi_m[i].aw_len    = '0;
@@ -445,6 +446,7 @@ module VX_core import VX_gpu_pkg::*; #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
         .N_MASTER (`NUM_LSU_BLOCKS),
         .NUM_TMEM_BANKS (NUM_TMEM_BANKS),
+        .NUM_DMA_CHANNELS (NUM_DMA_CHANNELS),
         .DMA_STORE_MAX_CHUNK_BEATS (DMA_STORE_MAX_CHUNK_BEATS)
     ) gemm_node (
         .clk         (clk),
@@ -490,7 +492,7 @@ module VX_core import VX_gpu_pkg::*; #(
     end
 `endif
 
-    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_disabled_gemm_dma_axi
+    for (genvar i = 0; i < NUM_DMA_CHANNELS; ++i) begin : g_disabled_gemm_dma_axi
         assign dma_axi_m[i].aw_id     = '0;
         assign dma_axi_m[i].aw_addr   = '0;
         assign dma_axi_m[i].aw_len    = '0;

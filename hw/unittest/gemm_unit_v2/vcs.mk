@@ -6,6 +6,7 @@ compile: $(TB) $(RTLS) $(DPI_SRCS) $(SOFTFLOAT_LIB) Makefile vcs.mk | setup
 	-full64 \
 	-debug_access+all \
 	+ntb_random_seed=1234 \
+	-top $(TOP_MODULE) \
 	-l $(COMPILE_LOG) \
 	-timescale=$(TIME_SCALE) \
 	+libext+.v+ \

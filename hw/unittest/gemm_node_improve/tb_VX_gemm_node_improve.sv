@@ -171,11 +171,13 @@ module tb_VX_gemm_node_improve
   localparam int AXI_ID_WIDTH   = 8;
   localparam int AXI_USER_WIDTH = 1;
   localparam int AXI_STRB_WIDTH = AXI_DATA_WIDTH / 8;
-  localparam int NUM_TMEM_BANKS = 8;
+  localparam int NUM_TMEM_BANKS = `NUM_TMEM_BANKS;
+  localparam int NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS;
+  localparam int NUM_HBM_PORTS = `NUM_HBM_PORTS;
   localparam int HBM_NUM_BANKS       = `PLATFORM_MEMORY_NUM_BANKS;
   localparam int HBM_BANK_BITS       = `CLOG2(HBM_NUM_BANKS);
-  localparam int HBM_PORT_BITS       = `CLOG2(NUM_TMEM_BANKS);
-  localparam int HBM_BANKS_PER_PORT  = HBM_NUM_BANKS / NUM_TMEM_BANKS;
+  localparam int HBM_PORT_BITS       = `CLOG2(NUM_HBM_PORTS);
+  localparam int HBM_BANKS_PER_PORT  = HBM_NUM_BANKS / NUM_HBM_PORTS;
   localparam int HBM_LOCAL_BITS      = `CLOG2(HBM_BANKS_PER_PORT);
   localparam int HBM_BANK_SHIFT      = AXI_ADDR_WIDTH - HBM_BANK_BITS;
   localparam int HBM_BLOCK_SHIFT     = `CLOG2(`MEM_BLOCK_SIZE);
@@ -186,7 +188,7 @@ module tb_VX_gemm_node_improve
     .AXI_DATA_WIDTH(AXI_DATA_WIDTH),
     .AXI_ID_WIDTH  (AXI_ID_WIDTH),
     .AXI_USER_WIDTH(AXI_USER_WIDTH)
-  ) dma_axi [NUM_TMEM_BANKS] ();
+  ) dma_axi [NUM_DMA_CHANNELS] ();
 
   // =========================================================================
   // DUT
@@ -195,7 +197,8 @@ module tb_VX_gemm_node_improve
     .INSTANCE_ID("gemm_node_0"),
     .N_MASTER(N_MASTER),
     .N_CHILDREN(6),
-    .NUM_TMEM_BANKS(NUM_TMEM_BANKS)
+    .NUM_TMEM_BANKS(NUM_TMEM_BANKS),
+    .NUM_DMA_CHANNELS(NUM_DMA_CHANNELS)
   ) u_dut (
     .clk         (clk),
     .reset       (reset),
@@ -251,7 +254,7 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   localparam int AXI_MEM_LATENCY = 4;
 
-  for (genvar ch = 0; ch < NUM_TMEM_BANKS; ch++) begin : g_axi_slave
+  for (genvar ch = 0; ch < NUM_DMA_CHANNELS; ch++) begin : g_axi_slave
 
     typedef struct {
       logic [AXI_DATA_WIDTH-1:0] data;
@@ -279,7 +282,7 @@ module tb_VX_gemm_node_improve
         byte_offset        = local_addr & longint'(`MEM_BLOCK_SIZE - 1);
         bank_offset_blocks = local_addr >> HBM_BLOCK_SHIFT;
         q                  = (bank_offset_blocks * longint'(HBM_BANKS_PER_PORT)) + local_bank;
-        block_idx          = (q * longint'(NUM_TMEM_BANKS)) + bank_port;
+        block_idx          = (q * longint'(NUM_HBM_PORTS)) + bank_port;
         return (block_idx << HBM_BLOCK_SHIFT) | byte_offset;
       end
     endfunction

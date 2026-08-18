@@ -1,0 +1,81 @@
+task: tmem-hbm-interleaved-dma-opt
+spec: agent-tasks/tmem-hbm-interleaved-dma-opt/tmem-hbm-interleaved-dma-opt-spec.md
+plan: docs/future_optim/gemv/gemm_improve/tmem_hbm_interleaved_dma_opt.md
+current_phase: complete
+status: pass
+iterations:
+  - iteration: 1
+    timestamp: "2026-08-17 23:27 KST"
+    phase: rtl_implementation
+    status: pass
+    summary: "Separated T/D/H through the GEMM hierarchy, added restricted c+kD TMEM routing and c+kD HBM routing, preserved the D==H direct path and U55C H=8 remap, and changed host capacity accounting to T."
+    verification: "Verilator lint passed for 8/8/8 and 16/8/8 GEMM-node elaboration; full Vortex_axi H>D elaboration passed for 4/2/4; focused VX_mem_remap simulations passed for P/H=32/8 and 32/2; xrt_sim_vcs.cpp T/D/H=16/8/8 syntax passed; Tcl completeness, YAML parse, and git diff --check passed."
+    lesson: "The GEMM DMA controller already emits D-channel-local addresses. A per-owner T/D TMEM switch can therefore add physical banks without changing command meaning, while H>D requires an AXI demux per DMA channel to preserve AW/W/B and AR/R route state."
+  - iteration: 1
+    timestamp: "2026-08-17 23:34 KST"
+    phase: verification
+    status: sim_fail
+    summary: "Focused mem_remap P/H=32/8 and 32/2 passed, and gemm_tmem_dma_ctrl D=8 load/store passed. dma_engine D/H=8/8 then failed at 45 ns because VX_dma_unit rejected lookahead_if.data_release for the misaligned DMA path."
+    error_log: "build/hw/unittest/dma_engine/logs/sim.log: VX_dma_unit.sv line 51, 'misaligned DMA does not support data prepare'."
+    root_cause: "Pending implementation audit; classify whether the dma_engine TB leaves data_release asserted/uninitialized or the T/D/H interface changes exposed a production protocol regression."
+    fix_applied: "None yet; stopped at the first failure."
+    lesson: "The DMA-engine gate must establish a legal lookahead baseline before remap and completion behavior can be credited."
+  - iteration: 2
+    timestamp: "2026-08-18 01:13 KST"
+    phase: verification
+    status: pass
+    summary: "dma_engine rerun and the full ordered TMEM/local-DMA/GEMM regression suite passed. gemm_node_improve passed all eight baseline/target cases with numerical and metadata completion exact."
+    verification: "T/D/H=8/8/8 and 16/8/8 each passed M={4,256} x QDIR={0,1}. Baseline completion was 17545 ns (M4) and 205785 ns (M256); target was 17415 ns (M4), 204875 ns (M256 QCOL), and 204745 ns (M256 QROW). Separate compile fingerprints proved the 16-bank binary was rebuilt."
+    root_cause: "The only prior failure was the standalone dma_engine TB's missing lookahead tie-off; no production topology defect remained."
+    fix_applied: "The TB now drives data_release=1 and data_max_beats=0 for every channel."
+    lesson: "Doubling TMEM banks while holding D/H at eight preserves correctness and already reduces node completion time by roughly 0.44-0.74 percent in the directed simulations."
+  - iteration: 3
+    timestamp: "2026-08-18 01:30 KST"
+    phase: blackbox_verification
+    status: pass
+    summary: "The complete XRT-VCS matrix passed for both 8/8/8 and 16/8/8 with distinct compile fingerprints and no stale cross-topology simv reuse."
+    verification: "All eight manifests exited zero with numerical and target-gemm PASS. Total-cycle deltas for 16/8/8 were -26 (-4.10%) M4 QCOL, -2 (-0.32%) M4 QROW, -176 (-0.91%) M256 QCOL, and -172 (-0.89%) M256 QROW. Input/Weight/Output stalls were zero in every case and ACC underflow/conflict remained zero."
+    lesson: "Extra TMEM banks deliver a measurable but workload-dependent benefit while leaving HBM/DMA transfer counts unchanged; waveform analysis is required to attribute the improvement to physical bank selection and conflicts."
+  - iteration: 4
+    timestamp: "2026-08-18 01:45 KST"
+    phase: fsdb_verification
+    status: pass
+    summary: "M4 QCOL FSDB comparison proved the restricted mapping, U55C remap preservation, traffic conservation, exact completion, and the source of the 16-bank performance gain."
+    verification: "HBM traffic was identical at 736 requests and 704 read responses. DMA-to-TMEM routing conserved 736 requests/responses with zero ownership mismatch, loss, duplicate, reorder, router bubble, or early completion. DMA stall cycles fell 151->69, multi-requester bank conflicts 282->173, Weight partial issues 91->65, Input internal bubbles 103->63, and Weight internal bubbles 71->47. Total cycles fell 633->608."
+    lesson: "The T/D restricted demux reduces physical-bank arbitration pressure without changing HBM traffic; the performance gain is therefore attributable to TMEM bank parallelism rather than extra external bandwidth."
+  - iteration: 2
+    timestamp: "2026-08-17 23:38 KST"
+    phase: rtl_fix
+    status: ready_for_rerun
+    summary: "Classified the 45 ns dma_engine failure as an undriven-testbench protocol input, not a T/D/H RTL regression, and explicitly tied the legacy lookahead state to released/no-credit."
+    error_log: "The TB drove PREPARE/ACTIVATE fields but never drove data_release or data_max_beats. VCS therefore presented X on lookahead_if.data_release to the intentional misaligned-backend assertion."
+    root_cause: "Misaligned DMA has no PREPARE cache and requires data_release=1 at all times. The standalone dma_engine TB predates the two newer lookahead fields and left them uninitialized; the production GEMM controller already drives data_release=1 for every non-prefetched command."
+    fix_applied: "In tb_VX_dma_engine, drive data_release=1 and data_max_beats=0 for every channel. Verilator compilation passes for both TB_ENABLE_MISALIGN=1 and 0."
+    lesson: "When a protocol interface gains inputs, legacy standalone masters must drive an explicit legal idle/bypass state; X-sensitive assertions correctly expose missing tie-offs before datapath behavior begins."
+verification_request:
+  - order: 1
+    test_type: "unittest"
+    test: "dma_engine VCS rerun from the first failed gate"
+    test_path: "hw/unittest/dma_engine"
+    sim_tool: "vcs"
+    configs: ["T/D/H=8/8/8", "TB_ENABLE_MISALIGN=1"]
+    notes: "Force rebuild so the new data_release/data_max_beats tie-offs are compiled."
+  - order: 2
+    test: "gemm_node_improve VCS functional baseline"
+    configs: ["T/D/H=8/8/8"]
+  - order: 3
+    test: "gemm_node_improve VCS expanded-TMEM functional run"
+    configs: ["T/D/H=16/8/8"]
+  - order: 4
+    test: "xrt-vcs run_target_gemm.sh correctness matrix"
+    configs: ["T/D/H=8/8/8", "T/D/H=16/8/8"]
+  - order: 5
+    test: "xrt-vcs cycle/performance comparison"
+    configs: ["T/D/H=8/8/8", "T/D/H=16/8/8"]
+known_limitations:
+  - "No VCS or blackbox run was executed by the implementation agent; functional and performance closure is delegated to verification."
+  - "The checked-in U55C platforms.mk connectivity exposes eight AXI masters. Generic H>D is implemented and linted, but a non-H=8 FPGA package requires a matching platform connectivity definition."
+  - "Generic D<8 controller behavior is no longer statically rejected, but the existing controller unittest is fixed at D=8 and needs parameterization or a focused wrapper before functional D=4 execution."
+notes:
+  - "Confirmed primary comparison: T/D/H=8/8/8 versus 16/8/8."
+  - "Preserve existing dirty-worktree TMEM arbitration and GEMM backpressure changes."

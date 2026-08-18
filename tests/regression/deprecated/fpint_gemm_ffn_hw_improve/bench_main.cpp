@@ -470,7 +470,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS,   &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 
-  uint64_t tensor_mem_size = TMEM_BANK_SIZE * NUM_DMA_CHANNELS;
+  uint64_t tensor_mem_size = TMEM_BANK_SIZE * NUM_TMEM_BANKS;
 
   // ---- Generate test vectors (no host reference) ----
   std::vector<uint16_t> h_A;

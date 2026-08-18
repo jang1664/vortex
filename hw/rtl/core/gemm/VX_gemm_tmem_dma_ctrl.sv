@@ -1819,8 +1819,11 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 `endif
 `endif
 
-    `VX_STATIC_ASSERT(NUM_CHANNELS == 8,
-      ("multi-command GEMM DMA requires eight channels"));
+    `VX_STATIC_ASSERT((NUM_CHANNELS > 0)
+                   && ((NUM_CHANNELS & (NUM_CHANNELS - 1)) == 0),
+      ("NUM_CHANNELS must be a positive power of two"));
+    `VX_STATIC_ASSERT((`PLATFORM_MEMORY_NUM_BANKS % NUM_CHANNELS) == 0,
+      ("physical memory banks must be divisible by NUM_CHANNELS"));
     `VX_STATIC_ASSERT(PENDING_DEPTH > 0,
       ("DMA pending depth must be positive"));
 

@@ -30,12 +30,12 @@ module tb_vcs_xrtsim #(
   parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
   parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
   parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-  parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_DMA_CHANNELS
+  parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_HBM_PORTS
 );
 
   localparam int CLK_HALF_PERIOD_NS = 5;
   localparam int DATA_SIZE = `PLATFORM_MEMORY_DATA_SIZE;
-  localparam int NUM_PORTS = `NUM_DMA_CHANNELS;
+  localparam int NUM_PORTS = `NUM_HBM_PORTS;
 
   // Response queue depth limit for backpressure
   localparam int RSP_QUEUE_LIMIT = 16;
@@ -234,7 +234,7 @@ module tb_vcs_xrtsim #(
 `ifdef VCS_POST_IMPL
   ulp_vortex_afu_1_0 dut (
     .ap_clk(ap_clk), .ap_rst_n(ap_rst_n),
-    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_HBM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),
@@ -263,7 +263,7 @@ module tb_vcs_xrtsim #(
     .C_M_AXI_MEM_ADDR_WIDTH(C_M_AXI_MEM_ADDR_WIDTH)
   ) dut (
     .clk(ap_clk), .reset(~ap_rst_n),
-    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_HBM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),

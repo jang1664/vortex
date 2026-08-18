@@ -18,7 +18,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
     parameter N_CHILDREN  = 6,
-    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS,
+    parameter NUM_TMEM_BANKS = `NUM_TMEM_BANKS,
+    parameter NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
         `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
@@ -29,7 +30,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.slave     mmio_if[N_MASTER],
 
     // DMA engine AXI ports (pass through to VX_tmem_subsystem -> HBM)
-    AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS]
+    AXI_BUS.Master          dma_axi_m [NUM_DMA_CHANNELS]
 `ifdef ENABLE_HW_DEBUG_GEMM
     ,output gemm_unit_debug_t gemm_unit_debug
 `endif
@@ -1176,14 +1177,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_config_reg_if #(
         .NUM (`DMA_CFG_REG_NUM),
         .DW  (32)
-    ) dma_cfg_if [NUM_TMEM_BANKS] ();
+    ) dma_cfg_if [NUM_DMA_CHANNELS] ();
 
-    VX_node_done_if dma_done_if [NUM_TMEM_BANKS] ();
-    VX_dma_lookahead_if dma_lookahead_if [NUM_TMEM_BANKS] ();
+    VX_node_done_if dma_done_if [NUM_DMA_CHANNELS] ();
+    VX_dma_lookahead_if dma_lookahead_if [NUM_DMA_CHANNELS] ();
 
     VX_gemm_tmem_dma_ctrl #(
         .INSTANCE_ID  ({INSTANCE_ID, "_tmem_dma_ctrl"}),
-        .NUM_CHANNELS (NUM_TMEM_BANKS)
+        .NUM_CHANNELS (NUM_DMA_CHANNELS)
     ) u_tmem_dma_ctrl (
         .clk              (clk),
         .reset            (reset),
@@ -1316,6 +1317,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_tmem_subsystem #(
       .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),
       .NUM_BANKS      (NUM_TMEM_BANKS),
+      .NUM_DMA_CHANNELS(NUM_DMA_CHANNELS),
       .BANK_SIZE      (`TMEM_BANK_SIZE),
       .DATA_SIZE      (`MEM_BLOCK_SIZE),
       .GEMM_DATA_SIZE (`MEM_BLOCK_SIZE),

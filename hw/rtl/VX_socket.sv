@@ -302,7 +302,8 @@ module VX_socket import VX_gpu_pkg::*; #(
         VX_core #(
             .CORE_ID  ((SOCKET_ID * `SOCKET_SIZE) + core_id),
             .INSTANCE_ID (`SFORMATF(("%s-core%0d", INSTANCE_ID, core_id))),
-            .NUM_TMEM_BANKS (`NUM_DMA_CHANNELS)
+            .NUM_TMEM_BANKS (`NUM_TMEM_BANKS),
+            .NUM_DMA_CHANNELS (`NUM_DMA_CHANNELS)
         ) core (
             `SCOPE_IO_BIND  (scope_core + core_id)
 

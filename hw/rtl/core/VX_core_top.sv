@@ -143,19 +143,21 @@ module VX_core_top import VX_gpu_pkg::*; #(
     `UNUSED_VAR (scope_bus_out_w)
 `endif
 
-    localparam NUM_TMEM_BANKS = `NUM_DMA_CHANNELS;
+    localparam NUM_TMEM_BANKS = `NUM_TMEM_BANKS;
+    localparam NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS;
 
     AXI_BUS #(
         .AXI_ADDR_WIDTH (`PLATFORM_MEMORY_ADDR_WIDTH),
         .AXI_DATA_WIDTH (`PLATFORM_MEMORY_DATA_SIZE * 8),
         .AXI_ID_WIDTH   (8),
         .AXI_USER_WIDTH (1)
-    ) dma_axi_m [NUM_TMEM_BANKS] ();
+    ) dma_axi_m [NUM_DMA_CHANNELS] ();
 
     VX_core #(
         .INSTANCE_ID (`SFORMATF(("core"))),
         .CORE_ID (CORE_ID),
-        .NUM_TMEM_BANKS (NUM_TMEM_BANKS)
+        .NUM_TMEM_BANKS (NUM_TMEM_BANKS),
+        .NUM_DMA_CHANNELS (NUM_DMA_CHANNELS)
     ) core (
         `SCOPE_IO_BIND (0)
         .clk            (clk),
