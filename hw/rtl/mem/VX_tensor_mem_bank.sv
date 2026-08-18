@@ -23,10 +23,14 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     parameter DATA_SIZE  = 64,       // Data width in bytes (512-bit = 64 bytes)
     parameter NUM_PORTS  = 6,        // Number of requestors
     parameter TAG_WIDTH  = 8,
-    parameter `STRING ARBITER = "R"  // Round-robin arbitration
+    parameter `STRING ARBITER = "R", // Round-robin arbitration
+    parameter bit ENABLE_URGENCY = 1'b0,
+    parameter int MAX_CONSECUTIVE_URGENT = 4
 ) (
     input wire clk,
     input wire reset,
+
+    input wire [NUM_PORTS-1:0] req_urgent_i,
 
     VX_mem_bus_if.slave mem_bus_if [NUM_PORTS]
 );
@@ -38,8 +42,17 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     localparam ARB_TAG_WIDTH = TAG_WIDTH + ARB_SEL_BITS;
     localparam MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH;
     localparam MEM_ADDR_W    = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
+    localparam PORT_PTR_W     = `CLOG2(NUM_PORTS);
+    localparam URGENT_COUNT_W = (MAX_CONSECUTIVE_URGENT > 0)
+                              ? $clog2(MAX_CONSECUTIVE_URGENT + 1) : 1;
 
     `UNUSED_SPARAM (INSTANCE_ID)
+
+    initial begin
+        if (MAX_CONSECUTIVE_URGENT < 1)
+            $fatal(1, "%s: MAX_CONSECUTIVE_URGENT must be positive",
+                   INSTANCE_ID);
+    end
 
     // ---------------------------------------------------------------
     // Arbiter: NUM_PORTS → 1
@@ -47,8 +60,86 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) eligible_bus_if [NUM_PORTS]();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
         .TAG_WIDTH  (ARB_TAG_WIDTH)
     ) arb_bus_if [1]();
+
+    wire [NUM_PORTS-1:0] request_valid;
+    wire [NUM_PORTS-1:0] request_ready;
+    localparam int REQ_DATA_WIDTH = 1 + MEM_ADDR_W + (DATA_SIZE * 9)
+                                  + MEM_FLAGS_WIDTH + TAG_WIDTH;
+    wire [NUM_PORTS-1:0][REQ_DATA_WIDTH-1:0] request_data;
+    wire [NUM_PORTS-1:0] urgent_valid;
+    wire [NUM_PORTS-1:0] normal_valid;
+    logic [NUM_PORTS-1:0] urgent_rr_mask;
+    logic [NUM_PORTS-1:0] normal_rr_mask;
+    logic [PORT_PTR_W-1:0] urgent_rr_ptr_r;
+    logic [PORT_PTR_W-1:0] normal_rr_ptr_r;
+    wire any_urgent = |urgent_valid;
+    wire any_normal = |normal_valid;
+    logic [URGENT_COUNT_W-1:0] consecutive_urgent_r;
+    wire force_normal = ENABLE_URGENCY && any_normal && any_urgent
+                     && (consecutive_urgent_r
+                         >= URGENT_COUNT_W'(MAX_CONSECUTIVE_URGENT));
+    wire select_urgent = ENABLE_URGENCY && any_urgent && !force_normal;
+    wire [NUM_PORTS-1:0] eligible_mask = ENABLE_URGENCY
+        ? (select_urgent ? urgent_rr_mask : normal_rr_mask)
+        : request_valid;
+
+    // Keep independent RR cursors for the two priority classes.  A shared
+    // cursor can be repeatedly displaced by urgent grants and therefore does
+    // not bound progress among multiple persistent normal requesters.
+    always_comb begin
+        urgent_rr_mask = '0;
+        normal_rr_mask = '0;
+        begin
+            logic urgent_found;
+            logic normal_found;
+            int urgent_candidate;
+            int normal_candidate;
+            urgent_found = 1'b0;
+            normal_found = 1'b0;
+            for (int offset = 0; offset < NUM_PORTS; ++offset) begin
+                urgent_candidate = int'(urgent_rr_ptr_r) + offset;
+                normal_candidate = int'(normal_rr_ptr_r) + offset;
+                if (urgent_candidate >= NUM_PORTS)
+                    urgent_candidate = urgent_candidate - NUM_PORTS;
+                if (normal_candidate >= NUM_PORTS)
+                    normal_candidate = normal_candidate - NUM_PORTS;
+                if (!urgent_found && urgent_valid[urgent_candidate]) begin
+                    urgent_rr_mask[urgent_candidate] = 1'b1;
+                    urgent_found = 1'b1;
+                end
+                if (!normal_found && normal_valid[normal_candidate]) begin
+                    normal_rr_mask[normal_candidate] = 1'b1;
+                    normal_found = 1'b1;
+                end
+            end
+        end
+    end
+
+    for (genvar p = 0; p < NUM_PORTS; ++p) begin : g_urgency_filter
+        assign request_valid[p] = mem_bus_if[p].req_valid;
+        assign request_data[p] = mem_bus_if[p].req_data;
+        assign urgent_valid[p] = mem_bus_if[p].req_valid && req_urgent_i[p];
+        assign normal_valid[p] = mem_bus_if[p].req_valid && !req_urgent_i[p];
+
+        assign eligible_bus_if[p].req_valid = mem_bus_if[p].req_valid
+                                            && eligible_mask[p];
+        assign eligible_bus_if[p].req_data = mem_bus_if[p].req_data;
+        assign mem_bus_if[p].req_ready = eligible_bus_if[p].req_ready
+                                       && eligible_mask[p];
+        assign request_ready[p] = eligible_bus_if[p].req_ready
+                                && eligible_mask[p];
+
+        assign mem_bus_if[p].rsp_valid = eligible_bus_if[p].rsp_valid;
+        assign mem_bus_if[p].rsp_data = eligible_bus_if[p].rsp_data;
+        assign eligible_bus_if[p].rsp_ready = mem_bus_if[p].rsp_ready;
+    end
 
     VX_mem_arb #(
         .NUM_INPUTS  (NUM_PORTS),
@@ -59,7 +150,7 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     ) mem_arb (
         .clk        (clk),
         .reset      (reset),
-        .bus_in_if  (mem_bus_if),
+        .bus_in_if  (eligible_bus_if),
         .bus_out_if (arb_bus_if)
     );
 
@@ -85,6 +176,35 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     // Accept a request when we can forward the response (no stall)
     wire req_fire = req_valid && ~rsp_stall;
+    wire grant_was_urgent = ENABLE_URGENCY && select_urgent && req_fire;
+    wire grant_was_normal = ENABLE_URGENCY && !select_urgent && req_fire;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            consecutive_urgent_r <= '0;
+            urgent_rr_ptr_r <= '0;
+            normal_rr_ptr_r <= '0;
+        end else if (grant_was_normal || !any_normal) begin
+            consecutive_urgent_r <= '0;
+        end else if (grant_was_urgent
+                  && (consecutive_urgent_r
+                      < URGENT_COUNT_W'(MAX_CONSECUTIVE_URGENT))) begin
+            consecutive_urgent_r <= consecutive_urgent_r
+                                  + URGENT_COUNT_W'(1);
+        end
+        if (!reset && req_fire && ENABLE_URGENCY) begin
+            for (int p = 0; p < NUM_PORTS; ++p) begin
+                if (eligible_mask[p]) begin
+                    if (select_urgent)
+                        urgent_rr_ptr_r <= (p == (NUM_PORTS - 1))
+                                         ? '0 : PORT_PTR_W'(p + 1);
+                    else
+                        normal_rr_ptr_r <= (p == (NUM_PORTS - 1))
+                                         ? '0 : PORT_PTR_W'(p + 1);
+                end
+            end
+        end
+    end
 
     // Backpressure: don't accept new requests when response is stalled
     assign arb_bus_if[0].req_ready = ~rsp_stall;
@@ -168,6 +288,61 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
         if (arb_bus_if[0].rsp_valid && arb_bus_if[0].rsp_ready) begin
             `TRACE(1, ("%t: %s rsp: data=0x%0h, tag=0x%0h\n",
                 $time, INSTANCE_ID, arb_bus_if[0].rsp_data.data, arb_bus_if[0].rsp_data.tag))
+        end
+    end
+`endif
+
+`ifndef SYNTHESIS
+    localparam int NORMAL_GRANT_BOUND = NUM_PORTS
+                                      * (MAX_CONSECUTIVE_URGENT + 1);
+    localparam int NORMAL_WAIT_W = $clog2(NORMAL_GRANT_BOUND + 1);
+    logic [NUM_PORTS-1:0] stalled_req_r;
+    logic [NUM_PORTS-1:0] stalled_urgent_r;
+    logic [NUM_PORTS-1:0][REQ_DATA_WIDTH-1:0] stalled_req_data_r;
+    logic [NUM_PORTS-1:0][NORMAL_WAIT_W-1:0] normal_wait_grants_r;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            stalled_req_r <= '0;
+            stalled_urgent_r <= '0;
+            stalled_req_data_r <= '0;
+            normal_wait_grants_r <= '0;
+        end else begin
+            assert ((eligible_mask & ~request_valid) == '0)
+                else $fatal(1, "%s: TMEM arbiter selected an invalid request",
+                            INSTANCE_ID);
+            assert (!force_normal
+                 || ((eligible_mask != '0)
+                  && ((eligible_mask & ~normal_valid) == '0)))
+                else $fatal(1, "%s: TMEM bounded-fairness normal override failed",
+                            INSTANCE_ID);
+            assert (!ENABLE_URGENCY || $onehot0(eligible_mask))
+                else $fatal(1, "%s: TMEM urgency frontend selected multiple ports",
+                            INSTANCE_ID);
+            for (int p = 0; p < NUM_PORTS; ++p) begin
+                if (stalled_req_r[p]) begin
+                    assert (request_valid[p]
+                         && (req_urgent_i[p] == stalled_urgent_r[p])
+                         && (request_data[p] == stalled_req_data_r[p]))
+                        else $fatal(1, "%s: TMEM request data/urgency changed under stall on port %0d",
+                                    INSTANCE_ID, p);
+                end
+                stalled_req_r[p] <= request_valid[p] && !request_ready[p];
+                stalled_urgent_r[p] <= req_urgent_i[p];
+                stalled_req_data_r[p] <= request_data[p];
+
+                if (!ENABLE_URGENCY || !normal_valid[p]
+                 || request_ready[p]) begin
+                    normal_wait_grants_r[p] <= '0;
+                end else if (req_fire) begin
+                    normal_wait_grants_r[p] <= normal_wait_grants_r[p]
+                                             + NORMAL_WAIT_W'(1);
+                    assert (normal_wait_grants_r[p]
+                         < NORMAL_WAIT_W'(NORMAL_GRANT_BOUND))
+                        else $fatal(1, "%s: normal requester %0d exceeded bounded grant wait",
+                                    INSTANCE_ID, p);
+                end
+            end
         end
     end
 `endif

@@ -30,6 +30,8 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .DATA_SIZE(BUS_BYTES),
     .TAG_WIDTH(TAG_WIDTH)
   ) gemm_bus_if();
+  wire lmem_req_urgent;
+  wire [3:0] ready_ahead;
 
   VX_lmem_dma_weight_overlap #(
     .INSTANCE_ID("weight_overlap_tb"),
@@ -38,6 +40,8 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .CMD_FIFO_DEPTH(4),
     .CMD_BEATS(CMD_BEATS),
     .RESPONSE_SLOTS(RESPONSE_SLOTS),
+    .ENABLE_TMEM_URGENCY(1'b1),
+    .READY_AHEAD_LOW_WATERMARK(2),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
     .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
     .LMEM_TAG_WIDTH_P(TAG_WIDTH),
@@ -51,7 +55,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .weight_consume_value1_i(weight_consume_value1_i),
     .gemm_sync_if(sync_if),
     .lmem_bus_if(lmem_bus_if),
-    .gemm_bus_if(gemm_bus_if)
+    .gemm_bus_if(gemm_bus_if),
+    .lmem_req_urgent_o(lmem_req_urgent),
+    .ready_ahead_o(ready_ahead)
   );
 
   logic lmem_req_ready_r;
@@ -347,6 +353,8 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (dut.slot_occupancy_r != RESPONSE_SLOTS)
       $fatal(1, "shared slot pool occupancy=%0d expected=%0d",
              dut.slot_occupancy_r, RESPONSE_SLOTS);
+    if ((ready_ahead != 0) || !lmem_req_urgent)
+      $fatal(1, "Weight WAIT_RSP occupancy incorrectly counted as ready-ahead");
     if (dut.cmd_count_r != 4 || dut.cmd_valid_r !== 4'b1111
      || dut.cmd_rd_done_r !== 4'b0011 || dut.rd_cmd_ptr_r != 2)
       $fatal(1, "four-descriptor/eight-slot residency mismatch count=%0d valid=%0h rd_done=%0h rd_ptr=%0d",
@@ -354,11 +362,21 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
              dut.rd_cmd_ptr_r);
     $display("PASS marker: eight slots hold two payloads while two later descriptors remain resident");
 
-    // Return all eight source responses in reverse tag order. Slot zero is
-    // deliberately last, proving tagged out-of-order capture and ordered drain.
-    for (int request_index = 7; request_index >= 0; --request_index)
+    // Return high slots first so ready-ahead remains zero despite READY
+    // occupancy, then release the writer head one beat at a time.
+    for (int request_index = 7; request_index >= 2; --request_index)
       send_response(request_index);
+    if ((ready_ahead != 0) || !lmem_req_urgent)
+      $fatal(1, "Weight nonconsecutive READY slots changed ready-ahead");
+    send_response(0);
+    if ((ready_ahead != 1) || !lmem_req_urgent)
+      $fatal(1, "Weight threshold-1 urgency mismatch count=%0d", ready_ahead);
+    send_response(1);
+    wait (ready_ahead == RESPONSE_SLOTS);
+    if (lmem_req_urgent)
+      $fatal(1, "Weight urgency remained set with sufficient consecutive lead");
     $display("PASS marker: delayed reverse-order tagged source responses accepted");
+    $display("PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP");
 
     // The writer has a valid staged request but must preserve it while the
     // destination is stalled.

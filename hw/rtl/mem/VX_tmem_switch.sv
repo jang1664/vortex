@@ -28,6 +28,8 @@ module VX_tmem_switch import VX_gpu_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
+    input wire req_urgent_i,
+    output wire [NUM_BANKS-1:0] bank_req_urgent_o,
 
     // Single input from local DMA
     VX_mem_bus_if.slave     bus_in_if,
@@ -67,6 +69,8 @@ module VX_tmem_switch import VX_gpu_pkg::*; #(
         assign bus_out_if[i].req_data.flags  = bus_in_if.req_data.flags;
         // Append bank_sel to the tag for response routing
         assign bus_out_if[i].req_data.tag    = OUT_TAG_WIDTH'({bank_sel, bus_in_if.req_data.tag});
+        assign bank_req_urgent_o[i] = req_urgent_i
+                                    && (bank_sel == BANK_SEL_BITS'(i));
     end
 
     // Ready from the selected bank — extract into wire array via genvar
@@ -141,6 +145,32 @@ module VX_tmem_switch import VX_gpu_pkg::*; #(
         if (bus_in_if.rsp_valid && bus_in_if.rsp_ready) begin
             `TRACE(1, ("%t: %s rsp: tag=0x%0h\n",
                 $time, INSTANCE_ID, rsp_tag_orig))
+        end
+    end
+`endif
+
+`ifndef SYNTHESIS
+    localparam int REQ_DATA_WIDTH = 1 + ADDR_WIDTH + (DATA_SIZE * 9)
+                                  + MEM_FLAGS_WIDTH + TAG_WIDTH;
+    logic req_stall_r;
+    logic req_stall_urgent_r;
+    logic [REQ_DATA_WIDTH-1:0] req_stall_data_r;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            req_stall_r <= 1'b0;
+            req_stall_urgent_r <= 1'b0;
+            req_stall_data_r <= '0;
+        end else begin
+            if (req_stall_r) begin
+                assert (bus_in_if.req_valid
+                     && (req_urgent_i == req_stall_urgent_r)
+                     && (bus_in_if.req_data == req_stall_data_r))
+                    else $fatal(1, "%t: %s request data/urgency changed while switch input stalled",
+                                $time, INSTANCE_ID);
+            end
+            req_stall_r <= bus_in_if.req_valid && !bus_in_if.req_ready;
+            req_stall_urgent_r <= req_urgent_i;
+            req_stall_data_r <= bus_in_if.req_data;
         end
     end
 `endif

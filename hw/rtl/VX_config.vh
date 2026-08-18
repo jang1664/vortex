@@ -1259,6 +1259,24 @@ for block_size in range(1, full_bitwidth+1):
 `define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
 `endif
 
+// TMEM-local Input/Weight urgency policy.  Keep the optimization disabled by
+// default so existing configurations retain bit-for-bit arbitration behavior.
+`ifndef TMEM_ARB_URGENCY_ENABLE
+`define TMEM_ARB_URGENCY_ENABLE 0
+`endif
+
+`ifndef I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK
+`define I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK 4
+`endif
+
+`ifndef W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK
+`define W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK 2
+`endif
+
+`ifndef TMEM_ARB_MAX_CONSECUTIVE_URGENT
+`define TMEM_ARB_MAX_CONSECUTIVE_URGENT 4
+`endif
+
 // Legacy single-command DMA capacity remains one command.  The improve TMEM
 // Weight path selects W_LMEM_DMA_RESPONSE_SLOTS explicitly.
 `ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
@@ -1322,7 +1340,17 @@ for block_size in range(1, full_bitwidth+1):
 // Configuration Registers
 // -------------------------------------------------------
 `ifndef NUM_DMA_CHANNELS
-`define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core (TMEM banks)
+`define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core
+`endif
+`ifndef NUM_TMEM_BANKS
+`define NUM_TMEM_BANKS `NUM_DMA_CHANNELS // Number of physical TMEM SRAM banks
+`endif
+`ifndef NUM_HBM_PORTS
+`ifdef PLATFORM_MEMORY_NUM_PORTS
+`define NUM_HBM_PORTS `PLATFORM_MEMORY_NUM_PORTS // Legacy configuration alias
+`else
+`define NUM_HBM_PORTS `NUM_DMA_CHANNELS  // Number of external HBM AXI ports
+`endif
 `endif
 `ifndef TMEM_BANK_SIZE
 `define TMEM_BANK_SIZE (64 * 1024) // 64KB
@@ -1332,9 +1360,14 @@ for block_size in range(1, full_bitwidth+1):
 `define MISALIGN_PACK_BYTES LSU_WORD_SIZE
 `endif
 
-// HBM interleave stride (bytes): consecutive MEM_BLOCK_SIZE blocks round-robin
-// across all DMA channels before advancing to the next stripe within one HBM bank.
-`define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
+// Logical block stripes.  DMA ownership and HBM-port remap are independent:
+// a DMA channel revisits its ownership class every NUM_DMA_CHANNELS blocks,
+// while an HBM port is revisited every NUM_HBM_PORTS blocks.
+`define DMA_CHANNEL_STRIDE_BYTES (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
+`define HBM_PORT_STRIPE_BYTES    (`MEM_BLOCK_SIZE * `NUM_HBM_PORTS)
+// Backward-compatible name used by the GEMM DMA descriptor generator.  Its
+// meaning is the DMA-channel stripe, not the HBM-port stripe.
+`define HBM_BUS_STRIDE `DMA_CHANNEL_STRIDE_BYTES
 
 `ifdef GEMM_NAIVE
 `define GEMM_CFG_REG_NUM 44       // Naive LMEM backend register map + reserved tile regs + output progress

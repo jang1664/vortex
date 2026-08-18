@@ -30,6 +30,7 @@
 module VX_dma_engine import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID   = "",
     parameter NUM_CHANNELS          = 8,
+    parameter NUM_HBM_PORTS         = `NUM_HBM_PORTS,
     parameter DATA_WIDTH            = 512,
     parameter AXI_ADDR_WIDTH        = `PLATFORM_MEMORY_ADDR_WIDTH,
     parameter AXI_DATA_WIDTH        = `PLATFORM_MEMORY_DATA_SIZE * 8,
@@ -208,7 +209,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign hbm_req_byte_addr = AXI_ADDR_WIDTH'(hbm_req_addr) << LOG2_DATA_SIZE;
 
         VX_mem_remap #(
-            .ADDR_W (AXI_ADDR_WIDTH)
+            .ADDR_W    (AXI_ADDR_WIDTH),
+            .NUM_PORTS (NUM_HBM_PORTS)
         ) u_mem_remap (
             .m_address   (hbm_req_byte_addr),
             .hbm_address (hbm_req_remap_byte_addr)

@@ -25,6 +25,8 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .DATA_SIZE(BUS_BYTES),
     .TAG_WIDTH(TAG_WIDTH)
   ) gemm_bus_if();
+  wire lmem_req_urgent;
+  wire [3:0] ready_ahead;
 
   VX_lmem_dma_input_overlap #(
     .INSTANCE_ID("input_overlap_tb"),
@@ -32,6 +34,8 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH),
     .CMD_FIFO_DEPTH(4),
     .RESPONSE_SLOTS(8),
+    .ENABLE_TMEM_URGENCY(1'b1),
+    .READY_AHEAD_LOW_WATERMARK(4),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
     .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
     .LMEM_TAG_WIDTH_P(TAG_WIDTH),
@@ -45,7 +49,9 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .writer_consume_value1_i('0),
     .gemm_sync_if(sync_if),
     .lmem_bus_if(lmem_bus_if),
-    .gemm_bus_if(gemm_bus_if)
+    .gemm_bus_if(gemm_bus_if),
+    .lmem_req_urgent_o(lmem_req_urgent),
+    .ready_ahead_o(ready_ahead)
   );
 
   logic lmem_req_ready_r;
@@ -70,8 +76,10 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
   int done_count;
   int start_count;
   int pending_count;
+  int response_count;
   int next_response_slot;
   logic response_release;
+  logic response_lowest_first;
   logic [BUS_BYTES*8-1:0] expected_payload[64];
 
   function automatic logic [BUS_BYTES*8-1:0]
@@ -133,9 +141,16 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
   always_comb begin
     next_response_slot = -1;
     if (response_release) begin
-      for (int slot = 7; slot >= 0; --slot) begin
-        if ((next_response_slot < 0) && pending_valid[slot])
-          next_response_slot = slot;
+      if (response_lowest_first) begin
+        for (int slot = 0; slot < 8; ++slot) begin
+          if ((next_response_slot < 0) && pending_valid[slot])
+            next_response_slot = slot;
+        end
+      end else begin
+        for (int slot = 7; slot >= 0; --slot) begin
+          if ((next_response_slot < 0) && pending_valid[slot])
+            next_response_slot = slot;
+        end
       end
     end
     lmem_rsp_valid_r = next_response_slot >= 0;
@@ -146,6 +161,17 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
       lmem_rsp_payload_r = pending_payload[next_response_slot];
     end
   end
+
+  task automatic release_one_response(input bit lowest_first);
+    int old_pending_count;
+    old_pending_count = pending_count;
+    @(negedge clk);
+    response_lowest_first = lowest_first;
+    response_release = 1'b1;
+    wait (pending_count == (old_pending_count - 1));
+    @(negedge clk);
+    response_release = 1'b0;
+  endtask
 
   always @(posedge clk) begin
     if (!reset) begin
@@ -161,8 +187,11 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
         pending_count++;
       end
       if (lmem_rsp_valid_r && lmem_bus_if.rsp_ready) begin
+        if ((next_response_slot < 0) || !pending_valid[next_response_slot])
+          $fatal(1, "Input response model emitted a stale/duplicate tag");
         pending_valid[next_response_slot] = 1'b0;
         pending_count--;
+        response_count++;
       end
       if (gemm_bus_if.req_valid && gemm_bus_if.req_ready) begin
         if (gemm_bus_if.req_data.data !== expected_payload[destination_count])
@@ -180,11 +209,13 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     lmem_req_ready_r = 1'b1;
     gemm_req_ready_r = 1'b0;
     response_release = 1'b0;
+    response_lowest_first = 1'b0;
     source_count = 0;
     destination_count = 0;
     done_count = 0;
     start_count = 0;
     pending_count = 0;
+    response_count = 0;
     for (int slot = 0; slot < 8; ++slot) begin
       pending_valid[slot] = 1'b0;
       pending_payload[slot] = '0;
@@ -201,18 +232,45 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     if ((start_count != 4) || (dut.cmd_count_r != 4)
         || (dut.slot_occupancy_r != 8))
       $fatal(1, "Input depth-four/eight-slot preload coverage failed");
+    if ((ready_ahead != 0) || !lmem_req_urgent)
+      $fatal(1, "Input WAIT_RSP occupancy incorrectly counted as ready-ahead");
     repeat (3) @(posedge clk);
     if (destination_count != 0)
       $fatal(1, "Input admitted data before the modeled fence released");
 
-    // Return the first slot set in reverse-tag order, then release admission.
+    // Return high tags first so occupancy falls while the writer-ready prefix
+    // remains zero. Then return slots 0..3 individually to cover 1,
+    // threshold-1, threshold, and finally full ready-ahead.
+    repeat (4)
+      release_one_response(1'b0);
+    if ((ready_ahead != 0) || !lmem_req_urgent)
+      $fatal(1, "Input nonconsecutive READY slots changed ready-ahead");
+    release_one_response(1'b1);
+    if ((ready_ahead != 1) || !lmem_req_urgent)
+      $fatal(1, "Input ready-ahead=1 urgency mismatch");
+    release_one_response(1'b1);
+    release_one_response(1'b1);
+    if ((ready_ahead != 3) || !lmem_req_urgent)
+      $fatal(1, "Input threshold-1 urgency mismatch count=%0d", ready_ahead);
+    release_one_response(1'b1);
+    wait (ready_ahead == 8);
+    if (lmem_req_urgent)
+      $fatal(1, "Input urgency remained set with sufficient consecutive lead");
+    $display("PASS marker: Input ready-ahead covers 0/1/threshold-1/threshold/full and excludes WAIT_RSP");
+    // The controlled checkpoint is complete. Continue returning every later
+    // tagged request so seq2/seq3 and variable-length commands can reuse the
+    // circular response slots. This enable occurs on the negedge reached by
+    // release_one_response, away from the response sampling edge.
+    response_lowest_first = 1'b1;
     response_release = 1'b1;
-    wait (pending_count == 0);
     gemm_req_ready_r = 1'b1;
     wait (destination_count == MAIN_BEATS);
     wait (done_count == MAIN_COMMANDS);
     if (source_count != MAIN_BEATS)
       $fatal(1, "Input source count mismatch");
+    if ((response_count != MAIN_BEATS) || (pending_count != 0))
+      $fatal(1, "Input main response accounting mismatch rsp=%0d pending=%0d",
+             response_count, pending_count);
 
     // Variable-length commands reuse the same ring and exercise pointer wrap.
     enqueue_command(4, 1);
@@ -220,8 +278,13 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     enqueue_command(6, 5);
     wait (destination_count == MAIN_BEATS + 9);
     wait (done_count == MAIN_COMMANDS + 3);
+    if ((response_count != source_count) || (pending_count != 0))
+      $fatal(1, "Input recycled-slot response accounting mismatch req=%0d rsp=%0d pending=%0d",
+             source_count, response_count, pending_count);
+    $display("PASS marker: Input recycled slots received one response per later tagged request");
 
     // Live reset must invalidate descriptors, slots, and staged output.
+    @(negedge clk);
     gemm_req_ready_r = 1'b0;
     response_release = 1'b0;
     enqueue_command(7, 4);

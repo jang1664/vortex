@@ -20,6 +20,10 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 | `AXI_ADDR_WIDTH` | `PLATFORM_MEMORY_ADDR_WIDTH` | AXI 주소 폭 |
 | `W_CMD_BEATS` | `MXU_ROW / MXU_WLOAD_NUM` | Beats in one Weight command |
 | `W_RD_OUTSTANDING` | `2 * W_CMD_BEATS` | Shared Weight response slots / wide-read contexts |
+| `TMEM_ARB_URGENCY_ENABLE` | 0 | Input/Weight ready-ahead priority enable; zero preserves legacy RR |
+| `INPUT_READY_AHEAD_LOW_WATERMARK` | 4 | Input consecutive-ready low watermark |
+| `WEIGHT_READY_AHEAD_LOW_WATERMARK` | 2 | Weight consecutive-ready low watermark |
+| `TMEM_ARB_MAX_CONSECUTIVE_URGENT` | 4 | Maximum urgent grants while normal requests wait |
 
 ## 포트
 
@@ -85,9 +89,11 @@ NUM_BANKS % BANKS_PER_BEAT = 0
 
 각 request의 local-DMA slot ID(`tag.value` 하위 비트)가 switch context ID로
 사용된다. Context는 원본 tag, 주소, byte enable, flags, target/issued/response
-bank mask와 조립 중인 response data를 저장한다. Issue FIFO head context가
+bank mask, TMEM-local urgency, 조립 중인 response data를 저장한다. Issue FIFO head context가
 선택 bank 모두에 handshake할 때까지 issue ownership을 유지하므로 일부
-bank만 ready여도 이미 accept한 bank에 중복 request를 보내지 않는다.
+bank만 ready여도 이미 accept한 bank에 중복 request를 보내지 않는다. 따라서
+partial issue 동안에도 모든 Weight lane은 context accept 시점의 동일한 urgency를
+사용하며 slot state 변화로 priority class가 갈라지지 않는다.
 
 Bank response는 기존 `{bank_id, original_tag}`를 사용해 원래 context로
 수집된다. 여러 context와 여러 bank의 response가 같은 cycle에 도착할 수
@@ -112,6 +118,15 @@ cycle의 response retire과 request accept를 동시에 수행하는 fall-throug
 
 - DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춤
 - 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
+
+Input/Weight optimization을 enable하면 각 bank는 urgent/normal class별 독립
+round-robin cursor를 사용한다. Normal request가
+대기하는 동안 `TMEM_ARB_MAX_CONSECUTIVE_URGENT`번을 서비스하면 다음 grant는 normal
+class로 강제되어 DMA, qparam, output starvation을 막는다. 동일 class 안의 arbitration과
+response tag routing은 기존 구조를 그대로 사용한다. Urgent grant가 normal cursor를
+움직이지 않으므로 여러 persistent normal requester도 bounded progress를 갖는다.
+첫 policy에서는 Input과 Weight만
+dynamic urgency를 만들고 나머지 requester는 normal class에 고정한다.
 
 ### 4. Local DMAs (`u_ldma_*`, x5)
 
@@ -153,6 +168,14 @@ reads run ahead of the irreversible GEMM admission boundary. Each slot records
 its command sequence and beat index, so TMEM responses may return out of order
 without changing destination order. The final actual `req_valid && req_ready`
 admission reports normal command completion.
+
+Input and Weight expose `ready_ahead` as the staged drain beat plus the
+consecutive `READY` prefix beginning at `wr_expect_slot`; occupied `WAIT_RSP`
+slots are not counted. Source urgency depends only on registered slot/fence
+state, never on TMEM `req_ready`, and is latched for the lifetime of a stalled
+source request. Input becomes normal after its configured buffered lead, so an
+urgent Weight request can overtake speculative Input prefetch; when both are
+below watermark both remain urgent and share round-robin service.
 
 Weight uses a separate in-order overlap executor and rejects passive prepare.
 It accepts up to two dependency-ready commands, stores both complete

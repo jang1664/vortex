@@ -64,6 +64,13 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; #(
     assign dma_lookahead_if[ch].bound = lookahead_bound_s[ch];
     assign dma_lookahead_if[ch].activate = lookahead_activate_s[ch];
     assign dma_lookahead_if[ch].activate_id = lookahead_activate_id_s[ch];
+    // The default misaligned-backend regression exercises the legacy path,
+    // which has no PREPARE cache and therefore must remain released.  Drive
+    // both newer lookahead inputs explicitly so VCS does not present X to the
+    // backend protocol assertion.  The aligned PREPARE-specific phase uses
+    // the same released baseline and supplies its own PREPARE/ACTIVATE fields.
+    assign dma_lookahead_if[ch].data_release = 1'b1;
+    assign dma_lookahead_if[ch].data_max_beats = '0;
   end
 
 `ifdef PERF_ENABLE

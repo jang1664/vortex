@@ -28,6 +28,8 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
+    input wire req_urgent_i,
+    output wire [NUM_BANKS-1:0] bank_req_urgent_o,
 
     VX_mem_bus_if.slave  bus_in_if,
     VX_mem_bus_if.master bus_out_if [NUM_BANKS]
@@ -77,6 +79,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     logic [OUTSTANDING-1:0][IN_ADDR_WIDTH-1:0]         ctx_addr_r, ctx_addr_n;
     logic [OUTSTANDING-1:0][WIDE_DATA_SIZE-1:0]        ctx_byteen_r, ctx_byteen_n;
     logic [OUTSTANDING-1:0][MEM_FLAGS_WIDTH-1:0]       ctx_flags_r, ctx_flags_n;
+    logic [OUTSTANDING-1:0]                            ctx_urgent_r, ctx_urgent_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_bank_mask_r, ctx_bank_mask_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_issued_r, ctx_issued_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_rsp_seen_r, ctx_rsp_seen_n;
@@ -107,6 +110,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     wire [CTX_BITS-1:0] order_head_ctx = order_fifo_r[order_rd_ptr_r];
 
     wire [NUM_BANKS-1:0] req_ready_bank;
+    wire [NUM_BANKS-1:0] req_valid_bank;
     wire [NUM_BANKS-1:0] req_fire_bank;
     wire [NUM_BANKS-1:0] rsp_valid_bank;
     wire [NUM_BANKS-1:0] rsp_fire_bank;
@@ -143,6 +147,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         localparam logic [BANK_SEL_BITS-1:0] BANK_ID = b;
 
         assign req_ready_bank[b] = bus_out_if[b].req_ready;
+        assign req_valid_bank[b] = bus_out_if[b].req_valid;
         assign req_fire_bank[b] = bus_out_if[b].req_valid && bus_out_if[b].req_ready;
         assign rsp_valid_bank[b] = bus_out_if[b].rsp_valid;
         assign rsp_data_bank[b] = bus_out_if[b].rsp_data.data;
@@ -158,6 +163,10 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_byteen_r[issue_head_ctx][BANK_LANE*DATA_SIZE +: DATA_SIZE];
         assign bus_out_if[b].req_data.flags = ctx_flags_r[issue_head_ctx];
         assign bus_out_if[b].req_data.tag = {BANK_ID, ctx_tag_r[issue_head_ctx]};
+        assign bank_req_urgent_o[b] = issue_head_valid
+                                    && ctx_urgent_r[issue_head_ctx]
+                                    && ctx_bank_mask_r[issue_head_ctx][b]
+                                    && !ctx_issued_r[issue_head_ctx][b];
 
         assign rsp_bank_id[b] =
             bus_out_if[b].rsp_data.tag[TAG_WIDTH +: BANK_SEL_BITS];
@@ -192,6 +201,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         ctx_addr_n = ctx_addr_r;
         ctx_byteen_n = ctx_byteen_r;
         ctx_flags_n = ctx_flags_r;
+        ctx_urgent_n = ctx_urgent_r;
         ctx_bank_mask_n = ctx_bank_mask_r;
         ctx_issued_n = ctx_issued_r;
         ctx_rsp_seen_n = ctx_rsp_seen_r;
@@ -226,6 +236,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_addr_n[order_head_ctx] = '0;
             ctx_byteen_n[order_head_ctx] = '0;
             ctx_flags_n[order_head_ctx] = '0;
+            ctx_urgent_n[order_head_ctx] = 1'b0;
             ctx_bank_mask_n[order_head_ctx] = '0;
             ctx_issued_n[order_head_ctx] = '0;
             ctx_rsp_seen_n[order_head_ctx] = '0;
@@ -239,6 +250,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_addr_n[incoming_ctx_id] = bus_in_if.req_data.addr;
             ctx_byteen_n[incoming_ctx_id] = bus_in_if.req_data.byteen;
             ctx_flags_n[incoming_ctx_id] = bus_in_if.req_data.flags;
+            ctx_urgent_n[incoming_ctx_id] = req_urgent_i;
             ctx_bank_mask_n[incoming_ctx_id] = incoming_bank_mask;
             ctx_issued_n[incoming_ctx_id] = '0;
             ctx_rsp_seen_n[incoming_ctx_id] = '0;
@@ -270,6 +282,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_addr_r <= '0;
             ctx_byteen_r <= '0;
             ctx_flags_r <= '0;
+            ctx_urgent_r <= '0;
             ctx_bank_mask_r <= '0;
             ctx_issued_r <= '0;
             ctx_rsp_seen_r <= '0;
@@ -288,6 +301,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_addr_r <= ctx_addr_n;
             ctx_byteen_r <= ctx_byteen_n;
             ctx_flags_r <= ctx_flags_n;
+            ctx_urgent_r <= ctx_urgent_n;
             ctx_bank_mask_r <= ctx_bank_mask_n;
             ctx_issued_r <= ctx_issued_n;
             ctx_rsp_seen_r <= ctx_rsp_seen_n;
@@ -304,6 +318,32 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     end
 
 `ifndef SYNTHESIS
+    localparam int IN_REQ_DATA_WIDTH = 1 + IN_ADDR_WIDTH
+                                     + (WIDE_DATA_SIZE * 9)
+                                     + MEM_FLAGS_WIDTH + TAG_WIDTH;
+    logic input_stall_r;
+    logic input_stall_urgent_r;
+    logic [IN_REQ_DATA_WIDTH-1:0] input_stall_data_r;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            input_stall_r <= 1'b0;
+            input_stall_urgent_r <= 1'b0;
+            input_stall_data_r <= '0;
+        end else begin
+            if (input_stall_r) begin
+                assert (bus_in_if.req_valid
+                     && (req_urgent_i == input_stall_urgent_r)
+                     && (bus_in_if.req_data == input_stall_data_r))
+                    else $fatal(1, "%t: %s wide request data/urgency changed under input stall",
+                                $time, INSTANCE_ID);
+            end
+            input_stall_r <= bus_in_if.req_valid && !bus_in_if.req_ready;
+            input_stall_urgent_r <= req_urgent_i;
+            input_stall_data_r <= bus_in_if.req_data;
+        end
+    end
+
     always @(posedge clk) begin
         if (!reset) begin
             assert (issue_count_r <= FIFO_CNT_W'(OUTSTANDING))
@@ -331,6 +371,11 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
                 assert (ctx_valid_r[issue_head_ctx])
                     else $fatal(1, "%t: %s issue FIFO references free context %0d",
                                 $time, INSTANCE_ID, issue_head_ctx);
+                assert ((bank_req_urgent_o & req_valid_bank)
+                     == (req_valid_bank
+                       & {NUM_BANKS{ctx_urgent_r[issue_head_ctx]}}))
+                    else $fatal(1, "%t: %s Weight context priority split across bank lanes",
+                                $time, INSTANCE_ID);
                 for (int b = 0; b < NUM_BANKS; ++b) begin
                     if (req_fire_bank[b]) begin
                         assert (ctx_bank_mask_r[issue_head_ctx][b])

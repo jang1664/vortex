@@ -21,16 +21,20 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       .DATA_SIZE (DATA_SIZE),
       .TAG_WIDTH (TAG_WIDTH)
   ) mem_bus_if [NUM_PORTS] ();
+  logic [NUM_PORTS-1:0] req_urgent;
 
   VX_tensor_mem_bank #(
       .INSTANCE_ID ("tb_tensor_mem_bank"),
       .SIZE        (BANK_BYTES),
       .DATA_SIZE   (DATA_SIZE),
       .NUM_PORTS   (NUM_PORTS),
-      .TAG_WIDTH   (TAG_WIDTH)
+      .TAG_WIDTH   (TAG_WIDTH),
+      .ENABLE_URGENCY(1'b1),
+      .MAX_CONSECUTIVE_URGENT(2)
   ) dut (
       .clk        (clk),
       .reset      (reset),
+      .req_urgent_i(req_urgent),
       .mem_bus_if (mem_bus_if)
   );
 
@@ -85,6 +89,7 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       req_byteen[p]  = '0;
       req_flags[p]   = '0;
       req_tag[p]     = '0;
+      req_urgent[p]  = 1'b0;
       rsp_ready[p]   = 1'b1;
     end
   endtask
@@ -114,6 +119,7 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     req_byteen[p] = '0;
     req_flags[p]  = '0;
     req_tag[p]    = '0;
+    req_urgent[p] = 1'b0;
   endtask
 
   task automatic wait_req_accept(input int p, input string msg);
@@ -193,6 +199,12 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     logic [DATA_WIDTH-1:0] w1;
     logic [DATA_WIDTH-1:0] exp_partial;
     int blocked_cycles;
+    int urgent_streak;
+    int max_urgent_streak;
+    int normal0_grants;
+    int normal2_grants;
+    int urgent0_grants;
+    int urgent1_grants;
 
     init_ports();
 
@@ -258,6 +270,126 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     clear_req(0);
     check_rsp(0, mk_tag(8'h51), 64'h1112_1314_1516_1718, "bp_followup_rsp");
     rsp_ready[4] = 1'b1;
+
+    // 5) One urgent requester must overtake normal traffic.
+    @(negedge clk);
+    set_req(0, 1'b0, ADDR_WIDTH'(8), '0, '0, mk_tag(8'h60));
+    set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h61));
+    req_urgent[1] = 1'b1;
+    @(posedge clk);
+    if (!req_ready[1] || req_ready[0])
+      $fatal(1, "urgent request did not overtake normal request");
+    @(negedge clk);
+    clear_req(1);
+    wait_req_accept(0, "urgent_then_normal");
+    @(negedge clk);
+    clear_req(0);
+    repeat (3) @(posedge clk);
+
+    // 6) Multiple urgent requesters retain RR progress within their class.
+    @(negedge clk);
+    set_req(0, 1'b0, ADDR_WIDTH'(8), '0, '0, mk_tag(8'h64));
+    set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h68));
+    req_urgent[0] = 1'b1;
+    req_urgent[1] = 1'b1;
+    urgent0_grants = 0;
+    urgent1_grants = 0;
+    for (int t = 0; t < 12; ++t) begin
+      @(posedge clk);
+      if (!req_valid[0] && !req_valid[1])
+        break;
+      if (req_valid[0] && req_ready[0]) begin
+        urgent0_grants++;
+        @(negedge clk);
+        if (urgent0_grants >= 2)
+          clear_req(0);
+        else
+          req_tag[0] = req_tag[0] + TAG_WIDTH'(1);
+      end else if (req_valid[1] && req_ready[1]) begin
+        urgent1_grants++;
+        @(negedge clk);
+        if (urgent1_grants >= 2)
+          clear_req(1);
+        else
+          req_tag[1] = req_tag[1] + TAG_WIDTH'(1);
+      end
+    end
+    if ((urgent0_grants < 2) || (urgent1_grants < 2))
+      $fatal(1, "urgent-class RR failed grants=%0d/%0d",
+             urgent0_grants, urgent1_grants);
+    if (req_valid[0] || req_valid[1])
+      $fatal(1, "urgent-class sources did not retire on their final handshakes");
+    repeat (3) @(posedge clk);
+
+    // 7) Two persistent normal requesters must both make progress. Reissue all
+    // sources after every fire; independent class RR state prevents the
+    // urgent source from perturbing the rotation among the normal sources.
+    @(negedge clk);
+    set_req(0, 1'b0, ADDR_WIDTH'(10), '0, '0, mk_tag(8'h70));
+    set_req(1, 1'b0, ADDR_WIDTH'(11), '0, '0, mk_tag(8'h71));
+    set_req(2, 1'b0, ADDR_WIDTH'(12), '0, '0, mk_tag(8'h72));
+    req_urgent[1] = 1'b1;
+    urgent_streak = 0;
+    max_urgent_streak = 0;
+    normal0_grants = 0;
+    normal2_grants = 0;
+    for (int t = 0; t < 40; ++t) begin
+      @(posedge clk);
+      if (!req_valid[0] && !req_valid[1] && !req_valid[2])
+        break;
+      if (req_valid[1] && req_ready[1]) begin
+        urgent_streak++;
+        if (urgent_streak > max_urgent_streak)
+          max_urgent_streak = urgent_streak;
+        @(negedge clk);
+        if ((normal0_grants >= 2) && (normal2_grants >= 2))
+          clear_req(1);
+        else
+          req_tag[1] = req_tag[1] + TAG_WIDTH'(1);
+      end else if (req_valid[0] && req_ready[0]) begin
+        if (urgent_streak > 2)
+          $fatal(1, "normal port 0 exceeded urgent grant budget");
+        urgent_streak = 0;
+        normal0_grants++;
+        @(negedge clk);
+        if (normal0_grants >= 2)
+          clear_req(0);
+        else
+          req_tag[0] = req_tag[0] + TAG_WIDTH'(1);
+      end else if (req_valid[2] && req_ready[2]) begin
+        if (urgent_streak > 2)
+          $fatal(1, "normal port 2 exceeded urgent grant budget");
+        urgent_streak = 0;
+        normal2_grants++;
+        @(negedge clk);
+        if (normal2_grants >= 2)
+          clear_req(2);
+        else
+          req_tag[2] = req_tag[2] + TAG_WIDTH'(1);
+      end
+    end
+    if ((normal0_grants < 2) || (normal2_grants < 2)
+     || (max_urgent_streak > 2))
+      $fatal(1, "bounded class fairness failed normal_grants=%0d/%0d max_urgent=%0d",
+             normal0_grants, normal2_grants, max_urgent_streak);
+    if (req_valid[0] || req_valid[1] || req_valid[2])
+      $fatal(1, "fairness-test sources did not retire on their final handshakes");
+    repeat (3) @(posedge clk);
+
+    $display("PASS marker: urgent-over-normal and independent normal RR progress (normal=%0d/%0d max urgent=%0d)",
+             normal0_grants, normal2_grants, max_urgent_streak);
+    $display("PASS marker: urgent class RR progress grants=%0d/%0d",
+             urgent0_grants, urgent1_grants);
+
+    // 8) Reset clears urgency-age and class-RR state without a stale response.
+    @(negedge clk);
+    reset = 1'b1;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    reset = 1'b0;
+    do_read(3, ADDR_WIDTH'(8), mk_tag(8'h7f),
+            64'h0102_0304_0506_0708, "post_priority_reset");
+    $display("PASS marker: priority state reset emitted no stale response");
 
     $display("%0t [tb_VX_tensor_mem_bank] all checks passed", $time);
     $display("TEST PASSED");

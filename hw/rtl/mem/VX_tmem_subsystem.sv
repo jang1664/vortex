@@ -26,6 +26,7 @@
 module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter NUM_BANKS         = 8,
+    parameter NUM_DMA_CHANNELS  = NUM_BANKS,
     parameter BANK_SIZE         = 32*1024,      // 32KB per bank
     parameter DATA_SIZE         = 64,           // 512-bit = 64 bytes
     parameter GEMM_DATA_SIZE    = 64,           // GEMM unit port width (64B)
@@ -44,15 +45,22 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RESPONSE_SLOTS,
     parameter int SZ_RD_OUTSTANDING = `SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int O_RD_OUTSTANDING = `O_LMEM_DMA_RD_OUTSTANDING_SLOTS,
-    parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT
+    parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT,
+    parameter bit TMEM_ARB_URGENCY_ENABLE = `TMEM_ARB_URGENCY_ENABLE,
+    parameter int INPUT_READY_AHEAD_LOW_WATERMARK =
+        `I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK,
+    parameter int WEIGHT_READY_AHEAD_LOW_WATERMARK =
+        `W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK,
+    parameter int TMEM_ARB_MAX_CONSECUTIVE_URGENT =
+        `TMEM_ARB_MAX_CONSECUTIVE_URGENT
 ) (
     input wire clk,
     input wire reset,
 
     // DMA config (from gemm_dma_ctrl, 8 channels for DMA engine)
-    VX_config_reg_if.slave  dma_cfg_if [NUM_BANKS],
-    VX_dma_lookahead_if.slave dma_lookahead_if [NUM_BANKS],
-    VX_node_done_if.master  dma_done_if [NUM_BANKS],
+    VX_config_reg_if.slave  dma_cfg_if [NUM_DMA_CHANNELS],
+    VX_dma_lookahead_if.slave dma_lookahead_if [NUM_DMA_CHANNELS],
+    VX_node_done_if.master  dma_done_if [NUM_DMA_CHANNELS],
 
     // Local DMA control (input/weight/scale/zero-point/output)
     VX_lmem_dma_ctrl_if.slave ldma_ctrl_if [5],
@@ -71,7 +79,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     input wire [31:0] zero_point_consume_value1_i,
 
     // HBM side: AXI master ports (pass through to DMA engine)
-    AXI_BUS.Master axi_m [NUM_BANKS],
+    AXI_BUS.Master axi_m [NUM_DMA_CHANNELS],
 
     // GEMM unit side memory bus interfaces
     VX_mem_bus_if.master gemm_input_if,
@@ -92,6 +100,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     localparam NUM_TMEM_PORTS   = 6;
     localparam NUM_LDMA         = 5;
     localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
+    localparam DMA_BANKS_PER_CHANNEL = NUM_BANKS / NUM_DMA_CHANNELS;
+    localparam DMA_BANK_SEL_BITS = `CLOG2(DMA_BANKS_PER_CHANNEL);
+    localparam DMA_SWITCH_TAG_WIDTH = TAG_WIDTH + DMA_BANK_SEL_BITS;
     localparam WEIGHT_BANKS_PER_BEAT = GEMM_WEIGHT_DATA_SIZE / DATA_SIZE;
     // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
     // its own selector bits. The TMEM bank sees:
@@ -105,6 +116,16 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     `UNUSED_PARAM (SZ_RD_PREFETCH_DEPTH)
 
     initial begin
+        if ((NUM_BANKS < 1) || ((NUM_BANKS & (NUM_BANKS - 1)) != 0))
+            $fatal(1, "%s: NUM_BANKS(%0d) must be a positive power of two",
+                   INSTANCE_ID, NUM_BANKS);
+        if ((NUM_DMA_CHANNELS < 1)
+         || ((NUM_DMA_CHANNELS & (NUM_DMA_CHANNELS - 1)) != 0))
+            $fatal(1, "%s: NUM_DMA_CHANNELS(%0d) must be a positive power of two",
+                   INSTANCE_ID, NUM_DMA_CHANNELS);
+        if (NUM_DMA_CHANNELS > NUM_BANKS)
+            $fatal(1, "%s: NUM_DMA_CHANNELS(%0d) must not exceed NUM_BANKS(%0d)",
+                   INSTANCE_ID, NUM_DMA_CHANNELS, NUM_BANKS);
         if ((`MXU_WLOAD_NUM < 1) || ((`MXU_ROW % `MXU_WLOAD_NUM) != 0))
             $fatal(1, "%s: MXU_WLOAD_NUM(%0d) must be positive and divide MXU_ROW(%0d)",
                    INSTANCE_ID, `MXU_WLOAD_NUM, `MXU_ROW);
@@ -120,6 +141,14 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
          || ((W_RD_OUTSTANDING & (W_RD_OUTSTANDING - 1)) != 0))
             $fatal(1, "%s: Weight shared response slots(%0d) must equal two commands x %0d beats",
                    INSTANCE_ID, W_RD_OUTSTANDING, W_CMD_BEATS);
+        if ((INPUT_READY_AHEAD_LOW_WATERMARK < 1)
+         || (INPUT_READY_AHEAD_LOW_WATERMARK > I_RD_OUTSTANDING))
+            $fatal(1, "%s: invalid Input ready-ahead watermark %0d",
+                   INSTANCE_ID, INPUT_READY_AHEAD_LOW_WATERMARK);
+        if ((WEIGHT_READY_AHEAD_LOW_WATERMARK < 1)
+         || (WEIGHT_READY_AHEAD_LOW_WATERMARK > W_RD_OUTSTANDING))
+            $fatal(1, "%s: invalid Weight ready-ahead watermark %0d",
+                   INSTANCE_ID, WEIGHT_READY_AHEAD_LOW_WATERMARK);
     end
 
     // ================================================================
@@ -129,11 +158,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
         .TAG_WIDTH  (TAG_WIDTH)
-    ) dma_to_tmem [NUM_BANKS] ();
+    ) dma_to_tmem [NUM_DMA_CHANNELS] ();
+
+    // Restricted DMA-to-TMEM fabric.  The flat array is indexed by physical
+    // TMEM bank; each element has exactly one static owner, bank%D.  The
+    // per-channel demux below only creates wires to banks c+kD.
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+    ) dma_switch_to_tmem [NUM_BANKS] ();
 
     VX_dma_engine #(
         .INSTANCE_ID    ({INSTANCE_ID, ":dma"}),
-        .NUM_CHANNELS   (NUM_BANKS),
+        .NUM_CHANNELS   (NUM_DMA_CHANNELS),
+        .NUM_HBM_PORTS  (`NUM_HBM_PORTS),
         .DATA_WIDTH     (DATA_WIDTH),
         .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
         .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
@@ -152,6 +190,71 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         ,.perf          (hbm_dma_perf)
     `endif
     );
+
+    // A DMA descriptor carries a D-channel-local word address.  When T>D,
+    // its low log2(T/D) bits select an owned bank slot and the remaining bits
+    // are the physical bank-local address.  T==D keeps the legacy direct wire.
+    for (genvar c = 0; c < NUM_DMA_CHANNELS; ++c) begin : g_dma_tmem_route
+        if (NUM_BANKS == NUM_DMA_CHANNELS) begin : g_direct
+            localparam int BANK = c;
+
+            assign dma_switch_to_tmem[BANK].req_valid = dma_to_tmem[c].req_valid;
+            assign dma_switch_to_tmem[BANK].req_data.rw = dma_to_tmem[c].req_data.rw;
+            assign dma_switch_to_tmem[BANK].req_data.addr = dma_to_tmem[c].req_data.addr;
+            assign dma_switch_to_tmem[BANK].req_data.data = dma_to_tmem[c].req_data.data;
+            assign dma_switch_to_tmem[BANK].req_data.byteen = dma_to_tmem[c].req_data.byteen;
+            assign dma_switch_to_tmem[BANK].req_data.flags = dma_to_tmem[c].req_data.flags;
+            assign dma_switch_to_tmem[BANK].req_data.tag =
+                {{BANK_SEL_BITS{1'b0}}, dma_to_tmem[c].req_data.tag};
+            assign dma_to_tmem[c].req_ready = dma_switch_to_tmem[BANK].req_ready;
+
+            assign dma_to_tmem[c].rsp_valid = dma_switch_to_tmem[BANK].rsp_valid;
+            assign dma_to_tmem[c].rsp_data.data = dma_switch_to_tmem[BANK].rsp_data.data;
+            assign dma_to_tmem[c].rsp_data.tag =
+                dma_switch_to_tmem[BANK].rsp_data.tag[TAG_WIDTH-1:0];
+            assign dma_switch_to_tmem[BANK].rsp_ready = dma_to_tmem[c].rsp_ready;
+        end else begin : g_interleaved
+            VX_mem_bus_if #(
+                .DATA_SIZE  (DATA_SIZE),
+                .TAG_WIDTH  (DMA_SWITCH_TAG_WIDTH)
+            ) owned_bank_if [DMA_BANKS_PER_CHANNEL] ();
+
+            VX_tmem_switch #(
+                .INSTANCE_ID ({INSTANCE_ID, ":dma_sw"}),
+                .NUM_BANKS   (DMA_BANKS_PER_CHANNEL),
+                .DATA_SIZE   (DATA_SIZE),
+                .TAG_WIDTH   (TAG_WIDTH)
+            ) u_dma_switch (
+                .clk               (clk),
+                .reset             (reset),
+                .req_urgent_i      (1'b0),
+                .bank_req_urgent_o (),
+                .bus_in_if         (dma_to_tmem[c]),
+                .bus_out_if        (owned_bank_if)
+            );
+
+            for (genvar k = 0; k < DMA_BANKS_PER_CHANNEL; ++k) begin : g_owned_bank
+                localparam int BANK = c + k * NUM_DMA_CHANNELS;
+                localparam int TAG_PAD = SWITCH_TAG_WIDTH - DMA_SWITCH_TAG_WIDTH;
+
+                assign dma_switch_to_tmem[BANK].req_valid = owned_bank_if[k].req_valid;
+                assign dma_switch_to_tmem[BANK].req_data.rw = owned_bank_if[k].req_data.rw;
+                assign dma_switch_to_tmem[BANK].req_data.addr = owned_bank_if[k].req_data.addr;
+                assign dma_switch_to_tmem[BANK].req_data.data = owned_bank_if[k].req_data.data;
+                assign dma_switch_to_tmem[BANK].req_data.byteen = owned_bank_if[k].req_data.byteen;
+                assign dma_switch_to_tmem[BANK].req_data.flags = owned_bank_if[k].req_data.flags;
+                assign dma_switch_to_tmem[BANK].req_data.tag =
+                    {{TAG_PAD{1'b0}}, owned_bank_if[k].req_data.tag};
+                assign owned_bank_if[k].req_ready = dma_switch_to_tmem[BANK].req_ready;
+
+                assign owned_bank_if[k].rsp_valid = dma_switch_to_tmem[BANK].rsp_valid;
+                assign owned_bank_if[k].rsp_data.data = dma_switch_to_tmem[BANK].rsp_data.data;
+                assign owned_bank_if[k].rsp_data.tag =
+                    dma_switch_to_tmem[BANK].rsp_data.tag[DMA_SWITCH_TAG_WIDTH-1:0];
+                assign dma_switch_to_tmem[BANK].rsp_ready = owned_bank_if[k].rsp_ready;
+            end
+        end
+    end
 
     // ================================================================
     // 2. Local DMA -> Switch -> TMEM bank wiring
@@ -211,6 +314,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     VX_gemm_sync_if ldma_sync_if [NUM_LDMA] ();
 
+    wire input_req_urgent;
+    wire weight_req_urgent;
+    wire [NUM_BANKS-1:0] input_bank_req_urgent;
+    wire [NUM_BANKS-1:0] weight_bank_req_urgent;
+
     for (genvar i = 0; i < NUM_LDMA; ++i) begin : g_ldma_sync
         assign ldma_sync_if[i].ready = 1'b1;
     end
@@ -227,6 +335,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_input (
         .clk        (clk),
         .reset      (reset),
+        .req_urgent_i(input_req_urgent),
+        .bank_req_urgent_o(input_bank_req_urgent),
         .bus_in_if  (ldma_to_switch[0]),
         .bus_out_if (in_switch_to_tmem)
     );
@@ -241,6 +351,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_weight (
         .clk        (clk),
         .reset      (reset),
+        .req_urgent_i(weight_req_urgent),
+        .bank_req_urgent_o(weight_bank_req_urgent),
         .bus_in_if  (ldma_weight_to_tmem),
         .bus_out_if (wt_switch_to_tmem)
     );
@@ -253,6 +365,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_scale (
         .clk        (clk),
         .reset      (reset),
+        .req_urgent_i(1'b0),
+        .bank_req_urgent_o(),
         .bus_in_if  (ldma_to_switch[2]),
         .bus_out_if (sc_switch_to_tmem)
     );
@@ -265,6 +379,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_zero_point (
         .clk        (clk),
         .reset      (reset),
+        .req_urgent_i(1'b0),
+        .bank_req_urgent_o(),
         .bus_in_if  (ldma_to_switch[3]),
         .bus_out_if (zp_switch_to_tmem)
     );
@@ -277,6 +393,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_output (
         .clk        (clk),
         .reset      (reset),
+        .req_urgent_i(1'b0),
+        .bank_req_urgent_o(),
         .bus_in_if  (ldma_to_switch[4]),
         .bus_out_if (out_switch_to_tmem)
     );
@@ -302,20 +420,29 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             .TAG_WIDTH  (SWITCH_TAG_WIDTH)
         ) bank_port_if [NUM_TMEM_PORTS] ();
 
-        // Port 0: DMA direct (ch b -> bank b, 1:1 mapping)
-        assign bank_port_if[0].req_valid       = dma_to_tmem[b].req_valid;
-        assign bank_port_if[0].req_data.rw     = dma_to_tmem[b].req_data.rw;
-        assign bank_port_if[0].req_data.addr   = dma_to_tmem[b].req_data.addr;
-        assign bank_port_if[0].req_data.data   = dma_to_tmem[b].req_data.data;
-        assign bank_port_if[0].req_data.byteen = dma_to_tmem[b].req_data.byteen;
-        assign bank_port_if[0].req_data.flags  = dma_to_tmem[b].req_data.flags;
-        assign bank_port_if[0].req_data.tag    = {{BANK_SEL_BITS{1'b0}}, dma_to_tmem[b].req_data.tag};
-        assign dma_to_tmem[b].req_ready        = bank_port_if[0].req_ready;
+        wire [NUM_TMEM_PORTS-1:0] bank_req_urgent;
+        assign bank_req_urgent[0] = 1'b0;
+        assign bank_req_urgent[1] = input_bank_req_urgent[b];
+        assign bank_req_urgent[2] = weight_bank_req_urgent[b];
+        assign bank_req_urgent[3] = 1'b0;
+        assign bank_req_urgent[4] = 1'b0;
+        assign bank_req_urgent[5] = 1'b0;
 
-        assign dma_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
-        assign dma_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
-        assign dma_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag[TAG_WIDTH-1:0];
-        assign bank_port_if[0].rsp_ready    = dma_to_tmem[b].rsp_ready;
+        // Port 0: restricted DMA direct path.  Physical bank b is owned by
+        // DMA channel b%NUM_DMA_CHANNELS; no cross-class path is elaborated.
+        assign bank_port_if[0].req_valid       = dma_switch_to_tmem[b].req_valid;
+        assign bank_port_if[0].req_data.rw     = dma_switch_to_tmem[b].req_data.rw;
+        assign bank_port_if[0].req_data.addr   = dma_switch_to_tmem[b].req_data.addr;
+        assign bank_port_if[0].req_data.data   = dma_switch_to_tmem[b].req_data.data;
+        assign bank_port_if[0].req_data.byteen = dma_switch_to_tmem[b].req_data.byteen;
+        assign bank_port_if[0].req_data.flags  = dma_switch_to_tmem[b].req_data.flags;
+        assign bank_port_if[0].req_data.tag    = dma_switch_to_tmem[b].req_data.tag;
+        assign dma_switch_to_tmem[b].req_ready = bank_port_if[0].req_ready;
+
+        assign dma_switch_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
+        assign dma_switch_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
+        assign dma_switch_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag;
+        assign bank_port_if[0].rsp_ready            = dma_switch_to_tmem[b].rsp_ready;
 
         // Port 1: input switch
         assign bank_port_if[1].req_valid       = in_switch_to_tmem[b].req_valid;
@@ -397,10 +524,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             .SIZE        (BANK_SIZE),
             .DATA_SIZE   (DATA_SIZE),
             .NUM_PORTS   (NUM_TMEM_PORTS),
-            .TAG_WIDTH   (SWITCH_TAG_WIDTH)
+            .TAG_WIDTH   (SWITCH_TAG_WIDTH),
+            .ENABLE_URGENCY(TMEM_ARB_URGENCY_ENABLE),
+            .MAX_CONSECUTIVE_URGENT(TMEM_ARB_MAX_CONSECUTIVE_URGENT)
         ) u_bank (
             .clk        (clk),
             .reset      (reset),
+            .req_urgent_i(bank_req_urgent),
             .mem_bus_if (bank_port_if)
         );
 
@@ -428,7 +558,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .CMD_FIFO_DEPTH(4),
-        .RESPONSE_SLOTS(I_RD_OUTSTANDING)
+        .RESPONSE_SLOTS(I_RD_OUTSTANDING),
+        .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
+        .READY_AHEAD_LOW_WATERMARK(INPUT_READY_AHEAD_LOW_WATERMARK)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
@@ -438,7 +570,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .writer_consume_value1_i ('0),
         .gemm_sync_if(ldma_sync_if[0]),
         .lmem_bus_if (ldma_to_switch[0]),
-        .gemm_bus_if (ldma_gemm[0])
+        .gemm_bus_if (ldma_gemm[0]),
+        .lmem_req_urgent_o(input_req_urgent),
+        .ready_ahead_o()
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[0])
     `endif
@@ -454,7 +588,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .CMD_FIFO_DEPTH(4),
         .CMD_BEATS   (W_CMD_BEATS),
-        .RESPONSE_SLOTS(W_RD_OUTSTANDING)
+        .RESPONSE_SLOTS(W_RD_OUTSTANDING),
+        .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
+        .READY_AHEAD_LOW_WATERMARK(WEIGHT_READY_AHEAD_LOW_WATERMARK)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
@@ -464,7 +600,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .weight_consume_value1_i(weight_consume_value1_i),
         .gemm_sync_if(ldma_sync_if[1]),
         .lmem_bus_if (ldma_weight_to_tmem),
-        .gemm_bus_if (ldma_gemm_weight)
+        .gemm_bus_if (ldma_gemm_weight),
+        .lmem_req_urgent_o(weight_req_urgent),
+        .ready_ahead_o()
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[1])
     `endif

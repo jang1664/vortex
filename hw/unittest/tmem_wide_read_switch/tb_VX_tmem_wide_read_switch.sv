@@ -39,6 +39,10 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
     ) bank_if [NUM_BANKS] ();
 
     logic [NUM_BANKS-1:0] bank_req_ready;
+    logic wide_req_urgent;
+    logic local_reset = 1'b0;
+    wire dut_reset = reset || local_reset;
+    wire  [NUM_BANKS-1:0] bank_req_urgent;
     wire  [NUM_BANKS-1:0] bank_req_valid;
     wire  [NUM_BANKS-1:0][OUT_ADDR_WIDTH-1:0] bank_req_addr;
     wire  [NUM_BANKS-1:0][DATA_WIDTH-1:0] bank_req_data;
@@ -61,7 +65,9 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         .OUTSTANDING    (OUTSTANDING)
     ) dut (
         .clk        (clk),
-        .reset      (reset),
+        .reset      (dut_reset),
+        .req_urgent_i(wide_req_urgent),
+        .bank_req_urgent_o(bank_req_urgent),
         .bus_in_if  (wide_if),
         .bus_out_if (bank_if)
     );
@@ -181,6 +187,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         wide_if.req_data.byteen = transaction_byteen(batch, transaction);
         wide_if.req_data.flags = transaction_flags(batch, transaction);
         wide_if.req_data.tag = transaction_tag(batch, transaction);
+        wide_req_urgent = transaction[0];
     endtask
 
     logic issue_monitor_enable;
@@ -192,7 +199,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
     // Request-side scoreboard. It checks every cycle of a partially accepted
     // bank group, so a bank that has already fired cannot be reissued silently.
     always @(posedge clk) begin
-        if (!reset && issue_monitor_enable) begin
+        if (!dut_reset && issue_monitor_enable) begin
             logic [NUM_BANKS-1:0] expected_mask;
             logic [NUM_BANKS-1:0] expected_remaining;
             logic [NUM_BANKS-1:0] fired;
@@ -235,6 +242,9 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                             !== BANK_SEL_BITS'(b))
                             $fatal(1, "case%0d tx%0d bank%0d: bank tag prefix mismatch",
                                    CASE_ID, issue_transaction, b);
+                        if (bank_req_urgent[b] !== issue_transaction[0])
+                            $fatal(1, "case%0d tx%0d bank%0d: stored urgency mismatch",
+                                   CASE_ID, issue_transaction, b);
                     end
                 end
 
@@ -262,6 +272,53 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         end
     end
 
+    task automatic probe_full_depth(input int batch);
+        issue_batch = batch;
+        issue_accepted = 0;
+        issue_transaction = 0;
+        issue_seen = '0;
+        issue_monitor_enable = 1'b1;
+        bank_req_ready = '1;
+
+        for (int t = 0; t < OUTSTANDING; ++t) begin
+            @(negedge clk);
+            if (wide_if.req_ready !== 1'b1)
+                $fatal(1, "case%0d full-probe tx%0d: req_ready broke consecutive acceptance",
+                       CASE_ID, t);
+            drive_request(batch, t);
+            @(posedge clk);
+        end
+
+        // Once full, the one-extra request must remain stable while stalled.
+        // Cancel it only by reset so the ready/valid protocol is not violated.
+        @(negedge clk);
+        if (wide_if.req_ready !== 1'b0)
+            $fatal(1, "case%0d: req_ready stayed high beyond depth %0d",
+                   CASE_ID, OUTSTANDING);
+        drive_request(batch, 0);
+        @(posedge clk);
+        @(negedge clk);
+        if (wide_if.req_ready !== 1'b0)
+            $fatal(1, "case%0d: full switch accepted the one-extra request", CASE_ID);
+        if (issue_accepted != OUTSTANDING)
+            $fatal(1, "case%0d: full probe accepted=%0d expected=%0d",
+                   CASE_ID, issue_accepted, OUTSTANDING);
+
+        local_reset = 1'b1;
+        issue_monitor_enable = 1'b0;
+        repeat (2) @(posedge clk);
+        @(negedge clk);
+        wide_if.req_valid = 1'b0;
+        wide_req_urgent = 1'b0;
+        bank_req_ready = '0;
+        local_reset = 1'b0;
+        repeat (2) @(posedge clk);
+        if (wide_if.req_ready !== 1'b1 || wide_if.rsp_valid !== 1'b0)
+            $fatal(1, "case%0d: full-probe reset did not empty the switch", CASE_ID);
+        $display("case%0d PASS: full-depth blocked request remained stable until reset cancellation",
+                 CASE_ID);
+    endtask
+
     task automatic accept_batch(input int batch, input bit test_partial_ready);
         int stalled_bank;
 
@@ -285,17 +342,10 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
             @(posedge clk);
         end
 
-        // The one-extra request is held for a full edge and must not fire.
+        // Retire the final driven request only after its acceptance edge.
         @(negedge clk);
-        if (wide_if.req_ready !== 1'b0)
-            $fatal(1, "case%0d: req_ready stayed high beyond depth %0d",
-                   CASE_ID, OUTSTANDING);
-        drive_request(batch, 0);
-        @(posedge clk);
-        @(negedge clk);
-        if (wide_if.req_ready !== 1'b0)
-            $fatal(1, "case%0d: full switch accepted the one-extra request", CASE_ID);
         wide_if.req_valid = 1'b0;
+        wide_req_urgent = 1'b0;
 
         // Releasing this bank after several clocks proves that the already
         // accepted banks were not duplicated while one bank was stalled.
@@ -490,6 +540,7 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         done = 1'b0;
         wide_if.req_valid = 1'b0;
         wide_if.req_data = '0;
+        wide_req_urgent = 1'b0;
         wide_if.rsp_ready = 1'b0;
         bank_req_ready = '0;
         bank_rsp_valid = '0;
@@ -513,8 +564,13 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
             if (negative_enabled) begin
                 run_negative(negative_mode);
             end else begin
-                // Batch 0: depth/full behavior, simultaneous responses, skew,
-                // reverse completion, in-order retire, and response backpressure.
+                // Probe depth/full behavior separately so the blocked extra
+                // request is canceled only through reset and does not change
+                // the response/order counts of the functional batches.
+                probe_full_depth(2);
+
+                // Batch 0: simultaneous responses, skew, reverse completion,
+                // in-order retire, and response backpressure.
                 accept_batch(0, 1'b0);
                 respond_reversed_skewed(0);
                 retire_batch(0);
@@ -527,6 +583,8 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                 retire_batch(1);
 
                 done = 1'b1;
+                $display("case%0d PASS: context urgency stayed identical across every partial bank lane",
+                         CASE_ID);
                 $display("case%0d PASS: WIDE_DATA_SIZE=%0d OUTSTANDING=%0d BANKS_PER_BEAT=%0d",
                          CASE_ID, WIDE_DATA_SIZE, OUTSTANDING, BANKS_PER_BEAT);
             end
