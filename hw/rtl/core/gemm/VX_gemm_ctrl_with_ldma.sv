@@ -43,6 +43,10 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   
   VX_gemm_sync_if     gemm_sync_if[5] ();// from gemm/dma node
   VX_gemm_dma_ctrl_if gemm_dma_ctrl_if();
+  wire [31:0] scheduler_zero_work_seq[4];
+  for (genvar sched_zero = 0; sched_zero < 4; ++sched_zero) begin
+    assign scheduler_zero_work_seq[sched_zero] = '0;
+  end
 
   VX_mem_bus_if # (
     .DATA_SIZE(LSU_WORD_SIZE),
@@ -81,6 +85,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign gemm_ctrl_if.input_read_flag.done = input_dma_ctrl_if.done;
   assign input_dma_ctrl_if.reg_idx = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
   assign input_dma_ctrl_if.reg_value = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
+  assign input_dma_ctrl_if.scheduler_work_seq
+      = gemm_ctrl_if.input_read_ctrl.cmd.work_seq;
 
   assign weight_dma_ctrl_if.start = gemm_ctrl_if.weight_read_ctrl.start;
   assign weight_dma_ctrl_if.src_base_addr = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
@@ -101,6 +107,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign gemm_ctrl_if.weight_read_flag.done = weight_dma_ctrl_if.done;
   assign weight_dma_ctrl_if.reg_idx = gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data;
   assign weight_dma_ctrl_if.reg_value = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
+  assign weight_dma_ctrl_if.scheduler_work_seq
+      = gemm_ctrl_if.weight_read_ctrl.cmd.work_seq;
 
   assign quant_param_dma_ctrl_if.start = gemm_ctrl_if.quant_param_read_ctrl.start;
   assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
@@ -122,6 +130,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign gemm_ctrl_if.quant_param_read_flag.done = quant_param_dma_ctrl_if.done;
   assign quant_param_dma_ctrl_if.reg_idx = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
   assign quant_param_dma_ctrl_if.reg_value = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
+  assign quant_param_dma_ctrl_if.scheduler_work_seq
+      = gemm_ctrl_if.quant_param_read_ctrl.cmd.work_seq;
 
   assign output_dma_ctrl_if.start = gemm_ctrl_if.output_write_ctrl.start;
   assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
@@ -144,6 +154,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.done;
   assign output_dma_ctrl_if.reg_idx = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
   assign output_dma_ctrl_if.reg_value = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
+  assign output_dma_ctrl_if.scheduler_work_seq = '0;
   
   assign gemm_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
   assign gemm_dma_ctrl_if.cmd_valid = gemm_ctrl_if.dma_ctrl.cmd_valid;
@@ -178,7 +189,26 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .scale_consume_value0_o(),
     .scale_consume_value1_o(),
     .zero_point_consume_value0_o(),
-    .zero_point_consume_value1_o()
+    .zero_point_consume_value1_o(),
+    .sched_source_valid_i('0),
+    .sched_source_work_seq_i(scheduler_zero_work_seq),
+    .sched_source_total_beats_i(scheduler_zero_work_seq),
+    .sched_source_request_beats_i(scheduler_zero_work_seq),
+    .sched_source_response_beats_i(scheduler_zero_work_seq),
+    .sched_source_writer_beats_i(scheduler_zero_work_seq),
+    .sched_input_slot_occupancy_i('0),
+    .sched_input_ahead_credit_i(1'b0),
+    .sched_input_admit_valid_i(1'b0),
+    .sched_input_admit_work_seq_i('0),
+    .sched_fetch_complete_i('0),
+    .sched_fetch_complete_work_seq_i(scheduler_zero_work_seq),
+    .consumer_block_valid_i(1'b0),
+    .consumer_block_resource_i('0),
+    .consumer_block_work_seq_i('0),
+    .consumer_block_bank_i(1'b0),
+    .consumer_block_target_i('0),
+    .sched_source_priority_o(),
+    .sched_input_source_enable_o()
   );
 
   VX_gemm_dma_ctrl #(

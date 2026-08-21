@@ -1,10 +1,12 @@
 `timescale 1ns / 1ps
 `include "VX_define.vh"
 
-module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
+module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; #(
+  parameter bit TB_ENABLE_URGENCY = 1'b1
+) ();
 
   localparam int PERIOD     = 10;
-  localparam int NUM_PORTS  = 5;
+  localparam int NUM_PORTS  = 6;
   localparam int DATA_SIZE  = 8;     // 64-bit beats for readable checks
   localparam int TAG_WIDTH  = 8;
   localparam int BANK_BYTES = 1024;
@@ -22,6 +24,7 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       .TAG_WIDTH (TAG_WIDTH)
   ) mem_bus_if [NUM_PORTS] ();
   logic [NUM_PORTS-1:0] req_urgent;
+  logic [NUM_PORTS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0] req_priority;
 
   VX_tensor_mem_bank #(
       .INSTANCE_ID ("tb_tensor_mem_bank"),
@@ -29,12 +32,13 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       .DATA_SIZE   (DATA_SIZE),
       .NUM_PORTS   (NUM_PORTS),
       .TAG_WIDTH   (TAG_WIDTH),
-      .ENABLE_URGENCY(1'b1),
-      .MAX_CONSECUTIVE_URGENT(2)
+      .ENABLE_URGENCY(TB_ENABLE_URGENCY),
+      .MAX_CONSECUTIVE_URGENT(4)
   ) dut (
       .clk        (clk),
       .reset      (reset),
       .req_urgent_i(req_urgent),
+      .req_priority_i(req_priority),
       .mem_bus_if (mem_bus_if)
   );
 
@@ -76,6 +80,15 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     assign mem_bus_if[p].rsp_ready = rsp_ready[p];
   end
 
+  always @(posedge clk) begin
+    if (!reset) begin
+      if ($isunknown(req_priority))
+        $fatal(1, "request priority contains X");
+      if ($isunknown(req_ready) || $isunknown(rsp_valid))
+        $fatal(1, "request/response handshake contains X");
+    end
+  end
+
   function automatic logic [TAG_WIDTH-1:0] mk_tag(input logic [TAG_WIDTH-1:0] t);
     return t;
   endfunction
@@ -90,6 +103,7 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       req_flags[p]   = '0;
       req_tag[p]     = '0;
       req_urgent[p]  = 1'b0;
+      req_priority[p] = GEMM_SCHED_PRIORITY_BACKGROUND;
       rsp_ready[p]   = 1'b1;
     end
   endtask
@@ -120,6 +134,7 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     req_flags[p]  = '0;
     req_tag[p]    = '0;
     req_urgent[p] = 1'b0;
+    req_priority[p] = GEMM_SCHED_PRIORITY_BACKGROUND;
   endtask
 
   task automatic wait_req_accept(input int p, input string msg);
@@ -201,10 +216,11 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     int blocked_cycles;
     int urgent_streak;
     int max_urgent_streak;
-    int normal0_grants;
-    int normal2_grants;
     int urgent0_grants;
     int urgent1_grants;
+    int weight_grants;
+    int dma_grants;
+    int output_grants;
 
     init_ports();
 
@@ -271,7 +287,33 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     check_rsp(0, mk_tag(8'h51), 64'h1112_1314_1516_1718, "bp_followup_rsp");
     rsp_ready[4] = 1'b1;
 
-    // 5) One urgent requester must overtake normal traffic.
+    // Reset the arbitration cursors before the policy-specific checks.
+    @(negedge clk);
+    reset = 1'b1;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    reset = 1'b0;
+    repeat (2) @(posedge clk);
+
+    if (TB_ENABLE_URGENCY) begin
+    // 5) P2 Weight (physical port 2) must beat P1 Input (physical port 1).
+    @(negedge clk);
+    set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h5a));
+    set_req(2, 1'b0, ADDR_WIDTH'(10), '0, '0, mk_tag(8'h5b));
+    req_priority[1] = GEMM_SCHED_PRIORITY_NEAR;
+    req_priority[2] = GEMM_SCHED_PRIORITY_EARLIEST;
+    @(posedge clk);
+    if (!req_ready[2] || req_ready[1])
+      $fatal(1, "P2 Weight did not beat P1 Input");
+    @(negedge clk);
+    clear_req(2);
+    wait_req_accept(1, "p2_weight_then_p1_input");
+    @(negedge clk);
+    clear_req(1);
+    repeat (3) @(posedge clk);
+    $display("PASS marker: P2 Weight beats P1 Input");
+
+    // 6) The legacy urgent bit maps to P1 and overtakes P0 traffic.
     @(negedge clk);
     set_req(0, 1'b0, ADDR_WIDTH'(8), '0, '0, mk_tag(8'h60));
     set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h61));
@@ -286,12 +328,12 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
     clear_req(0);
     repeat (3) @(posedge clk);
 
-    // 6) Multiple urgent requesters retain RR progress within their class.
+    // 7) Equal explicit P2 requesters retain round-robin progress.
     @(negedge clk);
     set_req(0, 1'b0, ADDR_WIDTH'(8), '0, '0, mk_tag(8'h64));
     set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h68));
-    req_urgent[0] = 1'b1;
-    req_urgent[1] = 1'b1;
+    req_priority[0] = GEMM_SCHED_PRIORITY_EARLIEST;
+    req_priority[1] = GEMM_SCHED_PRIORITY_EARLIEST;
     urgent0_grants = 0;
     urgent1_grants = 0;
     for (int t = 0; t < 12; ++t) begin
@@ -315,73 +357,118 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       end
     end
     if ((urgent0_grants < 2) || (urgent1_grants < 2))
-      $fatal(1, "urgent-class RR failed grants=%0d/%0d",
+      $fatal(1, "equal-P2 RR failed grants=%0d/%0d",
              urgent0_grants, urgent1_grants);
     if (req_valid[0] || req_valid[1])
       $fatal(1, "urgent-class sources did not retire on their final handshakes");
     repeat (3) @(posedge clk);
 
-    // 7) Two persistent normal requesters must both make progress. Reissue all
-    // sources after every fire; independent class RR state prevents the
-    // urgent source from perturbing the rotation among the normal sources.
+    $display("PASS marker: equal-tier P2 round-robin grants=%0d/%0d",
+             urgent0_grants, urgent1_grants);
+
+    // 8) P3 > P2 > P1 lexicographic selection.  Priority remains attached to
+    // each held request; the following fairness test proves that this strict
+    // ordering still has a bounded escape for lower tiers.
+    @(negedge clk);
+    set_req(0, 1'b0, ADDR_WIDTH'(8), '0, '0, mk_tag(8'h6a));
+    set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h6b));
+    set_req(2, 1'b0, ADDR_WIDTH'(10), '0, '0, mk_tag(8'h6c));
+    req_priority[0] = GEMM_SCHED_PRIORITY_NEAR;
+    req_priority[1] = GEMM_SCHED_PRIORITY_BLOCKED;
+    req_priority[2] = GEMM_SCHED_PRIORITY_EARLIEST;
+    @(posedge clk);
+    if (!req_ready[1] || req_ready[0] || req_ready[2])
+      $fatal(1, "P3 request did not beat P2/P1");
+    @(negedge clk);
+    clear_req(1);
+    wait_req_accept(2, "p2_after_p3");
+    @(negedge clk);
+    clear_req(2);
+    wait_req_accept(0, "p1_after_p2");
+    @(negedge clk);
+    clear_req(0);
+    repeat (3) @(posedge clk);
+    $display("PASS marker: P3>P2>P1 tier ordering");
+
+    // 9) A persistent P2 Weight may win at most four consecutive grants before
+    // all-requester fairness advances both P0 DMA and P0 Output requesters.
     @(negedge clk);
     set_req(0, 1'b0, ADDR_WIDTH'(10), '0, '0, mk_tag(8'h70));
-    set_req(1, 1'b0, ADDR_WIDTH'(11), '0, '0, mk_tag(8'h71));
-    set_req(2, 1'b0, ADDR_WIDTH'(12), '0, '0, mk_tag(8'h72));
-    req_urgent[1] = 1'b1;
+    set_req(2, 1'b0, ADDR_WIDTH'(11), '0, '0, mk_tag(8'h71));
+    set_req(5, 1'b0, ADDR_WIDTH'(13), '0, '0, mk_tag(8'h73));
+    req_priority[2] = GEMM_SCHED_PRIORITY_EARLIEST;
     urgent_streak = 0;
     max_urgent_streak = 0;
-    normal0_grants = 0;
-    normal2_grants = 0;
-    for (int t = 0; t < 40; ++t) begin
+    weight_grants = 0;
+    dma_grants = 0;
+    output_grants = 0;
+    for (int t = 0; t < 80; ++t) begin
       @(posedge clk);
-      if (!req_valid[0] && !req_valid[1] && !req_valid[2])
+      if (!req_valid[0] && !req_valid[2] && !req_valid[5])
         break;
-      if (req_valid[1] && req_ready[1]) begin
+      if (req_valid[2] && req_ready[2]) begin
         urgent_streak++;
         if (urgent_streak > max_urgent_streak)
           max_urgent_streak = urgent_streak;
+        weight_grants++;
         @(negedge clk);
-        if ((normal0_grants >= 2) && (normal2_grants >= 2))
-          clear_req(1);
-        else
-          req_tag[1] = req_tag[1] + TAG_WIDTH'(1);
-      end else if (req_valid[0] && req_ready[0]) begin
-        if (urgent_streak > 2)
-          $fatal(1, "normal port 0 exceeded urgent grant budget");
-        urgent_streak = 0;
-        normal0_grants++;
-        @(negedge clk);
-        if (normal0_grants >= 2)
-          clear_req(0);
-        else
-          req_tag[0] = req_tag[0] + TAG_WIDTH'(1);
-      end else if (req_valid[2] && req_ready[2]) begin
-        if (urgent_streak > 2)
-          $fatal(1, "normal port 2 exceeded urgent grant budget");
-        urgent_streak = 0;
-        normal2_grants++;
-        @(negedge clk);
-        if (normal2_grants >= 2)
+        if ((dma_grants >= 2) && (output_grants >= 2))
           clear_req(2);
         else
           req_tag[2] = req_tag[2] + TAG_WIDTH'(1);
+      end else if (req_valid[0] && req_ready[0]) begin
+        if (urgent_streak > 4)
+          $fatal(1, "P0 DMA exceeded four-grant priority budget");
+        urgent_streak = 0;
+        dma_grants++;
+        @(negedge clk);
+        if (dma_grants >= 2)
+          clear_req(0);
+        else
+          req_tag[0] = req_tag[0] + TAG_WIDTH'(1);
+      end else if (req_valid[5] && req_ready[5]) begin
+        if (urgent_streak > 4)
+          $fatal(1, "P0 Output exceeded four-grant priority budget");
+        urgent_streak = 0;
+        output_grants++;
+        @(negedge clk);
+        if (output_grants >= 2)
+          clear_req(5);
+        else
+          req_tag[5] = req_tag[5] + TAG_WIDTH'(1);
       end
     end
-    if ((normal0_grants < 2) || (normal2_grants < 2)
-     || (max_urgent_streak > 2))
-      $fatal(1, "bounded class fairness failed normal_grants=%0d/%0d max_urgent=%0d",
-             normal0_grants, normal2_grants, max_urgent_streak);
-    if (req_valid[0] || req_valid[1] || req_valid[2])
+    if ((dma_grants < 2) || (output_grants < 2)
+     || (max_urgent_streak > 4))
+      $fatal(1, "bounded fairness failed DMA/Output=%0d/%0d max_weight=%0d",
+             dma_grants, output_grants, max_urgent_streak);
+    if (req_valid[0] || req_valid[2] || req_valid[5])
       $fatal(1, "fairness-test sources did not retire on their final handshakes");
     repeat (3) @(posedge clk);
 
-    $display("PASS marker: urgent-over-normal and independent normal RR progress (normal=%0d/%0d max urgent=%0d)",
-             normal0_grants, normal2_grants, max_urgent_streak);
-    $display("PASS marker: urgent class RR progress grants=%0d/%0d",
-             urgent0_grants, urgent1_grants);
+    $display("PASS marker: MAX_CONSECUTIVE_URGENT=4 force_fair advances P0 DMA/Output grants=%0d/%0d max_weight=%0d",
+             dma_grants, output_grants, max_urgent_streak);
+    end else begin
+      // Explicit legacy mode: after reset the normal RR cursor selects Input
+      // even though Weight presents a numerically higher, ignored priority.
+      @(negedge clk);
+      set_req(1, 1'b0, ADDR_WIDTH'(9), '0, '0, mk_tag(8'h78));
+      set_req(2, 1'b0, ADDR_WIDTH'(10), '0, '0, mk_tag(8'h79));
+      req_priority[1] = GEMM_SCHED_PRIORITY_NEAR;
+      req_priority[2] = GEMM_SCHED_PRIORITY_EARLIEST;
+      @(posedge clk);
+      if (!req_ready[1] || req_ready[2])
+        $fatal(1, "legacy ENABLE_URGENCY=0 did not preserve normal RR");
+      @(negedge clk);
+      clear_req(1);
+      wait_req_accept(2, "legacy_input_then_weight");
+      @(negedge clk);
+      clear_req(2);
+      repeat (3) @(posedge clk);
+      $display("PASS marker: explicit ENABLE_URGENCY=0 legacy RR ignores priority");
+    end
 
-    // 8) Reset clears urgency-age and class-RR state without a stale response.
+    // 10) Reset clears urgency-age and class-RR state without a stale response.
     @(negedge clk);
     reset = 1'b1;
     repeat (2) @(posedge clk);

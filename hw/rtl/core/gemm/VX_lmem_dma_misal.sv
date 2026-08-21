@@ -517,6 +517,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
   parameter bit ENABLE_TMEM_URGENCY = 1'b0,
+  parameter bit ENABLE_SCHED_SOURCE_GATE = 1'b0,
   parameter int READY_AHEAD_LOW_WATERMARK = 4,
   parameter bit ENABLE_WRITER_FENCE = 1'b0,
   parameter bit ENABLE_SAME_CYCLE_CMD_RECYCLE = 1'b1,
@@ -529,6 +530,8 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
 ) (
   input wire clk,
   input wire reset,
+  input wire sched_source_enable_i,
+  input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] sched_priority_i,
 
   VX_lmem_dma_ctrl_if.slave ctrl_if,
   input gemm_wait_meta_t     writer_wait_i,
@@ -538,7 +541,18 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master      lmem_bus_if,
   VX_mem_bus_if.master      gemm_bus_if,
   output wire               lmem_req_urgent_o,
-  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0] ready_ahead_o
+  output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority_o,
+  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0] ready_ahead_o,
+  output wire               sched_source_valid_o,
+  output wire [31:0]        sched_source_work_seq_o,
+  output wire [31:0]        sched_source_total_beats_o,
+  output wire [31:0]        sched_source_request_beats_o,
+  output wire [31:0]        sched_source_response_beats_o,
+  output wire [31:0]        sched_source_writer_beats_o,
+  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0]
+                            sched_slot_occupancy_o,
+  output wire               sched_fetch_complete_o,
+  output wire [31:0]        sched_fetch_complete_work_seq_o
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
 `endif
@@ -572,12 +586,14 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   logic [31:0] cmd_total_beats_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_rd_count_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_wr_count_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_rsp_count_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_rd_i_dim_r[CMD_FIFO_DEPTH][NDIM];
   logic [31:0] cmd_rd_seg_offset_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_wr_i_dim_r[CMD_FIFO_DEPTH][NDIM];
   logic [31:0] cmd_wr_seg_offset_r[CMD_FIFO_DEPTH];
   gemm_wait_meta_t cmd_writer_wait_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_sequence_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_scheduler_work_seq_r[CMD_FIFO_DEPTH];
 
   logic [CMD_PTR_BITS-1:0] rd_cmd_ptr_r;
   logic [CMD_PTR_BITS-1:0] wr_cmd_ptr_r;
@@ -604,6 +620,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   logic ready_prefix;
   logic source_urgent_hold_valid_r;
   logic source_urgent_hold_r;
+  logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] source_priority_hold_r;
 
   wire cmd_fifo_full = (cmd_count_r == CMD_COUNT_BITS'(CMD_FIFO_DEPTH));
   wire rd_cmd_valid = cmd_valid_r[rd_cmd_ptr_r]
@@ -682,10 +699,34 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   wire source_urgent_now = writer_released
       && (consecutive_ready_ahead
           < SLOT_COUNT_BITS'(READY_AHEAD_LOW_WATERMARK));
+  assign lmem_req_priority_o = source_urgent_hold_valid_r
+      ? source_priority_hold_r : sched_priority_i;
+  // A scheduler-managed P0 is an intentional background decision, not an
+  // invitation for legacy ready-ahead urgency to raise the request again.
+  // Unmanaged descriptors (work_seq zero) retain the legacy fallback.
   assign lmem_req_urgent_o = ENABLE_TMEM_URGENCY
       && (source_urgent_hold_valid_r ? source_urgent_hold_r
-                                     : source_urgent_now);
+                                     : source_urgent_now)
+      && ((cmd_scheduler_work_seq_r[rd_cmd_ptr_r] == 0)
+       || (lmem_req_priority_o != GEMM_SCHED_PRIORITY_BACKGROUND));
   assign ready_ahead_o = consecutive_ready_ahead;
+  assign sched_source_valid_o = rd_cmd_valid;
+  assign sched_source_work_seq_o
+      = cmd_scheduler_work_seq_r[rd_cmd_ptr_r];
+  assign sched_source_total_beats_o = rd_cmd_valid
+      ? cmd_total_beats_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_request_beats_o = rd_cmd_valid
+      ? cmd_rd_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_response_beats_o = rd_cmd_valid
+      ? cmd_rsp_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_writer_beats_o = rd_cmd_valid
+      ? cmd_wr_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_slot_occupancy_o = slot_occupancy_r;
+  assign sched_fetch_complete_o = source_rsp_fire
+      && ((cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]] + 32'd1)
+       == cmd_total_beats_r[slot_owner_cmd_r[source_rsp_slot]]);
+  assign sched_fetch_complete_work_seq_o
+      = cmd_scheduler_work_seq_r[slot_owner_cmd_r[source_rsp_slot]];
 
   wire slot_read_ready = !drain_valid_r || destination_write_fire;
   wire [CMD_PTR_BITS-1:0] slot_read_cmd = destination_last_write
@@ -720,7 +761,15 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   assign gemm_sync_if.value = cmd_valid_r[wr_cmd_ptr_r]
                             ? cmd_reg_value_r[wr_cmd_ptr_r] : '0;
 
+  wire sched_source_allowed = !ENABLE_SCHED_SOURCE_GATE
+                           || sched_source_enable_i
+                           // Admission gating cannot revoke a request that
+                           // has already entered ready/valid backpressure.
+                           // This registered bit is set on the first stalled
+                           // edge and clears only when that request fires.
+                           || source_urgent_hold_valid_r;
   assign lmem_bus_if.req_valid = rd_cmd_valid
+      && sched_source_allowed
       && (slot_state_r[alloc_slot_r] == SLOT_FREE);
   assign lmem_bus_if.req_data.rw = 1'b0;
   assign lmem_bus_if.req_data.addr
@@ -815,6 +864,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
       drain_owner_beat_r <= '0;
       source_urgent_hold_valid_r <= 1'b0;
       source_urgent_hold_r <= 1'b0;
+      source_priority_hold_r <= '0;
       for (int cmd = 0; cmd < CMD_FIFO_DEPTH; ++cmd) begin
         cmd_src_base_r[cmd] <= '0;
         cmd_dst_base_r[cmd] <= '0;
@@ -824,10 +874,12 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         cmd_total_beats_r[cmd] <= '0;
         cmd_rd_count_r[cmd] <= '0;
         cmd_wr_count_r[cmd] <= '0;
+        cmd_rsp_count_r[cmd] <= '0;
         cmd_rd_seg_offset_r[cmd] <= '0;
         cmd_wr_seg_offset_r[cmd] <= '0;
         cmd_writer_wait_r[cmd] <= '0;
         cmd_sequence_r[cmd] <= '0;
+        cmd_scheduler_work_seq_r[cmd] <= '0;
         for (int d = 0; d < NDIM; ++d) begin
           cmd_src_strides_r[cmd][d] <= '0;
           cmd_dst_strides_r[cmd][d] <= '0;
@@ -848,6 +900,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
       end else if (lmem_bus_if.req_valid && !source_urgent_hold_valid_r) begin
         source_urgent_hold_valid_r <= 1'b1;
         source_urgent_hold_r <= source_urgent_now;
+        source_priority_hold_r <= sched_priority_i;
       end
       unique case ({command_enqueue, destination_last_write})
         2'b10: cmd_count_r <= cmd_count_r + CMD_COUNT_BITS'(1);
@@ -874,6 +927,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         cmd_valid_r[wr_cmd_ptr_r] <= 1'b0;
         cmd_rd_done_r[wr_cmd_ptr_r] <= 1'b0;
         cmd_wr_count_r[wr_cmd_ptr_r] <= '0;
+        cmd_rsp_count_r[wr_cmd_ptr_r] <= '0;
         cmd_wr_seg_offset_r[wr_cmd_ptr_r] <= '0;
         for (int d = 0; d < NDIM; ++d)
           cmd_wr_i_dim_r[wr_cmd_ptr_r][d] <= '0;
@@ -908,6 +962,10 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
               <= cmd_wr_seg_offset_r[wr_cmd_ptr_r] + 32'(BUS_BYTES);
         end
       end
+
+      if (source_rsp_fire)
+        cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]]
+            <= cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]] + 32'd1;
 
       if (source_req_fire) begin
         slot_state_r[alloc_slot_r] <= SLOT_WAIT_RSP;
@@ -995,6 +1053,8 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         cmd_wr_seg_offset_r[cmd_tail_ptr_r] <= '0;
         cmd_writer_wait_r[cmd_tail_ptr_r] <= writer_wait_i;
         cmd_sequence_r[cmd_tail_ptr_r] <= next_cmd_sequence_r;
+        cmd_scheduler_work_seq_r[cmd_tail_ptr_r]
+            <= ctrl_if.scheduler_work_seq;
         for (int d = 0; d < NDIM; ++d) begin
           cmd_src_strides_r[cmd_tail_ptr_r][d] <= ctrl_if.src_strides[d];
           cmd_dst_strides_r[cmd_tail_ptr_r][d] <= ctrl_if.dst_strides[d];
@@ -1036,6 +1096,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   logic [BUS_BYTES*8-1:0] destination_stall_data_r;
   logic source_stall_r;
   logic source_stall_urgent_r;
+  logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] source_stall_priority_r;
   always_ff @(posedge clk) begin
     if (reset) begin
       destination_stall_r <= 1'b0;
@@ -1043,6 +1104,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
       destination_stall_data_r <= '0;
       source_stall_r <= 1'b0;
       source_stall_urgent_r <= 1'b0;
+      source_stall_priority_r <= '0;
     end else begin
       assert (cmd_count_r <= CMD_COUNT_BITS'(CMD_FIFO_DEPTH))
         else $fatal(1, "%s: Input command FIFO overflow", INSTANCE_ID);
@@ -1126,7 +1188,8 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
       end
       if (source_stall_r) begin
         assert (lmem_bus_if.req_valid
-             && (lmem_req_urgent_o == source_stall_urgent_r))
+             && (lmem_req_urgent_o == source_stall_urgent_r)
+             && (lmem_req_priority_o == source_stall_priority_r))
           else $fatal(1, "%s: Input source urgency changed under backpressure",
                       INSTANCE_ID);
       end
@@ -1134,6 +1197,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         else $fatal(1, "%s: Input ready-ahead count overflow", INSTANCE_ID);
       source_stall_r <= lmem_bus_if.req_valid && !lmem_bus_if.req_ready;
       source_stall_urgent_r <= lmem_req_urgent_o;
+      source_stall_priority_r <= lmem_req_priority_o;
       destination_stall_r <= gemm_bus_if.req_valid
                           && !gemm_bus_if.req_ready;
       destination_stall_addr_r <= gemm_bus_if.req_data.addr;
@@ -1246,13 +1310,25 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
 ) (
   input wire clk,
   input wire reset,
+  input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] sched_priority_i,
   VX_lmem_dma_ctrl_if.slave ctrl_if,
   input gemm_wait_meta_t writer_wait_i,
   input wire [31:0] writer_consume_value0_i,
   input wire [31:0] writer_consume_value1_i,
   VX_gemm_sync_if.master gemm_sync_if,
   VX_mem_bus_if.master lmem_bus_if,
-  VX_mem_bus_if.master gemm_bus_if
+  VX_mem_bus_if.master gemm_bus_if,
+  output wire sched_source_valid_o,
+  output wire [31:0] sched_source_work_seq_o,
+  output wire [31:0] sched_source_total_beats_o,
+  output wire [31:0] sched_source_request_beats_o,
+  output wire [31:0] sched_source_response_beats_o,
+  output wire [31:0] sched_source_writer_beats_o,
+  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0]
+      sched_slot_occupancy_o,
+  output wire sched_fetch_complete_o,
+  output wire [31:0] sched_fetch_complete_work_seq_o
+  ,output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority_o
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
 `endif
@@ -1265,6 +1341,7 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     .CMD_FIFO_DEPTH       (CMD_FIFO_DEPTH),
     .RESPONSE_SLOTS       (RESPONSE_SLOTS),
     .ENABLE_WRITER_FENCE  (1'b1),
+    .ENABLE_SCHED_SOURCE_GATE (1'b0),
     .ENABLE_SAME_CYCLE_CMD_RECYCLE (1'b0),
     .WRITER_RID0          (WRITER_RID0),
     .WRITER_RID1          (WRITER_RID1),
@@ -1275,6 +1352,8 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   ) u_overlap (
     .clk                    (clk),
     .reset                  (reset),
+    .sched_source_enable_i  (1'b1),
+    .sched_priority_i       (sched_priority_i),
     .ctrl_if                (ctrl_if),
     .writer_wait_i          (writer_wait_i),
     .writer_consume_value0_i(writer_consume_value0_i),
@@ -1283,7 +1362,17 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     .lmem_bus_if            (lmem_bus_if),
     .gemm_bus_if            (gemm_bus_if),
     .lmem_req_urgent_o      (),
-    .ready_ahead_o          ()
+    .lmem_req_priority_o    (lmem_req_priority_o),
+    .ready_ahead_o          (),
+    .sched_source_valid_o   (sched_source_valid_o),
+    .sched_source_work_seq_o(sched_source_work_seq_o),
+    .sched_source_total_beats_o(sched_source_total_beats_o),
+    .sched_source_request_beats_o(sched_source_request_beats_o),
+    .sched_source_response_beats_o(sched_source_response_beats_o),
+    .sched_source_writer_beats_o(sched_source_writer_beats_o),
+    .sched_slot_occupancy_o (sched_slot_occupancy_o),
+    .sched_fetch_complete_o (sched_fetch_complete_o),
+    .sched_fetch_complete_work_seq_o(sched_fetch_complete_work_seq_o)
   `ifdef PERF_ENABLE
     ,.perf                  (perf)
   `endif
@@ -1298,10 +1387,9 @@ endmodule
 //
 //  Source requests and destination writes are each command-granular and
 //  ordered, but their command heads advance independently.  This permits the
-//  source reads of command N+1 to fill the shared eight-slot response RAM
-//  while command N drains to the GEMM weight register.  The response RAM holds
-//  two complete four-beat payloads; the other contexts remain descriptor-only
-//  until slots become free.
+//  source reads of command N+1 to fill the shared response RAM while command N
+//  drains to the GEMM weight register.  Per-command length comes from the
+//  accepted descriptor; the fixed slot pool bounds aggregate fetch lead.
 //==============================================================================
 
 module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
@@ -1320,6 +1408,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
 ) (
   input wire clk,
   input wire reset,
+  input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] sched_priority_i,
 
   VX_lmem_dma_ctrl_if.slave ctrl_if,
   input gemm_wait_meta_t     writer_wait_i,
@@ -1330,7 +1419,18 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master      lmem_bus_if,
   VX_mem_bus_if.master      gemm_bus_if,
   output wire               lmem_req_urgent_o,
-  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0] ready_ahead_o
+  output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority_o,
+  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0] ready_ahead_o,
+  output wire               sched_source_valid_o,
+  output wire [31:0]        sched_source_work_seq_o,
+  output wire [31:0]        sched_source_total_beats_o,
+  output wire [31:0]        sched_source_request_beats_o,
+  output wire [31:0]        sched_source_response_beats_o,
+  output wire [31:0]        sched_source_writer_beats_o,
+  output wire [$clog2(RESPONSE_SLOTS + 1)-1:0]
+                            sched_slot_occupancy_o,
+  output wire               sched_fetch_complete_o,
+  output wire [31:0]        sched_fetch_complete_work_seq_o
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
 `endif
@@ -1340,7 +1440,6 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   localparam int BUS_ADDR_BITS = `CLOG2(BUS_BYTES);
   localparam int CMD_PTR_BITS = $clog2(CMD_FIFO_DEPTH);
   localparam int CMD_COUNT_BITS = $clog2(CMD_FIFO_DEPTH + 1);
-  localparam int BEAT_COUNT_BITS = $clog2(CMD_BEATS + 1);
   localparam int SLOT_BITS = $clog2(RESPONSE_SLOTS);
   localparam int SLOT_COUNT_BITS = $clog2(RESPONSE_SLOTS + 1);
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
@@ -1364,11 +1463,14 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   logic [31:0] cmd_reg_idx_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_reg_value_r[CMD_FIFO_DEPTH];
   gemm_wait_meta_t cmd_writer_wait_r[CMD_FIFO_DEPTH];
-  logic [BEAT_COUNT_BITS-1:0] cmd_rd_count_r[CMD_FIFO_DEPTH];
-  logic [BEAT_COUNT_BITS-1:0] cmd_wr_count_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_total_beats_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_rd_count_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_wr_count_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_rsp_count_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_rd_i_dim_r[CMD_FIFO_DEPTH][NDIM];
   logic [31:0] cmd_rd_seg_offset_r[CMD_FIFO_DEPTH];
   logic [31:0] cmd_sequence_r[CMD_FIFO_DEPTH];
+  logic [31:0] cmd_scheduler_work_seq_r[CMD_FIFO_DEPTH];
 
   logic [CMD_PTR_BITS-1:0] rd_cmd_ptr_r;
   logic [CMD_PTR_BITS-1:0] wr_cmd_ptr_r;
@@ -1379,7 +1481,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   slot_state_e slot_state_r[RESPONSE_SLOTS];
   logic [CMD_PTR_BITS-1:0] slot_owner_cmd_r[RESPONSE_SLOTS];
   logic [31:0] slot_owner_sequence_r[RESPONSE_SLOTS];
-  logic [BEAT_COUNT_BITS-1:0] slot_owner_beat_r[RESPONSE_SLOTS];
+  logic [31:0] slot_owner_beat_r[RESPONSE_SLOTS];
   logic [SLOT_BITS-1:0] alloc_slot_r;
   logic [SLOT_BITS-1:0] wr_expect_slot_r;
   logic [SLOT_COUNT_BITS-1:0] slot_occupancy_r;
@@ -1388,13 +1490,14 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   logic [SLOT_BITS-1:0] drain_slot_r;
   logic [CMD_PTR_BITS-1:0] drain_owner_cmd_r;
   logic [31:0] drain_owner_sequence_r;
-  logic [BEAT_COUNT_BITS-1:0] drain_owner_beat_r;
+  logic [31:0] drain_owner_beat_r;
   wire [BUS_BYTES*8-1:0] drain_payload;
 
   logic [SLOT_COUNT_BITS-1:0] consecutive_ready_ahead;
   logic ready_prefix;
   logic source_urgent_hold_valid_r;
   logic source_urgent_hold_r;
+  logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] source_priority_hold_r;
 
   wire cmd_fifo_full = (cmd_count_r == CMD_COUNT_BITS'(CMD_FIFO_DEPTH));
   wire rd_cmd_valid = cmd_valid_r[rd_cmd_ptr_r]
@@ -1457,15 +1560,40 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   wire source_urgent_now = writer_released
       && (consecutive_ready_ahead
           < SLOT_COUNT_BITS'(READY_AHEAD_LOW_WATERMARK));
+  assign lmem_req_priority_o = source_urgent_hold_valid_r
+      ? source_priority_hold_r : sched_priority_i;
+  // Preserve ready-ahead urgency for legacy/untracked commands.  A tracked
+  // P0 request must remain background so far-lookahead Weight cannot regain
+  // P1 independently of the dependency scheduler.
   assign lmem_req_urgent_o = ENABLE_TMEM_URGENCY
       && (source_urgent_hold_valid_r ? source_urgent_hold_r
-                                     : source_urgent_now);
+                                     : source_urgent_now)
+      && ((cmd_scheduler_work_seq_r[rd_cmd_ptr_r] == 0)
+       || (lmem_req_priority_o != GEMM_SCHED_PRIORITY_BACKGROUND));
   assign ready_ahead_o = consecutive_ready_ahead;
+  assign sched_source_valid_o = rd_cmd_valid;
+  assign sched_source_work_seq_o
+      = cmd_scheduler_work_seq_r[rd_cmd_ptr_r];
+  assign sched_source_total_beats_o = rd_cmd_valid
+      ? cmd_total_beats_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_request_beats_o = rd_cmd_valid
+      ? cmd_rd_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_response_beats_o = rd_cmd_valid
+      ? cmd_rsp_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_source_writer_beats_o = rd_cmd_valid
+      ? cmd_wr_count_r[rd_cmd_ptr_r] : '0;
+  assign sched_slot_occupancy_o = slot_occupancy_r;
+  assign sched_fetch_complete_o = source_rsp_fire
+      && ((cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]]
+         + 32'd1)
+       == cmd_total_beats_r[slot_owner_cmd_r[source_rsp_slot]]);
+  assign sched_fetch_complete_work_seq_o
+      = cmd_scheduler_work_seq_r[slot_owner_cmd_r[source_rsp_slot]];
   wire destination_write_fire = gemm_bus_if.req_valid
                               && gemm_bus_if.req_ready;
   wire destination_last_write = destination_write_fire
-      && (cmd_wr_count_r[wr_cmd_ptr_r]
-          == BEAT_COUNT_BITS'(CMD_BEATS - 1));
+      && ((cmd_wr_count_r[wr_cmd_ptr_r] + 32'd1)
+          == cmd_total_beats_r[wr_cmd_ptr_r]);
   wire command_enqueue = ctrl_if.start && ctrl_if.idle;
 
   // The synchronous RAM read can be launched while the current staged beat is
@@ -1593,6 +1721,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
       drain_owner_beat_r <= '0;
       source_urgent_hold_valid_r <= 1'b0;
       source_urgent_hold_r <= 1'b0;
+      source_priority_hold_r <= '0;
       for (int cmd = 0; cmd < CMD_FIFO_DEPTH; ++cmd) begin
         cmd_src_base_r[cmd] <= '0;
         cmd_dst_base_r[cmd] <= '0;
@@ -1600,10 +1729,13 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         cmd_reg_idx_r[cmd] <= '0;
         cmd_reg_value_r[cmd] <= '0;
         cmd_writer_wait_r[cmd] <= '0;
+        cmd_total_beats_r[cmd] <= '0;
         cmd_rd_count_r[cmd] <= '0;
         cmd_wr_count_r[cmd] <= '0;
+        cmd_rsp_count_r[cmd] <= '0;
         cmd_rd_seg_offset_r[cmd] <= '0;
         cmd_sequence_r[cmd] <= '0;
+        cmd_scheduler_work_seq_r[cmd] <= '0;
         for (int d = 0; d < NDIM; ++d) begin
           cmd_src_strides_r[cmd][d] <= '0;
           cmd_dst_strides_r[cmd][d] <= '0;
@@ -1623,6 +1755,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
       end else if (lmem_bus_if.req_valid && !source_urgent_hold_valid_r) begin
         source_urgent_hold_valid_r <= 1'b1;
         source_urgent_hold_r <= source_urgent_now;
+        source_priority_hold_r <= sched_priority_i;
       end
       unique case ({command_enqueue, destination_last_write})
         2'b10: cmd_count_r <= cmd_count_r + CMD_COUNT_BITS'(1);
@@ -1649,11 +1782,17 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         cmd_valid_r[wr_cmd_ptr_r] <= 1'b0;
         cmd_rd_done_r[wr_cmd_ptr_r] <= 1'b0;
         cmd_wr_count_r[wr_cmd_ptr_r] <= '0;
+        cmd_rsp_count_r[wr_cmd_ptr_r] <= '0;
         wr_cmd_ptr_r <= wr_cmd_ptr_r + CMD_PTR_BITS'(1);
       end else if (destination_write_fire) begin
         cmd_wr_count_r[wr_cmd_ptr_r]
-            <= cmd_wr_count_r[wr_cmd_ptr_r] + BEAT_COUNT_BITS'(1);
+            <= cmd_wr_count_r[wr_cmd_ptr_r] + 32'd1;
       end
+
+      if (source_rsp_fire)
+        cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]]
+            <= cmd_rsp_count_r[slot_owner_cmd_r[source_rsp_slot]]
+             + 32'd1;
 
       if (source_req_fire) begin
         slot_state_r[alloc_slot_r] <= SLOT_WAIT_RSP;
@@ -1689,13 +1828,13 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
           cmd_rd_seg_offset_r[rd_cmd_ptr_r]
               <= cmd_rd_seg_offset_r[rd_cmd_ptr_r] + 32'(BUS_BYTES);
         end
-        if (cmd_rd_count_r[rd_cmd_ptr_r]
-            == BEAT_COUNT_BITS'(CMD_BEATS - 1)) begin
+        if ((cmd_rd_count_r[rd_cmd_ptr_r] + 32'd1)
+            == cmd_total_beats_r[rd_cmd_ptr_r]) begin
           cmd_rd_done_r[rd_cmd_ptr_r] <= 1'b1;
           rd_cmd_ptr_r <= rd_cmd_ptr_r + CMD_PTR_BITS'(1);
         end else begin
           cmd_rd_count_r[rd_cmd_ptr_r]
-              <= cmd_rd_count_r[rd_cmd_ptr_r] + BEAT_COUNT_BITS'(1);
+              <= cmd_rd_count_r[rd_cmd_ptr_r] + 32'd1;
         end
       end
 
@@ -1730,10 +1869,17 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         cmd_reg_idx_r[cmd_tail_ptr_r] <= ctrl_if.reg_idx;
         cmd_reg_value_r[cmd_tail_ptr_r] <= ctrl_if.reg_value;
         cmd_writer_wait_r[cmd_tail_ptr_r] <= writer_wait_i;
+        cmd_total_beats_r[cmd_tail_ptr_r]
+            <= (ctrl_if.seg_size / BUS_BYTES)
+             * ctrl_if.bounds[0]
+             * ctrl_if.bounds[1]
+             * ctrl_if.bounds[2];
         cmd_rd_count_r[cmd_tail_ptr_r] <= '0;
         cmd_wr_count_r[cmd_tail_ptr_r] <= '0;
         cmd_rd_seg_offset_r[cmd_tail_ptr_r] <= '0;
         cmd_sequence_r[cmd_tail_ptr_r] <= next_cmd_sequence_r;
+        cmd_scheduler_work_seq_r[cmd_tail_ptr_r]
+            <= ctrl_if.scheduler_work_seq;
         for (int d = 0; d < NDIM; ++d) begin
           cmd_src_strides_r[cmd_tail_ptr_r][d] <= ctrl_if.src_strides[d];
           cmd_dst_strides_r[cmd_tail_ptr_r][d] <= ctrl_if.dst_strides[d];
@@ -1751,22 +1897,25 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   logic dst_order_valid_r;
   logic [31:0] src_order_sequence_r;
   logic [31:0] dst_order_sequence_r;
-  logic [BEAT_COUNT_BITS-1:0] src_order_beat_r;
-  logic [BEAT_COUNT_BITS-1:0] dst_order_beat_r;
+  logic [31:0] src_order_beat_r;
+  logic [31:0] src_order_total_beats_r;
+  logic [31:0] dst_order_beat_r;
+  logic [31:0] dst_order_total_beats_r;
   logic destination_stall_r;
   logic [GEMM_ADDR_WIDTH_P-1:0] destination_stall_addr_r;
   logic [BUS_BYTES*8-1:0] destination_stall_data_r;
   logic source_stall_r;
   logic source_stall_urgent_r;
+  logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] source_stall_priority_r;
   logic [CMD_COUNT_BITS-1:0] live_command_count;
   logic [SLOT_COUNT_BITS-1:0] live_slot_count;
   wire [CMD_PTR_BITS-1:0] slot_read_expected_cmd = destination_last_write
       ? (wr_cmd_ptr_r + CMD_PTR_BITS'(1)) : wr_cmd_ptr_r;
-  wire [BEAT_COUNT_BITS-1:0] slot_read_expected_beat =
+  wire [31:0] slot_read_expected_beat =
       destination_write_fire
       ? (destination_last_write
          ? '0
-         : (cmd_wr_count_r[wr_cmd_ptr_r] + BEAT_COUNT_BITS'(1)))
+         : (cmd_wr_count_r[wr_cmd_ptr_r] + 32'd1))
       : cmd_wr_count_r[wr_cmd_ptr_r];
 
   always_comb begin
@@ -1789,12 +1938,15 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
       src_order_sequence_r <= '0;
       dst_order_sequence_r <= '0;
       src_order_beat_r <= '0;
+      src_order_total_beats_r <= '0;
       dst_order_beat_r <= '0;
+      dst_order_total_beats_r <= '0;
       destination_stall_r <= 1'b0;
       destination_stall_addr_r <= '0;
       destination_stall_data_r <= '0;
       source_stall_r <= 1'b0;
       source_stall_urgent_r <= 1'b0;
+      source_stall_priority_r <= '0;
     end else begin
       assert (cmd_count_r <= CMD_COUNT_BITS'(CMD_FIFO_DEPTH))
         else $fatal(1, "%s: Weight command FIFO overflow", INSTANCE_ID);
@@ -1819,12 +1971,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
              && (ctrl_if.bounds[1] != 0)
              && (ctrl_if.bounds[2] != 0)
              && (ctrl_if.seg_size != 0)
-             && ((ctrl_if.seg_size % BUS_BYTES) == 0)
-             && (64'(ctrl_if.seg_size)
-                 * 64'(ctrl_if.bounds[0])
-                 * 64'(ctrl_if.bounds[1])
-                 * 64'(ctrl_if.bounds[2])
-                 == 64'(CMD_BEATS * BUS_BYTES)))
+             && ((ctrl_if.seg_size % BUS_BYTES) == 0))
           else $fatal(1, "%s: unsupported Weight descriptor shape", INSTANCE_ID);
         assert ((ctrl_if.src_base_addr[BUS_ADDR_BITS-1:0] == '0)
              && (ctrl_if.dst_base_addr[BUS_ADDR_BITS-1:0] == '0))
@@ -1856,7 +2003,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
                       INSTANCE_ID);
         if (src_order_valid_r) begin
           if (cmd_rd_count_r[rd_cmd_ptr_r] == 0) begin
-            assert ((src_order_beat_r == BEAT_COUNT_BITS'(CMD_BEATS - 1))
+            assert (((src_order_beat_r + 32'd1)
+                      == src_order_total_beats_r)
                  && (cmd_sequence_r[rd_cmd_ptr_r]
                      == (src_order_sequence_r + 32'd1)))
               else $fatal(1, "%s: Weight source commands interleaved/reordered",
@@ -1865,7 +2013,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
             assert ((cmd_sequence_r[rd_cmd_ptr_r]
                      == src_order_sequence_r)
                  && (cmd_rd_count_r[rd_cmd_ptr_r]
-                     == (src_order_beat_r + BEAT_COUNT_BITS'(1))))
+                     == (src_order_beat_r + 32'd1)))
               else $fatal(1, "%s: Weight source beat order violation",
                           INSTANCE_ID);
           end
@@ -1873,6 +2021,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         src_order_valid_r <= 1'b1;
         src_order_sequence_r <= cmd_sequence_r[rd_cmd_ptr_r];
         src_order_beat_r <= cmd_rd_count_r[rd_cmd_ptr_r];
+        src_order_total_beats_r <= cmd_total_beats_r[rd_cmd_ptr_r];
       end
 
       if (lmem_bus_if.rsp_valid) begin
@@ -1907,7 +2056,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
                       INSTANCE_ID);
         if (dst_order_valid_r) begin
           if (cmd_wr_count_r[wr_cmd_ptr_r] == 0) begin
-            assert ((dst_order_beat_r == BEAT_COUNT_BITS'(CMD_BEATS - 1))
+            assert (((dst_order_beat_r + 32'd1)
+                      == dst_order_total_beats_r)
                  && (cmd_sequence_r[wr_cmd_ptr_r]
                      == (dst_order_sequence_r + 32'd1)))
               else $fatal(1, "%s: Weight destination commands reordered",
@@ -1916,7 +2066,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
             assert ((cmd_sequence_r[wr_cmd_ptr_r]
                      == dst_order_sequence_r)
                  && (cmd_wr_count_r[wr_cmd_ptr_r]
-                     == (dst_order_beat_r + BEAT_COUNT_BITS'(1))))
+                     == (dst_order_beat_r + 32'd1)))
               else $fatal(1, "%s: Weight destination beat order violation",
                           INSTANCE_ID);
           end
@@ -1924,6 +2074,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         dst_order_valid_r <= 1'b1;
         dst_order_sequence_r <= cmd_sequence_r[wr_cmd_ptr_r];
         dst_order_beat_r <= cmd_wr_count_r[wr_cmd_ptr_r];
+        dst_order_total_beats_r <= cmd_total_beats_r[wr_cmd_ptr_r];
       end
 
       if (cmd_valid_r[wr_cmd_ptr_r]
@@ -1941,8 +2092,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
 
       if (destination_last_write) begin
         assert (cmd_rd_done_r[wr_cmd_ptr_r]
-             && (cmd_wr_count_r[wr_cmd_ptr_r]
-                 == BEAT_COUNT_BITS'(CMD_BEATS - 1)))
+             && ((cmd_wr_count_r[wr_cmd_ptr_r] + 32'd1)
+                 == cmd_total_beats_r[wr_cmd_ptr_r]))
           else $fatal(1, "%s: Weight command completed before all reads/writes",
                       INSTANCE_ID);
       end
@@ -1956,7 +2107,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
       end
       if (source_stall_r) begin
         assert (lmem_bus_if.req_valid
-             && (lmem_req_urgent_o == source_stall_urgent_r))
+             && (lmem_req_urgent_o == source_stall_urgent_r)
+             && (lmem_req_priority_o == source_stall_priority_r))
           else $fatal(1, "%s: Weight source urgency changed under backpressure",
                       INSTANCE_ID);
       end
@@ -1964,6 +2116,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         else $fatal(1, "%s: Weight ready-ahead count overflow", INSTANCE_ID);
       source_stall_r <= lmem_bus_if.req_valid && !lmem_bus_if.req_ready;
       source_stall_urgent_r <= lmem_req_urgent_o;
+      source_stall_priority_r <= lmem_req_priority_o;
       destination_stall_r <= gemm_bus_if.req_valid
                           && !gemm_bus_if.req_ready;
       destination_stall_addr_r <= gemm_bus_if.req_data.addr;

@@ -89,6 +89,19 @@ module tb_VX_gemm_ctrl;
   logic [N_CHILDREN-1:0] directed_prepare_ready;
   logic directed_start;
   gemm_unified_cmd_t directed_cmd;
+  logic directed_scheduler_probe_valid;
+  logic [31:0] directed_scheduler_probe_work_seq;
+  logic [2:0] directed_scheduler_probe_child;
+  logic [31:0] directed_next_work_seq;
+  logic directed_open_work_valid;
+  logic [31:0] directed_open_work_seq;
+  logic [3:0] directed_sched_source_valid;
+  logic [31:0] directed_sched_source_work_seq[4];
+  logic [31:0] directed_sched_source_total_beats[4];
+  logic [31:0] directed_sched_source_request_beats[4];
+  logic [31:0] directed_sched_source_response_beats[4];
+  logic [31:0] directed_sched_source_writer_beats[4];
+  wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] directed_sched_priority[4];
   logic [GEMM_DMA_TAG_WIDTH-1:0] directed_dma_done_tag;
   logic [GEMM_DMA_TAG_WIDTH-1:0] natural_dma_done_tag;
   int unsigned total_cfg_accept_count;
@@ -100,6 +113,10 @@ module tb_VX_gemm_ctrl;
   VX_gemm_ctrl_if                      gemm_ctrl_if();
   VX_node_done_if                      done_if();
   VX_gemm_sync_if                      gemm_sync_slv_if[N_NODE]();
+  wire [31:0] scheduler_zero_work_seq[4];
+  for (genvar sched_zero = 0; sched_zero < 4; ++sched_zero) begin
+    assign scheduler_zero_work_seq[sched_zero] = '0;
+  end
 
   VX_gemm_ctrl #(
     .INSTANCE_ID(INSTANCE_ID),
@@ -121,7 +138,25 @@ module tb_VX_gemm_ctrl;
     .scale_consume_value0_o(),
     .scale_consume_value1_o(),
     .zero_point_consume_value0_o(),
-    .zero_point_consume_value1_o()
+    .zero_point_consume_value1_o(),
+    .sched_source_valid_i(directed_sched_source_valid),
+    .sched_source_work_seq_i(directed_sched_source_work_seq),
+    .sched_source_total_beats_i(directed_sched_source_total_beats),
+    .sched_source_request_beats_i(directed_sched_source_request_beats),
+    .sched_source_response_beats_i(directed_sched_source_response_beats),
+    .sched_source_writer_beats_i(directed_sched_source_writer_beats),
+    .sched_input_slot_occupancy_i('0),
+    .sched_input_admit_valid_i(1'b0),
+    .sched_input_admit_work_seq_i('0),
+    .sched_fetch_complete_i('0),
+    .sched_fetch_complete_work_seq_i(scheduler_zero_work_seq),
+    .consumer_block_valid_i(1'b0),
+    .consumer_block_resource_i('0),
+    .consumer_block_work_seq_i('0),
+    .consumer_block_bank_i(1'b0),
+    .consumer_block_target_i('0),
+    .sched_source_priority_o(directed_sched_priority),
+    .sched_input_source_enable_o()
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,.dbg_compute_active_i(1'b0)
@@ -190,6 +225,20 @@ module tb_VX_gemm_ctrl;
       directed_prepare_ready = '1;
       directed_start = 1'b0;
       directed_cmd = '0;
+      directed_scheduler_probe_valid = 1'b0;
+      directed_scheduler_probe_work_seq = '0;
+      directed_scheduler_probe_child = '0;
+      directed_next_work_seq = 32'd1;
+      directed_open_work_valid = 1'b0;
+      directed_open_work_seq = '0;
+      directed_sched_source_valid = '0;
+      for (int resource = 0; resource < 4; ++resource) begin
+        directed_sched_source_work_seq[resource] = '0;
+        directed_sched_source_total_beats[resource] = '0;
+        directed_sched_source_request_beats[resource] = '0;
+        directed_sched_source_response_beats[resource] = '0;
+        directed_sched_source_writer_beats[resource] = '0;
+      end
       directed_dma_done_tag = '0;
 
       cfg_reg_if.valid      = 1'b0;
@@ -1004,15 +1053,58 @@ module tb_VX_gemm_ctrl;
     input gemm_unified_cmd_t c,
     input int child
   );
+    gemm_unified_cmd_t tracked_c;
+    logic scheduler_command;
     begin
       if (dut.child_q_full_v[child])
         $fatal(1, "SCHED_DIRECTED injection child %0d unexpectedly full", child);
+      tracked_c = c;
+      scheduler_command = child <= 3;
+
+      // Direct injection must model the same pending-work probe contract as
+      // the real FSM.  Zero means "assign a legal directed micro-tile ID";
+      // W/S/Z commands join the next Input work, while consecutive Inputs
+      // without producers receive distinct ordered work IDs.
+      if (scheduler_command && (tracked_c.work_seq == 0)) begin
+        if (child == 0) begin
+          if (directed_open_work_valid) begin
+            tracked_c.work_seq = directed_open_work_seq;
+          end else begin
+            tracked_c.work_seq = directed_next_work_seq;
+            directed_next_work_seq = directed_next_work_seq + 32'd1;
+          end
+          directed_open_work_valid = 1'b0;
+        end else begin
+          if (!directed_open_work_valid) begin
+            directed_open_work_seq = directed_next_work_seq;
+            directed_next_work_seq = directed_next_work_seq + 32'd1;
+            directed_open_work_valid = 1'b1;
+          end
+          tracked_c.work_seq = directed_open_work_seq;
+        end
+      end
+
       @(negedge clk);
-      directed_cmd = c;
+      directed_cmd = tracked_c;
+      directed_scheduler_probe_valid = scheduler_command;
+      directed_scheduler_probe_work_seq = tracked_c.work_seq;
+      directed_scheduler_probe_child = 3'(child);
+      #1;
+      if (dut.fsm_target_child !== 3'(child))
+        $fatal(1,
+          "SCHED_DIRECTED command/child mismatch op=%0d decoded=%0d expected=%0d",
+          tracked_c.instr[3:0], dut.fsm_target_child, child);
+      if (scheduler_command && !dut.scheduler_probe_ready)
+        $fatal(1,
+          "SCHED_DIRECTED work_seq=%0d resource child=%0d was not probe-ready",
+          tracked_c.work_seq, child);
       directed_start = 1'b1;
       @(posedge clk);
       #1;
       directed_start = 1'b0;
+      directed_scheduler_probe_valid = 1'b0;
+      directed_scheduler_probe_work_seq = '0;
+      directed_scheduler_probe_child = '0;
       #1;
       if (dut.child_q_empty_v[child])
         $fatal(1, "SCHED_DIRECTED injection child %0d did not enqueue", child);
@@ -1389,6 +1481,7 @@ module tb_VX_gemm_ctrl;
         c = make_directed_input_cmd(1'b0, 32'd11,
                                     gemm_wreg_idx_t'(n), n[0], ~n[0],
                                     n[0], 32'(80 + n));
+        c.work_seq = 32'(601 + n);
         c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
                      value:32'(301 + n)};
         directed_inject(c, 0);
@@ -1401,26 +1494,44 @@ module tb_VX_gemm_ctrl;
 
       c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
                                   1'b0, 1'b0, 1'b0, 32'd84);
+      c.work_seq = 32'd605;
       c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
                    value:32'd305};
-      directed_inject(c, 0);
-      held_cmd = dut.child_q_cmd[0];
-      if (dut.child_issue_fire_v[0] || dut.child_q_pop_v[0])
-        $fatal(1, "INPUT_DEPTH4 fifth command escaped full inflight FIFO");
-
       @(negedge clk);
+      directed_cmd = c;
+      directed_scheduler_probe_valid = 1'b1;
+      directed_scheduler_probe_work_seq = c.work_seq;
+      directed_scheduler_probe_child = 3'd0;
+      directed_start = 1'b0;
+      #1;
+      if (dut.scheduler_probe_ready
+       || dut.gemm_fsm_if.flag.child_ready[0]
+       || !dut.child_q_empty_v[0])
+        $fatal(1, "INPUT_DEPTH4 fifth work escaped full readiness scoreboard");
+
       directed_done[0] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[0]
-       || !dut.child_issue_fire_v[0]
-       || !dut.child_q_pop_v[0]
-       || gemm_ctrl_if.input_read_ctrl.cmd !== held_cmd)
-        $fatal(1, "INPUT_DEPTH4 completion did not permit ordered same-cycle pop/push");
+       || !dut.scheduler_probe_ready
+       || !dut.gemm_fsm_if.flag.child_ready[0])
+        $fatal(1, "INPUT_DEPTH4 ordered completion did not release fifth work");
+      directed_start = 1'b1;
       @(posedge clk);
       #1;
+      directed_start = 1'b0;
+      directed_scheduler_probe_valid = 1'b0;
+      directed_scheduler_probe_work_seq = '0;
+      directed_scheduler_probe_child = '0;
       directed_done[0] = 1'b0;
-      if (!dut.child_inflight_full_v[0] || dut.sync_regs_q[11] !== 32'd301)
-        $fatal(1, "INPUT_DEPTH4 rollover lost occupancy or first notification");
+      held_cmd = dut.child_q_cmd[0];
+      if (dut.scheduler_entry_count !== 3'd4
+       || dut.child_q_empty_v[0]
+       || held_cmd.work_seq !== 32'd605
+       || dut.sync_regs_q[11] !== 32'd301)
+        $fatal(1, "INPUT_DEPTH4 scoreboard recycle lost occupancy, command, or notification");
+      directed_accept_issue(0);
+      if (!dut.child_inflight_full_v[0])
+        $fatal(1, "INPUT_DEPTH4 fifth command did not refill Input inflight FIFO");
 
       for (int expected = 302; expected <= 305; ++expected) begin
         directed_complete(0);
@@ -1430,7 +1541,7 @@ module tb_VX_gemm_ctrl;
       end
       if (!dut.child_inflight_empty_v[0])
         $fatal(1, "INPUT_DEPTH4 final drain left inflight metadata");
-      $display("SCHED_DIRECTED_INPUT_DEPTH4_PASS issues=5 depth=4 same_cycle_pop_push=1 ordered_notify=301..305");
+      $display("SCHED_DIRECTED_INPUT_DEPTH4_PASS issues=5 depth=4 scoreboard_same_cycle_recycle=1 ordered_notify=301..305");
     end
   endtask
 
@@ -1498,6 +1609,134 @@ module tb_VX_gemm_ctrl;
     end
   endtask
 
+  task automatic run_readiness_scoreboard_controller_case;
+    gemm_unified_cmd_t c;
+    begin
+      // Fill the controller-visible readiness scoreboard with four Weight
+      // commands whose matching Input commands have not arrived yet.
+      for (int n = 0; n < 4; ++n) begin
+        c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W0,
+                              1'b1, 32'(501 + n));
+        c.work_seq = 32'(401 + n);
+        c.flags[0] = 1'b0;
+        directed_inject(c, 1);
+        directed_accept_issue(1);
+      end
+      if (dut.scheduler_entry_count !== 3'd4)
+        $fatal(1, "SCHED_DIRECTED readiness scoreboard did not fill");
+
+      directed_sched_source_work_seq[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd401;
+      directed_sched_source_total_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd4;
+      directed_sched_source_request_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd1;
+      directed_sched_source_response_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd0;
+      directed_sched_source_writer_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd0;
+      directed_sched_source_valid[GEMM_SCHED_RESOURCE_WEIGHT] = 1'b1;
+      #1;
+      if (directed_sched_priority[GEMM_SCHED_RESOURCE_WEIGHT]
+          !== GEMM_SCHED_PRIORITY_EARLIEST)
+        $fatal(1, "SCHED_DIRECTED earliest Weight tier mismatch");
+
+      // A fifth W-before-Input probe must be held outside the child queue.
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W0,
+                            1'b1, 32'd505);
+      c.work_seq = 32'd405;
+      c.flags[0] = 1'b0;
+      @(negedge clk);
+      directed_cmd = c;
+      directed_scheduler_probe_valid = 1'b1;
+      directed_scheduler_probe_work_seq = c.work_seq;
+      directed_scheduler_probe_child = 3'd1;
+      directed_start = 1'b0;
+      #1;
+      if (dut.scheduler_probe_ready
+       || dut.gemm_fsm_if.flag.child_ready[1]
+       || !dut.child_q_empty_v[1])
+        $fatal(1, "SCHED_DIRECTED fifth W-before-Input bypassed full scoreboard");
+      $display("SCHED_DIRECTED_SCOREBOARD_FULL_FIFTH_W_BEFORE_INPUT_PASS depth=4 held_before_child=1");
+      directed_scheduler_probe_valid = 1'b0;
+      directed_scheduler_probe_work_seq = '0;
+      directed_scheduler_probe_child = '0;
+
+      // Add the matching head Input.  Its ordered completion must make the
+      // fifth Weight probe ready and recycle the retired slot on the same
+      // edge, without bypassing the production scoreboard bookkeeping.
+      c = make_directed_input_cmd(
+          1'b0, dut.sync_regs_q[RID_TILE0], 2'd0,
+          1'b0, 1'b0, 1'b0, gemm_ctrl_if.input_acc_free_value[0]);
+      c.input_admit_waits[0].target = gemm_ctrl_if.input_w_load_value[0];
+      c.input_admit_waits[1].target = gemm_ctrl_if.input_sc_load_value[0];
+      c.input_admit_waits[2].target = gemm_ctrl_if.input_zp_load_value[0];
+      c.work_seq = 32'd401;
+      if (!c.waits[0].valid
+       || (c.waits[0].reg_id != RID_TILE0)
+       || (c.waits[0].target != dut.sync_regs_q[RID_TILE0])
+       || c.waits[1].valid || c.waits[2].valid
+       || c.waits[3].valid || c.waits[4].valid
+       || !c.input_admit_waits[0].valid
+       || !c.input_admit_waits[1].valid
+       || !c.input_admit_waits[2].valid
+       || !c.input_admit_waits[3].valid
+       || (c.input_admit_waits[0].reg_id != RID_W0)
+       || (c.input_admit_waits[1].reg_id != RID_SC0)
+       || (c.input_admit_waits[2].reg_id != RID_ZP0)
+       || (c.input_admit_waits[3].reg_id != RID_ACC_FREE0)
+       || (c.input_admit_waits[0].target
+           != gemm_ctrl_if.input_w_load_value[0])
+       || (c.input_admit_waits[1].target
+           != gemm_ctrl_if.input_sc_load_value[0])
+       || (c.input_admit_waits[2].target
+           != gemm_ctrl_if.input_zp_load_value[0])
+       || (c.input_admit_waits[3].target
+           != gemm_ctrl_if.input_acc_free_value[0]))
+        $fatal(1, "SCHED_DIRECTED head Input metadata is not legal/ready");
+      directed_inject(c, 0);
+      directed_accept_issue(0);
+
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W0,
+                            1'b1, 32'd505);
+      c.work_seq = 32'd405;
+      c.flags[0] = 1'b0;
+      @(negedge clk);
+      directed_cmd = c;
+      directed_scheduler_probe_valid = 1'b1;
+      directed_scheduler_probe_work_seq = c.work_seq;
+      directed_scheduler_probe_child = 3'd1;
+      directed_done[0] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[0]
+       || !dut.scheduler_probe_ready
+       || !dut.gemm_fsm_if.flag.child_ready[1])
+        $fatal(1, "SCHED_DIRECTED ordered head retire did not release fifth Weight probe");
+      directed_start = 1'b1;
+      #1;
+      if (!dut.scheduler_cmd_fire)
+        $fatal(1, "SCHED_DIRECTED fifth Weight did not fire with ordered retire");
+      @(posedge clk);
+      #1;
+      directed_start = 1'b0;
+      directed_scheduler_probe_valid = 1'b0;
+      directed_scheduler_probe_work_seq = '0;
+      directed_scheduler_probe_child = '0;
+      directed_done[0] = 1'b0;
+      if (dut.scheduler_entry_count !== 3'd4
+       || dut.child_q_empty_v[1])
+        $fatal(1, "SCHED_DIRECTED same-cycle retire/recycle lost occupancy or command");
+      $display("SCHED_DIRECTED_SCOREBOARD_ORDERED_RETIRE_RECYCLE_PASS head_seq=401 new_seq=405 count=4");
+
+      directed_sched_source_work_seq[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd405;
+      directed_sched_source_total_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd4;
+      directed_sched_source_request_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd1;
+      directed_sched_source_response_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd0;
+      directed_sched_source_writer_beats[GEMM_SCHED_RESOURCE_WEIGHT] = 32'd0;
+      #1;
+      if (directed_sched_priority[GEMM_SCHED_RESOURCE_WEIGHT]
+          !== GEMM_SCHED_PRIORITY_BACKGROUND)
+        $fatal(1, "SCHED_DIRECTED recycled fifth Weight tier mismatch");
+      $display("SCHED_DIRECTED_SCOREBOARD_TIER_PASS earliest=P2 recycled_distance3=P0");
+      directed_sched_source_valid = '0;
+    end
+  endtask
+
   task automatic run_scheduler_directed();
     gemm_unified_cmd_t c;
     gemm_unified_cmd_t held_cmd;
@@ -1514,6 +1753,12 @@ module tb_VX_gemm_ctrl;
       directed_start = 1'b0;
       force dut.gemm_fsm_if.ctrl.start = directed_start;
       force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+      force dut.fsm_pending_scheduler_work
+          = directed_scheduler_probe_valid;
+      force dut.fsm_pending_work_seq
+          = directed_scheduler_probe_work_seq;
+      force dut.fsm_pending_child
+          = directed_scheduler_probe_child;
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
       force dut.dbg_fsm_meta_valid = directed_start;
@@ -1531,6 +1776,12 @@ module tb_VX_gemm_ctrl;
       force dut.dbg_fsm_meta_generation = 32'd0;
 `endif
 `endif
+
+      run_readiness_scoreboard_controller_case();
+      // The remaining dependency suite predates readiness scheduling.  Start
+      // it from a clean architectural state after the explicit controller
+      // integration contract above.
+      reset_dut();
 
       run_dma_tagged_scoreboard();
 
@@ -2072,6 +2323,9 @@ module tb_VX_gemm_ctrl;
       @(negedge clk);
       release dut.gemm_fsm_if.ctrl.start;
       release dut.gemm_fsm_if.ctrl.cmd;
+      release dut.fsm_pending_scheduler_work;
+      release dut.fsm_pending_work_seq;
+      release dut.fsm_pending_child;
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
       release dut.dbg_fsm_meta_valid;
@@ -2149,6 +2403,12 @@ module tb_VX_gemm_ctrl;
       directed_start = 1'b0;
       force dut.gemm_fsm_if.ctrl.start = directed_start;
       force dut.gemm_fsm_if.ctrl.cmd = directed_cmd;
+      force dut.fsm_pending_scheduler_work
+          = directed_scheduler_probe_valid;
+      force dut.fsm_pending_work_seq
+          = directed_scheduler_probe_work_seq;
+      force dut.fsm_pending_child
+          = directed_scheduler_probe_child;
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
       force dut.dbg_fsm_meta_valid = directed_start;

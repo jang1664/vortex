@@ -31,7 +31,27 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     output wire [31:0]            scale_consume_value0_o,
     output wire [31:0]            scale_consume_value1_o,
     output wire [31:0]            zero_point_consume_value0_o,
-    output wire [31:0]            zero_point_consume_value1_o
+    output wire [31:0]            zero_point_consume_value1_o,
+    input wire [3:0]              sched_source_valid_i,
+    input wire [31:0]             sched_source_work_seq_i [4],
+    input wire [31:0]             sched_source_total_beats_i [4],
+    input wire [31:0]             sched_source_request_beats_i [4],
+    input wire [31:0]             sched_source_response_beats_i [4],
+    input wire [31:0]             sched_source_writer_beats_i [4],
+    input wire [3:0]              sched_input_slot_occupancy_i,
+    input wire                    sched_input_ahead_credit_i,
+    input wire                    sched_input_admit_valid_i,
+    input wire [31:0]             sched_input_admit_work_seq_i,
+    input wire [3:0]              sched_fetch_complete_i,
+    input wire [31:0]             sched_fetch_complete_work_seq_i [4],
+    input wire                    consumer_block_valid_i,
+    input wire [1:0]              consumer_block_resource_i,
+    input wire [31:0]             consumer_block_work_seq_i,
+    input wire                    consumer_block_bank_i,
+    input wire [31:0]             consumer_block_target_i,
+    output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+                                   sched_source_priority_o [4],
+    output wire                    sched_input_source_enable_o
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,input wire                   dbg_compute_active_i
@@ -68,7 +88,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     localparam int DMA_CHILD_INDEX = 5;
     localparam int DMA_INFLIGHT_DEPTH = 1 << GEMM_DMA_TAG_WIDTH;
     localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
-    localparam int INFLIGHT_DATAW = $bits(gemm_notify_meta_t);
+    typedef struct packed {
+      logic valid;
+      logic [GEMM_SYNC_REG_ID_WIDTH-1:0] reg_id;
+      logic set_mode;
+      logic [31:0] value;
+      logic [31:0] work_seq;
+    } child_inflight_meta_t;
+    localparam int INFLIGHT_DATAW = $bits(child_inflight_meta_t);
 
     VX_gemm_fsm_if gemm_fsm_if ();
     VX_gemm_fsm_if gemm_cqueue_out[N_CHILDREN] ();
@@ -91,10 +118,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0] child_single_active_ready_v;
     logic [N_CHILDREN-1:0] child_completion_pop_v;
     gemm_unified_cmd_t child_q_cmd[N_CHILDREN];
-    gemm_notify_meta_t child_inflight_head[N_CHILDREN];
+    child_inflight_meta_t child_inflight_head[N_CHILDREN];
 
     logic [DMA_INFLIGHT_DEPTH-1:0] dma_inflight_valid_q;
-    gemm_notify_meta_t dma_inflight_meta_q[DMA_INFLIGHT_DEPTH];
+    child_inflight_meta_t dma_inflight_meta_q[DMA_INFLIGHT_DEPTH];
     logic dma_issue_tag_reserved_q;
     logic [GEMM_DMA_TAG_WIDTH-1:0] dma_issue_tag_q;
     logic dma_free_tag_valid;
@@ -107,11 +134,24 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic fsm_idle;
     logic fsm_pending_work;
     logic [2:0] fsm_pending_child;
+    logic fsm_pending_scheduler_work;
+    logic [31:0] fsm_pending_work_seq;
+    logic scheduler_probe_ready;
+    logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        scheduler_source_priority[4];
+    gemm_wait_meta_t scheduler_input_waits[4];
+    logic scheduler_input_source_enable;
+    logic [$clog2(4+1)-1:0] scheduler_entry_count;
     logic invocation_active_q;
     logic done_valid_q;
     logic [31:0] active_entry_id_q;
     logic [31:0] done_entry_id_q;
     logic [31:0] output_progress_q;
+
+    for (genvar sched_wait = 0; sched_wait < 4; ++sched_wait) begin : g_sched_input_waits
+      assign scheduler_input_waits[sched_wait]
+          = gemm_fsm_if.ctrl.cmd.input_admit_waits[sched_wait];
+    end
 
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
@@ -182,7 +222,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // exactly: new_invocation_ready = fsm_idle && scheduler_quiescent.
     assign gemm_fsm_if.flag.done = scheduler_quiescent;
     assign gemm_fsm_if.flag.idle = 1'b1;
-    assign gemm_fsm_if.flag.child_ready = ~child_q_full_v;
+    always_comb begin
+      gemm_fsm_if.flag.child_ready = ~child_q_full_v;
+      if (fsm_pending_scheduler_work && !scheduler_probe_ready
+       && (fsm_pending_child < N_CHILDREN))
+        gemm_fsm_if.flag.child_ready[fsm_pending_child] = 1'b0;
+    end
+    assign sched_source_priority_o = scheduler_source_priority;
+    assign sched_input_source_enable_o = scheduler_input_source_enable;
 
     VX_gemm_fsm #(
       .INSTANCE_ID (INSTANCE_ID),
@@ -196,7 +243,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .gemm_start_o (),
       .fsm_idle_o   (fsm_idle),
       .pending_work_o (fsm_pending_work),
-      .pending_child_o (fsm_pending_child)
+      .pending_child_o (fsm_pending_child),
+      .pending_scheduler_work_o(fsm_pending_scheduler_work),
+      .pending_work_seq_o(fsm_pending_work_seq)
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
       ,.dbg_cmd_meta_valid_o (dbg_fsm_meta_valid)
@@ -233,6 +282,80 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     wire [2:0] fsm_target_child = command_child(gemm_fsm_if.ctrl.cmd);
     wire fsm_target_valid = (fsm_target_child < N_CHILDREN);
+    wire scheduler_cmd_valid = fsm_target_valid
+        && (fsm_target_child <= ZP_CHILD_INDEX);
+    wire scheduler_cmd_fire = gemm_fsm_if.ctrl.start
+                            && scheduler_cmd_valid;
+    logic [1:0] scheduler_cmd_resource;
+    logic scheduler_cmd_bank;
+
+    always_comb begin
+      scheduler_cmd_resource = GEMM_SCHED_RESOURCE_INPUT;
+      scheduler_cmd_bank = 1'b0;
+      unique case (fsm_target_child)
+        3'd0: begin
+          scheduler_cmd_resource = GEMM_SCHED_RESOURCE_INPUT;
+          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[2];
+        end
+        WEIGHT_CHILD_INDEX: begin
+          scheduler_cmd_resource = GEMM_SCHED_RESOURCE_WEIGHT;
+          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[0];
+        end
+        SCALE_CHILD_INDEX: begin
+          scheduler_cmd_resource = GEMM_SCHED_RESOURCE_SCALE;
+          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[1];
+        end
+        default: begin
+          scheduler_cmd_resource = GEMM_SCHED_RESOURCE_ZP;
+          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[1];
+        end
+      endcase
+    end
+
+    VX_microtile_readiness_scheduler #(
+      .INSTANCE_ID({INSTANCE_ID, ":readiness"}),
+      .DEPTH(4),
+      .INPUT_SLOTS(8)
+    ) u_microtile_readiness_scheduler (
+      .clk(clk),
+      .reset(reset || cfg_fire),
+      .probe_valid_i(fsm_pending_scheduler_work),
+      .probe_work_seq_i(fsm_pending_work_seq),
+      .probe_ready_o(scheduler_probe_ready),
+      .cmd_fire_i(scheduler_cmd_fire),
+      .cmd_resource_i(scheduler_cmd_resource),
+      .cmd_work_seq_i(gemm_fsm_if.ctrl.cmd.work_seq),
+      .cmd_bank_i(scheduler_cmd_bank),
+      .cmd_target_i(gemm_fsm_if.ctrl.cmd.notify.value),
+      .cmd_writer_wait_i(gemm_fsm_if.ctrl.cmd.writer_wait),
+      .input_waits_i(scheduler_input_waits),
+      .retire_valid_i(child_completion_pop_v[0]),
+      .retire_work_seq_i(child_inflight_head[0].work_seq),
+      .fetch_complete_valid_i(sched_fetch_complete_i),
+      .fetch_complete_work_seq_i(sched_fetch_complete_work_seq_i),
+      .block_valid_i(consumer_block_valid_i),
+      .block_resource_i(consumer_block_resource_i),
+      .block_work_seq_i(consumer_block_work_seq_i),
+      .block_bank_i(consumer_block_bank_i),
+      .block_target_i(consumer_block_target_i),
+      .source_valid_i(sched_source_valid_i),
+      .source_work_seq_i(sched_source_work_seq_i),
+      .source_total_beats_i(sched_source_total_beats_i),
+      .source_request_beats_i(sched_source_request_beats_i),
+      .source_response_beats_i(sched_source_response_beats_i),
+      .source_writer_beats_i(sched_source_writer_beats_i),
+      .input_slot_occupancy_i(sched_input_slot_occupancy_i),
+      .input_ahead_credit_i(sched_input_ahead_credit_i),
+      .input_admit_valid_i(sched_input_admit_valid_i),
+      .input_admit_work_seq_i(sched_input_admit_work_seq_i),
+      .w_load_value_i(gemm_ctrl_if.input_w_load_value),
+      .s_load_value_i(gemm_ctrl_if.input_sc_load_value),
+      .z_load_value_i(gemm_ctrl_if.input_zp_load_value),
+      .acc_free_value_i(gemm_ctrl_if.input_acc_free_value),
+      .source_priority_o(scheduler_source_priority),
+      .input_source_enable_o(scheduler_input_source_enable),
+      .entry_count_o(scheduler_entry_count)
+    );
 
     always_comb begin
       child_q_push_v = '0;
@@ -496,7 +619,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
             .reset     (reset),
             .push      (child_issue_fire_v[i]),
             .pop       (child_completion_pop_v[i]),
-            .data_in   (child_q_cmd[i].notify),
+            .data_in   ({child_q_cmd[i].notify,
+                         child_q_cmd[i].work_seq}),
             .data_out  (inflight_dout),
             .empty     (child_inflight_empty_v[i]),
             .full      (child_inflight_full_v[i]),
@@ -778,7 +902,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         if (child_issue_fire_v[DMA_CHILD_INDEX]) begin
           dma_inflight_valid_q[dma_issue_tag] <= 1'b1;
           dma_inflight_meta_q[dma_issue_tag]
-              <= child_q_cmd[DMA_CHILD_INDEX].notify;
+              <= {child_q_cmd[DMA_CHILD_INDEX].notify,
+                  child_q_cmd[DMA_CHILD_INDEX].work_seq};
         end
 
         if (child_issue_fire_v[DMA_CHILD_INDEX]) begin

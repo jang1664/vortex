@@ -1259,10 +1259,16 @@ for block_size in range(1, full_bitwidth+1):
 `define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
 `endif
 
-// TMEM-local Input/Weight urgency policy.  Keep the optimization disabled by
-// default so existing configurations retain bit-for-bit arbitration behavior.
+// The improve backend's dependency scheduler requires the existing TMEM
+// priority frontend to apply its registered source classes at the physical
+// banks.  Preserve legacy arbitration for non-improve configurations and
+// retain an explicit build override for focused comparisons.
 `ifndef TMEM_ARB_URGENCY_ENABLE
+`ifdef GEMM_IMPROVE
+`define TMEM_ARB_URGENCY_ENABLE 1
+`else
 `define TMEM_ARB_URGENCY_ENABLE 0
+`endif
 `endif
 
 `ifndef I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK

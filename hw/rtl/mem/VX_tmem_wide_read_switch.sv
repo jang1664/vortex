@@ -29,7 +29,10 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     input wire clk,
     input wire reset,
     input wire req_urgent_i,
+    input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] req_priority_i,
     output wire [NUM_BANKS-1:0] bank_req_urgent_o,
+    output wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        bank_req_priority_o,
 
     VX_mem_bus_if.slave  bus_in_if,
     VX_mem_bus_if.master bus_out_if [NUM_BANKS]
@@ -80,6 +83,8 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     logic [OUTSTANDING-1:0][WIDE_DATA_SIZE-1:0]        ctx_byteen_r, ctx_byteen_n;
     logic [OUTSTANDING-1:0][MEM_FLAGS_WIDTH-1:0]       ctx_flags_r, ctx_flags_n;
     logic [OUTSTANDING-1:0]                            ctx_urgent_r, ctx_urgent_n;
+    logic [OUTSTANDING-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+                                                            ctx_priority_r, ctx_priority_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_bank_mask_r, ctx_bank_mask_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_issued_r, ctx_issued_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_rsp_seen_r, ctx_rsp_seen_n;
@@ -167,6 +172,11 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
                                     && ctx_urgent_r[issue_head_ctx]
                                     && ctx_bank_mask_r[issue_head_ctx][b]
                                     && !ctx_issued_r[issue_head_ctx][b];
+        assign bank_req_priority_o[b] = (issue_head_valid
+                                      && ctx_bank_mask_r[issue_head_ctx][b]
+                                      && !ctx_issued_r[issue_head_ctx][b])
+            ? ctx_priority_r[issue_head_ctx]
+            : GEMM_SCHED_PRIORITY_BACKGROUND;
 
         assign rsp_bank_id[b] =
             bus_out_if[b].rsp_data.tag[TAG_WIDTH +: BANK_SEL_BITS];
@@ -202,6 +212,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         ctx_byteen_n = ctx_byteen_r;
         ctx_flags_n = ctx_flags_r;
         ctx_urgent_n = ctx_urgent_r;
+        ctx_priority_n = ctx_priority_r;
         ctx_bank_mask_n = ctx_bank_mask_r;
         ctx_issued_n = ctx_issued_r;
         ctx_rsp_seen_n = ctx_rsp_seen_r;
@@ -237,6 +248,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_byteen_n[order_head_ctx] = '0;
             ctx_flags_n[order_head_ctx] = '0;
             ctx_urgent_n[order_head_ctx] = 1'b0;
+            ctx_priority_n[order_head_ctx] = '0;
             ctx_bank_mask_n[order_head_ctx] = '0;
             ctx_issued_n[order_head_ctx] = '0;
             ctx_rsp_seen_n[order_head_ctx] = '0;
@@ -251,6 +263,11 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_byteen_n[incoming_ctx_id] = bus_in_if.req_data.byteen;
             ctx_flags_n[incoming_ctx_id] = bus_in_if.req_data.flags;
             ctx_urgent_n[incoming_ctx_id] = req_urgent_i;
+            ctx_priority_n[incoming_ctx_id]
+                = (req_priority_i != GEMM_SCHED_PRIORITY_BACKGROUND)
+                ? req_priority_i
+                : (req_urgent_i ? GEMM_SCHED_PRIORITY_NEAR
+                                : GEMM_SCHED_PRIORITY_BACKGROUND);
             ctx_bank_mask_n[incoming_ctx_id] = incoming_bank_mask;
             ctx_issued_n[incoming_ctx_id] = '0;
             ctx_rsp_seen_n[incoming_ctx_id] = '0;
@@ -283,6 +300,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_byteen_r <= '0;
             ctx_flags_r <= '0;
             ctx_urgent_r <= '0;
+            ctx_priority_r <= '0;
             ctx_bank_mask_r <= '0;
             ctx_issued_r <= '0;
             ctx_rsp_seen_r <= '0;
@@ -302,6 +320,7 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_byteen_r <= ctx_byteen_n;
             ctx_flags_r <= ctx_flags_n;
             ctx_urgent_r <= ctx_urgent_n;
+            ctx_priority_r <= ctx_priority_n;
             ctx_bank_mask_r <= ctx_bank_mask_n;
             ctx_issued_r <= ctx_issued_n;
             ctx_rsp_seen_r <= ctx_rsp_seen_n;
@@ -323,23 +342,27 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
                                      + MEM_FLAGS_WIDTH + TAG_WIDTH;
     logic input_stall_r;
     logic input_stall_urgent_r;
+    logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] input_stall_priority_r;
     logic [IN_REQ_DATA_WIDTH-1:0] input_stall_data_r;
 
     always_ff @(posedge clk) begin
         if (reset) begin
             input_stall_r <= 1'b0;
             input_stall_urgent_r <= 1'b0;
+            input_stall_priority_r <= '0;
             input_stall_data_r <= '0;
         end else begin
             if (input_stall_r) begin
                 assert (bus_in_if.req_valid
                      && (req_urgent_i == input_stall_urgent_r)
+                     && (req_priority_i == input_stall_priority_r)
                      && (bus_in_if.req_data == input_stall_data_r))
                     else $fatal(1, "%t: %s wide request data/urgency changed under input stall",
                                 $time, INSTANCE_ID);
             end
             input_stall_r <= bus_in_if.req_valid && !bus_in_if.req_ready;
             input_stall_urgent_r <= req_urgent_i;
+            input_stall_priority_r <= req_priority_i;
             input_stall_data_r <= bus_in_if.req_data;
         end
     end

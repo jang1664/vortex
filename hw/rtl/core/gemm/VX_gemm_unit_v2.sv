@@ -423,6 +423,11 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     logic                                          qcol_scale_consumer_fire;
     logic                                          qrow_zp_consumer_fire;
     logic                                          qcol_zp_consumer_fire;
+    logic                                          consumer_block_raw_valid;
+    logic [1:0]                                    consumer_block_raw_resource;
+    logic [31:0]                                   consumer_block_raw_work_seq;
+    logic                                          consumer_block_raw_bank;
+    logic [31:0]                                   consumer_block_raw_target;
     logic                                          qrow_scale_consume_last;
     logic                                          qcol_scale_consume_last;
     logic                                          qrow_zp_consume_last;
@@ -626,6 +631,71 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         = compute_fire && pre_meta_out.ctrl.last;
     assign gemm_unit_v2_if.weight_consume_idx
         = pre_meta_out.ctrl.wreg_use_idx;
+
+    // True-consumer feedback is registered before leaving the GEMM unit.  It
+    // observes the exact transaction metadata and missing generation at the
+    // actual consumer, but it never participates in local ready generation.
+    always_comb begin
+        consumer_block_raw_valid = 1'b0;
+        consumer_block_raw_resource = GEMM_SCHED_RESOURCE_INPUT;
+        consumer_block_raw_work_seq = '0;
+        consumer_block_raw_bank = 1'b0;
+        consumer_block_raw_target = '0;
+        if (pre_meta_valid_out && prealigner_out_valid && !weight_ready) begin
+            consumer_block_raw_valid = 1'b1;
+            consumer_block_raw_resource = GEMM_SCHED_RESOURCE_WEIGHT;
+            consumer_block_raw_work_seq = pre_meta_out.ctrl.work_seq;
+            consumer_block_raw_bank = pre_meta_out.ctrl.wreg_use_idx;
+            consumer_block_raw_target = pre_meta_out.ctrl.w_load_target;
+        end else if (in_pipe_valid_out && !input_stage_is_qcol
+                  && !qrow_scale_ready) begin
+            consumer_block_raw_valid = 1'b1;
+            consumer_block_raw_resource = GEMM_SCHED_RESOURCE_SCALE;
+            consumer_block_raw_work_seq
+                = qrow_scale_consumer_ctrl.work_seq;
+            consumer_block_raw_bank = qrow_scale_consumer_ctrl.sreg_use_idx;
+            consumer_block_raw_target
+                = qrow_scale_consumer_ctrl.s_load_target;
+        end else if (pre_meta_valid_out && prealigner_out_valid
+                  && weight_ready && !zero_ready) begin
+            consumer_block_raw_valid = 1'b1;
+            consumer_block_raw_resource = GEMM_SCHED_RESOURCE_ZP;
+            consumer_block_raw_work_seq = pre_meta_out.ctrl.work_seq;
+            consumer_block_raw_bank = pre_meta_out.ctrl.zreg_use_idx;
+            consumer_block_raw_target = pre_meta_out.ctrl.z_load_target;
+        end else if ((!int2fp_result_empty || int2fp_result_push)
+                  && (qcol_scale_consumer_ctrl.quant_dir == `QDIR_COL)
+                  && !qcol_scale_ready) begin
+            consumer_block_raw_valid = 1'b1;
+            consumer_block_raw_resource = GEMM_SCHED_RESOURCE_SCALE;
+            consumer_block_raw_work_seq
+                = qcol_scale_consumer_ctrl.work_seq;
+            consumer_block_raw_bank = qcol_scale_consumer_ctrl.sreg_use_idx;
+            consumer_block_raw_target
+                = qcol_scale_consumer_ctrl.s_load_target;
+        end
+    end
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            gemm_unit_v2_if.consumer_block_valid <= 1'b0;
+            gemm_unit_v2_if.consumer_block_resource <= '0;
+            gemm_unit_v2_if.consumer_block_work_seq <= '0;
+            gemm_unit_v2_if.consumer_block_bank <= 1'b0;
+            gemm_unit_v2_if.consumer_block_target <= '0;
+        end else begin
+            gemm_unit_v2_if.consumer_block_valid
+                <= consumer_block_raw_valid;
+            gemm_unit_v2_if.consumer_block_resource
+                <= consumer_block_raw_resource;
+            gemm_unit_v2_if.consumer_block_work_seq
+                <= consumer_block_raw_work_seq;
+            gemm_unit_v2_if.consumer_block_bank
+                <= consumer_block_raw_bank;
+            gemm_unit_v2_if.consumer_block_target
+                <= consumer_block_raw_target;
+        end
+    end
     // A packet retires only when its final control reaches the commit edge.
     // Write packets additionally require the aligned datapath result to fire;
     // a missing result therefore cannot create a false-empty indication.
@@ -636,6 +706,28 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         = !(i_lmem_bus_if.req_valid
           || (pipeline_pending_count != 0)
           || pipeline_busy);
+
+    // Scheduler capacity feedback is deliberately registered at the GEMM
+    // boundary.  One credit means both the elastic input edge and the
+    // registered tree reservation state can accept another transaction.  It
+    // is only a bounded prefetch hint; local req_ready remains the authority.
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            gemm_unit_v2_if.input_ahead_credit <= 1'b0;
+            gemm_unit_v2_if.input_admit_valid <= 1'b0;
+            gemm_unit_v2_if.input_admit_work_seq <= '0;
+        end else begin
+            gemm_unit_v2_if.input_ahead_credit
+                <= in_pipe_ready_in && (tree_credit_q != 0);
+            // Admission metadata is sampled only on the exact GEMM input
+            // handshake.  The registered event may affect scheduler policy
+            // on the following cycle, never local req_ready in this cycle.
+            gemm_unit_v2_if.input_admit_valid <= input_fire;
+            if (input_fire)
+                gemm_unit_v2_if.input_admit_work_seq
+                    <= admitted_ctrl.work_seq;
+        end
+    end
 
     assign post_launch_forward
         = int2fp_result_pop

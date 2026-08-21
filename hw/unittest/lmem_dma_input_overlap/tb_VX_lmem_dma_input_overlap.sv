@@ -26,7 +26,16 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH)
   ) gemm_bus_if();
   wire lmem_req_urgent;
+  wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority;
+  logic sched_source_enable;
+  logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] sched_priority;
   wire [3:0] ready_ahead;
+  wire sched_source_valid;
+  wire [31:0] sched_source_work_seq;
+  wire [31:0] sched_source_total_beats;
+  wire [31:0] sched_source_request_beats;
+  wire [31:0] sched_source_response_beats;
+  wire [31:0] sched_source_writer_beats;
 
   VX_lmem_dma_input_overlap #(
     .INSTANCE_ID("input_overlap_tb"),
@@ -35,6 +44,7 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .CMD_FIFO_DEPTH(4),
     .RESPONSE_SLOTS(8),
     .ENABLE_TMEM_URGENCY(1'b1),
+    .ENABLE_SCHED_SOURCE_GATE(1'b1),
     .READY_AHEAD_LOW_WATERMARK(4),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
     .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
@@ -43,6 +53,8 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
   ) dut (
     .clk(clk),
     .reset(reset),
+    .sched_source_enable_i(sched_source_enable),
+    .sched_priority_i(sched_priority),
     .ctrl_if(ctrl_if),
     .writer_wait_i('0),
     .writer_consume_value0_i('0),
@@ -51,7 +63,17 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     .lmem_bus_if(lmem_bus_if),
     .gemm_bus_if(gemm_bus_if),
     .lmem_req_urgent_o(lmem_req_urgent),
-    .ready_ahead_o(ready_ahead)
+    .lmem_req_priority_o(lmem_req_priority),
+    .ready_ahead_o(ready_ahead),
+    .sched_source_valid_o(sched_source_valid),
+    .sched_source_work_seq_o(sched_source_work_seq),
+    .sched_source_total_beats_o(sched_source_total_beats),
+    .sched_source_request_beats_o(sched_source_request_beats),
+    .sched_source_response_beats_o(sched_source_response_beats),
+    .sched_source_writer_beats_o(sched_source_writer_beats),
+    .sched_slot_occupancy_o(),
+    .sched_fetch_complete_o(),
+    .sched_fetch_complete_work_seq_o()
   );
 
   logic lmem_req_ready_r;
@@ -106,6 +128,7 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
       ctrl_if.seg_size = '0;
       ctrl_if.reg_idx = '0;
       ctrl_if.reg_value = '0;
+      ctrl_if.scheduler_work_seq = '0;
     end
   endtask
 
@@ -124,6 +147,7 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
       ctrl_if.bounds[1] = 1;
       ctrl_if.bounds[2] = 1;
       ctrl_if.seg_size = BUS_BYTES;
+      ctrl_if.scheduler_work_seq = 32'(seq);
       ctrl_if.start = 1'b1;
       @(posedge clk);
       #1;
@@ -206,6 +230,8 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
 
   initial begin
     clear_ctrl();
+    sched_source_enable = 1'b1;
+    sched_priority = GEMM_SCHED_PRIORITY_NEAR;
     lmem_req_ready_r = 1'b1;
     gemm_req_ready_r = 1'b0;
     response_release = 1'b0;
@@ -223,9 +249,96 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     repeat (4) @(posedge clk);
     reset = 1'b0;
 
+    // Once a request is presented, both the fixed tier and complete payload
+    // must survive TMEM backpressure even if the scheduler disables new
+    // source admission.  After that request fires, the disabled scheduler
+    // must suppress the following request until re-enabled.
+    begin : source_gate_stability
+      logic held_rw;
+      logic [BUS_ADDR_WIDTH-1:0] held_addr;
+      logic [BUS_BYTES*8-1:0] held_data;
+      logic [BUS_BYTES-1:0] held_byteen;
+      logic [MEM_FLAGS_WIDTH-1:0] held_flags;
+      logic [TAG_WIDTH-1:0] held_tag;
+      logic held_urgent;
+      logic [31:0] held_sched_work_seq;
+      logic [31:0] held_sched_total;
+      logic [31:0] held_sched_request;
+      logic [31:0] held_sched_response;
+      logic [31:0] held_sched_writer;
+      int held_source_count;
+
+    lmem_req_ready_r = 1'b0;
+    enqueue_command(0, 4);
+    wait (lmem_bus_if.req_valid);
+    #1;
+    if (lmem_req_priority != GEMM_SCHED_PRIORITY_NEAR)
+      $fatal(1, "Input initial held priority mismatch");
+    held_rw = lmem_bus_if.req_data.rw;
+    held_addr = lmem_bus_if.req_data.addr;
+    held_data = lmem_bus_if.req_data.data;
+    held_byteen = lmem_bus_if.req_data.byteen;
+    held_flags = lmem_bus_if.req_data.flags;
+    held_tag = lmem_bus_if.req_data.tag;
+    held_urgent = lmem_req_urgent;
+    held_sched_work_seq = sched_source_work_seq;
+    held_sched_total = sched_source_total_beats;
+    held_sched_request = sched_source_request_beats;
+    held_sched_response = sched_source_response_beats;
+    held_sched_writer = sched_source_writer_beats;
+    if (!sched_source_valid || (held_sched_work_seq != 0)
+     || (held_sched_total != 4) || (held_sched_request != 0)
+     || (held_sched_response != 0) || (held_sched_writer != 0))
+      $fatal(1, "Input initial scheduler progress mismatch");
+    // Let the executor sample the request context at the first stalled edge,
+    // matching a scheduler state transition on a clock boundary.
+    @(posedge clk);
+    #1;
+    sched_priority = GEMM_SCHED_PRIORITY_BLOCKED;
+    sched_source_enable = 1'b0;
+    repeat (2) @(posedge clk);
+    #1;
+    if (!lmem_bus_if.req_valid
+     || (lmem_bus_if.req_data.rw != held_rw)
+     || (lmem_bus_if.req_data.addr != held_addr)
+     || (lmem_bus_if.req_data.data != held_data)
+     || (lmem_bus_if.req_data.byteen != held_byteen)
+     || (lmem_bus_if.req_data.flags != held_flags)
+     || (lmem_bus_if.req_data.tag != held_tag)
+     || (lmem_req_urgent != held_urgent)
+     || (lmem_req_priority != GEMM_SCHED_PRIORITY_NEAR)
+     || !sched_source_valid
+     || (sched_source_work_seq != held_sched_work_seq)
+     || (sched_source_total_beats != held_sched_total)
+     || (sched_source_request_beats != held_sched_request)
+     || (sched_source_response_beats != held_sched_response)
+     || (sched_source_writer_beats != held_sched_writer))
+      $fatal(1, "Input source request changed when scheduler disabled under stall");
+    @(negedge clk);
+    lmem_req_ready_r = 1'b1;
+    wait (source_count == 1);
+    #1;
+    if (lmem_bus_if.req_valid)
+      $fatal(1, "Input admitted a new source request while scheduler disabled");
+    held_source_count = source_count;
+    repeat (2) begin
+      @(posedge clk);
+      #1;
+      if (lmem_bus_if.req_valid || (source_count != held_source_count))
+        $fatal(1, "Input scheduler gate did not suppress subsequent request");
+    end
+    @(negedge clk);
+    sched_source_enable = 1'b1;
+    wait (lmem_bus_if.req_valid);
+    #1;
+    if (lmem_req_priority != GEMM_SCHED_PRIORITY_BLOCKED)
+      $fatal(1, "Input next request did not sample raised priority");
+    $display("PASS marker: Input request/payload/priority holds when scheduler disables under stall; next request remains gated until re-enable");
+    end
+
     // Four descriptors must enqueue before admission.  The source fills all
     // eight shared slots while the GEMM side remains fenced.
-    for (int cmd = 0; cmd < MAIN_COMMANDS; ++cmd)
+    for (int cmd = 1; cmd < MAIN_COMMANDS; ++cmd)
       enqueue_command(cmd, 4);
     wait (source_count == 8);
     #1;  // Sample DUT occupancy after the eighth allocation NBA commits.

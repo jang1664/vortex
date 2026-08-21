@@ -49,13 +49,24 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   ) dut (
     .clk(clk),
     .reset(reset),
+    .sched_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
     .ctrl_if(ctrl_if),
     .writer_wait_i(writer_wait),
     .writer_consume_value0_i(consume_value0),
     .writer_consume_value1_i(consume_value1),
     .gemm_sync_if(sync_if),
     .lmem_bus_if(lmem_bus_if),
-    .gemm_bus_if(gemm_bus_if)
+    .gemm_bus_if(gemm_bus_if),
+    .sched_source_valid_o(),
+    .sched_source_work_seq_o(),
+    .sched_source_total_beats_o(),
+    .sched_source_request_beats_o(),
+    .sched_source_response_beats_o(),
+    .sched_source_writer_beats_o(),
+    .sched_slot_occupancy_o(),
+    .sched_fetch_complete_o(),
+    .sched_fetch_complete_work_seq_o(),
+    .lmem_req_priority_o()
   );
 
   logic pending_valid[8];
@@ -92,6 +103,7 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
       ctrl_if.seg_size = '0;
       ctrl_if.reg_idx = '0;
       ctrl_if.reg_value = '0;
+      ctrl_if.scheduler_work_seq = '0;
       writer_wait = '0;
     end
   endtask
@@ -115,6 +127,7 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
       ctrl_if.bounds[1] = 1;
       ctrl_if.bounds[2] = 1;
       ctrl_if.seg_size = BUS_BYTES;
+      ctrl_if.scheduler_work_seq = 32'(seq_id);
       writer_wait.valid = 1'b1;
       writer_wait.reg_id = bank
                          ? GEMM_SYNC_REG_ID_WIDTH'(RID1)

@@ -78,6 +78,19 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     input wire [31:0] zero_point_consume_value0_i,
     input wire [31:0] zero_point_consume_value1_i,
 
+    input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        sched_source_priority_i [4],
+    input wire sched_input_source_enable_i,
+    output wire [3:0] sched_source_valid_o,
+    output wire [31:0] sched_source_work_seq_o [4],
+    output wire [31:0] sched_source_total_beats_o [4],
+    output wire [31:0] sched_source_request_beats_o [4],
+    output wire [31:0] sched_source_response_beats_o [4],
+    output wire [31:0] sched_source_writer_beats_o [4],
+    output wire [3:0] sched_input_slot_occupancy_o,
+    output wire [3:0] sched_fetch_complete_o,
+    output wire [31:0] sched_fetch_complete_work_seq_o [4],
+
     // HBM side: AXI master ports (pass through to DMA engine)
     AXI_BUS.Master axi_m [NUM_DMA_CHANNELS],
 
@@ -228,7 +241,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
                 .clk               (clk),
                 .reset             (reset),
                 .req_urgent_i      (1'b0),
+                .req_priority_i    (GEMM_SCHED_PRIORITY_BACKGROUND),
                 .bank_req_urgent_o (),
+                .bank_req_priority_o(),
                 .bus_in_if         (dma_to_tmem[c]),
                 .bus_out_if        (owned_bank_if)
             );
@@ -316,8 +331,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     wire input_req_urgent;
     wire weight_req_urgent;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] input_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] weight_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] scale_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] zero_point_req_priority;
     wire [NUM_BANKS-1:0] input_bank_req_urgent;
     wire [NUM_BANKS-1:0] weight_bank_req_urgent;
+    wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        input_bank_req_priority;
+    wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        weight_bank_req_priority;
+    wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        scale_bank_req_priority;
+    wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+        zero_point_bank_req_priority;
 
     for (genvar i = 0; i < NUM_LDMA; ++i) begin : g_ldma_sync
         assign ldma_sync_if[i].ready = 1'b1;
@@ -336,7 +363,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .req_urgent_i(input_req_urgent),
+        .req_priority_i(input_req_priority),
         .bank_req_urgent_o(input_bank_req_urgent),
+        .bank_req_priority_o(input_bank_req_priority),
         .bus_in_if  (ldma_to_switch[0]),
         .bus_out_if (in_switch_to_tmem)
     );
@@ -352,7 +381,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .req_urgent_i(weight_req_urgent),
+        .req_priority_i(weight_req_priority),
         .bank_req_urgent_o(weight_bank_req_urgent),
+        .bank_req_priority_o(weight_bank_req_priority),
         .bus_in_if  (ldma_weight_to_tmem),
         .bus_out_if (wt_switch_to_tmem)
     );
@@ -366,7 +397,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .req_urgent_i(1'b0),
+        .req_priority_i(scale_req_priority),
         .bank_req_urgent_o(),
+        .bank_req_priority_o(scale_bank_req_priority),
         .bus_in_if  (ldma_to_switch[2]),
         .bus_out_if (sc_switch_to_tmem)
     );
@@ -380,7 +413,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .req_urgent_i(1'b0),
+        .req_priority_i(zero_point_req_priority),
         .bank_req_urgent_o(),
+        .bank_req_priority_o(zero_point_bank_req_priority),
         .bus_in_if  (ldma_to_switch[3]),
         .bus_out_if (zp_switch_to_tmem)
     );
@@ -394,7 +429,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .req_urgent_i(1'b0),
+        .req_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
         .bank_req_urgent_o(),
+        .bank_req_priority_o(),
         .bus_in_if  (ldma_to_switch[4]),
         .bus_out_if (out_switch_to_tmem)
     );
@@ -421,12 +458,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         ) bank_port_if [NUM_TMEM_PORTS] ();
 
         wire [NUM_TMEM_PORTS-1:0] bank_req_urgent;
+        wire [NUM_TMEM_PORTS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
+            bank_req_priority;
         assign bank_req_urgent[0] = 1'b0;
         assign bank_req_urgent[1] = input_bank_req_urgent[b];
         assign bank_req_urgent[2] = weight_bank_req_urgent[b];
         assign bank_req_urgent[3] = 1'b0;
         assign bank_req_urgent[4] = 1'b0;
         assign bank_req_urgent[5] = 1'b0;
+        assign bank_req_priority[0] = GEMM_SCHED_PRIORITY_BACKGROUND;
+        assign bank_req_priority[1] = input_bank_req_priority[b];
+        assign bank_req_priority[2] = weight_bank_req_priority[b];
+        assign bank_req_priority[3] = scale_bank_req_priority[b];
+        assign bank_req_priority[4] = zero_point_bank_req_priority[b];
+        assign bank_req_priority[5] = GEMM_SCHED_PRIORITY_BACKGROUND;
 
         // Port 0: restricted DMA direct path.  Physical bank b is owned by
         // DMA channel b%NUM_DMA_CHANNELS; no cross-class path is elaborated.
@@ -531,6 +576,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             .clk        (clk),
             .reset      (reset),
             .req_urgent_i(bank_req_urgent),
+            .req_priority_i(bank_req_priority),
             .mem_bus_if (bank_port_if)
         );
 
@@ -560,10 +606,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .CMD_FIFO_DEPTH(4),
         .RESPONSE_SLOTS(I_RD_OUTSTANDING),
         .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
+        .ENABLE_SCHED_SOURCE_GATE(1'b1),
         .READY_AHEAD_LOW_WATERMARK(INPUT_READY_AHEAD_LOW_WATERMARK)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
+        .sched_source_enable_i(sched_input_source_enable_i),
+        .sched_priority_i(sched_source_priority_i[0]),
         .ctrl_if     (ldma_ctrl_if[0]),
         .writer_wait_i ('0),
         .writer_consume_value0_i ('0),
@@ -572,7 +621,18 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .lmem_bus_if (ldma_to_switch[0]),
         .gemm_bus_if (ldma_gemm[0]),
         .lmem_req_urgent_o(input_req_urgent),
-        .ready_ahead_o()
+        .lmem_req_priority_o(input_req_priority),
+        .ready_ahead_o(),
+        .sched_source_valid_o(sched_source_valid_o[0]),
+        .sched_source_work_seq_o(sched_source_work_seq_o[0]),
+        .sched_source_total_beats_o(sched_source_total_beats_o[0]),
+        .sched_source_request_beats_o(sched_source_request_beats_o[0]),
+        .sched_source_response_beats_o(sched_source_response_beats_o[0]),
+        .sched_source_writer_beats_o(sched_source_writer_beats_o[0]),
+        .sched_slot_occupancy_o(sched_input_slot_occupancy_o),
+        .sched_fetch_complete_o(sched_fetch_complete_o[0]),
+        .sched_fetch_complete_work_seq_o(
+            sched_fetch_complete_work_seq_o[0])
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[0])
     `endif
@@ -594,6 +654,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
+        .sched_priority_i(sched_source_priority_i[1]),
         .ctrl_if     (ldma_ctrl_if[1]),
         .writer_wait_i(weight_writer_wait_i),
         .weight_consume_value0_i(weight_consume_value0_i),
@@ -602,7 +663,18 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .lmem_bus_if (ldma_weight_to_tmem),
         .gemm_bus_if (ldma_gemm_weight),
         .lmem_req_urgent_o(weight_req_urgent),
-        .ready_ahead_o()
+        .lmem_req_priority_o(weight_req_priority),
+        .ready_ahead_o(),
+        .sched_source_valid_o(sched_source_valid_o[1]),
+        .sched_source_work_seq_o(sched_source_work_seq_o[1]),
+        .sched_source_total_beats_o(sched_source_total_beats_o[1]),
+        .sched_source_request_beats_o(sched_source_request_beats_o[1]),
+        .sched_source_response_beats_o(sched_source_response_beats_o[1]),
+        .sched_source_writer_beats_o(sched_source_writer_beats_o[1]),
+        .sched_slot_occupancy_o(),
+        .sched_fetch_complete_o(sched_fetch_complete_o[1]),
+        .sched_fetch_complete_work_seq_o(
+            sched_fetch_complete_work_seq_o[1])
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[1])
     `endif
@@ -625,6 +697,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_ldma_scale (
         .clk         (clk),
         .reset       (reset),
+        .sched_priority_i(sched_source_priority_i[2]),
         .ctrl_if     (ldma_ctrl_if[2]),
         .writer_wait_i(scale_writer_wait_i),
         .writer_consume_value0_i(scale_consume_value0_i),
@@ -632,6 +705,17 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[2]),
         .lmem_bus_if (ldma_to_switch[2]),
         .gemm_bus_if (ldma_gemm[2])
+        ,.sched_source_valid_o(sched_source_valid_o[2])
+        ,.sched_source_work_seq_o(sched_source_work_seq_o[2])
+        ,.sched_source_total_beats_o(sched_source_total_beats_o[2])
+        ,.sched_source_request_beats_o(sched_source_request_beats_o[2])
+        ,.sched_source_response_beats_o(sched_source_response_beats_o[2])
+        ,.sched_source_writer_beats_o(sched_source_writer_beats_o[2])
+        ,.sched_slot_occupancy_o()
+        ,.sched_fetch_complete_o(sched_fetch_complete_o[2])
+        ,.sched_fetch_complete_work_seq_o(
+            sched_fetch_complete_work_seq_o[2])
+        ,.lmem_req_priority_o(scale_req_priority)
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[2])
     `endif
@@ -652,6 +736,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_ldma_zero_point (
         .clk         (clk),
         .reset       (reset),
+        .sched_priority_i(sched_source_priority_i[3]),
         .ctrl_if     (ldma_ctrl_if[3]),
         .writer_wait_i(zero_point_writer_wait_i),
         .writer_consume_value0_i(zero_point_consume_value0_i),
@@ -659,6 +744,17 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[3]),
         .lmem_bus_if (ldma_to_switch[3]),
         .gemm_bus_if (ldma_gemm[3])
+        ,.sched_source_valid_o(sched_source_valid_o[3])
+        ,.sched_source_work_seq_o(sched_source_work_seq_o[3])
+        ,.sched_source_total_beats_o(sched_source_total_beats_o[3])
+        ,.sched_source_request_beats_o(sched_source_request_beats_o[3])
+        ,.sched_source_response_beats_o(sched_source_response_beats_o[3])
+        ,.sched_source_writer_beats_o(sched_source_writer_beats_o[3])
+        ,.sched_slot_occupancy_o()
+        ,.sched_fetch_complete_o(sched_fetch_complete_o[3])
+        ,.sched_fetch_complete_work_seq_o(
+            sched_fetch_complete_work_seq_o[3])
+        ,.lmem_req_priority_o(zero_point_req_priority)
     `ifdef PERF_ENABLE
         ,.perf       (ldma_perf[3])
     `endif

@@ -31,7 +31,16 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH)
   ) gemm_bus_if();
   wire lmem_req_urgent;
+  wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority;
   wire [3:0] ready_ahead;
+  wire sched_source_valid;
+  wire [31:0] sched_source_work_seq;
+  wire [31:0] sched_source_total_beats;
+  wire [31:0] sched_source_request_beats;
+  wire [31:0] sched_source_response_beats;
+  wire [31:0] sched_source_writer_beats;
+  wire sched_fetch_complete;
+  wire [31:0] sched_fetch_complete_work_seq;
 
   VX_lmem_dma_weight_overlap #(
     .INSTANCE_ID("weight_overlap_tb"),
@@ -49,6 +58,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   ) dut (
     .clk(clk),
     .reset(reset),
+    .sched_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
     .ctrl_if(ctrl_if),
     .writer_wait_i(writer_wait_i),
     .weight_consume_value0_i(weight_consume_value0_i),
@@ -57,7 +67,17 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     .lmem_bus_if(lmem_bus_if),
     .gemm_bus_if(gemm_bus_if),
     .lmem_req_urgent_o(lmem_req_urgent),
-    .ready_ahead_o(ready_ahead)
+    .lmem_req_priority_o(lmem_req_priority),
+    .ready_ahead_o(ready_ahead),
+    .sched_source_valid_o(sched_source_valid),
+    .sched_source_work_seq_o(sched_source_work_seq),
+    .sched_source_total_beats_o(sched_source_total_beats),
+    .sched_source_request_beats_o(sched_source_request_beats),
+    .sched_source_response_beats_o(sched_source_response_beats),
+    .sched_source_writer_beats_o(sched_source_writer_beats),
+    .sched_slot_occupancy_o(),
+    .sched_fetch_complete_o(sched_fetch_complete),
+    .sched_fetch_complete_work_seq_o(sched_fetch_complete_work_seq)
   );
 
   logic lmem_req_ready_r;
@@ -109,6 +129,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     ctrl_if.seg_size = CMD_BEATS * BUS_BYTES;
     ctrl_if.reg_idx = 32'(100 + seq);
     ctrl_if.reg_value = 32'(200 + seq);
+    ctrl_if.scheduler_work_seq = 32'(seq);
     writer_wait_i = '0;
     // Commands 2..5 arrive after value 3 is already visible, covering
     // consume-before-accept. Command 6 deliberately waits for a new buffer-0
@@ -159,6 +180,8 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   integer previous_command_last_cycle;
   integer source_stall_cycles;
   integer destination_stall_cycles;
+  integer scheduler_fetch_complete_count;
+  logic scheduler_fetch_complete_seen[16];
   logic source_stall_active_r;
   logic [BUS_ADDR_WIDTH-1:0] source_stall_addr_r;
   logic [TAG_WIDTH-1:0] source_stall_tag_r;
@@ -174,6 +197,24 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
 
     cycle_count = cycle_count + 1;
     if (!reset) begin
+      if (sched_source_valid) begin
+        if ((sched_source_total_beats != CMD_BEATS)
+         || (sched_source_request_beats >= sched_source_total_beats)
+         || (sched_source_response_beats > sched_source_request_beats)
+         || (sched_source_writer_beats > sched_source_total_beats))
+          $fatal(1, "Weight scheduler progress invalid seq=%0d total=%0d req=%0d rsp=%0d writer=%0d",
+                 sched_source_work_seq, sched_source_total_beats,
+                 sched_source_request_beats, sched_source_response_beats,
+                 sched_source_writer_beats);
+      end
+      if (sched_fetch_complete) begin
+        if ((sched_fetch_complete_work_seq >= 16)
+         || scheduler_fetch_complete_seen[sched_fetch_complete_work_seq])
+          $fatal(1, "Weight scheduler fetch-complete identity duplicate/invalid seq=%0d",
+                 sched_fetch_complete_work_seq);
+        scheduler_fetch_complete_seen[sched_fetch_complete_work_seq] = 1'b1;
+        scheduler_fetch_complete_count = scheduler_fetch_complete_count + 1;
+      end
       if (source_stall_active_r) begin
         if (!lmem_bus_if.req_valid
          || lmem_bus_if.req_data.addr !== source_stall_addr_r
@@ -298,6 +339,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     ctrl_if.seg_size = '0;
     ctrl_if.reg_idx = '0;
     ctrl_if.reg_value = '0;
+    ctrl_if.scheduler_work_seq = '0;
     writer_wait_i = '0;
     weight_consume_value0_i = 32'd0;
     weight_consume_value1_i = 32'd0;
@@ -321,6 +363,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     previous_command_last_cycle = -1;
     source_stall_cycles = 0;
     destination_stall_cycles = 0;
+    scheduler_fetch_complete_count = 0;
+    for (int seq = 0; seq < 16; ++seq)
+      scheduler_fetch_complete_seen[seq] = 1'b0;
     source_stall_active_r = 1'b0;
     destination_stall_active_r = 1'b0;
 
@@ -353,8 +398,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (dut.slot_occupancy_r != RESPONSE_SLOTS)
       $fatal(1, "shared slot pool occupancy=%0d expected=%0d",
              dut.slot_occupancy_r, RESPONSE_SLOTS);
-    if ((ready_ahead != 0) || !lmem_req_urgent)
-      $fatal(1, "Weight WAIT_RSP occupancy incorrectly counted as ready-ahead");
+    if ((ready_ahead != 0) || lmem_req_urgent
+     || (lmem_req_priority != GEMM_SCHED_PRIORITY_BACKGROUND))
+      $fatal(1, "Weight tracked P0 request was re-promoted by WAIT_RSP urgency");
     if (dut.cmd_count_r != 4 || dut.cmd_valid_r !== 4'b1111
      || dut.cmd_rd_done_r !== 4'b0011 || dut.rd_cmd_ptr_r != 2)
       $fatal(1, "four-descriptor/eight-slot residency mismatch count=%0d valid=%0h rd_done=%0h rd_ptr=%0d",
@@ -366,17 +412,19 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     // occupancy, then release the writer head one beat at a time.
     for (int request_index = 7; request_index >= 2; --request_index)
       send_response(request_index);
-    if ((ready_ahead != 0) || !lmem_req_urgent)
-      $fatal(1, "Weight nonconsecutive READY slots changed ready-ahead");
+    if ((ready_ahead != 0) || lmem_req_urgent)
+      $fatal(1, "Weight tracked P0 request was re-promoted by nonconsecutive READY state");
     send_response(0);
-    if ((ready_ahead != 1) || !lmem_req_urgent)
-      $fatal(1, "Weight threshold-1 urgency mismatch count=%0d", ready_ahead);
+    if ((ready_ahead != 1) || lmem_req_urgent)
+      $fatal(1, "Weight tracked P0 request was re-promoted at ready-ahead=1 count=%0d",
+             ready_ahead);
     send_response(1);
     wait (ready_ahead == RESPONSE_SLOTS);
     if (lmem_req_urgent)
       $fatal(1, "Weight urgency remained set with sufficient consecutive lead");
     $display("PASS marker: delayed reverse-order tagged source responses accepted");
     $display("PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP");
+    $display("PASS marker: tracked Weight P0 is not re-promoted by local ready-ahead urgency");
 
     // The writer has a valid staged request but must preserve it while the
     // destination is stalled.
@@ -472,6 +520,14 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (completion_count != MAIN_COMMANDS + 1)
       $fatal(1, "writer-fence command completion count mismatch got=%0d",
              completion_count);
+    if (scheduler_fetch_complete_count != MAIN_COMMANDS + 1)
+      $fatal(1, "Weight logical fetch completion count=%0d expected=%0d",
+             scheduler_fetch_complete_count, MAIN_COMMANDS + 1);
+    for (int seq = 0; seq <= MAIN_COMMANDS; ++seq) begin
+      if (!scheduler_fetch_complete_seen[seq])
+        $fatal(1, "Weight logical fetch completion missing seq=%0d", seq);
+    end
+    $display("PASS marker: Weight scheduler logical response completed once per descriptor after all composite responses");
     $display("PASS marker: source-before-consume, wrong/stale release rejection, and matching writer release");
 
     // Reset while a source request is stalled, one response is live, and one

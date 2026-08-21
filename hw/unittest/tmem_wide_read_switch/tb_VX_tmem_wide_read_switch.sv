@@ -67,7 +67,9 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (dut_reset),
         .req_urgent_i(wide_req_urgent),
+        .req_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
         .bank_req_urgent_o(bank_req_urgent),
+        .bank_req_priority_o(),
         .bus_in_if  (wide_if),
         .bus_out_if (bank_if)
     );
@@ -390,6 +392,30 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         bank_rsp_valid = '0;
     endtask
 
+    task automatic send_single_context_lane(
+        input int batch,
+        input int transaction,
+        input int lane
+    );
+        int bank_base;
+        int bank;
+        bank_base = (transaction % NUM_BANK_GROUPS) * BANKS_PER_BEAT;
+        bank = bank_base + lane;
+        @(negedge clk);
+        bank_rsp_valid = '0;
+        bank_rsp_valid[bank] = 1'b1;
+        bank_rsp_data[bank] = response_pattern(batch, transaction, bank);
+        bank_rsp_tag[bank] = OUT_TAG_WIDTH'(
+            {BANK_SEL_BITS'(bank), transaction_tag(batch, transaction)});
+        #1;
+        if (!bank_rsp_ready[bank])
+            $fatal(1, "case%0d tx%0d bank%0d: legal partial response not ready",
+                   CASE_ID, transaction, bank);
+        @(posedge clk);
+        @(negedge clk);
+        bank_rsp_valid = '0;
+    endtask
+
     task automatic respond_reversed_skewed(input int batch);
         // Complete contexts in reverse order. Contexts may reuse a physical
         // bank group when context depth exceeds NUM_BANK_GROUPS, so each
@@ -399,8 +425,22 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
     endtask
 
     task automatic respond_ordered(input int batch);
-        for (int t = 0; t < OUTSTANDING; ++t)
-            send_context_lanes(batch, t, 0);
+        for (int t = 0; t < OUTSTANDING; ++t) begin
+            if ((t == 0) && (BANKS_PER_BEAT > 1)) begin
+                send_single_context_lane(batch, t, 0);
+                if (wide_if.rsp_valid)
+                    $fatal(1, "case%0d: logical Weight response completed before all lanes",
+                           CASE_ID);
+                send_context_lanes(batch, t, 1);
+                if (!wide_if.rsp_valid)
+                    $fatal(1, "case%0d: logical Weight response missing after final lane",
+                           CASE_ID);
+                $display("case%0d PASS: logical Weight response waited for all %0d lanes",
+                         CASE_ID, BANKS_PER_BEAT);
+            end else begin
+                send_context_lanes(batch, t, 0);
+            end
+        end
     endtask
 
     task automatic retire_batch(input int batch);

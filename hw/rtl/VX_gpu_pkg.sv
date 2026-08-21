@@ -919,6 +919,19 @@ package VX_gpu_pkg;
    localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
    localparam int GEMM_NUM_SYNC_REGS     = 21;
    localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
+   localparam int GEMM_SCHED_PRIORITY_WIDTH = 2;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_BACKGROUND = 2'd0;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_NEAR = 2'd1;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_EARLIEST = 2'd2;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_BLOCKED = 2'd3;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_INPUT  = 2'd0;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_WEIGHT = 2'd1;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_SCALE  = 2'd2;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_ZP     = 2'd3;
    localparam int GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS =
        `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS;
    localparam int GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS =
@@ -999,6 +1012,10 @@ package VX_gpu_pkg;
                                  dma_max_chunk_log2p1;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
+       // Monotonic micro-tile identity used only by the readiness scheduler.
+       // All W/S/Z/Input commands belonging to one micro-tile carry the same
+       // value.  It does not participate in architectural dependency checks.
+       logic [31:0]              work_seq;
        gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
        // Input-only resource metadata.  These waits are intentionally
        // excluded from child issue eligibility so the pure source-read phase
@@ -1048,6 +1065,7 @@ package VX_gpu_pkg;
       logic [31:0] w_load_target;
       logic [31:0] s_load_target;
       logic [31:0] z_load_target;
+      logic [31:0] work_seq;
       logic is_load;
       logic notify_on_writeback;
       logic last;

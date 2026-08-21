@@ -23,6 +23,9 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
   logic [31:0] seg_size;
   logic [31:0] reg_idx;
   logic [31:0] reg_value;
+  // Readiness-scheduler identity.  This is carried with the descriptor but is
+  // not interpreted by the DMA datapath or architectural completion logic.
+  logic [31:0] scheduler_work_seq;
 
   // Status signals (slave -> master)
   logic        idle;
@@ -45,6 +48,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     output seg_size,
     output reg_idx,
     output reg_value,
+    output scheduler_work_seq,
     input  idle,
     input  prepare_ready,
     input  done,
@@ -63,6 +67,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     input  seg_size,
     input  reg_idx,
     input  reg_value,
+    input  scheduler_work_seq,
     output idle,
     output prepare_ready,
     output done,

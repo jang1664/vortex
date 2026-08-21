@@ -14,7 +14,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output logic             gemm_start_o,
     output logic             fsm_idle_o,
     output logic             pending_work_o,
-    output logic [2:0]       pending_child_o
+    output logic [2:0]       pending_child_o,
+    output logic             pending_scheduler_work_o,
+    output logic [31:0]      pending_work_seq_o
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,output logic            dbg_cmd_meta_valid_o
@@ -896,6 +898,58 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     pending_work_o = state_emits_work(state_q);
     pending_child_o = state_child(state_q);
     cfg_reg_if.ready = fsm_idle_o && gemm_fsm_if.flag.done;
+  end
+
+  // The scoreboard admission probe must be independent of child_ready.
+  // Keep this predecode outside the command-construction always_comb block;
+  // otherwise tools conservatively form child_ready -> FSM -> probe_ready ->
+  // child_ready even though the mathematical sequence uses registered state
+  // only.
+  always_comb begin
+    mm_tile_sz_t sched_kt_eff;
+    mm_mxu_dim_t sched_kt_mxu_dim;
+    mm_mxu_dim_t sched_next_nt_mxu;
+    mm_mxu_dim_t sched_next_kt_mxu;
+    mm_mxu_linear_t sched_mxu_linear;
+    mm_mxu_linear_t sched_next_mxu_linear;
+    logic sched_has_next_mxu;
+    u32_t sched_tile_mxu_base;
+
+    sched_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
+    sched_kt_mxu_dim = mm_mxu_dim_t'(
+        div_log2(u32_t'(sched_kt_eff), $clog2(MXU_KT)));
+    sched_mxu_linear = mm_mxu_linear_t'(
+        mm_mxu_linear_t'(nt_mxu_q) * mm_mxu_linear_t'(sched_kt_mxu_dim)
+      + mm_mxu_linear_t'(kt_mxu_q));
+    sched_next_kt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
+                      ? '0 : (kt_mxu_q + 1);
+    sched_next_nt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
+                      ? (nt_mxu_q + 1) : nt_mxu_q;
+    sched_has_next_mxu = sched_next_nt_mxu < mm_mxu_dim_t'(
+        ceil_div_log2(u32_t'((tile_cur_nt_q == nt_dim_q - 1)
+                           ? n_last_q : NT_q), $clog2(MXU_NT)));
+    sched_next_mxu_linear = mm_mxu_linear_t'(
+        mm_mxu_linear_t'(sched_next_nt_mxu)
+          * mm_mxu_linear_t'(sched_kt_mxu_dim)
+      + mm_mxu_linear_t'(sched_next_kt_mxu));
+    sched_tile_mxu_base = tile_cur_q * u32_t'(MXU_PER_TILE_MAX);
+
+    pending_scheduler_work_o = 1'b0;
+    pending_work_seq_o = '0;
+    unique case (state_q)
+      S_MXU_PRE_CUR_W, S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP,
+      S_MXU_ARM_GEMM: begin
+        pending_scheduler_work_o = 1'b1;
+        pending_work_seq_o = sched_tile_mxu_base
+                           + u32_t'(sched_mxu_linear) + 32'd1;
+      end
+      S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
+        pending_scheduler_work_o = sched_has_next_mxu;
+        pending_work_seq_o = sched_tile_mxu_base
+                           + u32_t'(sched_next_mxu_linear) + 32'd1;
+      end
+      default:;
+    endcase
   end
 
   wire gemm_invocation_accept
@@ -1790,6 +1844,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound    = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.work_seq = global_mxu_seq;
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
@@ -1832,6 +1887,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.work_seq = global_mxu_seq;
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
@@ -1867,6 +1923,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.work_seq = global_mxu_seq;
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
@@ -1919,6 +1976,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             c.bound     = 16'd1;
 
             out_cmd_d   = c;
+            out_cmd_d.work_seq = next_global_mxu_seq;
             out_cmd_d.prepare = make_source_prepare_wait(
                 rid_tile(buf_cur), in_ready_target_cur,
                 GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
@@ -1967,6 +2025,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             c.bound     = 16'd1;
 
             out_cmd_d   = c;
+            out_cmd_d.work_seq = next_global_mxu_seq;
             out_cmd_d.prepare = make_source_prepare_wait(
                 rid_tile(buf_cur), in_ready_target_cur,
                 GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
@@ -2007,6 +2066,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.bound     = 16'd1;
 
           out_cmd_d   = c;
+          out_cmd_d.work_seq = next_global_mxu_seq;
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
@@ -2057,6 +2117,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.stride   = MXU_KT * FP16_BYTES;
 
           out_cmd_d   = c;
+          out_cmd_d.work_seq = global_mxu_seq;
           out_cmd_d.prepare = make_source_prepare_wait(
               rid_tile(buf_cur), in_ready_target_cur,
               GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);

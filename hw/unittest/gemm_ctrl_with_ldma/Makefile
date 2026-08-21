@@ -40,6 +40,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
+				$(RTL_DIR)/core/gemm/VX_microtile_readiness_scheduler.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync.sv \

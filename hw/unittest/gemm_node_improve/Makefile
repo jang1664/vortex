@@ -60,6 +60,7 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
+        $(RTL_DIR)/core/gemm/VX_microtile_readiness_scheduler.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \

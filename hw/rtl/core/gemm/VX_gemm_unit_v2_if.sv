@@ -20,6 +20,14 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
     logic zp_consume_valid;
     logic zp_consume_idx;
     logic pipeline_empty;
+    logic input_ahead_credit;
+    logic input_admit_valid;
+    logic [31:0] input_admit_work_seq;
+    logic consumer_block_valid;
+    logic [1:0] consumer_block_resource;
+    logic [31:0] consumer_block_work_seq;
+    logic consumer_block_bank;
+    logic [31:0] consumer_block_target;
 
     modport master (
         output packet_ctrl,
@@ -40,6 +48,14 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
         input  zp_consume_valid,
         input  zp_consume_idx,
         input  pipeline_empty
+        ,input input_ahead_credit
+        ,input input_admit_valid
+        ,input input_admit_work_seq
+        ,input consumer_block_valid
+        ,input consumer_block_resource
+        ,input consumer_block_work_seq
+        ,input consumer_block_bank
+        ,input consumer_block_target
     );
 
     modport slave (
@@ -61,6 +77,14 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
         output zp_consume_valid,
         output zp_consume_idx,
         output pipeline_empty
+        ,output input_ahead_credit
+        ,output input_admit_valid
+        ,output input_admit_work_seq
+        ,output consumer_block_valid
+        ,output consumer_block_resource
+        ,output consumer_block_work_seq
+        ,output consumer_block_bank
+        ,output consumer_block_target
     );
 
 endinterface
