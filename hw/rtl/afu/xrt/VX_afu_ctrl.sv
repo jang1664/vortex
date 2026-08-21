@@ -152,7 +152,7 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     localparam MEMORY_BANK_ADDR_WIDTH = `PLATFORM_MEMORY_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS);
 
     // device caps (num_banks = PLATFORM_MEMORY_NUM_BANKS, the physical HBM bank count)
-    wire [63:0] dev_caps = {8'b0,
+    wire [63:0] dev_caps = {8'(`NUM_BARRIERS),
                             5'(MEMORY_BANK_ADDR_WIDTH-20),
                             3'(`CLOG2(`PLATFORM_MEMORY_NUM_BANKS)),
                             8'(`LMEM_ENABLED ? `LMEM_LOG_SIZE : 0),
