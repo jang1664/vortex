@@ -180,6 +180,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   integer previous_command_last_cycle;
   integer source_stall_cycles;
   integer destination_stall_cycles;
+  integer logical_response_count;
   integer scheduler_fetch_complete_count;
   logic scheduler_fetch_complete_seen[16];
   logic source_stall_active_r;
@@ -188,6 +189,10 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   logic destination_stall_active_r;
   logic [BUS_ADDR_WIDTH-1:0] destination_stall_addr_r;
   logic [BUS_BYTES*8-1:0] destination_stall_data_r;
+  logic previous_destination_fire_r;
+  logic [TAG_WIDTH-`UP(UUID_WIDTH)-1:0]
+        previous_destination_slot_r;
+  integer next_cycle_slot_reuse_count;
 
   always @(posedge clk) begin
     int seq;
@@ -244,6 +249,19 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
                  source_req_count, lmem_bus_if.req_data.tag.value);
         source_req_count = source_req_count + 1;
       end
+      if (lmem_bus_if.req_valid && lmem_bus_if.req_ready
+       && gemm_bus_if.req_valid && gemm_bus_if.req_ready
+       && (lmem_bus_if.req_data.tag.value == dut.drain_slot_r))
+        $fatal(1, "Weight reused a destination slot on its release edge");
+      if (previous_destination_fire_r
+       && lmem_bus_if.req_valid && lmem_bus_if.req_ready
+       && (lmem_bus_if.req_data.tag.value == previous_destination_slot_r))
+        next_cycle_slot_reuse_count = next_cycle_slot_reuse_count + 1;
+      if (lmem_bus_if.rsp_valid && lmem_bus_if.rsp_ready) begin
+        if ($bits(lmem_bus_if.rsp_data.data) != BUS_BYTES * 8)
+          $fatal(1, "Weight queue accepted a non-logical-width response");
+        logical_response_count = logical_response_count + 1;
+      end
 
       if (destination_stall_active_r) begin
         if (!gemm_bus_if.req_valid
@@ -295,9 +313,13 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
         end
         destination_req_count = destination_req_count + 1;
       end
+      previous_destination_fire_r = dst_fire;
+      if (dst_fire)
+        previous_destination_slot_r = dut.drain_slot_r;
     end else begin
       source_stall_active_r = 1'b0;
       destination_stall_active_r = 1'b0;
+      previous_destination_fire_r = 1'b0;
     end
   end
 
@@ -313,9 +335,14 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     lmem_rsp_data_r = response_payload(seq, beat);
     lmem_rsp_tag_r = '0;
     lmem_rsp_tag_r[TAG_WIDTH-`UP(UUID_WIDTH)-1:0] = slot;
-    while (lmem_bus_if.rsp_ready !== 1'b1)
-      @(negedge clk);
+    // Sample the response handshake on the accepting edge.  In reverse-tag
+    // traffic, rsp_ready can be low for the previously consumed tag when this
+    // task changes the tag at a negedge, then rise for the new owned tag before
+    // the next posedge.  Waiting only on negedges misses that legal fire and
+    // incorrectly holds the already-consumed response into a second posedge.
     @(posedge clk);
+    while (lmem_bus_if.rsp_ready !== 1'b1)
+      @(posedge clk);
     @(negedge clk);
     lmem_rsp_valid_r = 1'b0;
   endtask
@@ -363,11 +390,15 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     previous_command_last_cycle = -1;
     source_stall_cycles = 0;
     destination_stall_cycles = 0;
+    logical_response_count = 0;
     scheduler_fetch_complete_count = 0;
     for (int seq = 0; seq < 16; ++seq)
       scheduler_fetch_complete_seen[seq] = 1'b0;
     source_stall_active_r = 1'b0;
     destination_stall_active_r = 1'b0;
+    previous_destination_fire_r = 1'b0;
+    previous_destination_slot_r = '0;
+    next_cycle_slot_reuse_count = 0;
 
     repeat (5) @(posedge clk);
     @(negedge clk);
@@ -384,6 +415,24 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     @(negedge clk);
     if (ctrl_if.idle !== 1'b0 || dut.cmd_count_r != 4)
       $fatal(1, "Weight command FIFO did not report full after four enqueues");
+    if (!dut.dbg_overlap_shared_queue_bound
+     || (dut.dbg_overlap_fetch_tag_width
+         != $bits(lmem_bus_if.req_data.tag.value))
+     || (dut.dbg_overlap_logical_beat_bytes != BUS_BYTES)
+     || !dut.dbg_overlap_ring_slot_order
+     || !dut.dbg_overlap_sink_pipeline
+     || dut.dbg_overlap_same_cycle_slot_recycle)
+      $fatal(1, "Weight shared-queue mode binding mismatch");
+    for (int entry = 0; entry < 4; ++entry) begin
+      if (!dut.u_stream_queue.cmd_valid_r[entry]
+       || dut.u_stream_queue.cmd_total_r[entry] != CMD_BEATS
+       || dut.u_stream_queue.cmd_request_r[entry] != 0
+       || dut.u_stream_queue.cmd_response_r[entry] != 0
+       || dut.u_stream_queue.cmd_write_r[entry] != 0)
+        $fatal(1, "Weight shared-queue descriptor mismatch entry=%0d", entry);
+    end
+    $display("PASS marker: Weight owns independent VX_gemm_stream_dma_queue depth4/slots8 logical_bytes=%0d",
+             BUS_BYTES);
     $display("PASS marker: four Weight descriptors enqueued before any completion");
 
     // Hold the first source request, then accept two commands' reads.  The
@@ -420,9 +469,13 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
              ready_ahead);
     send_response(1);
     wait (ready_ahead == RESPONSE_SLOTS);
+    if (logical_response_count != RESPONSE_SLOTS)
+      $fatal(1, "Weight complete logical response count=%0d expected=%0d",
+             logical_response_count, RESPONSE_SLOTS);
     if (lmem_req_urgent)
       $fatal(1, "Weight urgency remained set with sufficient consecutive lead");
     $display("PASS marker: delayed reverse-order tagged source responses accepted");
+    $display("PASS marker: each queue response is one completed 128B Weight logical beat");
     $display("PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP");
     $display("PASS marker: tracked Weight P0 is not re-promoted by local ready-ahead urgency");
 
@@ -479,12 +532,16 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (first_boundary_gap < 0 || first_boundary_gap > 1)
       $fatal(1, "ready burst boundary coverage missing gap=%0d",
              first_boundary_gap);
+    if (next_cycle_slot_reuse_count == 0)
+      $fatal(1, "legacy next-cycle Weight slot reuse was not exercised");
     if (dut.cmd_count_r != 0 || dut.slot_occupancy_r != 0)
       $fatal(1, "executor not empty after wrap test commands=%0d slots=%0d",
              dut.cmd_count_r, dut.slot_occupancy_r);
     $display("PASS marker: six commands wrapped command/slot pointers with ordered writes and completions");
     $display("PASS marker: ready four-beat burst boundary idle cycles=%0d", first_boundary_gap);
     $display("PASS marker: source and destination backpressure held requests stable");
+    $display("PASS marker: Weight slot reuse follows release by exactly one cycle count=%0d",
+             next_cycle_slot_reuse_count);
 
     // A source-ready buffer-0 command may fill all four response slots while
     // its exact consume target remains unresolved.  A stale target and a
@@ -523,6 +580,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (scheduler_fetch_complete_count != MAIN_COMMANDS + 1)
       $fatal(1, "Weight logical fetch completion count=%0d expected=%0d",
              scheduler_fetch_complete_count, MAIN_COMMANDS + 1);
+    if (logical_response_count != MAIN_BEATS + CMD_BEATS)
+      $fatal(1, "Weight logical response total=%0d expected=%0d",
+             logical_response_count, MAIN_BEATS + CMD_BEATS);
     for (int seq = 0; seq <= MAIN_COMMANDS; ++seq) begin
       if (!scheduler_fetch_complete_seen[seq])
         $fatal(1, "Weight logical fetch completion missing seq=%0d", seq);
@@ -559,7 +619,10 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     @(negedge clk);
     if (lmem_bus_if.req_valid || gemm_bus_if.req_valid
      || ctrl_if.done || ctrl_if.write_done || dut.cmd_count_r != 0
-     || dut.slot_occupancy_r != 0 || ctrl_if.idle !== 1'b1)
+     || dut.slot_occupancy_r != 0
+     || dut.u_stream_queue.cmd_count_r != 0
+     || dut.u_stream_queue.slot_count_r != 0
+     || ctrl_if.idle !== 1'b1)
       $fatal(1, "stale activity survived live reset");
     $display("PASS marker: live request/response/drain reset emitted no stale output");
 

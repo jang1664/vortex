@@ -253,9 +253,20 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     for (int entry = 0; entry < 4; ++entry) begin
       if (!dut.u_overlap.cmd_valid_r[entry]
           || dut.u_overlap.cmd_total_beats_r[entry] != 1
-          || dut.u_overlap.cmd_wr_count_r[entry] != 0)
+          || dut.u_overlap.cmd_wr_count_r[entry] != 0
+          || !dut.u_overlap.u_stream_queue.cmd_valid_r[entry]
+          || dut.u_overlap.u_stream_queue.cmd_total_r[entry] != 1
+          || dut.u_overlap.u_stream_queue.cmd_write_r[entry] != 0)
         $fatal(1, "Qparam one-beat descriptor state mismatch entry=%0d", entry);
     end
+    if (!dut.u_overlap.dbg_overlap_shared_queue_bound
+     || (dut.u_overlap.dbg_overlap_fetch_tag_width
+         != $bits(lmem_bus_if.req_data.tag.value))
+     || !dut.u_overlap.dbg_overlap_ring_slot_order
+     || !dut.u_overlap.dbg_overlap_sink_pipeline)
+      $fatal(1, "Qparam shared-queue mode binding mismatch");
+    $display("PASS: qparam mode=%s owns independent VX_gemm_stream_dma_queue depth4/slots8",
+             TEST_ZP ? "zero-point" : "scale");
     response_release = 1'b1;
     wait (pending_count == 0);
     repeat (3) @(posedge clk);
@@ -314,6 +325,8 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     repeat (2) @(posedge clk);
     if ((dut.u_overlap.cmd_count_r != 0)
      || (dut.u_overlap.slot_occupancy_r != 0)
+     || (dut.u_overlap.u_stream_queue.cmd_count_r != 0)
+     || (dut.u_overlap.u_stream_queue.slot_count_r != 0)
      || gemm_bus_if.req_valid)
       $fatal(1, "Qparam live-reset cleanup failed");
 

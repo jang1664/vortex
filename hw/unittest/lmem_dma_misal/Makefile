@@ -37,6 +37,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/core/VX_dma_unit.sv \
+				$(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+				$(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \

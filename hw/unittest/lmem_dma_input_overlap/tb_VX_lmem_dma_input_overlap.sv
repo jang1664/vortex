@@ -343,8 +343,11 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     wait (source_count == 8);
     #1;  // Sample DUT occupancy after the eighth allocation NBA commits.
     if ((start_count != 4) || (dut.cmd_count_r != 4)
-        || (dut.slot_occupancy_r != 8))
+        || (dut.slot_occupancy_r != 8)
+        || (dut.u_stream_queue.cmd_count_r != 4)
+        || (dut.u_stream_queue.slot_count_r != 8))
       $fatal(1, "Input depth-four/eight-slot preload coverage failed");
+    $display("PASS marker: Input descriptor/slot ownership is bound to VX_gemm_stream_dma_queue depth4/slots8");
     if ((ready_ahead != 0) || !lmem_req_urgent)
       $fatal(1, "Input WAIT_RSP occupancy incorrectly counted as ready-ahead");
     repeat (3) @(posedge clk);
@@ -406,6 +409,8 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
     reset = 1'b1;
     repeat (2) @(posedge clk);
     if ((dut.cmd_count_r != 0) || (dut.slot_occupancy_r != 0)
+        || (dut.u_stream_queue.cmd_count_r != 0)
+        || (dut.u_stream_queue.slot_count_r != 0)
         || gemm_bus_if.req_valid)
       $fatal(1, "Input live-reset cleanup failed");
 

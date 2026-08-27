@@ -426,7 +426,27 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
 
     task automatic respond_ordered(input int batch);
         for (int t = 0; t < OUTSTANDING; ++t) begin
-            if ((t == 0) && (BANKS_PER_BEAT > 1)) begin
+            if ((CASE_ID == 1) && (t == 0)
+             && (BANKS_PER_BEAT == 2)) begin
+                // WLOAD8 is exactly two 64-byte fragments. Return the upper
+                // fragment first and prove that it neither completes nor
+                // corrupts the logical 128-byte response before the lower
+                // fragment arrives.
+                send_single_context_lane(batch, t, 1);
+                if (wide_if.rsp_valid)
+                    $fatal(1, "case%0d: WLOAD8 response completed after upper half only",
+                           CASE_ID);
+                send_single_context_lane(batch, t, 0);
+                if (!wide_if.rsp_valid)
+                    $fatal(1, "case%0d: WLOAD8 response missing after lower half",
+                           CASE_ID);
+                if ((wide_if.rsp_data.tag !== transaction_tag(batch, t))
+                 || (wide_if.rsp_data.data !== expected_response(batch, t)))
+                    $fatal(1, "case%0d: upper-first WLOAD8 assembled response mismatch",
+                           CASE_ID);
+                $display("case%0d PASS: WLOAD8 upper fragment preceded lower fragment without early response",
+                         CASE_ID);
+            end else if ((t == 0) && (BANKS_PER_BEAT > 1)) begin
                 send_single_context_lane(batch, t, 0);
                 if (wide_if.rsp_valid)
                     $fatal(1, "case%0d: logical Weight response completed before all lanes",
@@ -491,9 +511,11 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
 
     task automatic run_negative(input string mode);
         logic [TAG_WIDTH-1:0] tag;
+        logic [TAG_WIDTH-1:0] stale_tag;
         int bank;
 
         tag = transaction_tag(0, 0);
+        stale_tag = tag ^ (TAG_WIDTH'(1) << CTX_BITS);
         bank = 0;
         wide_if.req_valid = 1'b0;
         wide_if.rsp_ready = 1'b0;
@@ -544,6 +566,25 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
             bank_rsp_data[bank] = response_pattern(0, 0, bank);
             bank_rsp_tag[bank] = OUT_TAG_WIDTH'(
                 {BANK_SEL_BITS'(bank), tag});
+            @(posedge clk);
+        end else if (mode == "stale_response") begin
+            @(negedge clk);
+            bank_req_ready = '1;
+            drive_request(0, 0);
+            if (!wide_if.req_ready)
+                $fatal(1, "negative stale_response setup: request was not ready");
+            @(posedge clk);
+            @(negedge clk);
+            wide_if.req_valid = 1'b0;
+            // Issue both physical reads, then return the same slot bits with
+            // a different full original tag. The live context must reject it
+            // as stale rather than treating it as an owned response.
+            @(posedge clk);
+            @(negedge clk);
+            bank_rsp_valid[bank] = 1'b1;
+            bank_rsp_data[bank] = response_pattern(0, 0, bank);
+            bank_rsp_tag[bank] = OUT_TAG_WIDTH'(
+                {BANK_SEL_BITS'(bank), stale_tag});
             @(posedge clk);
         end else if (mode == "duplicate_response") begin
             @(negedge clk);

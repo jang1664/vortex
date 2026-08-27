@@ -20,6 +20,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 	$(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 	$(RTL_DIR)/libs/VX_dp_ram.sv \
+	$(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+	$(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
+	$(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv \
 	$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv
 
 INCDIRS_ := $(RTL_DIR) $(RTL_DIR)/mem $(RTL_DIR)/core/gemm $(RTL_DIR)/libs
