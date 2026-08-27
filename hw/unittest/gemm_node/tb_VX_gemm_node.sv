@@ -29,6 +29,7 @@ module tb_VX_gemm_node
   localparam int DMA_MT     = `GEMM_FSM_MT;
   localparam int DMA_NT     = `GEMM_FSM_NT;
   localparam int DMA_KT     = `GEMM_FSM_KT;
+  localparam int DMA_MXU_KT = `GEMM_FSM_MXU_KT;
 
   localparam int FP16_WIDTH   = 16;
 
@@ -40,17 +41,20 @@ module tb_VX_gemm_node
   localparam longint unsigned LMEM_SCBUF_BYTES        = LMEM_GROUPS_TILE * longint'(DMA_NT) * 2;
   localparam longint unsigned LMEM_ZPBUF_BYTES        = LMEM_GROUPS_TILE * longint'(DMA_NT) * 2;
   localparam longint unsigned LMEM_OBUF_BYTES         = longint'(DMA_MT) * longint'(DMA_NT) * 2;
+  localparam longint unsigned LMEM_PSUM_BYTES         = longint'(DMA_MT) * longint'(DMA_NT) * 4;
 
   localparam longint unsigned LMEM_IBUF_ALLOC_BYTES   = ((LMEM_IBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
   localparam longint unsigned LMEM_WBUF_ALLOC_BYTES   = ((LMEM_WBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
   localparam longint unsigned LMEM_SCBUF_ALLOC_BYTES  = ((LMEM_SCBUF_BYTES + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
   localparam longint unsigned LMEM_ZPBUF_ALLOC_BYTES  = ((LMEM_ZPBUF_BYTES + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
   localparam longint unsigned LMEM_OBUF_ALLOC_BYTES   = ((LMEM_OBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
+  localparam longint unsigned LMEM_PSUM_ALLOC_BYTES   = ((LMEM_PSUM_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
   localparam longint unsigned LMEM_REQUIRED_BYTES     = (2 * LMEM_IBUF_ALLOC_BYTES)
                                                       + (2 * LMEM_WBUF_ALLOC_BYTES)
                                                       + (2 * LMEM_SCBUF_ALLOC_BYTES)
                                                       + (2 * LMEM_ZPBUF_ALLOC_BYTES)
-                                                      + LMEM_OBUF_ALLOC_BYTES;
+                                                      + LMEM_OBUF_ALLOC_BYTES
+                                                      + LMEM_PSUM_ALLOC_BYTES;
 
   // VX_local_mem is most robust with power-of-two footprint.
   localparam longint unsigned LMEM_SIZE_U = (64'd1 << `CLOG2(LMEM_REQUIRED_BYTES));
@@ -62,7 +66,9 @@ module tb_VX_gemm_node
   localparam int DMEM_SIZE       = 7 * 1024 * 1024; // 7MB
   localparam int DMEM_ADDR_WIDTH = `CLOG2(DMEM_SIZE);
 
-  localparam int DCACHE_BYTES = LSU_WORD_SIZE;
+  // Match the production W8 endpoint: one 64-byte DCache lane feeding the
+  // existing 32x8-byte (256-byte) LMEM side of VX_dma_node.
+  localparam int DCACHE_BYTES = DCACHE_WORD_SIZE;
   localparam int CACHE_NUM_REQS     = 1;
   localparam int CACHE_MEM_PORTS    = 1;
   localparam int CACHE_SIZE         = 4096;
@@ -102,6 +108,69 @@ module tb_VX_gemm_node
   initial clk = 1'b0;
   always #(PERIOD/2) clk = ~clk;
 
+  logic [11:0] psum_pending0_prev;
+  logic [11:0] psum_pending1_prev;
+  logic [11:0] psum_pending0_max;
+  logic [11:0] psum_pending1_max;
+  bit saw_psum_112_to_128;
+  bit saw_psum_set1_112_to_128;
+  bit saw_psum_set0_drain;
+  bit saw_psum_set1_drain;
+  bit saw_psum_conflict_block;
+  bit saw_psum_pop_while_blocked;
+  bit saw_psum_read_after_drain;
+  bit [3:0] saw_psum_lane0_boundary_addr;
+  bit saw_fsm_state14;
+  bit saw_fsm_leave_state14;
+  integer psum_lane0_boundary_writes;
+  logic [63:0] lmem_psum_base_monitor;
+  bit weight_command_active;
+  integer weight_beats_in_command;
+  integer weight_command_count;
+  integer weight_beat_count;
+  integer common_command_count;
+  integer common_admission_count;
+  integer common_retire_count;
+  integer common_acc_write_count;
+  integer common_psum_write_count;
+  integer common_final_write_count;
+  integer common_tagged_writeback_count;
+  integer common_command_done_count;
+  integer common_weight_write_count;
+  integer common_scale_write_count;
+  integer common_zero_write_count;
+  integer common_weight_generation_count;
+  integer common_scale_generation_count;
+  integer common_zero_generation_count;
+  integer common_address_progress_checks;
+  integer common_pending_completions;
+  logic common_packet_progress_valid;
+  logic [`MEM_ADDR_WIDTH-1:0] common_prev_rd_addr;
+  logic [`MEM_ADDR_WIDTH-1:0] common_prev_wr_addr;
+  logic common_prev_final_output;
+  logic [31:0] common_prev_work_seq;
+  logic [31:0] common_prev_w_generation [2];
+  logic [31:0] common_prev_s_generation [2];
+  logic [31:0] common_prev_z_generation [2];
+  logic common_weight_final_install_q;
+  logic common_weight_final_bank_q;
+  logic common_scale_final_install_q;
+  logic common_scale_final_bank_q;
+  logic common_zero_final_install_q;
+  logic common_zero_final_bank_q;
+  logic common_qparam_owner_active;
+  logic [7:0] common_qparam_owner_opcode;
+  logic [31:0] common_qparam_expected_writes;
+  logic [31:0] common_qparam_seen_writes;
+  integer common_scale_command_count;
+  integer common_zero_command_count;
+  integer common_scale_expected_write_sum;
+  integer common_zero_expected_write_sum;
+  integer common_qparam_min_expected;
+  integer common_qparam_max_expected;
+  integer common_test_qblk;
+  integer common_test_qdir;
+
 
   integer rpt_fd;
   integer log_fd;
@@ -122,11 +191,19 @@ module tb_VX_gemm_node
     $sformat(rpt_file_path,  "./reports/%s.rpt",  name);
 
 `ifdef VCS
-    $fsdbDumpfile(fsdb_file_path);
-    $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+    if (!$test$plusargs("NO_WAVE")) begin
+      $fsdbDumpfile(fsdb_file_path);
+      $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+    end else begin
+      $display("[TB] NO_WAVE active: waveform dumping disabled");
+    end
 `else
-    $dumpfile(fst_file_path);
-    $dumpvars(0, tb_VX_gemm_node);
+    if (!$test$plusargs("NO_WAVE")) begin
+      $dumpfile(fst_file_path);
+      $dumpvars(0, tb_VX_gemm_node);
+    end else begin
+      $display("[TB] NO_WAVE active: waveform dumping disabled");
+    end
 `endif
 
     rpt_fd = $fopen(rpt_file_path, "w");
@@ -239,8 +316,406 @@ module tb_VX_gemm_node
     .lmem_bus_if  (lmem_bus_if_dma)
   );
 
+  // The internal write arbiter may use a wider tag than the exposed PSUM
+  // write port.  Every non-tag field must remain bit-identical across that
+  // boundary, including the PSUM marker in flags[0].
+  for (genvar psum_lane = 0; psum_lane < `LMEM_NUM_PORTS; ++psum_lane) begin : g_psum_boundary_check
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        assert (u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_valid
+             === psum_wr_lmem_bus_if[psum_lane].req_valid)
+          else $fatal(1, "PSUM boundary valid mismatch lane=%0d", psum_lane);
+        assert (u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_ready
+             === psum_wr_lmem_bus_if[psum_lane].req_ready)
+          else $fatal(1, "PSUM boundary ready mismatch lane=%0d", psum_lane);
+        if (u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_valid) begin
+          assert (u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.rw
+               === psum_wr_lmem_bus_if[psum_lane].req_data.rw
+               && u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.addr
+               === psum_wr_lmem_bus_if[psum_lane].req_data.addr
+               && u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.data
+               === psum_wr_lmem_bus_if[psum_lane].req_data.data
+               && u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.byteen
+               === psum_wr_lmem_bus_if[psum_lane].req_data.byteen
+               && u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.flags
+               === psum_wr_lmem_bus_if[psum_lane].req_data.flags)
+            else $fatal(1, "PSUM boundary payload mismatch lane=%0d int_addr=0x%0h ext_addr=0x%0h int_flags=0x%0h ext_flags=0x%0h",
+                        psum_lane,
+                        u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.addr,
+                        psum_wr_lmem_bus_if[psum_lane].req_data.addr,
+                        u_dut.g_psum_lane_arb[psum_lane].wr_out_if[0].req_data.flags,
+                        psum_wr_lmem_bus_if[psum_lane].req_data.flags);
+        end
+      end
+    end
+  end
+
+  // Phase-0 WLOAD8 ordering proof.  A queued set-0 PSUM read must not pass
+  // while any of the sixteen-lane write credits remain, including the eighth
+  // write that raises the pending count from 112 to 128.
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      psum_pending0_prev <= '0;
+      psum_pending1_prev <= '0;
+      psum_pending0_max <= '0;
+      psum_pending1_max <= '0;
+      saw_psum_112_to_128 <= 1'b0;
+      saw_psum_set1_112_to_128 <= 1'b0;
+      saw_psum_set0_drain <= 1'b0;
+      saw_psum_set1_drain <= 1'b0;
+      saw_psum_conflict_block <= 1'b0;
+      saw_psum_pop_while_blocked <= 1'b0;
+      saw_psum_read_after_drain <= 1'b0;
+      saw_psum_lane0_boundary_addr <= '0;
+      saw_fsm_state14 <= 1'b0;
+      saw_fsm_leave_state14 <= 1'b0;
+      psum_lane0_boundary_writes <= 0;
+      weight_command_active <= 1'b0;
+      weight_beats_in_command <= 0;
+      weight_command_count <= 0;
+      weight_beat_count <= 0;
+    end else begin
+      if (psum_pending0_prev == 12'd112) begin
+        assert (u_dut.psum_wr_pending_by_set[0] != 12'd0)
+          else $fatal(1, "PSUM pending set0 wrapped 112->0");
+        if (u_dut.psum_wr_pending_by_set[0] == 12'd128) begin
+          saw_psum_112_to_128 <= 1'b1;
+          $display("PSUM_CREDIT_CROSS set=0 pending=112->128 time=%0t", $time);
+        end
+      end
+      psum_pending0_prev <= u_dut.psum_wr_pending_by_set[0];
+      if (u_dut.psum_wr_pending_by_set[0] > psum_pending0_max)
+        psum_pending0_max <= u_dut.psum_wr_pending_by_set[0];
+      if (psum_pending1_prev == 12'd112) begin
+        assert (u_dut.psum_wr_pending_by_set[1] != 12'd0)
+          else $fatal(1, "PSUM pending set1 wrapped 112->0");
+        if (u_dut.psum_wr_pending_by_set[1] == 12'd128) begin
+          saw_psum_set1_112_to_128 <= 1'b1;
+          $display("PSUM_CREDIT_CROSS set=1 pending=112->128 time=%0t", $time);
+        end
+      end
+      psum_pending1_prev <= u_dut.psum_wr_pending_by_set[1];
+      if (u_dut.psum_wr_pending_by_set[1] > psum_pending1_max)
+        psum_pending1_max <= u_dut.psum_wr_pending_by_set[1];
+
+      if (saw_psum_112_to_128 && (psum_pending0_prev != 0)
+       && (u_dut.psum_wr_pending_by_set[0] == 0)) begin
+        saw_psum_set0_drain <= 1'b1;
+        $display("PSUM_CREDIT_DRAIN set=0 pending=%0d->0 time=%0t",
+                 psum_pending0_prev, $time);
+      end
+      if (saw_psum_set1_112_to_128 && (psum_pending1_prev != 0)
+       && (u_dut.psum_wr_pending_by_set[1] == 0)) begin
+        saw_psum_set1_drain <= 1'b1;
+        $display("PSUM_CREDIT_DRAIN set=1 pending=%0d->0 time=%0t",
+                 psum_pending1_prev, $time);
+      end
+
+      if (u_dut.g_psum_lane_arb[0].wr_out_if[0].req_valid
+       && u_dut.g_psum_lane_arb[0].wr_out_if[0].req_ready
+       && u_dut.g_psum_lane_arb[0].wr_out_if[0].req_data.flags[0]) begin
+        assert (psum_wr_lmem_bus_if[0].req_data.flags[0])
+          else $fatal(1, "PSUM lane0 marker lost at write boundary");
+        case (64'(u_dut.g_psum_lane_arb[0].wr_out_if[0].req_data.addr)
+              - (lmem_psum_base_monitor >> $clog2(LSU_WORD_SIZE)))
+          'h0:  saw_psum_lane0_boundary_addr[0] <= 1'b1;
+          'h10: saw_psum_lane0_boundary_addr[1] <= 1'b1;
+          'h20: saw_psum_lane0_boundary_addr[2] <= 1'b1;
+          'h30: saw_psum_lane0_boundary_addr[3] <= 1'b1;
+          default: ;
+        endcase
+        psum_lane0_boundary_writes <= psum_lane0_boundary_writes + 1;
+      end
+
+      if (u_dut.u_VX_gemm_ctrl_naive.u_VX_gemm_fsm_naive.state_q == 8'd14)
+        saw_fsm_state14 <= 1'b1;
+      if (saw_fsm_state14
+       && (u_dut.u_VX_gemm_ctrl_naive.u_VX_gemm_fsm_naive.state_q != 8'd14))
+        saw_fsm_leave_state14 <= 1'b1;
+
+      if (u_dut.psum_rd_raw_bus_if.req_valid
+       && (u_dut.psum_rd_raw_bus_if.req_data.addr[0] == 1'b0)
+       && (u_dut.psum_wr_pending_by_set[0] != 0)) begin
+        assert (u_dut.psum_rd_pending_conflict
+             && u_dut.psum_rd_order_block
+             && !u_dut.psum_rd_raw_bus_if.req_ready
+             && !u_dut.psum_rd_wide_bus_if.req_valid)
+          else $fatal(1, "conflicting PSUM read escaped with set0 pending=%0d",
+                      u_dut.psum_wr_pending_by_set[0]);
+        saw_psum_conflict_block <= 1'b1;
+        if (u_dut.psum_wr_lane_pop_by_set[0] != 0)
+          saw_psum_pop_while_blocked <= 1'b1;
+      end
+
+      if (u_dut.psum_rd_raw_bus_if.req_valid
+       && u_dut.psum_rd_raw_bus_if.req_ready
+       && (u_dut.psum_rd_raw_bus_if.req_data.addr[0] == 1'b0)
+       && saw_psum_conflict_block) begin
+        assert ((u_dut.psum_wr_pending_by_set[0] == 0)
+             && saw_psum_pop_while_blocked)
+          else $fatal(1, "set0 PSUM read admitted before blocked write credits drained");
+        saw_psum_read_after_drain <= 1'b1;
+      end
+
+      if (u_dut.weight_dma_ctrl_if.start && u_dut.weight_dma_ctrl_if.idle) begin
+        assert (!weight_command_active)
+          else $fatal(1, "overlapping Weight gather commands");
+        weight_command_active <= 1'b1;
+        weight_beats_in_command <= 0;
+      end
+      if (u_dut.w_dma_gemm_bus_if.req_valid
+       && u_dut.w_dma_gemm_bus_if.req_ready) begin
+        assert (weight_command_active)
+          else $fatal(1, "Weight beat observed outside an active gather command");
+        weight_beats_in_command <= weight_beats_in_command + 1;
+        weight_beat_count <= weight_beat_count + 1;
+      end
+      if (u_dut.weight_dma_ctrl_if.done) begin
+        assert (weight_command_active && (weight_beats_in_command == 4))
+          else $fatal(1, "Weight command completed with %0d beats, expected 4",
+                      weight_beats_in_command);
+        weight_command_active <= 1'b0;
+        weight_command_count <= weight_command_count + 1;
+      end
+    end
+  end
+
+  // Phase-5 common-path accounting.  These XMRs intentionally prove that the
+  // default NAIVE hierarchy elaborates the shared compute core and LMEM ACC
+  // adapter.  The legacy VX_gemm_unit has no instance in VX_gemm_node_naive.
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      common_command_count <= 0;
+      common_admission_count <= 0;
+      common_retire_count <= 0;
+      common_acc_write_count <= 0;
+      common_psum_write_count <= 0;
+      common_final_write_count <= 0;
+      common_tagged_writeback_count <= 0;
+      common_command_done_count <= 0;
+      common_weight_write_count <= 0;
+      common_scale_write_count <= 0;
+      common_zero_write_count <= 0;
+      common_weight_generation_count <= 0;
+      common_scale_generation_count <= 0;
+      common_zero_generation_count <= 0;
+      common_address_progress_checks <= 0;
+      common_pending_completions <= 0;
+      common_packet_progress_valid <= 1'b0;
+      common_prev_rd_addr <= '0;
+      common_prev_wr_addr <= '0;
+      common_prev_final_output <= 1'b0;
+      common_prev_work_seq <= '0;
+      common_prev_w_generation[0] <= '0;
+      common_prev_w_generation[1] <= '0;
+      common_prev_s_generation[0] <= '0;
+      common_prev_s_generation[1] <= '0;
+      common_prev_z_generation[0] <= '0;
+      common_prev_z_generation[1] <= '0;
+      common_weight_final_install_q <= 1'b0;
+      common_weight_final_bank_q <= 1'b0;
+      common_scale_final_install_q <= 1'b0;
+      common_scale_final_bank_q <= 1'b0;
+      common_zero_final_install_q <= 1'b0;
+      common_zero_final_bank_q <= 1'b0;
+      common_qparam_owner_active <= 1'b0;
+      common_qparam_owner_opcode <= '0;
+      common_qparam_expected_writes <= '0;
+      common_qparam_seen_writes <= '0;
+      common_scale_command_count <= 0;
+      common_zero_command_count <= 0;
+      common_scale_expected_write_sum <= 0;
+      common_zero_expected_write_sum <= 0;
+      common_qparam_min_expected <= 32'h7fff_ffff;
+      common_qparam_max_expected <= 0;
+    end else begin
+      if (u_dut.packetizer_cmd_valid && u_dut.packetizer_cmd_ready)
+        common_command_count <= common_command_count + 1;
+
+      if (u_dut.u_VX_gemm_compute_core.input_fire) begin
+        common_admission_count <= common_admission_count + 1;
+        if (common_packet_progress_valid) begin
+          assert (u_dut.gemm_unit_v2_if.packet_ctrl.work_seq
+               == common_prev_work_seq)
+            else $fatal(1, "NAIVE packet work_seq changed within a command");
+          assert (u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_addr
+               == common_prev_rd_addr + `GEMM_PSUM_DATA_SIZE)
+            else $fatal(1, "NAIVE packet read address stride mismatch");
+          assert (u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr
+               == common_prev_wr_addr
+                + (common_prev_final_output
+                    ? (DMA_NT * 2) : `GEMM_PSUM_DATA_SIZE))
+            else $fatal(1, "NAIVE packet write address stride mismatch");
+          assert (u_dut.gemm_unit_v2_if.packet_ctrl.last
+               == common_prev_final_output)
+            else $fatal(1, "NAIVE final/nonfinal metadata changed within command");
+          common_address_progress_checks <= common_address_progress_checks + 1;
+        end
+        common_prev_rd_addr
+            <= u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_addr;
+        common_prev_wr_addr
+            <= u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr;
+        common_prev_final_output
+            <= u_dut.gemm_unit_v2_if.packet_ctrl.last;
+        common_prev_work_seq
+            <= u_dut.gemm_unit_v2_if.packet_ctrl.work_seq;
+        common_packet_progress_valid
+            <= !u_dut.gemm_unit_v2_if.packet_ctrl.notify_on_writeback;
+      end
+
+      if (u_dut.u_VX_gemm_compute_core.pipeline_retire)
+        common_retire_count <= common_retire_count + 1;
+      if (u_dut.u_VX_gemm_compute_core.acc_write_fire)
+        common_acc_write_count <= common_acc_write_count + 1;
+      if (u_dut.psum_wr_raw_bus_if.req_valid
+       && u_dut.psum_wr_raw_bus_if.req_ready)
+        common_psum_write_count <= common_psum_write_count + 1;
+      if (u_dut.u_VX_gemm_acc_lmem.final_lmem_fire)
+        common_final_write_count <= common_final_write_count + 1;
+
+      if (u_dut.gemm_unit_v2_if.tagged_writeback) begin
+        common_tagged_writeback_count <= common_tagged_writeback_count + 1;
+        common_pending_completions <= common_pending_completions + 1;
+      end
+      if (u_dut.packetizer_command_done) begin
+        assert (common_pending_completions != 0)
+          else $fatal(1, "NAIVE command done preceded tagged writeback");
+        assert (u_dut.gemm_wr_lane_pending_r == 0)
+          else $fatal(1, "NAIVE command done preceded physical lane drain");
+        common_command_done_count <= common_command_done_count + 1;
+        common_pending_completions <= common_pending_completions - 1;
+      end
+
+      if (u_dut.gemm_unit_v2_if.weight_register_write)
+        common_weight_write_count <= common_weight_write_count + 1;
+      if (u_dut.gemm_unit_v2_if.scale_register_write)
+        common_scale_write_count <= common_scale_write_count + 1;
+      if (u_dut.gemm_unit_v2_if.zero_point_register_write)
+        common_zero_write_count <= common_zero_write_count + 1;
+
+      if (u_dut.gemm_unit_v2_if.scale_register_write
+       || u_dut.gemm_unit_v2_if.zero_point_register_write) begin
+        assert (common_qparam_owner_active)
+          else $fatal(1, "TB qparam write has no tracked command owner");
+        assert (u_dut.qparam_install_writes_remaining_r
+             == common_qparam_expected_writes
+              - common_qparam_seen_writes)
+          else $fatal(1, "qparam owner did not decrement by actual writes");
+        if (!((common_qparam_owner_opcode == 8'h21
+               && u_dut.gemm_unit_v2_if.scale_register_write
+               && !u_dut.gemm_unit_v2_if.zero_point_register_write)
+           || (common_qparam_owner_opcode == 8'h24
+               && u_dut.gemm_unit_v2_if.zero_point_register_write
+               && !u_dut.gemm_unit_v2_if.scale_register_write)))
+          $fatal(1, "Scale/Zero write decremented the wrong owner opcode=0x%0h scale=%0d zero=%0d remaining=%0d seen=%0d expected=%0d new_start=%0d new_opcode=0x%0h",
+                  common_qparam_owner_opcode,
+                  u_dut.gemm_unit_v2_if.scale_register_write,
+                  u_dut.gemm_unit_v2_if.zero_point_register_write,
+                  u_dut.qparam_install_writes_remaining_r,
+                  common_qparam_seen_writes,
+                  common_qparam_expected_writes,
+                  u_dut.quant_param_dma_ctrl_if.start
+                  && u_dut.quant_param_dma_ctrl_if.idle,
+                  u_dut.gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0]);
+        common_qparam_seen_writes <= common_qparam_seen_writes + 1'b1;
+        if (u_dut.qparam_install_writes_remaining_r == 1) begin
+          assert (common_qparam_seen_writes + 1
+               == common_qparam_expected_writes)
+            else $fatal(1, "qparam final write count disagrees with owner");
+          common_qparam_owner_active <= 1'b0;
+          if (common_qparam_owner_opcode == 8'h21) begin
+            common_scale_command_count <= common_scale_command_count + 1;
+            common_scale_expected_write_sum
+                <= common_scale_expected_write_sum
+                 + common_qparam_expected_writes;
+          end else begin
+            common_zero_command_count <= common_zero_command_count + 1;
+            common_zero_expected_write_sum
+                <= common_zero_expected_write_sum
+                 + common_qparam_expected_writes;
+          end
+        end
+      end
+
+      if (u_dut.quant_param_dma_ctrl_if.start
+       && u_dut.quant_param_dma_ctrl_if.idle) begin
+        assert (!common_qparam_owner_active
+             || ((u_dut.gemm_unit_v2_if.scale_register_write
+               || u_dut.gemm_unit_v2_if.zero_point_register_write)
+              && (u_dut.qparam_install_writes_remaining_r == 1)))
+          else $fatal(1, "qparam command replaced an undrained owner");
+        assert (u_dut.qparam_install_expected_writes
+             == (common_test_qdir
+                  ? DMA_MXU_KT
+                  : ((DMA_MXU_KT + common_test_qblk - 1)
+                     / common_test_qblk)))
+          else $fatal(1, "qparam command install count mismatches QDIR/QBLK");
+        common_qparam_owner_active <= 1'b1;
+        common_qparam_owner_opcode
+            <= u_dut.gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0];
+        common_qparam_expected_writes
+            <= u_dut.qparam_install_expected_writes;
+        common_qparam_seen_writes <= '0;
+        if (u_dut.qparam_install_expected_writes
+         < common_qparam_min_expected)
+          common_qparam_min_expected
+              <= u_dut.qparam_install_expected_writes;
+        if (u_dut.qparam_install_expected_writes
+         > common_qparam_max_expected)
+          common_qparam_max_expected
+              <= u_dut.qparam_install_expected_writes;
+      end
+
+      for (int common_bank = 0; common_bank < 2; ++common_bank) begin
+        if (u_dut.w_load_value_r[common_bank]
+         != common_prev_w_generation[common_bank]) begin
+          assert (common_weight_final_install_q
+               && (common_weight_final_bank_q == common_bank[0]))
+            else $fatal(1, "Weight generation advanced before final register write");
+          common_weight_generation_count
+              <= common_weight_generation_count + 1;
+        end
+        if (u_dut.s_load_value_r[common_bank]
+         != common_prev_s_generation[common_bank]) begin
+          assert (common_scale_final_install_q
+               && (common_scale_final_bank_q == common_bank[0]))
+            else $fatal(1, "Scale generation advanced before final register write");
+          common_scale_generation_count
+              <= common_scale_generation_count + 1;
+        end
+        if (u_dut.z_load_value_r[common_bank]
+         != common_prev_z_generation[common_bank]) begin
+          assert (common_zero_final_install_q
+               && (common_zero_final_bank_q == common_bank[0]))
+            else $fatal(1, "Zero generation advanced before final register write");
+          common_zero_generation_count
+              <= common_zero_generation_count + 1;
+        end
+        common_prev_w_generation[common_bank]
+            <= u_dut.w_load_value_r[common_bank];
+        common_prev_s_generation[common_bank]
+            <= u_dut.s_load_value_r[common_bank];
+        common_prev_z_generation[common_bank]
+            <= u_dut.z_load_value_r[common_bank];
+      end
+
+      common_weight_final_install_q
+          <= u_dut.gemm_unit_v2_if.weight_register_write
+          && (u_dut.weight_install_writes_remaining_r == 1);
+      common_weight_final_bank_q <= u_dut.weight_install_bank_r;
+      common_scale_final_install_q
+          <= u_dut.gemm_unit_v2_if.scale_register_write
+          && (u_dut.qparam_install_writes_remaining_r == 1);
+      common_scale_final_bank_q <= u_dut.qparam_install_bank_r;
+      common_zero_final_install_q
+          <= u_dut.gemm_unit_v2_if.zero_point_register_write
+          && (u_dut.qparam_install_writes_remaining_r == 1);
+      common_zero_final_bank_q <= u_dut.qparam_install_bank_r;
+    end
+  end
+
   // =========================================================================
-  // Job regs indices (0..39)
+  // Job regs indices (0..41)
   // =========================================================================
   localparam int REG_CONTROL             =  0;
   localparam int REG_INPUT_BASE_LO       =  1;
@@ -284,6 +759,8 @@ module tb_VX_gemm_node
   localparam int REG_N_START             = 37;
   localparam int REG_WTRANS              = 38;
   localparam int REG_QDIR                = 39;
+  localparam int REG_LMEM_PSUM_LO        = 40;
+  localparam int REG_LMEM_PSUM_HI        = 41;
 
   // =========================================================================
   // Memory fabric (closer to real Vortex path)
@@ -1057,7 +1534,8 @@ module tb_VX_gemm_node
     input logic [63:0] lmem_scbuf1_base,
     input logic [63:0] lmem_zpbuf0_base,
     input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
+    input logic [63:0] lmem_obuf_base,
+    input logic [63:0] lmem_psum_base
   );
     // globals
     job_write_reg64(eid, REG_INPUT_BASE_LO,  gmem_in_base);
@@ -1076,6 +1554,7 @@ module tb_VX_gemm_node
     job_write_reg64(eid, REG_LMEM_ZPBUF0_LO,  lmem_zpbuf0_base);
     job_write_reg64(eid, REG_LMEM_ZPBUF1_LO,  lmem_zpbuf1_base);
     job_write_reg64(eid, REG_LMEM_OBUF_LO,    lmem_obuf_base);
+    job_write_reg64(eid, REG_LMEM_PSUM_LO,    lmem_psum_base);
 
     // problem shape/control
     job_write_reg32(eid, REG_M_ORIG, test_m);
@@ -1240,7 +1719,8 @@ module tb_VX_gemm_node
     input logic [63:0] lmem_scbuf1_base,
     input logic [63:0] lmem_zpbuf0_base,
     input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
+    input logic [63:0] lmem_obuf_base,
+    input logic [63:0] lmem_psum_base
   );
     longint unsigned gmem_in_bytes;
     longint unsigned gmem_w_bytes;
@@ -1252,6 +1732,7 @@ module tb_VX_gemm_node
     longint unsigned lmem_scbuf_bytes;
     longint unsigned lmem_zpbuf_bytes;
     longint unsigned lmem_obuf_bytes;
+    longint unsigned lmem_psum_bytes;
     longint unsigned groups_total;
     longint unsigned groups_tile;
     longint unsigned ng_total, ng_tile;
@@ -1291,6 +1772,7 @@ module tb_VX_gemm_node
         lmem_zpbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
       end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;                // fp16 output
+      lmem_psum_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 4;                // fp32 partial sum
 
       // GMEM range checks
       assert_range_fit("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  DMEM_LIMIT);
@@ -1320,6 +1802,10 @@ module tb_VX_gemm_node
       assert_range_fit("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, LMEM_LIMIT);
       assert_range_fit("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, LMEM_LIMIT);
       assert_range_fit("LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes,  LMEM_LIMIT);
+      assert_range_fit("LMEM_PSUM",  lmem_psum_base,  lmem_psum_bytes,  LMEM_LIMIT);
+      if ((lmem_psum_base % LMEM_LAYOUT_ALIGN_BYTES) != 0)
+        $fatal(1, "[%0t] LMEM_PSUM base 0x%0h is not 4096-byte aligned",
+               $time, lmem_psum_base);
 
       assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes);
       assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes);
@@ -1358,7 +1844,18 @@ module tb_VX_gemm_node
       assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
       assert_no_overlap("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
 
-      $display("[%0t] Tensor layout check passed", $time);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+      assert_no_overlap("LMEM_OBUF", lmem_obuf_base, lmem_obuf_bytes, "LMEM_PSUM", lmem_psum_base, lmem_psum_bytes);
+
+      $display("[%0t] Tensor layout check passed: LMEM_PSUM base=0x%0h bytes=%0d aligned=4096 nonoverlap=1",
+               $time, lmem_psum_base, lmem_psum_bytes);
     end
   endtask
 
@@ -1383,7 +1880,8 @@ module tb_VX_gemm_node
     input logic [63:0] lmem_scbuf1_base,
     input logic [63:0] lmem_zpbuf0_base,
     input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
+    input logic [63:0] lmem_obuf_base,
+    input logic [63:0] lmem_psum_base
   );
     int unsigned job_eid_local;
     int unsigned job_gen_local;
@@ -1411,7 +1909,8 @@ module tb_VX_gemm_node
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base,
+        lmem_obuf_base, lmem_psum_base
       );
       write_gmem_inputs_weights_sc_zp(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
@@ -1437,7 +1936,8 @@ module tb_VX_gemm_node
               DMA_MT, DMA_NT, part_m * DMA_MT, part_n * DMA_NT,
               gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
               lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-              lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+              lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base,
+              lmem_obuf_base, lmem_psum_base
             );
             wait_job_done(job_eid_local, job_gen_local);
             check_progress_final(job_eid_local, DMA_MT, DMA_NT);
@@ -1450,7 +1950,8 @@ module tb_VX_gemm_node
           test_m, test_n, 0, 0,
           gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
           lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base,
+          lmem_obuf_base, lmem_psum_base
         );
         wait_job_done(job_eid_local, job_gen_local);
         check_progress_final(job_eid_local, test_m, test_n);
@@ -1482,11 +1983,12 @@ module tb_VX_gemm_node
     output logic [63:0] lmem_scbuf1_base,
     output logic [63:0] lmem_zpbuf0_base,
     output logic [63:0] lmem_zpbuf1_base,
-    output logic [63:0] lmem_obuf_base
+    output logic [63:0] lmem_obuf_base,
+    output logic [63:0] lmem_psum_base
   );
     longint unsigned cur_gmem, cur_lmem;
     longint unsigned gmem_in_bytes, gmem_w_bytes, gmem_sc_bytes, gmem_zp_bytes, gmem_out_bytes;
-    longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
+    longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes, lmem_psum_bytes;
     longint unsigned groups_total;
     longint unsigned groups_tile;
     longint unsigned ng_total, ng_tile;
@@ -1529,6 +2031,7 @@ module tb_VX_gemm_node
         lmem_zpbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
       end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;
+      lmem_psum_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 4;
 
       cur_gmem = align_up(AUTO_GMEM_BASE, ADDR_ALIGN_BYTES);
       gmem_in_base = cur_gmem[63:0];
@@ -1559,6 +2062,12 @@ module tb_VX_gemm_node
       lmem_zpbuf1_base = cur_lmem[63:0];
       cur_lmem += align_up(lmem_zpbuf_bytes, ADDR_ALIGN_BYTES);
       lmem_obuf_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_obuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_psum_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_psum_bytes, ADDR_ALIGN_BYTES);
+      if (cur_lmem > LMEM_LIMIT)
+        $fatal(1, "[%0t] auto LMEM layout including PSUM exceeds limit: end=0x%0h limit=0x%0h",
+               $time, cur_lmem, LMEM_LIMIT);
     end
   endtask
 
@@ -1570,7 +2079,7 @@ module tb_VX_gemm_node
     int test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir;
     logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
-    logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
+    logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base, lmem_psum_base;
 
     $timeformat(-9, 0, "ns", 0);
     reset = 1'b0;
@@ -1587,6 +2096,8 @@ module tb_VX_gemm_node
       test_wtrans = 0;
     if (!$value$plusargs("QDIR=%d", test_qdir))
       test_qdir = 0;
+    common_test_qblk = test_qblk;
+    common_test_qdir = test_qdir;
     if (!$value$plusargs("TEST=%s", case_name))
       $sformat(case_name, "M%0dN%0dK%0d_WT%0d_QD%0d", test_m, test_n, test_k, test_wtrans, test_qdir);
 
@@ -1594,8 +2105,10 @@ module tb_VX_gemm_node
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base,
+      lmem_obuf_base, lmem_psum_base
     );
+    lmem_psum_base_monitor = lmem_psum_base;
 
     $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
              $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
@@ -1605,15 +2118,105 @@ module tb_VX_gemm_node
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base,
+      lmem_obuf_base, lmem_psum_base
     );
+
+    if ((common_command_count == 0)
+     || (common_admission_count == 0)
+     || (common_admission_count != common_retire_count)
+     || (common_admission_count != common_acc_write_count)
+     || (common_acc_write_count
+         != common_psum_write_count + common_final_write_count)
+     || (common_command_count != common_tagged_writeback_count)
+     || (common_command_count != common_command_done_count)
+     || (common_pending_completions != 0)
+     || (common_weight_write_count == 0)
+     || (common_scale_write_count == 0)
+     || (common_zero_write_count == 0)
+     || (common_weight_generation_count == 0)
+     || (common_scale_generation_count != common_scale_command_count)
+     || (common_zero_generation_count != common_zero_command_count)
+     || (common_scale_write_count != common_scale_expected_write_sum)
+     || (common_zero_write_count != common_zero_expected_write_sum)
+     || common_qparam_owner_active
+     || (u_dut.qparam_install_writes_remaining_r != 0)
+     || (common_address_progress_checks == 0)
+     || (u_dut.u_VX_gemm_acc_lmem.txn_count != 0))
+      $fatal(1, "COMMON_PATH terminal mismatch commands=%0d admissions=%0d retires=%0d acc_writes=%0d psum=%0d final=%0d tagged=%0d done=%0d pending_done=%0d W/S/Z_writes=%0d/%0d/%0d W/S/Z_generations=%0d/%0d/%0d S/Z_commands=%0d/%0d S/Z_expected_sum=%0d/%0d qowner=%0d qremaining=%0d addr_checks=%0d acc_txns=%0d",
+              common_command_count, common_admission_count,
+              common_retire_count, common_acc_write_count,
+              common_psum_write_count, common_final_write_count,
+              common_tagged_writeback_count, common_command_done_count,
+              common_pending_completions, common_weight_write_count,
+              common_scale_write_count, common_zero_write_count,
+              common_weight_generation_count, common_scale_generation_count,
+              common_zero_generation_count, common_scale_command_count,
+              common_zero_command_count, common_scale_expected_write_sum,
+              common_zero_expected_write_sum, common_qparam_owner_active,
+              u_dut.qparam_install_writes_remaining_r,
+              common_address_progress_checks,
+              u_dut.u_VX_gemm_acc_lmem.txn_count);
+    $display("COMMON_PATH_HIERARCHY compute_core=1 lmem_acc=1 legacy_unit=0");
+    $display("COMMON_PATH_COUNTS commands=%0d admissions=%0d retires=%0d acc_writes=%0d psum_writes=%0d final_writes=%0d tagged_writebacks=%0d command_done=%0d W/S/Z_writes=%0d/%0d/%0d W/S/Z_generations=%0d/%0d/%0d address_progress=%0d pending_done=0 acc_txns=0",
+             common_command_count, common_admission_count,
+             common_retire_count, common_acc_write_count,
+             common_psum_write_count, common_final_write_count,
+             common_tagged_writeback_count, common_command_done_count,
+             common_weight_write_count, common_scale_write_count,
+             common_zero_write_count, common_weight_generation_count,
+             common_scale_generation_count, common_zero_generation_count,
+             common_address_progress_checks);
+    $display("QPARAM_OWNER_COUNTS scale_commands=%0d zero_commands=%0d scale_writes=%0d zero_writes=%0d scale_generations=%0d zero_generations=%0d expected_min=%0d expected_max=%0d owner_final=0 remaining_final=0",
+             common_scale_command_count, common_zero_command_count,
+             common_scale_write_count, common_zero_write_count,
+             common_scale_generation_count, common_zero_generation_count,
+             common_qparam_min_expected, common_qparam_max_expected);
+
+    if (`MXU_WLOAD_NUM == 8) begin
+      if ((saw_psum_112_to_128 && !saw_psum_set0_drain)
+       || (saw_psum_set1_112_to_128 && !saw_psum_set1_drain)
+       || (saw_psum_conflict_block
+           && (!saw_psum_pop_while_blocked || !saw_psum_read_after_drain))
+       || (u_dut.psum_wr_pending_by_set[0] != 0)
+       || (u_dut.psum_wr_pending_by_set[1] != 0)
+       || (u_dut.gemm_wr_lane_pending_r != 0))
+        $fatal(1, "PSUM drain proof incomplete cross0=%0d cross1=%0d drain0=%0d drain1=%0d block=%0d pop=%0d read=%0d pending0=%0d pending1=%0d aggregate=%0d",
+                  saw_psum_112_to_128, saw_psum_set1_112_to_128,
+                  saw_psum_set0_drain, saw_psum_set1_drain,
+                  saw_psum_conflict_block, saw_psum_pop_while_blocked,
+                  saw_psum_read_after_drain, u_dut.psum_wr_pending_by_set[0],
+                  u_dut.psum_wr_pending_by_set[1], u_dut.gemm_wr_lane_pending_r);
+      if (saw_psum_lane0_boundary_addr != 4'hf
+       || (psum_lane0_boundary_writes == 0))
+        $fatal(1, "PSUM boundary proof incomplete addrs=0x%0h lane0_writes=%0d",
+                  saw_psum_lane0_boundary_addr, psum_lane0_boundary_writes);
+      if (!saw_fsm_state14 || !saw_fsm_leave_state14)
+        $fatal(1, "FSM state14 progress proof incomplete entered=%0d left=%0d",
+                  saw_fsm_state14, saw_fsm_leave_state14);
+      if (weight_command_active || (weight_command_count == 0)
+       || (weight_beat_count != (4 * weight_command_count)))
+        $fatal(1, "Weight gather count mismatch active=%0d commands=%0d beats=%0d",
+                  weight_command_active, weight_command_count, weight_beat_count);
+      $display("PSUM_CREDIT_CHECK PASSED: max_set0=%0d max_set1=%0d cross128_set0=%0d cross128_set1=%0d conflict_block=%0d lane_pop=%0d read_after_drain=%0d final_sets=0 aggregate=0",
+               psum_pending0_max, psum_pending1_max,
+               saw_psum_112_to_128, saw_psum_set1_112_to_128,
+               saw_psum_conflict_block, saw_psum_pop_while_blocked,
+               saw_psum_read_after_drain);
+      $display("PSUM_BOUNDARY_CHECK PASSED: lane0_addrs=0x0,0x10,0x20,0x30 flags0=1 pending_sets=0 aggregate=0 fsm14_left=1 lane0_writes=%0d",
+               psum_lane0_boundary_writes);
+      $display("WLOAD8_NODE_COUNTS commands=%0d beats=%0d beats_per_command=4",
+               weight_command_count, weight_beat_count);
+    end
 
     $display("[%0t] TB completed", $time);
 
 `ifdef VCS
-    $fsdbDumpoff();
+    if (!$test$plusargs("NO_WAVE"))
+      $fsdbDumpoff();
 `else
-    $dumpoff();
+    if (!$test$plusargs("NO_WAVE"))
+      $dumpoff();
 `endif
     $finish;
   end
