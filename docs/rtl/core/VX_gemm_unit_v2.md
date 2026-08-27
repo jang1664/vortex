@@ -1,9 +1,22 @@
 # VX_gemm_unit_v2
 
-`VX_gemm_unit_v2` is the fixed-latency GEMM datapath used by the
+`VX_gemm_unit_v2` is the fixed-latency compatibility wrapper used by the
 `GEMM_IMPROVE` node. It is a separate implementation from
-`VX_gemm_unit.sv`; the legacy unit and interface remain available for the
-naive node and its unit tests.
+`VX_gemm_unit.sv`; the legacy unit and interface remain available only as
+migration references and for their focused unit tests. The default NAIVE node
+also instantiates the common core directly.
+
+The production module is now a compatibility wrapper around two explicit
+blocks. `VX_gemm_compute_core` owns the arithmetic pipeline, elastic
+data/control movement, W/S/Z consumer gates, result FIFOs and credits,
+forwarding history, and transaction retirement. It communicates accumulator
+reads and writes only through `VX_gemm_acc_if` and has no local-memory,
+tensor-memory, DMA, accumulator-bank-layout, or physical-SRAM ownership.
+`VX_gemm_acc_internal` owns the fixed four-bank accumulator, early/nominal
+physical read schedule, output-read endpoint, and bank-group fence. The wrapper
+preserves the existing `VX_gemm_unit_v2` ports and fixed-cycle behavior. The
+common core itself accepts variable ACC request, response, and write latency;
+the internal adapter's ready/latency contract selects the original fast path.
 
 ## Packet interface
 
@@ -88,40 +101,80 @@ one cycle before `ctrl_pipe`, dropping the final ACC write.
 
 ## Accumulator scheduling
 
-The accumulator consists of four physical single-port SRAM banks. The
+The internal accumulator adapter consists of four physical single-port SRAM
+banks. The
 external byte address selects the physical bank and the per-bank depth.
-For an accumulating packet, the unit compares its target bank with the
+For an accumulating packet, the common core reports the older dependent
+address through `VX_gemm_acc_if`; the adapter compares its target bank with the
 write-side packet admitted exactly
 
 ```text
 K = L_A + L_P + L_R
 ```
 
-cycles earlier. A matching valid write makes the packet issue its read one
+cycles earlier. A matching valid write makes the adapter issue its read one
 cycle before the nominal request cycle. Otherwise it issues at the nominal
 cycle. The early response is stored in a one-entry hold register for that
 bank and consumed at the accumulator input. Strict sequential ping-pong
 addresses guarantee that moving the request by one cycle cannot create a
 second same-bank conflict.
 
-Same-address accumulation dependencies use two fixed forwarding paths. At
+Accepted and retired transaction events, including a backend-independent
+core-local packet tag, cross the same interface with opaque ACC addresses. The
+packet tag increments on each input handshake and is distinct from `work_seq`,
+which identifies a logical microtile and may repeat across in-flight packets.
+These events let
+the adapter retain physical bank-group ownership for
+output-read exclusion without exposing the group bit or bank mapping to the
+common core. The fixed adapter remains always-ready. The common core holds a
+read request until acceptance, joins responses by tag in a four-entry ordered
+post queue, and reserves a two-entry result queue before launching the no-ready
+ACC add. Responses may arrive with variable latency or out of request order.
+A write request keeps valid, tag, address, and data stable until its actual
+handshake; only that handshake retires a writing transaction. Filling either
+bounded queue stops converter-result pops and propagates through the existing
+converter, merged-result, and tree credits.
+
+Same-address accumulation dependencies use two common forwarding paths. At
 admission distance `d=1`, the consumer suppresses its SRAM read and uses the
 producer's concurrent writeback result. At `d=2`, the consumer suppresses both
 the otherwise-conflicting early read and its nominal read, then uses the
-producer result retained in a one-cycle writeback-history register. Immediate
+producer result retained in a two-entry tagged writeback history. Pending
+results are also searched before physical write acceptance, so backend write
+backpressure cannot expose stale SRAM data. Immediate
 forwarding has priority when both admission-history comparisons match, which
 preserves a full-rate chain of three or more same-address packets. At `d=3`
 or greater, the producer has already updated ACC SRAM before the consumer's
 nominal read.
 
-This contract is intentionally limited to `L_R=1`, `L_A=1`, and `L_P=0`.
-Elaboration rejects a different accumulator timing instead of silently
-generalizing the history window. Both forwarding dependency bits travel with
-the packet sideband, so every accepted input keeps its fixed write latency even
-when admission inserts bubbles between commands.
+The arithmetic island remains intentionally limited to `L_A=1` and `L_P=0`;
+its no-ready output is protected by explicit result credit. Physical read
+latency is no longer part of that safety proof. `VX_gemm_acc_programmable`
+provides a validation backend with non-uniform, reorderable responses and
+request/write backpressure. It fences reads behind older accepted same-address
+writers by transaction order, without treating the transaction's own
+destination or a younger writer as a dependency.
 
-Simulation assertions check valid-ready stability, fire-only input state
-updates, control/data alignment,
+## NAIVE backend integration
+
+`VX_gemm_node_naive` uses the same compute core through
+`VX_gemm_acc_lmem`. `VX_gemm_input_packetizer` converts each already-decoded
+NAIVE compute command into one control record per actual Input handshake. The
+packetizer treats the FSM's PSUM and final-output bases and strides as opaque
+byte addresses, advances the row index only when the core accepts Input, and
+holds the complete control record stable while Input is stalled.
+
+The NAIVE node exposes exact W/S/Z load generations to the common consumer
+gates. A generation becomes visible only after the final corresponding common
+core register write, rather than when the source DMA finishes. Compute-command
+completion is similarly based on the tagged last-result write followed by the
+drain of every physical LMEM lane request. Thus the existing row-major address
+equations, LMEM lane split/arbitration, pending-write ordering, and external
+output DMA topology remain unchanged, while the former fixed PSUM response
+startup delay is no longer a correctness condition.
+
+Simulation assertions check valid-ready stability, tagged response matching,
+bounded join/result credits, fire-only input state updates, control/data alignment,
 single-port read/write exclusion, early-response availability, both forwarding
 sources' validity/address equality, and legal sequential or same-address
 dependencies within a command stream. Load packets are checked at the scaler

@@ -37,6 +37,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
         $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_internal.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_compute_core.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit_v2.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit_v2_if.sv \
         $(RTL_DIR)/core/gemm/VX_prealigner.sv \

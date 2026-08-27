@@ -82,12 +82,16 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     bit test_failed;
     longint unsigned scoreboard_cycle;
     int scoreboard_admission_count;
+    int scoreboard_retire_count;
     int scoreboard_write_count;
     int scoreboard_read_count;
     int scoreboard_coincident_read_count;
     int scoreboard_forward_count;
     int scoreboard_history_forward_count;
     int scoreboard_early_hold_count;
+    int scoreboard_output_read_count;
+    int scoreboard_output_response_count;
+    int scoreboard_stalled_input_cycles;
     transaction_expect_t launch_expect_q[$];
     write_expect_t write_expect_q[$];
     read_expect_t read_expect_q[$];
@@ -239,11 +243,11 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 nominal_read_count <= nominal_read_count + 1;
             if ((|u_dut.early_read_req) && (|u_dut.nominal_read_req))
                 coincident_read_count <= coincident_read_count + 1;
-            if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid
-             && u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX])
+            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].valid
+             && u_dut.u_compute_core.forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX])
                 forward_count <= forward_count + 1;
-            if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid
-             && u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX])
+            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].valid
+             && u_dut.u_compute_core.history_forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX])
                 history_forward_count <= history_forward_count + 1;
             if (gemm_unit_v2_if.last_write)
                 last_write_count <= last_write_count + 1;
@@ -292,27 +296,40 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             history_entry.write_bank = '0;
             history_entry.write_address = '0;
 
+            if (u_dut.output_read_fire === 1'b1)
+                scoreboard_output_read_count
+                    = scoreboard_output_read_count + 1;
+            if ((o_lmem_bus_if.rsp_valid === 1'b1)
+             && (o_lmem_bus_if.rsp_ready === 1'b1))
+                scoreboard_output_response_count
+                    = scoreboard_output_response_count + 1;
+            if ((i_lmem_bus_if.req_valid === 1'b1)
+             && (i_lmem_bus_if.req_ready === 1'b0))
+                scoreboard_stalled_input_cycles
+                    = scoreboard_stalled_input_cycles + 1;
+
             // Every accepted transaction reaches the write boundary in order,
             // including packets with acc_wr_en deasserted.
-            if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid) begin
+            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid) begin
+                scoreboard_retire_count = scoreboard_retire_count + 1;
                 if (write_expect_q.size() == 0) begin
                     $error("unexpected ACC write/control transaction cycle=%0d addr=%h",
                            scoreboard_cycle,
-                           u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_addr);
+                           u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr);
                     test_failed = 1'b1;
                 end else begin
                     write_expect = write_expect_q.pop_front();
                     expected_write_en[write_expect.bank]
                         = write_expect.acc_wr_en;
-                    if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_en
+                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en
                           !== write_expect.acc_wr_en
-                     || u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_addr
+                     || u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr
                           !== write_expect.address) begin
                         $error("write control order/address mismatch cycle=%0d exp_en=%0b exp_addr=%h actual_en=%0b actual_addr=%h",
                                scoreboard_cycle, write_expect.acc_wr_en,
                                write_expect.address,
-                               u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_en,
-                               u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_addr);
+                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en,
+                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr);
                         test_failed = 1'b1;
                     end
                     if (u_dut.acc_write_fire !== write_expect.acc_wr_en
@@ -325,7 +342,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                     end
                     if (write_expect.acc_wr_en
                      && (u_dut.acc_mem_in_data[write_expect.bank]
-                         !== u_dut.writeback_result_data)) begin
+                         !== u_dut.u_compute_core.writeback_result_data)) begin
                         $error("ACC write data routing mismatch cycle=%0d bank=%0d",
                                scoreboard_cycle, write_expect.bank);
                         test_failed = 1'b1;
@@ -355,14 +372,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                             = scoreboard_write_count + 1;
                 end
             end else begin
-                if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid !== 1'b0
+                if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid !== 1'b0
                  || u_dut.acc_write_fire !== 1'b0
                  || u_dut.acc_mem_wr_en !== '0
                  || gemm_unit_v2_if.last_write !== 1'b0
                  || gemm_unit_v2_if.tagged_final_writeback !== 1'b0) begin
                     $error("unexpected ACC write/control cycle=%0d valid=%0b fire=%0b banks=%b last=%0b",
                            scoreboard_cycle,
-                           u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid,
+                           u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid,
                            u_dut.acc_write_fire, u_dut.acc_mem_wr_en,
                            gemm_unit_v2_if.last_write);
                     test_failed = 1'b1;
@@ -371,23 +388,23 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
 
             // Each post launch contributes one scaler-boundary expectation.
             // Pop only when the corresponding control actually arrives.
-            if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid) begin
+            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].valid) begin
                 if (forward_expect_q.size() == 0) begin
                     $error("unexpected scaler/forward transaction cycle=%0d addr=%h",
                            scoreboard_cycle,
-                           u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr);
+                           u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_addr);
                     test_failed = 1'b1;
                 end else begin
                     forward_expect = forward_expect_q.pop_front();
-                    if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_en
+                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_en
                           !== forward_expect.acc_rd_en
-                     || u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr
+                     || u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_addr
                           !== forward_expect.read_address
-                     || u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX]
+                     || u_dut.u_compute_core.forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                           !== forward_expect.immediate_forward
-                     || u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX]
+                     || u_dut.u_compute_core.history_forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                           !== forward_expect.history_forward
-                     || u_dut.early_pipe[u_dut.SCALER_CTRL_IDX]
+                     || u_dut.u_compute_core.early_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                           !== forward_expect.early_read) begin
                         $error("forward sideband order mismatch cycle=%0d exp_rd=%0b exp_immediate=%0b exp_history=%0b exp_early=%0b exp_addr=%h actual_rd=%0b actual_immediate=%0b actual_history=%0b actual_early=%0b actual_addr=%h",
                                scoreboard_cycle,
@@ -396,30 +413,30 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                                forward_expect.history_forward,
                                forward_expect.early_read,
                                forward_expect.read_address,
-                               u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_en,
-                               u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX],
-                               u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX],
-                               u_dut.early_pipe[u_dut.SCALER_CTRL_IDX],
-                               u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr);
+                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_en,
+                               u_dut.u_compute_core.forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX],
+                               u_dut.u_compute_core.history_forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX],
+                               u_dut.u_compute_core.early_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX],
+                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_addr);
                         test_failed = 1'b1;
                     end
                     current_read_bank = scoreboard_acc_bank(
                         forward_expect.read_address);
                     if (forward_expect.acc_rd_en) begin
                         if (forward_expect.immediate_forward
-                         && (u_dut.selected_psum_data
-                             !== u_dut.writeback_result_data)) begin
+                         && (u_dut.u_compute_core.selected_psum_data
+                             !== u_dut.u_compute_core.writeback_result_data)) begin
                             $error("immediate-forward data routing mismatch cycle=%0d",
                                    scoreboard_cycle);
                             test_failed = 1'b1;
                         end else if (forward_expect.history_forward
-                                  && (u_dut.selected_psum_data
-                                      !== u_dut.writeback_history_data)) begin
+                                  && (u_dut.u_compute_core.selected_psum_data
+                                      !== u_dut.u_compute_core.writeback_history_data)) begin
                             $error("history-forward data routing mismatch cycle=%0d",
                                    scoreboard_cycle);
                             test_failed = 1'b1;
                         end else if (forward_expect.early_read
-                                  && (u_dut.selected_psum_data
+                                  && (u_dut.u_compute_core.selected_psum_data
                                       !== u_dut.early_hold_data[
                                           current_read_bank])) begin
                             $error("early-read data routing mismatch cycle=%0d bank=%0d",
@@ -428,7 +445,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                         end else if (!forward_expect.immediate_forward
                                   && !forward_expect.history_forward
                                   && !forward_expect.early_read
-                                  && (u_dut.selected_psum_data
+                                  && (u_dut.u_compute_core.selected_psum_data
                                       !== u_dut.acc_mem_out_data[
                                           current_read_bank])) begin
                             $error("nominal-read data routing mismatch cycle=%0d bank=%0d",
@@ -446,10 +463,10 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                         scoreboard_early_hold_count
                             = scoreboard_early_hold_count + 1;
                 end
-            end else if ((u_dut.forward_pipe[u_dut.SCALER_CTRL_IDX] !== 1'b0)
-                      || (u_dut.history_forward_pipe[u_dut.SCALER_CTRL_IDX]
+            end else if ((u_dut.u_compute_core.forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX] !== 1'b0)
+                      || (u_dut.u_compute_core.history_forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                           !== 1'b0)
-                      || (u_dut.early_pipe[u_dut.SCALER_CTRL_IDX]
+                      || (u_dut.u_compute_core.early_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                           !== 1'b0)) begin
                 $error("forward/read sideband without scaler control cycle=%0d",
                        scoreboard_cycle);
@@ -462,21 +479,21 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             // still checks the fixed post-process ownership distances.
             // This runs before request consumption because an early ACC read
             // may be issued in the same cycle as int2fp_result_pop.
-            if (u_dut.int2fp_result_pop) begin
+            if (u_dut.u_compute_core.int2fp_result_pop) begin
                 if (launch_expect_q.size() == 0) begin
                     $error("unexpected INT2FP-result launch cycle=%0d addr=%h",
                            scoreboard_cycle,
-                           u_dut.int2fp_result_data_out.ctrl.acc_wr_addr);
+                           u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_addr);
                     test_failed = 1'b1;
                 end else begin
                     transaction_expect = launch_expect_q.pop_front();
-                    if (u_dut.int2fp_result_data_out.ctrl.acc_rd_en
+                    if (u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_en
                           !== transaction_expect.acc_rd_en
-                     || u_dut.int2fp_result_data_out.ctrl.acc_wr_en
+                     || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_en
                           !== transaction_expect.acc_wr_en
-                     || u_dut.int2fp_result_data_out.ctrl.acc_rd_addr
+                     || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr
                           !== transaction_expect.read_address
-                     || u_dut.int2fp_result_data_out.ctrl.acc_wr_addr
+                     || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_addr
                           !== transaction_expect.write_address) begin
                         $error("INT2FP-result launch order/address mismatch cycle=%0d exp_rd_en=%0b exp_wr_en=%0b exp_rd=%h exp_wr=%h actual_rd_en=%0b actual_wr_en=%0b actual_rd=%h actual_wr=%h",
                                scoreboard_cycle,
@@ -484,10 +501,10 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                                transaction_expect.acc_wr_en,
                                transaction_expect.read_address,
                                transaction_expect.write_address,
-                               u_dut.int2fp_result_data_out.ctrl.acc_rd_en,
-                               u_dut.int2fp_result_data_out.ctrl.acc_wr_en,
-                               u_dut.int2fp_result_data_out.ctrl.acc_rd_addr,
-                               u_dut.int2fp_result_data_out.ctrl.acc_wr_addr);
+                               u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_en,
+                               u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_en,
+                               u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr,
+                               u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_addr);
                         test_failed = 1'b1;
                     end
 
@@ -514,24 +531,24 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                     if (transaction_expect.acc_rd_en
                      && !schedule_forward
                      && !schedule_history_forward
-                     && (post_history_q.size() >= u_dut.K_LOOKBACK)) begin
+                     && (post_history_q.size() >= u_dut.u_compute_core.K_LOOKBACK)) begin
                         schedule_early
-                            = post_history_q[u_dut.K_LOOKBACK-1].valid
-                           && post_history_q[u_dut.K_LOOKBACK-1].acc_wr_en
+                            = post_history_q[u_dut.u_compute_core.K_LOOKBACK-1].valid
+                           && post_history_q[u_dut.u_compute_core.K_LOOKBACK-1].acc_wr_en
                            && (post_history_q[
-                                   u_dut.K_LOOKBACK-1].write_bank
+                                   u_dut.u_compute_core.K_LOOKBACK-1].write_bank
                                == current_read_bank);
                     end
-                    if (u_dut.post_launch_forward !== schedule_forward
-                     || u_dut.post_launch_history_forward
+                    if (u_dut.u_compute_core.post_launch_forward !== schedule_forward
+                     || u_dut.u_compute_core.post_launch_history_forward
                           !== schedule_history_forward
-                     || u_dut.post_launch_early !== schedule_early) begin
+                     || u_dut.u_compute_core.post_launch_early !== schedule_early) begin
                         $error("post-launch dependency classification mismatch cycle=%0d exp_forward=%0b exp_history=%0b exp_early=%0b actual_forward=%0b actual_history=%0b actual_early=%0b",
                                scoreboard_cycle, schedule_forward,
                                schedule_history_forward, schedule_early,
-                               u_dut.post_launch_forward,
-                               u_dut.post_launch_history_forward,
-                               u_dut.post_launch_early);
+                               u_dut.u_compute_core.post_launch_forward,
+                               u_dut.u_compute_core.post_launch_history_forward,
+                               u_dut.u_compute_core.post_launch_early);
                         test_failed = 1'b1;
                     end
 
@@ -671,7 +688,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             end
 
             post_history_q.push_front(history_entry);
-            while (post_history_q.size() > u_dut.K_LOOKBACK)
+            while (post_history_q.size() > u_dut.u_compute_core.K_LOOKBACK)
                 void'(post_history_q.pop_back());
 
             if (gemm_unit_v2_if.pipeline_empty
@@ -818,8 +835,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
              || !gemm_unit_v2_if.zero_point_register_write
              || !gemm_unit_v2_if.quant_register_write)
                 $fatal(1, "parallel qparam REG0/REG1 write pulses were not simultaneous");
-            if (u_dut.scale_regs[0] !== scale_reg0_data
-             || u_dut.zero_regs[1] !== zero_reg1_expected)
+            if (u_dut.u_compute_core.scale_regs[0] !== scale_reg0_data
+             || u_dut.u_compute_core.zero_regs[1] !== zero_reg1_expected)
                 $fatal(1, "parallel qparam REG0/REG1 data mismatch");
             @(negedge clk);
             sc_lmem_bus_if.req_valid = 1'b0;
@@ -838,8 +855,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             #1;
             if (!gemm_unit_v2_if.scale_register_write
              || !gemm_unit_v2_if.zero_point_register_write
-             || u_dut.scale_regs[1] !== scale_reg1_data
-             || u_dut.zero_regs[0] !== zero_reg0_expected)
+             || u_dut.u_compute_core.scale_regs[1] !== scale_reg1_data
+             || u_dut.u_compute_core.zero_regs[0] !== zero_reg0_expected)
                 $fatal(1, "parallel qparam REG1/REG0 write mismatch");
             @(negedge clk);
             sc_lmem_bus_if.req_valid = 1'b0;
@@ -914,7 +931,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             drive_packet_ctrl(input_data, '0, 1'b0, 1'b0, 1'b0,
                               `QDIR_COL, gemm_wreg_idx_t'(0), 1'b0, 1'b0,
                               1'b0, 1'b0);
-            force u_dut.qrow_scaler_input_ready = 1'b0;
+            force u_dut.u_compute_core.qrow_scaler_input_ready = 1'b0;
             drive_packet_ctrl(
                               input_data,
                               `GEMM_ACC_MEM_ADDR_WIDTH'(ACC_ROW_BYTES),
@@ -924,10 +941,10 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             end_stream();
 
             timeout = 0;
-            while (!(u_dut.in_pipe_valid_out
-                  && (u_dut.qrow_scale_consumer_ctrl.quant_dir == `QDIR_ROW)
-                  && (u_dut.qrow_scale_consumer_ctrl.sreg_use_idx == 1'b1)
-                  && (u_dut.qrow_zp_consumer_ctrl.zreg_use_idx == 1'b1))
+            while (!(u_dut.u_compute_core.in_pipe_valid_out
+                  && (u_dut.u_compute_core.qrow_scale_consumer_ctrl.quant_dir == `QDIR_ROW)
+                  && (u_dut.u_compute_core.qrow_scale_consumer_ctrl.sreg_use_idx == 1'b1)
+                  && (u_dut.u_compute_core.qrow_zp_consumer_ctrl.zreg_use_idx == 1'b1))
                 && (timeout < 100)) begin
                 @(negedge clk);
                 ++timeout;
@@ -940,19 +957,19 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             timeout = 0;
             while ((!qcol_scale_seen || !qcol_zp_seen) && (timeout < 200)) begin
                 @(negedge clk);
-                if (u_dut.qcol_zp_consumer_fire) begin
-                    if (u_dut.qcol_zp_consumer_ctrl.quant_dir != `QDIR_COL
-                     || u_dut.qcol_zp_consumer_ctrl.zreg_use_idx != 1'b0
-                     || u_dut.qcol_zp_consumer_ctrl.last
-                     || u_dut.zp_last_consume_idx != 1'b1)
+                if (u_dut.u_compute_core.qcol_zp_consumer_fire) begin
+                    if (u_dut.u_compute_core.qcol_zp_consumer_ctrl.quant_dir != `QDIR_COL
+                     || u_dut.u_compute_core.qcol_zp_consumer_ctrl.zreg_use_idx != 1'b0
+                     || u_dut.u_compute_core.qcol_zp_consumer_ctrl.last
+                     || u_dut.u_compute_core.zp_last_consume_idx != 1'b1)
                         $fatal(1, "non-last QCOL ZP used last-event metadata");
                     qcol_zp_seen = 1'b1;
                 end
-                if (u_dut.qcol_scale_consumer_fire) begin
-                    if (u_dut.qcol_scale_consumer_ctrl.quant_dir != `QDIR_COL
-                     || u_dut.qcol_scale_consumer_ctrl.sreg_use_idx != 1'b0
-                     || u_dut.qcol_scale_consumer_ctrl.last
-                     || u_dut.scale_last_consume_idx != 1'b1)
+                if (u_dut.u_compute_core.qcol_scale_consumer_fire) begin
+                    if (u_dut.u_compute_core.qcol_scale_consumer_ctrl.quant_dir != `QDIR_COL
+                     || u_dut.u_compute_core.qcol_scale_consumer_ctrl.sreg_use_idx != 1'b0
+                     || u_dut.u_compute_core.qcol_scale_consumer_ctrl.last
+                     || u_dut.u_compute_core.scale_last_consume_idx != 1'b1)
                         $fatal(1, "non-last QCOL Scale used last-event metadata");
                     qcol_scale_seen = 1'b1;
                 end
@@ -961,7 +978,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             if (timeout == 200)
                 $fatal(1, "timeout waiting for non-last QCOL consumers");
 
-            release u_dut.qrow_scaler_input_ready;
+            release u_dut.u_compute_core.qrow_scaler_input_ready;
             wait_for_empty();
             $display("NONLAST_QCOL_CONSUMER_METADATA_PASS qcol_bank=0 held_qrow_bank=1");
         end
@@ -1374,17 +1391,17 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         // Elastic control has intentional holes between the branch output and
         // prealign completion.  Cover the architectural ownership boundaries
         // instead of requiring every legacy fixed-latency index to toggle.
-        stage_required[u_dut.INPUT_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.PREALIGN_INPUT_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.PREALIGN_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.PREALIGN_CTRL_IDX+1] = 1'b1;
-        stage_required[u_dut.QCOL_REDUCE_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.PREPROCESS_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.MXU_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.MERGER_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.INT2FP_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.SCALER_CTRL_IDX] = 1'b1;
-        stage_required[u_dut.WRITE_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.INPUT_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.PREALIGN_INPUT_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.PREALIGN_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.PREALIGN_CTRL_IDX+1] = 1'b1;
+        stage_required[u_dut.u_compute_core.QCOL_REDUCE_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.PREPROCESS_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.MXU_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.MERGER_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.INT2FP_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.SCALER_CTRL_IDX] = 1'b1;
+        stage_required[u_dut.u_compute_core.WRITE_CTRL_IDX] = 1'b1;
         final_write_block_seen = 1'b0;
 
         // Admission-edge handoff is legal: the incoming packet does not
@@ -1407,7 +1424,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
 
         do @(posedge clk); while (!i_lmem_bus_if.req_ready);
         #1;
-        if (!u_dut.ctrl_pipe[0].valid
+        if (!u_dut.u_compute_core.ctrl_pipe[0].valid
          || !u_dut.compute_group_busy[compute_group]
          || !u_dut.output_group_conflict) begin
             $error("same-group fence did not begin at ctrl_pipe[0] group=%0d",
@@ -1432,7 +1449,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         clear_compute_request();
         drive_output_request(output_address, compute_bank_offset);
         #1;
-        if (!u_dut.ctrl_pipe[0].valid
+        if (!u_dut.u_compute_core.ctrl_pipe[0].valid
          || !u_dut.compute_group_busy[compute_group]
          || o_lmem_bus_if.req_ready
          || u_dut.output_read_fire) begin
@@ -1449,13 +1466,13 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                        u_dut.compute_group_pending_count[compute_group]);
                 test_failed = 1'b1;
             end
-            for (int stage = 0; stage <= u_dut.WRITE_CTRL_IDX; ++stage) begin
-                if (u_dut.ctrl_pipe[stage].valid) begin
+            for (int stage = 0; stage <= u_dut.u_compute_core.WRITE_CTRL_IDX; ++stage) begin
+                if (u_dut.u_compute_core.ctrl_pipe[stage].valid) begin
                     stage_seen[stage] = 1'b1;
-                    if (u_dut.ctrl_pipe[stage].acc_rd_addr
+                    if (u_dut.u_compute_core.ctrl_pipe[stage].acc_rd_addr
                           [`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1]
                         != compute_group
-                     || u_dut.ctrl_pipe[stage].acc_wr_addr
+                     || u_dut.u_compute_core.ctrl_pipe[stage].acc_wr_addr
                           [`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1]
                         != compute_group) begin
                         $error("compute group changed in ctrl_pipe stage=%0d", stage);
@@ -1468,7 +1485,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                        compute_group, u_dut.compute_group_busy);
                 test_failed = 1'b1;
             end
-            if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid) begin
+            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid) begin
                 if (!u_dut.acc_write_fire) begin
                     $error("directed final ACC writeback was not valid");
                     test_failed = 1'b1;
@@ -1483,7 +1500,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 @(negedge clk);
         end
 
-        for (int stage = 0; stage <= u_dut.WRITE_CTRL_IDX; ++stage) begin
+        for (int stage = 0; stage <= u_dut.u_compute_core.WRITE_CTRL_IDX; ++stage) begin
             if (stage_required[stage] && !stage_seen[stage]) begin
                 $error("same-group block did not cover architectural ctrl boundary stage=%0d", stage);
                 test_failed = 1'b1;
@@ -1544,7 +1561,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             check_output_bank_exclusion("different-group incoming admission");
             do @(posedge clk); while (!i_lmem_bus_if.req_ready);
             #1;
-            if (!u_dut.ctrl_pipe[0].valid
+            if (!u_dut.u_compute_core.ctrl_pipe[0].valid
              || !u_dut.compute_group_busy[compute_group]
              || u_dut.compute_group_busy[~compute_group]) begin
                 $error("different-group registered ownership was not visible at ctrl_pipe[0] group=%0d",
@@ -1561,7 +1578,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             timeout = 0;
             while ((((phase == 1) && !(|u_dut.compute_bank_read_req))
                   || ((phase == 2)
-                   && !(u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid
+                   && !(u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid
                      && u_dut.acc_write_fire)))
                 && timeout < 100) begin
                 @(posedge clk);
@@ -1711,7 +1728,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             test_failed = 1'b1;
         end
         $display("GEMM_UNIT_V2_GROUP_ARBITRATION_PASS same_group_stages=%0d different_group_phases=6 backpressure=1",
-                 u_dut.WRITE_CTRL_IDX + 1);
+                 u_dut.u_compute_core.WRITE_CTRL_IDX + 1);
     endtask
 
     task automatic test_group_aware_output_arbitration();
@@ -2177,7 +2194,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         early_addr = `GEMM_ACC_MEM_ADDR_WIDTH'(
             base_addr
           + `GEMM_ACC_MEM_ADDR_WIDTH'(
-                u_dut.K_LOOKBACK * ACC_ROW_BYTES));
+                u_dut.u_compute_core.K_LOOKBACK * ACC_ROW_BYTES));
         nominal_bank = scoreboard_acc_bank(nominal_addr);
         early_bank = scoreboard_acc_bank(early_addr);
 
@@ -2185,12 +2202,12 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         // read/add/post contract: W, N, E launch in consecutive cycles, N is
         // nominal on the opposite bank, and E sees W exactly K_LOOKBACK=2
         // launches earlier on its bank at a different address.
-        if (u_dut.K_LOOKBACK != 2
+        if (u_dut.u_compute_core.K_LOOKBACK != 2
          || scoreboard_acc_bank(writer_addr) != early_bank
          || nominal_bank == early_bank
          || writer_addr == early_addr) begin
             $error("invalid directed scheduler address/latency setup K=%0d writer_bank=%0d nominal_bank=%0d early_bank=%0d writer=%h early=%h",
-                   u_dut.K_LOOKBACK, scoreboard_acc_bank(writer_addr),
+                   u_dut.u_compute_core.K_LOOKBACK, scoreboard_acc_bank(writer_addr),
                    nominal_bank, early_bank, writer_addr, early_addr);
             test_failed = 1'b1;
             return;
@@ -2237,29 +2254,29 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                     @(posedge clk);
                     observe_timeout++;
 
-                    if (u_dut.int2fp_result_pop) begin
+                    if (u_dut.u_compute_core.int2fp_result_pop) begin
                         expected_addr = `GEMM_ACC_MEM_ADDR_WIDTH'(
                             base_addr
                           + `GEMM_ACC_MEM_ADDR_WIDTH'(
                                 launch_index * ACC_ROW_BYTES));
                         if (launch_index >= NUM_TEST_PACKETS
-                         || u_dut.int2fp_result_data_out.ctrl.quant_dir
+                         || u_dut.u_compute_core.int2fp_result_data_out.ctrl.quant_dir
                               !== `QDIR_COL
-                         || u_dut.int2fp_result_data_out.ctrl.acc_rd_en
+                         || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_en
                               !== 1'b1
-                         || u_dut.int2fp_result_data_out.ctrl.acc_wr_en
+                         || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_en
                               !== 1'b1
-                         || u_dut.int2fp_result_data_out.ctrl.acc_rd_addr
+                         || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr
                               !== expected_addr
-                         || u_dut.int2fp_result_data_out.ctrl.acc_wr_addr
+                         || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_addr
                               !== expected_addr) begin
                             $error("directed scheduler INT2FP-result launch mismatch index=%0d expected_addr=%h actual_qdir=%0b actual_rd_en=%0b actual_wr_en=%0b actual_rd=%h actual_wr=%h",
                                    launch_index, expected_addr,
-                                   u_dut.int2fp_result_data_out.ctrl.quant_dir,
-                                   u_dut.int2fp_result_data_out.ctrl.acc_rd_en,
-                                   u_dut.int2fp_result_data_out.ctrl.acc_wr_en,
-                                   u_dut.int2fp_result_data_out.ctrl.acc_rd_addr,
-                                   u_dut.int2fp_result_data_out.ctrl.acc_wr_addr);
+                                   u_dut.u_compute_core.int2fp_result_data_out.ctrl.quant_dir,
+                                   u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_en,
+                                   u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_en,
+                                   u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr,
+                                   u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_wr_addr);
                             test_failed = 1'b1;
                         end
                         if ((launch_index != 0)
@@ -2271,42 +2288,42 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                         end
 
                         if (launch_index == 1) begin
-                            if (u_dut.post_launch_forward
-                             || u_dut.post_launch_history_forward
-                             || u_dut.post_launch_early) begin
+                            if (u_dut.u_compute_core.post_launch_forward
+                             || u_dut.u_compute_core.post_launch_history_forward
+                             || u_dut.u_compute_core.post_launch_early) begin
                                 $error("directed nominal launch was misclassified immediate=%0b history=%0b early=%0b",
-                                       u_dut.post_launch_forward,
-                                       u_dut.post_launch_history_forward,
-                                       u_dut.post_launch_early);
+                                       u_dut.u_compute_core.post_launch_forward,
+                                       u_dut.u_compute_core.post_launch_history_forward,
+                                       u_dut.u_compute_core.post_launch_early);
                                 test_failed = 1'b1;
                             end
                         end
-                        if (launch_index == u_dut.K_LOOKBACK) begin
-                            if (!u_dut.ctrl_pipe[
-                                    u_dut.MERGER_CTRL_IDX
-                                  + u_dut.K_LOOKBACK - 1].valid
-                             || !u_dut.ctrl_pipe[
-                                    u_dut.MERGER_CTRL_IDX
-                                  + u_dut.K_LOOKBACK - 1].acc_wr_en
-                             || u_dut.ctrl_pipe[
-                                    u_dut.MERGER_CTRL_IDX
-                                  + u_dut.K_LOOKBACK - 1].acc_wr_addr
+                        if (launch_index == u_dut.u_compute_core.K_LOOKBACK) begin
+                            if (!u_dut.u_compute_core.ctrl_pipe[
+                                    u_dut.u_compute_core.MERGER_CTRL_IDX
+                                  + u_dut.u_compute_core.K_LOOKBACK - 1].valid
+                             || !u_dut.u_compute_core.ctrl_pipe[
+                                    u_dut.u_compute_core.MERGER_CTRL_IDX
+                                  + u_dut.u_compute_core.K_LOOKBACK - 1].acc_wr_en
+                             || u_dut.u_compute_core.ctrl_pipe[
+                                    u_dut.u_compute_core.MERGER_CTRL_IDX
+                                  + u_dut.u_compute_core.K_LOOKBACK - 1].acc_wr_addr
                                   !== writer_addr
-                             || u_dut.int2fp_result_data_out.ctrl.acc_rd_addr
+                             || u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr
                                   !== early_addr
-                             || u_dut.post_launch_forward
-                             || u_dut.post_launch_history_forward
-                             || !u_dut.post_launch_early) begin
+                             || u_dut.u_compute_core.post_launch_forward
+                             || u_dut.u_compute_core.post_launch_history_forward
+                             || !u_dut.u_compute_core.post_launch_early) begin
                                 $error("directed early launch classification mismatch writer=%h expected_writer=%h read=%h expected_read=%h immediate=%0b history=%0b early=%0b",
-                                       u_dut.ctrl_pipe[
-                                           u_dut.MERGER_CTRL_IDX
-                                         + u_dut.K_LOOKBACK - 1].acc_wr_addr,
+                                       u_dut.u_compute_core.ctrl_pipe[
+                                           u_dut.u_compute_core.MERGER_CTRL_IDX
+                                         + u_dut.u_compute_core.K_LOOKBACK - 1].acc_wr_addr,
                                        writer_addr,
-                                       u_dut.int2fp_result_data_out.ctrl.acc_rd_addr,
+                                       u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr,
                                        early_addr,
-                                       u_dut.post_launch_forward,
-                                       u_dut.post_launch_history_forward,
-                                       u_dut.post_launch_early);
+                                       u_dut.u_compute_core.post_launch_forward,
+                                       u_dut.u_compute_core.post_launch_history_forward,
+                                       u_dut.u_compute_core.post_launch_early);
                                 test_failed = 1'b1;
                             end
                         end
@@ -2334,39 +2351,39 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                         coincident_seen = 1'b1;
                     end
 
-                    if (u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].valid
-                     && u_dut.ctrl_pipe[u_dut.SCALER_CTRL_IDX].acc_rd_addr
+                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].valid
+                     && u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].acc_rd_addr
                           == early_addr) begin
-                        if (!u_dut.early_pipe[u_dut.SCALER_CTRL_IDX]
+                        if (!u_dut.u_compute_core.early_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX]
                          || !u_dut.early_hold_valid[early_bank]
-                         || u_dut.selected_psum_data
+                         || u_dut.u_compute_core.selected_psum_data
                               !== u_dut.early_hold_data[early_bank]) begin
                             $error("directed early-hold source mismatch bank=%0d early_sideband=%0b hold_valid=%0b",
                                    early_bank,
-                                   u_dut.early_pipe[u_dut.SCALER_CTRL_IDX],
+                                   u_dut.u_compute_core.early_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX],
                                    u_dut.early_hold_valid[early_bank]);
                             test_failed = 1'b1;
                         end
                         early_hold_seen = 1'b1;
                     end
 
-                    if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].valid) begin
+                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid) begin
                         expected_addr = `GEMM_ACC_MEM_ADDR_WIDTH'(
                             base_addr
                           + `GEMM_ACC_MEM_ADDR_WIDTH'(
                                 directed_write_index * ACC_ROW_BYTES));
                         if (directed_write_index >= NUM_TEST_PACKETS
-                         || !u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_en
+                         || !u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en
                          || !u_dut.acc_write_fire
-                         || u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_addr
+                         || u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr
                               !== expected_addr) begin
                             $error("directed scheduler write order mismatch index=%0d expected_addr=%h actual_en=%0b actual_fire=%0b actual_addr=%h",
                                    directed_write_index, expected_addr,
-                                   u_dut.ctrl_pipe[
-                                       u_dut.WRITE_CTRL_IDX].acc_wr_en,
+                                   u_dut.u_compute_core.ctrl_pipe[
+                                       u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en,
                                    u_dut.acc_write_fire,
-                                   u_dut.ctrl_pipe[
-                                       u_dut.WRITE_CTRL_IDX].acc_wr_addr);
+                                   u_dut.u_compute_core.ctrl_pipe[
+                                       u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr);
                             test_failed = 1'b1;
                         end
                         directed_write_index++;
@@ -2385,15 +2402,15 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         check_scoreboard_empty("same-QDIR full-rate ACC scheduler");
 
         if ((early_read_count - early_before)
-            != NUM_TEST_PACKETS - u_dut.K_LOOKBACK) begin
+            != NUM_TEST_PACKETS - u_dut.u_compute_core.K_LOOKBACK) begin
             $error("one-cycle-early read count mismatch expected=%0d actual=%0d",
-                   NUM_TEST_PACKETS - u_dut.K_LOOKBACK,
+                   NUM_TEST_PACKETS - u_dut.u_compute_core.K_LOOKBACK,
                    early_read_count - early_before);
             test_failed = 1'b1;
         end
-        if ((nominal_read_count - nominal_before) != u_dut.K_LOOKBACK) begin
+        if ((nominal_read_count - nominal_before) != u_dut.u_compute_core.K_LOOKBACK) begin
             $error("nominal read count mismatch expected=%0d actual=%0d",
-                   u_dut.K_LOOKBACK,
+                   u_dut.u_compute_core.K_LOOKBACK,
                    nominal_read_count - nominal_before);
             test_failed = 1'b1;
         end
@@ -2405,10 +2422,10 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             test_failed = 1'b1;
         end
         if ((scoreboard_early_hold_count - early_holds_before)
-               != NUM_TEST_PACKETS - u_dut.K_LOOKBACK
+               != NUM_TEST_PACKETS - u_dut.u_compute_core.K_LOOKBACK
          || !early_hold_seen) begin
             $error("early-hold source coverage mismatch expected=%0d actual=%0d seen=%0b",
-                   NUM_TEST_PACKETS - u_dut.K_LOOKBACK,
+                   NUM_TEST_PACKETS - u_dut.u_compute_core.K_LOOKBACK,
                    scoreboard_early_hold_count - early_holds_before,
                    early_hold_seen);
             test_failed = 1'b1;
@@ -2449,7 +2466,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                          1'b0, i[0] ? `QDIR_ROW : `QDIR_COL,
                          i[0], ~i[0], i[0], i == 7);
             if ((i == 1) || (i == 4))
-                drive_bubble(i == 1 ? u_dut.K_LOOKBACK : 1);
+                drive_bubble(i == 1 ? u_dut.u_compute_core.K_LOOKBACK : 1);
         end
         end_stream();
         wait_for_last_write();
@@ -2596,7 +2613,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         repeat (3) @(posedge clk);
         @(negedge clk);
         reset = 1'b0;
-        repeat (u_dut.WRITE_DLY + 3) @(posedge clk);
+        repeat (u_dut.u_compute_core.WRITE_DLY + 3) @(posedge clk);
         if (u_dut.acc_write_fire
          || gemm_unit_v2_if.last_write
          || gemm_unit_v2_if.tagged_final_writeback) begin
@@ -2610,12 +2627,16 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         last_write_count = 0;
         scoreboard_cycle = 0;
         scoreboard_admission_count = 0;
+        scoreboard_retire_count = 0;
         scoreboard_write_count = 0;
         scoreboard_read_count = 0;
         scoreboard_coincident_read_count = 0;
         scoreboard_forward_count = 0;
         scoreboard_history_forward_count = 0;
         scoreboard_early_hold_count = 0;
+        scoreboard_output_read_count = 0;
+        scoreboard_output_response_count = 0;
+        scoreboard_stalled_input_cycles = 0;
         reset = 1'b0;
         init_signals();
         apply_reset();
@@ -2661,16 +2682,34 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
          || (scoreboard_coincident_read_count == 0)
          || (scoreboard_forward_count == 0)
          || (scoreboard_history_forward_count == 0)
-         || (scoreboard_early_hold_count == 0)) begin
-            $error("scoreboard coverage gap admissions=%0d writes=%0d reads=%0d coincident_reads=%0d immediate_forwards=%0d history_forwards=%0d early_holds=%0d",
-                   scoreboard_admission_count, scoreboard_write_count,
+         || (scoreboard_early_hold_count == 0)
+         || (scoreboard_output_read_count == 0)
+         || (scoreboard_output_response_count == 0)
+         || (scoreboard_stalled_input_cycles == 0)) begin
+            $error("scoreboard coverage gap admissions=%0d retires=%0d writes=%0d reads=%0d coincident_reads=%0d immediate_forwards=%0d history_forwards=%0d early_holds=%0d output_reads=%0d output_responses=%0d stalled_input_cycles=%0d",
+                   scoreboard_admission_count, scoreboard_retire_count,
+                   scoreboard_write_count,
                    scoreboard_read_count,
                    scoreboard_coincident_read_count,
                    scoreboard_forward_count,
                    scoreboard_history_forward_count,
-                   scoreboard_early_hold_count);
+                   scoreboard_early_hold_count,
+                   scoreboard_output_read_count,
+                   scoreboard_output_response_count,
+                   scoreboard_stalled_input_cycles);
             test_failed = 1'b1;
         end
+
+        $display("GEMM_UNIT_V2_PHASE1_COUNTS admissions=%0d retires=%0d writes=%0d reads=%0d coincident_reads=%0d immediate_forwards=%0d history_forwards=%0d early_holds=%0d output_reads=%0d output_responses=%0d stalled_input_cycles=%0d",
+                 scoreboard_admission_count, scoreboard_retire_count,
+                 scoreboard_write_count, scoreboard_read_count,
+                 scoreboard_coincident_read_count,
+                 scoreboard_forward_count,
+                 scoreboard_history_forward_count,
+                 scoreboard_early_hold_count,
+                 scoreboard_output_read_count,
+                 scoreboard_output_response_count,
+                 scoreboard_stalled_input_cycles);
 
         if (last_write_count != EXPECTED_LAST_WRITES) begin
             $error("last_write pulse count mismatch expected=%0d actual=%0d",

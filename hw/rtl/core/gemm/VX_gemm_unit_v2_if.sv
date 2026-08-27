@@ -8,6 +8,8 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
     logic [31:0] s_load_value [2];
     logic [31:0] z_load_value [2];
     logic last_write;
+    logic tagged_writeback;
+    logic [31:0] tagged_writeback_work_seq;
     logic tagged_final_writeback;
     logic weight_register_write;
     logic scale_register_write;
@@ -36,6 +38,8 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
         output s_load_value,
         output z_load_value,
         input  last_write,
+        input  tagged_writeback,
+        input  tagged_writeback_work_seq,
         input  tagged_final_writeback,
         input  weight_register_write,
         input  scale_register_write,
@@ -65,6 +69,8 @@ interface VX_gemm_unit_v2_if import VX_gpu_pkg::*; ();
         input  s_load_value,
         input  z_load_value,
         output last_write,
+        output tagged_writeback,
+        output tagged_writeback_work_seq,
         output tagged_final_writeback,
         output weight_register_write,
         output scale_register_write,

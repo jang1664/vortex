@@ -1053,8 +1053,11 @@ package VX_gpu_pkg;
       logic valid;
       logic acc_rd_en;
       logic acc_wr_en;
-      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_rd_addr;
-      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_wr_addr;
+      // Backend-opaque byte addresses.  The internal ACC adapter consumes
+      // only GEMM_ACC_MEM_ADDR_WIDTH low bits, while the NAIVE LMEM adapter
+      // must retain the complete LMEM address.
+      logic [`MEM_ADDR_WIDTH-1:0] acc_rd_addr;
+      logic [`MEM_ADDR_WIDTH-1:0] acc_wr_addr;
       logic quant_dir;
       gemm_wreg_idx_t wreg_use_idx;
       gemm_qreg_idx_t sreg_use_idx;
@@ -1065,6 +1068,11 @@ package VX_gpu_pkg;
       logic [31:0] w_load_target;
       logic [31:0] s_load_target;
       logic [31:0] z_load_target;
+      // Core-local packet identity used only to join variable-latency ACC
+      // channels.  work_seq identifies a logical microtile and may repeat
+      // across many simultaneously in-flight packets, so it is not a legal
+      // ready/valid transaction tag.
+      logic [31:0] acc_txn_tag;
       logic [31:0] work_seq;
       logic is_load;
       logic notify_on_writeback;

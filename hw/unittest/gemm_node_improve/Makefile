@@ -43,6 +43,9 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
         $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_internal.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_compute_core.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit_v2.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit_v2_if.sv \
         $(RTL_DIR)/core/gemm/VX_prealigner.sv \
@@ -66,6 +69,9 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
         $(RTL_DIR)/core/gemm/VX_cmd_constructor.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \

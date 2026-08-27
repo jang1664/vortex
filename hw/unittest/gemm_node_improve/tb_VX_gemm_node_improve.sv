@@ -3070,7 +3070,10 @@ module tb_VX_gemm_node_improve
       start_now[2] = u_dut.gemm_ctrl_if.scale_read_ctrl.start;
       start_now[3] = u_dut.gemm_ctrl_if.zero_point_read_ctrl.start;
       start_now[4] = u_dut.gemm_ctrl_if.output_write_ctrl.start;
-      start_now[5] = u_dut.gemm_ctrl_if.dma_ctrl.start;
+      // DMA child start is a held valid, unlike the local child fire pulses.
+      // Count its scheduler/executor acceptance, not valid-high stall cycles.
+      start_now[5] = u_dut.gemm_ctrl_if.dma_ctrl.cmd_valid
+                   && u_dut.gemm_ctrl_if.dma_flag.cmd_ready;
       endpoint_now[1] = u_dut.weight_last_register_write;
       endpoint_now[2] = u_dut.scale_last_register_write;
       endpoint_now[3] = u_dut.zero_point_last_register_write;
@@ -3154,10 +3157,19 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  // Integration-level prepare/release contract.  Module-level tests cover
-  // exact descriptor contents and bounded response storage; this scoreboard
-  // proves that the natural FSM/scheduler reaches local prepare before normal
-  // release and that no consumer-visible request escapes in between.
+  // Integration-level prepare/release contract.  The fixed888 local
+  // Input/Weight/Scale/ZP paths use overlap executors: they enqueue the normal
+  // command and prefetch through their bounded descriptor/response slots, and
+  // intentionally advertise prepare_ready=0.  Passive prepare/release belongs
+  // only to the global tile DMA path in this hierarchy.  Module-level tests
+  // cover exact local descriptor contents and bounded response storage; this
+  // scoreboard proves the architectural capability split and that no
+  // consumer-visible request escapes an accepted passive prepare.  A global
+  // prepare is opportunity-dependent: the directed gemm_ctrl and
+  // gemm_tmem_dma_ctrl tests create a dependency-blocked queue head and prove
+  // positive rd0..3 prepare/release coverage.  A normally draining single job
+  // may legally observe no such window, so integration requires exact balance
+  // rather than a nonzero event count.
   longint unsigned prefetch_prepare_count [0:4];
   longint unsigned prefetch_release_count [0:4];
   logic [3:0] local_prefetch_pending;
@@ -3243,20 +3255,22 @@ module tb_VX_gemm_node_improve
 
   task automatic check_prefetch_contract_coverage;
     begin
-      if (prefetch_prepare_count[0] == 0
-          || prefetch_release_count[0] != prefetch_prepare_count[0]
-          || local_prefetch_pending != 0)
+      if (local_prefetch_pending != 0)
         $fatal(1,
-          "PREFETCH_CONTRACT input lifecycle missing/mismatch prepare=%0d release=%0d pending=0x%0h",
-          prefetch_prepare_count[0], prefetch_release_count[0],
+          "PREFETCH_CONTRACT local passive prepare remained pending=0x%0h",
           local_prefetch_pending);
-      for (int path = 1; path < 5; ++path) begin
-        if (prefetch_release_count[path] != prefetch_prepare_count[path])
+      for (int path = 0; path < 4; ++path) begin
+        if (prefetch_prepare_count[path] != 0
+            || prefetch_release_count[path] != 0)
           $fatal(1,
-            "PREFETCH_CONTRACT path=%0d lifecycle mismatch prepare=%0d release=%0d",
+            "PREFETCH_CONTRACT overlap path=%0d unexpectedly accepted passive prepare/release prepare=%0d release=%0d",
             path, prefetch_prepare_count[path], prefetch_release_count[path]);
       end
-      $display("PREFETCH_CONTRACT_PASSED local_prepare={i:%0d,w:%0d,sc:%0d,zp:%0d} local_release={i:%0d,w:%0d,sc:%0d,zp:%0d} tile={prepare:%0d,release:%0d} no_pre_release_consumer=1 output_prepare=0",
+      if (prefetch_release_count[4] != prefetch_prepare_count[4])
+        $fatal(1,
+          "PREFETCH_CONTRACT tile lifecycle mismatch prepare=%0d release=%0d",
+          prefetch_prepare_count[4], prefetch_release_count[4]);
+      $display("PREFETCH_CONTRACT_PASSED local_passive_disabled=1 tile_opportunity_optional=1 local_prepare={i:%0d,w:%0d,sc:%0d,zp:%0d} local_release={i:%0d,w:%0d,sc:%0d,zp:%0d} tile={prepare:%0d,release:%0d} no_pre_release_consumer=1 output_prepare=0",
                prefetch_prepare_count[0], prefetch_prepare_count[1],
                prefetch_prepare_count[2], prefetch_prepare_count[3],
                prefetch_release_count[0], prefetch_release_count[1],
@@ -3369,8 +3383,8 @@ module tb_VX_gemm_node_improve
           && !u_dut.u_VX_gemm_unit_v2.compute_group_busy[compute_tail_group])
         $fatal(1, "OUTPUT_DBUF compute group released before final writeback");
       if (u_dut.gemm_unit_v2_if.last_write) begin
-        incoming_group = u_dut.u_VX_gemm_unit_v2.ctrl_pipe[
-            u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr[
+        incoming_group = u_dut.u_VX_gemm_unit_v2.u_compute_core.ctrl_pipe[
+            u_dut.u_VX_gemm_unit_v2.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr[
               `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
         if (!compute_tail_active || (incoming_group != compute_tail_group))
           $fatal(1, "OUTPUT_DBUF final-writeback group/lifetime mismatch");
@@ -3648,7 +3662,7 @@ module tb_VX_gemm_node_improve
     if (!reset && u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en[0] && acc_wr_mon_cnt < 3) begin
       $display("[%0t] [ACC_WR_MON] bank0 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
-               u_dut.u_VX_gemm_unit_v2.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr,
+               u_dut.u_VX_gemm_unit_v2.u_compute_core.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr,
                u_dut.u_VX_gemm_unit_v2.acc_mem_addr[0],
                u_dut.u_VX_gemm_unit_v2.acc_mem_in_data[0]);
       acc_wr_mon_cnt++;
@@ -3656,7 +3670,7 @@ module tb_VX_gemm_node_improve
     if (!reset && u_dut.u_VX_gemm_unit_v2.acc_mem_wr_en[1] && acc_wr_mon_cnt < 3) begin
       $display("[%0t] [ACC_WR_MON] bank1 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
-               u_dut.u_VX_gemm_unit_v2.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.WRITE_CTRL_IDX].acc_wr_addr,
+               u_dut.u_VX_gemm_unit_v2.u_compute_core.ctrl_pipe[u_dut.u_VX_gemm_unit_v2.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr,
                u_dut.u_VX_gemm_unit_v2.acc_mem_addr[1],
                u_dut.u_VX_gemm_unit_v2.acc_mem_in_data[1]);
       acc_wr_mon_cnt++;
@@ -3666,11 +3680,11 @@ module tb_VX_gemm_node_improve
   // Monitor input pipe valid
   int in_pipe_cnt = 0;
   always @(posedge clk) begin
-    if (!reset && u_dut.u_VX_gemm_unit_v2.in_pipe_valid_out && in_pipe_cnt < 3) begin
+    if (!reset && u_dut.u_VX_gemm_unit_v2.u_compute_core.in_pipe_valid_out && in_pipe_cnt < 3) begin
       $display("[%0t] [IN_PIPE_MON] input beat %0d: data[15:0]=0x%04h data[31:16]=0x%04h",
                $time, in_pipe_cnt,
-               u_dut.u_VX_gemm_unit_v2.in_pipe_data_out[15:0],
-               u_dut.u_VX_gemm_unit_v2.in_pipe_data_out[31:16]);
+               u_dut.u_VX_gemm_unit_v2.u_compute_core.in_pipe_data_out[15:0],
+               u_dut.u_VX_gemm_unit_v2.u_compute_core.in_pipe_data_out[31:16]);
       in_pipe_cnt++;
     end
   end
@@ -3825,14 +3839,14 @@ module tb_VX_gemm_node_improve
       read_req = u_dut.u_VX_gemm_unit_v2.early_read_req
                | u_dut.u_VX_gemm_unit_v2.nominal_read_req;
       nominal_read_req_q <= u_dut.u_VX_gemm_unit_v2.nominal_read_req;
-      acc_consume = u_dut.u_VX_gemm_unit_v2.acc_in_data_valid[0];
+      acc_consume = u_dut.u_VX_gemm_unit_v2.u_compute_core.acc_in_data_valid[0];
       forwarded_consume = acc_consume
-                       && u_dut.u_VX_gemm_unit_v2.forward_pipe[
-                            u_dut.u_VX_gemm_unit_v2.SCALER_CTRL_IDX];
+                       && u_dut.u_VX_gemm_unit_v2.u_compute_core.forward_pipe[
+                            u_dut.u_VX_gemm_unit_v2.u_compute_core.SCALER_CTRL_IDX];
       early_underflow = acc_consume
                      && !forwarded_consume
-                     && u_dut.u_VX_gemm_unit_v2.early_pipe[
-                          u_dut.u_VX_gemm_unit_v2.SCALER_CTRL_IDX]
+                     && u_dut.u_VX_gemm_unit_v2.u_compute_core.early_pipe[
+                          u_dut.u_VX_gemm_unit_v2.u_compute_core.SCALER_CTRL_IDX]
                      && !u_dut.u_VX_gemm_unit_v2.early_hold_valid[
                           u_dut.u_VX_gemm_unit_v2.accum_bank];
 

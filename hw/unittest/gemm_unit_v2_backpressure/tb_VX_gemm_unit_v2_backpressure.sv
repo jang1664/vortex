@@ -114,10 +114,10 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
         reset = 1'b0;
         repeat (2) @(posedge clk);
         if (!gemm_unit_v2_if.pipeline_empty
-         || u_dut.merged_fifo_count != 0
-         || u_dut.tree_credit_q
-             != $bits(u_dut.tree_credit_q)'(
-                    u_dut.MERGED_RESULT_FIFO_DEPTH)) begin
+         || u_dut.u_compute_core.merged_fifo_count != 0
+         || u_dut.u_compute_core.tree_credit_q
+             != $bits(u_dut.u_compute_core.tree_credit_q)'(
+                    u_dut.u_compute_core.MERGED_RESULT_FIFO_DEPTH)) begin
             $error("backpressure reset did not clear all ownership");
             test_failed = 1'b1;
         end
@@ -176,7 +176,7 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
         @(negedge clk);
         post_ready = 1'b0;
         u_dut.postprocess_ready_test = 1'b0;
-        wait (u_dut.merged_fifo_push);
+        wait (u_dut.u_compute_core.merged_fifo_push);
         // Keep ready low across the edge that captures the first result.
         @(posedge clk);
         @(negedge clk);
@@ -234,19 +234,19 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
                 accepted_q.push_back(item);
                 accepted_count++;
             end
-            if (u_dut.compute_fire)
+            if (u_dut.u_compute_core.compute_fire)
                 compute_count++;
-            if (u_dut.merged_fifo_push)
+            if (u_dut.u_compute_core.merged_fifo_push)
                 push_count++;
-            if (u_dut.merged_fifo_pop) begin
+            if (u_dut.u_compute_core.merged_fifo_pop) begin
                 if (accepted_q.size() == 0) begin
                     $error("merged FIFO pop without accepted transaction");
                     test_failed = 1'b1;
                 end else begin
                     item = accepted_q.pop_front();
-                    if (u_dut.merged_fifo_data_out.ctrl.acc_wr_addr !== item.addr
-                     || u_dut.merged_fifo_data_out.ctrl.quant_dir !== item.quant_dir
-                     || u_dut.merged_fifo_data_out.ctrl.last !== item.last) begin
+                    if (u_dut.u_compute_core.merged_fifo_data_out.ctrl.acc_wr_addr !== item.addr
+                     || u_dut.u_compute_core.merged_fifo_data_out.ctrl.quant_dir !== item.quant_dir
+                     || u_dut.u_compute_core.merged_fifo_data_out.ctrl.last !== item.last) begin
                         $error("merged FIFO transaction reordered");
                         test_failed = 1'b1;
                     end
@@ -260,7 +260,7 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
                     test_failed = 1'b1;
                 end else begin
                     item = commit_q.pop_front();
-                    if (u_dut.ctrl_pipe[u_dut.WRITE_CTRL_IDX].acc_wr_addr
+                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr
                         !== item.addr) begin
                         $error("ACC commit transaction reordered");
                         test_failed = 1'b1;
@@ -272,18 +272,18 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
                 last_write_count++;
 
             if (!post_ready
-             && (!u_dut.merged_fifo_empty || u_dut.merged_fifo_push)) begin
+             && (!u_dut.u_compute_core.merged_fifo_empty || u_dut.u_compute_core.merged_fifo_push)) begin
                 if (held_head_valid
-                 && (u_dut.merged_fifo_data_out.data !== held_head_data
-                  || u_dut.merged_fifo_data_out.ctrl !== held_head_ctrl
-                  || u_dut.merged_fifo_data_out.max_exp !== held_head_max_exp)) begin
+                 && (u_dut.u_compute_core.merged_fifo_data_out.data !== held_head_data
+                  || u_dut.u_compute_core.merged_fifo_data_out.ctrl !== held_head_ctrl
+                  || u_dut.u_compute_core.merged_fifo_data_out.max_exp !== held_head_max_exp)) begin
                     $error("merged FIFO head changed while valid and stalled");
                     test_failed = 1'b1;
                 end
                 held_head_valid = 1'b1;
-                held_head_data = u_dut.merged_fifo_data_out.data;
-                held_head_ctrl = u_dut.merged_fifo_data_out.ctrl;
-                held_head_max_exp = u_dut.merged_fifo_data_out.max_exp;
+                held_head_data = u_dut.u_compute_core.merged_fifo_data_out.data;
+                held_head_ctrl = u_dut.u_compute_core.merged_fifo_data_out.ctrl;
+                held_head_max_exp = u_dut.u_compute_core.merged_fifo_data_out.max_exp;
             end else begin
                 held_head_valid = 1'b0;
             end
@@ -325,7 +325,7 @@ module tb_VX_gemm_unit_v2_backpressure import VX_gpu_pkg::*; ();
         post_ready = 1'b0;
         u_dut.postprocess_ready_test = 1'b0;
         drive_packets(4, 64);
-        wait (u_dut.merged_fifo_count >= 2);
+        wait (u_dut.u_compute_core.merged_fifo_count >= 2);
         apply_reset();
         post_ready = 1'b1;
         u_dut.postprocess_ready_test = 1'b1;
