@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <VX_config.h>
 
-#define VX_TVM_GEMM_ABI_VERSION 1
+#define VX_TVM_GEMM_ABI_VERSION 2
 #define VX_TVM_GEMM_MODE_NAIVE 1
 #define VX_TVM_GEMM_MODE_IMPROVE 2
 
@@ -119,7 +119,7 @@ static inline bool allocate_scratch(Scratch* scratch, uint32_t qblock,
   uint64_t cursor = mode == VX_TVM_GEMM_MODE_NAIVE ? local_memory_base : 0;
   const uint64_t limit = mode == VX_TVM_GEMM_MODE_NAIVE
                              ? local_memory_base + (uint64_t(1) << LMEM_LOG_SIZE)
-                             : uint64_t(TMEM_BANK_SIZE) * 32;
+                             : uint64_t(TMEM_BANK_SIZE) * NUM_DMA_CHANNELS;
 
   auto allocate = [&](uint64_t bytes, uint64_t* address) {
     cursor = align_up(cursor, 64);
@@ -226,5 +226,25 @@ static inline int vx_tvm_gemm_w4a16(
     uint32_t weight_transpose, uint32_t quant_direction, uint32_t mode) {
   return vortex::tvm_gemm::submit(input, weight, scale, zero_point, output, m, n, k,
                                  qblock, weight_transpose, quant_direction, mode);
+}
+
+// ABI v2 keeps the externally visible logical N/K separate from the padded
+// dimensions programmed into the IMPROVE FSM.  M already has native tail
+// support and is therefore both logical and programmed.
+static inline int vx_tvm_gemm_w4a16_v2(
+    const void* input, const void* weight, const void* scale, const void* zero_point,
+    void* output, uint32_t m, uint32_t execution_n, uint32_t execution_k,
+    uint32_t qblock, uint32_t weight_transpose, uint32_t quant_direction,
+    uint32_t mode, uint32_t logical_n, uint32_t logical_k,
+    uint32_t layout_abi_version) {
+  if (mode != VX_TVM_GEMM_MODE_IMPROVE || layout_abi_version != 2u ||
+      qblock != 32u || logical_n == 0u || logical_k == 0u ||
+      logical_n > execution_n || logical_k > execution_k ||
+      (execution_n % MXU_COL) != 0u || (execution_k % MXU_ROW) != 0u) {
+    return -7;
+  }
+  return vortex::tvm_gemm::submit(input, weight, scale, zero_point, output, m,
+                                  execution_n, execution_k, qblock,
+                                  weight_transpose, quant_direction, mode);
 }
 #endif

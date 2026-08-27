@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <vortex.h>
 #include "common.h"
 
@@ -24,6 +25,8 @@ static uint32_t M = 2;        // user-requested (real) M
 static uint32_t M_pad = 0;    // padded to multiple of 8 (set after parse_args)
 static uint32_t N = 32;
 static uint32_t K = 128;
+static uint32_t N_logical = 32;
+static uint32_t K_logical = 128;
 static uint32_t QBLK = 32;
 static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
@@ -218,23 +221,23 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
   uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
 
-  h_A.resize(M * K);
-  h_W_raw.resize(K * N);
-  h_scales.resize(sc_zp_size);
-  h_zeros.resize(sc_zp_size);
-  h_ref_out_fp16.resize(M * N);
+  h_A.assign(M * K, 0);
+  h_W_raw.assign(K * N, 0);
+  h_scales.assign(sc_zp_size, 0);
+  h_zeros.assign(sc_zp_size, 0);
+  h_ref_out_fp16.assign(M * N, 0);
 
   // Input matrix A [M x K] fp16
   for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K; ++k) {
+    for (uint32_t k = 0; k < K_logical; ++k) {
       h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 3)/100.0);
       // h_A[m * K + k] = float_to_fp16(1.0f);
     }
   }
 
   // Weight matrix W [K x N] raw int4 values (unpacked for reference)
-  for (uint32_t k = 0; k < K; ++k){
-    for (uint32_t n = 0; n < N; ++n) {
+  for (uint32_t k = 0; k < K_logical; ++k){
+    for (uint32_t n = 0; n < N_logical; ++n) {
       h_W_raw[k * N + n] = int8_t(int((k * N + n) % 7) - 3);
       // h_W_raw[k * N + n] = int8_t(int(1));
     }
@@ -242,16 +245,16 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 
   // Scale and zero-point
   if (QDIR == 0) {
-    for (uint32_t kg = 0; kg < groups_total; ++kg)
-      for (uint32_t n = 0; n < N; ++n) {
+    for (uint32_t kg = 0; kg < (K_logical + QBLK - 1) / QBLK; ++kg)
+      for (uint32_t n = 0; n < N_logical; ++n) {
         h_scales[kg * N + n] = float_to_fp16(1.0f + float((n+kg) % 3)/100.0);
         h_zeros[kg * N + n] = int16_t(int((n+kg) % 7) - 3);
         // h_scales[kg * N + n] = float_to_fp16(1.0f);
         // h_zeros[kg * N + n] = int16_t(-1);
       }
   } else {
-    for (uint32_t k = 0; k < K; ++k)
-      for (uint32_t ng = 0; ng < ng_total; ++ng) {
+    for (uint32_t k = 0; k < K_logical; ++k)
+      for (uint32_t ng = 0; ng < (N_logical + QBLK - 1) / QBLK; ++ng) {
         h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float((ng+k) % 3)/100.0);
         h_zeros[k * ng_total + ng] = int16_t(int((ng+k) % 7) - 3);
         // h_scales[k * ng_total + ng] = float_to_fp16(1.0f);
@@ -262,9 +265,9 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   // Reference output C = A * dequant(W) [M x N]
   if (compute_reference) {
     for (uint32_t m = 0; m < M; ++m)
-      for (uint32_t n = 0; n < N; ++n) {
+      for (uint32_t n = 0; n < N_logical; ++n) {
         float sum = 0.0f;
-        for (uint32_t k = 0; k < K; ++k) {
+        for (uint32_t k = 0; k < K_logical; ++k) {
           float a = fp16_to_float(h_A[m * K + k]);
           float scale, zp;
           if (QDIR == 0) {
@@ -534,7 +537,7 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
           idx += 2;
 
           // Skip padded rows: kernel didn't compute these (MXU bound = real M).
-          if (gm >= M) continue;
+          if (gm >= M || gn >= N_logical) continue;
 
           uint16_t exp = ref[gm * N + gn];
           if (!compare_fp16(got, exp, FP16_TOL)) {
@@ -605,27 +608,27 @@ int main(int argc, char *argv[]) {
   parse_args(argc, argv);
 
   // Validate constraints
-  if (QBLK == 0 || WTRANS > 1 || QDIR > 1) {
+  if (QBLK != 32 || WTRANS > 1 || QDIR > 1) {
     std::cerr << "Invalid parameters: QBLK=" << QBLK
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
     return -1;
   }
-  if (M == 0) {
-    std::cerr << "M must be > 0" << std::endl;
+  if (M == 0 || N == 0 || K == 0) {
+    std::cerr << "M, N, and K must be > 0" << std::endl;
     return -1;
   }
+  N_logical = N;
+  K_logical = K;
+  if (N_logical > std::numeric_limits<uint32_t>::max() - (DMA_MXU_NT - 1) ||
+      K_logical > std::numeric_limits<uint32_t>::max() - (DMA_MXU_KT - 1)) {
+    std::cerr << "N/K execution padding exceeds the 32-bit command ABI" << std::endl;
+    return -1;
+  }
+  N = uint32_t(align_up_u64(N_logical, DMA_MXU_NT));
+  K = uint32_t(align_up_u64(K_logical, DMA_MXU_KT));
   // Pad M up to multiple of 8 for DMA stripe alignment (NUM_DMA_CHANNELS=8).
   // DRAM slots reserve M_pad rows for address alignment; compute/DMA use real M.
   M_pad = (M + 7u) & ~7u;
-  if (N % DMA_MXU_NT != 0) {
-    std::cerr << "N=" << N << " must be a multiple of DMA_MXU_NT=" << DMA_MXU_NT
-              << std::endl;
-    return -1;
-  }
-  if (K % DMA_MXU_KT != 0) {
-    std::cerr << "K=" << K << " must be a multiple of DMA_MXU_KT=" << DMA_MXU_KT << std::endl;
-    return -1;
-  }
   if (QDIR == 0 && (DMA_KT % QBLK != 0)) {
     std::cerr << "QCOL mode: DMA_KT=" << DMA_KT << " must be divisible by QBLK=" << QBLK << std::endl;
     return -1;
@@ -635,7 +638,8 @@ int main(int argc, char *argv[]) {
             << (POWER_MODE ? " [POWER MODE: no reference, no verify]" : "")
             << std::endl;
   std::cout << "M=" << M << " (padded to " << M_pad << ")"
-            << ", N=" << N << ", K=" << K
+            << ", N=" << N_logical << " (execution " << N << ")"
+            << ", K=" << K_logical << " (execution " << K << ")"
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
             << ", QDIR=" << QDIR << ", REPS=" << REPS << std::endl;
   std::cout << "Tile: MT=" << DMA_MT << " KT=" << DMA_KT
