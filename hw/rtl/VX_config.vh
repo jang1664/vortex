@@ -1349,14 +1349,10 @@ for block_size in range(1, full_bitwidth+1):
 `define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core
 `endif
 `ifndef NUM_TMEM_BANKS
-`define NUM_TMEM_BANKS `NUM_DMA_CHANNELS // Number of physical TMEM SRAM banks
+`define NUM_TMEM_BANKS 8          // Number of physical TMEM SRAM banks
 `endif
 `ifndef NUM_HBM_PORTS
-`ifdef PLATFORM_MEMORY_NUM_PORTS
-`define NUM_HBM_PORTS `PLATFORM_MEMORY_NUM_PORTS // Legacy configuration alias
-`else
-`define NUM_HBM_PORTS `NUM_DMA_CHANNELS  // Number of external HBM AXI ports
-`endif
+`define NUM_HBM_PORTS 8           // Number of external HBM AXI ports
 `endif
 `ifndef TMEM_BANK_SIZE
 `define TMEM_BANK_SIZE (64 * 1024) // 64KB

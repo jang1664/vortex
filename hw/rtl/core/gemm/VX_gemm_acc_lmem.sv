@@ -1,5 +1,7 @@
 `include "VX_define.vh"
 
+`ifdef GEMM_NAIVE
+
 // Variable-latency accumulator backend for the GEMM_NAIVE LMEM topology.
 //
 // Addresses on VX_gemm_acc_if are byte addresses.  The existing NAIVE wide
@@ -649,3 +651,5 @@ module VX_gemm_acc_lmem #(
     `UNUSED_VAR (final_lmem_bus_if.rsp_valid)
     `UNUSED_VAR (final_lmem_bus_if.rsp_data)
 endmodule
+
+`endif // GEMM_NAIVE
