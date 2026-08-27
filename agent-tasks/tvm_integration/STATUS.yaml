@@ -1,19 +1,35 @@
 task: tvm_integration
 state: COMPLETE
-spec: vortex_tvm_native_kernel_backend_plan.md
+spec: vortex_tvm_gemm_improve_arbitrary_shape_debug_plan.md
 current_phase: complete
-updated_at: "2026-08-20 20:21"
+updated_at: "2026-08-28 00:21"
 repositories:
   vortex:
     path: /home/jaeyongjang/project.local/vortex_base
     branch: fpint
     baseline: 08121831
+    final_head: fc55b00f
   tvm:
     path: /home/jaeyongjang/project.local/tvm
     branch: fi_system
     baseline: 089a098a2
-    final_head: de2b245dc
+    final_head: aee6d008c
 progress:
+  - timestamp: "2026-08-28 00:13"
+    phase: final_validation
+    status: pass
+    summary: Fixed the TVM IMPROVE A-layout M-tail stride, added direct-ABI, K-group sentinel, boundary, QDIR, WTRANS, and multi-tile hardware regressions, and closed the physical U55C correctness blocker.
+    learned: Native packs each K micro-tile with the real cur_m rows and reserves row-alignment padding only at the end of each (mt,kt) slot. The former TVM transform incorrectly used slot_m between micro-tiles, moving K=32 from element 224 to 256 for M=7. Direct ABI and sentinel tests pass after using cur_m for the payload stride while retaining slot_m for slot allocation. The focused host suite passed 123 tests with 32 skips, ten full Relax VM arbitrary-shape U55C cases passed, and native (7,31,33) passed.
+  - timestamp: "2026-08-28 00:05"
+    phase: root_cause
+    status: pass
+    summary: Reproduced the failure through the ABI v2 helper with host-generated physical buffers and compared the physical A layout against the passing native converter.
+    learned: The failure was not caused by VM cache visibility, buffer lifetime, ABI validation, or MMIO fields. The TVM and initial debug-side A packers inserted M-row alignment padding between K micro-tiles, whereas hardware expects that padding only at the end of the containing (mt,kt) slot.
+  - timestamp: "2026-08-28 00:01"
+    phase: debug_isolation
+    status: active
+    summary: Started the arbitrary-shape IMPROVE GEMM correctness debug plan, preserving the minimal physical U55C Relax VM reproducer at logical shape (7,31,33).
+    learned: Native Vortex GEMM and standalone TVM A/W/qparam transforms pass on U55C, while the chained Relax VM result omits the K=32 contribution; the first experiment will isolate the ABI v2 helper with host-generated physical buffers.
   - timestamp: "2026-08-20 16:50"
     phase: intake
     status: pass
@@ -95,4 +111,5 @@ pitfalls:
   - The current upstream vxbin.py uses a fixed /tmp/temp_kernel.bin scratch path, so compiler packaging must remain serial until that helper is made concurrency-safe.
   - The local build helper and runtime sidecar intentionally use this workspace's explicit Vortex root and source-tree runtime rpath. A relocatable install/package contract is future deployment work, not part of the validated local U55C flow.
   - The independent Claude adversarial review route could not authenticate in its execution context, so the adversarial lens used an in-process reviewer and has no cross-model corroboration receipt.
+  - TIR script closure constants must be explicitly captured before constructing a PrimFunc; the first post-fix Relax build exposed a missing dma_kt closure variable before any hardware launch.
 blockers: []
