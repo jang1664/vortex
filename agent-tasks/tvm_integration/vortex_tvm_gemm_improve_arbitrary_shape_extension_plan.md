@@ -605,3 +605,24 @@ Milestone B is complete when:
    module inspection that eligible intermediate detile/zero-fill/retile kernels were removed.
 4. Rank-2 per-head QK^T, PV, KV-cache update, bytecode/compiled VM, and export/load replay pass on the
    pinned physical image; first-class batched GEMM remains a separately documented follow-up.
+
+## Milestone B execution record
+
+Milestone B was completed on 2026-08-28 against the pinned
+`xrt_hw_u55c_c_f100_fpint_64300e5119` image.
+
+- A pre-legalization Vortex pass now creates descriptor-checked IMPROVE layout regions before
+  generic legalization and fusion. Compatible GEMM-C values remain tiled across ReLU, bias add,
+  residual add, and the next GEMM. Row-major consumers retain branch-local detile boundaries.
+- IMPROVE physical kernels are opaque to generic `FuseTIR`; quantize, dequantize, and KV-cache
+  tuple lowering remains after generic fusion so scheduled non-root bodies are never re-fused.
+- Immutable packed W, scale, and zero-point Relax constants are prepacked for all WTRANS/QDIR
+  combinations. Their full logical/execution/quantization/ABI descriptor is retained in module
+  metadata, and exported VM artifacts replay without runtime W/qparam layout kernels.
+- Module inspection proves the fused FFN has one initial A transform and one final C detile, while
+  the unfused reference has two of each. Fused and unfused FFN and attention paths match on U55C.
+- Rank-2 per-head QK^T and PV, capacity-129 INT4 KV caches, repeated cache feedback, bytecode and
+  compiled VM modes, export/load replay, and matrices crossing the 128-element DMA boundary pass.
+- Validation passed 206 Vortex-focused host tests (72 hardware skips) and all 37 improved-image
+  physical tests. First-class batched GEMM remains a follow-up; heads/batches use the explicit
+  rank-2 per-head selection contract in this milestone.

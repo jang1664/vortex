@@ -1,8 +1,8 @@
 task: tvm_integration
 state: COMPLETE
-spec: vortex_tvm_gemm_improve_arbitrary_shape_debug_plan.md
+spec: vortex_tvm_gemm_improve_arbitrary_shape_extension_plan.md
 current_phase: complete
-updated_at: "2026-08-28 00:21"
+updated_at: "2026-08-28 02:07"
 repositories:
   vortex:
     path: /home/jaeyongjang/project.local/vortex_base
@@ -15,6 +15,26 @@ repositories:
     baseline: 089a098a2
     final_head: aee6d008c
 progress:
+  - timestamp: "2026-08-28 02:07"
+    phase: milestone_b_final_validation
+    status: pass
+    summary: Completed Milestone B with pre-legalization IMPROVE layout regions, descriptor-checked GEMM/vector chaining, compile-time constant prepacking, branch-local boundaries, and irregular multi-tile attention/KV-cache replay.
+    learned: The final Vortex-focused host suite passed 206 tests with 72 hardware skips. The managed U55C improved-image suite passed all 37 selected hardware tests, including fused/unfused FFN, all WTRANS/QDIR constant-prepack combinations in bytecode and compiled VM modes, QK^T/PV attention, irregular capacity-129 KV-cache replay, export/load, and the existing Milestone A arbitrary-shape matrix. A final focused fused/unfused attention rerun passed both VM modes.
+  - timestamp: "2026-08-28 01:58"
+    phase: milestone_b_pipeline_split
+    status: pass
+    summary: Split lowering into a pre-legalization IMPROVE GEMM/layout-region pass and a post-fusion quantize/dequantize/KV-update pass.
+    learned: Lowering every Vortex logical op before FuseOps/FuseTIR exposed scheduled non-root PrimFuncs inside generic fusion regions. Marking IMPROVE physical kernels opaque and delaying auxiliary tuple operators preserves graph-level GEMM fusion without violating FuseTIR's schedulable-root requirement.
+  - timestamp: "2026-08-28 01:50"
+    phase: milestone_b_hardware_environment
+    status: pass
+    summary: Moved physical validation into the managed Slurm U55C allocation after an unmanaged direct-XRT attempt found a busy card.
+    learned: Direct XRT saw both U55C devices and selected a board whose xclbin was in use. The managed allocation plus xrt_device_detect.sh resolved the granted device deterministically and all subsequent physical runs passed.
+  - timestamp: "2026-08-28 01:36"
+    phase: milestone_b_baseline
+    status: active
+    summary: Started Milestone B layout-preserving graph execution from the completed arbitrary-shape GEMM baseline.
+    learned: The existing lowerer already fuses a directly chained GEMM-C to GEMM-A and has row-major attention and KV-cache acceptance, but it still detiles across vector operators and retransforms W/scale/ZP at every invocation. Milestone B requires a pre-legalization graph pass, descriptor-aware tile-aware vector regions, branch-local boundaries, and constant prepacking.
   - timestamp: "2026-08-28 00:13"
     phase: final_validation
     status: pass
@@ -101,6 +121,8 @@ progress:
     summary: Validated kernel timeout configuration before launch and expanded the physical device-to-device copy test across the one MiB staging boundary.
     learned: The final runtime-focused host suite passed 27 tests with one expected hardware skip, and the pinned U55C runtime suite passed all 11 tests in 8.95 seconds on index 0/BDF 0000:2a:00.1.
 pitfalls:
+  - Pre-scheduled IMPROVE PrimFuncs introduced before FuseOps must carry opaque op_pattern metadata; otherwise an adjacent logical quantize or tuple region can make FuseTIR attempt to fuse a non-root scheduled body.
+  - Physical TVM tests must run inside the managed Slurm U55C allocation and resolve XRT_DEVICE_INDEX from ci/xrt_device_detect.sh; an unmanaged process may select a busy board even when another U55C is available.
   - The user-provided plan was untracked before implementation and must not be included accidentally in an implementation commit.
   - Host TVM LLVM and the Vortex device LLVM must remain isolated; ambient shell PATH is not authoritative.
   - Hardware execution is authoritative. simx may only diagnose a hardware failure and cannot replace a U55C result.
