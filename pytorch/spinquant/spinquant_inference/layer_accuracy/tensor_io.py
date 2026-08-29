@@ -40,6 +40,7 @@ def dequantize_weight(
     scales: torch.Tensor,
     group_size: int,
     *,
+    zero_points: torch.Tensor | None = None,
     dtype: torch.dtype = torch.float16,
 ) -> torch.Tensor:
     q = unpack_signed_int4(packed).to(device=scales.device, dtype=torch.float32)
@@ -50,5 +51,11 @@ def dequantize_weight(
             f"weight/scale shape mismatch: q={tuple(q.shape)}, scales={tuple(scales.shape)}, "
             f"group_size={group_size}"
         )
+    if zero_points is not None:
+        if zero_points.dtype != torch.int16 or zero_points.shape != scales.shape:
+            raise ValueError(
+                "weight zero-points must be INT16 with the same shape as scales"
+            )
+        q = q - zero_points.float().repeat_interleave(group_size, dim=0)
     expanded = scales.float().repeat_interleave(group_size, dim=0)
     return (q * expanded).to(dtype)

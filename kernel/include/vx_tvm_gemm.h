@@ -238,7 +238,8 @@ static inline int vx_tvm_gemm_w4a16_v2(
     uint32_t mode, uint32_t logical_n, uint32_t logical_k,
     uint32_t layout_abi_version) {
   if (mode != VX_TVM_GEMM_MODE_IMPROVE || layout_abi_version != 2u ||
-      qblock != 32u || logical_n == 0u || logical_k == 0u ||
+      (qblock != 32u && qblock != 64u && qblock != 128u) ||
+      logical_n == 0u || logical_k == 0u ||
       logical_n > execution_n || logical_k > execution_k ||
       (execution_n % MXU_COL) != 0u || (execution_k % MXU_ROW) != 0u) {
     return -7;

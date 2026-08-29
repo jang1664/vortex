@@ -784,6 +784,58 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn("all_fpint_gemm_improve_alone_layout", WORKLOAD_VARIANTS)
         self.assertIn("all_fpint_gemm_improve_fused_layout", WORKLOAD_VARIANTS)
 
+    def test_llama3_c4_all_asymmetric_wkv4_policy_is_versioned(self) -> None:
+        variant = "all_fpint_gemm_improve_fused_layout_spinquant_all_asym_wkv4"
+        self.assertIn(variant, WORKLOAD_VARIANTS)
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["prefill", "generation"],
+            batch=2,
+            prefill_seq_len=7,
+            gen_kv_len=7,
+            out_tokens=3,
+            max_seq_len=16,
+            qblk=32,
+            variant=variant,
+        )
+
+        policy = payload["config"]["quantization_policy"]
+        self.assertEqual("signed_all_asymmetric_wkv4_v1", policy["name"])
+        for operand in ("weight", "key", "value"):
+            self.assertEqual("signed_asymmetric_int4", policy[operand]["scheme"])
+            self.assertEqual("float16", policy[operand]["scale_dtype"])
+            self.assertEqual("int16", policy[operand]["zero_point_dtype"])
+        self.assertEqual(32, policy["weight"]["group_size"])
+        self.assertEqual(128, policy["key"]["group_size"])
+        self.assertEqual(128, policy["value"]["group_size"])
+
+        q_proj = _kernel_by_name(payload, "q_proj")
+        k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        v_quant = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+        self.assertEqual(policy["weight"], q_proj["shape"]["operand_quantization"])
+        self.assertEqual(policy["key"], k_quant["shape"]["operand_quantization"])
+        self.assertEqual(policy["value"], v_quant["shape"]["operand_quantization"])
+        self.assertEqual("spinquant_signed_asymmetric", k_quant["shape"]["quant_mode"])
+        self.assertEqual("spinquant_signed_asymmetric", v_quant["shape"]["quant_mode"])
+
+        historical = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["prefill"],
+            batch=1,
+            prefill_seq_len=7,
+            gen_kv_len=7,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+        )
+        historical_v = _kernel_by_name(
+            historical, "kv_cache_quant_v_cache_to_attn_pv"
+        )
+        self.assertEqual(
+            "historical_spinquant_w4kv4_v1",
+            historical["config"]["quantization_policy"]["name"],
+        )
+        self.assertEqual("spinquant_signed_symmetric", historical_v["shape"]["quant_mode"])
+
     def test_spinquant_variants_emit_hadamard_kernels(self) -> None:
         self.assertIn("all_sgemm_tcu_spinquant", WORKLOAD_VARIANTS)
         self.assertIn("all_fpint_gemm_improve_fused_layout_spinquant", WORKLOAD_VARIANTS)

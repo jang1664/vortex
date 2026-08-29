@@ -298,6 +298,66 @@ def _mm_w4a16_fake(
     return lhs.new_empty((*lhs.shape[:-1], n), dtype=torch.float16)
 
 
+@torch.library.custom_op("vortex::mm_w4a16_prepacked", mutates_args=())
+def mm_w4a16_prepacked(
+    lhs: torch.Tensor,
+    rhs_tiled: torch.Tensor,
+    scales_tiled: torch.Tensor,
+    zero_points_tiled: torch.Tensor,
+    rhs_logical_shape: list[int],
+    group_size: int,
+    quant_axis: int,
+    pack_axis: int,
+    quant_scheme: str,
+    transpose_rhs: bool,
+) -> torch.Tensor:
+    del (
+        rhs_tiled,
+        scales_tiled,
+        zero_points_tiled,
+        group_size,
+        quant_axis,
+        pack_axis,
+        quant_scheme,
+    )
+    rhs_shape = tuple(rhs_logical_shape)
+    n = rhs_shape[-2] if transpose_rhs else rhs_shape[-1]
+    return lhs.new_zeros((*lhs.shape[:-1], n), dtype=torch.float16)
+
+
+@mm_w4a16_prepacked.register_fake
+def _mm_w4a16_prepacked_fake(
+    lhs,
+    rhs_tiled,
+    scales_tiled,
+    zero_points_tiled,
+    rhs_logical_shape,
+    group_size,
+    quant_axis,
+    pack_axis,
+    quant_scheme,
+    transpose_rhs,
+):
+    if lhs.dtype != torch.float16 or lhs.ndim < 2:
+        raise ValueError("prepacked W4A16 lhs must be rank-2-or-higher FP16")
+    if rhs_tiled.dtype != torch.uint8 or rhs_tiled.ndim != 1:
+        raise ValueError("prepacked W4A16 weight must be flat uint8")
+    if scales_tiled.dtype != torch.float16 or scales_tiled.ndim != 1:
+        raise ValueError("prepacked W4A16 scale must be flat FP16")
+    if zero_points_tiled.dtype != torch.int16 or zero_points_tiled.ndim != 1:
+        raise ValueError("prepacked W4A16 zero point must be flat INT16")
+    if scales_tiled.shape != zero_points_tiled.shape:
+        raise ValueError("prepacked W4A16 qparam buffers must have equal shapes")
+    del rhs_tiled, scales_tiled, zero_points_tiled, group_size, quant_axis, pack_axis
+    _validate_scheme(quant_scheme)
+    rhs_shape = tuple(rhs_logical_shape)
+    k = rhs_shape[-1] if transpose_rhs else rhs_shape[-2]
+    n = rhs_shape[-2] if transpose_rhs else rhs_shape[-1]
+    if lhs.shape[-1] != k:
+        raise ValueError(f"prepacked W4A16 K mismatch: lhs={lhs.shape[-1]}, rhs={k}")
+    return lhs.new_empty((*lhs.shape[:-1], n), dtype=torch.float16)
+
+
 @torch.library.custom_op("vortex::kv_cache_update", mutates_args=())
 def kv_cache_update(
     cache_payload: torch.Tensor,
@@ -335,6 +395,58 @@ def _kv_cache_update_fake(
     capacity,
 ):
     del payload, scale, zero_point, position, capacity
+    return (
+        torch.empty_like(cache_payload),
+        torch.empty_like(cache_scale),
+        torch.empty_like(cache_zero_point),
+    )
+
+
+def _validate_cache_position_tensor(position: torch.Tensor) -> None:
+    if position.dtype != torch.int64 or position.numel() != 1:
+        raise ValueError("cache position must be one scalar INT64 tensor")
+
+
+@torch.library.custom_op("vortex::kv_cache_update_dynamic", mutates_args=())
+def kv_cache_update_dynamic(
+    cache_payload: torch.Tensor,
+    cache_scale: torch.Tensor,
+    cache_zero_point: torch.Tensor,
+    payload: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor,
+    position: torch.Tensor,
+    capacity: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    _validate_cache_position_tensor(position)
+    index = int(position.item())
+    if index < 0 or index >= capacity:
+        raise ValueError(f"cache position {index} is outside capacity {capacity}")
+    outputs = [
+        tensor.clone() for tensor in (cache_payload, cache_scale, cache_zero_point)
+    ]
+    for output, update in zip(outputs, (payload, scale, zero_point)):
+        if output.shape[-2] != capacity or update.shape[-2] != 1:
+            raise ValueError(
+                "kv_cache_update_dynamic uses the penultimate dimension as sequence"
+            )
+        output[..., index : index + 1, :].copy_(update)
+    return tuple(outputs)
+
+
+@kv_cache_update_dynamic.register_fake
+def _kv_cache_update_dynamic_fake(
+    cache_payload,
+    cache_scale,
+    cache_zero_point,
+    payload,
+    scale,
+    zero_point,
+    position,
+    capacity,
+):
+    del payload, scale, zero_point, capacity
+    _validate_cache_position_tensor(position)
     return (
         torch.empty_like(cache_payload),
         torch.empty_like(cache_scale),

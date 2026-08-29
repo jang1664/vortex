@@ -15,6 +15,7 @@ from ..utils.quant_utils import quantize_per_token
 from ..modeling.quantized_kv_cache import FixedCapacityKVQuantizedCache
 from .artifacts import DecodeCase, LayerCase
 from .specs import (
+    ALL_ASYMMETRIC_WKV4,
     CacheGeometry,
     CacheState,
     DecodeConfig,
@@ -407,6 +408,8 @@ class TorchBackend(Backend):
             head_dim=layer.head_dim,
             max_sequence_length=config.max_sequence_length,
             device=self.device,
+            k_mode=layer.key_quant_mode,
+            v_mode=layer.value_quant_mode,
         )
 
     def tensor(self, name: str) -> torch.Tensor:
@@ -424,6 +427,11 @@ class TorchBackend(Backend):
                 self.tensor(f"{name}.qweight"),
                 self.tensor(f"{name}.scales"),
                 self.layer_config.weight_group_size,
+                zero_points=(
+                    self.tensor(f"{name}.zeros")
+                    if self.layer_config.weight_quant_mode == "asym"
+                    else None
+                ),
                 dtype=torch.float16,
             )
             self._weights[name] = cached
@@ -476,11 +484,33 @@ class TorchBackend(Backend):
     def quantize(self, x: torch.Tensor, mode: str) -> QuantizedActivation:
         if mode not in ("sym", "asym"):
             raise ValueError(f"unsupported KV quantization mode {mode!r}")
+        all_asymmetric = (
+            hasattr(self, "case")
+            and self.layer_config.quantization_policy == ALL_ASYMMETRIC_WKV4
+        )
+        if all_asymmetric:
+            from ..vortex_export_ops import _quantize_reference
+
+            packed, scale, zero = _quantize_reference(
+                x,
+                x.ndim - 1,
+                self.layer_config.kv_group_size,
+                x.ndim - 1,
+                "signed_asymmetric_int4",
+            )
+            return QuantizedActivation(
+                packed=packed,
+                scale=scale,
+                zero=zero,
+                mode="asym",
+                logical_shape=tuple(x.shape),
+                unpacked=unpack_signed_int4(packed),
+            )
         quantized, scale, zero = quantize_per_token(x, mode=mode)
         return QuantizedActivation(
             packed=pack_signed_int4(quantized),
             scale=scale,
-            zero=zero,
+            zero=zero.to(torch.int16) if zero is not None else None,
             mode=mode,
             logical_shape=tuple(x.shape),
             unpacked=quantized,
@@ -716,6 +746,8 @@ class VortexPersistentCache:
             allocation_id=f"vortex-kv-{id(self):x}",
         )
         self.group_count = layer.batch_size * layer.num_key_value_heads
+        self.value_mode = layer.value_quant_mode
+        self.value_quant_mode = 1 if self.value_mode == "asym" else 2
         zero_source_host = torch.zeros(
             (config.max_sequence_length, layer.head_dim),
             dtype=torch.float16,
@@ -727,7 +759,7 @@ class VortexPersistentCache:
             for _ in range(self.group_count)
         )
         self.value_buffers = tuple(
-            self._allocate_group(zero_source, quant_mode=2)
+            self._allocate_group(zero_source, quant_mode=self.value_quant_mode)
             for _ in range(self.group_count)
         )
         backend._record(
@@ -805,25 +837,37 @@ class VortexPersistentCache:
             token_count=sequence,
         )
 
-    def prefill_quantized(self, qkey, k_scale, k_zero, qvalue, v_scale) -> None:
-        del k_scale, k_zero, v_scale
+    def prefill_quantized(
+        self, qkey, k_scale, k_zero, qvalue, v_scale, v_zero
+    ) -> None:
+        del k_scale, k_zero, v_scale, v_zero
         prompt_length = int(qkey.spec.shape[-2])
         self.state.validate_prefill(prompt_length)
         if int(qvalue.spec.shape[-2]) != prompt_length:
             raise ValueError("K/V prefill lengths do not match")
         self._update(qkey, self.key_buffers, quant_mode=1, start_position=0)
-        self._update(qvalue, self.value_buffers, quant_mode=2, start_position=0)
+        self._update(
+            qvalue,
+            self.value_buffers,
+            quant_mode=self.value_quant_mode,
+            start_position=0,
+        )
         self.state.publish_prefill(prompt_length)
 
     def append_quantized(
-        self, qkey, k_scale, k_zero, qvalue, v_scale, *, position: int
+        self, qkey, k_scale, k_zero, qvalue, v_scale, v_zero, *, position: int
     ) -> None:
-        del k_scale, k_zero, v_scale
+        del k_scale, k_zero, v_scale, v_zero
         self.state.validate_append(position=position)
         if int(qkey.spec.shape[-2]) != 1 or int(qvalue.spec.shape[-2]) != 1:
             raise ValueError("persistent append requires exactly one K/V token")
         self._update(qkey, self.key_buffers, quant_mode=1, start_position=position)
-        self._update(qvalue, self.value_buffers, quant_mode=2, start_position=position)
+        self._update(
+            qvalue,
+            self.value_buffers,
+            quant_mode=self.value_quant_mode,
+            start_position=position,
+        )
         self.state.publish_append()
 
     def _packed_handle(self, *, key: bool) -> TensorHandle:
@@ -865,7 +909,7 @@ class VortexPersistentCache:
         buffer_index = 4 if zero else 3
         values = tuple(group[buffer_index] for group in buffers)
         if zero:
-            name = "k_zero"
+            name = "k_zero" if key else "v_zero"
         else:
             name = "k_scale" if key else "v_scale"
         return _make_grouped_handle(
@@ -893,13 +937,21 @@ class VortexPersistentCache:
         k_zero = self._logical_handle(key=True, zero=True)
         value = self._packed_handle(key=False)
         v_scale = self._logical_handle(key=False)
+        v_zero = (
+            self._logical_handle(key=False, zero=True)
+            if self.value_mode == "asym"
+            else None
+        )
         key.attachments["weight_tiled"] = tuple(group[0] for group in self.key_buffers)
         k_scale.attachments["scale_tiled"] = tuple(group[1] for group in self.key_buffers)
         k_zero.attachments["zero_tiled"] = tuple(group[2] for group in self.key_buffers)
         value.attachments["weight_tiled"] = tuple(group[0] for group in self.value_buffers)
         v_scale.attachments["scale_tiled"] = tuple(group[1] for group in self.value_buffers)
-        v_scale.attachments["zero_tiled"] = tuple(group[2] for group in self.value_buffers)
-        return (key, k_scale, k_zero), (value, v_scale, None)
+        if v_zero is not None:
+            v_zero.attachments["zero_tiled"] = tuple(
+                group[2] for group in self.value_buffers
+            )
+        return (key, k_scale, k_zero), (value, v_scale, v_zero)
 
     def dequantized_kv(self):
         key_cache, value_cache = self.get_kv()
@@ -908,8 +960,8 @@ class VortexPersistentCache:
             mode="asym", logical_shape=key_cache[0].spec.shape,
         )
         value = QuantizedActivation(
-            packed=value_cache[0], scale=value_cache[1], zero=None,
-            mode="sym", logical_shape=value_cache[0].spec.shape,
+            packed=value_cache[0], scale=value_cache[1], zero=value_cache[2],
+            mode=self.value_mode, logical_shape=value_cache[0].spec.shape,
         )
         return self.backend.quantized_capture(key), self.backend.quantized_capture(value)
 
@@ -1183,7 +1235,11 @@ class VortexBackend(Backend):
         scales = self.tensor(f"{name}.scales").contiguous()
         in_features = packed.shape[0]
         out_features = packed.shape[1] * 2
-        zeros = torch.zeros(scales.shape, dtype=torch.int16).to(self.device)
+        zeros = (
+            self.tensor(f"{name}.zeros").to(torch.int16).contiguous()
+            if self.layer_config.weight_quant_mode == "asym"
+            else torch.zeros(scales.shape, dtype=torch.int16, device=self.device)
+        )
         weight_tiled = torch.ops.vortex.tile_weight_w4a16(packed, in_features, out_features, 0)
         scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
             scales, in_features, out_features, self.layer_config.weight_group_size, 0
@@ -1397,9 +1453,9 @@ class VortexBackend(Backend):
         n_dim = rhs.logical_shape[-2] if transpose_source else rhs.logical_shape[-1]
         rhs_layouts = {}
         rhs_zero_int16 = None
-        if transpose_source:
+        if rhs.mode == "asym":
             if rhs.zero is None:
-                raise ValueError("asymmetric QK GEMM requires zero-points")
+                raise ValueError("asymmetric attention GEMM requires zero-points")
             rhs_zero_int16 = rhs.zero.to(torch.int16).contiguous()
         for batch_index in range(batch):
             for head in range(heads):
@@ -1429,8 +1485,12 @@ class VortexBackend(Backend):
                             self.layer_config.kv_group_size, 1, 0, 1
                         )
                     else:
-                        zeros = torch.zeros(
-                            scale.shape, dtype=torch.int16, device=self.device
+                        zeros = (
+                            rhs_zero_int16[batch_index, kv_head]
+                            if rhs_zero_int16 is not None
+                            else torch.zeros(
+                                scale.shape, dtype=torch.int16, device=self.device
+                            )
                         )
                         weight = torch.ops.vortex.tile_weight_w4a16(
                             packed, k_dim, n_dim, 0
