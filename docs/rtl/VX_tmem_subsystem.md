@@ -48,6 +48,10 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 - `cfg_reg_if`로 각 채널의 전송 설정(시작 주소, 길이, 방향)을 받음
 - `axi_m[ch]` ↔ `dma_to_tmem[ch]` 1:1 매핑
 - 각 채널이 독립적으로 동작하며, 완료 시 `dma_done_if[ch]`로 통지
+- The production HBM-to-TMEM engine sets `ENABLE_PADDING=0`. HBM and TMEM
+  have equal beat widths, and production descriptors use `PAD=0`, so response
+  RAM data drives destination writes directly. Generic DMA users retain the
+  default padding-enabled zero-fill behavior.
 
 ### 2. Switches (`u_switch_*`, x5)
 

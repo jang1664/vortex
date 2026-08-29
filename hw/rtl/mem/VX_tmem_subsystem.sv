@@ -190,6 +190,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
         .AXI_ID_WIDTH   (AXI_ID_WIDTH),
         .TAG_WIDTH      (TAG_WIDTH),
+        .ENABLE_PADDING (1'b0),
         .RD_OUTSTANDING (DMA_RD_OUTSTANDING)
     ) u_dma_engine (
         .clk            (clk),

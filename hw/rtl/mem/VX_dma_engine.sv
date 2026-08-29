@@ -43,6 +43,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     // semantics. Default 0 (aligned-only) to match the chip-level SW
     // convention; parents that still need byte-misalign must override.
     parameter bit ENABLE_MISALIGN   = 1'b0,
+    parameter bit ENABLE_PADDING    = 1'b1,
     parameter int RD_OUTSTANDING    = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
@@ -155,6 +156,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         VX_dma_unit #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+            .ENABLE_PADDING   (ENABLE_PADDING),
             .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
             .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
             .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),

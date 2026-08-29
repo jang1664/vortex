@@ -30,6 +30,7 @@
 
 module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
+  parameter bit ENABLE_PADDING = 1'b1,
   // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers,
   // so we cannot read those parameters directly here.
@@ -96,6 +97,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   initial begin
     if (!(((DCACHE_BYTES % LMEM_BYTES) == 0) || ((LMEM_BYTES % DCACHE_BYTES) == 0)))
       $fatal(1, "aligned DMA requires divisible dcache/lmem bus widths");
+    if (!ENABLE_PADDING && (DCACHE_BYTES != LMEM_BYTES))
+      $fatal(1,
+          "padding-disabled aligned DMA requires equal dcache/lmem bus widths");
   end
 
   function automatic logic [DCACHE_ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
@@ -290,6 +294,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
               "%s: descriptor replaced old command without done handshake",
               INSTANCE_ID);
       end
+      if (!ENABLE_PADDING && cfg_fire)
+        assert (cfg_reg_if.regs[15] == 0)
+          else $fatal(1,
+              "%s: padding-disabled DMA accepted nonzero padding=%0d",
+              INSTANCE_ID, cfg_reg_if.regs[15]);
 
     end
   end
@@ -319,13 +328,17 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
   wire [63:0] cmd_dst_base = {
       cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
-  wire [31:0] cmd_valid_total = cfg_reg_if.regs[14] - cfg_reg_if.regs[15];
+  wire [31:0] cmd_valid_total = ENABLE_PADDING
+                              ? (cfg_reg_if.regs[14] - cfg_reg_if.regs[15])
+                              : cfg_reg_if.regs[14];
   wire cmd_fast_path = cmd_start
                     && (cfg_reg_if.regs[11] != 0)
                     && (cfg_reg_if.regs[12] != 0)
                     && (cfg_reg_if.regs[13] != 0)
                     && (cfg_reg_if.regs[14] != 0)
-                    && (cfg_reg_if.regs[14] > cfg_reg_if.regs[15]);
+                    && (ENABLE_PADDING
+                        ? (cfg_reg_if.regs[14] > cfg_reg_if.regs[15])
+                        : 1'b1);
 
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
@@ -817,7 +830,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   // valid/padding boundary
   // ------------------------------------------------------------
   logic [31:0] valid_total;
-  assign valid_total = (seg_size_r > padding_r) ? (seg_size_r - padding_r) : 32'd0;
+  assign valid_total = ENABLE_PADDING
+                     ? ((seg_size_r > padding_r) ? (seg_size_r - padding_r) : 32'd0)
+                     : seg_size_r;
 
   // ------------------------------------------------------------
   // Window buffers for width conversion
@@ -1008,8 +1023,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   assign dcache_bus_if.req_data.rw = active_dir;
   assign dcache_bus_if.req_data.addr = active_dir
                                     ? dcache_req_addr_w : dcache_rd_addr;
-  assign dcache_bus_if.req_data.data = (active_dir && wr_payload_needed)
-                                     ? dcache_req_data_w : '0;
+  assign dcache_bus_if.req_data.data = ENABLE_PADDING
+                                     ? ((active_dir && wr_payload_needed)
+                                        ? dcache_req_data_w : '0)
+                                     : ram_wr_slot_data;
   assign dcache_bus_if.req_data.byteen = active_dir
                                       ? dcache_req_byteen_w : dcache_rd_byteen;
   assign dcache_bus_if.req_data.flags = active_dir
@@ -1025,8 +1042,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   assign lmem_bus_if.req_data.rw = !active_dir;
   assign lmem_bus_if.req_data.addr = active_dir
                                   ? lmem_rd_addr : lmem_req_addr_w;
-  assign lmem_bus_if.req_data.data = (!active_dir && wr_payload_needed)
-                                   ? lmem_req_data_w : '0;
+  assign lmem_bus_if.req_data.data = ENABLE_PADDING
+                                   ? ((!active_dir && wr_payload_needed)
+                                      ? lmem_req_data_w : '0)
+                                   : ram_wr_slot_data;
   assign lmem_bus_if.req_data.byteen = active_dir
                                     ? lmem_rd_byteen : lmem_req_byteen_w;
   assign lmem_bus_if.req_data.flags = active_dir
@@ -1128,11 +1147,15 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     else
       slot_rsp_data_raw[0 +: DCACHE_BYTES*8] = dcache_bus_if.rsp_data.data;
 
-    slot_rsp_data = '0;
-    for (int b = 0; b < MAX_BYTES; ++b) begin
-      if (!SAME_WIDTH_FAST
-          || (b < int'(slot_valid_bytes_r[rsp_slot_idx])))
-        slot_rsp_data[b*8 +: 8] = slot_rsp_data_raw[b*8 +: 8];
+    if (!ENABLE_PADDING) begin
+      slot_rsp_data = slot_rsp_data_raw;
+    end else begin
+      slot_rsp_data = '0;
+      for (int b = 0; b < MAX_BYTES; ++b) begin
+        if (!SAME_WIDTH_FAST
+            || (b < int'(slot_valid_bytes_r[rsp_slot_idx])))
+          slot_rsp_data[b*8 +: 8] = slot_rsp_data_raw[b*8 +: 8];
+      end
     end
   end
 
@@ -1159,7 +1182,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire [31:0] wr_dst_beat_bytes = active_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
   wire [31:0] wr_remaining      = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
   wire [31:0] wr_nbytes_cur     = umin32(wr_remaining, wr_dst_beat_bytes);
-  wire [31:0] wr_src_bytes_cur  = calc_src_bytes(out_off, valid_total, wr_nbytes_cur);
+  wire [31:0] wr_src_bytes_cur  = ENABLE_PADDING
+                                ? calc_src_bytes(out_off, valid_total, wr_nbytes_cur)
+                                : wr_nbytes_cur;
   assign wr_payload_needed = (wr_src_bytes_cur != 0);
   wire        wr_is_last_seg    = (wr_i_dim[0] + 32'd1 >= bound_r[0])
                                && (wr_i_dim[1] + 32'd1 >= bound_r[1])
@@ -1224,8 +1249,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                              : (win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES)));
   wire wr_window_pull = wr_slot_valid_r && wr_window_can_pull;
 
-  assign wr_slot_pop_ready = SAME_WIDTH_FAST ? (dst_req_fire && wr_payload_needed)
-                                             : wr_window_can_pull;
+  assign wr_slot_pop_ready = SAME_WIDTH_FAST
+                           ? (dst_req_fire
+                              && (ENABLE_PADDING ? wr_payload_needed : 1'b1))
+                           : wr_window_can_pull;
   assign wr_slot_drain_fire = wr_slot_valid_r && wr_slot_pop_ready;
   wire slot_release_fire = wr_slot_drain_fire;
   assign wr_slot_pending_next = (wr_slot_pending_r && !wr_slot_drain_fire)
@@ -1272,6 +1299,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       if (dst_req_fire && !lookahead_if.data_release)
         $fatal(1, "%s: destination request issued before data release",
                INSTANCE_ID);
+      if (!ENABLE_PADDING && dst_req_fire)
+        assert (wr_src_bytes_cur == wr_nbytes_cur)
+          else $fatal(1,
+              "%s: padding-disabled write byte mismatch src=%0d dst=%0d",
+              INSTANCE_ID, wr_src_bytes_cur, wr_nbytes_cur);
       if (src_req_fire && !lookahead_if.data_release
        && ((data_max_beats_r == 0)
         || (pre_release_reads_r >= data_max_beats_r)))

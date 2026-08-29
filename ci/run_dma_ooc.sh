@@ -16,6 +16,7 @@ OUTPUT_DIR=""
 REFERENCE_REPORT=""
 WRITE_CHECKPOINT="0"
 ENABLE_MISALIGN="0"
+PADDING_ENABLED="1"
 MISALIGN_PACK_BYTES_OVERRIDE=""
 DCACHE_BYTES_OVERRIDE=""
 LMEM_BYTES_OVERRIDE=""
@@ -44,6 +45,7 @@ Options:
   --reference-report PATH  Historical report to record beside the OOC result
   --write-checkpoint       Also retain the large post-synthesis DCP
   --enable-misalign        Elaborate VX_dma_unit_misal instead of aligned DMA
+  --padding-enabled 0|1    Enable descriptor padding logic (default: 1)
   --misalign-pack-bytes N  Override MISALIGN_PACK_BYTES for this run
   --dcache-bytes N         Aggregate node-backend Dcache width in bytes (64..512)
   --lmem-bytes N           Aggregate node-backend LMEM width in bytes (64..512)
@@ -120,6 +122,10 @@ while [[ $# -gt 0 ]]; do
       ENABLE_MISALIGN="1"
       shift
       ;;
+    --padding-enabled)
+      PADDING_ENABLED="${2:?missing value for --padding-enabled}"
+      shift 2
+      ;;
     --misalign-pack-bytes)
       MISALIGN_PACK_BYTES_OVERRIDE="${2:?missing value for --misalign-pack-bytes}"
       shift 2
@@ -160,6 +166,8 @@ done
   || fail "--target must be engine or node-backend"
 [[ "${FIXED_DIR}" == "-1" || "${FIXED_DIR}" == "0" || "${FIXED_DIR}" == "1" ]] \
   || fail "--fixed-dir must be -1, 0, or 1"
+[[ "${PADDING_ENABLED}" == "0" || "${PADDING_ENABLED}" == "1" ]] \
+  || fail "--padding-enabled must be 0 or 1"
 if [[ -n "${MISALIGN_PACK_BYTES_OVERRIDE}" ]]; then
   [[ "${MISALIGN_PACK_BYTES_OVERRIDE}" =~ ^[1-9][0-9]*$ ]] \
     || fail "--misalign-pack-bytes must be a positive integer"
@@ -197,6 +205,9 @@ fi
 
 if [[ "${TARGET}" != "node-backend" && "${FIXED_DIR}" != "-1" ]]; then
   fail "--fixed-dir is only valid with --target node-backend"
+fi
+if [[ "${TARGET}" == "node-backend" && "${PADDING_ENABLED}" != "1" ]]; then
+  fail "--padding-enabled 0 is only valid with --target engine"
 fi
 
 if [[ "${TARGET}" == "node-backend" ]]; then
@@ -309,6 +320,8 @@ if [[ "${TARGET}" == "node-backend" ]]; then
   TOP_GENERICS="DCACHE_DATA_SIZE=${DCACHE_BYTES_OVERRIDE}"
   TOP_GENERICS+=" LMEM_DATA_SIZE=${LMEM_BYTES_OVERRIDE}"
   TOP_GENERICS+=" FIXED_DIR=${FIXED_DIR}"
+else
+  TOP_GENERICS="ENABLE_PADDING=${PADDING_ENABLED}"
 fi
 
 mkdir -p "${OUTPUT_DIR}"
@@ -411,6 +424,7 @@ printf '\n' >> "${OUTPUT_DIR}/command.txt"
   echo "device=${DEVICE}"
   echo "jobs=${JOBS}"
   echo "enable_misalign=${ENABLE_MISALIGN}"
+  echo "padding_enabled=${PADDING_ENABLED}"
   echo "misalign_pack_bytes_override=${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}"
   echo "dcache_bytes=${DCACHE_BYTES_OVERRIDE:-wrapper-default}"
   echo "lmem_bytes=${LMEM_BYTES_OVERRIDE:-wrapper-default}"
@@ -540,6 +554,7 @@ cat > "${OUTPUT_DIR}/comparison.md" <<EOF
 - Aggregate Dcache width: \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes
 - Aggregate LMEM width: \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes
 - Direction mode: \`${FIXED_DIR}\`
+- Padding enabled: \`${PADDING_ENABLED}\`
 - Top generics: \`${TOP_GENERICS:-none}\`
 - MISALIGN_PACK_BYTES: \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\`
 - Extra defines: \`${NORMALIZED_EXTRA_DEFINES[*]:-none}\`
@@ -581,6 +596,7 @@ cat > "${OUTPUT_DIR}/manifest.md" <<EOF
 | Aggregate Dcache width | \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes |
 | Aggregate LMEM width | \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes |
 | Direction mode | \`${FIXED_DIR}\` |
+| Padding enabled | \`${PADDING_ENABLED}\` |
 | Top generics | \`${TOP_GENERICS:-none}\` |
 | MISALIGN_PACK_BYTES | \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\` |
 | Extra defines | \`${NORMALIZED_EXTRA_DEFINES[*]:-none}\` |

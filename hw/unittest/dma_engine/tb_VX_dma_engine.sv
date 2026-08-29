@@ -89,7 +89,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; #(
       .AXI_ID_WIDTH    (AXI_ID_W),
       .AXI_USER_WIDTH  (AXI_USER_W),
       .TAG_WIDTH       (TAG_WIDTH),
-      .ENABLE_MISALIGN (TB_ENABLE_MISALIGN)
+      .ENABLE_MISALIGN (TB_ENABLE_MISALIGN),
+      .ENABLE_PADDING  (1'b1)
   ) dut (
       .clk        (clk),
       .reset      (reset),

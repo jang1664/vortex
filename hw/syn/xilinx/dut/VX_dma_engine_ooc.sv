@@ -8,6 +8,7 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
     parameter int TAG_WIDTH      = GEMM_BASE_TAG_WIDTH,
     parameter int MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter int CFG_REGS       = `DMA_CFG_REG_NUM,
+    parameter bit ENABLE_PADDING = 1'b1,
     parameter int MISALIGN_PACK_BYTES = `MISALIGN_PACK_BYTES,
     parameter int AXI_DATA_WIDTH = DATA_SIZE * 8,
     parameter int MEM_ADDR_WORD_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)
@@ -99,6 +100,8 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         assign lookahead_if[ch].bound = '0;
         assign lookahead_if[ch].activate = 1'b0;
         assign lookahead_if[ch].activate_id = '0;
+        assign lookahead_if[ch].data_release = 1'b1;
+        assign lookahead_if[ch].data_max_beats = '0;
     end
 
     AXI_BUS #(
@@ -201,7 +204,8 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH),
         .TAG_WIDTH      (TAG_WIDTH),
         .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
-        .ENABLE_MISALIGN     (ENABLE_MISALIGN)
+        .ENABLE_MISALIGN     (ENABLE_MISALIGN),
+        .ENABLE_PADDING      (ENABLE_PADDING)
     ) u_dma_engine (
         .clk         (clk),
         .reset       (reset),
