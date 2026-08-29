@@ -19,6 +19,10 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   localparam int CLK_PERIOD_NS = 10;
   localparam int NUM_CHANNELS  = 8;
   localparam int CFG_NUM       = `DMA_CFG_REG_NUM;
+  localparam int STORE_TMEM_BEAT_STRIDE =
+    (`PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS) * `MEM_BLOCK_SIZE;
+  localparam int STORE_HBM_BEAT_STRIDE =
+    `PLATFORM_MEMORY_NUM_BANKS * `MEM_BLOCK_SIZE;
 
   localparam int DMA_R_DST_BASE_LO = 1;
   localparam int DMA_R_SRC_BASE_LO = 3;
@@ -114,6 +118,12 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   logic [127:0][NUM_CHANNELS-1:0] descriptor_active;
   logic [127:0][NUM_CHANNELS-1:0][CFG_NUM-1:0][31:0]
     descriptor_regs;
+  wire shadow_high_prepared = dut.shadow_owner_live
+                           && (dut.shadow_owner_id_q == 1'b0)
+                           && dut.shadow_prepared_q;
+  wire shadow_fallback_prepared = dut.shadow_owner_live
+                               && (dut.shadow_owner_id_q == 1'b1)
+                               && dut.shadow_prepared_q;
 
   task automatic run_data_prepare_release_case(input logic [2:0] rd);
     gemm_unified_cmd_t c;
@@ -530,11 +540,11 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
 
       wait_cycles = 0;
       while ((!dut.candidate_valid_q[0]
-           || !dut.candidate_prepared_q[0]) && (wait_cycles < 30)) begin
+           || !shadow_high_prepared) && (wait_cycles < 30)) begin
         @(posedge clk);
         wait_cycles++;
       end
-      if (!dut.candidate_valid_q[0] || !dut.candidate_prepared_q[0])
+      if (!dut.candidate_valid_q[0] || !shadow_high_prepared)
         $fatal(1, "[phase6_chain] prepared high candidate timeout");
 
       final_ch = -1;
@@ -599,7 +609,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
         @(posedge clk);
         wait_cycles++;
       end
-      if (!dut.candidate_valid_q[0] || dut.candidate_prepared_q[0])
+      if (!dut.candidate_valid_q[0] || shadow_high_prepared)
         $fatal(1, "[phase6_miss] high candidate readiness model failed");
 
       @(negedge clk);
@@ -619,7 +629,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       end
       #1;
       if (!(|cfg_valid_s) || !(|lookahead_activate_seen_s)
-       || dut.candidate_prepared_q[0])
+       || shadow_high_prepared)
         $fatal(1, "[phase6_miss] unprepared high did not use slow ACTIVATE");
       @(posedge clk);
       #1;
@@ -668,12 +678,20 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       end
       if (!dut.candidate_valid_q[1])
         $fatal(1, "[phase7_skew] fallback candidate was not reserved");
+      wait_cycles = 0;
+      while ((!dut.prepare_active_q || !dut.shadow_owner_live
+           || (dut.shadow_owner_id_q != 1'b1)) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.prepare_active_q || dut.shadow_owner_id_q != 1'b1)
+        $fatal(1, "[phase7_skew] fallback shadow PREPARE did not start");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         @(negedge clk);
         lookahead_prepare_ready_drive[ch] = 1'b1;
         @(posedge clk);
         #1;
-        if (!dut.candidate_prepare_accept_q[1][ch])
+        if (!dut.shadow_prepare_accept_q[ch])
           $fatal(1, "[phase7_skew] ch%0d PREPARE was not accepted", ch);
         for (int prev = 0; prev <= ch; ++prev) begin
           if (lookahead_prepare_valid_seen_s[prev])
@@ -686,7 +704,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
         @(posedge clk);
       end
       #1;
-      if (!dut.candidate_prepared_q[1])
+      if (!shadow_fallback_prepared)
         $fatal(1, "[phase7_skew] fallback did not collect skewed results");
 
       // A later high-priority load is deliberately left unprepared.  It must
@@ -699,7 +717,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
         @(posedge clk);
         wait_cycles++;
       end
-      if (!dut.candidate_valid_q[0] || dut.candidate_prepared_q[0])
+      if (!dut.candidate_valid_q[0] || shadow_high_prepared)
         $fatal(1, "[phase7_skew] late high readiness setup failed");
 
       @(negedge clk);
@@ -989,15 +1007,21 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
             != TB_PENDING_DEPTH
        || gemm_dma_ctrl_if.cmd_ready)
         $fatal(1, "[priority_pause] pending queue did not reach full");
-      if (!dut.candidate_valid_q[0] || !dut.candidate_prepared_q[0]
-       || !dut.candidate_valid_q[1] || !dut.candidate_prepared_q[1])
-        $fatal(1, "[priority_pause] high/fallback candidate table not ready");
+      if (!dut.candidate_valid_q[0] || !shadow_high_prepared
+       || !dut.candidate_valid_q[1])
+        $fatal(1, "[priority_pause] compact candidates/high shadow not ready");
       if (dut.store_bank_beat_cursor_q != 0
-       || dut.candidate_desc_q[1][0].regs[DMA_R_SRC_BASE_LO] != 32'd512
-       || dut.candidate_desc_q[1][0].regs[DMA_R_DST_BASE_LO]
-            != 32'h0040_2000)
+       || dut.candidate_store_cursor_q[1] != 32'd2
+       || dut.candidate_store_remaining_q[1] != 32'd2
+       || dut.candidate_owner_q[1].cmd.rs2_data != 64'd0
+       || dut.candidate_owner_q[1].cmd.rs1_data != 64'h0040_1000
+       || (64'(dut.candidate_store_cursor_q[1])
+           * 64'(STORE_TMEM_BEAT_STRIDE)) != 64'd512
+       || (64'(dut.candidate_owner_q[1].cmd.rs1_data)
+           + (64'(dut.candidate_store_cursor_q[1])
+              * 64'(STORE_HBM_BEAT_STRIDE))) != 64'h0040_2000)
         $fatal(1, "[priority_pause] speculative store cursor committed early or descriptor mismatch");
-      $display("TMEM_DMA_PREPARED_TABLE_PASS id0=oldest_high id1=paused_store accepted_all=1 ready_all=1 cursor_speculative=1");
+      $display("TMEM_DMA_SHADOW_TABLE_PASS id0=oldest_high id1=paused_store high_shadow_ready=1 cursor_speculative=1");
 
       c = make_dma_cmd(OP_DMA_LD, 28'd64,
                        64'h0000_0000_0000_0a00,
@@ -1110,11 +1134,11 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
        || !dut.candidate_valid_q[0] || gemm_dma_ctrl_if.cmd_ready)
         $fatal(1, "[depth_%0d] queue full contract mismatch", TB_PENDING_DEPTH);
       for (int wait_cycles = 0;
-           !dut.candidate_prepared_q[0] && (wait_cycles < 10);
+           !shadow_high_prepared && (wait_cycles < 10);
            ++wait_cycles)
         @(posedge clk);
       #1;
-      if (!dut.candidate_prepared_q[0])
+      if (!shadow_high_prepared)
         $fatal(1, "[depth_%0d] high candidate was not prepared", TB_PENDING_DEPTH);
       complete_descriptor(first_issue, 1'b1, 1'b0, 3'd0, "depth_active");
       for (int j = 1; j <= TB_PENDING_DEPTH; ++j) begin

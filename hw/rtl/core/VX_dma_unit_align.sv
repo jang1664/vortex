@@ -240,18 +240,44 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic cfg_fire;
   // A legacy descriptor is accepted only from IDLE.  A controller-selected
   // prepared descriptor may additionally replace an old command on the exact
-  // S_DONE completion handshake edge.  Requiring both ACTIVATE and
-  // done_if.ready keeps the legacy interface behavior unchanged and prevents
-  // a descriptor from becoming active before physical completion is consumed.
-  wire chain_accept_window = (state == S_DONE)
-                          && done_if.ready
-                          && lookahead_if.activate;
-  assign cfg_reg_if.ready = (state == S_IDLE) || chain_accept_window;
+  // S_DONE completion handshake edge.  This capability is owned solely by
+  // registered channel state plus the old-command completion consumer; it
+  // must not depend on the controller's ACTIVATE offer.
+  assign cfg_reg_if.ready = (state == S_IDLE)
+                         || ((state == S_DONE) && done_if.ready);
   assign cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
 
 `ifndef SYNTHESIS
+  logic cfg_stalled_prev_r;
+  logic [NUM_REGS-1:0][31:0] cfg_stall_regs_r;
+  logic [31:0] cfg_stall_entry_id_r;
+  logic cfg_stall_activate_r;
+  logic cfg_stall_activate_id_r;
+  logic chain_start_prev_r;
+  logic chain_start_fast_prev_r;
+  logic chain_start_dir_prev_r;
+
   always_ff @(posedge clk) begin
-    if (!reset) begin
+    if (reset) begin
+      cfg_stalled_prev_r <= 1'b0;
+    end else begin
+      if (cfg_stalled_prev_r) begin
+        assert (cfg_reg_if.valid
+             && (cfg_reg_if.regs == cfg_stall_regs_r)
+             && (cfg_reg_if.entry_id == cfg_stall_entry_id_r)
+             && (lookahead_if.activate == cfg_stall_activate_r)
+             && (lookahead_if.activate_id == cfg_stall_activate_id_r))
+          else $fatal(1,
+              "%s: cfg/ACTIVATE changed while held", INSTANCE_ID);
+      end
+      cfg_stalled_prev_r <= cfg_reg_if.valid && !cfg_reg_if.ready;
+      if (cfg_reg_if.valid && !cfg_reg_if.ready) begin
+        cfg_stall_regs_r <= cfg_reg_if.regs;
+        cfg_stall_entry_id_r <= cfg_reg_if.entry_id;
+        cfg_stall_activate_r <= lookahead_if.activate;
+        cfg_stall_activate_id_r <= lookahead_if.activate_id;
+      end
+
       if (lookahead_if.prepare_valid && !cfg_reg_if.valid)
         assert (!cfg_fire)
           else $fatal(1, "%s: PREPARE caused cfg_fire", INSTANCE_ID);
@@ -264,6 +290,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
               "%s: descriptor replaced old command without done handshake",
               INSTANCE_ID);
       end
+
     end
   end
 `endif
@@ -299,6 +326,32 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                     && (cfg_reg_if.regs[13] != 0)
                     && (cfg_reg_if.regs[14] != 0)
                     && (cfg_reg_if.regs[14] > cfg_reg_if.regs[15]);
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      chain_start_prev_r <= 1'b0;
+    end else begin
+      if (chain_start_prev_r) begin
+        assert (state != S_IDLE && state != S_DONE)
+          else $fatal(1,
+              "%s: chained descriptor visited an idle/done state", INSTANCE_ID);
+        assert (state == (chain_start_fast_prev_r
+                       ? (chain_start_dir_prev_r
+                          ? S_L2G_DECIDE : S_G2L_DECIDE)
+                       : S_PRECALC))
+          else $fatal(1,
+              "%s: chained descriptor did not enter its direct next state",
+              INSTANCE_ID);
+      end
+      chain_start_prev_r <= cmd_start && (state == S_DONE);
+      if (cmd_start && (state == S_DONE)) begin
+        chain_start_fast_prev_r <= cmd_fast_path;
+        chain_start_dir_prev_r <= cmd_dir;
+      end
+    end
+  end
+`endif
 
   // ------------------------------------------------------------
   // Runtime alignment guard for the aligned-only module.

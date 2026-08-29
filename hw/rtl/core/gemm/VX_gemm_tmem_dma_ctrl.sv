@@ -72,8 +72,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     localparam int PENDING_COUNT_W    = `CLOG2(PENDING_DEPTH + 1);
     localparam int PENDING_INDEX_W    = (PENDING_DEPTH > 1)
                                       ? `CLOG2(PENDING_DEPTH) : 1;
-    localparam int PREP_HIGH_ID       = 0;
-    localparam int PREP_FALLBACK_ID   = 1;
+    localparam logic PREP_HIGH_ID     = 1'b0;
+    localparam logic PREP_FALLBACK_ID = 1'b1;
 
     typedef struct packed {
         gemm_unified_cmd_t cmd;
@@ -141,22 +141,33 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic pending_dequeue;
     logic [PENDING_INDEX_W-1:0] pending_select_idx;
 
-    // Controller-owned random-access candidate table.  Slot 0 is reserved
-    // for the oldest high-priority load; slot 1 owns either the next paused
-    // store chunk or the oldest low-priority command.  Full descriptors live
-    // only here; DMA channels receive only D0/D1 PREPARE operands.
+    // Controller-owned compact candidate table.  Slot 0 is reserved for the
+    // oldest high-priority load; slot 1 owns either the next paused store
+    // chunk or the oldest low-priority command.  Exactly one candidate is
+    // decoded into shadow_desc_q for background PREPARE and chaining.
     logic [1:0] candidate_valid_q;
-    logic [1:0] candidate_prepared_q;
+    logic [1:0] candidate_gen_q;
     pending_cmd_t candidate_owner_q[2];
     logic candidate_is_store_q[2];
     logic candidate_store_new_q[2];
     logic candidate_store_chunkable_q[2];
-    logic [31:0] candidate_chunk_beats_q[2];
+    logic [31:0] candidate_store_cursor_q[2];
     logic [31:0] candidate_store_remaining_q[2];
-    channel_desc_t candidate_desc_q[2][NUM_CHANNELS];
-    channel_desc_t candidate_store_desc_q[2][NUM_CHANNELS];
-    logic [NUM_CHANNELS-1:0] candidate_prepare_accept_q[2];
-    logic [1:0] candidate_result_ready_q[2][NUM_CHANNELS];
+
+    logic shadow_valid_q;
+    logic shadow_owner_id_q;
+    logic shadow_owner_gen_q;
+    logic shadow_prepared_q;
+    logic [31:0] shadow_chunk_beats_q;
+    channel_desc_t shadow_desc_q[NUM_CHANNELS];
+    logic [NUM_CHANNELS-1:0] shadow_prepare_accept_q;
+    logic [1:0] shadow_result_ready_q[NUM_CHANNELS];
+    logic shadow_build_request;
+    logic shadow_build_id;
+    logic shadow_decode_needed;
+    logic shadow_decode_id;
+    logic shadow_owner_live;
+    logic shadow_invalidate;
 
     logic candidate_capture;
     logic candidate_capture_from_pending;
@@ -167,13 +178,13 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic issue_candidate_id_q;
     logic candidate_select;
     logic candidate_select_id;
-    logic [1:0] candidate_prepared_now;
+    logic shadow_prepared_now;
     logic chain_candidate_select;
     logic chain_candidate_id;
+    logic chain_candidate_offer;
     logic chain_candidate_fire;
 
     logic prepare_active_q;
-    logic prepare_active_id_q;
 
     gemm_unified_cmd_t work_cmd_q;
     logic [GEMM_DMA_TAG_WIDTH-1:0] work_tag_q;
@@ -185,7 +196,6 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic decoded_chunkable;
 
     channel_desc_t load_desc_q[NUM_CHANNELS];
-    channel_desc_t store_desc_q[NUM_CHANNELS];
     channel_desc_t issue_desc_q[NUM_CHANNELS];
 
     logic store_context_valid_q;
@@ -221,9 +231,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] lookahead_activate_s;
     logic [NUM_CHANNELS-1:0] lookahead_activate_id_s;
     logic [1:0] candidate_reserved_logical_count;
-    logic [1:0] candidate_cfg_all_ready;
+    logic shadow_cfg_all_ready;
     logic [NUM_CHANNELS-1:0] cfg_channel_ready_s;
     logic [NUM_CHANNELS-1:0] cfg_valid_s;
+    logic [NUM_CHANNELS-1:0] cfg_fire_s;
     logic [PENDING_COUNT_W:0] pending_capacity_used;
 
     wire prepared_release_match = work_data_prefetched_q
@@ -301,36 +312,61 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     assign gemm_sync_if.value   = 32'd0;
 
     always_comb begin
+        shadow_owner_live = shadow_valid_q
+                         && candidate_valid_q[shadow_owner_id_q]
+                         && (candidate_gen_q[shadow_owner_id_q]
+                             == shadow_owner_gen_q);
+    end
+
+
+    always_comb begin
+        shadow_decode_needed = 1'b0;
+        shadow_decode_id = PREP_HIGH_ID;
+        if (!prepare_active_q) begin
+            if (candidate_valid_q[PREP_HIGH_ID]
+             && (!shadow_owner_live
+              || (shadow_owner_id_q != PREP_HIGH_ID))) begin
+                shadow_decode_needed = 1'b1;
+                shadow_decode_id = PREP_HIGH_ID;
+            end else if (!candidate_valid_q[PREP_HIGH_ID]
+                      && candidate_valid_q[PREP_FALLBACK_ID]
+                      && (!shadow_owner_live
+                       || (shadow_owner_id_q != PREP_FALLBACK_ID))) begin
+                shadow_decode_needed = 1'b1;
+                shadow_decode_id = PREP_FALLBACK_ID;
+            end
+        end
+    end
+
+    always_comb begin
         prepare_all_accepted = prepare_active_q;
         prepare_all_results_ready = prepare_active_q;
         for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-            if (candidate_desc_q[prepare_active_id_q][ch].active) begin
+            if (shadow_desc_q[ch].active) begin
                 prepare_all_accepted &=
-                    candidate_prepare_accept_q[prepare_active_id_q][ch]
+                    shadow_prepare_accept_q[ch]
                     || (lookahead_prepare_valid_s[ch]
                      && lookahead_prepare_ready_s[ch]);
                 prepare_all_results_ready &=
-                    &(candidate_result_ready_q[prepare_active_id_q][ch]
+                    &(shadow_result_ready_q[ch]
                     | lookahead_result_ready_s[ch]);
             end
         end
     end
 
     always_comb begin
-        candidate_prepared_now = candidate_prepared_q;
+        shadow_prepared_now = shadow_prepared_q;
         if (prepare_active_q
          && prepare_all_accepted
          && prepare_all_results_ready)
-            candidate_prepared_now[prepare_active_id_q] = 1'b1;
+            shadow_prepared_now = 1'b1;
     end
 
     always_comb begin
-        candidate_cfg_all_ready = '1;
-        for (int id = 0; id < 2; ++id) begin
-            for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                if (candidate_desc_q[id][ch].active)
-                    candidate_cfg_all_ready[id] &= cfg_channel_ready_s[ch];
-            end
+        shadow_cfg_all_ready = 1'b1;
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+            if (shadow_desc_q[ch].active)
+                shadow_cfg_all_ready &= cfg_channel_ready_s[ch];
         end
     end
 
@@ -344,26 +380,31 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         if ((state_q == S_WAIT_DONE) && done_all_valid
          && work_release_visible) begin
             if (candidate_valid_q[PREP_HIGH_ID]) begin
-                if (candidate_prepared_now[PREP_HIGH_ID]) begin
+                if (shadow_owner_live
+                 && (shadow_owner_id_q == PREP_HIGH_ID)
+                 && shadow_prepared_now) begin
                     chain_candidate_select = 1'b1;
                     chain_candidate_id = PREP_HIGH_ID;
                 end
             end else if (!pending_high_found && !accepted_high_now
                       && candidate_valid_q[PREP_FALLBACK_ID]
-             && candidate_prepared_now[PREP_FALLBACK_ID]) begin
+                      && shadow_owner_live
+                      && (shadow_owner_id_q == PREP_FALLBACK_ID)
+                      && shadow_prepared_now) begin
                 chain_candidate_select = 1'b1;
                 chain_candidate_id = PREP_FALLBACK_ID;
             end
         end
     end
 
-    // Scheduling selection is independent of channel readiness.  Only the
-    // fire qualifier consumes the old completion and presents the selected
-    // descriptor as one atomic cfg/ACTIVATE transaction.  Keeping readiness
-    // out of selection avoids a select -> active mask -> ready -> select loop.
+    // Scheduling selection and its source-owned offer are independent of
+    // channel readiness.  Only the fire qualifier consumes ownership and
+    // updates state.  Keeping readiness out of valid/ACTIVATE generation
+    // avoids a ready -> valid/ACTIVATE -> ready feedback loop.
     always_comb begin
-        chain_candidate_fire = chain_candidate_select
-                            && candidate_cfg_all_ready[chain_candidate_id];
+        chain_candidate_offer = chain_candidate_select;
+        chain_candidate_fire = chain_candidate_offer
+                            && shadow_cfg_all_ready;
     end
 
     always_comb begin
@@ -407,7 +448,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 end else if (candidate_valid_q[PREP_HIGH_ID]) begin
                     candidate_select = 1'b1;
                     candidate_select_id = 1'b0;
-                    state_d = S_PROG;
+                    state_d = S_CAPTURE;
                 end else if (pending_high_found) begin
                     pending_dequeue = 1'b1;
                     pending_select_idx = pending_high_idx;
@@ -419,7 +460,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 end else if (candidate_valid_q[PREP_FALLBACK_ID]) begin
                     candidate_select = 1'b1;
                     candidate_select_id = 1'b1;
-                    state_d = S_PROG;
+                    state_d = S_CAPTURE;
                 end else if (store_context_valid_q) begin
                     state_d = S_BUILD;
                 end else if (pending_low_found) begin
@@ -444,8 +485,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
             S_WAIT_DONE: begin
                 if (done_all_valid && work_release_visible) begin
-                    state_d = chain_candidate_fire ? S_WAIT_DONE : S_SELECT;
-                end else if (!candidate_valid_q[PREP_HIGH_ID]
+                    state_d = chain_candidate_offer ? S_WAIT_DONE : S_SELECT;
+                end else if (!shadow_decode_needed
+                          && !candidate_valid_q[PREP_HIGH_ID]
                           && pending_high_found) begin
                     candidate_capture = 1'b1;
                     candidate_capture_from_pending = 1'b1;
@@ -453,7 +495,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                     candidate_capture_idx = pending_high_idx;
                     pending_dequeue = 1'b1;
                     pending_select_idx = pending_high_idx;
-                end else if (!candidate_valid_q[PREP_FALLBACK_ID]) begin
+                end else if (!shadow_decode_needed
+                          && !candidate_valid_q[PREP_FALLBACK_ID]) begin
                     if (store_context_valid_q
                      && (!work_is_store_q || !store_chunk_last)) begin
                         candidate_capture = 1'b1;
@@ -476,13 +519,36 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         endcase
     end
 
+    // Decode at most one compact candidate into the single shadow.  A high
+    // candidate replaces a fallback shadow only after the old PREPARE
+    // lifecycle is quiescent; until then priority logic suppresses fallback
+    // chaining.  Descriptor construction remains off the completion path.
+    always_comb begin
+        shadow_build_request = 1'b0;
+        shadow_build_id = PREP_HIGH_ID;
+        if ((state_q == S_WAIT_DONE) && shadow_decode_needed) begin
+            shadow_build_request = 1'b1;
+            shadow_build_id = shadow_decode_id;
+        end
+    end
+
+    always_comb begin
+        shadow_invalidate = shadow_owner_live
+                         && (shadow_owner_id_q == PREP_FALLBACK_ID)
+                         && candidate_valid_q[PREP_HIGH_ID]
+                         && !prepare_active_q
+                         && !shadow_build_request;
+    end
+
     // The existing decoder is shared by the foreground slow path and the
-    // background candidate capture.  Capture is restricted to S_WAIT_DONE,
-    // so it never steals the decoder from S_CAPTURE.
+    // one background shadow build.  Shadow construction is restricted to
+    // S_WAIT_DONE, so it never steals the decoder from S_CAPTURE.
     gemm_unified_cmd_t decode_cmd;
     always_comb begin
         decode_cmd = work_cmd_q;
-        if (candidate_capture_from_pending)
+        if (shadow_build_request)
+            decode_cmd = candidate_owner_q[shadow_build_id].cmd;
+        else if (candidate_capture_from_pending)
             decode_cmd = pending_q[candidate_capture_idx].cmd;
     end
 
@@ -589,8 +655,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         end
     end
 
-    // Registered chunk builder input.  The store descriptor/context remains
-    // untouched while high-priority loads execute.
+    // Chunk construction is shared by the foreground slow path and the one
+    // decoded candidate shadow.  Original store descriptors are regenerated
+    // from the compact command, so no candidate-indexed store descriptor copy
+    // is required.
     always_comb begin
         logic [31:0] orig_bnd0;
         logic [31:0] orig_bnd2;
@@ -607,32 +675,19 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         builder_store_cursor = store_bank_beat_cursor_q;
         builder_store_remaining = store_remaining_beats_per_bank_q;
         for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-            builder_store_desc[ch] = store_desc_q[ch];
+            builder_store_desc[ch] = decoded_desc[ch];
             builder_default_desc[ch] = work_is_store_q
-                                     ? store_desc_q[ch] : load_desc_q[ch];
+                                     ? decoded_desc[ch] : load_desc_q[ch];
         end
 
-        if (candidate_capture_store_cont) begin
-            builder_is_store = 1'b1;
-            builder_store_chunkable = store_chunkable_q;
-            builder_store_cmd = store_cmd_q;
-            builder_store_cursor = store_bank_beat_cursor_q;
-            builder_store_remaining = store_remaining_beats_per_bank_q;
-            if (work_is_store_q) begin
-                builder_store_cursor = store_bank_beat_cursor_q
-                                     + issued_chunk_beats_per_bank_q;
-                builder_store_remaining = store_remaining_beats_per_bank_q
-                                        - issued_chunk_beats_per_bank_q;
-            end
-            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                builder_default_desc[ch] = store_desc_q[ch];
-        end else if (candidate_capture_from_pending && decode_is_store) begin
-            builder_is_store = 1'b1;
-            builder_store_chunkable = decoded_chunkable;
-            builder_store_cmd = decode_cmd;
-            builder_store_cursor = 32'd0;
-            builder_store_remaining = decoded_desc[0].regs[DMA_R_BND0]
-                                    * decoded_desc[0].regs[DMA_R_BND1];
+        if (shadow_build_request) begin
+            builder_is_store = candidate_is_store_q[shadow_build_id];
+            builder_store_chunkable =
+                candidate_store_chunkable_q[shadow_build_id];
+            builder_store_cmd = candidate_owner_q[shadow_build_id].cmd;
+            builder_store_cursor = candidate_store_cursor_q[shadow_build_id];
+            builder_store_remaining =
+                candidate_store_remaining_q[shadow_build_id];
             for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
                 builder_store_desc[ch] = decoded_desc[ch];
                 builder_default_desc[ch] = decoded_desc[ch];
@@ -718,52 +773,53 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_issue_channels
         assign cfg_channel_ready_s[ch] = cfg_reg_if[ch].ready;
-        wire chain_channel_active =
-            candidate_desc_q[chain_candidate_id][ch].active;
+        wire chain_channel_active = shadow_desc_q[ch].active;
         wire program_channel_active = chain_candidate_select
                                     ? chain_channel_active
                                     : issue_desc_q[ch].active;
 
         assign cfg_reg_if[ch].regs = chain_candidate_select
-                                  ? candidate_desc_q[chain_candidate_id][ch].regs
+                                  ? shadow_desc_q[ch].regs
                                   : issue_desc_q[ch].regs;
         assign cfg_reg_if[ch].entry_id = 32'd0;
         assign cfg_reg_if[ch].valid = ((state_q == S_PROG)
                                     && cfg_all_ready
                                     && issue_desc_q[ch].active)
-                                    || (chain_candidate_fire
+                                    || (chain_candidate_offer
                                      && chain_channel_active);
         assign cfg_valid_s[ch] = cfg_reg_if[ch].valid;
+        assign cfg_fire_s[ch] = cfg_reg_if[ch].valid
+                              && cfg_reg_if[ch].ready;
         assign lookahead_if[ch].prepare_valid = prepare_active_q
-            && candidate_valid_q[prepare_active_id_q]
-            && candidate_desc_q[prepare_active_id_q][ch].active
-            && !candidate_prepare_accept_q[prepare_active_id_q][ch]
+            && shadow_owner_live
+            && shadow_desc_q[ch].active
+            && !shadow_prepare_accept_q[ch]
             && !((state_q == S_PROG) && issue_candidate_q
-              && (issue_candidate_id_q == prepare_active_id_q));
+              && (issue_candidate_id_q == shadow_owner_id_q));
         assign lookahead_prepare_valid_s[ch] = lookahead_if[ch].prepare_valid;
         assign lookahead_prepare_ready_s[ch] = lookahead_if[ch].prepare_ready;
         assign lookahead_result_ready_s[ch] = lookahead_if[ch].result_ready;
-        assign lookahead_if[ch].prepare_id = prepare_active_id_q;
+        assign lookahead_if[ch].prepare_id = shadow_owner_id_q;
         assign lookahead_if[ch].src_stride[0] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_SRC_ST0];
+            shadow_desc_q[ch].regs[DMA_R_SRC_ST0];
         assign lookahead_if[ch].src_stride[1] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_SRC_ST1];
+            shadow_desc_q[ch].regs[DMA_R_SRC_ST1];
         assign lookahead_if[ch].dst_stride[0] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_DST_ST0];
+            shadow_desc_q[ch].regs[DMA_R_DST_ST0];
         assign lookahead_if[ch].dst_stride[1] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_DST_ST1];
+            shadow_desc_q[ch].regs[DMA_R_DST_ST1];
         assign lookahead_if[ch].bound[0] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_BND0];
+            shadow_desc_q[ch].regs[DMA_R_BND0];
         assign lookahead_if[ch].bound[1] =
-            candidate_desc_q[prepare_active_id_q][ch].regs[DMA_R_BND1];
+            shadow_desc_q[ch].regs[DMA_R_BND1];
         assign lookahead_if[ch].activate = ((state_q == S_PROG)
                                          && cfg_all_ready
                                          && issue_candidate_q
                                          && issue_desc_q[ch].active)
-                                         || (chain_candidate_fire
+                                         || (chain_candidate_offer
                                           && chain_channel_active);
         assign lookahead_if[ch].activate_id = chain_candidate_select
-                                            ? chain_candidate_id
+                                            ? shadow_owner_id_q
                                             : issue_candidate_id_q;
         assign lookahead_if[ch].data_release = work_release_visible;
         assign lookahead_if[ch].data_max_beats = work_data_prefetched_q
@@ -795,11 +851,16 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             issued_chunk_beats_per_bank_q <= '0;
             done_sticky_q <= '0;
             candidate_valid_q <= '0;
-            candidate_prepared_q <= '0;
+            candidate_gen_q <= '0;
+            shadow_valid_q <= 1'b0;
+            shadow_owner_id_q <= 1'b0;
+            shadow_owner_gen_q <= 1'b0;
+            shadow_prepared_q <= 1'b0;
+            shadow_chunk_beats_q <= '0;
+            shadow_prepare_accept_q <= '0;
             issue_candidate_q <= 1'b0;
             issue_candidate_id_q <= 1'b0;
             prepare_active_q <= 1'b0;
-            prepare_active_id_q <= 1'b0;
             for (int idx = 0; idx < PENDING_DEPTH; ++idx)
                 pending_q[idx] <= '0;
             for (int id = 0; id < 2; ++id) begin
@@ -807,19 +868,14 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 candidate_is_store_q[id] <= 1'b0;
                 candidate_store_new_q[id] <= 1'b0;
                 candidate_store_chunkable_q[id] <= 1'b0;
-                candidate_chunk_beats_q[id] <= '0;
+                candidate_store_cursor_q[id] <= '0;
                 candidate_store_remaining_q[id] <= '0;
-                candidate_prepare_accept_q[id] <= '0;
-                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                    candidate_desc_q[id][ch] <= '0;
-                    candidate_store_desc_q[id][ch] <= '0;
-                    candidate_result_ready_q[id][ch] <= '0;
-                end
             end
             for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
                 load_desc_q[ch] <= '0;
-                store_desc_q[ch] <= '0;
                 issue_desc_q[ch] <= '0;
+                shadow_desc_q[ch] <= '0;
+                shadow_result_ready_q[ch] <= '0;
             end
         end else begin
             state_q <= state_d;
@@ -875,14 +931,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 work_is_store_q <= candidate_is_store_q[candidate_select_id];
                 work_data_prefetched_q <= 1'b0;
                 work_data_released_q <= 1'b1;
-                issued_chunk_beats_per_bank_q <=
-                    candidate_chunk_beats_q[candidate_select_id];
                 issue_candidate_q <= 1'b1;
                 issue_candidate_id_q <= candidate_select_id;
                 done_sticky_q <= '0;
-                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                    issue_desc_q[ch] <=
-                        candidate_desc_q[candidate_select_id][ch];
 
                 if (candidate_store_new_q[candidate_select_id]) begin
                     store_context_valid_q <= 1'b1;
@@ -890,12 +941,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                         candidate_store_chunkable_q[candidate_select_id];
                     store_cmd_q <= candidate_owner_q[candidate_select_id].cmd;
                     store_tag_q <= candidate_owner_q[candidate_select_id].tag;
-                    store_bank_beat_cursor_q <= 32'd0;
+                    store_bank_beat_cursor_q <=
+                        candidate_store_cursor_q[candidate_select_id];
                     store_remaining_beats_per_bank_q <=
                         candidate_store_remaining_q[candidate_select_id];
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                        store_desc_q[ch] <=
-                            candidate_store_desc_q[candidate_select_id][ch];
                 end
             end else if ((state_q == S_SELECT) && pending_dequeue) begin
                 work_cmd_q <= pending_q[pending_select_idx].cmd;
@@ -911,6 +960,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                       && !candidate_valid_q[PREP_HIGH_ID]
                       && !candidate_valid_q[PREP_FALLBACK_ID]
                       && store_context_valid_q) begin
+                work_cmd_q <= store_cmd_q;
+                work_tag_q <= store_tag_q;
                 work_is_store_q <= 1'b1;
                 work_data_prefetched_q <= 1'b0;
                 work_data_released_q <= 1'b1;
@@ -923,7 +974,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
             if (state_q == S_CAPTURE) begin
-                if (work_is_store_q) begin
+                if (work_is_store_q
+                 && (!issue_candidate_q
+                  || candidate_store_new_q[issue_candidate_id_q])) begin
                     store_context_valid_q <= 1'b1;
                     store_chunkable_q <= decoded_chunkable;
                     store_cmd_q <= work_cmd_q;
@@ -932,11 +985,11 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                     store_remaining_beats_per_bank_q <=
                         decoded_desc[0].regs[DMA_R_BND0]
                         * decoded_desc[0].regs[DMA_R_BND1];
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                        store_desc_q[ch] <= decoded_desc[ch];
                 end else begin
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                        load_desc_q[ch] <= decoded_desc[ch];
+                    if (!work_is_store_q) begin
+                        for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                            load_desc_q[ch] <= decoded_desc[ch];
+                    end
                 end
             end
 
@@ -956,8 +1009,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             // never changed here.
             if (candidate_capture) begin
                 candidate_valid_q[candidate_capture_id] <= 1'b1;
-                candidate_prepared_q[candidate_capture_id] <= 1'b0;
-                candidate_prepare_accept_q[candidate_capture_id] <= '0;
+                candidate_gen_q[candidate_capture_id]
+                    <= ~candidate_gen_q[candidate_capture_id];
 
                 if (candidate_capture_from_pending) begin
                     candidate_owner_q[candidate_capture_id]
@@ -968,27 +1021,11 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                         <= decode_is_store;
                     candidate_store_chunkable_q[candidate_capture_id]
                         <= decoded_chunkable;
-                    candidate_chunk_beats_q[candidate_capture_id]
-                        <= decode_is_store
-                         ? built_chunk_beats_per_bank : 32'd0;
+                    candidate_store_cursor_q[candidate_capture_id] <= 32'd0;
                     candidate_store_remaining_q[candidate_capture_id]
                         <= decode_is_store
                          ? (decoded_desc[0].regs[DMA_R_BND0]
                           * decoded_desc[0].regs[DMA_R_BND1]) : 32'd0;
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                        candidate_desc_q[candidate_capture_id][ch]
-                            <= decode_is_store ? built_desc[ch]
-                                               : decoded_desc[ch];
-                        candidate_store_desc_q[candidate_capture_id][ch]
-                            <= decoded_desc[ch];
-                        candidate_prepare_accept_q[candidate_capture_id][ch]
-                            <= decode_is_store ? !built_desc[ch].active
-                                               : !decoded_desc[ch].active;
-                        candidate_result_ready_q[candidate_capture_id][ch]
-                            <= (decode_is_store ? built_desc[ch].active
-                                                : decoded_desc[ch].active)
-                             ? 2'b00 : 2'b11;
-                    end
                 end else begin
                     candidate_owner_q[candidate_capture_id].cmd <= store_cmd_q;
                     candidate_owner_q[candidate_capture_id].tag <= store_tag_q;
@@ -996,51 +1033,70 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                     candidate_store_new_q[candidate_capture_id] <= 1'b0;
                     candidate_store_chunkable_q[candidate_capture_id]
                         <= store_chunkable_q;
-                    candidate_chunk_beats_q[candidate_capture_id]
-                        <= built_chunk_beats_per_bank;
+                    candidate_store_cursor_q[candidate_capture_id]
+                        <= work_is_store_q
+                         ? (store_bank_beat_cursor_q
+                          + issued_chunk_beats_per_bank_q)
+                         : store_bank_beat_cursor_q;
                     candidate_store_remaining_q[candidate_capture_id]
-                        <= builder_store_remaining;
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                        candidate_desc_q[candidate_capture_id][ch]
-                            <= built_desc[ch];
-                        candidate_store_desc_q[candidate_capture_id][ch]
-                            <= store_desc_q[ch];
-                        candidate_prepare_accept_q[candidate_capture_id][ch]
-                            <= !built_desc[ch].active;
-                        candidate_result_ready_q[candidate_capture_id][ch]
-                            <= built_desc[ch].active ? 2'b00 : 2'b11;
-                    end
+                        <= work_is_store_q
+                         ? (store_remaining_beats_per_bank_q
+                          - issued_chunk_beats_per_bank_q)
+                         : store_remaining_beats_per_bank_q;
                 end
+            end
+
+            // One candidate at a time owns decoded descriptor and PREPARE
+            // state.  Generation matching prevents a stale shadow from being
+            // consumed after its compact slot is reused.
+            if (shadow_build_request) begin
+                shadow_valid_q <= 1'b1;
+                shadow_owner_id_q <= shadow_build_id;
+                shadow_owner_gen_q <= candidate_gen_q[shadow_build_id];
+                shadow_prepared_q <= 1'b0;
+                shadow_chunk_beats_q <= built_chunk_beats_per_bank;
+                shadow_prepare_accept_q <= '0;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    shadow_desc_q[ch] <= candidate_is_store_q[shadow_build_id]
+                                       ? built_desc[ch] : decoded_desc[ch];
+                    shadow_prepare_accept_q[ch]
+                        <= candidate_is_store_q[shadow_build_id]
+                         ? !built_desc[ch].active : !decoded_desc[ch].active;
+                    shadow_result_ready_q[ch]
+                        <= (candidate_is_store_q[shadow_build_id]
+                            ? built_desc[ch].active : decoded_desc[ch].active)
+                         ? 2'b00 : 2'b11;
+                end
+            end
+
+
+            if (shadow_invalidate) begin
+                shadow_valid_q <= 1'b0;
+                shadow_prepared_q <= 1'b0;
             end
 
             // Serialize PREPARE transactions globally so prepare_id and all
             // operands stay stable through arbitrary per-channel skew.
             if (!prepare_active_q) begin
-                if (candidate_valid_q[PREP_HIGH_ID]
-                 && !candidate_prepared_q[PREP_HIGH_ID]) begin
+                if (shadow_owner_live && !shadow_prepared_q
+                 && !shadow_build_request && !shadow_invalidate) begin
                     prepare_active_q <= 1'b1;
-                    prepare_active_id_q <= 1'b0;
-                end else if (candidate_valid_q[PREP_FALLBACK_ID]
-                          && !candidate_prepared_q[PREP_FALLBACK_ID]) begin
-                    prepare_active_q <= 1'b1;
-                    prepare_active_id_q <= 1'b1;
                 end
             end else begin
                 for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
                     if (lookahead_prepare_valid_s[ch]
                      && lookahead_prepare_ready_s[ch])
-                        candidate_prepare_accept_q[prepare_active_id_q][ch]
-                            <= 1'b1;
-                    if (candidate_desc_q[prepare_active_id_q][ch].active
-                     && (candidate_prepare_accept_q[prepare_active_id_q][ch]
+                        shadow_prepare_accept_q[ch] <= 1'b1;
+                    if (shadow_desc_q[ch].active
+                     && (shadow_prepare_accept_q[ch]
                       || (lookahead_prepare_valid_s[ch]
                        && lookahead_prepare_ready_s[ch])))
-                        candidate_result_ready_q[prepare_active_id_q][ch]
-                            <= candidate_result_ready_q[prepare_active_id_q][ch]
+                        shadow_result_ready_q[ch]
+                            <= shadow_result_ready_q[ch]
                              | lookahead_result_ready_s[ch];
                 end
                 if (prepare_all_accepted && prepare_all_results_ready) begin
-                    candidate_prepared_q[prepare_active_id_q] <= 1'b1;
+                    shadow_prepared_q <= 1'b1;
                     prepare_active_q <= 1'b0;
                 end
             end
@@ -1051,19 +1107,20 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if ((state_q == S_PROG) && cfg_all_ready
              && issue_candidate_q) begin
                 candidate_valid_q[issue_candidate_id_q] <= 1'b0;
-                candidate_prepared_q[issue_candidate_id_q] <= 1'b0;
-                if (prepare_active_q
-                 && (prepare_active_id_q == issue_candidate_id_q))
+                if (shadow_owner_live
+                 && (shadow_owner_id_q == issue_candidate_id_q)) begin
+                    shadow_valid_q <= 1'b0;
+                    shadow_prepared_q <= 1'b0;
                     prepare_active_q <= 1'b0;
+                end
                 issue_candidate_q <= 1'b0;
             end
 
             if (chain_candidate_fire) begin
                 candidate_valid_q[chain_candidate_id] <= 1'b0;
-                candidate_prepared_q[chain_candidate_id] <= 1'b0;
-                if (prepare_active_q
-                 && (prepare_active_id_q == chain_candidate_id))
-                    prepare_active_q <= 1'b0;
+                shadow_valid_q <= 1'b0;
+                shadow_prepared_q <= 1'b0;
+                prepare_active_q <= 1'b0;
             end
 
             if ((state_q == S_WAIT_DONE) && done_all_valid
@@ -1098,12 +1155,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 work_data_prefetched_q <= 1'b0;
                 work_data_released_q <= 1'b1;
                 issued_chunk_beats_per_bank_q <=
-                    candidate_chunk_beats_q[chain_candidate_id];
+                    shadow_chunk_beats_q;
                 issue_candidate_q <= 1'b0;
                 issue_candidate_id_q <= chain_candidate_id;
                 done_sticky_q <= '0;
                 for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                    issue_desc_q[ch] <= candidate_desc_q[chain_candidate_id][ch];
+                    issue_desc_q[ch] <= shadow_desc_q[ch];
 
                 if (candidate_store_new_q[chain_candidate_id]) begin
                     store_context_valid_q <= 1'b1;
@@ -1111,24 +1168,77 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                         candidate_store_chunkable_q[chain_candidate_id];
                     store_cmd_q <= candidate_owner_q[chain_candidate_id].cmd;
                     store_tag_q <= candidate_owner_q[chain_candidate_id].tag;
-                    store_bank_beat_cursor_q <= 32'd0;
+                    store_bank_beat_cursor_q <=
+                        candidate_store_cursor_q[chain_candidate_id];
                     store_remaining_beats_per_bank_q <=
                         candidate_store_remaining_q[chain_candidate_id];
-                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
-                        store_desc_q[ch] <=
-                            candidate_store_desc_q[chain_candidate_id][ch];
                 end
             end
         end
     end
 
 `ifndef SYNTHESIS
+    logic chain_offer_stalled_prev_r;
+    logic chain_offer_id_hold_r;
+    channel_desc_t chain_offer_desc_hold_r[NUM_CHANNELS];
+    logic chain_fire_prev_r;
+    logic chain_fire_id_hold_r;
+    channel_desc_t chain_fire_desc_hold_r[NUM_CHANNELS];
+
     initial begin
         if (`PLATFORM_MEMORY_INTERLEAVE == 0)
             $fatal(1, "%s: interleaved memory is required", INSTANCE_ID);
         if (RAW_BURST_GROUPS == 0)
             $fatal(1, "%s: memory banks must cover all DMA channels",
                    INSTANCE_ID);
+    end
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            chain_offer_stalled_prev_r <= 1'b0;
+            chain_fire_prev_r <= 1'b0;
+        end else begin
+            if (chain_offer_stalled_prev_r) begin
+                assert (chain_candidate_offer
+                     && (chain_candidate_id == chain_offer_id_hold_r))
+                    else $fatal(1,
+                        "%s: chained candidate ownership changed while held",
+                        INSTANCE_ID);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    assert (shadow_desc_q[ch] == chain_offer_desc_hold_r[ch])
+                        else $fatal(1,
+                            "%s: chained channel %0d descriptor changed while held",
+                            INSTANCE_ID, ch);
+                end
+            end
+            chain_offer_stalled_prev_r <= chain_candidate_offer
+                                       && !chain_candidate_fire;
+            if (chain_candidate_offer && !chain_candidate_fire) begin
+                chain_offer_id_hold_r <= chain_candidate_id;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    chain_offer_desc_hold_r[ch] <= shadow_desc_q[ch];
+            end
+
+            if (chain_fire_prev_r) begin
+                assert ((state_q == S_WAIT_DONE)
+                     && (issue_candidate_id_q == chain_fire_id_hold_r))
+                    else $fatal(1,
+                        "%s: chained command did not directly enter WAIT_DONE",
+                        INSTANCE_ID);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    assert (issue_desc_q[ch] == chain_fire_desc_hold_r[ch])
+                        else $fatal(1,
+                            "%s: chained channel %0d lost descriptor ownership",
+                            INSTANCE_ID, ch);
+                end
+            end
+            chain_fire_prev_r <= chain_candidate_fire;
+            if (chain_candidate_fire) begin
+                chain_fire_id_hold_r <= chain_candidate_id;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    chain_fire_desc_hold_r[ch] <= shadow_desc_q[ch];
+            end
+        end
     end
 
     always_ff @(posedge clk) begin
@@ -1245,16 +1355,18 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
 
-            if (chain_candidate_fire) begin
+            if (chain_candidate_offer) begin
                 assert (done_all_valid
                      && candidate_valid_q[chain_candidate_id]
-                     && candidate_prepared_now[chain_candidate_id])
+                     && shadow_owner_live
+                     && (shadow_owner_id_q == chain_candidate_id)
+                     && shadow_prepared_now)
                     else $fatal(1,
                         "%s: unsafe or unprepared same-edge ACTIVATE",
                         INSTANCE_ID);
-                assert (cfg_all_ready)
+                assert (shadow_cfg_all_ready)
                     else $fatal(1,
-                        "%s: chained descriptor was not atomically accepted",
+                        "%s: chained descriptor did not have all-channel ready",
                         INSTANCE_ID);
                 if (chain_candidate_id == PREP_FALLBACK_ID)
                     assert (!candidate_valid_q[PREP_HIGH_ID]
@@ -1264,20 +1376,76 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                             "%s: fallback chained while high load was visible",
                             INSTANCE_ID);
                 for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                    if (candidate_desc_q[chain_candidate_id][ch].active)
-                        assert (lookahead_activate_s[ch]
-                             && (lookahead_activate_id_s[ch]
-                              == chain_candidate_id))
+                    assert (done_sticky_q[ch] || done_or_inactive[ch])
+                        else $fatal(1,
+                            "%s: old channel %0d was not done before chaining",
+                            INSTANCE_ID, ch);
+                    assert (cfg_channel_ready_s[ch]
+                         || !shadow_desc_q[ch].active)
+                        else $fatal(1,
+                            "%s: channel %0d offered without cfg ready",
+                            INSTANCE_ID, ch);
+                    assert (cfg_valid_s[ch]
+                         == shadow_desc_q[ch].active)
+                        else $fatal(1,
+                            "%s: channel %0d chained cfg active-mask mismatch",
+                            INSTANCE_ID, ch);
+                    assert (lookahead_activate_s[ch]
+                         == shadow_desc_q[ch].active)
+                        else $fatal(1,
+                            "%s: channel %0d chained ACTIVATE active-mask mismatch",
+                            INSTANCE_ID, ch);
+                    assert (cfg_fire_s[ch]
+                         == shadow_desc_q[ch].active)
+                        else $fatal(1,
+                            "%s: channel %0d partial chained cfg acceptance",
+                            INSTANCE_ID, ch);
+                    if (shadow_desc_q[ch].active) begin
+                        assert (lookahead_activate_id_s[ch]
+                             == chain_candidate_id)
                             else $fatal(1,
-                                "%s: channel %0d missed chained ACTIVATE",
+                                "%s: channel %0d chained ACTIVATE ID mismatch",
                                 INSTANCE_ID, ch);
+                    end
                 end
+                assert (chain_candidate_fire)
+                    else $fatal(1,
+                        "%s: chained all-ready offer did not fire atomically",
+                        INSTANCE_ID);
             end
 
             if (prepare_active_q) begin
-                assert (candidate_valid_q[prepare_active_id_q])
+                assert (shadow_owner_live && !shadow_prepared_q)
                     else $fatal(1, "%s: PREPARE lost candidate ownership",
                                 INSTANCE_ID);
+            end
+
+            if (shadow_valid_q) begin
+                assert (shadow_owner_live)
+                    else $fatal(1, "%s: shadow lost compact owner generation",
+                                INSTANCE_ID);
+                if (shadow_owner_id_q == PREP_FALLBACK_ID)
+                    assert (!candidate_valid_q[PREP_HIGH_ID]
+                         || prepare_active_q
+                         || shadow_invalidate
+                         || (shadow_build_request
+                          && (shadow_build_id == PREP_HIGH_ID)))
+                        else $fatal(1,
+                            "%s: prepared fallback shadow survived visible high owner",
+                            INSTANCE_ID);
+            end
+
+            if (shadow_build_request && shadow_owner_live
+             && (shadow_owner_id_q != shadow_build_id)) begin
+                assert (candidate_valid_q[shadow_owner_id_q])
+                    else $fatal(1,
+                        "%s: shadow replacement retired compact owner",
+                        INSTANCE_ID);
+                if (shadow_build_id == PREP_HIGH_ID)
+                    assert (shadow_owner_id_q == PREP_FALLBACK_ID)
+                        else $fatal(1,
+                            "%s: high shadow replacement had invalid prior owner",
+                            INSTANCE_ID);
             end
 
             if ((state_q == S_CAPTURE) && work_is_store_q
@@ -1302,7 +1470,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if ((state_q == S_PROG) && work_is_store_q
              && !store_chunkable_q) begin
                 for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
-                    assert (issue_desc_q[ch] == store_desc_q[ch])
+                    assert (issue_desc_q[ch] == decoded_desc[ch])
                         else $fatal(1,
                             "%s: non-chunkable store descriptor changed on channel %0d",
                             INSTANCE_ID, ch);
@@ -1312,7 +1480,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             if ((state_q == S_PROG) && work_is_store_q
              && store_chunkable_q) begin
                 assert (issue_desc_q[0].regs[DMA_R_BND0]
-                     <= store_desc_q[0].regs[DMA_R_BND0])
+                     <= decoded_desc[0].regs[DMA_R_BND0])
                     else $fatal(1, "%s: chunk increased original BND0",
                                 INSTANCE_ID);
             end

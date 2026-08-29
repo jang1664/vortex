@@ -216,6 +216,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic scale_register_write_done_q;
     logic zero_point_register_write_done_q;
     logic        output_write_active_r;
+    logic        output_write_done_q;
 
     wire weight_dma_start = gemm_ctrl_if.weight_read_ctrl.start;
     wire scale_dma_start = gemm_ctrl_if.scale_read_ctrl.start;
@@ -1022,17 +1023,27 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.reg_value = '0;
     assign output_dma_ctrl_if.scheduler_work_seq = '0;
     assign gemm_ctrl_if.output_write_flag.idle
-        = output_dma_ctrl_if.idle && !output_write_active_r;
-    assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.write_done;
+        = output_dma_ctrl_if.idle
+       && (!output_write_active_r || output_write_done_q);
+    assign gemm_ctrl_if.output_write_flag.done = output_write_done_q;
     assign gemm_ctrl_if.output_write_flag.prepare_ready = 1'b0;
 
     always_ff @(posedge clk) begin
       if (reset) begin
         output_write_active_r <= 1'b0;
-      end else if (gemm_ctrl_if.output_write_ctrl.start) begin
-        output_write_active_r <= 1'b1;
-      end else if (output_dma_ctrl_if.write_done) begin
-        output_write_active_r <= 1'b0;
+        output_write_done_q <= 1'b0;
+      end else begin
+        // Keep physical completion raw inside the DMA boundary.  Controller
+        // retirement observes it one cycle later, breaking the final-write
+        // ready-to-next-request combinational path.
+        output_write_done_q <= output_dma_ctrl_if.write_done;
+        // A same-cycle new start owns the active bit over the prior command's
+        // delayed completion.
+        if (gemm_ctrl_if.output_write_ctrl.start) begin
+          output_write_active_r <= 1'b1;
+        end else if (output_write_done_q) begin
+          output_write_active_r <= 1'b0;
+        end
       end
     end
 
@@ -1043,18 +1054,21 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
     logic scale_last_register_write_prev_r;
     logic zero_point_last_register_write_prev_r;
+    logic output_write_done_raw_prev_r;
 
-    // Weight/output completion coincides with the terminal endpoint. Qparam
-    // completion is the registered image of that endpoint and therefore
-    // retires the controller entry exactly one cycle later.
+    // Weight completion coincides with its terminal endpoint. Qparam and
+    // Output completions are registered images of their physical endpoints
+    // and therefore retire controller entries exactly one cycle later.
     always_ff @(posedge clk) begin
       if (reset) begin
         scale_last_register_write_prev_r <= 1'b0;
         zero_point_last_register_write_prev_r <= 1'b0;
+        output_write_done_raw_prev_r <= 1'b0;
       end else begin
         scale_last_register_write_prev_r <= scale_last_register_write;
         zero_point_last_register_write_prev_r
             <= zero_point_last_register_write;
+        output_write_done_raw_prev_r <= output_dma_ctrl_if.write_done;
         if (weight_dma_start) begin
           assert ((weight_boundary_count_r
                    < WEIGHT_BOUNDARY_COUNT_BITS'(WEIGHT_BOUNDARY_DEPTH))
@@ -1153,7 +1167,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
           else $fatal(1, "%s: ZP boundary count overflow", INSTANCE_ID);
 
         if (gemm_ctrl_if.output_write_ctrl.start) begin
-          assert (!output_write_active_r)
+          assert (!output_write_active_r || output_write_done_q)
             else $fatal(1, "%s: overlapping output command", INSTANCE_ID);
         end
         if (output_dma_ctrl_if.write_done) begin
@@ -1161,9 +1175,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
             else $fatal(1, "%s: early or duplicate output destination write done",
                         INSTANCE_ID);
         end
+        if (output_write_done_q) begin
+          assert (output_write_active_r)
+            else $fatal(1, "%s: Output retired without active ownership",
+                        INSTANCE_ID);
+        end
         assert (gemm_ctrl_if.output_write_flag.done
-             == output_dma_ctrl_if.write_done)
-          else $fatal(1, "%s: output done is not direct final destination write",
+             == output_write_done_raw_prev_r)
+          else $fatal(1, "%s: Output completion is not raw write_done +1 cycle",
                       INSTANCE_ID);
 
         if (gemm_unit_v2_if.weight_consume_valid) begin
