@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -28,15 +29,24 @@ from spinquant_inference.llama3_c4_export import (  # noqa: E402
     Llama3ExportConfig,
     Llama3LayerDecode,
     Llama3LayerPrefill,
+    Llama3LayerPrefillCheckpoints,
+    Llama3FinalHead,
     Llama3ModelDecode,
     Llama3ModelPrefill,
     Llama3StackDecode,
     Llama3StackPrefill,
+    Llama3TokenEmbedding,
+    embedding_parameter_shapes,
     exported_graph_has_physical_c4_ops,
+    final_head_parameter_shapes,
     full_model_parameter_shapes,
     make_meta_parameters,
     stack_parameter_shapes,
+    layer_checkpoint_names,
+    _dense_hadamard,
+    _sylvester_hadamard,
 )
+from spinquant_inference.utils.hadamard_utils import get_hadK  # noqa: E402
 
 
 def _tiny_layer(*, batch: int, sequence: int) -> LayerConfig:
@@ -57,7 +67,9 @@ def _tiny_layer(*, batch: int, sequence: int) -> LayerConfig:
     )
 
 
-def _export_config(layer: LayerConfig, *, query: int, capacity: int) -> Llama3ExportConfig:
+def _export_config(
+    layer: LayerConfig, *, query: int, capacity: int
+) -> Llama3ExportConfig:
     return Llama3ExportConfig(
         batch_size=layer.batch_size,
         query_length=query,
@@ -78,7 +90,9 @@ def _parameters(tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     result = {
         name: tensor
         for name, tensor in tensors.items()
-        if name.endswith(".weight") or name.endswith(".scales") or name.endswith(".zeros")
+        if name.endswith(".weight")
+        or name.endswith(".scales")
+        or name.endswith(".zeros")
     }
     result.update(
         {
@@ -101,9 +115,7 @@ def _stack_parameters(
                 0, 256, shape, dtype=dtype, generator=generator
             )
         elif dtype == torch.int16:
-            result[name] = torch.randint(
-                -2, 3, shape, dtype=dtype, generator=generator
-            )
+            result[name] = torch.randint(-2, 3, shape, dtype=dtype, generator=generator)
         elif name.endswith("norm.weight"):
             result[name] = torch.ones(shape, dtype=dtype)
         else:
@@ -127,9 +139,7 @@ def _full_model_parameters(
 ) -> dict[str, torch.Tensor]:
     parameters = _stack_parameters(config, num_layers)
     generator = torch.Generator().manual_seed(140 + num_layers)
-    for name, (shape, dtype) in full_model_parameter_shapes(
-        config, num_layers
-    ).items():
+    for name, (shape, dtype) in full_model_parameter_shapes(config, num_layers).items():
         if name in parameters:
             continue
         if dtype == torch.uint8:
@@ -157,6 +167,25 @@ def _assert_cache_suffix_zero(outputs: tuple[torch.Tensor, ...], length: int) ->
             rtol=0,
             atol=0,
         )
+
+
+def _butterfly_hadamard_reference(
+    hidden: torch.Tensor, base: torch.Tensor, base_size: int
+) -> torch.Tensor:
+    width = hidden.shape[-1]
+    work = hidden.float().reshape(-1, width, 1)
+    while work.shape[1] > base_size:
+        pairs = work.reshape(work.shape[0], work.shape[1] // 2, 2, work.shape[2])
+        work = torch.cat(
+            (
+                pairs[:, :, 0, :] + pairs[:, :, 1, :],
+                pairs[:, :, 0, :] - pairs[:, :, 1, :],
+            ),
+            dim=-1,
+        )
+    if base_size > 1:
+        work = torch.matmul(base.reshape(1, base_size, base_size), work)
+    return (work.reshape(hidden.shape) / math.sqrt(width)).to(hidden.dtype)
 
 
 def test_prefill_matches_backend_neutral_all_asymmetric_reference() -> None:
@@ -207,6 +236,57 @@ def test_prefill_matches_backend_neutral_all_asymmetric_reference() -> None:
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
+def test_prefill_checkpoint_boundary_preserves_production_outputs() -> None:
+    layer = _tiny_layer(batch=1, sequence=1)
+    case = create_random_case(layer, seed=151)
+    config = _export_config(layer, query=1, capacity=8)
+    arguments = (
+        case.tensors["input"],
+        case.tensors["position_ids"],
+        _parameters(case.tensors),
+    )
+    production = Llama3LayerPrefill(config)(*arguments)
+    checkpointed = Llama3LayerPrefillCheckpoints(config)(*arguments)
+
+    checkpoint_names = layer_checkpoint_names(config)
+    assert checkpoint_names[-1] == "output"
+    assert len(checkpointed) == len(checkpoint_names) + 7
+    torch.testing.assert_close(
+        checkpointed[len(checkpoint_names) - 1], production[0], rtol=0, atol=0
+    )
+    for actual, expected in zip(checkpointed[len(checkpoint_names) :], production[1:]):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("width", (128, 14336))
+def test_dense_mixed_radix_hadamard_matches_butterfly(width: int) -> None:
+    base, base_size = get_hadK(width)
+    if base is None:
+        base = torch.ones((1, 1), dtype=torch.float32)
+    hidden = torch.randn((2, width), dtype=torch.float16)
+    expected = _butterfly_hadamard_reference(hidden, base.float(), base_size)
+    actual = _dense_hadamard(
+        hidden,
+        base.float(),
+        base_size,
+        _sylvester_hadamard(width // base_size),
+    )
+    absolute_error = (actual.float() - expected.float()).abs()
+    small = expected.float().abs() < 1.0
+    small_max_absolute_error = (
+        absolute_error[small].max().item() if torch.any(small) else 0.0
+    )
+    relative_l2 = torch.linalg.vector_norm(
+        actual.float() - expected.float()
+    ) / torch.linalg.vector_norm(expected.float()).clamp_min(1e-12)
+    cosine = torch.nn.functional.cosine_similarity(
+        actual.float().flatten(), expected.float().flatten(), dim=0
+    )
+    assert small_max_absolute_error <= 5e-4
+    assert relative_l2.item() <= 1e-5
+    assert cosine.item() >= 0.99999
+
+
 @pytest.mark.parametrize("batch,prompt,capacity", [(1, 1, 8), (2, 3, 8)])
 def test_prefill_then_three_decode_steps_reuse_functional_cache(
     batch: int, prompt: int, capacity: int
@@ -220,9 +300,7 @@ def test_prefill_then_three_decode_steps_reuse_functional_cache(
     prefill_module = Llama3LayerPrefill(
         _export_config(layer, query=prompt, capacity=capacity)
     )
-    decode_module = Llama3LayerDecode(
-        _export_config(layer, query=1, capacity=capacity)
-    )
+    decode_module = Llama3LayerDecode(_export_config(layer, query=1, capacity=capacity))
     state = prefill_module(
         case.tensors["prompt_input"],
         case.tensors["prompt_position_ids"],
@@ -331,7 +409,10 @@ def test_decoder_stack_matches_sequential_layers_and_exports(num_layers: int) ->
         expected_states.append(state)
     expected_prefill = (
         expected_hidden,
-        *(torch.stack([state[index] for state in expected_states]) for index in range(1, 7)),
+        *(
+            torch.stack([state[index] for state in expected_states])
+            for index in range(1, 7)
+        ),
         torch.stack([state[7] for state in expected_states]),
     )
     prefill = Llama3StackPrefill(config, num_layers)
@@ -362,7 +443,10 @@ def test_decoder_stack_matches_sequential_layers_and_exports(num_layers: int) ->
         expected_states.append(state)
     expected_decode = (
         expected_hidden,
-        *(torch.stack([state[index] for state in expected_states]) for index in range(1, 7)),
+        *(
+            torch.stack([state[index] for state in expected_states])
+            for index in range(1, 7)
+        ),
         torch.stack([state[7] for state in expected_states]),
     )
     decode = Llama3StackDecode(config, num_layers)
@@ -447,6 +531,88 @@ def test_full_model_boundary_prefill_then_three_decode_steps_exports() -> None:
     assert not exported_graph_has_physical_c4_ops(decode_export)
 
 
+def test_partitioned_model_boundaries_match_full_model_helpers() -> None:
+    config = Llama3ExportConfig(
+        batch_size=1,
+        query_length=2,
+        cache_capacity=8,
+        hidden_size=128,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=32,
+        weight_group_size=32,
+        kv_group_size=32,
+        vocabulary_size=64,
+    )
+    parameters = _full_model_parameters(config, 2)
+    token_ids = torch.tensor([[3, 7]], dtype=torch.int64)
+    embedding_parameters = {
+        name: parameters[name] for name in embedding_parameter_shapes(config)
+    }
+    head_parameters = {
+        name: parameters[name] for name in final_head_parameter_shapes(config)
+    }
+
+    embedding = Llama3TokenEmbedding()
+    (hidden,) = embedding(token_ids, embedding_parameters)
+    torch.testing.assert_close(
+        hidden,
+        torch.nn.functional.embedding(token_ids, parameters["token_embedding.weight"]),
+        rtol=0,
+        atol=0,
+    )
+    embedding_export = torch.export.export(
+        embedding, (token_ids, embedding_parameters), strict=True
+    )
+    assert not exported_graph_has_physical_c4_ops(embedding_export)
+
+    head = Llama3FinalHead(config)
+    logits, normalized = head(hidden, head_parameters)
+    model = Llama3ModelPrefill(config, 2)
+    expected_logits, expected_normalized = model._finalize(hidden, parameters)
+    torch.testing.assert_close(logits, expected_logits, rtol=0, atol=0)
+    torch.testing.assert_close(normalized, expected_normalized, rtol=0, atol=0)
+    head_export = torch.export.export(head, (hidden, head_parameters), strict=True)
+    assert not exported_graph_has_physical_c4_ops(head_export)
+    assert (
+        str(head_export.graph_module.graph).count("torch.ops.vortex.mm_w4a16.default")
+        == 1
+    )
+
+
+@pytest.mark.parametrize("batch,prompt", [(1, 1), (1, 7), (2, 1), (2, 7)])
+def test_real_llama3_partitioned_boundaries_export_on_meta(
+    batch: int, prompt: int
+) -> None:
+    config = Llama3ExportConfig(batch, prompt, max(prompt + 3, 8))
+    token_ids = torch.empty((batch, prompt), dtype=torch.int64, device="meta")
+    embedding_parameters = {
+        name: torch.empty(shape, dtype=dtype, device="meta")
+        for name, (shape, dtype) in embedding_parameter_shapes(config).items()
+    }
+    embedding_export = torch.export.export(
+        Llama3TokenEmbedding().to("meta"),
+        (token_ids, embedding_parameters),
+        strict=True,
+    )
+    assert not exported_graph_has_physical_c4_ops(embedding_export)
+
+    hidden = torch.empty(
+        (batch, prompt, config.hidden_size), dtype=torch.float16, device="meta"
+    )
+    head_parameters = {
+        name: torch.empty(shape, dtype=dtype, device="meta")
+        for name, (shape, dtype) in final_head_parameter_shapes(config).items()
+    }
+    head_export = torch.export.export(
+        Llama3FinalHead(config).to("meta"),
+        (hidden, head_parameters),
+        strict=True,
+    )
+    assert not exported_graph_has_physical_c4_ops(head_export)
+
+
 @pytest.mark.parametrize(
     "batch,prompt,capacity",
     [(1, 1, 8), (1, 7, 16), (2, 1, 8), (2, 7, 16)],
@@ -467,9 +633,7 @@ def test_real_llama3_geometry_exports_s1_s4_on_meta(
     decode_config = Llama3ExportConfig(batch, 1, capacity)
     decode = Llama3LayerDecode(decode_config).to("meta")
     decode_parameters = make_meta_parameters(decode_config)
-    packed = torch.empty(
-        (batch, 8, capacity, 64), dtype=torch.uint8, device="meta"
-    )
+    packed = torch.empty((batch, 8, capacity, 64), dtype=torch.uint8, device="meta")
     scale = torch.empty((batch, 8, capacity, 1), dtype=torch.float16, device="meta")
     zero = torch.empty((batch, 8, capacity, 1), dtype=torch.int16, device="meta")
     exported_decode = torch.export.export(

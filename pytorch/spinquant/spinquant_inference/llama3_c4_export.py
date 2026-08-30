@@ -30,6 +30,33 @@ PROJECTION_DIMS = {
     "down_proj": ("intermediate_size", "hidden_size"),
 }
 
+_LAYER_CHECKPOINT_PREFIX = (
+    "q_projection",
+    "query_after_rope",
+    "attention_scores",
+    "attention_masked_scores",
+    "attention_probabilities",
+    "attention_context",
+    "o_projection",
+    "attention_residual",
+    "post_attention_normalized",
+    "gate_projection",
+    "up_projection",
+    "activated_mlp",
+)
+
+
+def layer_checkpoint_names(config: "Llama3ExportConfig") -> tuple[str, ...]:
+    """Names matching the dense-Hadamard checkpoint tuple."""
+
+    del config
+    return (
+        *_LAYER_CHECKPOINT_PREFIX,
+        "transformed_mlp",
+        "down_projection",
+        "output",
+    )
+
 
 @dataclass(frozen=True)
 class Llama3ExportConfig:
@@ -64,7 +91,9 @@ class Llama3ExportConfig:
         if self.intermediate_size % self.weight_group_size:
             raise ValueError("intermediate size must be divisible by weight group size")
         if self.quantization_policy != ALL_ASYMMETRIC_WKV4:
-            raise ValueError("the initial C4 Llama graph requires all-asymmetric W/K/V INT4")
+            raise ValueError(
+                "the initial C4 Llama graph requires all-asymmetric W/K/V INT4"
+            )
         if self.vocabulary_size <= 0 or self.vocabulary_size % 2:
             raise ValueError("vocabulary size must be a positive even value")
 
@@ -77,7 +106,9 @@ class Llama3ExportConfig:
         return self.num_attention_heads // self.num_key_value_heads
 
 
-def parameter_shapes(config: Llama3ExportConfig) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+def parameter_shapes(
+    config: Llama3ExportConfig,
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
     shapes: dict[str, tuple[tuple[int, ...], torch.dtype]] = {
         "input_norm.weight": ((config.hidden_size,), torch.float16),
         "post_attention_norm.weight": ((config.hidden_size,), torch.float16),
@@ -154,6 +185,47 @@ def full_model_parameter_shapes(
     return shapes
 
 
+def embedding_parameter_shapes(
+    config: Llama3ExportConfig,
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    """Parameters owned by the independently compiled token embedding boundary."""
+
+    return {
+        "token_embedding.weight": (
+            (config.vocabulary_size, config.hidden_size),
+            torch.float16,
+        )
+    }
+
+
+def final_head_parameter_shapes(
+    config: Llama3ExportConfig,
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    """Parameters owned by the independently compiled final norm/LM-head boundary."""
+
+    return {
+        "final_norm.weight": ((config.hidden_size,), torch.float16),
+        "lm_head.qweight": (
+            (config.hidden_size, config.vocabulary_size // 2),
+            torch.uint8,
+        ),
+        "lm_head.scales": (
+            (
+                config.hidden_size // config.weight_group_size,
+                config.vocabulary_size,
+            ),
+            torch.float16,
+        ),
+        "lm_head.zeros": (
+            (
+                config.hidden_size // config.weight_group_size,
+                config.vocabulary_size,
+            ),
+            torch.int16,
+        ),
+    }
+
+
 def make_meta_full_model_parameters(
     config: Llama3ExportConfig, num_layers: int
 ) -> dict[str, torch.Tensor]:
@@ -179,9 +251,7 @@ def _layer_parameters(
         )
     } | {
         "input_norm.weight": parameters[f"{prefix}input_norm.weight"],
-        "post_attention_norm.weight": parameters[
-            f"{prefix}post_attention_norm.weight"
-        ],
+        "post_attention_norm.weight": parameters[f"{prefix}post_attention_norm.weight"],
     }
 
 
@@ -197,16 +267,33 @@ def _rotate_half(hidden: torch.Tensor) -> torch.Tensor:
     return torch.cat((-hidden[..., half:], hidden[..., :half]), dim=-1)
 
 
-def _hadamard(hidden: torch.Tensor, base: torch.Tensor, base_size: int) -> torch.Tensor:
-    width = hidden.shape[-1]
-    work = hidden.float().reshape(-1, width, 1)
-    while work.shape[1] > base_size:
-        pairs = work.reshape(work.shape[0], work.shape[1] // 2, 2, work.shape[2])
-        work = torch.cat(
-            (pairs[:, :, 0, :] + pairs[:, :, 1, :],
-             pairs[:, :, 0, :] - pairs[:, :, 1, :]),
-            dim=-1,
+def _sylvester_hadamard(size: int) -> torch.Tensor:
+    if size <= 0 or size & (size - 1):
+        raise ValueError("Sylvester Hadamard size must be a positive power of two")
+    matrix = torch.ones((1, 1), dtype=torch.float32)
+    while matrix.shape[0] < size:
+        matrix = torch.cat(
+            (
+                torch.cat((matrix, matrix), dim=1),
+                torch.cat((matrix, -matrix), dim=1),
+            ),
+            dim=0,
         )
+    return matrix
+
+
+def _dense_hadamard(
+    hidden: torch.Tensor,
+    base: torch.Tensor,
+    base_size: int,
+    power2_matrix: torch.Tensor,
+) -> torch.Tensor:
+    """Equivalent mixed-radix transform without transient butterfly buffers."""
+
+    width = hidden.shape[-1]
+    factor = width // base_size
+    work = hidden.float().reshape(-1, base_size, factor)
+    work = torch.matmul(work, power2_matrix.transpose(0, 1))
     if base_size > 1:
         work = torch.matmul(base.reshape(1, base_size, base_size), work)
     return (work.reshape(hidden.shape) / math.sqrt(width)).to(hidden.dtype)
@@ -221,7 +308,10 @@ class _Llama3LayerBase(torch.nn.Module):
         self.prepacked_weights = prepacked_weights
         inv_freq = 1.0 / (
             config.rope_theta
-            ** (torch.arange(0, config.head_dim, 2, dtype=torch.float32) / config.head_dim)
+            ** (
+                torch.arange(0, config.head_dim, 2, dtype=torch.float32)
+                / config.head_dim
+            )
         )
         self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
         r4, r4_base = get_hadK(config.intermediate_size)
@@ -229,6 +319,16 @@ class _Llama3LayerBase(torch.nn.Module):
             r4 = torch.ones((1, 1), dtype=torch.float32)
         self.register_buffer("r4_base", r4.to(torch.float32), persistent=False)
         self.r4_base_size = int(r4_base)
+        self.register_buffer(
+            "r3_power2",
+            _sylvester_hadamard(config.head_dim),
+            persistent=False,
+        )
+        self.register_buffer(
+            "r4_power2",
+            _sylvester_hadamard(config.intermediate_size // self.r4_base_size),
+            persistent=False,
+        )
 
     def _linear(
         self,
@@ -268,11 +368,15 @@ class _Llama3LayerBase(torch.nn.Module):
         ).transpose(1, 2)
 
     def _rope(self, hidden: torch.Tensor, position_ids: torch.Tensor) -> torch.Tensor:
-        frequencies = position_ids.float().unsqueeze(-1) * self.rope_inv_freq.reshape(1, 1, -1)
+        frequencies = position_ids.float().unsqueeze(-1) * self.rope_inv_freq.reshape(
+            1, 1, -1
+        )
         embedding = torch.cat((frequencies, frequencies), dim=-1)
         cos = embedding.cos().to(torch.float16).unsqueeze(1)
         sin = embedding.sin().to(torch.float16).unsqueeze(1)
-        return (hidden.float() * cos + _rotate_half(hidden).float() * sin).to(torch.float16)
+        return (hidden.float() * cos + _rotate_half(hidden).float() * sin).to(
+            torch.float16
+        )
 
     def _quantize_kv(
         self, hidden: torch.Tensor
@@ -309,6 +413,20 @@ class _Llama3LayerBase(torch.nn.Module):
         valid_length: torch.Tensor,
         position_ids: torch.Tensor,
     ) -> torch.Tensor:
+        return self._attention_checkpoints(
+            query, key_cache, value_cache, valid_length, position_ids
+        )[-1]
+
+    def _attention_checkpoints(
+        self,
+        query: torch.Tensor,
+        key_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        value_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        valid_length: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return the attention GEMM and masking boundaries for debug exports."""
+
         config = self.config
         groups = config.query_heads_per_kv_head
         query_grouped = query.reshape(
@@ -318,9 +436,7 @@ class _Llama3LayerBase(torch.nn.Module):
             query.shape[-2],
             config.head_dim,
         )
-        key_payload, key_scale, key_zero = (
-            tensor.unsqueeze(2) for tensor in key_cache
-        )
+        key_payload, key_scale, key_zero = (tensor.unsqueeze(2) for tensor in key_cache)
         key_shape = [
             config.batch_size,
             config.num_key_value_heads,
@@ -340,17 +456,21 @@ class _Llama3LayerBase(torch.nn.Module):
             "signed_asymmetric_int4",
             True,
         )
-        scores = scores.float() / math.sqrt(config.head_dim)
+        scaled_scores = scores.float() / math.sqrt(config.head_dim)
         key_positions = torch.arange(
             config.cache_capacity, device=query.device, dtype=torch.int64
         )
-        valid = key_positions.reshape(1, 1, 1, 1, -1) < valid_length.reshape(1, 1, 1, 1, 1)
+        valid = key_positions.reshape(1, 1, 1, 1, -1) < valid_length.reshape(
+            1, 1, 1, 1, 1
+        )
         causal = key_positions.reshape(1, 1, 1, 1, -1) <= position_ids.reshape(
             config.batch_size, 1, 1, query.shape[-2], 1
         )
         valid = valid & causal
-        scores = torch.where(valid, scores, torch.full_like(scores, float("-inf")))
-        probabilities = torch.softmax(scores, dim=-1).to(torch.float16)
+        masked_scores = torch.where(
+            valid, scaled_scores, torch.full_like(scaled_scores, float("-inf"))
+        )
+        probabilities = torch.softmax(masked_scores, dim=-1).to(torch.float16)
 
         value_payload, value_scale, value_zero = (
             tensor.unsqueeze(2) for tensor in value_cache
@@ -374,12 +494,13 @@ class _Llama3LayerBase(torch.nn.Module):
             "signed_asymmetric_int4",
             False,
         )
-        return context.reshape(
+        context = context.reshape(
             config.batch_size,
             config.num_attention_heads,
             query.shape[-2],
             config.head_dim,
         )
+        return scores, masked_scores, probabilities, context
 
     def _layer(
         self,
@@ -391,32 +512,81 @@ class _Llama3LayerBase(torch.nn.Module):
         value_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         valid_length: torch.Tensor,
     ) -> torch.Tensor:
+        return self._layer_checkpoints(
+            hidden,
+            attention_normalized,
+            position_ids,
+            parameters,
+            key_cache,
+            value_cache,
+            valid_length,
+        )[-1]
+
+    def _layer_checkpoints(
+        self,
+        hidden: torch.Tensor,
+        attention_normalized: torch.Tensor,
+        position_ids: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+        key_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        value_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        valid_length: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
+        """Return Q/attention/MLP boundaries without changing their execution order."""
+
         config = self.config
         residual = hidden
-        query = self._split_heads(
-            self._linear("q_proj", attention_normalized, parameters),
-            config.num_attention_heads,
+        query_projection = self._linear("q_proj", attention_normalized, parameters)
+        query = self._split_heads(query_projection, config.num_attention_heads)
+        query = _dense_hadamard(
+            self._rope(query, position_ids),
+            self.r4_base[:1, :1],
+            1,
+            self.r3_power2,
         )
-        query = _hadamard(self._rope(query, position_ids), self.r4_base[:1, :1], 1)
-        attention = self._attention(
+        scores, masked_scores, probabilities, context = self._attention_checkpoints(
             query, key_cache, value_cache, valid_length, position_ids
         )
-        attention = attention.transpose(1, 2).reshape(
+        attention = context.transpose(1, 2).reshape(
             config.batch_size, hidden.shape[1], config.hidden_size
         )
         attention = self._linear("o_proj", attention, parameters)
-        residual = (residual.float() + attention.float()).to(torch.float16)
+        attention_residual = (residual.float() + attention.float()).to(torch.float16)
         normalized = _rms_norm(
-            residual,
+            attention_residual,
             parameters["post_attention_norm.weight"],
             config.rms_norm_eps,
         )
         gate = self._linear("gate_proj", normalized, parameters)
         up = self._linear("up_proj", normalized, parameters)
-        mlp = (F.silu(gate.float()) * up.float()).to(torch.float16)
-        mlp = _hadamard(mlp, self.r4_base, self.r4_base_size)
-        mlp = self._linear("down_proj", mlp, parameters)
-        return (residual.float() + mlp.float()).to(torch.float16)
+        activated_mlp = (F.silu(gate.float()) * up.float()).to(torch.float16)
+        transformed_mlp = _dense_hadamard(
+            activated_mlp,
+            self.r4_base,
+            self.r4_base_size,
+            self.r4_power2,
+        )
+        down_projection = self._linear("down_proj", transformed_mlp, parameters)
+        output = (attention_residual.float() + down_projection.float()).to(
+            torch.float16
+        )
+        return (
+            query_projection,
+            query,
+            scores,
+            masked_scores,
+            probabilities,
+            context,
+            attention,
+            attention_residual,
+            normalized,
+            gate,
+            up,
+            activated_mlp,
+            transformed_mlp,
+            down_projection,
+            output,
+        )
 
     def _project_kv(
         self,
@@ -431,7 +601,12 @@ class _Llama3LayerBase(torch.nn.Module):
             self._linear("k_proj", attention_normalized, parameters),
             self.config.num_key_value_heads,
         )
-        key = _hadamard(self._rope(key, position_ids), self.r4_base[:1, :1], 1)
+        key = _dense_hadamard(
+            self._rope(key, position_ids),
+            self.r4_base[:1, :1],
+            1,
+            self.r3_power2,
+        )
         value = self._split_heads(
             self._linear("v_proj", attention_normalized, parameters),
             self.config.num_key_value_heads,
@@ -481,7 +656,9 @@ class Llama3LayerPrefill(_Llama3LayerBase):
                 position,
                 config.cache_capacity,
             )
-        length = torch.tensor(config.query_length, dtype=torch.int64, device=hidden.device)
+        length = torch.tensor(
+            config.query_length, dtype=torch.int64, device=hidden.device
+        )
         output = self._layer(
             hidden,
             attention_normalized,
@@ -492,6 +669,65 @@ class Llama3LayerPrefill(_Llama3LayerBase):
             length,
         )
         return (output, *key_cache, *value_cache, length)
+
+
+class Llama3LayerPrefillCheckpoints(Llama3LayerPrefill):
+    """Debug-only prefill boundary exposing every Q/attention/MLP checkpoint."""
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        position_ids: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, ...]:
+        config = self.config
+        attention_normalized = _rms_norm(
+            hidden,
+            parameters["input_norm.weight"],
+            config.rms_norm_eps,
+        )
+        key_update, value_update = self._project_kv(
+            attention_normalized, position_ids, parameters
+        )
+        packed_shape = (
+            config.batch_size,
+            config.num_key_value_heads,
+            config.cache_capacity,
+            config.head_dim // 2,
+        )
+        qparam_shape = (*packed_shape[:-1], 1)
+        key_cache = (
+            hidden.new_zeros(packed_shape, dtype=torch.uint8),
+            hidden.new_zeros(qparam_shape, dtype=torch.float16),
+            hidden.new_zeros(qparam_shape, dtype=torch.int16),
+        )
+        value_cache = tuple(tensor.clone() for tensor in key_cache)
+        for position in range(config.query_length):
+            key_cache = torch.ops.vortex.kv_cache_update(
+                *key_cache,
+                *(tensor[..., position : position + 1, :] for tensor in key_update),
+                position,
+                config.cache_capacity,
+            )
+            value_cache = torch.ops.vortex.kv_cache_update(
+                *value_cache,
+                *(tensor[..., position : position + 1, :] for tensor in value_update),
+                position,
+                config.cache_capacity,
+            )
+        length = torch.tensor(
+            config.query_length, dtype=torch.int64, device=hidden.device
+        )
+        checkpoints = self._layer_checkpoints(
+            hidden,
+            attention_normalized,
+            position_ids,
+            parameters,
+            key_cache,
+            value_cache,
+            length,
+        )
+        return (*checkpoints, *key_cache, *value_cache, length)
 
 
 class Llama3LayerDecode(_Llama3LayerBase):
@@ -556,6 +792,63 @@ class Llama3LayerDecode(_Llama3LayerBase):
         return (output, *key_cache, *value_cache, updated_length)
 
 
+class Llama3LayerDecodeCheckpoints(Llama3LayerDecode):
+    """Debug-only decode boundary exposing Q/attention/MLP checkpoints."""
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        position_ids: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+        key_payload: torch.Tensor,
+        key_scale: torch.Tensor,
+        key_zero: torch.Tensor,
+        value_payload: torch.Tensor,
+        value_scale: torch.Tensor,
+        value_zero: torch.Tensor,
+        cache_length: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
+        torch._assert_async(
+            (cache_length >= 0) & (cache_length < self.config.cache_capacity),
+            "cache_length must be within the allocated KV cache capacity",
+        )
+        attention_normalized = _rms_norm(
+            hidden,
+            parameters["input_norm.weight"],
+            self.config.rms_norm_eps,
+        )
+        key_update, value_update = self._project_kv(
+            attention_normalized, position_ids, parameters
+        )
+        key_cache = torch.ops.vortex.kv_cache_update_dynamic(
+            key_payload,
+            key_scale,
+            key_zero,
+            *key_update,
+            cache_length,
+            self.config.cache_capacity,
+        )
+        value_cache = torch.ops.vortex.kv_cache_update_dynamic(
+            value_payload,
+            value_scale,
+            value_zero,
+            *value_update,
+            cache_length,
+            self.config.cache_capacity,
+        )
+        updated_length = cache_length + 1
+        checkpoints = self._layer_checkpoints(
+            hidden,
+            attention_normalized,
+            position_ids,
+            parameters,
+            key_cache,
+            value_cache,
+            updated_length,
+        )
+        return (*checkpoints, *key_cache, *value_cache, updated_length)
+
+
 class Llama3StackPrefill(torch.nn.Module):
     """Backend-neutral decoder stack with layer-major persistent KV state."""
 
@@ -590,9 +883,35 @@ class Llama3StackPrefill(torch.nn.Module):
             layer_states.append(state)
         return (
             hidden,
-            *(torch.stack([state[index] for state in layer_states]) for index in range(1, 7)),
+            *(
+                torch.stack([state[index] for state in layer_states])
+                for index in range(1, 7)
+            ),
             torch.stack([state[7] for state in layer_states]),
         )
+
+
+class Llama3StackPrefillCheckpoints(torch.nn.Module):
+    """One-layer stack ABI wrapper for the debug checkpoint boundary."""
+
+    def __init__(
+        self,
+        config: Llama3ExportConfig,
+        num_layers: int = 1,
+        prepacked_weights: bool = False,
+    ) -> None:
+        super().__init__()
+        if num_layers != 1:
+            raise ValueError("checkpoint stack currently supports exactly one layer")
+        self.layer = Llama3LayerPrefillCheckpoints(config, prepacked_weights)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        position_ids: torch.Tensor,
+        parameters: Mapping[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, ...]:
+        return self.layer(hidden, position_ids, _layer_parameters(parameters, 0))
 
 
 class Llama3StackDecode(torch.nn.Module):
@@ -646,7 +965,10 @@ class Llama3StackDecode(torch.nn.Module):
             layer_states.append(state)
         return (
             hidden,
-            *(torch.stack([state[index] for state in layer_states]) for index in range(1, 7)),
+            *(
+                torch.stack([state[index] for state in layer_states])
+                for index in range(1, 7)
+            ),
             torch.stack([state[7] for state in layer_states]),
         )
 
@@ -694,9 +1016,37 @@ class _Llama3ModelBase(torch.nn.Module):
             "signed_asymmetric_int4",
             False,
         )
-        return logits.reshape(
-            *hidden.shape[:-1], self.config.vocabulary_size
-        ), normalized
+        return (
+            logits.reshape(*hidden.shape[:-1], self.config.vocabulary_size),
+            normalized,
+        )
+
+
+class Llama3TokenEmbedding(torch.nn.Module):
+    """Independently compilable token-ID to hidden-state model boundary."""
+
+    def forward(
+        self, token_ids: torch.Tensor, parameters: Mapping[str, torch.Tensor]
+    ) -> tuple[torch.Tensor]:
+        # Keep a tuple output because strict torch.export currently rejects a
+        # pytree LeafSpec output for this otherwise scalar boundary.
+        return (F.embedding(token_ids, parameters["token_embedding.weight"]),)
+
+
+class Llama3FinalHead(_Llama3ModelBase):
+    """Independently compilable final RMSNorm and asymmetric W4 LM head."""
+
+    def __init__(
+        self,
+        config: Llama3ExportConfig,
+        prepacked_weights: bool = False,
+    ) -> None:
+        super().__init__(config, num_layers=0, prepacked_weights=prepacked_weights)
+
+    def forward(
+        self, hidden: torch.Tensor, parameters: Mapping[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._finalize(hidden, parameters)
 
 
 class Llama3ModelPrefill(_Llama3ModelBase):
@@ -709,9 +1059,7 @@ class Llama3ModelPrefill(_Llama3ModelBase):
         prepacked_weights: bool = False,
     ) -> None:
         super().__init__(config, num_layers, prepacked_weights)
-        self.decoder = Llama3StackPrefill(
-            config, num_layers, prepacked_weights
-        )
+        self.decoder = Llama3StackPrefill(config, num_layers, prepacked_weights)
 
     def forward(
         self,
@@ -719,7 +1067,9 @@ class Llama3ModelPrefill(_Llama3ModelBase):
         position_ids: torch.Tensor,
         parameters: Mapping[str, torch.Tensor],
     ) -> tuple[torch.Tensor, ...]:
-        state = self.decoder(self._embed(token_ids, parameters), position_ids, parameters)
+        state = self.decoder(
+            self._embed(token_ids, parameters), position_ids, parameters
+        )
         logits, normalized = self._finalize(state[0], parameters)
         return (logits, normalized, *state[1:])
 
@@ -734,9 +1084,7 @@ class Llama3ModelDecode(_Llama3ModelBase):
         prepacked_weights: bool = False,
     ) -> None:
         super().__init__(config, num_layers, prepacked_weights)
-        self.decoder = Llama3StackDecode(
-            config, num_layers, prepacked_weights
-        )
+        self.decoder = Llama3StackDecode(config, num_layers, prepacked_weights)
 
     def forward(
         self,
