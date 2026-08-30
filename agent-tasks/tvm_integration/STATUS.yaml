@@ -1,8 +1,8 @@
 task: tvm_integration
 state: ACTIVE
-spec: vortex_tvm_llama3_8b_c4_end_to_end_plan.md
-current_phase: llama3_milestone_6
-updated_at: "2026-08-29 04:34"
+spec: vortex_tvm_llama3_8b_synthetic_inference_plan.md
+current_phase: llama3_synthetic_inference_s1_alone_no_retry_complete
+updated_at: "2026-08-30 04:56"
 repositories:
   vortex:
     path: /home/jaeyongjang/project.local/vortex_base
@@ -15,6 +15,31 @@ repositories:
     baseline: 089a098a2
     final_head: aee6d008c
 progress:
+  - timestamp: "2026-08-30 04:56"
+    phase: llama3_synthetic_inference_s1_alone_no_retry_acceptance
+    status: pass
+    summary: Replaced the intermittently corrupt pairwise MLP Hadamard chain with an equivalent dense mixed-radix transform and passed retry-free persistent prefill plus three-step decode with device-resident state on the pinned U55C.
+    learned: Checkpoint captures placed the first bad value at transformed_mlp; a representative final butterfly stage jumped from max 44.89 to 4407.50 while K/V stayed exact. The normal eight-output dense package passed alternating layers 24/25 for 100/100 calls, one full chain, two persistent host-snapshot chains, and two persistent production device-copy chains. The final device-copy run covered 256 decoder calls with retry 0, nonfinite 0, exact cache lengths 1/2/3/4, identical step hashes, 1028 D2D state copies per repetition, and zero cache host snapshots. No RTL or xclbin change was required.
+  - timestamp: "2026-08-30 02:43"
+    phase: llama3_synthetic_inference_divergence_reduction
+    status: pass_with_diagnostic_recovery
+    summary: Separated apparent decode divergence into quantized-chain drift and transient accelerator-call corruption, then passed physical embedding/head prefill plus three decode steps twice in one persistent U55C process using checked identical-input retries.
+    learned: Exact-input PyTorch replay of the decode-3/layer-1 capture matched hardware at hidden relative-L2 0.0005878 and cosine 0.999999827, while the canonical chain differed by relative-L2 0.25999; later canonical drift is therefore W4/K4/V4 cache accumulation, not a local GEMM failure. The persistent physical run generated [89754, 29229, 89754] in both repetitions with exact 1/2/3/4 cache lengths. Four and seven transient events were recovered respectively, at most retry 2, with no bad hidden propagation. The end-to-end diagnostic goal passes, but production acceptance still requires finding the internal accelerator corruption cause and passing with retries disabled.
+  - timestamp: "2026-08-29 23:22"
+    phase: llama3_synthetic_inference_persistent_process
+    status: blocked
+    summary: Added persistent-process inference repetition with one device open/xclbin programming event and one resident 5.7 GB archive; three consecutive prefills passed, but both prefill-plus-decode repetitions failed in decode 1.
+    learned: The persistent prefill run passed 3/3 at 92.33-95.10 seconds with one XRT initialization and identical parameter addresses. In a two-repetition decode3 run, repetition 0 failed decode-1 hidden at layer 2 with relative-L2 729.49, while repetition 1 passed all decode-1 hidden checkpoints and failed layer-1 key-cache semantic validation at relative-L2 0.08173. Process restart and FPGA reprogramming were prefill confounders, not the decode root cause; next isolate final-head/embedding/Vortex-program transitions while keeping the xclbin and archive resident.
+  - timestamp: "2026-08-29 19:40"
+    phase: llama3_synthetic_inference_address_reduction
+    status: blocked
+    summary: Added physical-address diagnostics and fixed-context controls; exact layers pass at fixed, swept, alternating, and above-4GB addresses, while the full sequential chain remains non-repeatable.
+    learned: A single bad address and 32-bit truncation are ruled out. Alternating fixed decode layers 11/24 passed 40/40. Reproducing the runner's state copies poisoned a later raw VM result; key-scale-only copy was the shortest transfer trigger, but removing every copy still allowed a sequential prefill failure. One fixed-hidden prefill passed 32 layers and a fresh fixed-hidden run failed at layer 3, so address fixation is not a sufficient fix. Next isolate read/write/allocation effects, cold-versus-warm device state, and the shortest data-dependent layer prefix before returning to RTL.
+  - timestamp: "2026-08-29 18:30"
+    phase: llama3_synthetic_inference_s1_alone
+    status: blocked
+    summary: Implemented real-geometry partitioned packaging, reload, deterministic 5.7 GB archive binding, eager references, and the inference CLI, but repeatable S1/alone hardware execution is blocked by variable-layer non-finite output on the pinned U55C.
+    learned: One complete 32-layer prefill passed with logits relative-L2 0.000309 and top-1 agreement 1.0, but the same path is not repeatable. An exact repeated-layer reproducer eventually returns a wholly non-finite hidden tensor; only AP reset plus a 50 ms settle before every low-level launch survived 20 repetitions, while shorter/periodic resets and handshake variants failed. This satisfies the plan's reduced-reproducer condition for a follow-up AFU launch-completion and AXI write-drain investigation. No RTL, xclbin, or production reset workaround was retained.
   - timestamp: "2026-08-29 04:34"
     phase: llama3_milestone_6
     status: pass
@@ -64,7 +89,7 @@ progress:
     phase: llama3_milestone_2
     status: active
     summary: Imported and lowered the real-geometry one-layer Llama3 graph, added static rank-5 GQA decomposition into checked rank-2 IMPROVE ABI v2 submissions, enabled 32/64/128 qblocks, and passed S1 C4/alone on the pinned physical U55C with compile-time-prepacked constants.
-    learned: S1 produced exact K/V payload, scale, zero-point, and length state with a 0.00048828125 maximum hidden-state error. Binding deterministic weights before lowering avoids a prohibitively slow runtime layout path and reduced S1 to 66.88 s build plus 2.62 s execution. The first S2-S4 attempt exposed two independent gaps: literal negative infinity emits invalid `-inff` Vortex C++, and batch-two S3 reaches a device timeout that now requires launch-level isolation. QBLK=128 failed until the kernel ABI v2 guard was extended from 32 to the compiler-supported 32/64/128 set; direct ABI and Relax VM QDIR=1 coverage then passed.
+    learned: 'S1 produced exact K/V payload, scale, zero-point, and length state with a 0.00048828125 maximum hidden-state error. Binding deterministic weights before lowering avoids a prohibitively slow runtime layout path and reduced S1 to 66.88 s build plus 2.62 s execution. The first S2-S4 attempt exposed two independent gaps: literal negative infinity emits invalid `-inff` Vortex C++, and batch-two S3 reaches a device timeout that now requires launch-level isolation. QBLK=128 failed until the kernel ABI v2 guard was extended from 32 to the compiler-supported 32/64/128 set; direct ABI and Relax VM QDIR=1 coverage then passed.'
   - timestamp: "2026-08-28 20:05"
     phase: llama3_milestone_1
     status: pass
@@ -199,4 +224,5 @@ pitfalls:
   - The local build helper and runtime sidecar intentionally use this workspace's explicit Vortex root and source-tree runtime rpath. A relocatable install/package contract is future deployment work, not part of the validated local U55C flow.
   - The independent Claude adversarial review route could not authenticate in its execution context, so the adversarial lens used an in-process reviewer and has no cross-model corroboration receipt.
   - TIR script closure constants must be explicitly captured before constructing a PrimFunc; the first post-fix Relax build exposed a missing dma_kt closure variable before any hardware launch.
+  - U55C Python runs require VORTEX_DRIVER=xrt, XRT_XCLBIN_PATH, and the configured Vortex build/runtime directory in LD_LIBRARY_PATH; otherwise the runtime rejects device open before computation.
 blockers: []
