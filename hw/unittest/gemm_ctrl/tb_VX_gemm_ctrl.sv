@@ -55,8 +55,16 @@ module tb_VX_gemm_ctrl;
       = GEMM_RID_ZP_CONSUME0;
   localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_ZP_CONSUME1
       = GEMM_RID_ZP_CONSUME1;
-  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE0 = 5'd0;
-  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE1 = 5'd5;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE0
+      = GEMM_RID_T0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_TILE1
+      = GEMM_RID_T1;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_G0
+      = GEMM_RID_G0;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_O
+      = GEMM_RID_O;
+  localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_G1
+      = GEMM_RID_G1;
   localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W0
       = GEMM_RID_W0;
   localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_W1
@@ -1159,22 +1167,34 @@ module tb_VX_gemm_ctrl;
   endtask
 
   localparam logic [GEMM_SYNC_REG_ID_WIDTH-1:0] RID_DMA_TAGGED
-      = RID_ZP0;
+      = RID_TILE1;
 
   function automatic logic [GEMM_SYNC_REG_ID_WIDTH-1:0]
       dma_scoreboard_rid(input int slot);
     begin
       unique case (slot)
         0: dma_scoreboard_rid = RID_TILE0;
-        1: dma_scoreboard_rid = RID_W0;
-        2: dma_scoreboard_rid = GEMM_SYNC_REG_ID_WIDTH'(3);
-        3: dma_scoreboard_rid = GEMM_SYNC_REG_ID_WIDTH'(4);
+        1: dma_scoreboard_rid = RID_TILE1;
+        2: dma_scoreboard_rid = RID_O;
+        3: dma_scoreboard_rid = RID_TILE0;
         4: dma_scoreboard_rid = RID_TILE1;
-        5: dma_scoreboard_rid = RID_W1;
-        6: dma_scoreboard_rid = GEMM_SYNC_REG_ID_WIDTH'(8);
-        default: dma_scoreboard_rid = RID_SC0;
+        5: dma_scoreboard_rid = RID_O;
+        6: dma_scoreboard_rid = RID_TILE0;
+        default: dma_scoreboard_rid = RID_TILE1;
       endcase
     end
+  endfunction
+
+  function automatic logic dma_scoreboard_set_mode(input int slot);
+    return dma_scoreboard_rid(slot) != RID_O;
+  endfunction
+
+  function automatic logic [3:0] dma_scoreboard_op(input int slot);
+    return dma_scoreboard_rid(slot) == RID_O ? OP_DMA_ST : OP_DMA_LD;
+  endfunction
+
+  function automatic logic [31:0] dma_scoreboard_value(input int slot);
+    return dma_scoreboard_rid(slot) == RID_O ? 32'd1 : 32'(100 + slot);
   endfunction
 
   task automatic run_dma_tagged_scoreboard;
@@ -1182,6 +1202,7 @@ module tb_VX_gemm_ctrl;
     gemm_unified_cmd_t held_cmd;
     logic [GEMM_DMA_TAG_WIDTH-1:0] held_tag;
     int completion_order [0:6];
+    logic [31:0] expected_o;
     begin
       completion_order[0] = 2;
       completion_order[1] = 5;
@@ -1190,6 +1211,7 @@ module tb_VX_gemm_ctrl;
       completion_order[4] = 1;
       completion_order[5] = 4;
       completion_order[6] = 3;
+      expected_o = dut.sync_regs_q[RID_O];
 
       // Reserve an issue tag while the executor applies backpressure.  Both
       // the command and its sideband tag must remain stable until acceptance.
@@ -1224,12 +1246,13 @@ module tb_VX_gemm_ctrl;
       if (dut.sync_regs_q[RID_DMA_TAGGED] !== 32'd77)
         $fatal(1, "DMA_TAGGED retained metadata mapped to wrong RID");
 
-      // Fill all eight slots with distinct SET notifications and prove that
-      // their direct tag identity permits out-of-order retirement.
+      // Fill all eight slots with architecturally legal T0/T1 SET and O PLUS
+      // notifications, then prove direct tag identity under OOO retirement.
       for (int slot = 0; slot < 8; ++slot) begin
-        c = make_directed_cmd(OP_DMA_LD, 1'b1,
+        c = make_directed_cmd(dma_scoreboard_op(slot), 1'b1,
                               dma_scoreboard_rid(slot),
-                              1'b1, 32'(100 + slot));
+                              dma_scoreboard_set_mode(slot),
+                              dma_scoreboard_value(slot));
         directed_inject(c, 5);
         if (!gemm_ctrl_if.dma_ctrl.cmd_valid
          || gemm_ctrl_if.dma_ctrl.cmd_tag !== GEMM_DMA_TAG_WIDTH'(slot))
@@ -1243,7 +1266,7 @@ module tb_VX_gemm_ctrl;
 
       // Queue a ninth command.  A completion in this cycle must not allow
       // same-cycle allocation; the released tag becomes usable next cycle.
-      c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_DMA_TAGGED,
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, RID_TILE0,
                             1'b1, 32'd208);
       directed_inject(c, 5);
       if (gemm_ctrl_if.dma_ctrl.cmd_valid || dut.child_issue_fire_v[5])
@@ -1259,7 +1282,7 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       directed_done[5] = 1'b0;
-      if (dut.sync_regs_q[dma_scoreboard_rid(7)] !== 32'd107)
+      if (dut.sync_regs_q[RID_TILE1] !== 32'd107)
         $fatal(1, "DMA_TAGGED boundary completion mapped wrong RID");
       if (!gemm_ctrl_if.dma_ctrl.cmd_valid
        || gemm_ctrl_if.dma_ctrl.cmd_tag !== 3'd7)
@@ -1267,42 +1290,35 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       if (!dut.dma_inflight_valid_q[7]
-       || dut.dma_inflight_meta_q[7].reg_id !== RID_DMA_TAGGED)
+       || dut.dma_inflight_meta_q[7].reg_id !== RID_TILE0)
         $fatal(1, "DMA_TAGGED released slot did not capture ninth metadata");
 
       for (int n = 0; n < 7; ++n) begin
         int tag;
         tag = completion_order[n];
         directed_dma_complete_tag(GEMM_DMA_TAG_WIDTH'(tag));
-        if (dut.sync_regs_q[dma_scoreboard_rid(tag)] !== 32'(100 + tag))
-          $fatal(1, "DMA_TAGGED OOO completion tag=%0d mapped wrong notify",
-                 tag);
+        if (dma_scoreboard_rid(tag) == RID_O) begin
+          expected_o = expected_o + 32'd1;
+          if (dut.sync_regs_q[RID_O] !== expected_o)
+            $fatal(1, "DMA_TAGGED OOO PLUS tag=%0d mapped wrong notify",
+                   tag);
+        end else if (dut.sync_regs_q[dma_scoreboard_rid(tag)]
+                     !== dma_scoreboard_value(tag)) begin
+          $fatal(1, "DMA_TAGGED OOO SET tag=%0d mapped wrong notify", tag);
+        end
       end
       directed_dma_complete_tag(3'd7);
-      if (dut.sync_regs_q[RID_DMA_TAGGED] !== 32'd208
+      if (dut.sync_regs_q[RID_TILE0] !== 32'd208
+       || dut.sync_regs_q[RID_TILE1] !== 32'd104
+       || dut.sync_regs_q[RID_O] !== expected_o
        || dut.dma_inflight_valid_q !== '0
        || !dut.child_inflight_empty_v[5])
         $fatal(1, "DMA_TAGGED final drain or reused-tag metadata mismatch");
-      $display("DMA_TAGGED_SCOREBOARD_PASS tags=8 stable_backpressure=1 ooo=1 full_boundary=1 no_same_cycle_reuse=1 reused_tag=7");
+      $display("DMA_TAGGED_SCOREBOARD_PASS tags=8 stable_backpressure=1 ooo=1 legal_t0_t1_set=1 legal_o_plus=1 full_boundary=1 no_same_cycle_reuse=1 reused_tag=7");
 
-      // Leave the legacy dependency suite with its original all-zero
-      // scoreboard precondition.
-      for (int slot = 0; slot < 8; ++slot) begin
-        logic [GEMM_DMA_TAG_WIDTH-1:0] tag;
-        c = make_directed_cmd(OP_DMA_LD, 1'b1,
-                              dma_scoreboard_rid(slot),
-                              1'b1, 32'd0);
-        directed_inject(c, 5);
-        tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
-        directed_accept_issue(5);
-        directed_dma_complete_tag(tag);
-      end
-      c = make_directed_cmd(OP_DMA_LD, 1'b1, RID_DMA_TAGGED,
-                            1'b1, 32'd0);
-      directed_inject(c, 5);
-      held_tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
-      directed_accept_issue(5);
-      directed_dma_complete_tag(held_tag);
+      // Restore the all-zero architectural scoreboard precondition without
+      // manufacturing an illegal completion for the increment-only RID_O.
+      reset_dut();
     end
   endtask
 
@@ -1311,11 +1327,57 @@ module tb_VX_gemm_ctrl;
     input logic [31:0] value
   );
     gemm_unified_cmd_t c;
+    int child;
     begin
-      c = make_directed_cmd(OP_DMA_LD, 1'b1, rid, 1'b1, value);
-      directed_inject(c, 5);
-      directed_accept_issue(5);
-      directed_complete(5);
+      unique case (rid)
+        RID_TILE0, RID_TILE1: begin
+          child = 5;
+          c = make_directed_cmd(OP_DMA_LD, 1'b1, rid, 1'b1, value);
+        end
+        RID_W0, RID_W1: begin
+          child = 1;
+          c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, rid, 1'b1, value);
+          c.flags[0] = (rid == RID_W1);
+        end
+        RID_SC0, RID_SC1: begin
+          child = 2;
+          c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, rid, 1'b1, value);
+          c.flags[0] = (rid == RID_SC1);
+        end
+        RID_ZP0, RID_ZP1: begin
+          child = 3;
+          c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, rid, 1'b1, value);
+          c.flags[0] = (rid == RID_ZP1);
+        end
+        RID_ACC_FREE0, RID_ACC_FREE1: begin
+          child = 4;
+          c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, rid, 1'b1, value);
+        end
+        RID_G0, RID_G1: begin
+          if (value !== (dut.sync_regs_q[rid] + 32'd1))
+            $fatal(1, "SCHED_DIRECTED G RID %0d is increment-only", rid);
+          child = 0;
+          c = make_directed_input_cmd(
+              rid == RID_G1,
+              dut.sync_regs_q[rid == RID_G1 ? RID_TILE1 : RID_TILE0],
+              gemm_wreg_idx_t'(rid == RID_G1),
+              rid == RID_G1, rid == RID_G1, rid == RID_G1,
+              dut.sync_regs_q[rid == RID_G1
+                              ? RID_ACC_FREE1 : RID_ACC_FREE0]);
+          c.notify = '{valid:1'b1, reg_id:rid, set_mode:1'b0,
+                       value:32'd1};
+        end
+        RID_O: begin
+          if (value !== (dut.sync_regs_q[RID_O] + 32'd1))
+            $fatal(1, "SCHED_DIRECTED RID_O is increment-only");
+          child = 5;
+          c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_O, 1'b0, 32'd1);
+        end
+        default: $fatal(1, "SCHED_DIRECTED no legal completion owner for RID %0d", rid);
+      endcase
+      directed_inject(c, child);
+      directed_accept_issue(child);
+      directed_complete(child);
       if (dut.sync_regs_q[rid] !== value)
         $fatal(1, "SCHED_DIRECTED SET rid=%0d got=%0d expected=%0d",
                rid, dut.sync_regs_q[rid], value);
@@ -1331,19 +1393,30 @@ module tb_VX_gemm_ctrl;
     gemm_unified_cmd_t producer;
     gemm_unified_cmd_t c;
     gemm_unified_cmd_t held_cmd;
+    logic [GEMM_SYNC_REG_ID_WIDTH-1:0] producer_rid;
+    int producer_child;
     begin
-      // Child 1 models the prior owner whose completion releases the tested
-      // command.  Prepare may read the immutable source while that owner is
-      // still active, but it must not consume the queue head or allocate any
-      // architectural inflight/completion state.
-      producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd6,
-                                   1'b1, release_target);
-      directed_inject(producer, 1);
-      directed_accept_issue(1);
+      // DMA wait-slot 0 accepts only G0/G1/ACC_FREE0/1.  Use ACC_FREE0's
+      // architectural owner for DMA cases and W1's owner for general-child
+      // cases while preserving the same prepare-before-release sequence.
+      if (child == 5) begin
+        producer_child = 4;
+        producer_rid = RID_ACC_FREE0;
+        producer = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, producer_rid,
+                                     1'b1, release_target);
+      end else begin
+        producer_child = 1;
+        producer_rid = RID_W1;
+        producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, producer_rid,
+                                     1'b1, release_target);
+      end
+      directed_inject(producer, producer_child);
+      directed_accept_issue(producer_child);
 
       c = make_directed_cmd(op, 1'b0, '0, 1'b0, '0);
       c.rd = rd;
-      c.waits[0] = '{valid:1'b1, reg_id:4'd6, target:release_target};
+      c.waits[0] = '{valid:1'b1, reg_id:producer_rid,
+                     target:release_target};
       c.prepare.valid = 1'b1;
       c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
       c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(1);
@@ -1381,16 +1454,16 @@ module tb_VX_gemm_ctrl;
           op, child);
 
       @(negedge clk);
-      directed_done[1] = 1'b1;
+      directed_done[producer_child] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[1]
+      if (!dut.child_completion_pop_v[producer_child]
        || !dut.child_deps_ready_v[child]
        || !dut.child_issue_fire_v[child]
        || !dut.child_q_pop_v[child]
        || dut.child_inflight_empty_v[child]) begin
         // inflight occupancy changes at the edge; before the edge it must
         // still be empty, so check it separately below.
-        if (!dut.child_completion_pop_v[1]
+        if (!dut.child_completion_pop_v[producer_child]
          || !dut.child_deps_ready_v[child]
          || !dut.child_issue_fire_v[child]
          || !dut.child_q_pop_v[child])
@@ -1400,8 +1473,8 @@ module tb_VX_gemm_ctrl;
       end
       @(posedge clk);
       #1;
-      directed_done[1] = 1'b0;
-      if (dut.sync_regs_q[6] !== release_target
+      directed_done[producer_child] = 1'b0;
+      if (dut.sync_regs_q[producer_rid] !== release_target
        || !dut.child_q_empty_v[child]
        || dut.child_inflight_empty_v[child]
        || dut.child_prepare_sent_q[child])
@@ -1422,10 +1495,10 @@ module tb_VX_gemm_ctrl;
       // The source producer owns RID_TILE0.  W1/SC1/ZP0/ACC1 targets remain
       // deliberately unresolved: they are downstream admission fences and
       // must not prevent the controller from issuing the Input source command.
-      producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_TILE0,
+      producer = make_directed_cmd(OP_DMA_LD, 1'b1, RID_TILE0,
                                    1'b1, 32'd11);
-      directed_inject(producer, 1);
-      directed_accept_issue(1);
+      directed_inject(producer, 5);
+      directed_accept_issue(5);
 
       c = make_directed_input_cmd(1'b0, 32'd11, gemm_wreg_idx_t'(1),
                                   1'b1, 1'b0, 1'b1, 32'd77);
@@ -1444,9 +1517,9 @@ module tb_VX_gemm_ctrl;
       end
 
       @(negedge clk);
-      directed_done[1] = 1'b1;
+      directed_done[5] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[1]
+      if (!dut.child_completion_pop_v[5]
        || !dut.child_deps_ready_v[0]
        || !dut.child_issue_fire_v[0]
        || !dut.child_q_pop_v[0]
@@ -1465,7 +1538,7 @@ module tb_VX_gemm_ctrl;
         $fatal(1, "INPUT_SPLIT admission fences were not deliberately blocked");
       @(posedge clk);
       #1;
-      directed_done[1] = 1'b0;
+      directed_done[5] = 1'b0;
       if (dut.child_inflight_empty_v[0])
         $fatal(1, "INPUT_SPLIT issued command did not enter Input inflight FIFO");
       directed_complete(0);
@@ -1476,14 +1549,16 @@ module tb_VX_gemm_ctrl;
   task automatic run_input_depth_four_case;
     gemm_unified_cmd_t c;
     gemm_unified_cmd_t held_cmd;
+    logic [31:0] g0_start;
     begin
+      g0_start = dut.sync_regs_q[RID_G0];
       for (int n = 0; n < 4; ++n) begin
         c = make_directed_input_cmd(1'b0, 32'd11,
                                     gemm_wreg_idx_t'(n), n[0], ~n[0],
                                     n[0], 32'(80 + n));
         c.work_seq = 32'(601 + n);
-        c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
-                     value:32'(301 + n)};
+        c.notify = '{valid:1'b1, reg_id:RID_G0, set_mode:1'b0,
+                     value:32'd1};
         directed_inject(c, 0);
         directed_accept_issue(0);
       end
@@ -1495,8 +1570,8 @@ module tb_VX_gemm_ctrl;
       c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
                                   1'b0, 1'b0, 1'b0, 32'd84);
       c.work_seq = 32'd605;
-      c.notify = '{valid:1'b1, reg_id:5'd11, set_mode:1'b1,
-                   value:32'd305};
+      c.notify = '{valid:1'b1, reg_id:RID_G0, set_mode:1'b0,
+                   value:32'd1};
       @(negedge clk);
       directed_cmd = c;
       directed_scheduler_probe_valid = 1'b1;
@@ -1527,21 +1602,21 @@ module tb_VX_gemm_ctrl;
       if (dut.scheduler_entry_count !== 3'd4
        || dut.child_q_empty_v[0]
        || held_cmd.work_seq !== 32'd605
-       || dut.sync_regs_q[11] !== 32'd301)
+       || dut.sync_regs_q[RID_G0] !== (g0_start + 32'd1))
         $fatal(1, "INPUT_DEPTH4 scoreboard recycle lost occupancy, command, or notification");
       directed_accept_issue(0);
       if (!dut.child_inflight_full_v[0])
         $fatal(1, "INPUT_DEPTH4 fifth command did not refill Input inflight FIFO");
 
-      for (int expected = 302; expected <= 305; ++expected) begin
+      for (int expected = 2; expected <= 5; ++expected) begin
         directed_complete(0);
-        if (dut.sync_regs_q[11] !== 32'(expected))
+        if (dut.sync_regs_q[RID_G0] !== (g0_start + 32'(expected)))
           $fatal(1, "INPUT_DEPTH4 ordered notification mismatch expected=%0d got=%0d",
-                 expected, dut.sync_regs_q[11]);
+                 g0_start + 32'(expected), dut.sync_regs_q[RID_G0]);
       end
       if (!dut.child_inflight_empty_v[0])
         $fatal(1, "INPUT_DEPTH4 final drain left inflight metadata");
-      $display("SCHED_DIRECTED_INPUT_DEPTH4_PASS issues=5 depth=4 scoreboard_same_cycle_recycle=1 ordered_notify=301..305");
+      $display("SCHED_DIRECTED_INPUT_DEPTH4_PASS issues=5 depth=4 scoreboard_same_cycle_recycle=1 ordered_g0_increments=5");
     end
   endtask
 
@@ -1553,15 +1628,27 @@ module tb_VX_gemm_ctrl;
   );
     gemm_unified_cmd_t producer;
     gemm_unified_cmd_t c;
+    logic [GEMM_SYNC_REG_ID_WIDTH-1:0] producer_rid;
+    int producer_child;
     begin
-      producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd6,
-                                   1'b1, release_target);
-      directed_inject(producer, 1);
-      directed_accept_issue(1);
+      if (child == 5) begin
+        producer_child = 4;
+        producer_rid = RID_ACC_FREE1;
+        producer = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, producer_rid,
+                                     1'b1, release_target);
+      end else begin
+        producer_child = 1;
+        producer_rid = RID_W1;
+        producer = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, producer_rid,
+                                     1'b1, release_target);
+      end
+      directed_inject(producer, producer_child);
+      directed_accept_issue(producer_child);
 
       c = make_directed_cmd(op, 1'b0, '0, 1'b0, '0);
       c.rd = rd;
-      c.waits[0] = '{valid:1'b1, reg_id:4'd6, target:release_target};
+      c.waits[0] = '{valid:1'b1, reg_id:producer_rid,
+                     target:release_target};
       directed_inject(c, child);
       repeat (2) begin
         #1;
@@ -1577,9 +1664,9 @@ module tb_VX_gemm_ctrl;
       end
 
       @(negedge clk);
-      directed_done[1] = 1'b1;
+      directed_done[producer_child] = 1'b1;
       #1;
-      if (!dut.child_completion_pop_v[1]
+      if (!dut.child_completion_pop_v[producer_child]
        || !dut.child_issue_fire_v[child]
        || !dut.child_q_pop_v[child])
         $fatal(1,
@@ -1587,7 +1674,7 @@ module tb_VX_gemm_ctrl;
           op, child, rd);
       @(posedge clk);
       #1;
-      directed_done[1] = 1'b0;
+      directed_done[producer_child] = 1'b0;
       directed_complete(child);
       $display("NONPREFETCH_PASS op=%0d child=%0d rd=%0d prepare=0 normal_release=1",
                op, child, rd);
@@ -1737,6 +1824,177 @@ module tb_VX_gemm_ctrl;
     end
   endtask
 
+  task automatic run_parallel_child_completion_case;
+    gemm_unified_cmd_t c;
+    begin
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W0,
+                            1'b1, 32'd21);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC0,
+                            1'b1, 32'd7);
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+
+      c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, RID_ZP0,
+                            1'b1, 32'd5);
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, RID_ACC_FREE0,
+                            1'b1, 32'd9);
+      directed_inject(c, 4);
+      directed_accept_issue(4);
+
+      c = make_directed_input_cmd(
+          1'b0, dut.sync_regs_q[RID_TILE0], 2'd0,
+          1'b0, 1'b0, 1'b0, dut.sync_regs_q[RID_ACC_FREE0]);
+      c.notify = '{valid:1'b1, reg_id:RID_G0, set_mode:1'b0,
+                   value:32'd1};
+      directed_inject(c, 0);
+      directed_accept_issue(0);
+
+      @(negedge clk);
+      directed_done[4:0] = '1;
+      #1;
+      if (dut.child_completion_pop_v[4:0] !== 5'b11111
+       || dut.effective_sync[RID_G0] !== 32'd1
+       || dut.effective_sync[RID_W0] !== 32'd21
+       || dut.effective_sync[RID_SC0] !== 32'd7
+       || dut.effective_sync[RID_ZP0] !== 32'd5
+       || dut.effective_sync[RID_SZ0] !== 32'd5
+       || dut.effective_sync[RID_ACC_FREE0] !== 32'd9)
+        $fatal(1, "PARALLEL_SYNC child0-4 simultaneous completion mismatch");
+      @(posedge clk);
+      #1;
+      directed_done[4:0] = '0;
+      if (dut.sync_regs_q[RID_G0] !== 32'd1
+       || dut.sync_regs_q[RID_W0] !== 32'd21
+       || dut.sync_regs_q[RID_SZ0] !== 32'd5
+       || dut.sync_regs_q[RID_ACC_FREE0] !== 32'd9)
+        $fatal(1, "PARALLEL_SYNC child0-4 committed state mismatch");
+      $display("PARALLEL_SYNC_CHILD0_4_PASS children=0,1,2,3,4 simultaneous=1 independent_rids=1");
+      $display("PARALLEL_SYNC_SZ_NEXT_MIN_PASS group=0 sc=7 zp=5 min=5 simultaneous=1");
+
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, RID_SC1,
+                            1'b1, 32'd4);
+      c.flags[0] = 1'b1;
+      directed_inject(c, 2);
+      directed_accept_issue(2);
+      c = make_directed_cmd(OP_ZP_LDMA_MXU, 1'b1, RID_ZP1,
+                            1'b1, 32'd9);
+      c.flags[0] = 1'b1;
+      directed_inject(c, 3);
+      directed_accept_issue(3);
+      @(negedge clk);
+      directed_done[2] = 1'b1;
+      directed_done[3] = 1'b1;
+      #1;
+      if (!dut.child_completion_pop_v[2]
+       || !dut.child_completion_pop_v[3]
+       || dut.effective_sync[RID_SC1] !== 32'd4
+       || dut.effective_sync[RID_ZP1] !== 32'd9
+       || dut.effective_sync[RID_SZ1] !== 32'd4)
+        $fatal(1, "PARALLEL_SYNC group1 SC/ZP next-min mismatch");
+      @(posedge clk);
+      #1;
+      directed_done[2] = 1'b0;
+      directed_done[3] = 1'b0;
+      $display("PARALLEL_SYNC_SZ_NEXT_MIN_PASS group=1 sc=4 zp=9 min=4 simultaneous=1");
+    end
+  endtask
+
+  task automatic run_g_to_dma_release_case;
+    gemm_unified_cmd_t c;
+    logic [31:0] release_target;
+    logic [GEMM_SYNC_REG_ID_WIDTH-1:0] g_rid;
+    logic [GEMM_SYNC_REG_ID_WIDTH-1:0] t_rid;
+    begin
+      for (int group = 0; group < 2; ++group) begin
+        g_rid = group ? RID_G1 : RID_G0;
+        t_rid = group ? RID_TILE1 : RID_TILE0;
+        release_target = dut.sync_regs_q[g_rid] + 32'd1;
+
+        c = make_directed_input_cmd(
+            group[0], dut.sync_regs_q[t_rid], gemm_wreg_idx_t'(group),
+            group[0], group[0], group[0],
+            dut.sync_regs_q[group ? RID_ACC_FREE1 : RID_ACC_FREE0]);
+        c.notify = '{valid:1'b1, reg_id:g_rid, set_mode:1'b0,
+                     value:32'd1};
+        directed_inject(c, 0);
+        directed_accept_issue(0);
+
+        c = make_directed_cmd(OP_DMA_LD, 1'b1, t_rid,
+                              1'b1, 32'(700 + group));
+        c.waits[0] = '{valid:1'b1, reg_id:g_rid,
+                       target:release_target};
+        directed_inject(c, 5);
+        if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5])
+          $fatal(1, "PARALLEL_SYNC DMA escaped G%0d wait", group);
+
+        @(negedge clk);
+        directed_done[0] = 1'b1;
+        #1;
+        if (!dut.child_completion_pop_v[0]
+         || dut.effective_sync[g_rid] !== release_target
+         || !dut.child_deps_ready_v[5]
+         || !dut.child_issue_fire_v[5])
+          $fatal(1, "PARALLEL_SYNC G%0d did not release DMA in-cycle", group);
+        @(posedge clk);
+        #1;
+        directed_done[0] = 1'b0;
+        directed_complete(5);
+        if (dut.sync_regs_q[t_rid] !== 32'(700 + group))
+          $fatal(1, "PARALLEL_SYNC DMA T%0d SET completion mismatch", group);
+      end
+      $display("PARALLEL_SYNC_G_TO_DMA_RELEASE_PASS g0=1 g1=1 same_cycle=1");
+    end
+  endtask
+
+  task automatic run_acc_to_dma_store_release_case;
+    gemm_unified_cmd_t c;
+    logic [31:0] release_target;
+    logic [31:0] expected_o;
+    logic [GEMM_SYNC_REG_ID_WIDTH-1:0] acc_rid;
+    begin
+      for (int group = 0; group < 2; ++group) begin
+        acc_rid = group ? RID_ACC_FREE1 : RID_ACC_FREE0;
+        release_target = dut.sync_regs_q[acc_rid] + 32'd1;
+        expected_o = dut.sync_regs_q[RID_O] + 32'd1;
+
+        c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, acc_rid,
+                              1'b1, release_target);
+        directed_inject(c, 4);
+        directed_accept_issue(4);
+
+        c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_O, 1'b0, 32'd1);
+        c.waits[0] = '{valid:1'b1, reg_id:acc_rid,
+                       target:release_target};
+        directed_inject(c, 5);
+        if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5])
+          $fatal(1, "PARALLEL_SYNC DMA store escaped ACC_FREE%0d wait", group);
+
+        @(negedge clk);
+        directed_done[4] = 1'b1;
+        #1;
+        if (!dut.child_completion_pop_v[4]
+         || dut.effective_sync[acc_rid] !== release_target
+         || !dut.child_deps_ready_v[5]
+         || !dut.child_issue_fire_v[5])
+          $fatal(1, "PARALLEL_SYNC ACC_FREE%0d did not release DMA store in-cycle",
+                 group);
+        @(posedge clk);
+        #1;
+        directed_done[4] = 1'b0;
+        directed_complete(5);
+        if (dut.sync_regs_q[RID_O] !== expected_o)
+          $fatal(1, "PARALLEL_SYNC DMA store O completion mismatch");
+      end
+      $display("PARALLEL_SYNC_ACC_TO_DMA_STORE_RELEASE_PASS acc_free0=1 acc_free1=1 same_cycle=1");
+    end
+  endtask
+
   task automatic run_scheduler_directed();
     gemm_unified_cmd_t c;
     gemm_unified_cmd_t held_cmd;
@@ -1744,6 +2002,7 @@ module tb_VX_gemm_ctrl;
     logic [31:0] weight_consume_target;
     logic [31:0] scale_consume_target;
     logic [31:0] zp_consume_target;
+    logic [31:0] g_release_target;
     int unsigned cfg_count_before;
     int unsigned done_count_before;
     bit saw_done;
@@ -1784,14 +2043,19 @@ module tb_VX_gemm_ctrl;
       reset_dut();
 
       run_dma_tagged_scoreboard();
+      run_parallel_child_completion_case();
+      reset_dut();
+      run_g_to_dma_release_case();
+      run_acc_to_dma_store_release_case();
+      reset_dut();
 
       // Seed four independent scoreboard registers with legal SET completions.
       // RID_SZ0/1 are derived from the physical SC/ZP completion pairs and
       // therefore must not be seeded directly.
-      directed_set_sync(4'd0, 32'd10);
-      directed_set_sync(4'd1, 32'd20);
-      directed_set_sync(4'd5, 32'd30);
-      directed_set_sync(4'd3, 32'd40);
+      directed_set_sync(RID_TILE0, 32'd10);
+      directed_set_sync(RID_W0, 32'd20);
+      directed_set_sync(RID_TILE1, 32'd30);
+      directed_set_sync(RID_G0, 32'd1);
 
       // Input has a tile-ready source phase and independent W/S/Z/ACC
       // admission fences.  It no longer uses passive prepare.  Other pure
@@ -1820,7 +2084,7 @@ module tb_VX_gemm_ctrl;
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
       c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
-      c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd40};
+      c.waits[3] = '{valid:1'b1, reg_id:RID_G0, target:32'd1};
       c.waits[4] = '{valid:1'b1, reg_id:4'd6,
                      target:dut.sync_regs_q[6]};
       directed_inject(c, 4);
@@ -1832,51 +2096,58 @@ module tb_VX_gemm_ctrl;
 
       // One of four blocked, then a producer SET completion resolves it in
       // the same cycle and the dependent command starts immediately.
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 4'd3, 1'b1, 32'd41);
-      directed_inject(c, 1);
-      directed_accept_issue(1);
+      g_release_target = dut.sync_regs_q[RID_G0] + 32'd1;
+      c = make_directed_input_cmd(
+          1'b0, dut.sync_regs_q[RID_TILE0], 2'd0,
+          1'b0, 1'b0, 1'b0, dut.sync_regs_q[RID_ACC_FREE0]);
+      c.notify = '{valid:1'b1, reg_id:RID_G0, set_mode:1'b0,
+                   value:32'd1};
+      directed_inject(c, 0);
+      directed_accept_issue(0);
       c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
       c.waits[0] = '{valid:1'b1, reg_id:4'd0, target:32'd10};
       c.waits[1] = '{valid:1'b1, reg_id:4'd1, target:32'd20};
       c.waits[2] = '{valid:1'b1, reg_id:4'd5, target:32'd30};
-      c.waits[3] = '{valid:1'b1, reg_id:4'd3, target:32'd41};
+      c.waits[3] = '{valid:1'b1, reg_id:RID_G0,
+                     target:g_release_target};
       c.waits[4] = '{valid:1'b1, reg_id:4'd6,
                      target:dut.sync_regs_q[6]};
       directed_inject(c, 4);
       if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED one-blocked wait was not masked");
       @(negedge clk);
-      directed_done[1] = 1'b1;
+      directed_done[0] = 1'b1;
       #1;
       if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED same-cycle SET did not start dependent head");
       @(posedge clk);
       #1;
-      directed_done[1] = 1'b0;
+      directed_done[0] = 1'b0;
       directed_complete(4);
       $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SAME_CYCLE_SET_PASS blocked=1 resolved=1");
 
       // PLUS completion also participates in the same-cycle effective view.
-      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b1, 4'd4, 1'b0, 32'd1);
-      directed_inject(c, 2);
-      directed_accept_issue(2);
+      c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_O, 1'b0, 32'd1);
+      directed_inject(c, 5);
+      directed_accept_issue(5);
       c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      c.waits[0] = '{valid:1'b1, reg_id:RID_O,
+                     target:(dut.sync_regs_q[RID_O] + 32'd1)};
       directed_inject(c, 4);
       if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED PLUS dependent unexpectedly ready before completion");
       @(negedge clk);
-      directed_done[2] = 1'b1;
+      directed_done[5] = 1'b1;
       #1;
       if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
         $fatal(1, "SCHED_DIRECTED same-cycle PLUS did not start dependent head");
       @(posedge clk);
       #1;
-      directed_done[2] = 1'b0;
+      directed_done[5] = 1'b0;
       directed_complete(4);
-      if (dut.sync_regs_q[4] !== 32'd1)
+      if (dut.sync_regs_q[RID_O] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED PLUS scoreboard update mismatch");
-      $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[4]);
+      $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[RID_O]);
 
       // Physical scale and zero-point completions independently update their
       // scoreboards.  Retain logical RID_SZ minimum/bypass coverage on a
@@ -2063,18 +2334,18 @@ module tb_VX_gemm_ctrl;
        || dut.sync_regs_q[RID_ZP_CONSUME0] !== zp_consume_target)
         $fatal(1, "SCHED_DIRECTED ARM qparam consume event was not committed");
 
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b1, 32'd11);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd11);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd7);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd18);
       directed_inject(c, 1);
       if (!dut.child_issue_fire_v[1] || !dut.child_q_pop_v[1])
         $fatal(1, "SCHED_DIRECTED second ready Weight command did not issue before completion");
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd5);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd23);
       directed_inject(c, 1);
       directed_accept_issue(1);
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd3);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd26);
       directed_inject(c, 1);
       directed_accept_issue(1);
       if (!dut.child_inflight_full_v[1])
@@ -2083,7 +2354,7 @@ module tb_VX_gemm_ctrl;
         $fatal(1, "SCHED_DIRECTED physical inflight FIFO depth is not four");
 
       weight_consume_target = dut.sync_regs_q[RID_W_CONSUME0] + 32'd1;
-      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, 5'd8, 1'b0, 32'd2);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd28);
       c.waits[0] = '{valid:1'b1, reg_id:5'd4, target:32'd0};
       c.writer_wait = '{valid:1'b1, reg_id:RID_W_CONSUME0,
                         target:weight_consume_target};
@@ -2137,20 +2408,20 @@ module tb_VX_gemm_ctrl;
       #1;
       directed_done[1] = 1'b0;
       if (!dut.child_inflight_full_v[1]
-          || dut.sync_regs_q[8] !== 32'd11)
+          || dut.sync_regs_q[RID_W1] !== 32'd11)
         $fatal(1, "SCHED_DIRECTED Weight rollover lost occupancy or reordered SET");
 
       directed_complete(1);
-      if (dut.sync_regs_q[8] !== 32'd18)
+      if (dut.sync_regs_q[RID_W1] !== 32'd18)
         $fatal(1, "SCHED_DIRECTED second Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[8] !== 32'd23)
+      if (dut.sync_regs_q[RID_W1] !== 32'd23)
         $fatal(1, "SCHED_DIRECTED third Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[8] !== 32'd26)
+      if (dut.sync_regs_q[RID_W1] !== 32'd26)
         $fatal(1, "SCHED_DIRECTED fourth Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[8] !== 32'd28)
+      if (dut.sync_regs_q[RID_W1] !== 32'd28)
         $fatal(1, "SCHED_DIRECTED fifth Weight notification retired out of order");
       if (!dut.child_inflight_empty_v[1])
         $fatal(1, "SCHED_DIRECTED inflight drain incomplete");
@@ -2180,23 +2451,27 @@ module tb_VX_gemm_ctrl;
       // ACC ownership is an Input admission fence, not a controller issue
       // dependency.  Both opposite- and same-group Input source commands may
       // issue while group 0 is blocked; the DMA store still waits on ACC_FREE0.
-      directed_set_sync(4'd4, 32'd0);
-      if (dut.sync_regs_q[9] !== 32'd0 || dut.sync_regs_q[10] !== 32'd0)
+      // Reset here because RID_O is architecturally increment-only.
+      reset_dut();
+      if (dut.sync_regs_q[RID_O] !== 32'd0
+       || dut.sync_regs_q[RID_ACC_FREE0] !== 32'd0
+       || dut.sync_regs_q[RID_ACC_FREE1] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED ACC release RIDs were not initially zero");
 
-      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd9, 1'b1, 32'd1);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd0};
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, RID_ACC_FREE0,
+                            1'b1, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_O, target:32'd0};
       directed_inject(c, 4);
       directed_accept_issue(4);
 
-      c = make_directed_cmd(OP_DMA_ST, 1'b1, 4'd4, 1'b0, 32'd1);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd9, target:32'd1};
+      c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_O, 1'b0, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_ACC_FREE0, target:32'd1};
       directed_inject(c, 5);
       if (dut.child_deps_ready_v[5] || dut.child_issue_fire_v[5]
           || dut.child_q_pop_v[5])
         $fatal(1, "SCHED_DIRECTED DMA store was not blocked on RID_ACC_FREE0");
 
-      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+      c = make_directed_input_cmd(1'b0, dut.sync_regs_q[RID_TILE0], 2'd0,
                                   1'b0, 1'b0, 1'b1, 32'd0);
       directed_inject(c, 0);
       if (dut.child_inflight_empty_v[4]
@@ -2208,7 +2483,7 @@ module tb_VX_gemm_ctrl;
       directed_accept_issue(0);
       directed_complete(0);
 
-      c = make_directed_input_cmd(1'b0, 32'd11, 2'd0,
+      c = make_directed_input_cmd(1'b0, dut.sync_regs_q[RID_TILE0], 2'd0,
                                   1'b0, 1'b0, 1'b0, 32'd1);
       directed_inject(c, 0);
       if (!dut.child_deps_ready_v[0] || !dut.child_issue_fire_v[0]
@@ -2232,7 +2507,7 @@ module tb_VX_gemm_ctrl;
       directed_done[4] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[4]
-          || dut.effective_sync[9] !== 32'd1
+          || dut.effective_sync[RID_ACC_FREE0] !== 32'd1
           || !dut.child_deps_ready_v[5]
           || !dut.child_issue_fire_v[5]
           || !dut.child_q_pop_v[5])
@@ -2240,17 +2515,19 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       directed_done[4] = 1'b0;
-      if (dut.sync_regs_q[9] !== 32'd1
+      if (dut.sync_regs_q[RID_ACC_FREE0] !== 32'd1
           || !dut.child_inflight_empty_v[0]
           || dut.child_inflight_empty_v[5]
-          || dut.sync_regs_q[4] !== 32'd0)
+          || dut.sync_regs_q[RID_O] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED ACC release lost SET or DMA issue");
 
-      if (dut.child_inflight_empty_v[5] || dut.sync_regs_q[4] !== 32'd0)
+      if (dut.child_inflight_empty_v[5]
+       || dut.sync_regs_q[RID_O] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED delayed DMA store state was lost");
 
-      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, 4'd10, 1'b1, 32'd1);
-      c.waits[0] = '{valid:1'b1, reg_id:4'd4, target:32'd1};
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b1, RID_ACC_FREE1,
+                            1'b1, 32'd1);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_O, target:32'd1};
       directed_inject(c, 4);
       if (dut.child_deps_ready_v[4] || dut.child_issue_fire_v[4]
           || dut.child_q_pop_v[4])
@@ -2260,7 +2537,7 @@ module tb_VX_gemm_ctrl;
       directed_done[5] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[5]
-          || dut.effective_sync[4] !== 32'd1
+          || dut.effective_sync[RID_O] !== 32'd1
           || dut.u_VX_gemm_fsm.completed_output_store_count_i !== 32'd1
           || !dut.child_deps_ready_v[4]
           || !dut.child_issue_fire_v[4]
@@ -2271,12 +2548,12 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       directed_done[5] = 1'b0;
-      if (dut.sync_regs_q[4] !== 32'd1
+      if (dut.sync_regs_q[RID_O] !== 32'd1
           || dut.child_inflight_empty_v[4]
-          || dut.sync_regs_q[10] !== 32'd0)
+          || dut.sync_regs_q[RID_ACC_FREE1] !== 32'd0)
         $fatal(1, "SCHED_DIRECTED output-LMEM release lost RID_O or ACC2LMEM issue");
       directed_complete(4);
-      if (dut.sync_regs_q[10] !== 32'd1)
+      if (dut.sync_regs_q[RID_ACC_FREE1] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED RID_ACC_FREE1 completion mismatch");
       $display("SCHED_DIRECTED_ACC_OWNERSHIP_PASS opposite_group_source=1 same_group_source_before_admission=1 effective_set_release_dma=1 rid_o_block=1 rid9=1 rid10=1");
 

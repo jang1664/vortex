@@ -1,0 +1,55 @@
+task: th16-parallel-sync-reduction
+state: complete
+spec: agent-tasks/th16-parallel-sync-reduction/th16-parallel-sync-reduction-spec.md
+source_plan: analysis_workspace/th16_parallel_sync_reduction_plan.md
+updated: "2026-08-30 17:33"
+iterations:
+  - feature: "Parallel synchronization controller"
+    iteration: 1
+    timestamp: "2026-08-30 17:31"
+    status: sim_fail
+    error_summary: "A directed opposite-group Input overlap check did not issue after the preceding test reset."
+    root_cause: "The testbench retained a hard-coded T0 dependency target of 11 even though the legal DMA scoreboard cleanup now resets architectural synchronization state to zero."
+    fix_applied: "Changed the directed Input command to use the current registered T0 value, preserving the intended ready dependency after reset. Production RTL was unchanged."
+    lesson: "Directed dependency targets must be derived from current architectural state when a preceding ownership-normalization step uses reset instead of an illegal synthetic completion."
+    log: build/hw/unittest/gemm_ctrl/logs/sim.log
+  - feature: "Parallel synchronization controller"
+    iteration: 2
+    timestamp: "2026-08-30 17:33"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 1 was limited to a stale directed-test target after reset."
+    fix_applied: "Retained the testbench correction and reran the identical VCS command."
+    lesson: "Legal owner-specific stimulus can preserve the former OOO, backpressure, FIFO, collision, and same-cycle dependency coverage without generic cross-owner notifications."
+    coverage: "Eight-tag OOO DMA metadata with legal T0/T1 SET and O PLUS; simultaneous child 0-4 updates; group-0/group-1 SC/ZP next-value minima; same-cycle G0/G1-to-DMA and ACC_FREE0/1-to-DMA-store release; controller scheduler lifecycle and ownership regression."
+    markers: "DMA_TAGGED_SCOREBOARD_PASS; PARALLEL_SYNC_CHILD0_4_PASS; PARALLEL_SYNC_SZ_NEXT_MIN_PASS; PARALLEL_SYNC_G_TO_DMA_RELEASE_PASS; PARALLEL_SYNC_ACC_TO_DMA_STORE_RELEASE_PASS; SCHED_DIRECTED_ACC_OWNERSHIP_PASS; TEST PASSED"
+    log: build/hw/unittest/gemm_ctrl/logs/sim.log
+  - feature: "GEMM FSM RID and metadata regression"
+    iteration: 1
+    timestamp: "2026-08-30 17:33"
+    status: pass
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "No test or RTL correction was required."
+    lesson: "Centralizing the missing RID constants preserved existing numeric encodings and emitted command metadata."
+    coverage: "Existing GEMM FSM output dependency and command metadata checks with PIPE_MULT=0, PIPE_ALIGN=0, and PIPE_INTERVAL=1."
+    markers: "TEST PASSED: GEMM FSM output dependency checks completed"
+    log: build/hw/unittest/gemm_fsm/logs/sim.log
+log:
+  - timestamp: "2026-08-30 17:09"
+    action: "Loaded the RTL improvement and project context procedures, reviewed the confirmed timing analysis and implementation plan, and bounded this run to RTL simulation."
+    result: "Created the confirmed implementation specification and separated RTL implementation from independent verification."
+    learned: "The performance constraint prohibits a registered synchronization stage; the optimization must preserve current-cycle completion-to-issue visibility."
+  - timestamp: "2026-08-30 17:22"
+    action: "Implemented centralized RID constants, owner-specific constant-index synchronization next state, a four-RID DMA dependency selector, simulation-only legacy equivalence, and ownership/contract assertions."
+    result: "RTL implementation completed in VX_gpu_pkg.sv, VX_gemm_fsm.sv, and VX_gemm_ctrl.sv; git diff --check passed and no synthesis was run."
+    learned: "The existing controller testbench contains intentionally generic child/RID injections that are illegal under the now-explicit architectural ownership contract and must be normalized without weakening OOO or collision coverage."
+  - timestamp: "2026-08-30 17:33"
+    action: "Normalized directed controller stimulus to legal owner/RID/mode combinations, added focused parallel-reduction coverage, configured the build under the TH16 bigmem configuration, and ran controller/FSM VCS simulations through tools/verify_rtl.py."
+    result: "Both focused controller and FSM regressions passed after one testbench-only target correction. No synthesis, implementation, placement, or routing command was run."
+    learned: "The optimized reducer is cycle-identical to its simulation-only legacy reference for legal events and retains same-cycle completion-to-DMA issue for all four specialized dependency RIDs."
+pitfalls:
+  - "Do not renumber synchronization RIDs; software-visible behavior is not intended to change."
+  - "Do not share the two group completion adders through a dynamic RID mux."
+  - "Derive SZ0/SZ1 from next SC/ZP values so same-cycle visibility is preserved."
+  - "Do not run synthesis, placement, routing, or P&R in this task."

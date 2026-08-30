@@ -64,13 +64,17 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 );
 
     localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
-    localparam int RID_O = 4;
+    localparam int RID_T0 = GEMM_RID_T0;
     localparam int RID_W0 = GEMM_RID_W0;
+    localparam int RID_SZ0 = GEMM_RID_SZ0;
+    localparam int RID_G0 = GEMM_RID_G0;
+    localparam int RID_O = GEMM_RID_O;
+    localparam int RID_T1 = GEMM_RID_T1;
     localparam int RID_W1 = GEMM_RID_W1;
+    localparam int RID_SZ1 = GEMM_RID_SZ1;
+    localparam int RID_G1 = GEMM_RID_G1;
     localparam int RID_ACC_FREE0 = GEMM_RID_ACC_FREE0;
     localparam int RID_ACC_FREE1 = GEMM_RID_ACC_FREE1;
-    localparam int RID_SZ0 = GEMM_RID_SZ0;
-    localparam int RID_SZ1 = GEMM_RID_SZ1;
     localparam int RID_SC0 = GEMM_RID_SC0;
     localparam int RID_ZP0 = GEMM_RID_ZP0;
     localparam int RID_SC1 = GEMM_RID_SC1;
@@ -179,24 +183,6 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                             && fsm_idle
                             && scheduler_quiescent;
     wire done_fire = done_if.valid && done_if.ready;
-
-    function automatic logic is_consume_rid(
-        input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] rid
-    );
-      return (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1));
-    endfunction
-
-    function automatic logic is_acc_free_rid(
-        input logic [GEMM_SYNC_REG_ID_WIDTH-1:0] rid
-    );
-      return (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0))
-          || (rid == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1));
-    endfunction
 
     function automatic int rid_w_consume_for_idx(
         input gemm_wreg_idx_t idx
@@ -363,57 +349,260 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         child_q_push_v[fsm_target_child] = 1'b1;
     end
 
-    // Apply architectural completion updates before dependency comparison.
-    // Pairwise collision assertions below make this reduction deterministic.
+    // Each completion source has a fixed architectural owner.  Build every
+    // next value independently so simultaneous completions on different RIDs
+    // remain parallel and cannot form a dynamic-index write chain.
+    wire child0_done = child_completion_pop_v[0]
+                    && child_inflight_head[0].valid;
+    wire child1_done = child_completion_pop_v[1]
+                    && child_inflight_head[1].valid;
+    wire child2_done = child_completion_pop_v[2]
+                    && child_inflight_head[2].valid;
+    wire child3_done = child_completion_pop_v[3]
+                    && child_inflight_head[3].valid;
+    wire child4_done = child_completion_pop_v[4]
+                    && child_inflight_head[4].valid;
+    wire child5_done = child_completion_pop_v[5]
+                    && child_inflight_head[5].valid;
+
+    wire child0_g0 = child0_done
+                  && (child_inflight_head[0].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_G0));
+    wire child0_g1 = child0_done
+                  && (child_inflight_head[0].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_G1));
+    wire child1_w0 = child1_done
+                  && (child_inflight_head[1].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_W0));
+    wire child1_w1 = child1_done
+                  && (child_inflight_head[1].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_W1));
+    wire child2_sc0 = child2_done
+                   && (child_inflight_head[2].reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(RID_SC0));
+    wire child2_sc1 = child2_done
+                   && (child_inflight_head[2].reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(RID_SC1));
+    wire child3_zp0 = child3_done
+                   && (child_inflight_head[3].reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP0));
+    wire child3_zp1 = child3_done
+                   && (child_inflight_head[3].reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP1));
+    wire child4_acc_free0 = child4_done
+                         && (child_inflight_head[4].reg_id
+                             == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0));
+    wire child4_acc_free1 = child4_done
+                         && (child_inflight_head[4].reg_id
+                             == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1));
+    wire child5_t0 = child5_done
+                  && (child_inflight_head[5].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_T0));
+    wire child5_t1 = child5_done
+                  && (child_inflight_head[5].reg_id
+                      == GEMM_SYNC_REG_ID_WIDTH'(RID_T1));
+    wire child5_o = child5_done
+                 && (child_inflight_head[5].reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_O));
+
+`ifndef SYNTHESIS
+    wire child0_update_legal = !child0_done
+        || ((child0_g0 || child0_g1)
+         && !child_inflight_head[0].set_mode
+         && (child_inflight_head[0].value == 32'd1));
+    wire child1_update_legal = !child1_done
+        || ((child1_w0 || child1_w1)
+         && child_inflight_head[1].set_mode);
+    wire child2_update_legal = !child2_done
+        || ((child2_sc0 || child2_sc1)
+         && child_inflight_head[2].set_mode);
+    wire child3_update_legal = !child3_done
+        || ((child3_zp0 || child3_zp1)
+         && child_inflight_head[3].set_mode);
+    wire child4_update_legal = !child4_done
+        || ((child4_acc_free0 || child4_acc_free1)
+         && child_inflight_head[4].set_mode);
+    wire child5_update_legal = !child5_done
+        || (((child5_t0 || child5_t1)
+          && child_inflight_head[5].set_mode)
+         || (child5_o
+          && !child_inflight_head[5].set_mode
+          && (child_inflight_head[5].value == 32'd1)));
+`endif
+
+    wire node1_w_consume0 = gemm_sync_slv_if[1].valid
+                         && (gemm_sync_slv_if[1].reg_idx
+                             == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0));
+    wire node1_w_consume1 = gemm_sync_slv_if[1].valid
+                         && (gemm_sync_slv_if[1].reg_idx
+                             == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1));
+    wire node2_sc_consume0 = gemm_sync_slv_if[2].valid
+                          && (gemm_sync_slv_if[2].reg_idx
+                              == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0));
+    wire node2_sc_consume1 = gemm_sync_slv_if[2].valid
+                          && (gemm_sync_slv_if[2].reg_idx
+                              == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1));
+    wire node3_zp_consume0 = gemm_sync_slv_if[3].valid
+                          && (gemm_sync_slv_if[3].reg_idx
+                              == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0));
+    wire node3_zp_consume1 = gemm_sync_slv_if[3].valid
+                          && (gemm_sync_slv_if[3].reg_idx
+                              == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1));
+`ifndef SYNTHESIS
+    wire external_updates_legal
+        = (!gemm_sync_slv_if[1].valid
+        || ((node1_w_consume0 || node1_w_consume1)
+         && (gemm_sync_slv_if[1].value == 32'd1)))
+       && (!gemm_sync_slv_if[2].valid
+        || ((node2_sc_consume0 || node2_sc_consume1)
+         && (gemm_sync_slv_if[2].value == 32'd1)))
+       && (!gemm_sync_slv_if[3].valid
+        || ((node3_zp_consume0 || node3_zp_consume1)
+         && (gemm_sync_slv_if[3].value == 32'd1)));
+    wire sync_update_contract_legal = child0_update_legal
+                                   && child1_update_legal
+                                   && child2_update_legal
+                                   && child3_update_legal
+                                   && child4_update_legal
+                                   && child5_update_legal
+                                   && external_updates_legal;
+`endif
+
+    wire [31:0] sync_t0_next = child5_t0
+        ? child_inflight_head[5].value : sync_regs_q[RID_T0];
+    wire [31:0] sync_w0_next = child1_w0
+        ? child_inflight_head[1].value : sync_regs_q[RID_W0];
+    wire [31:0] sync_g0_next = sync_regs_q[RID_G0]
+        + (child0_g0 ? child_inflight_head[0].value : 32'd0);
+    wire [31:0] sync_o_next = sync_regs_q[RID_O]
+        + (child5_o ? child_inflight_head[5].value : 32'd0);
+    wire [31:0] sync_t1_next = child5_t1
+        ? child_inflight_head[5].value : sync_regs_q[RID_T1];
+    wire [31:0] sync_w1_next = child1_w1
+        ? child_inflight_head[1].value : sync_regs_q[RID_W1];
+    wire [31:0] sync_g1_next = sync_regs_q[RID_G1]
+        + (child0_g1 ? child_inflight_head[0].value : 32'd0);
+    wire [31:0] sync_acc_free0_next = child4_acc_free0
+        ? child_inflight_head[4].value : sync_regs_q[RID_ACC_FREE0];
+    wire [31:0] sync_acc_free1_next = child4_acc_free1
+        ? child_inflight_head[4].value : sync_regs_q[RID_ACC_FREE1];
+    wire [31:0] sync_sc0_next = child2_sc0
+        ? child_inflight_head[2].value : sync_regs_q[RID_SC0];
+    wire [31:0] sync_zp0_next = child3_zp0
+        ? child_inflight_head[3].value : sync_regs_q[RID_ZP0];
+    wire [31:0] sync_sc1_next = child2_sc1
+        ? child_inflight_head[2].value : sync_regs_q[RID_SC1];
+    wire [31:0] sync_zp1_next = child3_zp1
+        ? child_inflight_head[3].value : sync_regs_q[RID_ZP1];
+    wire [31:0] sync_sz0_next = (sync_sc0_next < sync_zp0_next)
+        ? sync_sc0_next : sync_zp0_next;
+    wire [31:0] sync_sz1_next = (sync_sc1_next < sync_zp1_next)
+        ? sync_sc1_next : sync_zp1_next;
+    wire [31:0] sync_w_consume0_next = sync_regs_q[RID_W_CONSUME0]
+        + (node1_w_consume0 ? gemm_sync_slv_if[1].value : 32'd0);
+    wire [31:0] sync_w_consume1_next = sync_regs_q[RID_W_CONSUME1]
+        + (node1_w_consume1 ? gemm_sync_slv_if[1].value : 32'd0);
+    wire [31:0] sync_sc_consume0_next = sync_regs_q[RID_SC_CONSUME0]
+        + (node2_sc_consume0 ? gemm_sync_slv_if[2].value : 32'd0);
+    wire [31:0] sync_sc_consume1_next = sync_regs_q[RID_SC_CONSUME1]
+        + (node2_sc_consume1 ? gemm_sync_slv_if[2].value : 32'd0);
+    wire [31:0] sync_zp_consume0_next = sync_regs_q[RID_ZP_CONSUME0]
+        + (node3_zp_consume0 ? gemm_sync_slv_if[3].value : 32'd0);
+    wire [31:0] sync_zp_consume1_next = sync_regs_q[RID_ZP_CONSUME1]
+        + (node3_zp_consume1 ? gemm_sync_slv_if[3].value : 32'd0);
+
+    always_comb begin
+      effective_sync[RID_T0] = sync_t0_next;
+      effective_sync[RID_W0] = sync_w0_next;
+      effective_sync[RID_SZ0] = sync_sz0_next;
+      effective_sync[RID_G0] = sync_g0_next;
+      effective_sync[RID_O] = sync_o_next;
+      effective_sync[RID_T1] = sync_t1_next;
+      effective_sync[RID_W1] = sync_w1_next;
+      effective_sync[RID_SZ1] = sync_sz1_next;
+      effective_sync[RID_G1] = sync_g1_next;
+      effective_sync[RID_ACC_FREE0] = sync_acc_free0_next;
+      effective_sync[RID_ACC_FREE1] = sync_acc_free1_next;
+      effective_sync[RID_SC0] = sync_sc0_next;
+      effective_sync[RID_ZP0] = sync_zp0_next;
+      effective_sync[RID_SC1] = sync_sc1_next;
+      effective_sync[RID_ZP1] = sync_zp1_next;
+      effective_sync[RID_W_CONSUME0] = sync_w_consume0_next;
+      effective_sync[RID_W_CONSUME1] = sync_w_consume1_next;
+      effective_sync[RID_SC_CONSUME0] = sync_sc_consume0_next;
+      effective_sync[RID_SC_CONSUME1] = sync_sc_consume1_next;
+      effective_sync[RID_ZP_CONSUME0] = sync_zp_consume0_next;
+      effective_sync[RID_ZP_CONSUME1] = sync_zp_consume1_next;
+    end
+
+`ifndef SYNTHESIS
+    // Keep the previous serial reducer as a simulation-only executable
+    // specification.  Every legal owner event must remain bit- and
+    // cycle-identical while synthesis sees only the parallel implementation.
+    logic [31:0] effective_sync_legacy[NUM_SYNC_REGS];
+
     always_comb begin
       for (int rid = 0; rid < NUM_SYNC_REGS; ++rid)
-        effective_sync[rid] = sync_regs_q[rid];
+        effective_sync_legacy[rid] = sync_regs_q[rid];
 
       for (int child = 0; child < N_CHILDREN; ++child) begin
         if (child_completion_pop_v[child]
          && child_inflight_head[child].valid) begin
           if (child_inflight_head[child].set_mode) begin
-            effective_sync[child_inflight_head[child].reg_id]
+            effective_sync_legacy[child_inflight_head[child].reg_id]
                 = child_inflight_head[child].value;
           end else begin
-            effective_sync[child_inflight_head[child].reg_id]
-                = effective_sync[child_inflight_head[child].reg_id]
+            effective_sync_legacy[child_inflight_head[child].reg_id]
+                = effective_sync_legacy[
+                    child_inflight_head[child].reg_id]
                 + child_inflight_head[child].value;
           end
         end
       end
 
-      // External resource-consume events are architectural increments.  Fold
-      // them into the same-cycle dependency view before evaluating waits.
       if (gemm_sync_slv_if[1].valid
        && (gemm_sync_slv_if[1].reg_idx < NUM_SYNC_REGS)) begin
-        effective_sync[gemm_sync_slv_if[1].reg_idx]
-            = effective_sync[gemm_sync_slv_if[1].reg_idx]
+        effective_sync_legacy[gemm_sync_slv_if[1].reg_idx]
+            = effective_sync_legacy[gemm_sync_slv_if[1].reg_idx]
             + gemm_sync_slv_if[1].value;
       end
       if (gemm_sync_slv_if[2].valid
        && (gemm_sync_slv_if[2].reg_idx < NUM_SYNC_REGS)) begin
-        effective_sync[gemm_sync_slv_if[2].reg_idx]
-            = effective_sync[gemm_sync_slv_if[2].reg_idx]
+        effective_sync_legacy[gemm_sync_slv_if[2].reg_idx]
+            = effective_sync_legacy[gemm_sync_slv_if[2].reg_idx]
             + gemm_sync_slv_if[2].value;
       end
       if (gemm_sync_slv_if[3].valid
        && (gemm_sync_slv_if[3].reg_idx < NUM_SYNC_REGS)) begin
-        effective_sync[gemm_sync_slv_if[3].reg_idx]
-            = effective_sync[gemm_sync_slv_if[3].reg_idx]
+        effective_sync_legacy[gemm_sync_slv_if[3].reg_idx]
+            = effective_sync_legacy[gemm_sync_slv_if[3].reg_idx]
             + gemm_sync_slv_if[3].value;
       end
 
-      // Preserve the logical combined qparam level for legacy observability.
-      // Phase 2 input packets carry independent SC/ZP targets and compare the
-      // registered physical levels only at their actual consumer stages.
-      effective_sync[RID_SZ0]
-          = (effective_sync[RID_SC0] < effective_sync[RID_ZP0])
-          ? effective_sync[RID_SC0] : effective_sync[RID_ZP0];
-      effective_sync[RID_SZ1]
-          = (effective_sync[RID_SC1] < effective_sync[RID_ZP1])
-          ? effective_sync[RID_SC1] : effective_sync[RID_ZP1];
+      effective_sync_legacy[RID_SZ0]
+          = (effective_sync_legacy[RID_SC0]
+             < effective_sync_legacy[RID_ZP0])
+          ? effective_sync_legacy[RID_SC0]
+          : effective_sync_legacy[RID_ZP0];
+      effective_sync_legacy[RID_SZ1]
+          = (effective_sync_legacy[RID_SC1]
+             < effective_sync_legacy[RID_ZP1])
+          ? effective_sync_legacy[RID_SC1]
+          : effective_sync_legacy[RID_ZP1];
     end
+
+    always_ff @(posedge clk) begin
+      if (!reset && sync_update_contract_legal) begin
+        for (int rid = 0; rid < NUM_SYNC_REGS; ++rid) begin
+          assert (effective_sync[rid] == effective_sync_legacy[rid])
+            else $fatal(1,
+                "%s: parallel sync reducer diverged at RID %0d: new=%0d legacy=%0d",
+                INSTANCE_ID, rid, effective_sync[rid],
+                effective_sync_legacy[rid]);
+        end
+      end
+    end
+`endif
 
     always_ff @(posedge clk) begin
       if (reset || cfg_fire) begin
@@ -425,42 +614,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       end
     end
 
-    // Writer fences need the external consume pulse in the current cycle, but
-    // must not depend on the monolithic effective_sync array.  Child
-    // completions cannot target consume RIDs (asserted below), so each direct
-    // fold is exactly the corresponding registered level plus its dedicated
-    // resource event.  This preserves same-cycle old-read/new-write while
-    // cutting the hierarchy-wide completion -> effective_sync -> writer SCC.
-    assign weight_consume_value0_o = sync_regs_q[RID_W_CONSUME0]
-        + ((gemm_sync_slv_if[1].valid
-         && (gemm_sync_slv_if[1].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0)))
-           ? gemm_sync_slv_if[1].value : 32'd0);
-    assign weight_consume_value1_o = sync_regs_q[RID_W_CONSUME1]
-        + ((gemm_sync_slv_if[1].valid
-         && (gemm_sync_slv_if[1].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1)))
-           ? gemm_sync_slv_if[1].value : 32'd0);
-    assign scale_consume_value0_o = sync_regs_q[RID_SC_CONSUME0]
-        + ((gemm_sync_slv_if[2].valid
-         && (gemm_sync_slv_if[2].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0)))
-           ? gemm_sync_slv_if[2].value : 32'd0);
-    assign scale_consume_value1_o = sync_regs_q[RID_SC_CONSUME1]
-        + ((gemm_sync_slv_if[2].valid
-         && (gemm_sync_slv_if[2].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1)))
-           ? gemm_sync_slv_if[2].value : 32'd0);
-    assign zero_point_consume_value0_o = sync_regs_q[RID_ZP_CONSUME0]
-        + ((gemm_sync_slv_if[3].valid
-         && (gemm_sync_slv_if[3].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0)))
-           ? gemm_sync_slv_if[3].value : 32'd0);
-    assign zero_point_consume_value1_o = sync_regs_q[RID_ZP_CONSUME1]
-        + ((gemm_sync_slv_if[3].valid
-         && (gemm_sync_slv_if[3].reg_idx
-             == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1)))
-           ? gemm_sync_slv_if[3].value : 32'd0);
+    // Direct folds retain same-cycle old-read/new-write behavior without
+    // inheriting the complete architectural sync array.
+    assign weight_consume_value0_o = sync_w_consume0_next;
+    assign weight_consume_value1_o = sync_w_consume1_next;
+    assign scale_consume_value0_o = sync_sc_consume0_next;
+    assign scale_consume_value1_o = sync_sc_consume1_next;
+    assign zero_point_consume_value0_o = sync_zp_consume0_next;
+    assign zero_point_consume_value1_o = sync_zp_consume1_next;
 
     // Registered operand completion makes a final register write consumable
     // only on the following cycle for all W/S/Z resources.
@@ -470,28 +631,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.input_sc_load_value[1] = sync_regs_q[RID_SC1];
     assign gemm_ctrl_if.input_zp_load_value[0] = sync_regs_q[RID_ZP0];
     assign gemm_ctrl_if.input_zp_load_value[1] = sync_regs_q[RID_ZP1];
-    // ACC-free notifications are produced only by ordered ACC2LMEM child 4.
-    // Fold that exact completion directly so input admission keeps its
-    // same-cycle handoff without inheriting unrelated effective_sync array
-    // dependencies (including S/Z consume events).
-    assign gemm_ctrl_if.input_acc_free_value[0]
-        = (child_completion_pop_v[4]
-        && child_inflight_head[4].valid
-        && (child_inflight_head[4].reg_id
-            == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0)))
-        ? (child_inflight_head[4].set_mode
-           ? child_inflight_head[4].value
-           : sync_regs_q[RID_ACC_FREE0] + child_inflight_head[4].value)
-        : sync_regs_q[RID_ACC_FREE0];
-    assign gemm_ctrl_if.input_acc_free_value[1]
-        = (child_completion_pop_v[4]
-        && child_inflight_head[4].valid
-        && (child_inflight_head[4].reg_id
-            == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1)))
-        ? (child_inflight_head[4].set_mode
-           ? child_inflight_head[4].value
-           : sync_regs_q[RID_ACC_FREE1] + child_inflight_head[4].value)
-        : sync_regs_q[RID_ACC_FREE1];
+    assign gemm_ctrl_if.input_acc_free_value[0] = sync_acc_free0_next;
+    assign gemm_ctrl_if.input_acc_free_value[1] = sync_acc_free1_next;
 
     generate
       for (genvar i = 0; i < N_CHILDREN; ++i) begin : g_child_scheduler
@@ -504,33 +645,65 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
         assign child_q_cmd[i] = child_q_dout;
 
-        always_comb begin
-          deps_ready = 1'b1;
-          for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; ++dep) begin
-            if (child_q_cmd[i].waits[dep].valid) begin
-              deps_ready &= (child_q_cmd[i].waits[dep].reg_id
-                             < NUM_SYNC_REGS)
-                         && (effective_sync[
-                               child_q_cmd[i].waits[dep].reg_id]
-                             >= child_q_cmd[i].waits[dep].target);
+        if (i == DMA_CHILD_INDEX) begin : g_dma_dependency_check
+          logic dma_wait_supported;
+          logic [31:0] dma_wait_value;
+
+          always_comb begin
+            dma_wait_supported = 1'b1;
+            case (child_q_cmd[i].waits[0].reg_id)
+              GEMM_SYNC_REG_ID_WIDTH'(RID_G0):
+                dma_wait_value = sync_g0_next;
+              GEMM_SYNC_REG_ID_WIDTH'(RID_G1):
+                dma_wait_value = sync_g1_next;
+              GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0):
+                dma_wait_value = sync_acc_free0_next;
+              GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1):
+                dma_wait_value = sync_acc_free1_next;
+              default: begin
+                dma_wait_supported = 1'b0;
+                dma_wait_value = 32'd0;
+              end
+            endcase
+          end
+
+          assign deps_ready = !child_q_cmd[i].waits[0].valid
+                           || (dma_wait_supported
+                            && (dma_wait_value
+                                >= child_q_cmd[i].waits[0].target));
+          // DMA source preparation has no architectural dependency.  This is
+          // an explicit producer contract, checked in simulation below.
+          assign prepare_deps_ready = 1'b1;
+        end else begin : g_generic_dependency_check
+          always_comb begin
+            deps_ready = 1'b1;
+            for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; ++dep) begin
+              if (child_q_cmd[i].waits[dep].valid) begin
+                deps_ready &= (child_q_cmd[i].waits[dep].reg_id
+                               < NUM_SYNC_REGS)
+                           && (effective_sync[
+                                 child_q_cmd[i].waits[dep].reg_id]
+                               >= child_q_cmd[i].waits[dep].target);
+              end
+            end
+          end
+
+          always_comb begin
+            prepare_deps_ready = 1'b1;
+            for (int dep = 0; dep < GEMM_MAX_PREPARE_WAIT_DEPS; ++dep) begin
+              if (child_q_cmd[i].prepare.waits[dep].valid) begin
+                prepare_deps_ready
+                    &= (child_q_cmd[i].prepare.waits[dep].reg_id
+                        < NUM_SYNC_REGS)
+                    && (effective_sync[
+                          child_q_cmd[i].prepare.waits[dep].reg_id]
+                        >= child_q_cmd[i].prepare.waits[dep].target);
+              end
             end
           end
         end
 
         assign child_deps_ready_v[i] = deps_ready;
-        always_comb begin
-          prepare_deps_ready = 1'b1;
-          for (int dep = 0; dep < GEMM_MAX_PREPARE_WAIT_DEPS; ++dep) begin
-            if (child_q_cmd[i].prepare.waits[dep].valid) begin
-              prepare_deps_ready
-                  &= (child_q_cmd[i].prepare.waits[dep].reg_id
-                      < NUM_SYNC_REGS)
-                  && (effective_sync[
-                        child_q_cmd[i].prepare.waits[dep].reg_id]
-                      >= child_q_cmd[i].prepare.waits[dep].target);
-            end
-          end
-        end
         assign child_prepare_deps_ready_v[i] = prepare_deps_ready;
         assign child_prepare_valid_v[i]
             = !child_q_empty_v[i]
@@ -711,6 +884,32 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                 $fatal(1, "%s: output child must never prepare", INSTANCE_ID);
             end
             if (i == DMA_CHILD_INDEX) begin
+              if (!child_q_empty_v[i]) begin
+                assert (!child_q_cmd[i].waits[1].valid
+                     && !child_q_cmd[i].waits[2].valid
+                     && !child_q_cmd[i].waits[3].valid
+                     && !child_q_cmd[i].waits[4].valid)
+                  else $fatal(1,
+                      "%s: DMA child used dependency slots above waits[0]",
+                      INSTANCE_ID);
+                assert (!child_q_cmd[i].prepare.waits[0].valid)
+                  else $fatal(1,
+                      "%s: DMA child used a prepare dependency",
+                      INSTANCE_ID);
+                if (child_q_cmd[i].waits[0].valid) begin
+                  assert ((child_q_cmd[i].waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_G0))
+                       || (child_q_cmd[i].waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_G1))
+                       || (child_q_cmd[i].waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0))
+                       || (child_q_cmd[i].waits[0].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1)))
+                    else $fatal(1,
+                        "%s: DMA child used unsupported waits[0] RID %0d",
+                        INSTANCE_ID, child_q_cmd[i].waits[0].reg_id);
+                end
+              end
               assert (!(gemm_cqueue_out[i].flag.done
                      && !dma_inflight_valid_q[
                           gemm_ctrl_if.dma_flag.done_tag]))
@@ -755,8 +954,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               end else if ((i == 0) && child_issue_fire_v[i]) begin
                 assert ((child_q_cmd[i].instr[3:0] == 4'd7)
                      && child_q_cmd[i].waits[0].valid
-                     && ((child_q_cmd[i].waits[0].reg_id == 5'd0)
-                      || (child_q_cmd[i].waits[0].reg_id == 5'd5))
+                     && ((child_q_cmd[i].waits[0].reg_id
+                          == GEMM_SYNC_REG_ID_WIDTH'(RID_T0))
+                      || (child_q_cmd[i].waits[0].reg_id
+                          == GEMM_SYNC_REG_ID_WIDTH'(RID_T1)))
                      && !child_q_cmd[i].waits[1].valid
                      && !child_q_cmd[i].waits[2].valid
                      && !child_q_cmd[i].waits[3].valid
@@ -1910,21 +2111,64 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         for (int child = 0; child < N_CHILDREN; ++child) begin
           if (child_completion_pop_v[child]
            && child_inflight_head[child].valid) begin
-            assert (!is_consume_rid(child_inflight_head[child].reg_id))
-              else $fatal(1, "%s: child %0d notified consume RID %0d",
-                          INSTANCE_ID, child,
-                          child_inflight_head[child].reg_id);
-            assert (!is_acc_free_rid(child_inflight_head[child].reg_id)
-                 || (child == 4))
-              else $fatal(1,
-                  "%s: child %0d illegally notified ACC_FREE RID %0d; owner is child 4",
-                  INSTANCE_ID, child,
-                  child_inflight_head[child].reg_id);
-            assert ((child != 4)
-                 || is_acc_free_rid(child_inflight_head[child].reg_id))
-              else $fatal(1,
-                  "%s: ACC2LMEM child 4 notified non-ACC_FREE RID %0d",
-                  INSTANCE_ID, child_inflight_head[child].reg_id);
+            unique case (child)
+              0: assert (((child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_G0))
+                       || (child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_G1)))
+                      && !child_inflight_head[child].set_mode
+                      && (child_inflight_head[child].value == 32'd1))
+                else $fatal(1,
+                    "%s: child 0 violated G0/G1 increment ownership",
+                    INSTANCE_ID);
+              1: assert (((child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W0))
+                       || (child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_W1)))
+                      && child_inflight_head[child].set_mode)
+                else $fatal(1,
+                    "%s: child 1 violated W0/W1 set ownership",
+                    INSTANCE_ID);
+              2: assert (((child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_SC0))
+                       || (child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_SC1)))
+                      && child_inflight_head[child].set_mode)
+                else $fatal(1,
+                    "%s: child 2 violated SC0/SC1 set ownership",
+                    INSTANCE_ID);
+              3: assert (((child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP0))
+                       || (child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP1)))
+                      && child_inflight_head[child].set_mode)
+                else $fatal(1,
+                    "%s: child 3 violated ZP0/ZP1 set ownership",
+                    INSTANCE_ID);
+              4: assert (((child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0))
+                       || (child_inflight_head[child].reg_id
+                           == GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1)))
+                      && child_inflight_head[child].set_mode)
+                else $fatal(1,
+                    "%s: child 4 violated ACC_FREE0/1 set ownership",
+                    INSTANCE_ID);
+              5: assert ((((child_inflight_head[child].reg_id
+                            == GEMM_SYNC_REG_ID_WIDTH'(RID_T0))
+                         || (child_inflight_head[child].reg_id
+                            == GEMM_SYNC_REG_ID_WIDTH'(RID_T1)))
+                        && child_inflight_head[child].set_mode)
+                       || ((child_inflight_head[child].reg_id
+                            == GEMM_SYNC_REG_ID_WIDTH'(RID_O))
+                        && !child_inflight_head[child].set_mode
+                        && (child_inflight_head[child].value == 32'd1)))
+                else $fatal(1,
+                    "%s: child 5 violated T0/T1 set or O increment ownership",
+                    INSTANCE_ID);
+              default: $fatal(1,
+                  "%s: completion from unsupported child %0d",
+                  INSTANCE_ID, child);
+            endcase
           end
         end
         assert (!(cfg_fire
@@ -2000,5 +2244,17 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       ("VX_gemm_ctrl child queue depth must be at least two"));
     `VX_STATIC_ASSERT(DMA_CHILD_QUEUE_DEPTH == DMA_INFLIGHT_DEPTH,
       ("VX_gemm_ctrl DMA child queue and tag scoreboard must both have eight entries"));
+    `VX_STATIC_ASSERT((RID_T0 == 0) && (RID_W0 == 1) && (RID_SZ0 == 2)
+                   && (RID_G0 == 3) && (RID_O == 4) && (RID_T1 == 5)
+                   && (RID_W1 == 6) && (RID_SZ1 == 7) && (RID_G1 == 8)
+                   && (RID_ACC_FREE0 == 9) && (RID_ACC_FREE1 == 10)
+                   && (RID_SC0 == 11) && (RID_ZP0 == 12)
+                   && (RID_SC1 == 13) && (RID_ZP1 == 14)
+                   && (RID_W_CONSUME0 == 15) && (RID_W_CONSUME1 == 16)
+                   && (RID_SC_CONSUME0 == 17)
+                   && (RID_SC_CONSUME1 == 18)
+                   && (RID_ZP_CONSUME0 == 19)
+                   && (RID_ZP_CONSUME1 == 20),
+      ("VX_gemm_ctrl sync RID encoding changed"));
 
 endmodule

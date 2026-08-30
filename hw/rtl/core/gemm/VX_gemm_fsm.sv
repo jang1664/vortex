@@ -359,9 +359,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // Sync register assignment
   // --------------------------------------------------------------------------
   localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
-  localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
-  localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
-  localparam int RID_ACC_FREE0 = 9, RID_ACC_FREE1 = 10;
+  localparam int RID_T0 = GEMM_RID_T0, RID_W0 = GEMM_RID_W0;
+  localparam int RID_SZ0 = GEMM_RID_SZ0, RID_G0 = GEMM_RID_G0;
+  localparam int RID_O = GEMM_RID_O, RID_T1 = GEMM_RID_T1;
+  localparam int RID_W1 = GEMM_RID_W1, RID_SZ1 = GEMM_RID_SZ1;
+  localparam int RID_G1 = GEMM_RID_G1;
+  localparam int RID_ACC_FREE0 = GEMM_RID_ACC_FREE0;
+  localparam int RID_ACC_FREE1 = GEMM_RID_ACC_FREE1;
   localparam int RID_SC0 = GEMM_RID_SC0, RID_ZP0 = GEMM_RID_ZP0;
   localparam int RID_SC1 = GEMM_RID_SC1, RID_ZP1 = GEMM_RID_ZP1;
   localparam int RID_W_CONSUME0 = GEMM_RID_W_CONSUME0;
@@ -3080,6 +3084,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     ("Tile-DMA prefetch credit is out of range"));
   `VX_STATIC_ASSERT(GEMM_SYNC_REG_ID_WIDTH >= $clog2(GEMM_NUM_SYNC_REGS),
     ("GEMM sync RID width is too small"));
+  `VX_STATIC_ASSERT((RID_T0 == 0) && (RID_W0 == 1) && (RID_SZ0 == 2)
+                 && (RID_G0 == 3) && (RID_O == 4) && (RID_T1 == 5)
+                 && (RID_W1 == 6) && (RID_SZ1 == 7) && (RID_G1 == 8)
+                 && (RID_ACC_FREE0 == 9) && (RID_ACC_FREE1 == 10)
+                 && (RID_SC0 == 11) && (RID_ZP0 == 12)
+                 && (RID_SC1 == 13) && (RID_ZP1 == 14)
+                 && (RID_W_CONSUME0 == 15) && (RID_W_CONSUME1 == 16)
+                 && (RID_SC_CONSUME0 == 17) && (RID_SC_CONSUME1 == 18)
+                 && (RID_ZP_CONSUME0 == 19) && (RID_ZP_CONSUME1 == 20),
+    ("GEMM sync RID encoding changed"));
   `VX_STATIC_ASSERT((RID_W_CONSUME0 < NUM_SYNC_REGS)
                  && (RID_W_CONSUME1 < NUM_SYNC_REGS)
                  && (RID_SC_CONSUME0 < NUM_SYNC_REGS)

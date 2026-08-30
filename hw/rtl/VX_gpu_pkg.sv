@@ -951,10 +951,15 @@ package VX_gpu_pkg;
 
    // RID_SZ remains the logical dependency consumed by input commands.  The
    // scheduler derives it from the two physical completion sequences.
-   localparam int GEMM_RID_SZ0 = 2;
-   localparam int GEMM_RID_SZ1 = 7;
+   localparam int GEMM_RID_T0 = 0;
    localparam int GEMM_RID_W0 = 1;
+   localparam int GEMM_RID_SZ0 = 2;
+   localparam int GEMM_RID_G0 = 3;
+   localparam int GEMM_RID_O = 4;
+   localparam int GEMM_RID_T1 = 5;
    localparam int GEMM_RID_W1 = 6;
+   localparam int GEMM_RID_SZ1 = 7;
+   localparam int GEMM_RID_G1 = 8;
    localparam int GEMM_RID_ACC_FREE0 = 9;
    localparam int GEMM_RID_ACC_FREE1 = 10;
    localparam int GEMM_RID_SC0 = 11;
