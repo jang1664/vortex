@@ -244,6 +244,54 @@ def _dequantize_int4_fake(
     return torch.empty(tuple(logical_shape), dtype=torch.float16, device="meta")
 
 
+def _validate_hadamard_args(
+    hidden: torch.Tensor, base: torch.Tensor, base_size: int
+) -> tuple[int, int]:
+    if hidden.dtype != torch.float16 or hidden.ndim < 2:
+        raise ValueError("hadamard input must be rank-2-or-higher FP16")
+    if base.dtype != torch.float32 or base.ndim != 2:
+        raise ValueError("hadamard base must be rank-2 FP32")
+    width = hidden.shape[-1]
+    if base_size <= 0 or width % base_size:
+        raise ValueError("hadamard base_size must be a positive divisor of width")
+    if tuple(base.shape) != (base_size, base_size):
+        raise ValueError("hadamard base shape must match base_size")
+    factor = width // base_size
+    if factor & (factor - 1):
+        raise ValueError("hadamard power-of-two factor is invalid")
+    return width, factor
+
+
+def _hadamard_reference(
+    hidden: torch.Tensor, base: torch.Tensor, base_size: int
+) -> torch.Tensor:
+    """Mixed-radix FP32 Hadamard reference used by eager PyTorch."""
+
+    width, factor = _validate_hadamard_args(hidden, base, base_size)
+    work = hidden.float().reshape(-1, base_size, factor)
+    stride = 1
+    while stride < factor:
+        grouped = work.reshape(work.shape[0], base_size, -1, 2, stride)
+        left = grouped[..., 0, :]
+        right = grouped[..., 1, :]
+        work = torch.cat((left + right, left - right), dim=-1).reshape_as(work)
+        stride *= 2
+    if base_size > 1:
+        work = torch.matmul(base.reshape(1, base_size, base_size), work)
+    return (work.reshape_as(hidden) / math.sqrt(width)).to(hidden.dtype)
+
+
+@torch.library.custom_op("vortex::hadamard", mutates_args=())
+def hadamard(hidden: torch.Tensor, base: torch.Tensor, base_size: int) -> torch.Tensor:
+    return _hadamard_reference(hidden, base, base_size)
+
+
+@hadamard.register_fake
+def _hadamard_fake(hidden, base, base_size):
+    _validate_hadamard_args(hidden, base, base_size)
+    return hidden.new_empty(hidden.shape)
+
+
 @torch.library.custom_op("vortex::mm_w4a16", mutates_args=())
 def mm_w4a16(
     lhs: torch.Tensor,

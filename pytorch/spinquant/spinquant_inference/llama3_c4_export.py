@@ -267,36 +267,10 @@ def _rotate_half(hidden: torch.Tensor) -> torch.Tensor:
     return torch.cat((-hidden[..., half:], hidden[..., :half]), dim=-1)
 
 
-def _sylvester_hadamard(size: int) -> torch.Tensor:
-    if size <= 0 or size & (size - 1):
-        raise ValueError("Sylvester Hadamard size must be a positive power of two")
-    matrix = torch.ones((1, 1), dtype=torch.float32)
-    while matrix.shape[0] < size:
-        matrix = torch.cat(
-            (
-                torch.cat((matrix, matrix), dim=1),
-                torch.cat((matrix, -matrix), dim=1),
-            ),
-            dim=0,
-        )
-    return matrix
+def _hadamard(hidden: torch.Tensor, base: torch.Tensor, base_size: int) -> torch.Tensor:
+    """Keep the complete mixed-radix transform as one logical export op."""
 
-
-def _dense_hadamard(
-    hidden: torch.Tensor,
-    base: torch.Tensor,
-    base_size: int,
-    power2_matrix: torch.Tensor,
-) -> torch.Tensor:
-    """Equivalent mixed-radix transform without transient butterfly buffers."""
-
-    width = hidden.shape[-1]
-    factor = width // base_size
-    work = hidden.float().reshape(-1, base_size, factor)
-    work = torch.matmul(work, power2_matrix.transpose(0, 1))
-    if base_size > 1:
-        work = torch.matmul(base.reshape(1, base_size, base_size), work)
-    return (work.reshape(hidden.shape) / math.sqrt(width)).to(hidden.dtype)
+    return torch.ops.vortex.hadamard(hidden, base, base_size)
 
 
 class _Llama3LayerBase(torch.nn.Module):
@@ -317,18 +291,11 @@ class _Llama3LayerBase(torch.nn.Module):
         r4, r4_base = get_hadK(config.intermediate_size)
         if r4_base == 1:
             r4 = torch.ones((1, 1), dtype=torch.float32)
+        self.register_buffer(
+            "r3_base", torch.ones((1, 1), dtype=torch.float32), persistent=False
+        )
         self.register_buffer("r4_base", r4.to(torch.float32), persistent=False)
         self.r4_base_size = int(r4_base)
-        self.register_buffer(
-            "r3_power2",
-            _sylvester_hadamard(config.head_dim),
-            persistent=False,
-        )
-        self.register_buffer(
-            "r4_power2",
-            _sylvester_hadamard(config.intermediate_size // self.r4_base_size),
-            persistent=False,
-        )
 
     def _linear(
         self,
@@ -538,11 +505,10 @@ class _Llama3LayerBase(torch.nn.Module):
         residual = hidden
         query_projection = self._linear("q_proj", attention_normalized, parameters)
         query = self._split_heads(query_projection, config.num_attention_heads)
-        query = _dense_hadamard(
+        query = _hadamard(
             self._rope(query, position_ids),
-            self.r4_base[:1, :1],
+            self.r3_base,
             1,
-            self.r3_power2,
         )
         scores, masked_scores, probabilities, context = self._attention_checkpoints(
             query, key_cache, value_cache, valid_length, position_ids
@@ -560,11 +526,10 @@ class _Llama3LayerBase(torch.nn.Module):
         gate = self._linear("gate_proj", normalized, parameters)
         up = self._linear("up_proj", normalized, parameters)
         activated_mlp = (F.silu(gate.float()) * up.float()).to(torch.float16)
-        transformed_mlp = _dense_hadamard(
+        transformed_mlp = _hadamard(
             activated_mlp,
             self.r4_base,
             self.r4_base_size,
-            self.r4_power2,
         )
         down_projection = self._linear("down_proj", transformed_mlp, parameters)
         output = (attention_residual.float() + down_projection.float()).to(
@@ -601,11 +566,10 @@ class _Llama3LayerBase(torch.nn.Module):
             self._linear("k_proj", attention_normalized, parameters),
             self.config.num_key_value_heads,
         )
-        key = _dense_hadamard(
+        key = _hadamard(
             self._rope(key, position_ids),
-            self.r4_base[:1, :1],
+            self.r3_base,
             1,
-            self.r3_power2,
         )
         value = self._split_heads(
             self._linear("v_proj", attention_normalized, parameters),
