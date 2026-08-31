@@ -423,21 +423,12 @@ class _Llama3LayerBase(torch.nn.Module):
             "signed_asymmetric_int4",
             True,
         )
-        scaled_scores = scores.float() / math.sqrt(config.head_dim)
-        key_positions = torch.arange(
-            config.cache_capacity, device=query.device, dtype=torch.int64
+        masked_scores, probabilities = torch.ops.vortex.causal_softmax(
+            scores,
+            position_ids,
+            valid_length,
+            config.head_dim,
         )
-        valid = key_positions.reshape(1, 1, 1, 1, -1) < valid_length.reshape(
-            1, 1, 1, 1, 1
-        )
-        causal = key_positions.reshape(1, 1, 1, 1, -1) <= position_ids.reshape(
-            config.batch_size, 1, 1, query.shape[-2], 1
-        )
-        valid = valid & causal
-        masked_scores = torch.where(
-            valid, scaled_scores, torch.full_like(scaled_scores, float("-inf"))
-        )
-        probabilities = torch.softmax(masked_scores, dim=-1).to(torch.float16)
 
         value_payload, value_scale, value_zero = (
             tensor.unsqueeze(2) for tensor in value_cache

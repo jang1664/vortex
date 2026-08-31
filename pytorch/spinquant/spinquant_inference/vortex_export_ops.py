@@ -292,6 +292,64 @@ def _hadamard_fake(hidden, base, base_size):
     return hidden.new_empty(hidden.shape)
 
 
+def _validate_causal_softmax_args(
+    scores: torch.Tensor,
+    position_ids: torch.Tensor,
+    valid_length: torch.Tensor,
+    head_dim: int,
+) -> None:
+    if scores.dtype != torch.float16 or scores.ndim != 5:
+        raise ValueError("causal_softmax scores must be rank-5 FP16")
+    if position_ids.dtype != torch.int64 or position_ids.ndim != 2:
+        raise ValueError("causal_softmax position_ids must be rank-2 INT64")
+    if tuple(position_ids.shape) != (scores.shape[0], scores.shape[-2]):
+        raise ValueError(
+            "causal_softmax position_ids must match the batch and query extents"
+        )
+    if valid_length.dtype != torch.int64 or valid_length.numel() != 1:
+        raise ValueError("causal_softmax valid_length must be one INT64 scalar")
+    if head_dim <= 0:
+        raise ValueError("causal_softmax head_dim must be positive")
+
+
+@torch.library.custom_op("vortex::causal_softmax", mutates_args=())
+def causal_softmax(
+    scores: torch.Tensor,
+    position_ids: torch.Tensor,
+    valid_length: torch.Tensor,
+    head_dim: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply scaled causal masking and softmax to rank-5 GQA scores."""
+
+    _validate_causal_softmax_args(scores, position_ids, valid_length, head_dim)
+    scaled_scores = scores.float() / math.sqrt(head_dim)
+    key_positions = torch.arange(
+        scores.shape[-1], device=scores.device, dtype=torch.int64
+    )
+    valid = key_positions.reshape(1, 1, 1, 1, -1) < valid_length.reshape(
+        1, 1, 1, 1, 1
+    )
+    causal = key_positions.reshape(1, 1, 1, 1, -1) <= position_ids.reshape(
+        scores.shape[0], 1, 1, scores.shape[-2], 1
+    )
+    masked_scores = torch.where(
+        valid & causal,
+        scaled_scores,
+        torch.full_like(scaled_scores, float("-inf")),
+    )
+    probabilities = torch.softmax(masked_scores, dim=-1).to(torch.float16)
+    return masked_scores, probabilities
+
+
+@causal_softmax.register_fake
+def _causal_softmax_fake(scores, position_ids, valid_length, head_dim):
+    _validate_causal_softmax_args(scores, position_ids, valid_length, head_dim)
+    return (
+        scores.new_empty(scores.shape, dtype=torch.float32),
+        scores.new_empty(scores.shape, dtype=torch.float16),
+    )
+
+
 @torch.library.custom_op("vortex::mm_w4a16", mutates_args=())
 def mm_w4a16(
     lhs: torch.Tensor,

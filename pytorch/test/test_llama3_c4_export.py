@@ -43,8 +43,6 @@ from spinquant_inference.llama3_c4_export import (  # noqa: E402
     make_meta_parameters,
     stack_parameter_shapes,
     layer_checkpoint_names,
-    _dense_hadamard,
-    _sylvester_hadamard,
 )
 from spinquant_inference.utils.hadamard_utils import get_hadK  # noqa: E402
 
@@ -229,6 +227,7 @@ def test_prefill_matches_backend_neutral_all_asymmetric_reference() -> None:
     assert not exported_graph_has_physical_c4_ops(exported)
     graph = str(exported.graph_module.graph)
     assert graph.count("torch.ops.vortex.mm_w4a16.default") == 9
+    assert graph.count("torch.ops.vortex.causal_softmax.default") == 1
     assert graph.count("torch.ops.vortex.quantize_int4.default") == 2
     assert graph.count("torch.ops.vortex.kv_cache_update.default") == 6
     exported_outputs = exported.module()(*arguments)
@@ -259,18 +258,13 @@ def test_prefill_checkpoint_boundary_preserves_production_outputs() -> None:
 
 
 @pytest.mark.parametrize("width", (128, 14336))
-def test_dense_mixed_radix_hadamard_matches_butterfly(width: int) -> None:
+def test_logical_mixed_radix_hadamard_matches_butterfly(width: int) -> None:
     base, base_size = get_hadK(width)
     if base is None:
         base = torch.ones((1, 1), dtype=torch.float32)
     hidden = torch.randn((2, width), dtype=torch.float16)
     expected = _butterfly_hadamard_reference(hidden, base.float(), base_size)
-    actual = _dense_hadamard(
-        hidden,
-        base.float(),
-        base_size,
-        _sylvester_hadamard(width // base_size),
-    )
+    actual = torch.ops.vortex.hadamard(hidden, base.float(), base_size)
     absolute_error = (actual.float() - expected.float()).abs()
     small = expected.float().abs() < 1.0
     small_max_absolute_error = (

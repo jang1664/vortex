@@ -71,6 +71,36 @@ def test_mm_w4a16_models_qk_transpose_without_materialized_k_copy():
     assert key.data_ptr() == key.data_ptr()
 
 
+def test_causal_softmax_respects_each_batch_query_position_and_valid_length():
+    scores = torch.arange(2 * 2 * 2 * 3 * 5, dtype=torch.float16).reshape(
+        2, 2, 2, 3, 5
+    )
+    positions = torch.tensor([[0, 2, 4], [1, 3, 4]], dtype=torch.int64)
+    valid_length = torch.tensor(4, dtype=torch.int64)
+
+    masked, probabilities = torch.ops.vortex.causal_softmax(
+        scores, positions, valid_length, 4
+    )
+
+    keys = torch.arange(5).reshape(1, 1, 1, 1, 5)
+    valid = (keys < valid_length) & (
+        keys <= positions.reshape(2, 1, 1, 3, 1)
+    )
+    expected_masked = torch.where(
+        valid,
+        scores.float() / 2.0,
+        torch.full_like(scores.float(), float("-inf")),
+    )
+    torch.testing.assert_close(masked, expected_masked, rtol=0, atol=0)
+    torch.testing.assert_close(
+        probabilities,
+        torch.softmax(expected_masked, dim=-1).half(),
+        rtol=0,
+        atol=0,
+    )
+    assert torch.all(probabilities.masked_select(~valid) == 0)
+
+
 class _ExportedAttention(torch.nn.Module):
     def forward(self, query, key):
         packed, scale, zero = torch.ops.vortex.quantize_int4(
