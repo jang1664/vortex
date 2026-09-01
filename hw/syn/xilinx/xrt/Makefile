@@ -8,6 +8,7 @@ help:
 	$(ECHO) "Makefile Usage:"
 	$(ECHO) "  make all TARGET=<hw/hw_emu> PLATFORM=<FPGA platform>"
 	$(ECHO) "      Command to generate the design for specified Target and Device."
+	$(ECHO) "      Add FAST_MODE=1 for optimize=0, implementation ultrathreads, and congestion fail-fast."
 	$(ECHO) ""
 	$(ECHO) "  make clean"
 	$(ECHO) "      Command to remove the generated non-hardware files."
@@ -16,7 +17,23 @@ endif
 
 TARGET ?= hw
 PLATFORM ?=
+# Fast hardware iteration mode. It changes link/implementation settings only,
+# so switching modes does not invalidate the packaged RTL kernel (.xo).
+FAST_MODE ?= 0
 CONGESTION_FAIL_FAST ?= 1
+
+ifneq ($(FAST_MODE),0)
+ifneq ($(FAST_MODE),1)
+$(error FAST_MODE must be 0 or 1, got '$(FAST_MODE)')
+endif
+endif
+
+ifeq ($(FAST_MODE),1)
+override CONGESTION_FAIL_FAST := 1
+VPP_OPTIMIZE := 0
+else
+VPP_OPTIMIZE := 3
+endif
 
 ifneq ($(CONGESTION_FAIL_FAST),0)
 ifneq ($(CONGESTION_FAIL_FAST),1)
@@ -85,7 +102,7 @@ XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_
 XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
 CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE) SIMULATOR=$(SIMULATOR) VCS_INSTALL_DIR=$(VCS_INSTALL_DIR) VCS_SIMLIB_DIR=$(VCS_SIMLIB_DIR) VCS_GCC_INSTALL_DIR=$(VCS_GCC_INSTALL_DIR) VG_GNU_PACKAGE=$(VG_GNU_PACKAGE) GUI=$(GUI)
-LINK_CONFIG_FINGERPRINT = CONGESTION_FAIL_FAST=$(CONGESTION_FAIL_FAST)
+LINK_CONFIG_FINGERPRINT = FAST_MODE=$(FAST_MODE) VPP_OPTIMIZE=$(VPP_OPTIMIZE) CONGESTION_FAIL_FAST=$(CONGESTION_FAIL_FAST)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
@@ -233,6 +250,9 @@ VITIS_INI_ARGS += --simulator $(SIMULATOR)
 ifeq ($(CONGESTION_FAIL_FAST),0)
 VITIS_INI_ARGS += --disable-congestion-fail-fast
 endif
+ifeq ($(FAST_MODE),1)
+VITIS_INI_ARGS += --ultrathreads
+endif
 ifeq ($(SIMULATOR), vcs)
 VITIS_INI_ARGS += --vcs-install-dir $(VCS_INSTALL_DIR)
 VITIS_INI_ARGS += --vcs-simlib-dir $(VCS_SIMLIB_DIR)
@@ -258,17 +278,14 @@ endif
 
 # Debugging — only optimization level and CFLAGS remain here
 ifdef DEBUG
-# 	VPP_FLAGS += -g --optimize quick
-# 	VPP_FLAGS += -g --optimize 0
-	VPP_FLAGS += -g --optimize 3
+	VPP_FLAGS += -g --optimize $(VPP_OPTIMIZE)
 	ifeq ($(TARGET), hw)
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
 	else
 		CFLAGS += -DDEBUG_LEVEL=$(DEBUG) $(DBG_TRACE_FLAGS)
 	endif
 else
-# 	VPP_FLAGS += -g --optimize quick
-	VPP_FLAGS += --optimize 3
+	VPP_FLAGS += --optimize $(VPP_OPTIMIZE)
 	CFLAGS += -DNDEBUG
 endif
 
