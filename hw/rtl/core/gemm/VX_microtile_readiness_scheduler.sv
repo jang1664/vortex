@@ -129,6 +129,12 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
     logic [33:0] weight_outstanding_beats;
     logic [33:0] weight_ready_eta;
     logic [33:0] weight_issue_ready_eta;
+    logic [3:0] source_match_found;
+    logic [PTRW-1:0] source_match_idx[4];
+    logic [COUNTW-1:0] source_match_distance[4];
+    logic [3:0] source_block_match;
+    logic [3:0] source_fetch_pending;
+    logic [3:0] source_final_request;
 
     function automatic logic wait_released(
         input gemm_wait_meta_t wait_meta,
@@ -146,6 +152,68 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
                          || (is1 && (value1 >= wait_meta.target));
         end
     endfunction
+
+    // Keep each resource's scoreboard match physically static.  The genvar is
+    // an elaboration-time constant, so no variable resource selector sits
+    // after the four independent scans.
+    for (genvar resource = 0; resource < 4; ++resource) begin : g_source_match
+        always_comb begin
+            logic resource_bank;
+            logic [31:0] resource_target;
+
+            source_match_found[resource] = 1'b0;
+            source_match_idx[resource] = head_r;
+            source_match_distance[resource] = '0;
+            for (int offset = 0; offset < DEPTH; ++offset) begin
+                logic [PTRW-1:0] scan_idx;
+                scan_idx = head_r + PTRW'(offset);
+                if (!source_match_found[resource]
+                 && entries_r[scan_idx].valid
+                 && source_valid_i[resource]
+                 && (entries_r[scan_idx].work_seq
+                  == source_work_seq_i[resource])) begin
+                    source_match_found[resource] = 1'b1;
+                    source_match_idx[resource] = scan_idx;
+                    source_match_distance[resource] = COUNTW'(offset);
+                end
+            end
+
+            resource_bank = 1'b0;
+            resource_target = '0;
+            if (source_match_found[resource]) begin
+                if (resource == GEMM_SCHED_RESOURCE_WEIGHT) begin
+                    resource_bank = entries_r[source_match_idx[resource]].w_bank;
+                    resource_target
+                        = entries_r[source_match_idx[resource]].w_target;
+                end else if (resource == GEMM_SCHED_RESOURCE_SCALE) begin
+                    resource_bank = entries_r[source_match_idx[resource]].s_bank;
+                    resource_target
+                        = entries_r[source_match_idx[resource]].s_target;
+                end else if (resource == GEMM_SCHED_RESOURCE_ZP) begin
+                    resource_bank = entries_r[source_match_idx[resource]].z_bank;
+                    resource_target
+                        = entries_r[source_match_idx[resource]].z_target;
+                end
+            end
+
+            source_block_match[resource] = block_valid_i
+                && source_match_found[resource]
+                && (block_resource_i == 2'(resource))
+                && (block_work_seq_i
+                    == entries_r[source_match_idx[resource]].work_seq)
+                && (block_bank_i == resource_bank)
+                && (block_target_i == resource_target);
+            source_fetch_pending[resource] = source_match_found[resource]
+                && (source_total_beats_i[resource] != 0)
+                && (source_request_beats_i[resource]
+                    < source_total_beats_i[resource])
+                && (source_response_beats_i[resource]
+                    < source_total_beats_i[resource]);
+            source_final_request[resource] = source_fetch_pending[resource]
+                && ((source_request_beats_i[resource] + 32'd1)
+                    == source_total_beats_i[resource]);
+        end
+    end
 
     always_comb begin
         probe_match = 1'b0;
@@ -174,9 +242,6 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         logic earliest_all_operands;
         logic earliest_all_buffered;
         logic [3:0] input_budget;
-        logic weight_found;
-        logic [PTRW-1:0] weight_idx;
-        logic [COUNTW-1:0] weight_distance;
         logic weight_fetch_pending;
         logic weight_input_admitted;
         logic [33:0] weight_consumer_slack;
@@ -226,32 +291,14 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         // A wide logical response remains outstanding until every required
         // lane completes, so request-response includes an incomplete oldest
         // lane without adding a tile- or WLOAD-specific lane count here.
-        weight_found = 1'b0;
-        weight_idx = head_r;
-        weight_distance = '0;
-        for (int offset = 0; offset < DEPTH; ++offset) begin
-            logic [PTRW-1:0] scan_idx;
-            scan_idx = head_r + PTRW'(offset);
-            if (!weight_found && entries_r[scan_idx].valid
-             && source_valid_i[GEMM_SCHED_RESOURCE_WEIGHT]
-             && (entries_r[scan_idx].work_seq
-              == source_work_seq_i[GEMM_SCHED_RESOURCE_WEIGHT])) begin
-                weight_found = 1'b1;
-                weight_idx = scan_idx;
-                weight_distance = COUNTW'(offset);
-            end
-        end
-
-        weight_fetch_pending = weight_found
-            && (source_total_beats_i[GEMM_SCHED_RESOURCE_WEIGHT] != 0)
-            && (source_request_beats_i[GEMM_SCHED_RESOURCE_WEIGHT]
-                < source_total_beats_i[GEMM_SCHED_RESOURCE_WEIGHT])
-            && (source_response_beats_i[GEMM_SCHED_RESOURCE_WEIGHT]
-                < source_total_beats_i[GEMM_SCHED_RESOURCE_WEIGHT]);
-        weight_input_admitted = weight_found
-            && (entries_r[weight_idx].input_admitted
+        weight_fetch_pending
+            = source_fetch_pending[GEMM_SCHED_RESOURCE_WEIGHT];
+        weight_input_admitted
+            = source_match_found[GEMM_SCHED_RESOURCE_WEIGHT]
+            && (entries_r[source_match_idx[GEMM_SCHED_RESOURCE_WEIGHT]].input_admitted
              || (input_admit_valid_i
-              && (input_admit_work_seq_i == entries_r[weight_idx].work_seq)));
+              && (input_admit_work_seq_i
+                  == entries_r[source_match_idx[GEMM_SCHED_RESOURCE_WEIGHT]].work_seq)));
         weight_unrequested_beats = '0;
         weight_outstanding_beats = '0;
         if (weight_fetch_pending) begin
@@ -271,9 +318,10 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         weight_deadline_class = WEIGHT_DEADLINE_SAFE;
         weight_critical_now = 1'b0;
         if (weight_fetch_pending
-         && (weight_distance <= COUNTW'(WEIGHT_NEAR_WINDOW))) begin
+         && (source_match_distance[GEMM_SCHED_RESOURCE_WEIGHT]
+             <= COUNTW'(WEIGHT_NEAR_WINDOW))) begin
             weight_deadline_class = WEIGHT_DEADLINE_NEAR;
-            if ((weight_distance == 0)
+            if ((source_match_distance[GEMM_SCHED_RESOURCE_WEIGHT] == 0)
              || weight_input_admitted
              || ((input_slot_occupancy_i >= 4'(INPUT_MIN_READY))
               && (weight_ready_eta >= weight_consumer_slack))) begin
@@ -288,7 +336,8 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         // its valid/priority can be sampled and held by the LDMA request path;
         // no already-presented request is live-reprioritized.
         weight_issue_deadline_guard = weight_fetch_pending
-            && (weight_distance <= COUNTW'(WEIGHT_NEAR_WINDOW))
+            && (source_match_distance[GEMM_SCHED_RESOURCE_WEIGHT]
+                <= COUNTW'(WEIGHT_NEAR_WINDOW))
             && (weight_critical_now
              || (weight_issue_ready_eta >= weight_consumer_slack));
         precritical_weight_fetch_pending = weight_issue_deadline_guard
@@ -303,112 +352,93 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         else
             input_service_class = INPUT_SERVICE_AHEAD;
 
-        for (int resource = 0; resource < 4; ++resource) begin
-            logic found;
-            logic [PTRW-1:0] idx;
-            logic [COUNTW-1:0] distance;
-            logic block_match;
-            logic fetch_pending;
-            logic final_request;
-            logic resource_bank;
-            logic [31:0] resource_target;
-
-            found = 1'b0;
-            idx = head_r;
-            distance = '0;
-            for (int offset = 0; offset < DEPTH; ++offset) begin
-                logic [PTRW-1:0] scan_idx;
-                scan_idx = head_r + PTRW'(offset);
-                if (!found && entries_r[scan_idx].valid
-                 && source_valid_i[resource]
-                 && (entries_r[scan_idx].work_seq
-                  == source_work_seq_i[resource])) begin
-                    found = 1'b1;
-                    idx = scan_idx;
-                    distance = COUNTW'(offset);
-                end
-            end
-
-            resource_bank = 1'b0;
-            resource_target = '0;
-            if (found) begin
-                unique case (2'(resource))
-                    GEMM_SCHED_RESOURCE_INPUT:;
-                    GEMM_SCHED_RESOURCE_WEIGHT: begin
-                        resource_bank = entries_r[idx].w_bank;
-                        resource_target = entries_r[idx].w_target;
-                    end
-                    GEMM_SCHED_RESOURCE_SCALE: begin
-                        resource_bank = entries_r[idx].s_bank;
-                        resource_target = entries_r[idx].s_target;
-                    end
-                    default: begin
-                        resource_bank = entries_r[idx].z_bank;
-                        resource_target = entries_r[idx].z_target;
-                    end
-                endcase
-            end
-
-            block_match = block_valid_i && found
-                       && (block_resource_i == 2'(resource))
-                       && (block_work_seq_i == entries_r[idx].work_seq)
-                       && (block_bank_i == resource_bank)
-                       && (block_target_i == resource_target);
-
-            // The LDMA descriptor is the only authority for command length
-            // and progress.  In particular, register installation state does
-            // not keep a source request elevated after all responses arrived.
-            fetch_pending = found
-                         && (source_total_beats_i[resource] != 0)
-                         && (source_request_beats_i[resource]
-                             < source_total_beats_i[resource])
-                         && (source_response_beats_i[resource]
-                             < source_total_beats_i[resource]);
-            final_request = fetch_pending
-                         && ((source_request_beats_i[resource] + 32'd1)
-                             == source_total_beats_i[resource]);
-            source_priority_o[resource] = GEMM_SCHED_PRIORITY_BACKGROUND;
-            if (fetch_pending) begin
-                if (2'(resource) == GEMM_SCHED_RESOURCE_WEIGHT) begin
-                    if (weight_issue_deadline_guard)
-                        source_priority_o[resource]
-                            = GEMM_SCHED_PRIORITY_EARLIEST;
-                    else if (weight_deadline_class == WEIGHT_DEADLINE_NEAR)
-                        source_priority_o[resource]
-                            = GEMM_SCHED_PRIORITY_NEAR;
-                    // The final logical request, including all of its wide
-                    // lanes, receives at most the CRITICAL P2 tier.
-                    if (final_request
-                     && weight_issue_deadline_guard)
-                        source_priority_o[resource]
-                            = GEMM_SCHED_PRIORITY_EARLIEST;
-                end else begin
-                    source_priority_o[resource]
-                        = (distance == 0) ? GEMM_SCHED_PRIORITY_EARLIEST
-                        : (distance == 1) ? GEMM_SCHED_PRIORITY_NEAR
-                                          : GEMM_SCHED_PRIORITY_BACKGROUND;
-                    if (final_request && (distance <= COUNTW'(1)))
-                        source_priority_o[resource]
-                            = GEMM_SCHED_PRIORITY_EARLIEST;
-                end
-                if (block_match)
-                    source_priority_o[resource]
-                        = GEMM_SCHED_PRIORITY_BLOCKED;
-            end
-            if ((2'(resource) == GEMM_SCHED_RESOURCE_INPUT) && fetch_pending
-             && (distance <= COUNTW'(1))) begin
+        source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
+            = GEMM_SCHED_PRIORITY_BACKGROUND;
+        if (source_fetch_pending[GEMM_SCHED_RESOURCE_INPUT]) begin
+            source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
+                = (source_match_distance[GEMM_SCHED_RESOURCE_INPUT] == 0)
+                ? GEMM_SCHED_PRIORITY_EARLIEST
+                : (source_match_distance[GEMM_SCHED_RESOURCE_INPUT] == 1)
+                ? GEMM_SCHED_PRIORITY_NEAR
+                : GEMM_SCHED_PRIORITY_BACKGROUND;
+            if (source_final_request[GEMM_SCHED_RESOURCE_INPUT]
+             && (source_match_distance[GEMM_SCHED_RESOURCE_INPUT]
+                 <= COUNTW'(1)))
+                source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
+                    = GEMM_SCHED_PRIORITY_EARLIEST;
+            if (source_block_match[GEMM_SCHED_RESOURCE_INPUT])
+                source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
+                    = GEMM_SCHED_PRIORITY_BLOCKED;
+            if (source_match_distance[GEMM_SCHED_RESOURCE_INPUT]
+                <= COUNTW'(1)) begin
                 unique case (input_service_class)
                     INPUT_SERVICE_STARVATION:
-                        source_priority_o[resource]
+                        source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
                             = GEMM_SCHED_PRIORITY_BLOCKED;
                     INPUT_SERVICE_AHEAD_THROTTLED:
-                        source_priority_o[resource]
+                        source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
                             = GEMM_SCHED_PRIORITY_NEAR;
                     default:
-                        source_priority_o[resource]
+                        source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
                             = GEMM_SCHED_PRIORITY_EARLIEST;
                 endcase
             end
+        end
+
+        source_priority_o[GEMM_SCHED_RESOURCE_WEIGHT]
+            = GEMM_SCHED_PRIORITY_BACKGROUND;
+        if (source_fetch_pending[GEMM_SCHED_RESOURCE_WEIGHT]) begin
+            if (weight_issue_deadline_guard)
+                source_priority_o[GEMM_SCHED_RESOURCE_WEIGHT]
+                    = GEMM_SCHED_PRIORITY_EARLIEST;
+            else if (weight_deadline_class == WEIGHT_DEADLINE_NEAR)
+                source_priority_o[GEMM_SCHED_RESOURCE_WEIGHT]
+                    = GEMM_SCHED_PRIORITY_NEAR;
+            if (source_final_request[GEMM_SCHED_RESOURCE_WEIGHT]
+             && weight_issue_deadline_guard)
+                source_priority_o[GEMM_SCHED_RESOURCE_WEIGHT]
+                    = GEMM_SCHED_PRIORITY_EARLIEST;
+            if (source_block_match[GEMM_SCHED_RESOURCE_WEIGHT])
+                source_priority_o[GEMM_SCHED_RESOURCE_WEIGHT]
+                    = GEMM_SCHED_PRIORITY_BLOCKED;
+        end
+
+        source_priority_o[GEMM_SCHED_RESOURCE_SCALE]
+            = GEMM_SCHED_PRIORITY_BACKGROUND;
+        if (source_fetch_pending[GEMM_SCHED_RESOURCE_SCALE]) begin
+            source_priority_o[GEMM_SCHED_RESOURCE_SCALE]
+                = (source_match_distance[GEMM_SCHED_RESOURCE_SCALE] == 0)
+                ? GEMM_SCHED_PRIORITY_EARLIEST
+                : (source_match_distance[GEMM_SCHED_RESOURCE_SCALE] == 1)
+                ? GEMM_SCHED_PRIORITY_NEAR
+                : GEMM_SCHED_PRIORITY_BACKGROUND;
+            if (source_final_request[GEMM_SCHED_RESOURCE_SCALE]
+             && (source_match_distance[GEMM_SCHED_RESOURCE_SCALE]
+                 <= COUNTW'(1)))
+                source_priority_o[GEMM_SCHED_RESOURCE_SCALE]
+                    = GEMM_SCHED_PRIORITY_EARLIEST;
+            if (source_block_match[GEMM_SCHED_RESOURCE_SCALE])
+                source_priority_o[GEMM_SCHED_RESOURCE_SCALE]
+                    = GEMM_SCHED_PRIORITY_BLOCKED;
+        end
+
+        source_priority_o[GEMM_SCHED_RESOURCE_ZP]
+            = GEMM_SCHED_PRIORITY_BACKGROUND;
+        if (source_fetch_pending[GEMM_SCHED_RESOURCE_ZP]) begin
+            source_priority_o[GEMM_SCHED_RESOURCE_ZP]
+                = (source_match_distance[GEMM_SCHED_RESOURCE_ZP] == 0)
+                ? GEMM_SCHED_PRIORITY_EARLIEST
+                : (source_match_distance[GEMM_SCHED_RESOURCE_ZP] == 1)
+                ? GEMM_SCHED_PRIORITY_NEAR
+                : GEMM_SCHED_PRIORITY_BACKGROUND;
+            if (source_final_request[GEMM_SCHED_RESOURCE_ZP]
+             && (source_match_distance[GEMM_SCHED_RESOURCE_ZP]
+                 <= COUNTW'(1)))
+                source_priority_o[GEMM_SCHED_RESOURCE_ZP]
+                    = GEMM_SCHED_PRIORITY_EARLIEST;
+            if (source_block_match[GEMM_SCHED_RESOURCE_ZP])
+                source_priority_o[GEMM_SCHED_RESOURCE_ZP]
+                    = GEMM_SCHED_PRIORITY_BLOCKED;
         end
     end
 

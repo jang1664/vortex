@@ -327,7 +327,18 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
                     assert (request_valid[p]
                          && (req_urgent_i[p] == stalled_urgent_r[p])
                          && (req_priority_i[p] == stalled_priority_r[p])
-                         && (request_data[p] == stalled_req_data_r[p]))
+                         && (request_data[p][REQ_DATA_WIDTH-1 -:
+                                             (1 + MEM_ADDR_W)]
+                          == stalled_req_data_r[p][REQ_DATA_WIDTH-1 -:
+                                                   (1 + MEM_ADDR_W)])
+                         && (request_data[p][DATA_SIZE
+                                             + MEM_FLAGS_WIDTH
+                                             + TAG_WIDTH-1:0]
+                          == stalled_req_data_r[p][DATA_SIZE
+                                                   + MEM_FLAGS_WIDTH
+                                                   + TAG_WIDTH-1:0])
+                         && (!request_data[p][REQ_DATA_WIDTH-1]
+                          || (request_data[p] == stalled_req_data_r[p])))
                         else $fatal(1, "%s: TMEM request data/urgency changed under stall on port %0d",
                                     INSTANCE_ID, p);
                 end

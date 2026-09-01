@@ -107,6 +107,28 @@ Bank response는 기존 `{bank_id, original_tag}`를 사용해 원래 context로
 cycle의 response retire과 request accept를 동시에 수행하는 fall-through는
 지원하지 않으며, `req_ready`는 retire 다음 cycle에 다시 올라간다.
 
+#### Read-request reservations
+
+Input, Weight, Scale, and Zero-point each have an independent two-entry
+registered request reservation between the local DMA and its TMEM switch.
+Output remains directly connected because it is a TMEM write source.  A local
+DMA request handshake enqueues the reservation and allocates the corresponding
+DMA response slot.  The later switch-side dequeue does not allocate another
+slot, and the original tag is returned unchanged with the response.
+
+The reservations are non-fall-through: switch request valid, address, tag,
+priority, urgency, and scheduler work sequence come only from a registered
+head entry.  Upstream ready depends only on registered occupancy below two,
+so selected physical TMEM memory-array ready does not feed local-DMA response
+slot allocation.  Simultaneous dequeue/enqueue sustains one request per cycle
+after priming.  A full reservation exposes capacity on the cycle after its
+first dequeue, intentionally permitting one registered-credit recovery bubble.
+
+Only variable read state is stored.  Read/write direction, data, byte enable,
+flags, and tag UUID are reconstructed as read constants at the switch side.
+The readiness scheduler likewise uses four elaboration-time-static resource
+matches and applies each priority policy locally to its corresponding source.
+
 ### 3. TMEM Banks (`u_bank`, x8)
 
 각 뱅크는 6포트 중재(arbitration)를 가진 SRAM.

@@ -321,6 +321,30 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) ldma_weight_to_tmem ();
 
+    // Read request reservations cut selected-TMEM-memory-array ready from
+    // local-DMA response-slot allocation.  Responses remain a direct return
+    // path through each reservation because their slots were allocated when
+    // the corresponding request entered the reservation.
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) input_reserved_to_switch ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (GEMM_WEIGHT_DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) weight_reserved_to_switch ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) scale_reserved_to_switch ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) zero_point_reserved_to_switch ();
+
     // Weight transfers use their native GEMM beat width on both sides. The
     // wide TMEM switch fans each source read out to the required bank group.
     VX_mem_bus_if #(
@@ -336,6 +360,18 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] weight_req_priority;
     wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] scale_req_priority;
     wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] zero_point_req_priority;
+    wire input_reserved_req_urgent;
+    wire weight_reserved_req_urgent;
+    wire scale_reserved_req_urgent;
+    wire zero_point_reserved_req_urgent;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] input_reserved_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] weight_reserved_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] scale_reserved_req_priority;
+    wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] zero_point_reserved_req_priority;
+    wire [31:0] input_reserved_req_work_seq;
+    wire [31:0] weight_reserved_req_work_seq;
+    wire [31:0] scale_reserved_req_work_seq;
+    wire [31:0] zero_point_reserved_req_work_seq;
     wire [NUM_BANKS-1:0] input_bank_req_urgent;
     wire [NUM_BANKS-1:0] weight_bank_req_urgent;
     wire [NUM_BANKS-1:0][GEMM_SCHED_PRIORITY_WIDTH-1:0]
@@ -351,6 +387,79 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         assign ldma_sync_if[i].ready = 1'b1;
     end
 
+    VX_tmem_read_req_reservation #(
+        .INSTANCE_ID ({INSTANCE_ID, ":input_req_reservation"}),
+        .DATA_SIZE   (DATA_SIZE),
+        .TAG_WIDTH   (TAG_WIDTH)
+    ) u_input_req_reservation (
+        .clk              (clk),
+        .reset            (reset),
+        .req_priority_i   (input_req_priority),
+        .req_urgent_i     (input_req_urgent),
+        .req_work_seq_i   (sched_source_work_seq_o[0]),
+        .req_priority_o   (input_reserved_req_priority),
+        .req_urgent_o     (input_reserved_req_urgent),
+        .req_work_seq_o   (input_reserved_req_work_seq),
+        .upstream_if      (ldma_to_switch[0]),
+        .downstream_if    (input_reserved_to_switch)
+    );
+
+    VX_tmem_read_req_reservation #(
+        .INSTANCE_ID ({INSTANCE_ID, ":weight_req_reservation"}),
+        .DATA_SIZE   (GEMM_WEIGHT_DATA_SIZE),
+        .TAG_WIDTH   (TAG_WIDTH)
+    ) u_weight_req_reservation (
+        .clk              (clk),
+        .reset            (reset),
+        .req_priority_i   (weight_req_priority),
+        .req_urgent_i     (weight_req_urgent),
+        .req_work_seq_i   (sched_source_work_seq_o[1]),
+        .req_priority_o   (weight_reserved_req_priority),
+        .req_urgent_o     (weight_reserved_req_urgent),
+        .req_work_seq_o   (weight_reserved_req_work_seq),
+        .upstream_if      (ldma_weight_to_tmem),
+        .downstream_if    (weight_reserved_to_switch)
+    );
+
+    VX_tmem_read_req_reservation #(
+        .INSTANCE_ID ({INSTANCE_ID, ":scale_req_reservation"}),
+        .DATA_SIZE   (DATA_SIZE),
+        .TAG_WIDTH   (TAG_WIDTH)
+    ) u_scale_req_reservation (
+        .clk              (clk),
+        .reset            (reset),
+        .req_priority_i   (scale_req_priority),
+        .req_urgent_i     (1'b0),
+        .req_work_seq_i   (sched_source_work_seq_o[2]),
+        .req_priority_o   (scale_reserved_req_priority),
+        .req_urgent_o     (scale_reserved_req_urgent),
+        .req_work_seq_o   (scale_reserved_req_work_seq),
+        .upstream_if      (ldma_to_switch[2]),
+        .downstream_if    (scale_reserved_to_switch)
+    );
+
+    VX_tmem_read_req_reservation #(
+        .INSTANCE_ID ({INSTANCE_ID, ":zero_point_req_reservation"}),
+        .DATA_SIZE   (DATA_SIZE),
+        .TAG_WIDTH   (TAG_WIDTH)
+    ) u_zero_point_req_reservation (
+        .clk              (clk),
+        .reset            (reset),
+        .req_priority_i   (zero_point_req_priority),
+        .req_urgent_i     (1'b0),
+        .req_work_seq_i   (sched_source_work_seq_o[3]),
+        .req_priority_o   (zero_point_reserved_req_priority),
+        .req_urgent_o     (zero_point_reserved_req_urgent),
+        .req_work_seq_o   (zero_point_reserved_req_work_seq),
+        .upstream_if      (ldma_to_switch[3]),
+        .downstream_if    (zero_point_reserved_to_switch)
+    );
+
+    `UNUSED_VAR ({input_reserved_req_work_seq,
+                  weight_reserved_req_work_seq,
+                  scale_reserved_req_work_seq,
+                  zero_point_reserved_req_work_seq})
+
     // ================================================================
     // 3. Switches: 1:N address-based bank routing (x5)
     // ================================================================
@@ -363,11 +472,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_input (
         .clk        (clk),
         .reset      (reset),
-        .req_urgent_i(input_req_urgent),
-        .req_priority_i(input_req_priority),
+        .req_urgent_i(input_reserved_req_urgent),
+        .req_priority_i(input_reserved_req_priority),
         .bank_req_urgent_o(input_bank_req_urgent),
         .bank_req_priority_o(input_bank_req_priority),
-        .bus_in_if  (ldma_to_switch[0]),
+        .bus_in_if  (input_reserved_to_switch),
         .bus_out_if (in_switch_to_tmem)
     );
 
@@ -381,11 +490,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_weight (
         .clk        (clk),
         .reset      (reset),
-        .req_urgent_i(weight_req_urgent),
-        .req_priority_i(weight_req_priority),
+        .req_urgent_i(weight_reserved_req_urgent),
+        .req_priority_i(weight_reserved_req_priority),
         .bank_req_urgent_o(weight_bank_req_urgent),
         .bank_req_priority_o(weight_bank_req_priority),
-        .bus_in_if  (ldma_weight_to_tmem),
+        .bus_in_if  (weight_reserved_to_switch),
         .bus_out_if (wt_switch_to_tmem)
     );
 
@@ -397,11 +506,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_scale (
         .clk        (clk),
         .reset      (reset),
-        .req_urgent_i(1'b0),
-        .req_priority_i(scale_req_priority),
+        .req_urgent_i(scale_reserved_req_urgent),
+        .req_priority_i(scale_reserved_req_priority),
         .bank_req_urgent_o(),
         .bank_req_priority_o(scale_bank_req_priority),
-        .bus_in_if  (ldma_to_switch[2]),
+        .bus_in_if  (scale_reserved_to_switch),
         .bus_out_if (sc_switch_to_tmem)
     );
 
@@ -413,11 +522,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_zero_point (
         .clk        (clk),
         .reset      (reset),
-        .req_urgent_i(1'b0),
-        .req_priority_i(zero_point_req_priority),
+        .req_urgent_i(zero_point_reserved_req_urgent),
+        .req_priority_i(zero_point_reserved_req_priority),
         .bank_req_urgent_o(),
         .bank_req_priority_o(zero_point_bank_req_priority),
-        .bus_in_if  (ldma_to_switch[3]),
+        .bus_in_if  (zero_point_reserved_to_switch),
         .bus_out_if (zp_switch_to_tmem)
     );
 
@@ -898,6 +1007,160 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             `TRACE(1, ("%t: %s ldma_out req: addr=0x%0h, rw=%0b\n",
                 $time, INSTANCE_ID, ldma_to_switch[4].req_data.addr,
                 ldma_to_switch[4].req_data.rw))
+        end
+    end
+`endif
+
+endmodule
+
+// Two-entry, registered, non-fall-through reservation for read requests.
+// The local DMA allocates its response slot on upstream enqueue.  The
+// downstream handshake only releases this reservation and therefore must not
+// feed upstream ready in the same cycle.
+module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
+    parameter `STRING INSTANCE_ID = "",
+    parameter DATA_SIZE      = 64,
+    parameter TAG_WIDTH      = 8,
+    parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH
+) (
+    input wire clk,
+    input wire reset,
+
+    input wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] req_priority_i,
+    input wire req_urgent_i,
+    input wire [31:0] req_work_seq_i,
+    output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] req_priority_o,
+    output wire req_urgent_o,
+    output wire [31:0] req_work_seq_o,
+
+    VX_mem_bus_if.slave upstream_if,
+    VX_mem_bus_if.master downstream_if
+);
+    localparam int DEPTH = 2;
+    localparam int ADDR_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
+    localparam int TAG_VALUE_WIDTH = TAG_WIDTH - `UP(UUID_WIDTH);
+
+    logic [ADDR_WIDTH-1:0] addr_r[DEPTH];
+    logic [TAG_VALUE_WIDTH-1:0] tag_value_r[DEPTH];
+    logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] priority_r[DEPTH];
+    logic urgent_r[DEPTH];
+    // Work sequence is reservation provenance for debug/assertion correlation
+    // even though the current TMEM switch arbitration consumes only priority.
+    (* keep = "true" *)
+    logic [31:0] work_seq_r[DEPTH];
+    logic read_ptr_r;
+    logic write_ptr_r;
+    logic [1:0] occupancy_r;
+
+    wire enqueue = upstream_if.req_valid && upstream_if.req_ready;
+    wire dequeue = downstream_if.req_valid && downstream_if.req_ready;
+    wire head_valid = occupancy_r != 0;
+
+    // Registered-credit rule: a full reservation cannot accept a replacement
+    // on the same edge that begins draining.
+    assign upstream_if.req_ready = occupancy_r < 2'd2;
+
+    assign downstream_if.req_valid = head_valid;
+    assign downstream_if.req_data.rw = 1'b0;
+    assign downstream_if.req_data.addr = head_valid ? addr_r[read_ptr_r] : '0;
+    assign downstream_if.req_data.data = '0;
+    assign downstream_if.req_data.byteen = '1;
+    assign downstream_if.req_data.flags = '0;
+    assign downstream_if.req_data.tag.uuid = '0;
+    assign downstream_if.req_data.tag.value
+        = head_valid ? tag_value_r[read_ptr_r] : '0;
+    assign req_priority_o = head_valid
+        ? priority_r[read_ptr_r] : GEMM_SCHED_PRIORITY_BACKGROUND;
+    assign req_urgent_o = head_valid && urgent_r[read_ptr_r];
+    assign req_work_seq_o = head_valid ? work_seq_r[read_ptr_r] : '0;
+
+    // Response tags return unchanged to the local DMA slot allocated on
+    // enqueue.  No request state is allocated on downstream dequeue.
+    assign upstream_if.rsp_valid = downstream_if.rsp_valid;
+    assign upstream_if.rsp_data = downstream_if.rsp_data;
+    assign downstream_if.rsp_ready = upstream_if.rsp_ready;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            read_ptr_r <= 1'b0;
+            write_ptr_r <= 1'b0;
+            occupancy_r <= '0;
+        end else begin
+            if (enqueue) begin
+                addr_r[write_ptr_r] <= upstream_if.req_data.addr;
+                tag_value_r[write_ptr_r] <= upstream_if.req_data.tag.value;
+                priority_r[write_ptr_r] <= req_priority_i;
+                urgent_r[write_ptr_r] <= req_urgent_i;
+                work_seq_r[write_ptr_r] <= req_work_seq_i;
+                write_ptr_r <= ~write_ptr_r;
+            end
+            if (dequeue)
+                read_ptr_r <= ~read_ptr_r;
+
+            unique case ({enqueue, dequeue})
+                2'b10: occupancy_r <= occupancy_r + 2'd1;
+                2'b01: occupancy_r <= occupancy_r - 2'd1;
+                default:;
+            endcase
+        end
+    end
+
+`ifndef SYNTHESIS
+    logic stalled_head_r;
+    logic [ADDR_WIDTH-1:0] stalled_addr_r;
+    logic [TAG_VALUE_WIDTH-1:0] stalled_tag_value_r;
+    logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] stalled_priority_r;
+    logic stalled_urgent_r;
+    logic [31:0] stalled_work_seq_r;
+    logic [31:0] enqueue_count_r;
+    logic [31:0] dequeue_count_r;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            stalled_head_r <= 1'b0;
+            enqueue_count_r <= '0;
+            dequeue_count_r <= '0;
+        end else begin
+            assert (occupancy_r <= 2'd2)
+                else $fatal(1, "%s: read reservation occupancy overflow",
+                            INSTANCE_ID);
+            assert ((enqueue_count_r - dequeue_count_r) == occupancy_r)
+                else $fatal(1, "%s: read reservation accounting mismatch",
+                            INSTANCE_ID);
+            if (enqueue) begin
+                assert (!upstream_if.req_data.rw
+                     && (upstream_if.req_data.data == '0)
+                     && (&upstream_if.req_data.byteen)
+                     && (upstream_if.req_data.flags == '0)
+                     && (upstream_if.req_data.tag.uuid == '0))
+                    else $fatal(1,
+                        "%s: non-constant read payload entered reservation",
+                        INSTANCE_ID);
+                enqueue_count_r <= enqueue_count_r + 32'd1;
+            end
+            if (dequeue)
+                dequeue_count_r <= dequeue_count_r + 32'd1;
+            if (stalled_head_r) begin
+                assert (downstream_if.req_valid
+                     && (downstream_if.req_data.addr == stalled_addr_r)
+                     && (downstream_if.req_data.tag.value
+                         == stalled_tag_value_r)
+                     && (req_priority_o == stalled_priority_r)
+                     && (req_urgent_o == stalled_urgent_r)
+                     && (req_work_seq_o == stalled_work_seq_r))
+                    else $fatal(1,
+                        "%s: read reservation head changed under backpressure",
+                        INSTANCE_ID);
+            end
+            stalled_head_r <= downstream_if.req_valid
+                           && !downstream_if.req_ready;
+            if (downstream_if.req_valid && !downstream_if.req_ready) begin
+                stalled_addr_r <= downstream_if.req_data.addr;
+                stalled_tag_value_r <= downstream_if.req_data.tag.value;
+                stalled_priority_r <= req_priority_o;
+                stalled_urgent_r <= req_urgent_o;
+                stalled_work_seq_r <= req_work_seq_o;
+            end
         end
     end
 `endif
