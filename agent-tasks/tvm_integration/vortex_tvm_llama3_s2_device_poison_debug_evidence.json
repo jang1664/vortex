@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "status": "stability_accepted_historical_root_cause_not_reproduced",
+  "generated_date": "2026-09-01",
+  "identity": {
+    "vortex_revision": "88c971648c76afa72a55064335abe29e30268045",
+    "tvm_revision": "e2ca2b0bebe9a7fc0fa234d13451afafc0a11d20",
+    "profile_fingerprint": "62540fb747aa762d5cfab874e36d1daac7119d8cff3e32d659a104b460383256",
+    "xclbin_sha256": "f661b63a88db967072c1cfdf63373bfa7ad36e87d7002d6eba28d8fa036da6bf",
+    "package_sha256": "f97068b28a46ca5e34170af61bc9a5b636108cb53dad851e636efc708f7b612c",
+    "reference_sha256": "9b4903e0fbb0fda0e08a04cb9a6a918cab74cd54b08760c92d6ec91a390255f9",
+    "device_index": 1,
+    "bdf": "0000:3d:00.1"
+  },
+  "historical_failure": {
+    "classification": "kernel_wait_timeout_then_process_poison",
+    "runtime_error": "Vortex kernel wait failed with error -1",
+    "timeout_ms": 300000,
+    "observed_prefill_boundaries": [10, 20],
+    "operation_local_numerical_mismatch_before_timeout": false,
+    "causal_owner_proven": false
+  },
+  "acceptance": {
+    "persistent_full_strict": {
+      "chains_passed": 3,
+      "chains_failed": 0,
+      "layers": 384,
+      "internal_kernel_launches": 943680,
+      "duration_seconds": 1264.759323438,
+      "trace_sha256": "a489e88c7ac987325a3537caf6df440212cc00183e3bcd286879129250856a19"
+    },
+    "fresh_full_strict": {
+      "chains_passed": 3,
+      "chains_failed": 0,
+      "layers_per_chain": 128,
+      "internal_kernel_launches_per_chain": 314560,
+      "trace_sha256": [
+        "db4481ce22f137860831f3e7aa0a9348b2109a2f6639bef18f75179ac245b7ce",
+        "fcc7c784ca46049955999c3b3d242dca54d6732feda5b9c169c9fea0112d689f",
+        "7cd17e332cb687090adcd2dda4777c964314cdeb697546764b53b4ab95dea77e"
+      ]
+    },
+    "naive_allocator_prefill_stress": {
+      "chains_passed": 3,
+      "chains_failed": 0,
+      "layers": 96,
+      "internal_kernel_launches": 243264,
+      "trace_sha256": "ea91c03f2aa1f34d3a1dd8bf397062422496d1846e2ff38744c6633564ed462c"
+    },
+    "s2_free_running": {
+      "passed": true,
+      "generated_token_ids": [89754, 29229, 89754],
+      "cache_lengths": [7, 8, 9, 10],
+      "retries": 0,
+      "trace_sha256": "258ce0599ef0533e130f95cc2e09d264c3427ccdd9a7b537b5c8dd098308a181"
+    },
+    "s1_free_running": {
+      "passed": true,
+      "generated_token_ids": [89754, 29229, 89754],
+      "cache_lengths": [1, 2, 3, 4],
+      "retries": 0,
+      "trace_sha256": "d074b16cf97be0aaee9ae1d87ca051bb7e1e82c864dce61bc1bc5edf911bbbac"
+    },
+    "s4_decode3_canonical": {
+      "passed": true,
+      "layers": 32,
+      "internal_kernel_launches": 143296,
+      "trace_sha256": "39ece18cba650c2709282402f5d6e53a857e02284150fc1f46daf36f1859ad57"
+    }
+  },
+  "source_changes": {
+    "diagnostic_runner": "apps/vortex_llama3/debug_canonical_layer_range.py",
+    "production_runtime_fix": false,
+    "rtl_change": false,
+    "fsm_change": false,
+    "xclbin_change": false,
+    "retry_or_sleep_workaround": false
+  }
+}
