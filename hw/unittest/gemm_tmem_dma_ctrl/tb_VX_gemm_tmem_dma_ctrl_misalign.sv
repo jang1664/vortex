@@ -157,12 +157,12 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       gemm_dma_ctrl_if.prepare_valid = 1'b0;
 
       wait_cycles = 0;
-      while ((dut.state_q != 3'd4) && (wait_cycles < 40)) begin
+      while ((dut.state_q != 3'd5) && (wait_cycles < 40)) begin
         @(posedge clk);
         wait_cycles++;
       end
       #1;
-      if (dut.state_q != 3'd4 || !dut.work_data_prefetched_q
+      if (dut.state_q != 3'd5 || !dut.work_data_prefetched_q
        || dut.work_data_released_q)
         $fatal(1, "TMEM_DATA_PREPARE rd=%0d did not reach held WAIT_DONE", rd);
       expect_cfg_count(8, "data_prepare_cfg");
@@ -523,6 +523,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
   task automatic run_phase6_chain_case;
     gemm_unified_cmd_t current_cmd;
     gemm_unified_cmd_t next_cmd;
+    gemm_unified_cmd_t third_cmd;
     int first_issue;
     int final_ch;
     int wait_cycles;
@@ -534,6 +535,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       next_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
                               64'h0000_0000_0000_0200,
                               64'h0000_0000_0061_0000, 4'd0);
+      third_cmd = make_dma_cmd(OP_DMA_ST, 28'd512,
+                               64'h0000_0000_0062_0000,
+                               64'h0000_0000_0000_0400, 4'd4);
       send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h30));
       wait_descriptor(first_issue + 1, "phase6_chain_current");
       send_tagged_cmd(next_cmd, GEMM_DMA_TAG_WIDTH'(6'h31));
@@ -563,12 +567,21 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
                          && (ch != final_ch);
       @(posedge clk);
 
-      @(negedge clk);
+      // Accept C while A is still waiting for its final channel.  The command
+      // becomes pending on the acceptance edge; drive A's final completion in
+      // the following half-cycle so completion/activation and the independent
+      // pending-to-ID1 capture transact on exactly the same edge.
+      send_tagged_cmd(third_cmd, GEMM_DMA_TAG_WIDTH'(6'h32));
       clear_done_inputs();
       done_valid_s[final_ch] = 1'b1;
       #1;
       if (!dut.chain_candidate_select || dut.chain_candidate_id != 1'b0)
         $fatal(1, "[phase6_chain] prepared ID0 did not chain");
+      if (!dut.completion_event || !dut.chain_candidate_fire
+       || !dut.candidate_capture || !dut.candidate_capture_from_pending
+       || dut.candidate_capture_id != 1'b1
+       || !dut.background_pending_dequeue)
+        $fatal(1, "[phase6_chain] completion/chain/capture were not independent same-edge transactions");
       if (!gemm_dma_ctrl_if.done || !lookahead_activate_seen_s[final_ch])
         $fatal(1, "[phase6_chain] completion and ACTIVATE were not paired");
       @(posedge clk);
@@ -576,13 +589,80 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       clear_done_inputs();
       if (descriptor_issue_count != first_issue + 2)
         $fatal(1, "[phase6_chain] chained descriptor was not accepted");
+      if (!dut.candidate_valid_q[1]
+       || dut.candidate_owner_q[1].tag != GEMM_DMA_TAG_WIDTH'(6'h32)
+       || dut.candidate_owner_q[1].cmd != third_cmd)
+        $fatal(1, "[phase6_chain] independently captured ID1 owner was lost");
 
+      wait_cycles = 0;
+      while (!shadow_fallback_prepared && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!shadow_fallback_prepared)
+        $fatal(1, "[phase6_chain] third command did not prepare under chained owner");
       complete_descriptor(first_issue + 1, 1'b1, 1'b0,
                           GEMM_DMA_TAG_WIDTH'(6'h31),
                           "phase6_chain_next");
-      wait_idle("phase6_chain_next");
-      $display("TMEM_DMA_PHASE6_CHAIN_PASS completion_to_activate=0 cache=hit id=0 early_channels=%0d last_channel=%0d atomic_cfg=1",
+      wait_descriptor(first_issue + 3, "phase6_chain_third");
+      if (descriptor_regs[first_issue + 2][0][DMA_R_DST_BASE_LO]
+          != third_cmd.rs1_data[31:0])
+        $fatal(1, "[phase6_chain] third descriptor ownership changed");
+      complete_descriptor(first_issue + 2, 1'b1, 1'b1,
+                          GEMM_DMA_TAG_WIDTH'(6'h32),
+                          "phase6_chain_third");
+      wait_idle("phase6_chain_third");
+      $display("TMEM_DMA_PHASE6_CHAIN_PASS completion_to_activate=0 cache=hit id=0 early_channels=%0d last_channel=%0d atomic_cfg=1 independent_id1_capture=1 third_owner=1",
                final_ch, final_ch);
+    end
+  endtask
+
+  task automatic run_completion_capture_miss_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t pending_cmd;
+    int first_issue;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0600,
+                                 64'h0000_0000_0063_0000, 4'd0);
+      pending_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0800,
+                                 64'h0000_0000_0064_0000, 4'd0);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h33));
+      wait_descriptor(first_issue + 1, "completion_capture_miss_current");
+
+      // The pending command is accepted one edge before completion and is not
+      // yet resident in either candidate slot.  Completion must retire the
+      // current descriptor while the independent capture transaction moves
+      // the pending owner into ID0 for the subsequent slow path.
+      send_tagged_cmd(pending_cmd, GEMM_DMA_TAG_WIDTH'(6'h34));
+      clear_done_inputs();
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (!dut.completion_event || dut.chain_candidate_fire
+       || !dut.candidate_capture || !dut.candidate_capture_from_pending
+       || dut.candidate_capture_id != 1'b0
+       || !dut.background_pending_dequeue)
+        $fatal(1, "[completion_capture_miss] completion/capture arbitration mismatch");
+      @(posedge clk);
+      #1;
+      clear_done_inputs();
+      if (!dut.candidate_valid_q[0]
+       || dut.candidate_owner_q[0].tag != GEMM_DMA_TAG_WIDTH'(6'h34)
+       || dut.candidate_owner_q[0].cmd != pending_cmd)
+        $fatal(1, "[completion_capture_miss] captured owner was discarded");
+
+      wait_descriptor(first_issue + 2, "completion_capture_miss_next");
+      if (descriptor_regs[first_issue + 1][0][DMA_R_SRC_BASE_LO]
+          != pending_cmd.rs2_data[31:0])
+        $fatal(1, "[completion_capture_miss] slow-path descriptor ownership changed");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h34),
+                          "completion_capture_miss_next");
+      wait_idle("completion_capture_miss_next");
+      $display("TMEM_DMA_COMPLETION_CAPTURE_MISS_PASS completion=1 capture_id0=1 dequeue_committed=1 slow_path=1 owner=1");
     end
   endtask
 
@@ -735,11 +815,11 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       cfg_ready_drive = '1;
       cfg_ready_drive[NUM_CHANNELS-1] = 1'b0;
       wait_cycles = 0;
-      while ((dut.state_q != 3'd3) && (wait_cycles < 30)) begin
+      while ((dut.state_q != 3'd4) && (wait_cycles < 30)) begin
         @(posedge clk);
         wait_cycles++;
       end
-      if (dut.state_q != 3'd3)
+      if (dut.state_q != 3'd4)
         $fatal(1, "[phase7_skew] high candidate did not reach S_PROG");
       repeat (3) begin
         @(negedge clk);
@@ -1084,7 +1164,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       // Atomic ACTIVATE intentionally keeps every channel valid low until all
       // active channels are ready.  Wait for the held descriptor to reach the
       // program state rather than waiting for a forbidden partial valid.
-      while (dut.state_q != 3'd3) @(posedge clk);
+      while (dut.state_q != 3'd4) @(posedge clk);
       held_regs = cfg_reg_if[0].regs;
       repeat (3) begin
         @(posedge clk);
@@ -1463,7 +1543,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       gemm_dma_ctrl_if.cmd = c;
       $display("EXPECT_TMEM_NOTIFY_FATAL_ARMED opcode=3");
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       $fatal(1, "EXPECT_NOTIFY_FATAL intended assertion did not fire");
     end
 
@@ -1493,7 +1573,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "ld_single_word");
       expect_channel_active(0, 1'b1, "ld_single_word");
       expect_cfg_reg(0, DMA_R_SRC_BASE_LO, 32'h0001_0000, "ld_single_word");
@@ -1520,7 +1600,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(8, "ld_full_8ch");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         expect_channel_active(ch, 1'b1, "ld_full_8ch");
@@ -1545,7 +1625,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(8, "st_full_8ch");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         expect_channel_active(ch, 1'b1, "st_full_8ch");
@@ -1586,7 +1666,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "tmem_misaligned_ld_cfg");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch)
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_ld_cfg");
@@ -1622,7 +1702,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (4) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "tmem_misaligned_st_cfg");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch)
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_st_cfg");
@@ -1637,6 +1717,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
 
     if (TB_PENDING_DEPTH == 4) begin
       run_phase6_chain_case();
+      run_completion_capture_miss_case();
       run_phase6_unprepared_high_case();
       run_phase7_channel_skew_case();
       run_chunk_case(4, 4'd3, 3'd0);
