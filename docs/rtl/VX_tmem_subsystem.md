@@ -18,6 +18,7 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 | `GEMM_DATA_SIZE` | 64 | GEMM 유닛 포트 폭 |
 | `TAG_WIDTH` | 8 | 태그 비트폭 |
 | `AXI_ADDR_WIDTH` | `PLATFORM_MEMORY_ADDR_WIDTH` | AXI 주소 폭 |
+| `LDMA_CMD_FIFO_DEPTH` | `LMEM_DMA_CMD_FIFO_DEPTH` (4) | Input/Weight/Scale/Zero-point command FIFO depth |
 | `W_CMD_BEATS` | `MXU_ROW / MXU_WLOAD_NUM` | Beats in one Weight command |
 | `W_RD_OUTSTANDING` | `2 * W_CMD_BEATS` | Shared Weight response slots / wide-read contexts |
 | `TMEM_ARB_URGENCY_ENABLE` | 0 | Input/Weight ready-ahead priority enable; zero preserves legacy RR |
@@ -82,14 +83,21 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 
 따라서 WLOAD8에서 `{1,2}`와 같은 비정렬 bank pair는 생성되지 않는다.
 Weight command length and response capacity are separate elaboration-time
-contracts. The command always spans one MXU K dimension, while the response
-pool holds two complete commands.
+contracts. The command always spans one MXU K dimension. The response-pool
+default holds two complete commands, but `W_LMEM_DMA_RESPONSE_SLOTS` can
+select a smaller positive power-of-two capacity for focused experiments.
 
 ```text
 MXU_WLOAD_NUM * W_CMD_BEATS = MXU_ROW
-W_RD_OUTSTANDING = 2 * W_CMD_BEATS
+default W_RD_OUTSTANDING = 2 * W_CMD_BEATS
 NUM_BANKS % BANKS_PER_BEAT = 0
 ```
+
+The Input, Weight, Scale, and Zero-point common stream queues share
+`LDMA_CMD_FIFO_DEPTH`. The `LMEM_DMA_CMD_FIFO_DEPTH` compile-time macro keeps
+the default at four and permits a depth-two implementation for resource and
+performance comparisons. Output LDMA storage is not controlled by this
+parameter.
 
 각 request의 local-DMA slot ID(`tag.value` 하위 비트)가 switch context ID로
 사용된다. Context는 원본 tag, 주소, byte enable, flags, target/issued/response

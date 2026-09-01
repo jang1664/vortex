@@ -299,8 +299,9 @@ module VX_gemm_stream_dma_queue #(
     assign install_ready_ahead_o = install_ready_ahead;
 
     initial begin
-        if ((CMD_FIFO_DEPTH != 1) && (CMD_FIFO_DEPTH != 4))
-            $fatal(1, "%s: stream DMA command depth must be 1 or 4",
+        if ((CMD_FIFO_DEPTH != 1) && (CMD_FIFO_DEPTH != 2)
+         && (CMD_FIFO_DEPTH != 4))
+            $fatal(1, "%s: stream DMA command depth must be 1, 2, or 4",
                    INSTANCE_ID);
         if ((RESPONSE_SLOTS < 1)
          || ((RESPONSE_SLOTS & (RESPONSE_SLOTS - 1)) != 0))

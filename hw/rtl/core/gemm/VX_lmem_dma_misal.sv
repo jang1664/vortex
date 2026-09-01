@@ -827,8 +827,12 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: Input overlap DMA requires NDIM=3", INSTANCE_ID);
-    if ((CMD_FIFO_DEPTH != 4) || (RESPONSE_SLOTS != 8))
-      $fatal(1, "%s: common Input queue requires depth4/slots8", INSTANCE_ID);
+    if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
+      $fatal(1, "%s: common Input queue depth must be 2 or 4", INSTANCE_ID);
+    if ((RESPONSE_SLOTS < 1)
+     || ((RESPONSE_SLOTS & (RESPONSE_SLOTS - 1)) != 0))
+      $fatal(1, "%s: common Input queue slots must be a positive power of two",
+             INSTANCE_ID);
     if (ENABLE_WRITER_FENCE || !ENABLE_SAME_CYCLE_CMD_RECYCLE)
       $fatal(1, "%s: common Input adapter cannot be used as qparam legacy path",
              INSTANCE_ID);
@@ -1356,8 +1360,12 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: qparam queue requires NDIM=3", INSTANCE_ID);
-    if ((CMD_FIFO_DEPTH != 4) || (RESPONSE_SLOTS != 8))
-      $fatal(1, "%s: qparam queue requires depth4/slots8", INSTANCE_ID);
+    if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
+      $fatal(1, "%s: qparam queue depth must be 2 or 4", INSTANCE_ID);
+    if ((RESPONSE_SLOTS < 1)
+     || ((RESPONSE_SLOTS & (RESPONSE_SLOTS - 1)) != 0))
+      $fatal(1, "%s: qparam queue slots must be a positive power of two",
+             INSTANCE_ID);
     if (BUS_BYTES != gemm_bus_if.DATA_SIZE)
       $fatal(1, "%s: qparam source/destination widths differ", INSTANCE_ID);
     if ((LMEM_ADDR_WIDTH_P != lmem_bus_if.ADDR_WIDTH)
@@ -1947,14 +1955,14 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: Weight queue requires NDIM=3", INSTANCE_ID);
-    if (CMD_FIFO_DEPTH != 4)
-      $fatal(1, "%s: Weight queue requires depth4", INSTANCE_ID);
+    if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
+      $fatal(1, "%s: Weight queue depth must be 2 or 4", INSTANCE_ID);
     if ((CMD_BEATS < 1) || ((CMD_BEATS & (CMD_BEATS - 1)) != 0))
       $fatal(1, "%s: Weight command beats must be a positive power of two",
              INSTANCE_ID);
-    if ((RESPONSE_SLOTS != (2 * CMD_BEATS))
+    if ((RESPONSE_SLOTS < 1)
      || ((RESPONSE_SLOTS & (RESPONSE_SLOTS - 1)) != 0))
-      $fatal(1, "%s: Weight queue slots must equal 2*command beats",
+      $fatal(1, "%s: Weight queue slots must be a positive power of two",
              INSTANCE_ID);
     if ((BUS_BYTES != gemm_bus_if.DATA_SIZE)
      || (BUS_BYTES != `GEMM_WEIGHT_DATA_SIZE))

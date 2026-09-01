@@ -40,6 +40,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int LDMA_CMD_FIFO_DEPTH = `LMEM_DMA_CMD_FIFO_DEPTH,
     parameter int I_RD_OUTSTANDING = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int W_CMD_BEATS = `W_LMEM_DMA_CMD_BEATS,
     parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RESPONSE_SLOTS,
@@ -150,10 +151,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
          || ((NUM_BANKS % WEIGHT_BANKS_PER_BEAT) != 0))
             $fatal(1, "%s: invalid Weight bank grouping NUM_BANKS(%0d), WEIGHT_BANKS_PER_BEAT(%0d)",
                    INSTANCE_ID, NUM_BANKS, WEIGHT_BANKS_PER_BEAT);
-        if ((W_RD_OUTSTANDING != (2 * W_CMD_BEATS))
+        if ((LDMA_CMD_FIFO_DEPTH != 2) && (LDMA_CMD_FIFO_DEPTH != 4))
+            $fatal(1, "%s: LDMA command FIFO depth(%0d) must be 2 or 4",
+                   INSTANCE_ID, LDMA_CMD_FIFO_DEPTH);
+        if ((W_RD_OUTSTANDING < 1)
          || ((W_RD_OUTSTANDING & (W_RD_OUTSTANDING - 1)) != 0))
-            $fatal(1, "%s: Weight shared response slots(%0d) must equal two commands x %0d beats",
-                   INSTANCE_ID, W_RD_OUTSTANDING, W_CMD_BEATS);
+            $fatal(1, "%s: Weight shared response slots(%0d) must be a positive power of two",
+                   INSTANCE_ID, W_RD_OUTSTANDING);
         if ((INPUT_READY_AHEAD_LOW_WATERMARK < 1)
          || (INPUT_READY_AHEAD_LOW_WATERMARK > I_RD_OUTSTANDING))
             $fatal(1, "%s: invalid Input ready-ahead watermark %0d",
@@ -705,6 +709,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     dma_perf_t ldma_perf [5];
 `endif
 
+    wire [$clog2(I_RD_OUTSTANDING + 1)-1:0]
+        input_slot_occupancy;
+    assign sched_input_slot_occupancy_o
+        = $bits(sched_input_slot_occupancy_o)'(input_slot_occupancy);
+
     // Input local DMA
     VX_lmem_dma_input_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
@@ -713,7 +722,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .CMD_FIFO_DEPTH(4),
+        .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(I_RD_OUTSTANDING),
         .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
         .ENABLE_SCHED_SOURCE_GATE(1'b1),
@@ -739,7 +748,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .sched_source_request_beats_o(sched_source_request_beats_o[0]),
         .sched_source_response_beats_o(sched_source_response_beats_o[0]),
         .sched_source_writer_beats_o(sched_source_writer_beats_o[0]),
-        .sched_slot_occupancy_o(sched_input_slot_occupancy_o),
+        .sched_slot_occupancy_o(input_slot_occupancy),
         .sched_fetch_complete_o(sched_fetch_complete_o[0]),
         .sched_fetch_complete_work_seq_o(
             sched_fetch_complete_work_seq_o[0])
@@ -756,7 +765,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .CMD_FIFO_DEPTH(4),
+        .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .CMD_BEATS   (W_CMD_BEATS),
         .RESPONSE_SLOTS(W_RD_OUTSTANDING),
         .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
@@ -796,7 +805,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sc"}),
         .TAG_WIDTH   (TAG_WIDTH),
-        .CMD_FIFO_DEPTH(4),
+        .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
         .WRITER_RID0 (GEMM_RID_SC_CONSUME0),
         .WRITER_RID1 (GEMM_RID_SC_CONSUME1),
@@ -835,7 +844,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_zp"}),
         .TAG_WIDTH   (TAG_WIDTH),
-        .CMD_FIFO_DEPTH(4),
+        .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
         .WRITER_RID0 (GEMM_RID_ZP_CONSUME0),
         .WRITER_RID1 (GEMM_RID_ZP_CONSUME1),

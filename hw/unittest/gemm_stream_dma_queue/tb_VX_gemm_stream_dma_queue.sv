@@ -326,11 +326,15 @@ endmodule
 
 module tb_VX_gemm_stream_dma_queue;
     logic done_depth1;
+    logic done_depth2;
     logic done_depth4;
     logic done_input_mode;
 
     tb_stream_dma_queue_case #(.DEPTH(1)) depth1 (
         .done(done_depth1)
+    );
+    tb_stream_dma_queue_case #(.DEPTH(2)) depth2 (
+        .done(done_depth2)
     );
     tb_stream_dma_queue_case #(.DEPTH(4)) depth4 (
         .done(done_depth4)
@@ -345,8 +349,8 @@ module tb_VX_gemm_stream_dma_queue;
     );
 
     initial begin
-        wait (done_depth1 && done_depth4 && done_input_mode);
-        $display("TEST PASSED: GEMM stream DMA queue depth1/depth4/Input-mode contracts");
+        wait (done_depth1 && done_depth2 && done_depth4 && done_input_mode);
+        $display("TEST PASSED: GEMM stream DMA queue depth1/depth2/depth4/Input-mode contracts");
         $finish;
     end
 
