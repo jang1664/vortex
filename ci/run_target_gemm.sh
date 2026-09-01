@@ -45,6 +45,7 @@ Options:
   --wtrans 0|1             weight transpose flag (default: 0)
   --qdir 0|1               quantization direction (default: 1)
   --wload 4|8|16|32        GEMM weight columns per load (default: 8)
+  --config FILE             source config file (repo-relative or absolute)
   --perf CLASS             profiling class (default: 3)
   --no-perf                disable profiling
   --timeout SEC            wall-clock timeout (default: 1800)
@@ -60,6 +61,7 @@ Options:
 Examples:
   ci/run_target_gemm.sh
   ci/run_target_gemm.sh --wload 16
+  ci/run_target_gemm.sh --config configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
   ci/run_target_gemm.sh trace --k 512
   ci/run_target_gemm.sh fsdb-gemm --timeout 3600 --rebuild
 EOF
@@ -130,6 +132,8 @@ while [[ $# -gt 0 ]]; do
       require_value "$@"; QDIR="$2"; shift 2 ;;
     --wload)
       require_value "$@"; WLOAD="$2"; shift 2 ;;
+    --config)
+      require_value "$@"; CONFIG_FILE="$2"; shift 2 ;;
     --perf)
       require_value "$@"; PERF_CLASS="$2"; shift 2 ;;
     --no-perf)
@@ -172,6 +176,10 @@ is_positive_integer "${QBLK}" || die "--qblk must be a positive integer"
   die "--wload must be one of 4, 8, 16, or 32"
 [[ -z "${PERF_CLASS}" ]] || is_positive_integer "${PERF_CLASS}" || die "--perf must be a positive integer"
 is_positive_integer "${TIMEOUT_SEC}" || die "--timeout must be a positive integer"
+if [[ "${CONFIG_FILE}" != /* ]]; then
+  CONFIG_FILE="${REPO_ROOT}/${CONFIG_FILE}"
+fi
+CONFIG_FILE="$(realpath -m -- "${CONFIG_FILE}")"
 [[ -f "${CONFIG_FILE}" ]] || die "config not found: ${CONFIG_FILE}"
 if [[ "${EXTRA_APP_ARGS}" =~ (^|[[:space:]])-m ]]; then
   die "--extra-app-args cannot override --m (M=${M})"
