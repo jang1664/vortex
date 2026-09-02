@@ -29,6 +29,8 @@ PROJECTION_DIMS = {
     "up_proj": ("hidden_size", "intermediate_size"),
     "down_proj": ("intermediate_size", "hidden_size"),
 }
+LINEAR_COMPUTE_MODES = ("w4", "fp16")
+ATTENTION_COMPUTE_MODES = ("w4", "fp16")
 
 _LAYER_CHECKPOINT_PREFIX = (
     "q_projection",
@@ -123,6 +125,33 @@ def parameter_shapes(
     return shapes
 
 
+def fp16_parameter_shapes(
+    config: Llama3ExportConfig,
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    """Projection inputs after target-selected W4-to-FP16 materialization."""
+
+    shapes: dict[str, tuple[tuple[int, ...], torch.dtype]] = {
+        "input_norm.weight": ((config.hidden_size,), torch.float16),
+        "post_attention_norm.weight": ((config.hidden_size,), torch.float16),
+    }
+    for name, (input_field, output_field) in PROJECTION_DIMS.items():
+        shapes[f"{name}.weight"] = (
+            (getattr(config, input_field), getattr(config, output_field)),
+            torch.float16,
+        )
+    return shapes
+
+
+def parameter_shapes_for_compute(
+    config: Llama3ExportConfig, linear_compute: str
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    if linear_compute == "w4":
+        return parameter_shapes(config)
+    if linear_compute == "fp16":
+        return fp16_parameter_shapes(config)
+    raise ValueError(f"unsupported Llama3 linear compute mode: {linear_compute!r}")
+
+
 def make_meta_parameters(config: Llama3ExportConfig) -> dict[str, torch.Tensor]:
     return {
         name: torch.empty(shape, dtype=dtype, device="meta")
@@ -139,6 +168,20 @@ def stack_parameter_shapes(
         f"layers.{layer_index}.{name}": specification
         for layer_index in range(num_layers)
         for name, specification in parameter_shapes(config).items()
+    }
+
+
+def stack_parameter_shapes_for_compute(
+    config: Llama3ExportConfig, num_layers: int, linear_compute: str
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    if num_layers <= 0:
+        raise ValueError("number of decoder layers must be positive")
+    return {
+        f"layers.{layer_index}.{name}": specification
+        for layer_index in range(num_layers)
+        for name, specification in parameter_shapes_for_compute(
+            config, linear_compute
+        ).items()
     }
 
 
@@ -226,6 +269,22 @@ def final_head_parameter_shapes(
     }
 
 
+def final_head_parameter_shapes_for_compute(
+    config: Llama3ExportConfig, linear_compute: str
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+    if linear_compute == "w4":
+        return final_head_parameter_shapes(config)
+    if linear_compute != "fp16":
+        raise ValueError(f"unsupported Llama3 linear compute mode: {linear_compute!r}")
+    return {
+        "final_norm.weight": ((config.hidden_size,), torch.float16),
+        "lm_head.weight": (
+            (config.hidden_size, config.vocabulary_size),
+            torch.float16,
+        ),
+    }
+
+
 def make_meta_full_model_parameters(
     config: Llama3ExportConfig, num_layers: int
 ) -> dict[str, torch.Tensor]:
@@ -238,18 +297,29 @@ def make_meta_full_model_parameters(
 
 
 def _layer_parameters(
-    parameters: Mapping[str, torch.Tensor], layer_index: int
+    parameters: Mapping[str, torch.Tensor], layer_index: int, linear_compute: str = "w4"
 ) -> dict[str, torch.Tensor]:
     prefix = f"layers.{layer_index}."
-    return {
-        tensor_name: parameters[f"{prefix}{tensor_name}"]
-        for projection_name in PROJECTION_DIMS
-        for tensor_name in (
-            f"{projection_name}.qweight",
-            f"{projection_name}.scales",
-            f"{projection_name}.zeros",
-        )
-    } | {
+    if linear_compute == "w4":
+        projection_parameters = {
+            tensor_name: parameters[f"{prefix}{tensor_name}"]
+            for projection_name in PROJECTION_DIMS
+            for tensor_name in (
+                f"{projection_name}.qweight",
+                f"{projection_name}.scales",
+                f"{projection_name}.zeros",
+            )
+        }
+    elif linear_compute == "fp16":
+        projection_parameters = {
+            f"{projection_name}.weight": parameters[
+                f"{prefix}{projection_name}.weight"
+            ]
+            for projection_name in PROJECTION_DIMS
+        }
+    else:
+        raise ValueError(f"unsupported Llama3 linear compute mode: {linear_compute!r}")
+    return projection_parameters | {
         "input_norm.weight": parameters[f"{prefix}input_norm.weight"],
         "post_attention_norm.weight": parameters[f"{prefix}post_attention_norm.weight"],
     }
@@ -275,11 +345,25 @@ def _hadamard(hidden: torch.Tensor, base: torch.Tensor, base_size: int) -> torch
 
 class _Llama3LayerBase(torch.nn.Module):
     def __init__(
-        self, config: Llama3ExportConfig, prepacked_weights: bool = False
+        self,
+        config: Llama3ExportConfig,
+        prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
         super().__init__()
+        if linear_compute not in LINEAR_COMPUTE_MODES:
+            raise ValueError(f"unsupported Llama3 linear compute mode: {linear_compute!r}")
+        if attention_compute not in ATTENTION_COMPUTE_MODES:
+            raise ValueError(
+                f"unsupported Llama3 attention compute mode: {attention_compute!r}"
+            )
+        if prepacked_weights and linear_compute != "w4":
+            raise ValueError("prepacked weights require W4 linear compute")
         self.config = config
         self.prepacked_weights = prepacked_weights
+        self.linear_compute = linear_compute
+        self.attention_compute = attention_compute
         inv_freq = 1.0 / (
             config.rope_theta
             ** (
@@ -303,10 +387,15 @@ class _Llama3LayerBase(torch.nn.Module):
         hidden: torch.Tensor,
         parameters: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
-        packed = parameters[f"{name}.qweight"]
         input_size = hidden.shape[-1]
         output_size = getattr(self.config, PROJECTION_DIMS[name][1])
         flattened = hidden.reshape(-1, input_size)
+        if self.linear_compute == "fp16":
+            output = torch.ops.vortex.fp16_matmul(
+                flattened, parameters[f"{name}.weight"], f"linear.{name}"
+            )
+            return output.reshape(*hidden.shape[:-1], output_size)
+        packed = parameters[f"{name}.qweight"]
         mm_op = (
             torch.ops.vortex.mm_w4a16_prepacked
             if self.prepacked_weights
@@ -411,18 +500,33 @@ class _Llama3LayerBase(torch.nn.Module):
             config.cache_capacity,
             config.head_dim,
         ]
-        scores = torch.ops.vortex.mm_w4a16(
-            query_grouped,
-            key_payload,
-            key_scale,
-            key_zero,
-            key_shape,
-            config.kv_group_size,
-            4,
-            4,
-            "signed_asymmetric_int4",
-            True,
-        )
+        if self.attention_compute == "fp16":
+            key = torch.ops.vortex.dequantize_int4(
+                key_payload,
+                key_scale,
+                key_zero,
+                key_shape,
+                4,
+                config.kv_group_size,
+                4,
+                "signed_asymmetric_int4",
+            )
+            scores = torch.ops.vortex.fp16_matmul(
+                query_grouped, key.transpose(-2, -1), "attention.qk"
+            )
+        else:
+            scores = torch.ops.vortex.mm_w4a16(
+                query_grouped,
+                key_payload,
+                key_scale,
+                key_zero,
+                key_shape,
+                config.kv_group_size,
+                4,
+                4,
+                "signed_asymmetric_int4",
+                True,
+            )
         masked_scores, probabilities = torch.ops.vortex.causal_softmax(
             scores,
             position_ids,
@@ -440,18 +544,33 @@ class _Llama3LayerBase(torch.nn.Module):
             config.cache_capacity,
             config.head_dim,
         ]
-        context = torch.ops.vortex.mm_w4a16(
-            probabilities,
-            value_payload,
-            value_scale,
-            value_zero,
-            value_shape,
-            config.kv_group_size,
-            4,
-            4,
-            "signed_asymmetric_int4",
-            False,
-        )
+        if self.attention_compute == "fp16":
+            value = torch.ops.vortex.dequantize_int4(
+                value_payload,
+                value_scale,
+                value_zero,
+                value_shape,
+                4,
+                config.kv_group_size,
+                4,
+                "signed_asymmetric_int4",
+            )
+            context = torch.ops.vortex.fp16_matmul(
+                probabilities, value, "attention.pv"
+            )
+        else:
+            context = torch.ops.vortex.mm_w4a16(
+                probabilities,
+                value_payload,
+                value_scale,
+                value_zero,
+                value_shape,
+                config.kv_group_size,
+                4,
+                4,
+                "signed_asymmetric_int4",
+                False,
+            )
         context = context.reshape(
             config.batch_size,
             config.num_attention_heads,
@@ -687,11 +806,20 @@ class Llama3LayerPrefillCheckpoints(Llama3LayerPrefill):
 
 class Llama3LayerDecode(_Llama3LayerBase):
     def __init__(
-        self, config: Llama3ExportConfig, prepacked_weights: bool = False
+        self,
+        config: Llama3ExportConfig,
+        prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
         if config.query_length != 1:
             raise ValueError("decode specialization requires query_length=1")
-        super().__init__(config, prepacked_weights)
+        super().__init__(
+            config,
+            prepacked_weights,
+            linear_compute=linear_compute,
+            attention_compute=attention_compute,
+        )
 
     def forward(
         self,
@@ -812,13 +940,22 @@ class Llama3StackPrefill(torch.nn.Module):
         config: Llama3ExportConfig,
         num_layers: int = 32,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
         super().__init__()
         if num_layers <= 0:
             raise ValueError("number of decoder layers must be positive")
         self.num_layers = num_layers
+        self.linear_compute = linear_compute
         self.layers = torch.nn.ModuleList(
-            Llama3LayerPrefill(config, prepacked_weights) for _ in range(num_layers)
+            Llama3LayerPrefill(
+                config,
+                prepacked_weights,
+                linear_compute=linear_compute,
+                attention_compute=attention_compute,
+            )
+            for _ in range(num_layers)
         )
 
     def forward(
@@ -832,7 +969,7 @@ class Llama3StackPrefill(torch.nn.Module):
             state = layer(
                 hidden,
                 position_ids,
-                _layer_parameters(parameters, layer_index),
+                _layer_parameters(parameters, layer_index, self.linear_compute),
             )
             hidden = state[0]
             layer_states.append(state)
@@ -854,11 +991,19 @@ class Llama3StackPrefillCheckpoints(torch.nn.Module):
         config: Llama3ExportConfig,
         num_layers: int = 1,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
         super().__init__()
         if num_layers != 1:
             raise ValueError("checkpoint stack currently supports exactly one layer")
-        self.layer = Llama3LayerPrefillCheckpoints(config, prepacked_weights)
+        self.linear_compute = linear_compute
+        self.layer = Llama3LayerPrefillCheckpoints(
+            config,
+            prepacked_weights,
+            linear_compute=linear_compute,
+            attention_compute=attention_compute,
+        )
 
     def forward(
         self,
@@ -866,7 +1011,11 @@ class Llama3StackPrefillCheckpoints(torch.nn.Module):
         position_ids: torch.Tensor,
         parameters: Mapping[str, torch.Tensor],
     ) -> tuple[torch.Tensor, ...]:
-        return self.layer(hidden, position_ids, _layer_parameters(parameters, 0))
+        return self.layer(
+            hidden,
+            position_ids,
+            _layer_parameters(parameters, 0, self.linear_compute),
+        )
 
 
 class Llama3StackDecode(torch.nn.Module):
@@ -877,13 +1026,22 @@ class Llama3StackDecode(torch.nn.Module):
         config: Llama3ExportConfig,
         num_layers: int = 32,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
         super().__init__()
         if num_layers <= 0:
             raise ValueError("number of decoder layers must be positive")
         self.num_layers = num_layers
+        self.linear_compute = linear_compute
         self.layers = torch.nn.ModuleList(
-            Llama3LayerDecode(config, prepacked_weights) for _ in range(num_layers)
+            Llama3LayerDecode(
+                config,
+                prepacked_weights,
+                linear_compute=linear_compute,
+                attention_compute=attention_compute,
+            )
+            for _ in range(num_layers)
         )
 
     def forward(
@@ -912,7 +1070,7 @@ class Llama3StackDecode(torch.nn.Module):
             state = layer(
                 hidden,
                 position_ids,
-                _layer_parameters(parameters, layer_index),
+                _layer_parameters(parameters, layer_index, self.linear_compute),
                 *(tensor[layer_index] for tensor in cache_tensors),
                 cache_lengths[layer_index],
             )
@@ -934,11 +1092,13 @@ class _Llama3ModelBase(torch.nn.Module):
         config: Llama3ExportConfig,
         num_layers: int,
         prepacked_weights: bool,
+        linear_compute: str = "w4",
     ) -> None:
         super().__init__()
         self.config = config
         self.num_layers = num_layers
         self.prepacked_weights = prepacked_weights
+        self.linear_compute = linear_compute
 
     def _embed(
         self, token_ids: torch.Tensor, parameters: Mapping[str, torch.Tensor]
@@ -954,6 +1114,14 @@ class _Llama3ModelBase(torch.nn.Module):
             self.config.rms_norm_eps,
         )
         flattened = normalized.reshape(-1, self.config.hidden_size)
+        if self.linear_compute == "fp16":
+            logits = torch.ops.vortex.fp16_matmul(
+                flattened, parameters["lm_head.weight"], "linear.lm_head"
+            )
+            return (
+                logits.reshape(*hidden.shape[:-1], self.config.vocabulary_size),
+                normalized,
+            )
         mm_op = (
             torch.ops.vortex.mm_w4a16_prepacked
             if self.prepacked_weights
@@ -995,8 +1163,14 @@ class Llama3FinalHead(_Llama3ModelBase):
         self,
         config: Llama3ExportConfig,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
     ) -> None:
-        super().__init__(config, num_layers=0, prepacked_weights=prepacked_weights)
+        super().__init__(
+            config,
+            num_layers=0,
+            prepacked_weights=prepacked_weights,
+            linear_compute=linear_compute,
+        )
 
     def forward(
         self, hidden: torch.Tensor, parameters: Mapping[str, torch.Tensor]
@@ -1012,9 +1186,17 @@ class Llama3ModelPrefill(_Llama3ModelBase):
         config: Llama3ExportConfig,
         num_layers: int = 32,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
-        super().__init__(config, num_layers, prepacked_weights)
-        self.decoder = Llama3StackPrefill(config, num_layers, prepacked_weights)
+        super().__init__(config, num_layers, prepacked_weights, linear_compute)
+        self.decoder = Llama3StackPrefill(
+            config,
+            num_layers,
+            prepacked_weights,
+            linear_compute,
+            attention_compute,
+        )
 
     def forward(
         self,
@@ -1037,9 +1219,17 @@ class Llama3ModelDecode(_Llama3ModelBase):
         config: Llama3ExportConfig,
         num_layers: int = 32,
         prepacked_weights: bool = False,
+        linear_compute: str = "w4",
+        attention_compute: str = "w4",
     ) -> None:
-        super().__init__(config, num_layers, prepacked_weights)
-        self.decoder = Llama3StackDecode(config, num_layers, prepacked_weights)
+        super().__init__(config, num_layers, prepacked_weights, linear_compute)
+        self.decoder = Llama3StackDecode(
+            config,
+            num_layers,
+            prepacked_weights,
+            linear_compute,
+            attention_compute,
+        )
 
     def forward(
         self,

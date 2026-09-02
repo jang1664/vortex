@@ -13,6 +13,18 @@ import torch
 
 
 _SCHEMES = {"signed_symmetric_int4", "signed_asymmetric_int4"}
+_FP16_MATMUL_ROLES = {
+    "linear.q_proj",
+    "linear.k_proj",
+    "linear.v_proj",
+    "linear.o_proj",
+    "linear.gate_proj",
+    "linear.up_proj",
+    "linear.down_proj",
+    "linear.lm_head",
+    "attention.qk",
+    "attention.pv",
+}
 
 
 def _normalize_axis(axis: int, ndim: int, name: str) -> int:
@@ -239,9 +251,36 @@ def _dequantize_int4_fake(
     pack_axis,
     quant_scheme,
 ):
-    del packed, scale, zero_point, quant_axis, group_size, pack_axis
+    del scale, zero_point, quant_axis, group_size, pack_axis
     _validate_scheme(quant_scheme)
-    return torch.empty(tuple(logical_shape), dtype=torch.float16, device="meta")
+    return packed.new_empty(tuple(logical_shape), dtype=torch.float16)
+
+
+def _validate_fp16_matmul(lhs: torch.Tensor, rhs: torch.Tensor, role: str) -> None:
+    if lhs.dtype != torch.float16 or rhs.dtype != torch.float16:
+        raise TypeError("fp16_matmul operands must both be FP16")
+    if lhs.ndim < 2 or rhs.ndim < 2:
+        raise ValueError("fp16_matmul operands must have rank at least two")
+    if lhs.shape[-1] != rhs.shape[-2]:
+        raise ValueError(
+            f"fp16_matmul K mismatch: lhs={lhs.shape[-1]}, rhs={rhs.shape[-2]}"
+        )
+    if role not in _FP16_MATMUL_ROLES:
+        raise ValueError(f"unsupported fp16_matmul operation role: {role!r}")
+
+
+@torch.library.custom_op("vortex::fp16_matmul", mutates_args=())
+def fp16_matmul(lhs: torch.Tensor, rhs: torch.Tensor, role: str) -> torch.Tensor:
+    """Logical FP16 GEMM with explicit Llama operation provenance."""
+
+    _validate_fp16_matmul(lhs, rhs, role)
+    return torch.matmul(lhs.float(), rhs.float()).to(torch.float16)
+
+
+@fp16_matmul.register_fake
+def _fp16_matmul_fake(lhs, rhs, role):
+    _validate_fp16_matmul(lhs, rhs, role)
+    return torch.matmul(lhs, rhs)
 
 
 def _validate_hadamard_args(
