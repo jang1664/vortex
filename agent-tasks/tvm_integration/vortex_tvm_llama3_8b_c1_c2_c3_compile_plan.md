@@ -3,17 +3,47 @@
 ## 1. Goal
 
 Compile, package, serialize, and reload the existing backend-neutral synthetic Llama3-8B graph for
-the exact C1, C2, and C3 aliases in `ci/fpga_bin_alias_map.yaml`.
+the exact C1, C2, and C3 aliases in `ci/fpga_bin_alias_map.yaml`. Execute this in two stages: accept
+C1/C3 now, and run the exact C2 profile-bound compile/package tests after the intended C2 binary and
+manifest are available.
 
 This milestone is host-compile acceptance. It proves backend selection, physical parameter format,
 generated kernel inventory, package identity, and reloadability for all four small S1-S4 shapes.
 U55C execution for C1/C2/C3 is a later milestone and is not required by this plan.
 
-The S2 device-poison task in
-`agent-tasks/tvm_integration/vortex_tvm_llama3_s2_device_poison_debug_plan.md` is a required
-stability prerequisite before the final cross-backend package sweep begins. Host-only compiler
-unit work may proceed independently, but do not declare this plan accepted until that prerequisite
-passes.
+The S2 device-poison stability prerequisite is complete. The accepted run recorded three strict
+persistent-process passes and three strict fresh-process passes without timeout, retry, or unhealthy
+device probes; see
+`agent-tasks/tvm_integration/vortex_tvm_llama3_s2_device_poison_debug_execution_report.md` and
+`agent-tasks/tvm_integration/vortex_tvm_llama3_s2_device_poison_debug_evidence.json`. The historical
+transient wait-timeout mechanism was not reproduced, so recurrence remains an escalation trigger,
+but it no longer blocks this host-compile plan.
+
+### 1.1 Current baseline (2026-09-02)
+
+- Vortex S2 stability evidence is committed at `3e954ef7`; this plan was introduced at `88ab098b`.
+- TVM canonical replay diagnostics are committed at `101aa65e0`.
+- The C1 and C3 alias directories currently contain both their manifests and xclbins.
+- The C2 alias points to
+  `/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin`, whose image
+  directory is absent on the current host. C2 must not be approximated from a config or another
+  backend profile.
+- The missing C2 artifact is not a blocker for the current C1/C3 milestone. Keep C2 compiler-policy
+  and lowering preparation in scope, but defer its real alias/profile test and the full 12-package
+  closure until the intended binary and manifest are secured. Do not change the alias merely to
+  manufacture passing evidence.
+
+### 1.2 Execution status (2026-09-02)
+
+The current C1/C3 milestone is complete. All eight S1-S4 packages compiled, serialized, and
+reloaded; S1 also passed compiled VM mode for both backends. Exact profile, archive, artifact,
+kernel-inventory, compile-time, and size evidence is recorded in:
+
+- `agent-tasks/tvm_integration/vortex_tvm_llama3_8b_c1_c2_c3_compile_execution_report.md`
+- `agent-tasks/tvm_integration/vortex_tvm_llama3_8b_c1_c2_c3_compile_evidence.json`
+
+C2 remains open only as the explicitly deferred closure in Section 12.2. Its mapped image directory
+is still absent; no substitute binary or config-only profile was used.
 
 ## 2. Source-of-truth aliases
 
@@ -30,6 +60,10 @@ For each alias, load the sibling xclbin manifest through
 `load_vortex_accelerator_profile`. Store the exact resolved alias, xclbin path, manifest hash,
 normalized target attributes, and profile fingerprint in the package. A config-only approximation
 or the C4 fingerprint is not acceptable.
+
+Artifact availability above is a current-host observation, not a change to the backend contract.
+Treat an unavailable mapped artifact as a clear provisioning/alias error rather than synthesizing a
+profile from the shell config.
 
 ## 3. Backend computation contract
 
@@ -65,7 +99,10 @@ The current synthetic runner is C4-specific in several ways:
 6. current FP16 TCU tensorization recognizes only eligible static rank-2 matmul;
 7. S1-S4 have logical M/Q extents 1 or 7 and attention capacity 8 or 16, while the current TCU
    physical contract requires M/N multiples of 16 and K multiples of 32;
-8. C3 requires canonical row-major packed parameters, not C4 tile-major buffers.
+8. C3 requires canonical row-major packed parameters, not C4 tile-major buffers;
+9. the C2 alias's mapped FPGA image directory is absent on the current host, so its exact manifest,
+   normalized capability profile, and fingerprint cannot yet be loaded. This is a deferred C2 test
+   dependency, not a blocker for current C1/C3 acceptance.
 
 Changing only `XRT_XCLBIN_PATH` or `--layout-policy` cannot satisfy this plan.
 
@@ -163,8 +200,10 @@ For every backend/case, compile and package:
 - bytecode VM export/reload;
 - compiled VM export/reload for at least S1, then expand if no backend-specific issue appears.
 
-This produces 12 backend/shape package combinations. Reuse logical parameter content where hashes
-match, but never reuse an incompatible physical materialization.
+The eventual matrix contains 12 backend/shape package combinations. The current acceptance set is
+the eight C1/C3 combinations; the four C2 combinations are added after the actual C2 binary and
+manifest are available. Reuse logical parameter content where hashes match, but never reuse an
+incompatible physical materialization.
 
 ## 7. Milestones
 
@@ -172,12 +211,19 @@ match, but never reuse an incompatible physical materialization.
 
 1. Add a reusable YAML alias resolver with clear errors for missing alias, config, manifest, or
    xclbin.
-2. Load C1/C2/C3 manifests and snapshot normalized capabilities in host tests.
-3. Assert exact policy/capability acceptance and rejection combinations.
-4. Record alias and manifest identity in package metadata.
+2. Confirm C1/C3 against their available manifests and make the currently missing C2 directory a
+   deterministic, actionable resolver failure.
+3. Test the C2 policy/capability rules with an explicitly synthetic unit-test fixture only; do not
+   treat that fixture as alias, manifest, package, or acceptance evidence.
+4. Load the real C2 manifest and snapshot its normalized capabilities only after the intended C2
+   binary and manifest are secured.
+5. Assert exact policy/capability acceptance and rejection combinations.
+6. Record alias and manifest identity in package metadata.
 
-**Exit gate:** C1/C2/C3 resolve to the intended profiles, invalid cross-policy combinations fail
-before compilation, and no ambient config or xclbin path overrides the selected alias silently.
+**Current exit gate:** C1/C3 resolve to the intended profiles, the absent C2 artifact produces the
+expected resolver error, invalid cross-policy combinations fail before compilation, and no ambient
+config or xclbin path overrides the selected alias silently. Repeat the exact-profile checks for C2
+when its real binary becomes available.
 
 ### Milestone B: Logical archive and package generalization
 
@@ -187,8 +233,10 @@ before compilation, and no ambient config or xclbin path overrides the selected 
    packages.
 4. Remove C4-specific naming from common runner paths without changing C4 results.
 
-**Exit gate:** one logical archive can produce verified, profile-bound C1/C2/C3 materializations;
-package reload detects any alias, fingerprint, descriptor, or tensor-hash mismatch.
+**Current exit gate:** one logical archive can produce verified, profile-bound C1/C3
+materializations and a fixture-tested logical C2 materialization; package reload detects any alias,
+fingerprint, descriptor, or tensor-hash mismatch. Profile-bind C2 only in its deferred real-binary
+test.
 
 ### Milestone C: C3 all-naive compile
 
@@ -211,12 +259,14 @@ Start with C3 because the existing logical W4A16 naive lowering is closest to it
 **Exit gate:** four C1 packages compile/reload, all required GEMMs use FP16 TCU jobs, and no
 naive/IMPROVE W4A16 or unresolved logical GEMM remains.
 
-### Milestone E: C2 mixed compile
+### Milestone E: C2 mixed compile (deferred until the real binary is available)
 
-1. Route nine linear projections/head operations to naive W4A16 as specified.
-2. Route QK/PV roles to padded FP16 TCU jobs after K/V dequantization.
-3. Prove routing by operation role and generated symbol inventory.
-4. Package/reload S1, then S2-S4.
+1. Resolve the intended C2 alias against the secured binary and manifest; record their exact profile
+   fingerprint and reject stale or substituted artifacts.
+2. Route nine linear projections/head operations to naive W4A16 as specified.
+3. Route QK/PV roles to padded FP16 TCU jobs after K/V dequantization.
+4. Prove routing by operation role and generated symbol inventory.
+5. Package/reload S1, then S2-S4.
 
 **Exit gate:** four C2 packages compile/reload with naive FPINT linear kernels and FP16 TCU
 attention kernels only in their intended roles.
@@ -225,12 +275,14 @@ attention kernels only in their intended roles.
 
 1. Rerun C4 `alone`/`fused` compiler tests to prevent archive/policy generalization regressions.
 2. Run profile, target, archive, importer, lowering, serialization, and application tests.
-3. Save package manifests and compact kernel-inventory summaries for all 12 combinations.
+3. Save package manifests and compact kernel-inventory summaries for the eight current C1/C3
+   combinations; expand this to all 12 after deferred Milestone E.
 4. Write an execution report with compile time, artifact size, physical parameter bytes, and
    backend-symbol counts.
 
-**Exit gate:** C1/C2/C3 compile matrix and C4 regression tests pass, and the result is reproducible
-without FPGA access.
+**Current exit gate:** the C1/C3 compile matrix and C4 regression tests pass, and the result is
+reproducible without FPGA access. Add C2 to the matrix and publish the full cross-backend report
+after its real binary/profile is available.
 
 ## 8. Required compiler assertions
 
@@ -284,31 +336,46 @@ Do not begin hardware or RTL debugging for a host compile failure.
 - row-major naive W4A16 packaging for C2/C3;
 - generalized Llama package/runner metadata and loader;
 - host compiler and serialization tests;
-- 12 package manifests plus compact kernel inventories;
-- C1/C2/C3 compile execution report;
+- eight current C1/C3 package manifests plus compact kernel inventories;
+- a C1/C3 compile execution report that clearly marks C2 as awaiting its real binary;
+- four C2 package manifests and the completed 12-package report after deferred Milestone E;
 - unchanged C4 compiler regression evidence.
 
-## 12. Final acceptance criteria
+## 12. Staged acceptance criteria
 
-The task is complete only when:
+### 12.1 Current C1/C3 milestone
 
-1. the S2 device-poison prerequisite is accepted;
-2. all 12 C1/C2/C3 S1-S4 packages compile, serialize, and reload;
-3. C1/C2/C3 use the exact alias manifests and record their fingerprints;
-4. backend routing matches `all_sgemm_tcu`, mixed TCU/naive, and all-naive contracts;
+The current milestone is complete when:
+
+1. the accepted S2 device-poison stability evidence remains the execution baseline;
+2. all eight C1/C3 S1-S4 packages compile, serialize, and reload;
+3. C1/C3 use the exact alias manifests and record their fingerprints;
+4. backend routing matches the C1 `all_sgemm_tcu` and C3 `all_fpint_gemm_naive` contracts;
 5. TCU padding preserves logical shape, causal masking, batch isolation, and GQA ownership;
 6. logical W4/K4/V4 parameters and backend physical materializations are separately hashed;
-7. no C4 IMPROVE layout leaks into C1/C2/C3;
+7. no C4 IMPROVE layout leaks into C1/C3;
 8. no required logical GEMM remains unresolved and no required accelerator silently falls back;
 9. bytecode package/reload passes for all cases and compiled-mode reload passes for representative
    coverage;
 10. C4 `alone`/`fused` compiler regression tests remain green;
 11. no RTL, FSM, xclbin synthesis, or FPGA execution is required by this compile-only milestone;
-12. exact artifacts, tests, revisions, limitations, and next hardware milestone are documented.
+12. exact artifacts, tests, revisions, and the deferred C2-binary dependency are documented.
+
+### 12.2 Deferred C2 closure
+
+After the intended C2 binary and manifest are secured:
+
+1. load the exact alias manifest and record its fingerprint without config-only approximation;
+2. compile, serialize, and reload all four C2 S1-S4 packages;
+3. prove naive W4 linear and FP16 TCU attention routing with no IMPROVE leakage or silent fallback;
+4. expand the evidence from eight to all 12 packages and update the execution report;
+5. keep physical U55C execution as a separate hardware milestone unless that later task explicitly
+   includes it.
 
 ## 13. Deferred work
 
 - physical U55C execution and numerical acceptance for C1/C2/C3;
+- exact C2 alias/profile compile-package testing until its intended binary and manifest are secured;
 - latency, throughput, and energy comparison across C1-C4;
 - cost-based automatic backend selection;
 - dynamic-shape packages beyond the four static S1-S4 cases;

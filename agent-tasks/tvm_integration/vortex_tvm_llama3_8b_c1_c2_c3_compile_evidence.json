@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-02T01:45:54+09:00",
+  "scope": "host-only Llama3-8B C1/C3 S1-S4 compile, serialize, and reload",
+  "status": "passed",
+  "revisions": {
+    "vortex_base": "88ab098bf788689b8ceff08475c2de59cb516473",
+    "tvm": "101aa65e034459df96be4cf0054ef31854dac1b7",
+    "source_state": "implementation present in the recorded uncommitted worktrees"
+  },
+  "artifacts": {
+    "root": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix",
+    "matrix": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/matrix.json",
+    "matrix_sha256": "fc0c4a82faa63714685444ea4ecd79501ad40f99e2234633db8d2327d87e4bed",
+    "logical_archive": {
+      "nbytes": 1515347968,
+      "content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+      "manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316"
+    }
+  },
+  "backends": {
+    "C1": {
+      "policy": "c1_all_fp16_tcu",
+      "config": "/home/jaeyongjang/project.local/vortex_base/configs/tcu_th32_c1_rev2.sh",
+      "config_sha256": "ad1724b877b7712532fe5e769b44b954e3bdc2a2ac4c92ca961227713737e30f",
+      "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/manifest.json",
+      "manifest_sha256": "20813026adfa76f5e8638a68e20990502fa2b9f30a2bae77278e4f5f963c6767",
+      "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+      "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb",
+      "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+      "target_isa": "rv64imaf",
+      "target_abi": "lp64f",
+      "materialization_nbytes": 2537578496,
+      "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+      "materialization_data_sha256": "85ffd842ce4ff653421e1f7b7fab5f0ff74643e0556a66b3fb6c90001a09da76"
+    },
+    "C3": {
+      "policy": "c3_all_w4_naive",
+      "config": "/home/jaeyongjang/project.local/vortex_base/configs/naive_gemm_th32_tcol32_hwexp_dcache.sh",
+      "config_sha256": "44c2ed99c14ede56483b917ee8c1c8d345f48c53f2bb2bf48e89c75d349bca5c",
+      "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/manifest.json",
+      "manifest_sha256": "ba1f5d377c11828b5719b4fffd14a4cbda26743d5a90bb4bcd644ad0bee48ce8",
+      "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin",
+      "xclbin_sha256": "a68d686d5006821e5710e077a74797693cc25ba2ccc6e0c9cdcfa975e6b0f42a",
+      "profile_fingerprint": "5ceb94c342db6de0642234e9c3724ef459dfc1f1a56b47d6e132aadf9d3e74c4",
+      "target_isa": "rv64imaf",
+      "target_abi": "lp64f",
+      "materialization_nbytes": 1515347968,
+      "materialization_manifest_sha256": "bb6f38efd8b45c9d03c783f03502bce0d1620a880c12499dc60d1bf897acabe5",
+      "materialization_data_sha256": "34ea7ed52396a4a59d2a5655dc578c4ba2d58d2941179eef1325bf6bc6267659"
+    }
+  },
+  "packages": [
+    {
+      "alias": "C1",
+      "case": "S1",
+      "shape": [1, 1, 8],
+      "modes": ["bytecode", "compiled"],
+      "artifact_count": 12,
+      "artifact_nbytes": 8182096,
+      "compile_seconds": 116.140,
+      "package_sha256": "d3c6290a3cf7b5552f0ec59041a23f8430a183aa522df82ff5f00485731fbbc3",
+      "layer_physical_jobs": 71
+    },
+    {
+      "alias": "C1",
+      "case": "S2",
+      "shape": [1, 7, 16],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 4486056,
+      "compile_seconds": 58.470,
+      "package_sha256": "78a3817b779d96546e04c38db78d589cd8eabc7813d928ed5b1ce5ab1ce98b3a",
+      "layer_physical_jobs": 71
+    },
+    {
+      "alias": "C1",
+      "case": "S3",
+      "shape": [2, 1, 8],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 7806176,
+      "compile_seconds": 127.937,
+      "package_sha256": "3db5999e65017d6cf97fb1e7696453499d2b325f404160455312f1796227295b",
+      "layer_physical_jobs": 135
+    },
+    {
+      "alias": "C1",
+      "case": "S4",
+      "shape": [2, 7, 16],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 8261704,
+      "compile_seconds": 133.643,
+      "package_sha256": "1eba2c2641d7738e3c691fe0445241b132532852f69ad708114fc066deb0987a",
+      "layer_physical_jobs": 135
+    },
+    {
+      "alias": "C3",
+      "case": "S1",
+      "shape": [1, 1, 8],
+      "modes": ["bytecode", "compiled"],
+      "artifact_count": 12,
+      "artifact_nbytes": 7369288,
+      "compile_seconds": 82.931,
+      "package_sha256": "cc8b61546881a1071adb856a703f09a7395009c2dc1f0d9036e2ba5f1d06c4e2",
+      "layer_physical_jobs": 71
+    },
+    {
+      "alias": "C3",
+      "case": "S2",
+      "shape": [1, 7, 16],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 4026192,
+      "compile_seconds": 33.873,
+      "package_sha256": "57ac26c51ff72e298b2ce9e7c0da2ea71d030e26b1ea17900c46c871e0cc2d2d",
+      "layer_physical_jobs": 71
+    },
+    {
+      "alias": "C3",
+      "case": "S3",
+      "shape": [2, 1, 8],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 7238584,
+      "compile_seconds": 49.769,
+      "package_sha256": "ddffa0a1d0f0454b149cdbb09de7f1c5dcd61b0db2e9151194c7d8d729370a66",
+      "layer_physical_jobs": 135
+    },
+    {
+      "alias": "C3",
+      "case": "S4",
+      "shape": [2, 7, 16],
+      "modes": ["bytecode"],
+      "artifact_count": 6,
+      "artifact_nbytes": 7594192,
+      "compile_seconds": 54.333,
+      "package_sha256": "dff9634aa9f86030d3c1e8e53e5f265be5d003b0e4876c82b71b05f645442bd5",
+      "layer_physical_jobs": 135
+    }
+  ],
+  "kernel_assertions": {
+    "C1_layer": {
+      "logical_fp16_matmuls": 9,
+      "attention_qk_matmuls": 1,
+      "attention_pv_matmuls": 1,
+      "tcu_helper_definitions": 6,
+      "naive_helper_definitions": 0,
+      "improve_helper_definitions": 0
+    },
+    "C3_layer": {
+      "physical_layout": "row_major",
+      "naive_helper_definitions": 6,
+      "tcu_helper_definitions": 0,
+      "improve_helper_definitions": 0
+    },
+    "all_layer_packages": {
+      "unresolved_w4_calls": 0,
+      "unresolved_fp16_calls": 0,
+      "hadamard_helper_definitions": 3,
+      "causal_softmax_helper_definitions": 1,
+      "prefill_decode_inventory_equal": true
+    },
+    "all_artifacts_reloaded": true
+  },
+  "c2": {
+    "status": "deferred_until_exact_binary_and_manifest_are_available",
+    "mapped_image_directory": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin",
+    "observed_error": "FPGA bin alias 'C2' image directory is unavailable: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin",
+    "substitute_binary_used": false,
+    "synthetic_policy_fixture_passed": true,
+    "profile_bound_packages_created": 0
+  },
+  "tests": [
+    {
+      "scope": "Vortex strict FPGA alias resolver",
+      "result": "10 passed"
+    },
+    {
+      "scope": "TVM backend policy, logical/materialized archive, TCU, profile, and Llama routing",
+      "result": "58 passed, 1 hardware skipped"
+    },
+    {
+      "scope": "C4 alone/fused compiler, C4 archive, Llama end-to-end host, and inference app",
+      "result": "38 passed, 75 hardware skipped"
+    },
+    {
+      "scope": "Vortex target, codegen, Relax VM/importer, IMPROVE layout, and runtime",
+      "result": "166 passed, 7 hardware skipped"
+    }
+  ],
+  "hardware_actions": {
+    "fpga_opened": false,
+    "xclbin_programmed": false,
+    "rtl_changed": false,
+    "rtl_simulation_run": false
+  }
+}
