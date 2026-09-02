@@ -20,6 +20,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   parameter string FILE_POSTFIX = "func";
   parameter int    DCACHE_BYTES_P = 32;
   parameter int    LMEM_BYTES_P   = 16;
+  parameter int    MAX_DIMS_P     = 3;
+  parameter bit    DIMS_ONLY_P    = 1'b0;
 
   // -----------------------------
   // Params
@@ -80,7 +82,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   logic dma_prepare_id_s;
   logic [1:0][31:0] dma_prepare_src_stride_s;
   logic [1:0][31:0] dma_prepare_dst_stride_s;
-  logic [1:0][31:0] dma_prepare_bound_s;
+  logic [1:0][`DMA_BOUND_WIDTH-1:0] dma_prepare_bound_s;
   logic dma_activate_s;
   logic dma_activate_id_s;
   logic dma_done_ready_s;
@@ -92,6 +94,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   assign dma_lookahead_if.bound = dma_prepare_bound_s;
   assign dma_lookahead_if.activate = dma_activate_s;
   assign dma_lookahead_if.activate_id = dma_activate_id_s;
+  assign dma_lookahead_if.data_release = 1'b1;
+  assign dma_lookahead_if.data_max_beats = '0;
 
   VX_mem_bus_if #(
     .DATA_SIZE(DCACHE_BYTES),
@@ -114,7 +118,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     .DCACHE_ADDR_WIDTH(`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES)),
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH (TAG_WIDTH),
-    .LMEM_TAG_WIDTH   (TAG_WIDTH)
+    .LMEM_TAG_WIDTH   (TAG_WIDTH),
+    .MAX_DIMS         (MAX_DIMS_P)
   ) dut (
     .clk          (clk),
     .reset        (reset),
@@ -380,9 +385,12 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     cfg_reg_if.valid = 1'b0;
   endtask
 
-  // done detect: ready deassert -> assert
+  // Observe and consume DONE explicitly; ready is also high in S_DONE to
+  // support prepared-command chaining, so it no longer identifies IDLE alone.
   task automatic wait_dma_done();
     do @(posedge clk); while (cfg_reg_if.ready);   // left IDLE
+    do @(posedge clk); while (!done_if.valid);     // completion is visible
+    @(posedge clk);                                // consume DONE handshake
     do @(posedge clk); while (!cfg_reg_if.ready);  // back to IDLE
   endtask
 
@@ -954,6 +962,23 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     $fdisplay(rpt_fd, "[POWER] DONE");
   endtask
 
+  task sim_dims();
+    int unsigned dim1;
+    int unsigned dim2;
+    begin
+      dim1 = (MAX_DIMS_P >= 2) ? 3 : 1;
+      dim2 = 1;
+      cfg_reg_if.valid = 1'b0;
+      cfg_reg_if.entry_id = '0;
+      for (int r = 0; r < CFG_NUM; r++)
+        cfg_reg_if.regs[r] = '0;
+      repeat (5) @(posedge clk);
+      run_case(SEG_SIZE_2, 3, dim1, dim2, 0);
+      $display("DMA_DIMS_PASS max_dims=%0d bnd=(3,%0d,%0d)",
+               MAX_DIMS_P, dim1, dim2);
+    end
+  endtask
+
   // -----------------------------
   // Top-level objective runner
   // -----------------------------
@@ -971,14 +996,16 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
       @(negedge reset);
       repeat (5) @(posedge clk);
 
-      if (OBJ_ == "power") begin
+      if (DIMS_ONLY_P) begin
+        sim_dims();
+      end else if (OBJ_ == "power") begin
         sim_power();
       end else if (OBJ_ == "func") begin
         sim_func();
       end else begin
         $display("please set proper objective of the simulation");
       end
-      if (OBJ_ == "func") begin
+      if ((OBJ_ == "func") || DIMS_ONLY_P) begin
         $display("TEST PASSED");
       end
 

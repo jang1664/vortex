@@ -221,21 +221,33 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire weight_dma_start = gemm_ctrl_if.weight_read_ctrl.start;
     wire scale_dma_start = gemm_ctrl_if.scale_read_ctrl.start;
     wire zero_point_dma_start = gemm_ctrl_if.zero_point_read_ctrl.start;
-    wire [63:0] weight_command_bytes
-        = 64'(gemm_ctrl_if.weight_read_ctrl.cmd.bound)
-        * 64'(MXU_KT * (MXU_NT >> 1));
+    localparam int COMMAND_BOUND_WIDTH = 16;
+    localparam int WEIGHT_BYTES_PER_BOUND = MXU_KT * (MXU_NT >> 1);
+    localparam int WEIGHT_BYTES_CONST_WIDTH = `CLOG2(WEIGHT_BYTES_PER_BOUND + 1);
+    localparam int QPARAM_BYTES_PER_BOUND = MXU_NT * 2;
+    localparam int QPARAM_BYTES_CONST_WIDTH = `CLOG2(QPARAM_BYTES_PER_BOUND + 1);
+    wire [COMMAND_BOUND_WIDTH+WEIGHT_BYTES_CONST_WIDTH-1:0]
+        weight_command_bytes_native
+        = gemm_ctrl_if.weight_read_ctrl.cmd.bound
+        * WEIGHT_BYTES_CONST_WIDTH'(WEIGHT_BYTES_PER_BOUND);
+    wire [63:0] weight_command_bytes = 64'(weight_command_bytes_native);
     wire [63:0] weight_command_writes
         = (weight_command_bytes + 64'(`GEMM_WEIGHT_DATA_SIZE) - 1)
         / 64'(`GEMM_WEIGHT_DATA_SIZE);
-    wire [63:0] scale_command_bytes
-        = 64'(gemm_ctrl_if.scale_read_ctrl.cmd.bound)
-        * 64'(MXU_NT * 2);
+    wire [COMMAND_BOUND_WIDTH+QPARAM_BYTES_CONST_WIDTH-1:0]
+        scale_command_bytes_native
+        = gemm_ctrl_if.scale_read_ctrl.cmd.bound
+        * QPARAM_BYTES_CONST_WIDTH'(QPARAM_BYTES_PER_BOUND);
+    wire [63:0] scale_command_bytes = 64'(scale_command_bytes_native);
     wire [63:0] scale_command_writes
         = (scale_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
         / 64'(`GEMM_SCALE_ZERO_DATA_SIZE);
+    wire [COMMAND_BOUND_WIDTH+QPARAM_BYTES_CONST_WIDTH-1:0]
+        zero_point_command_bytes_native
+        = gemm_ctrl_if.zero_point_read_ctrl.cmd.bound
+        * QPARAM_BYTES_CONST_WIDTH'(QPARAM_BYTES_PER_BOUND);
     wire [63:0] zero_point_command_bytes
-        = 64'(gemm_ctrl_if.zero_point_read_ctrl.cmd.bound)
-        * 64'(MXU_NT * 2);
+        = 64'(zero_point_command_bytes_native);
     wire [63:0] zero_point_command_writes
         = (zero_point_command_bytes + 64'(`GEMM_SCALE_ZERO_DATA_SIZE) - 1)
         / 64'(`GEMM_SCALE_ZERO_DATA_SIZE);
@@ -655,9 +667,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
 
-    assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.bound;
-    assign input_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign input_dma_ctrl_if.bounds[2]       = 32'd1;
+    assign input_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.bound);
+    assign input_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
+    assign input_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
     assign input_dma_ctrl_if.reg_idx = '0;
@@ -694,9 +707,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.bounds[0]      = gemm_ctrl_if.weight_read_ctrl.cmd.bound;
-    assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
-    assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
+    assign weight_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.weight_read_ctrl.cmd.bound);
+    assign weight_dma_ctrl_if.bounds[1]      = `DMA_BOUND_WIDTH'(1);
+    assign weight_dma_ctrl_if.bounds[2]      = `DMA_BOUND_WIDTH'(1);
 
     assign weight_dma_ctrl_if.seg_size       = MXU_KT * (MXU_NT >> 1);  //int4, bytes
     // Preserve the command's architectural notify identity in the executor
@@ -845,9 +859,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign scale_dma_ctrl_if.dst_strides[1] = 0;
     assign scale_dma_ctrl_if.dst_strides[2] = 0;
     assign scale_dma_ctrl_if.bounds[0]
-        = gemm_ctrl_if.scale_read_ctrl.cmd.bound;
-    assign scale_dma_ctrl_if.bounds[1] = 32'd1;
-    assign scale_dma_ctrl_if.bounds[2] = 32'd1;
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.scale_read_ctrl.cmd.bound);
+    assign scale_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'(1);
+    assign scale_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
     assign scale_dma_ctrl_if.seg_size = MXU_NT * 2;
     assign scale_dma_ctrl_if.reg_idx = {
         25'd0,
@@ -888,9 +902,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign zero_point_dma_ctrl_if.dst_strides[1] = 0;
     assign zero_point_dma_ctrl_if.dst_strides[2] = 0;
     assign zero_point_dma_ctrl_if.bounds[0]
-        = gemm_ctrl_if.zero_point_read_ctrl.cmd.bound;
-    assign zero_point_dma_ctrl_if.bounds[1] = 32'd1;
-    assign zero_point_dma_ctrl_if.bounds[2] = 32'd1;
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.zero_point_read_ctrl.cmd.bound);
+    assign zero_point_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'(1);
+    assign zero_point_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
     assign zero_point_dma_ctrl_if.seg_size = MXU_NT * 2;
     assign zero_point_dma_ctrl_if.reg_idx = {
         25'd0,
@@ -1014,9 +1028,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = 32'd1;
-    assign output_dma_ctrl_if.bounds[1] = 32'd1;
-    assign output_dma_ctrl_if.bounds[2] = 32'd1;
+    assign output_dma_ctrl_if.bounds[0] = `DMA_BOUND_WIDTH'(1);
+    assign output_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'(1);
+    assign output_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
 
     assign output_dma_ctrl_if.seg_size         = MXU_NT * 2 * gemm_ctrl_if.output_write_ctrl.cmd.bound;  // all rows in one segment
     assign output_dma_ctrl_if.reg_idx = '0;

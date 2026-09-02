@@ -12,6 +12,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int DIR  = 0,
   parameter int NDIM = 3,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = NDIM,
   parameter int TAG_WIDTH = 1,
   // Compatibility-only. The reused core is controlled by RD_OUTSTANDING.
   parameter int RD_PREFETCH_DEPTH = 1,
@@ -41,6 +43,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
   localparam int GEMM_TAG_VALUE_W = GEMM_TAG_WIDTH_P - `UP(UUID_WIDTH);
   localparam int BUS_BYTES = lmem_bus_if.DATA_SIZE;
+  localparam int BYTES_D0_WIDTH = 32 + BOUND_WIDTH;
+  localparam int BYTES_D01_WIDTH = BYTES_D0_WIDTH + BOUND_WIDTH;
+  localparam int BYTES_D012_WIDTH = BYTES_D01_WIDTH + BOUND_WIDTH;
 
   `UNUSED_PARAM (RD_PREFETCH_DEPTH)
 
@@ -50,6 +55,12 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     if (NDIM != 3)
       $fatal(1, "%s: NDIM(%0d) unsupported, this implementation requires NDIM=3",
              INSTANCE_ID, NDIM);
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "%s: MAX_DIMS(%0d) must be in 1..%0d",
+             INSTANCE_ID, MAX_DIMS, NDIM);
+    if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+      $fatal(1, "%s: BOUND_WIDTH(%0d) != ctrl_if.BOUND_WIDTH(%0d)",
+             INSTANCE_ID, BOUND_WIDTH, ctrl_if.BOUND_WIDTH);
     if (((lmem_bus_if.DATA_SIZE % gemm_bus_if.DATA_SIZE) != 0)
      && ((gemm_bus_if.DATA_SIZE % lmem_bus_if.DATA_SIZE) != 0))
       $fatal(1, "%s: DATA_SIZE values must be divisible (lmem=%0d, gemm=%0d)",
@@ -80,7 +91,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   ) dma_cfg_if ();
 
   VX_node_done_if dma_done_if ();
-  VX_dma_lookahead_if dma_lookahead_if ();
+  VX_dma_lookahead_if #(
+    .BOUND_WIDTH (BOUND_WIDTH)
+  ) dma_lookahead_if ();
 
   assign dma_lookahead_if.prepare_valid = 1'b0;
   assign dma_lookahead_if.prepare_id = '0;
@@ -105,9 +118,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic released_r;
   logic [63:0] prepared_src_base_r;
   logic [63:0] prepared_dst_base_r;
-  logic [31:0] prepared_src_strides_r[NDIM];
-  logic [31:0] prepared_dst_strides_r[NDIM];
-  logic [31:0] prepared_bounds_r[NDIM];
+  logic [31:0] prepared_src_strides_r[MAX_DIMS];
+  logic [31:0] prepared_dst_strides_r[MAX_DIMS];
+  logic [BOUND_WIDTH-1:0] prepared_bounds_r[MAX_DIMS];
   logic [31:0] prepared_seg_size_r;
 
   logic prepared_descriptor_match;
@@ -117,7 +130,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         && (ctrl_if.src_base_addr == prepared_src_base_r)
         && (ctrl_if.dst_base_addr == prepared_dst_base_r)
         && (ctrl_if.seg_size == prepared_seg_size_r);
-    for (int d = 0; d < NDIM; ++d) begin
+    for (int d = 0; d < MAX_DIMS; ++d) begin
       prepared_descriptor_match &=
           (ctrl_if.src_strides[d] == prepared_src_strides_r[d])
        && (ctrl_if.dst_strides[d] == prepared_dst_strides_r[d])
@@ -139,11 +152,32 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       ? ctrl_if.prepare_max_beats : '0;
 
   wire cfg_fire = dma_cfg_if.valid && dma_cfg_if.ready;
-  wire [63:0] descriptor_write_bytes
-      = 64'(ctrl_if.seg_size)
-      * 64'(ctrl_if.bounds[0])
-      * 64'(ctrl_if.bounds[1])
-      * 64'(ctrl_if.bounds[2]);
+  wire [BYTES_D0_WIDTH-1:0] descriptor_bytes_d0
+      = ctrl_if.seg_size * ctrl_if.bounds[0];
+  wire [BYTES_D01_WIDTH-1:0] descriptor_bytes_d01
+      = descriptor_bytes_d0 * ctrl_if.bounds[1];
+  wire [BYTES_D012_WIDTH-1:0] descriptor_bytes_d012
+      = descriptor_bytes_d01 * ctrl_if.bounds[2];
+  logic [63:0] descriptor_write_bytes;
+  logic descriptor_write_overflow;
+  generate
+    if (MAX_DIMS == 1) begin : g_descriptor_bytes_1d
+      always_comb begin
+        descriptor_write_bytes = 64'(descriptor_bytes_d0);
+        descriptor_write_overflow = |(descriptor_bytes_d0 >> 64);
+      end
+    end else if (MAX_DIMS == 2) begin : g_descriptor_bytes_2d
+      always_comb begin
+        descriptor_write_bytes = 64'(descriptor_bytes_d01);
+        descriptor_write_overflow = |(descriptor_bytes_d01 >> 64);
+      end
+    end else begin : g_descriptor_bytes_3d
+      always_comb begin
+        descriptor_write_bytes = descriptor_bytes_d012[63:0];
+        descriptor_write_overflow = |(descriptor_bytes_d012 >> 64);
+      end
+    end
+  endgenerate
   wire dst_write_fire = (DIR != 0)
       ? (lmem_bus_if.req_valid && lmem_bus_if.req_ready
          && lmem_bus_if.req_data.rw)
@@ -163,7 +197,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     for (int d = 0; d < NDIM; ++d) begin
       dma_cfg_if.regs[5 + 2*d] = ctrl_if.src_strides[d];
       dma_cfg_if.regs[6 + 2*d] = ctrl_if.dst_strides[d];
-      dma_cfg_if.regs[11 + d] = ctrl_if.bounds[d];
+      dma_cfg_if.regs[11 + d] = 32'(ctrl_if.bounds[d]);
     end
     dma_cfg_if.regs[14] = ctrl_if.seg_size;
     dma_cfg_if.regs[15] = 32'd0;
@@ -216,7 +250,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       prepared_src_base_r <= '0;
       prepared_dst_base_r <= '0;
       prepared_seg_size_r <= '0;
-      for (int d = 0; d < NDIM; ++d) begin
+      for (int d = 0; d < MAX_DIMS; ++d) begin
         prepared_src_strides_r[d] <= '0;
         prepared_dst_strides_r[d] <= '0;
         prepared_bounds_r[d] <= '0;
@@ -232,7 +266,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         prepared_src_base_r <= ctrl_if.src_base_addr;
         prepared_dst_base_r <= ctrl_if.dst_base_addr;
         prepared_seg_size_r <= ctrl_if.seg_size;
-        for (int d = 0; d < NDIM; ++d) begin
+        for (int d = 0; d < MAX_DIMS; ++d) begin
           prepared_src_strides_r[d] <= ctrl_if.src_strides[d];
           prepared_dst_strides_r[d] <= ctrl_if.dst_strides[d];
           prepared_bounds_r[d] <= ctrl_if.bounds[d];
@@ -278,6 +312,19 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
     if (!reset) begin
+      if (cfg_fire) begin
+        assert (!descriptor_write_overflow)
+          else $fatal(1, "%s: descriptor byte count exceeds 64 bits",
+                      INSTANCE_ID);
+        if (MAX_DIMS == 1) begin
+          assert ((ctrl_if.bounds[1] == BOUND_WIDTH'(1))
+               && (ctrl_if.bounds[2] == BOUND_WIDTH'(1)))
+            else $fatal(1, "%s: 1D DMA requires BND1/BND2=1", INSTANCE_ID);
+        end else if (MAX_DIMS == 2) begin
+          assert (ctrl_if.bounds[2] == BOUND_WIDTH'(1))
+            else $fatal(1, "%s: 2D DMA requires BND2=1", INSTANCE_ID);
+        end
+      end
       if (prepare_fire) begin
         assert (prepare_supported && !ctrl_if.start
              && (ctrl_if.prepare_max_beats != 0))
@@ -325,7 +372,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     .DCACHE_TAG_WIDTH    (LMEM_TAG_WIDTH_P),
     .LMEM_TAG_WIDTH      (GEMM_TAG_WIDTH_P),
     .RD_OUTSTANDING      (RD_OUTSTANDING),
-    .FIXED_DIR           (DIR)
+    .FIXED_DIR           (DIR),
+    .BOUND_WIDTH         (BOUND_WIDTH),
+    .MAX_DIMS            (MAX_DIMS)
   ) dma_core (
     .clk           (clk),
     .reset         (reset),
@@ -518,6 +567,8 @@ endmodule
 module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int NDIM = 3,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = NDIM,
   parameter int TAG_WIDTH = 1,
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
@@ -569,12 +620,16 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   localparam int SLOT_BITS = $clog2(RESPONSE_SLOTS);
   localparam int SLOT_COUNT_BITS = $clog2(RESPONSE_SLOTS + 1);
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
+  localparam int BEATS_D0_WIDTH = 32 + BOUND_WIDTH;
+  localparam int BEATS_D01_WIDTH = BEATS_D0_WIDTH + BOUND_WIDTH;
+  localparam int BEATS_D012_WIDTH = BEATS_D01_WIDTH + BOUND_WIDTH;
+  localparam int ADDR_PRODUCT_WIDTH = BOUND_WIDTH + 32;
 
   typedef struct packed {
     logic [31:0] scheduler_work_seq;
     logic [31:0] seg_size;
-    logic [NDIM-1:0][31:0] bounds;
-    logic [NDIM-1:0][31:0] strides;
+    logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds;
+    logic [MAX_DIMS-1:0][31:0] strides;
     logic [63:0] base_addr;
   } input_source_meta_t;
 
@@ -633,7 +688,7 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   assign command_source_meta.scheduler_work_seq
       = ctrl_if.scheduler_work_seq;
   assign command_source_meta.seg_size = ctrl_if.seg_size;
-  for (genvar meta_dim = 0; meta_dim < NDIM; ++meta_dim) begin : g_input_meta
+  for (genvar meta_dim = 0; meta_dim < MAX_DIMS; ++meta_dim) begin : g_input_meta
     assign command_source_meta.bounds[meta_dim] = ctrl_if.bounds[meta_dim];
     assign command_source_meta.strides[meta_dim]
         = ctrl_if.src_strides[meta_dim];
@@ -647,22 +702,61 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
   assign sink_dest_meta = dma_sink_if.write_payload[DATAW+32 +: DEST_METAW];
   assign writer_dest_meta = writer_head_payload[DEST_METAW-1:0];
 
-  wire [31:0] command_total_beats
-      = (ctrl_if.seg_size / BUS_BYTES)
-      * ctrl_if.bounds[0] * ctrl_if.bounds[1] * ctrl_if.bounds[2];
+  wire [31:0] command_seg_beats = ctrl_if.seg_size / BUS_BYTES;
+  wire [BEATS_D0_WIDTH-1:0] command_beats_d0
+      = command_seg_beats * ctrl_if.bounds[0];
+  wire [BEATS_D01_WIDTH-1:0] command_beats_d01
+      = command_beats_d0 * ctrl_if.bounds[1];
+  wire [BEATS_D012_WIDTH-1:0] command_beats_d012
+      = command_beats_d01 * ctrl_if.bounds[2];
+  logic [31:0] command_total_beats;
+  logic command_total_beats_overflow;
+  generate
+    if (MAX_DIMS == 1) begin : g_input_beats_1d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d0);
+        command_total_beats_overflow = |(command_beats_d0 >> 32);
+      end
+    end else if (MAX_DIMS == 2) begin : g_input_beats_2d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d01);
+        command_total_beats_overflow = |(command_beats_d01 >> 32);
+      end
+    end else begin : g_input_beats_3d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d012);
+        command_total_beats_overflow = |(command_beats_d012 >> 32);
+      end
+    end
+  endgenerate
 
   assign dma_fetch_if.cmd_valid = ctrl_if.start;
   assign dma_fetch_if.cmd_id = ctrl_if.scheduler_work_seq;
   assign dma_fetch_if.cmd_total_beats = command_total_beats;
   assign dma_fetch_if.cmd_payload = {command_source_meta, command_dest_meta};
 
-  logic [31:0] rd_i_dim_r[NDIM];
+  logic [BOUND_WIDTH-1:0] rd_i_dim_r[MAX_DIMS];
   logic [31:0] rd_seg_offset_r;
-  wire [63:0] rd_src_byte_addr = fetch_source_meta.base_addr
-      + 64'(rd_i_dim_r[0] * fetch_source_meta.strides[0])
-      + 64'(rd_i_dim_r[1] * fetch_source_meta.strides[1])
-      + 64'(rd_i_dim_r[2] * fetch_source_meta.strides[2])
-      + 64'(rd_seg_offset_r);
+  wire [ADDR_PRODUCT_WIDTH-1:0] rd_dim_stride[MAX_DIMS];
+  for (genvar addr_dim = 0; addr_dim < MAX_DIMS; ++addr_dim) begin : g_input_addr_product
+    assign rd_dim_stride[addr_dim]
+        = rd_i_dim_r[addr_dim] * fetch_source_meta.strides[addr_dim];
+  end
+  logic [63:0] rd_src_byte_addr;
+  generate
+    if (MAX_DIMS == 1) begin : g_input_addr_1d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_seg_offset_r);
+    end else if (MAX_DIMS == 2) begin : g_input_addr_2d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+          + 64'(rd_seg_offset_r);
+    end else begin : g_input_addr_3d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+          + 64'(rd_dim_stride[2]) + 64'(rd_seg_offset_r);
+    end
+  endgenerate
 
   logic source_urgent_hold_valid_r;
   logic source_urgent_hold_r;
@@ -783,8 +877,6 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
 
   always_ff @(posedge clk) begin
     if (reset) begin
-      rd_i_dim_r <= '{default:'0};
-      rd_seg_offset_r <= '0;
       source_urgent_hold_valid_r <= 1'b0;
       source_urgent_hold_r <= 1'b0;
       source_priority_hold_r <= '0;
@@ -797,36 +889,103 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         source_priority_hold_r <= sched_priority_i;
       end
 
-      if (source_req_fire) begin
-        if ((fetch_beat + 32'd1) == dma_fetch_if.progress_total_beats) begin
+    end
+  end
+
+  generate
+    if (MAX_DIMS == 1) begin : g_input_advance_1d
+      always_ff @(posedge clk) begin
+        if (reset) begin
           rd_i_dim_r <= '{default:'0};
           rd_seg_offset_r <= '0;
-        end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
-                     >= fetch_source_meta.seg_size) begin
-          rd_seg_offset_r <= '0;
-          if ((rd_i_dim_r[0] + 32'd1) < fetch_source_meta.bounds[0]) begin
-            rd_i_dim_r[0] <= rd_i_dim_r[0] + 32'd1;
+        end else if (source_req_fire) begin
+          if ((fetch_beat + 32'd1) == dma_fetch_if.progress_total_beats) begin
+            rd_i_dim_r <= '{default:'0};
+            rd_seg_offset_r <= '0;
+          end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
+                       >= fetch_source_meta.seg_size) begin
+            rd_seg_offset_r <= '0;
+            if ((rd_i_dim_r[0] + BOUND_WIDTH'(1))
+                < fetch_source_meta.bounds[0])
+              rd_i_dim_r[0] <= rd_i_dim_r[0] + BOUND_WIDTH'(1);
+            else
+              rd_i_dim_r[0] <= '0;
           end else begin
-            rd_i_dim_r[0] <= '0;
-            if ((rd_i_dim_r[1] + 32'd1) < fetch_source_meta.bounds[1]) begin
-              rd_i_dim_r[1] <= rd_i_dim_r[1] + 32'd1;
-            end else begin
-              rd_i_dim_r[1] <= '0;
-              if ((rd_i_dim_r[2] + 32'd1)
-                  < fetch_source_meta.bounds[2])
-                rd_i_dim_r[2] <= rd_i_dim_r[2] + 32'd1;
-            end
+            rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
           end
-        end else begin
-          rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
+        end
+      end
+    end else if (MAX_DIMS == 2) begin : g_input_advance_2d
+      always_ff @(posedge clk) begin
+        if (reset) begin
+          rd_i_dim_r <= '{default:'0};
+          rd_seg_offset_r <= '0;
+        end else if (source_req_fire) begin
+          if ((fetch_beat + 32'd1) == dma_fetch_if.progress_total_beats) begin
+            rd_i_dim_r <= '{default:'0};
+            rd_seg_offset_r <= '0;
+          end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
+                       >= fetch_source_meta.seg_size) begin
+            rd_seg_offset_r <= '0;
+            if ((rd_i_dim_r[0] + BOUND_WIDTH'(1))
+                < fetch_source_meta.bounds[0]) begin
+              rd_i_dim_r[0] <= rd_i_dim_r[0] + BOUND_WIDTH'(1);
+            end else begin
+              rd_i_dim_r[0] <= '0;
+              if ((rd_i_dim_r[1] + BOUND_WIDTH'(1))
+                  < fetch_source_meta.bounds[1])
+                rd_i_dim_r[1] <= rd_i_dim_r[1] + BOUND_WIDTH'(1);
+              else
+                rd_i_dim_r[1] <= '0;
+            end
+          end else begin
+            rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
+          end
+        end
+      end
+    end else begin : g_input_advance_3d
+      always_ff @(posedge clk) begin
+        if (reset) begin
+          rd_i_dim_r <= '{default:'0};
+          rd_seg_offset_r <= '0;
+        end else if (source_req_fire) begin
+          if ((fetch_beat + 32'd1) == dma_fetch_if.progress_total_beats) begin
+            rd_i_dim_r <= '{default:'0};
+            rd_seg_offset_r <= '0;
+          end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
+                       >= fetch_source_meta.seg_size) begin
+            rd_seg_offset_r <= '0;
+            if ((rd_i_dim_r[0] + BOUND_WIDTH'(1))
+                < fetch_source_meta.bounds[0]) begin
+              rd_i_dim_r[0] <= rd_i_dim_r[0] + BOUND_WIDTH'(1);
+            end else begin
+              rd_i_dim_r[0] <= '0;
+              if ((rd_i_dim_r[1] + BOUND_WIDTH'(1))
+                  < fetch_source_meta.bounds[1]) begin
+                rd_i_dim_r[1] <= rd_i_dim_r[1] + BOUND_WIDTH'(1);
+              end else begin
+                rd_i_dim_r[1] <= '0;
+                if ((rd_i_dim_r[2] + BOUND_WIDTH'(1))
+                    < fetch_source_meta.bounds[2])
+                  rd_i_dim_r[2] <= rd_i_dim_r[2] + BOUND_WIDTH'(1);
+              end
+            end
+          end else begin
+            rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
+          end
         end
       end
     end
-  end
+  endgenerate
 
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: Input overlap DMA requires NDIM=3", INSTANCE_ID);
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "%s: Input MAX_DIMS(%0d) must be in 1..%0d",
+             INSTANCE_ID, MAX_DIMS, NDIM);
+    if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+      $fatal(1, "%s: Input bound width mismatch", INSTANCE_ID);
     if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
       $fatal(1, "%s: common Input queue depth must be 2 or 4", INSTANCE_ID);
     if ((RESPONSE_SLOTS < 1)
@@ -880,7 +1039,8 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
         else $fatal(1, "%s: Input command presented while FIFO full",
                     INSTANCE_ID);
       if (ctrl_if.start && ctrl_if.idle) begin
-        assert ((ctrl_if.bounds[0] != 0)
+        assert (!command_total_beats_overflow
+             && (ctrl_if.bounds[0] != 0)
              && (ctrl_if.bounds[1] != 0)
              && (ctrl_if.bounds[2] != 0)
              && (ctrl_if.seg_size != 0)
@@ -888,6 +1048,14 @@ module VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
              && !writer_wait_i.valid)
           else $fatal(1, "%s: unsupported common Input descriptor shape",
                       INSTANCE_ID);
+        if (MAX_DIMS == 1) begin
+          assert ((ctrl_if.bounds[1] == BOUND_WIDTH'(1))
+               && (ctrl_if.bounds[2] == BOUND_WIDTH'(1)))
+            else $fatal(1, "%s: 1D Input requires BND1/BND2=1", INSTANCE_ID);
+        end else if (MAX_DIMS == 2) begin
+          assert (ctrl_if.bounds[2] == BOUND_WIDTH'(1))
+            else $fatal(1, "%s: 2D Input requires BND2=1", INSTANCE_ID);
+        end
       end
       if (destination_stall_r) begin
         assert (gemm_bus_if.req_valid
@@ -1007,6 +1175,8 @@ endmodule
 module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int NDIM = 3,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = NDIM,
   parameter int TAG_WIDTH = 1,
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
@@ -1049,12 +1219,16 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   localparam int SLOT_BITS = $clog2(RESPONSE_SLOTS);
   localparam int SLOT_COUNT_BITS = $clog2(RESPONSE_SLOTS + 1);
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
+  localparam int BEATS_D0_WIDTH = 32 + BOUND_WIDTH;
+  localparam int BEATS_D01_WIDTH = BEATS_D0_WIDTH + BOUND_WIDTH;
+  localparam int BEATS_D012_WIDTH = BEATS_D01_WIDTH + BOUND_WIDTH;
+  localparam int ADDR_PRODUCT_WIDTH = BOUND_WIDTH + 32;
 
   typedef struct packed {
     logic [31:0] scheduler_work_seq;
     logic [31:0] seg_size;
-    logic [NDIM-1:0][31:0] bounds;
-    logic [NDIM-1:0][31:0] strides;
+    logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds;
+    logic [MAX_DIMS-1:0][31:0] strides;
     logic [63:0] base_addr;
   } qparam_source_meta_t;
 
@@ -1063,10 +1237,31 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
     logic [31:0] reg_value;
     logic [31:0] reg_idx;
     logic [31:0] seg_size;
-    logic [NDIM-1:0][31:0] bounds;
-    logic [NDIM-1:0][31:0] strides;
+    logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds;
+    logic [MAX_DIMS-1:0][31:0] strides;
     logic [63:0] base_addr;
   } qparam_dest_meta_t;
+
+  function automatic logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0]
+      qparam_advance_dims(
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] indices,
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds);
+    logic carry;
+    begin
+      qparam_advance_dims = indices;
+      carry = 1'b1;
+      for (int d = 0; d < MAX_DIMS; ++d) begin
+        if (carry) begin
+          if ((indices[d] + BOUND_WIDTH'(1)) < bounds[d]) begin
+            qparam_advance_dims[d] = indices[d] + BOUND_WIDTH'(1);
+            carry = 1'b0;
+          end else begin
+            qparam_advance_dims[d] = '0;
+          end
+        end
+      end
+    end
+  endfunction
 
   localparam int SOURCE_METAW = $bits(qparam_source_meta_t);
   localparam int DEST_METAW = $bits(qparam_dest_meta_t);
@@ -1121,7 +1316,7 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   assign command_dest_meta.reg_value = ctrl_if.reg_value;
   assign command_dest_meta.reg_idx = ctrl_if.reg_idx;
   assign command_dest_meta.seg_size = ctrl_if.seg_size;
-  for (genvar meta_dim = 0; meta_dim < NDIM; ++meta_dim) begin : g_qparam_meta
+  for (genvar meta_dim = 0; meta_dim < MAX_DIMS; ++meta_dim) begin : g_qparam_meta
     assign command_source_meta.bounds[meta_dim] = ctrl_if.bounds[meta_dim];
     assign command_source_meta.strides[meta_dim]
         = ctrl_if.src_strides[meta_dim];
@@ -1136,9 +1331,33 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   assign sink_dest_meta = dma_sink_if.write_payload[DATAW+32 +: DEST_METAW];
   assign writer_dest_meta = writer_head_payload[DEST_METAW-1:0];
 
-  wire [31:0] command_total_beats
-      = (ctrl_if.seg_size / BUS_BYTES)
-      * ctrl_if.bounds[0] * ctrl_if.bounds[1] * ctrl_if.bounds[2];
+  wire [31:0] command_seg_beats = ctrl_if.seg_size / BUS_BYTES;
+  wire [BEATS_D0_WIDTH-1:0] command_beats_d0
+      = command_seg_beats * ctrl_if.bounds[0];
+  wire [BEATS_D01_WIDTH-1:0] command_beats_d01
+      = command_beats_d0 * ctrl_if.bounds[1];
+  wire [BEATS_D012_WIDTH-1:0] command_beats_d012
+      = command_beats_d01 * ctrl_if.bounds[2];
+  logic [31:0] command_total_beats;
+  logic command_total_beats_overflow;
+  generate
+    if (MAX_DIMS == 1) begin : g_qparam_beats_1d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d0);
+        command_total_beats_overflow = |(command_beats_d0 >> 32);
+      end
+    end else if (MAX_DIMS == 2) begin : g_qparam_beats_2d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d01);
+        command_total_beats_overflow = |(command_beats_d01 >> 32);
+      end
+    end else begin : g_qparam_beats_3d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d012);
+        command_total_beats_overflow = |(command_beats_d012 >> 32);
+      end
+    end
+  endgenerate
   wire command_capacity = queue_cmd_occupancy
                         < CMD_COUNT_BITS'(CMD_FIFO_DEPTH);
   assign dma_fetch_if.cmd_valid = ctrl_if.start && command_capacity;
@@ -1146,20 +1365,48 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   assign dma_fetch_if.cmd_total_beats = command_total_beats;
   assign dma_fetch_if.cmd_payload = {command_source_meta, command_dest_meta};
 
-  logic [31:0] rd_i_dim_r[NDIM];
+  logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] rd_i_dim_r;
   logic [31:0] rd_seg_offset_r;
-  logic [31:0] wr_i_dim_r[NDIM];
+  logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] wr_i_dim_r;
   logic [31:0] wr_seg_offset_r;
-  wire [63:0] rd_src_byte_addr = fetch_source_meta.base_addr
-      + 64'(rd_i_dim_r[0] * fetch_source_meta.strides[0])
-      + 64'(rd_i_dim_r[1] * fetch_source_meta.strides[1])
-      + 64'(rd_i_dim_r[2] * fetch_source_meta.strides[2])
-      + 64'(rd_seg_offset_r);
-  wire [63:0] wr_dst_byte_addr = sink_dest_meta.base_addr
-      + 64'(wr_i_dim_r[0] * sink_dest_meta.strides[0])
-      + 64'(wr_i_dim_r[1] * sink_dest_meta.strides[1])
-      + 64'(wr_i_dim_r[2] * sink_dest_meta.strides[2])
-      + 64'(wr_seg_offset_r);
+  wire [ADDR_PRODUCT_WIDTH-1:0] rd_dim_stride[MAX_DIMS];
+  wire [ADDR_PRODUCT_WIDTH-1:0] wr_dim_stride[MAX_DIMS];
+  for (genvar addr_dim = 0; addr_dim < MAX_DIMS; ++addr_dim) begin : g_qparam_addr_product
+    assign rd_dim_stride[addr_dim]
+        = rd_i_dim_r[addr_dim] * fetch_source_meta.strides[addr_dim];
+    assign wr_dim_stride[addr_dim]
+        = wr_i_dim_r[addr_dim] * sink_dest_meta.strides[addr_dim];
+  end
+  logic [63:0] rd_src_byte_addr;
+  logic [63:0] wr_dst_byte_addr;
+  generate
+    if (MAX_DIMS == 1) begin : g_qparam_addr_1d
+      always_comb begin
+        rd_src_byte_addr = fetch_source_meta.base_addr
+            + 64'(rd_dim_stride[0]) + 64'(rd_seg_offset_r);
+        wr_dst_byte_addr = sink_dest_meta.base_addr
+            + 64'(wr_dim_stride[0]) + 64'(wr_seg_offset_r);
+      end
+    end else if (MAX_DIMS == 2) begin : g_qparam_addr_2d
+      always_comb begin
+        rd_src_byte_addr = fetch_source_meta.base_addr
+            + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+            + 64'(rd_seg_offset_r);
+        wr_dst_byte_addr = sink_dest_meta.base_addr
+            + 64'(wr_dim_stride[0]) + 64'(wr_dim_stride[1])
+            + 64'(wr_seg_offset_r);
+      end
+    end else begin : g_qparam_addr_3d
+      always_comb begin
+        rd_src_byte_addr = fetch_source_meta.base_addr
+            + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+            + 64'(rd_dim_stride[2]) + 64'(rd_seg_offset_r);
+        wr_dst_byte_addr = sink_dest_meta.base_addr
+            + 64'(wr_dim_stride[0]) + 64'(wr_dim_stride[1])
+            + 64'(wr_dim_stride[2]) + 64'(wr_seg_offset_r);
+      end
+    end
+  endgenerate
 
   wire writer_wait_rid_is0 = writer_dest_meta.writer_wait.reg_id
       == GEMM_SYNC_REG_ID_WIDTH'(WRITER_RID0);
@@ -1314,18 +1561,8 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
         end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
                      >= fetch_source_meta.seg_size) begin
           rd_seg_offset_r <= '0;
-          if ((rd_i_dim_r[0] + 32'd1) < fetch_source_meta.bounds[0]) begin
-            rd_i_dim_r[0] <= rd_i_dim_r[0] + 32'd1;
-          end else begin
-            rd_i_dim_r[0] <= '0;
-            if ((rd_i_dim_r[1] + 32'd1) < fetch_source_meta.bounds[1]) begin
-              rd_i_dim_r[1] <= rd_i_dim_r[1] + 32'd1;
-            end else begin
-              rd_i_dim_r[1] <= '0;
-              if ((rd_i_dim_r[2] + 32'd1) < fetch_source_meta.bounds[2])
-                rd_i_dim_r[2] <= rd_i_dim_r[2] + 32'd1;
-            end
-          end
+          rd_i_dim_r <= qparam_advance_dims(
+              rd_i_dim_r, fetch_source_meta.bounds);
         end else begin
           rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
         end
@@ -1338,18 +1575,8 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
         end else if ((wr_seg_offset_r + 32'(BUS_BYTES))
                      >= sink_dest_meta.seg_size) begin
           wr_seg_offset_r <= '0;
-          if ((wr_i_dim_r[0] + 32'd1) < sink_dest_meta.bounds[0]) begin
-            wr_i_dim_r[0] <= wr_i_dim_r[0] + 32'd1;
-          end else begin
-            wr_i_dim_r[0] <= '0;
-            if ((wr_i_dim_r[1] + 32'd1) < sink_dest_meta.bounds[1]) begin
-              wr_i_dim_r[1] <= wr_i_dim_r[1] + 32'd1;
-            end else begin
-              wr_i_dim_r[1] <= '0;
-              if ((wr_i_dim_r[2] + 32'd1) < sink_dest_meta.bounds[2])
-                wr_i_dim_r[2] <= wr_i_dim_r[2] + 32'd1;
-            end
-          end
+          wr_i_dim_r <= qparam_advance_dims(
+              wr_i_dim_r, sink_dest_meta.bounds);
         end else begin
           wr_seg_offset_r <= wr_seg_offset_r + 32'(BUS_BYTES);
         end
@@ -1360,6 +1587,11 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: qparam queue requires NDIM=3", INSTANCE_ID);
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "%s: qparam MAX_DIMS(%0d) must be in 1..%0d",
+             INSTANCE_ID, MAX_DIMS, NDIM);
+    if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+      $fatal(1, "%s: qparam bound width mismatch", INSTANCE_ID);
     if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
       $fatal(1, "%s: qparam queue depth must be 2 or 4", INSTANCE_ID);
     if ((RESPONSE_SLOTS < 1)
@@ -1403,7 +1635,8 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
         else $fatal(1, "%s: qparam command presented while FIFO full",
                     INSTANCE_ID);
       if (ctrl_if.start && ctrl_if.idle) begin
-        assert ((ctrl_if.bounds[0] != 0)
+        assert (!command_total_beats_overflow
+             && (ctrl_if.bounds[0] != 0)
              && (ctrl_if.bounds[1] != 0)
              && (ctrl_if.bounds[2] != 0)
              && (ctrl_if.seg_size != 0)
@@ -1417,6 +1650,14 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
                     && ctrl_if.dst_base_addr[BUS_ADDR_BITS]))
                && (writer_wait_i.target != 0))))
           else $fatal(1, "%s: unsupported qparam descriptor/fence", INSTANCE_ID);
+        if (MAX_DIMS == 1) begin
+          assert ((ctrl_if.bounds[1] == BOUND_WIDTH'(1))
+               && (ctrl_if.bounds[2] == BOUND_WIDTH'(1)))
+            else $fatal(1, "%s: 1D qparam requires BND1/BND2=1", INSTANCE_ID);
+        end else if (MAX_DIMS == 2) begin
+          assert (ctrl_if.bounds[2] == BOUND_WIDTH'(1))
+            else $fatal(1, "%s: 2D qparam requires BND2=1", INSTANCE_ID);
+        end
       end
       if (source_stall_r) begin
         assert (lmem_bus_if.req_valid
@@ -1512,6 +1753,8 @@ endmodule
 module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int NDIM = 3,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = NDIM,
   parameter int TAG_WIDTH = 1,
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
@@ -1551,6 +1794,8 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   VX_lmem_dma_qparam_queue #(
     .INSTANCE_ID          (INSTANCE_ID),
     .NDIM                 (NDIM),
+    .BOUND_WIDTH          (BOUND_WIDTH),
+    .MAX_DIMS             (MAX_DIMS),
     .TAG_WIDTH            (TAG_WIDTH),
     .CMD_FIFO_DEPTH       (CMD_FIFO_DEPTH),
     .RESPONSE_SLOTS       (RESPONSE_SLOTS),
@@ -1609,6 +1854,8 @@ endmodule
 module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int NDIM = 3,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = NDIM,
   parameter int TAG_WIDTH = 1,
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int CMD_BEATS = `W_LMEM_DMA_CMD_BEATS,
@@ -1659,12 +1906,16 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
   localparam int GEMM_TAG_VALUE_W = GEMM_TAG_WIDTH_P - `UP(UUID_WIDTH);
   localparam int DATAW = BUS_BYTES * 8;
+  localparam int BEATS_D0_WIDTH = 32 + BOUND_WIDTH;
+  localparam int BEATS_D01_WIDTH = BEATS_D0_WIDTH + BOUND_WIDTH;
+  localparam int BEATS_D012_WIDTH = BEATS_D01_WIDTH + BOUND_WIDTH;
+  localparam int ADDR_PRODUCT_WIDTH = BOUND_WIDTH + 32;
 
   typedef struct packed {
     logic [31:0] scheduler_work_seq;
     logic [31:0] seg_size;
-    logic [NDIM-1:0][31:0] bounds;
-    logic [NDIM-1:0][31:0] strides;
+    logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds;
+    logic [MAX_DIMS-1:0][31:0] strides;
     logic [63:0] base_addr;
   } weight_source_meta_t;
 
@@ -1674,6 +1925,27 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
     logic [31:0] reg_idx;
     logic [63:0] base_addr;
   } weight_dest_meta_t;
+
+  function automatic logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0]
+      weight_advance_dims(
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] indices,
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds);
+    logic carry;
+    begin
+      weight_advance_dims = indices;
+      carry = 1'b1;
+      for (int d = 0; d < MAX_DIMS; ++d) begin
+        if (carry) begin
+          if ((indices[d] + BOUND_WIDTH'(1)) < bounds[d]) begin
+            weight_advance_dims[d] = indices[d] + BOUND_WIDTH'(1);
+            carry = 1'b0;
+          end else begin
+            weight_advance_dims[d] = '0;
+          end
+        end
+      end
+    end
+  endfunction
 
   localparam int SOURCE_METAW = $bits(weight_source_meta_t);
   localparam int DEST_METAW = $bits(weight_dest_meta_t);
@@ -1726,7 +1998,7 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   assign command_dest_meta.writer_wait = writer_wait_i;
   assign command_dest_meta.reg_value = ctrl_if.reg_value;
   assign command_dest_meta.reg_idx = ctrl_if.reg_idx;
-  for (genvar meta_dim = 0; meta_dim < NDIM; ++meta_dim) begin : g_weight_meta
+  for (genvar meta_dim = 0; meta_dim < MAX_DIMS; ++meta_dim) begin : g_weight_meta
     assign command_source_meta.bounds[meta_dim] = ctrl_if.bounds[meta_dim];
     assign command_source_meta.strides[meta_dim]
         = ctrl_if.src_strides[meta_dim];
@@ -1738,21 +2010,60 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   assign sink_dest_meta = dma_sink_if.write_payload[DATAW+32 +: DEST_METAW];
   assign writer_dest_meta = writer_head_payload[DEST_METAW-1:0];
 
-  wire [31:0] command_total_beats
-      = (ctrl_if.seg_size / BUS_BYTES)
-      * ctrl_if.bounds[0] * ctrl_if.bounds[1] * ctrl_if.bounds[2];
+  wire [31:0] command_seg_beats = ctrl_if.seg_size / BUS_BYTES;
+  wire [BEATS_D0_WIDTH-1:0] command_beats_d0
+      = command_seg_beats * ctrl_if.bounds[0];
+  wire [BEATS_D01_WIDTH-1:0] command_beats_d01
+      = command_beats_d0 * ctrl_if.bounds[1];
+  wire [BEATS_D012_WIDTH-1:0] command_beats_d012
+      = command_beats_d01 * ctrl_if.bounds[2];
+  logic [31:0] command_total_beats;
+  logic command_total_beats_overflow;
+  generate
+    if (MAX_DIMS == 1) begin : g_weight_beats_1d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d0);
+        command_total_beats_overflow = |(command_beats_d0 >> 32);
+      end
+    end else if (MAX_DIMS == 2) begin : g_weight_beats_2d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d01);
+        command_total_beats_overflow = |(command_beats_d01 >> 32);
+      end
+    end else begin : g_weight_beats_3d
+      always_comb begin
+        command_total_beats = 32'(command_beats_d012);
+        command_total_beats_overflow = |(command_beats_d012 >> 32);
+      end
+    end
+  endgenerate
   assign dma_fetch_if.cmd_valid = ctrl_if.start;
   assign dma_fetch_if.cmd_id = ctrl_if.scheduler_work_seq;
   assign dma_fetch_if.cmd_total_beats = command_total_beats;
   assign dma_fetch_if.cmd_payload = {command_source_meta, command_dest_meta};
 
-  logic [31:0] rd_i_dim_r[NDIM];
+  logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] rd_i_dim_r;
   logic [31:0] rd_seg_offset_r;
-  wire [63:0] rd_src_byte_addr = fetch_source_meta.base_addr
-      + 64'(rd_i_dim_r[0] * fetch_source_meta.strides[0])
-      + 64'(rd_i_dim_r[1] * fetch_source_meta.strides[1])
-      + 64'(rd_i_dim_r[2] * fetch_source_meta.strides[2])
-      + 64'(rd_seg_offset_r);
+  wire [ADDR_PRODUCT_WIDTH-1:0] rd_dim_stride[MAX_DIMS];
+  for (genvar addr_dim = 0; addr_dim < MAX_DIMS; ++addr_dim) begin : g_weight_addr_product
+    assign rd_dim_stride[addr_dim]
+        = rd_i_dim_r[addr_dim] * fetch_source_meta.strides[addr_dim];
+  end
+  logic [63:0] rd_src_byte_addr;
+  generate
+    if (MAX_DIMS == 1) begin : g_weight_addr_1d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_seg_offset_r);
+    end else if (MAX_DIMS == 2) begin : g_weight_addr_2d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+          + 64'(rd_seg_offset_r);
+    end else begin : g_weight_addr_3d
+      always_comb rd_src_byte_addr = fetch_source_meta.base_addr
+          + 64'(rd_dim_stride[0]) + 64'(rd_dim_stride[1])
+          + 64'(rd_dim_stride[2]) + 64'(rd_seg_offset_r);
+    end
+  endgenerate
 
   wire writer_wait_rid_is_w0 = writer_dest_meta.writer_wait.reg_id
       == GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0);
@@ -1933,18 +2244,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         end else if ((rd_seg_offset_r + 32'(BUS_BYTES))
                      >= fetch_source_meta.seg_size) begin
           rd_seg_offset_r <= '0;
-          if ((rd_i_dim_r[0] + 32'd1) < fetch_source_meta.bounds[0]) begin
-            rd_i_dim_r[0] <= rd_i_dim_r[0] + 32'd1;
-          end else begin
-            rd_i_dim_r[0] <= '0;
-            if ((rd_i_dim_r[1] + 32'd1) < fetch_source_meta.bounds[1]) begin
-              rd_i_dim_r[1] <= rd_i_dim_r[1] + 32'd1;
-            end else begin
-              rd_i_dim_r[1] <= '0;
-              if ((rd_i_dim_r[2] + 32'd1) < fetch_source_meta.bounds[2])
-                rd_i_dim_r[2] <= rd_i_dim_r[2] + 32'd1;
-            end
-          end
+          rd_i_dim_r <= weight_advance_dims(
+              rd_i_dim_r, fetch_source_meta.bounds);
         end else begin
           rd_seg_offset_r <= rd_seg_offset_r + 32'(BUS_BYTES);
         end
@@ -1955,6 +2256,11 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   initial begin
     if (NDIM != 3)
       $fatal(1, "%s: Weight queue requires NDIM=3", INSTANCE_ID);
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "%s: Weight MAX_DIMS(%0d) must be in 1..%0d",
+             INSTANCE_ID, MAX_DIMS, NDIM);
+    if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+      $fatal(1, "%s: Weight bound width mismatch", INSTANCE_ID);
     if ((CMD_FIFO_DEPTH != 2) && (CMD_FIFO_DEPTH != 4))
       $fatal(1, "%s: Weight queue depth must be 2 or 4", INSTANCE_ID);
     if ((CMD_BEATS < 1) || ((CMD_BEATS & (CMD_BEATS - 1)) != 0))
@@ -2015,7 +2321,8 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
         else $fatal(1, "%s: Weight queue accepted passive prepare",
                     INSTANCE_ID);
       if (command_enqueue) begin
-        assert ((ctrl_if.bounds[0] != 0)
+        assert (!command_total_beats_overflow
+             && (ctrl_if.bounds[0] != 0)
              && (ctrl_if.bounds[1] != 0)
              && (ctrl_if.bounds[2] != 0)
              && (ctrl_if.seg_size != 0)
@@ -2023,6 +2330,14 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
              && (command_total_beats == 32'(CMD_BEATS)))
           else $fatal(1, "%s: unsupported Weight descriptor shape/count",
                       INSTANCE_ID);
+        if (MAX_DIMS == 1) begin
+          assert ((ctrl_if.bounds[1] == BOUND_WIDTH'(1))
+               && (ctrl_if.bounds[2] == BOUND_WIDTH'(1)))
+            else $fatal(1, "%s: 1D Weight requires BND1/BND2=1", INSTANCE_ID);
+        end else if (MAX_DIMS == 2) begin
+          assert (ctrl_if.bounds[2] == BOUND_WIDTH'(1))
+            else $fatal(1, "%s: 2D Weight requires BND2=1", INSTANCE_ID);
+        end
         assert ((ctrl_if.src_base_addr[BUS_ADDR_BITS-1:0] == '0)
              && (ctrl_if.dst_base_addr[BUS_ADDR_BITS-1:0] == '0))
           else $fatal(1, "%s: Weight descriptor is not beat aligned",

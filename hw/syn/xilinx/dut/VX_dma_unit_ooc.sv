@@ -12,6 +12,8 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
     parameter int MISALIGN_PACK_BYTES = `MISALIGN_PACK_BYTES,
     parameter int RD_OUTSTANDING = `DMA_NODE_RD_OUTSTANDING_SLOT,
     parameter int FIXED_DIR = -1,
+    parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+    parameter int MAX_DIMS = 3,
     parameter int DCACHE_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DCACHE_DATA_SIZE),
     parameter int LMEM_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LMEM_DATA_SIZE)
 ) (
@@ -60,7 +62,9 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
     ) cfg_if ();
 
     VX_node_done_if done_if ();
-    VX_dma_lookahead_if lookahead_if ();
+    VX_dma_lookahead_if #(
+        .BOUND_WIDTH (BOUND_WIDTH)
+    ) lookahead_if ();
 
     assign lookahead_if.prepare_valid = 1'b0;
     assign lookahead_if.prepare_id = '0;
@@ -118,6 +122,8 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
     VX_dma_unit #(
         .INSTANCE_ID         ("dma-node-ooc"),
         .ENABLE_MISALIGN     (1'b1),
+        .BOUND_WIDTH         (BOUND_WIDTH),
+        .MAX_DIMS            (MAX_DIMS),
         .DCACHE_ADDR_WIDTH   (DCACHE_ADDR_WIDTH),
         .LMEM_ADDR_WIDTH     (LMEM_ADDR_WIDTH),
         .DCACHE_TAG_WIDTH    (DCACHE_TAG_WIDTH_P),

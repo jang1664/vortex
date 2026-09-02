@@ -1,12 +1,14 @@
 `include "VX_define.vh"
 
-interface VX_dma_lookahead_if import VX_gpu_pkg::*; ();
+interface VX_dma_lookahead_if import VX_gpu_pkg::*; #(
+  parameter BOUND_WIDTH = `DMA_BOUND_WIDTH
+) ();
 
   logic                 prepare_valid;
   logic [0:0]           prepare_id;
   logic [1:0][31:0]     src_stride;
   logic [1:0][31:0]     dst_stride;
-  logic [1:0][31:0]     bound;
+  logic [1:0][BOUND_WIDTH-1:0] bound;
   logic                 activate;
   logic [0:0]           activate_id;
   logic                 data_release;

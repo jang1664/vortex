@@ -167,7 +167,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   logic [15:0] dram_stride0, lmem_stride0;
   logic [31:0] src_s0, src_s1, src_s2;
   logic [31:0] dst_s0, dst_s1, dst_s2;
-  logic [31:0] bnd0, bnd1, bnd2;
+  logic [`DMA_BOUND_WIDTH-1:0] bnd0, bnd1, bnd2;
   logic [31:0] seg_size;
   logic [31:0] padding;
 
@@ -180,7 +180,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
     src_s0 = 0; src_s1 = 0; src_s2 = 0;
     dst_s0 = 0; dst_s1 = 0; dst_s2 = 0;
-    bnd0 = 1; bnd1 = 1; bnd2 = 1;
+    bnd0 = `DMA_BOUND_WIDTH'(1);
+    bnd1 = `DMA_BOUND_WIDTH'(1);
+    bnd2 = `DMA_BOUND_WIDTH'(1);
     seg_size = 0;
     padding  = 0;
 
@@ -188,7 +190,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       dir_is_st = (cmd_op == OP_DMA_ST);
       src_base  = cmd_q.rs2_data;
       dst_base  = cmd_q.rs1_data;
-      bnd0      = {16'd0, cmd_q.bound};
+      bnd0      = `DMA_BOUND_WIDTH'(cmd_q.bound);
       seg_size  = {4'd0, cmd_q.instr[31:4]};
 
       if (cmd_op == OP_DMA_LD) begin
@@ -228,9 +230,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         DMA_R_SRC_ST2:     v32 = src_s2;
         DMA_R_DST_ST2:     v32 = dst_s2;
 
-        DMA_R_BND0:        v32 = bnd0;
-        DMA_R_BND1:        v32 = bnd1;
-        DMA_R_BND2:        v32 = bnd2;
+        DMA_R_BND0:        v32 = 32'(bnd0);
+        DMA_R_BND1:        v32 = 32'(bnd1);
+        DMA_R_BND2:        v32 = 32'(bnd2);
         DMA_R_SEG_SIZE:    v32 = seg_size;
         DMA_R_PAD:         v32 = padding;
         DMA_R_DIR:         v32 = {31'd0, dir_is_st};

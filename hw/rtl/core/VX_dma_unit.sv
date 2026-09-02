@@ -13,6 +13,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_MISALIGN = 1'b0,
   parameter bit ENABLE_PADDING = 1'b1,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = 3,
   // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
   parameter int DCACHE_ADDR_WIDTH = 1,
@@ -57,6 +59,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
 
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .BOUND_WIDTH      (BOUND_WIDTH),
+      .MAX_DIMS         (MAX_DIMS),
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
@@ -79,6 +83,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
     VX_dma_unit_align #(
       .INSTANCE_ID      (INSTANCE_ID),
       .ENABLE_PADDING   (ENABLE_PADDING),
+      .BOUND_WIDTH      (BOUND_WIDTH),
+      .MAX_DIMS         (MAX_DIMS),
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),

@@ -1263,6 +1263,12 @@ for block_size in range(1, full_bitwidth+1):
 `define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
 `endif
 
+// DMA descriptors retain 32-bit software-visible bound words, while the
+// internal iterator contract uses only the range required by MM_MAX_LOG_DIM.
+`ifndef DMA_BOUND_WIDTH
+`define DMA_BOUND_WIDTH 21
+`endif
+
 // The improve backend's dependency scheduler requires the existing TMEM
 // priority frontend to apply its registered source classes at the physical
 // banks.  Preserve legacy arbitration for non-improve configurations and

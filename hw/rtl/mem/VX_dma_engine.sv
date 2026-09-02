@@ -44,6 +44,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     // convention; parents that still need byte-misalign must override.
     parameter bit ENABLE_MISALIGN   = 1'b0,
     parameter bit ENABLE_PADDING    = 1'b1,
+    parameter int BOUND_WIDTH       = `DMA_BOUND_WIDTH,
+    parameter int MAX_DIMS          = 3,
     parameter int RD_OUTSTANDING    = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
@@ -157,6 +159,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
             .ENABLE_PADDING   (ENABLE_PADDING),
+            .BOUND_WIDTH      (BOUND_WIDTH),
+            .MAX_DIMS         (MAX_DIMS),
             .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
             .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
             .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),

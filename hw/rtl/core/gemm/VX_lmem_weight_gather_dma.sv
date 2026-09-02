@@ -9,7 +9,8 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     parameter int NUM_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE,
     parameter int TAG_WIDTH = 1,
     parameter int RD_PREFETCH_DEPTH = 4,
-    parameter int CMD_FIFO_DEPTH = 1
+    parameter int CMD_FIFO_DEPTH = 1,
+    parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH
 ) (
     input wire clk,
     input wire reset,
@@ -33,6 +34,8 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     localparam int EXPECTED_LANES = GEMM_BYTES / LANE_BYTES;
     localparam int EXPECTED_CMD_BEATS = `MXU_ROW / ROWS_PER_GROUP;
     localparam int COUNT_BITS = 32;
+    localparam int GROUP_ROW_WIDTH = BOUND_WIDTH + `CLOG2(ROWS_PER_GROUP);
+    localparam int GROUP_OFFSET_WIDTH = GROUP_ROW_WIDTH + 32;
     localparam int SEQUENCE_BITS = 32;
     localparam int SOURCE_META_BITS = 96;
     localparam int DEST_META_BITS = 64;
@@ -63,14 +66,14 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
         ctrl_if.src_base_addr, ctrl_if.src_strides[0]
     };
     wire [DEST_META_BITS-1:0] command_dest_meta = ctrl_if.dst_base_addr;
-    wire [COUNT_BITS-1:0] command_total_groups
+    wire [BOUND_WIDTH-1:0] command_total_groups
         = ctrl_if.bounds[0] / ROWS_PER_GROUP;
     wire command_valid = ctrl_if.start && ctrl_if.idle;
     wire command_fire = dma_fetch_if.cmd_valid && dma_fetch_if.cmd_ready;
 
     assign dma_fetch_if.cmd_valid = command_valid;
     assign dma_fetch_if.cmd_id = ctrl_if.reg_idx;
-    assign dma_fetch_if.cmd_total_beats = command_total_groups;
+    assign dma_fetch_if.cmd_total_beats = COUNT_BITS'(command_total_groups);
     assign dma_fetch_if.cmd_payload = {
         command_source_meta, command_dest_meta
     };
@@ -82,8 +85,14 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     wire [63:0] fetch_source_base
         = fetch_source_meta[SOURCE_META_BITS-1 -: 64];
     wire [31:0] fetch_source_stride = fetch_source_meta[31:0];
+    wire [BOUND_WIDTH-1:0] fetch_group_index
+        = fetch_beat[BOUND_WIDTH-1:0];
+    wire [GROUP_ROW_WIDTH-1:0] fetch_row_index
+        = fetch_group_index * ROWS_PER_GROUP;
+    wire [GROUP_OFFSET_WIDTH-1:0] fetch_group_offset
+        = fetch_row_index * fetch_source_stride;
     wire [63:0] fetch_group_base = fetch_source_base
-        + (fetch_beat * ROWS_PER_GROUP * fetch_source_stride);
+        + 64'(fetch_group_offset);
     wire [SLOT_BITS-1:0] fetch_slot = dma_fetch_if.req_tag;
 
     logic [31:0] source_stride_r;
@@ -283,6 +292,8 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
         if (CMD_FIFO_DEPTH != 1)
             $fatal(1, "%s: initial NAIVE Weight migration requires command depth 1",
                    INSTANCE_ID);
+        if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+            $fatal(1, "%s: weight gather bound width mismatch", INSTANCE_ID);
         if (TAG_VALUE_BITS < SLOT_BITS && `UP(UUID_WIDTH) < SLOT_BITS)
             $fatal(1, "%s: weight gather tag cannot encode %0d slot bits",
                    INSTANCE_ID, SLOT_BITS);
@@ -310,6 +321,9 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
                            INSTANCE_ID);
             end
             if (source_request_fire) begin
+                assert ((fetch_beat >> BOUND_WIDTH) == 0)
+                    else $fatal(1, "%s: weight group index exceeds bound width",
+                                INSTANCE_ID);
                 assert (!assembly_valid_r[fetch_slot])
                     else $fatal(1, "%s: logical fetch reused a live assembly slot=%0d",
                                 INSTANCE_ID, fetch_slot);

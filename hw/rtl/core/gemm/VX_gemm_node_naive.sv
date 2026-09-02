@@ -299,9 +299,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
     
-    assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
-    assign input_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign input_dma_ctrl_if.bounds[2]       = 32'd1;
+    assign input_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.eff_mt);
+    assign input_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
+    assign input_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*16/8;
     assign input_dma_ctrl_if.reg_idx         = '0;
@@ -394,9 +395,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.bounds[0]      = weight_wtrans ? MXU_NT : MXU_KT;
-    assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
-    assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
+    assign weight_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(weight_wtrans ? MXU_NT : MXU_KT);
+    assign weight_dma_ctrl_if.bounds[1]      = `DMA_BOUND_WIDTH'(1);
+    assign weight_dma_ctrl_if.bounds[2]      = `DMA_BOUND_WIDTH'(1);
     
     assign weight_dma_ctrl_if.seg_size       = weight_wtrans ? ((MXU_KT*4)/8) : ((MXU_NT*4)/8);  //int4, bytes
     assign weight_dma_ctrl_if.reg_idx        = '0;
@@ -481,11 +483,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
 
     // QCOL: bounds0 = ceil(MXU_KT/qblk) groups per MXU-K chunk
     // QROW: bounds0 = MXU_KT rows
-    assign quant_param_dma_ctrl_if.bounds[0]       = sz_qdir
-                                                   ? MXU_KT
-                                                   : ceil_div_log2(MXU_KT, gemm_ctrl_if.qblk_orig);
-    assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
+    assign quant_param_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(sz_qdir
+                          ? MXU_KT
+                          : ceil_div_log2(MXU_KT,
+                                          gemm_ctrl_if.qblk_orig));
+    assign quant_param_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
+    assign quant_param_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
     // QCOL: seg_size = MXU_NT * 2 (one group row, all N columns)
     // QROW: seg_size = NG_mxu * 2 (one K row, NG_mxu group columns)
@@ -543,6 +547,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
           qparam_install_writes_remaining_r
               <= qparam_install_expected_writes;
         end
+        if (output_dma_ctrl_if.start && output_dma_ctrl_if.idle) begin
+          assert ((output_mt_eff >> `DMA_BOUND_WIDTH) == 0)
+            else $fatal(1, "%s: output bound exceeds %0d bits",
+                        INSTANCE_ID, `DMA_BOUND_WIDTH);
+        end
         if (((qparam_install_opcode_r == OP_SC_LDMA_MXU)
           && gemm_unit_v2_if.scale_register_write)
          || ((qparam_install_opcode_r == OP_ZP_LDMA_MXU)
@@ -591,9 +600,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
-    assign output_dma_ctrl_if.bounds[1] = 32'd1;
-    assign output_dma_ctrl_if.bounds[2] = 32'd1;
+    assign output_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(output_mt_eff);
+    assign output_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'(1);
+    assign output_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
 
     assign output_dma_ctrl_if.seg_size         = output_nt_eff * 16 / 8;
     assign output_dma_ctrl_if.reg_idx           = '0;
@@ -1231,6 +1241,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Input DMA (LMEM -> GEMM, DIR=0)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
+      .MAX_DIMS(1),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE)),
@@ -1266,6 +1277,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Quant param DMA (LMEM -> GEMM, DIR=0)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
+      .MAX_DIMS(1),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)),
@@ -1287,6 +1299,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Output DMA (GEMM -> LMEM, DIR=1)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
+      .MAX_DIMS(1),
       .DIR(1),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),

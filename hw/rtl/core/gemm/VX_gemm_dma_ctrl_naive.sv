@@ -404,7 +404,11 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
   // contiguous short rows split would repeatedly fetch or write the same wide
   // beat. Restrict the transform to descriptors whose source and destination
   // layouts are both provably contiguous and contain no per-row padding.
-  wire [63:0] coalesced_seg_size = 64'(seg_size) * 64'(bnd0);
+  wire [`DMA_BOUND_WIDTH-1:0] bnd0_narrow
+      = bnd0[`DMA_BOUND_WIDTH-1:0];
+  wire [32+`DMA_BOUND_WIDTH-1:0] coalesced_seg_size_native
+      = seg_size * bnd0_narrow;
+  wire [63:0] coalesced_seg_size = 64'(coalesced_seg_size_native);
   wire can_coalesce_dim0 = (seg_size != 0)
                          && (padding == 0)
                          && (bnd0 > 1)
@@ -413,7 +417,8 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
                          && (src_s0 == seg_size)
                          && (dst_s0 == seg_size)
                          && (coalesced_seg_size <= 64'h0000_0000_ffff_ffff);
-  wire [31:0] desc_bnd0 = can_coalesce_dim0 ? 32'd1 : bnd0;
+  wire [`DMA_BOUND_WIDTH-1:0] desc_bnd0
+      = can_coalesce_dim0 ? `DMA_BOUND_WIDTH'(1) : bnd0_narrow;
   wire [31:0] desc_seg_size = can_coalesce_dim0
                             ? coalesced_seg_size[31:0] : seg_size;
 
@@ -428,9 +433,9 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
     logic [31:0] dst_s1;
     logic [31:0] src_s2;
     logic [31:0] dst_s2;
-    logic [31:0] bnd0;
-    logic [31:0] bnd1;
-    logic [31:0] bnd2;
+    logic [`DMA_BOUND_WIDTH-1:0] bnd0;
+    logic [`DMA_BOUND_WIDTH-1:0] bnd1;
+    logic [`DMA_BOUND_WIDTH-1:0] bnd2;
     logic [31:0] seg_size;
     logic [31:0] padding;
     logic        dir_is_st;
@@ -464,9 +469,9 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
         DMA_R_SRC_ST2:     v32 = desc_q.src_s2;
         DMA_R_DST_ST2:     v32 = desc_q.dst_s2;
 
-        DMA_R_BND0:        v32 = desc_q.bnd0;
-        DMA_R_BND1:        v32 = desc_q.bnd1;
-        DMA_R_BND2:        v32 = desc_q.bnd2;
+        DMA_R_BND0:        v32 = 32'(desc_q.bnd0);
+        DMA_R_BND1:        v32 = 32'(desc_q.bnd1);
+        DMA_R_BND2:        v32 = 32'(desc_q.bnd2);
         DMA_R_SEG_SIZE:    v32 = desc_q.seg_size;
         DMA_R_PAD:         v32 = desc_q.padding;
         DMA_R_DIR:         v32 = {31'd0, desc_q.dir_is_st};
@@ -816,6 +821,13 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
       qdir_tot_q    <= qdir_tot_d;
 
       if (state_q == S_DECODE) begin
+      `ifndef SYNTHESIS
+        assert (((bnd0 >> `DMA_BOUND_WIDTH) == 0)
+             && ((bnd1 >> `DMA_BOUND_WIDTH) == 0)
+             && ((bnd2 >> `DMA_BOUND_WIDTH) == 0))
+          else $fatal(1, "%s: DMA bound exceeds %0d bits",
+                      INSTANCE_ID, `DMA_BOUND_WIDTH);
+      `endif
         desc_q.dst_base  <= dst_base;
         desc_q.src_base  <= src_base;
         desc_q.src_s0    <= src_s0;
@@ -825,8 +837,8 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
         desc_q.src_s2    <= src_s2;
         desc_q.dst_s2    <= dst_s2;
         desc_q.bnd0      <= desc_bnd0;
-        desc_q.bnd1      <= bnd1;
-        desc_q.bnd2      <= bnd2;
+        desc_q.bnd1      <= bnd1[`DMA_BOUND_WIDTH-1:0];
+        desc_q.bnd2      <= bnd2[`DMA_BOUND_WIDTH-1:0];
         desc_q.seg_size  <= desc_seg_size;
         desc_q.padding   <= padding;
         desc_q.dir_is_st <= dir_is_st;

@@ -46,12 +46,33 @@ case "${MODE}" in
   regression|all)
     run_positive parity32 DATA_SIZE=32 NEGATIVE_PADDING=0
     run_positive parity64 DATA_SIZE=64 NEGATIVE_PADDING=0
+    run_positive dims1 DATA_SIZE=64 DIM_COMPARE=1 SPECIAL_MAX_DIMS=1
+    run_positive dims2 DATA_SIZE=64 DIM_COMPARE=1 SPECIAL_MAX_DIMS=2
+    run_positive misal_dims1 DATA_SIZE=64 DIM_COMPARE=1 \
+      SPECIAL_MAX_DIMS=1 USE_MISALIGN=1
+    run_positive misal_dims2 DATA_SIZE=64 DIM_COMPARE=1 \
+      SPECIAL_MAX_DIMS=2 USE_MISALIGN=1
     run_expected_failure nonzero_padding \
       "padding-disabled DMA accepted nonzero padding" \
       DATA_SIZE=64 NEGATIVE_PADDING=1
     run_expected_failure unequal_width \
       "padding-disabled aligned DMA requires equal dcache/lmem bus widths" \
       TOP_MODULE=tb_VX_dma_padding_width_invalid
+    run_expected_failure bound_upper \
+      "exceeds BOUND_WIDTH" \
+      DATA_SIZE=64 NEGATIVE_BOUND=1
+    run_expected_failure inactive_bound_1d \
+      "inactive bound[1]" \
+      DATA_SIZE=64 DIM_COMPARE=1 SPECIAL_MAX_DIMS=1 NEGATIVE_INACTIVE=1
+    run_expected_failure inactive_bound_2d \
+      "inactive bound[2]" \
+      DATA_SIZE=64 DIM_COMPARE=1 SPECIAL_MAX_DIMS=2 NEGATIVE_INACTIVE=1
+    run_expected_failure max_dims_zero \
+      "MAX_DIMS(0) must be from 1 through 3" \
+      TOP_MODULE=tb_VX_dma_max_dims_invalid INVALID_MAX_DIMS=0
+    run_expected_failure max_dims_four \
+      "MAX_DIMS(4) must be from 1 through 3" \
+      TOP_MODULE=tb_VX_dma_max_dims_invalid INVALID_MAX_DIMS=4
     ;;
   parity32)
     run_positive parity32 DATA_SIZE=32 NEGATIVE_PADDING=0

@@ -318,6 +318,7 @@ module VX_core import VX_gpu_pkg::*; #(
       .LMEM_NUM_LANES_P(`LMEM_NUM_PORTS),
       .DCACHE_NUM_LANES_P(`DMA_DCACHE_PORTS),
       .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
+      .MAX_DIMS(3),
       .ENABLE_MISALIGN(1'b1),
       .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (

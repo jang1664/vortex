@@ -240,6 +240,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     channel_desc_t decoded_desc[NUM_CHANNELS];
     logic [2:0] decoded_bnd0_log2[NUM_CHANNELS];
+    logic decoded_bound_overflow[NUM_CHANNELS];
     logic decoded_chunkable;
     logic [31:0] decoded_beats_per_bank;
 
@@ -257,6 +258,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     channel_desc_t built_desc[NUM_CHANNELS];
     logic [31:0] built_chunk_beats_per_bank;
+    logic built_bound_overflow;
     logic [63:0] chunk_src_base[NUM_CHANNELS];
     logic [63:0] chunk_dst_base[NUM_CHANNELS];
     logic [63:0] chunk_src_offset[NUM_CHANNELS];
@@ -726,6 +728,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         wire burst_mode = (ch_words >= 32'(NUM_BURST_GROUPS))
                        && ((ch_words
                             & 32'(NUM_BURST_GROUPS - 1)) == 0);
+        assign decoded_bound_overflow[ch] = burst_mode
+            ? ((total_bpb >> sub_burst_log2 >> `DMA_BOUND_WIDTH) != 0)
+            : ((ch_words >> `DMA_BOUND_WIDTH) != 0);
 
         always_comb begin
             decoded_bnd0_log2[ch] = burst_mode ? sub_burst_log2 : 3'd0;
@@ -739,10 +744,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             decoded_desc[ch].regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
 
             if (burst_mode) begin
-                decoded_desc[ch].regs[DMA_R_BND0] = 32'(sub_burst_size);
+                decoded_desc[ch].regs[DMA_R_BND0]
+                    = 32'(`DMA_BOUND_WIDTH'(sub_burst_size));
                 decoded_desc[ch].regs[DMA_R_BND1] =
-                    total_bpb >> sub_burst_log2;
-                decoded_desc[ch].regs[DMA_R_BND2] = 32'(NUM_BURST_GROUPS);
+                    32'(`DMA_BOUND_WIDTH'(total_bpb >> sub_burst_log2));
+                decoded_desc[ch].regs[DMA_R_BND2]
+                    = 32'(`DMA_BOUND_WIDTH'(NUM_BURST_GROUPS));
                 decoded_desc[ch].regs[DMA_R_SRC_ST0] = decode_is_store
                     ? 32'(BEAT_STRIDE_TMEM_B) : 32'(BEAT_STRIDE_HBM_B);
                 decoded_desc[ch].regs[DMA_R_DST_ST0] = decode_is_store
@@ -760,9 +767,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 decoded_desc[ch].regs[DMA_R_DST_ST2] = decode_is_store
                     ? 32'(BANK_STRIDE_HBM_B) : 32'(BANK_STRIDE_TMEM_B);
             end else begin
-                decoded_desc[ch].regs[DMA_R_BND0] = 32'd1;
-                decoded_desc[ch].regs[DMA_R_BND1] = ch_words;
-                decoded_desc[ch].regs[DMA_R_BND2] = 32'd1;
+                decoded_desc[ch].regs[DMA_R_BND0]
+                    = 32'(`DMA_BOUND_WIDTH'(1));
+                decoded_desc[ch].regs[DMA_R_BND1]
+                    = 32'(`DMA_BOUND_WIDTH'(ch_words));
+                decoded_desc[ch].regs[DMA_R_BND2]
+                    = 32'(`DMA_BOUND_WIDTH'(1));
                 decoded_desc[ch].regs[DMA_R_SRC_ST0] = 32'd0;
                 decoded_desc[ch].regs[DMA_R_DST_ST0] = 32'd0;
                 decoded_desc[ch].regs[DMA_R_SRC_ST1] = decode_is_store
@@ -863,6 +873,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         end
 
         built_chunk_beats_per_bank = 32'd0;
+        built_bound_overflow = 1'b0;
         orig_bnd0 = builder_store_desc[0].regs[DMA_R_BND0];
         max_chunk_beats = 32'd0;
         bank_budget = 32'd0;
@@ -907,6 +918,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
             built_chunk_beats_per_bank = (chunk_bnd0 == 0)
                 ? 32'd0 : (chunk_bnd1 << chunk_bnd0_log2);
+            built_bound_overflow = ((chunk_bnd0 >> `DMA_BOUND_WIDTH) != 0)
+                                || ((chunk_bnd1 >> `DMA_BOUND_WIDTH) != 0);
             for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
                 chunk_src_base[ch] = chunk_src_base[ch]
                                    + chunk_src_offset[ch];
@@ -921,8 +934,10 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                     = chunk_dst_base[ch][31:0];
                 built_desc[ch].regs[DMA_R_DST_BASE_HI]
                     = chunk_dst_base[ch][63:32];
-                built_desc[ch].regs[DMA_R_BND0] = chunk_bnd0;
-                built_desc[ch].regs[DMA_R_BND1] = chunk_bnd1;
+                built_desc[ch].regs[DMA_R_BND0]
+                    = 32'(`DMA_BOUND_WIDTH'(chunk_bnd0));
+                built_desc[ch].regs[DMA_R_BND1]
+                    = 32'(`DMA_BOUND_WIDTH'(chunk_bnd1));
                 built_desc[ch].regs[DMA_R_SRC_ST1] = (chunk_bnd0 == 0)
                     ? 32'd0
                     : (32'(BEAT_STRIDE_TMEM_B) << chunk_bnd0_log2);
@@ -977,9 +992,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         assign lookahead_if[ch].dst_stride[1] =
             shadow_desc_q[ch].regs[DMA_R_DST_ST1];
         assign lookahead_if[ch].bound[0] =
-            shadow_desc_q[ch].regs[DMA_R_BND0];
+            shadow_desc_q[ch].regs[DMA_R_BND0][`DMA_BOUND_WIDTH-1:0];
         assign lookahead_if[ch].bound[1] =
-            shadow_desc_q[ch].regs[DMA_R_BND1];
+            shadow_desc_q[ch].regs[DMA_R_BND1][`DMA_BOUND_WIDTH-1:0];
         assign lookahead_if[ch].activate = ((state_q == S_PROG)
                                          && cfg_all_ready
                                          && issue_candidate_q
@@ -1926,6 +1941,42 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                         else $fatal(1,
                             "%s: chunkable store stride/segment is not shift encodable on channel %0d",
                             INSTANCE_ID, ch);
+                end
+            end
+
+            if (decode_valid_q) begin
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    if (decoded_desc[ch].active) begin
+                        assert (!decoded_bound_overflow[ch]
+                             && ((decoded_desc[ch].regs[DMA_R_BND0]
+                                  >> `DMA_BOUND_WIDTH) == 0)
+                             && ((decoded_desc[ch].regs[DMA_R_BND1]
+                                  >> `DMA_BOUND_WIDTH) == 0)
+                             && ((decoded_desc[ch].regs[DMA_R_BND2]
+                                  >> `DMA_BOUND_WIDTH) == 0))
+                            else $fatal(1,
+                                "%s: decoded channel %0d bound exceeds %0d bits",
+                                INSTANCE_ID, ch, `DMA_BOUND_WIDTH);
+                    end
+                end
+            end
+
+            if ((state_q == S_PROG) && cfg_all_ready) begin
+                assert (!built_bound_overflow)
+                    else $fatal(1, "%s: store chunk bound exceeds %0d bits",
+                                INSTANCE_ID, `DMA_BOUND_WIDTH);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+                    if (program_desc_q[ch].active) begin
+                        assert (((program_desc_q[ch].regs[DMA_R_BND0]
+                                  >> `DMA_BOUND_WIDTH) == 0)
+                             && ((program_desc_q[ch].regs[DMA_R_BND1]
+                                  >> `DMA_BOUND_WIDTH) == 0)
+                             && ((program_desc_q[ch].regs[DMA_R_BND2]
+                                  >> `DMA_BOUND_WIDTH) == 0))
+                            else $fatal(1,
+                                "%s: programmed channel %0d bound exceeds %0d bits",
+                                INSTANCE_ID, ch, `DMA_BOUND_WIDTH);
+                    end
                 end
             end
 

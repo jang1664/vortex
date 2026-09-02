@@ -31,6 +31,8 @@
 module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_PADDING = 1'b1,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = 3,
   // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers,
   // so we cannot read those parameters directly here.
@@ -63,6 +65,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   localparam int NUM_REGS      = `DMA_CFG_REG_NUM;
   localparam int NDIM          = 3;
   localparam int DESC_DIR_IDX  = 16;
+  localparam int CORRECTION_WIDTH = 32 + BOUND_WIDTH;
+  localparam logic [3:0] PRECALC_DIM_MASK = (MAX_DIMS == 1) ? 4'b0000
+                                            : (MAX_DIMS == 2) ? 4'b0011
+                                                              : 4'b1111;
 
   initial begin
     if (cfg_reg_if.DW != 32) $fatal(1, "cfg_reg_if.DW must be 32");
@@ -70,6 +76,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       $fatal(1, "cfg_reg_if.NUM(%0d) < NUM_REGS(%0d)", cfg_reg_if.NUM, NUM_REGS);
     if ((FIXED_DIR < -1) || (FIXED_DIR > 1))
       $fatal(1, "FIXED_DIR(%0d) must be -1, 0, or 1", FIXED_DIR);
+    if ((BOUND_WIDTH <= 0) || (BOUND_WIDTH > 32))
+      $fatal(1, "BOUND_WIDTH(%0d) must be from 1 through 32", BOUND_WIDTH);
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "MAX_DIMS(%0d) must be from 1 through %0d", MAX_DIMS, NDIM);
     if ((RD_OUTSTANDING <= 0)
         || ((RD_OUTSTANDING & (RD_OUTSTANDING - 1)) != 0))
       $fatal(1, "RD_OUTSTANDING(%0d) must be a positive power of two", RD_OUTSTANDING);
@@ -300,6 +310,20 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
               "%s: padding-disabled DMA accepted nonzero padding=%0d",
               INSTANCE_ID, cfg_reg_if.regs[15]);
 
+      if (cfg_fire) begin
+        for (int d = 0; d < NDIM; ++d) begin
+          assert ((cfg_reg_if.regs[11 + d] >> BOUND_WIDTH) == 0)
+            else $fatal(1,
+                "%s: bound[%0d]=0x%08h exceeds BOUND_WIDTH=%0d",
+                INSTANCE_ID, d, cfg_reg_if.regs[11 + d], BOUND_WIDTH);
+          if (d >= MAX_DIMS)
+            assert (cfg_reg_if.regs[11 + d] == 32'd1)
+              else $fatal(1,
+                  "%s: inactive bound[%0d]=%0d must be one for MAX_DIMS=%0d",
+                  INSTANCE_ID, d, cfg_reg_if.regs[11 + d], MAX_DIMS);
+        end
+      end
+
     end
   end
 `endif
@@ -331,10 +355,19 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire [31:0] cmd_valid_total = ENABLE_PADDING
                               ? (cfg_reg_if.regs[14] - cfg_reg_if.regs[15])
                               : cfg_reg_if.regs[14];
+  wire cmd_bounds_nonzero;
+  if (MAX_DIMS == 1) begin : g_cmd_bounds_1d
+    assign cmd_bounds_nonzero = (cfg_reg_if.regs[11] != 0);
+  end else if (MAX_DIMS == 2) begin : g_cmd_bounds_2d
+    assign cmd_bounds_nonzero = (cfg_reg_if.regs[11] != 0)
+                             && (cfg_reg_if.regs[12] != 0);
+  end else begin : g_cmd_bounds_3d
+    assign cmd_bounds_nonzero = (cfg_reg_if.regs[11] != 0)
+                             && (cfg_reg_if.regs[12] != 0)
+                             && (cfg_reg_if.regs[13] != 0);
+  end
   wire cmd_fast_path = cmd_start
-                    && (cfg_reg_if.regs[11] != 0)
-                    && (cfg_reg_if.regs[12] != 0)
-                    && (cfg_reg_if.regs[13] != 0)
+                    && cmd_bounds_nonzero
                     && (cfg_reg_if.regs[14] != 0)
                     && (ENABLE_PADDING
                         ? (cfg_reg_if.regs[14] > cfg_reg_if.regs[15])
@@ -427,7 +460,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   // Precomputed stride * (bound - 1), used for carry-step base address correction.
   // D2 products are intentionally absent: no next-base equation consumes them.
   logic [63:0] stride_bound_r[2][2];
-  logic [31:0] bound_r[NDIM];
+  logic [BOUND_WIDTH-1:0] bound_r[NDIM];
   logic [31:0] seg_size_r;
   logic [31:0] padding_r;
   logic        direction_bit_r;    // 0: GLOBAL->LMEM (load), 1: LMEM->GLOBAL (store)
@@ -452,10 +485,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [1:0]          prep_issue_pending_r;
   logic [1:0][3:0]     prep_needed_r;
   logic [1:0][3:0]     prep_ready_r;
-  logic [1:0][3:0][63:0] prep_result_r;
+  logic [1:0][3:0][CORRECTION_WIDTH-1:0] prep_result_r;
   logic [1:0][1:0][31:0] prep_src_stride_r;
   logic [1:0][1:0][31:0] prep_dst_stride_r;
-  logic [1:0][1:0][31:0] prep_bound_r;
+  logic [1:0][1:0][BOUND_WIDTH-1:0] prep_bound_r;
 
   localparam int PRECALC_SRC_D0 = 0;
   localparam int PRECALC_DST_D0 = 1;
@@ -466,36 +499,47 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   always_comb begin
     logic consume_d0;
     logic consume_d1;
-    consume_d0 = (cfg_reg_if.regs[12] > 1)
-              || (cfg_reg_if.regs[13] > 1);
-    consume_d1 = (cfg_reg_if.regs[13] > 1);
+    consume_d0 = (MAX_DIMS > 1) && (cfg_reg_if.regs[12] > 1);
+    if (MAX_DIMS > 2)
+      consume_d0 |= (cfg_reg_if.regs[13] > 1);
+    consume_d1 = (MAX_DIMS > 2) && (cfg_reg_if.regs[13] > 1);
+    cmd_precalc_needed = '0;
 
     // Excluded descriptors retain the legacy setup wait. Positive fast-path
     // descriptors issue only correction products that can actually be used.
     if (cmd_fast_path) begin
-      cmd_precalc_needed[PRECALC_SRC_D0] = consume_d0
-          && (cfg_reg_if.regs[11] > 1) && (cfg_reg_if.regs[5] != 0);
-      cmd_precalc_needed[PRECALC_DST_D0] = consume_d0
-          && (cfg_reg_if.regs[11] > 1) && (cfg_reg_if.regs[6] != 0);
-      cmd_precalc_needed[PRECALC_SRC_D1] = consume_d1
-          && (cfg_reg_if.regs[12] > 1) && (cfg_reg_if.regs[7] != 0);
-      cmd_precalc_needed[PRECALC_DST_D1] = consume_d1
-          && (cfg_reg_if.regs[12] > 1) && (cfg_reg_if.regs[8] != 0);
+      if (MAX_DIMS > 1) begin
+        cmd_precalc_needed[PRECALC_SRC_D0] = consume_d0
+            && (cfg_reg_if.regs[11] > 1) && (cfg_reg_if.regs[5] != 0);
+        cmd_precalc_needed[PRECALC_DST_D0] = consume_d0
+            && (cfg_reg_if.regs[11] > 1) && (cfg_reg_if.regs[6] != 0);
+      end
+      if (MAX_DIMS > 2) begin
+        cmd_precalc_needed[PRECALC_SRC_D1] = consume_d1
+            && (cfg_reg_if.regs[12] > 1) && (cfg_reg_if.regs[7] != 0);
+        cmd_precalc_needed[PRECALC_DST_D1] = consume_d1
+            && (cfg_reg_if.regs[12] > 1) && (cfg_reg_if.regs[8] != 0);
+      end
     end else begin
-      cmd_precalc_needed = 4'b1111;
+      cmd_precalc_needed = PRECALC_DIM_MASK;
     end
   end
 
   logic [3:0] prep_cmd_needed;
   always_comb begin
-    prep_cmd_needed[PRECALC_SRC_D0] = (lookahead_if.bound[0] > 1)
-        && (lookahead_if.src_stride[0] != 0);
-    prep_cmd_needed[PRECALC_DST_D0] = (lookahead_if.bound[0] > 1)
-        && (lookahead_if.dst_stride[0] != 0);
-    prep_cmd_needed[PRECALC_SRC_D1] = (lookahead_if.bound[1] > 1)
-        && (lookahead_if.src_stride[1] != 0);
-    prep_cmd_needed[PRECALC_DST_D1] = (lookahead_if.bound[1] > 1)
-        && (lookahead_if.dst_stride[1] != 0);
+    prep_cmd_needed = '0;
+    if (MAX_DIMS > 1) begin
+      prep_cmd_needed[PRECALC_SRC_D0] = (lookahead_if.bound[0] > 1)
+          && (lookahead_if.src_stride[0] != 0);
+      prep_cmd_needed[PRECALC_DST_D0] = (lookahead_if.bound[0] > 1)
+          && (lookahead_if.dst_stride[0] != 0);
+    end
+    if (MAX_DIMS > 2) begin
+      prep_cmd_needed[PRECALC_SRC_D1] = (lookahead_if.bound[1] > 1)
+          && (lookahead_if.src_stride[1] != 0);
+      prep_cmd_needed[PRECALC_DST_D1] = (lookahead_if.bound[1] > 1)
+          && (lookahead_if.dst_stride[1] != 0);
+    end
   end
 
   wire prepare_fire = lookahead_if.prepare_valid
@@ -513,7 +557,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
   logic [3:0] multiplier_needed;
   logic [3:0][31:0] multiplier_stride;
-  logic [3:0][31:0] multiplier_bound;
+  logic [3:0][BOUND_WIDTH-1:0] multiplier_bound;
   always_comb begin
     multiplier_needed = precalc_needed_r;
     multiplier_stride[PRECALC_SRC_D0] = stride_r[0][0];
@@ -554,8 +598,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     .data_out (multiplier_owner_tag)
   );
 
-  logic [3:0]       precalc_valid;
-  logic [3:0][63:0] precalc_result;
+  logic [3:0]                            precalc_valid;
+  logic [3:0][CORRECTION_WIDTH-1:0]      precalc_result;
   wire multiplier_result_cache = multiplier_owner_tag[1];
   wire multiplier_result_id = multiplier_owner_tag[0];
   wire [3:0] active_precalc_valid = precalc_valid
@@ -584,7 +628,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire activate_cache_hit = cmd_start && activate_slot_owner
       && ((prep_ready_now[lookahead_if.activate_id] & cmd_precalc_needed)
        == cmd_precalc_needed);
-  logic [3:0][63:0] activate_cached_result;
+  logic [3:0][CORRECTION_WIDTH-1:0] activate_cached_result;
   always_comb begin
     activate_cached_result = prep_result_r[lookahead_if.activate_id];
     if (multiplier_result_cache
@@ -602,59 +646,89 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire              precalc_done = &precalc_ready_now;
 
   wire [63:0] src_d0_correction = active_precalc_valid[PRECALC_SRC_D0]
-                                      ? precalc_result[PRECALC_SRC_D0]
+                                      ? 64'(precalc_result[PRECALC_SRC_D0])
                                       : stride_bound_r[0][0];
   wire [63:0] dst_d0_correction = active_precalc_valid[PRECALC_DST_D0]
-                                      ? precalc_result[PRECALC_DST_D0]
+                                      ? 64'(precalc_result[PRECALC_DST_D0])
                                       : stride_bound_r[1][0];
   wire [63:0] src_d1_correction = active_precalc_valid[PRECALC_SRC_D1]
-                                      ? precalc_result[PRECALC_SRC_D1]
+                                      ? 64'(precalc_result[PRECALC_SRC_D1])
                                       : stride_bound_r[0][1];
   wire [63:0] dst_d1_correction = active_precalc_valid[PRECALC_DST_D1]
-                                      ? precalc_result[PRECALC_DST_D1]
+                                      ? 64'(precalc_result[PRECALC_DST_D1])
                                       : stride_bound_r[1][1];
 
-  // Four D0/D1 source/destination correction multipliers. Bound-one and
-  // zero-stride corrections are known zero and bypass the multiplier.
-  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d0 (
-    .clk(clk),
-    .reset(reset),
-    .valid_in(multiplier_issue && multiplier_needed[PRECALC_SRC_D0]),
-    .a(multiplier_stride[PRECALC_SRC_D0]),
-    .b(multiplier_bound[PRECALC_SRC_D0] - 32'd1),
-    .valid_out(precalc_valid[0]),
-    .result(precalc_result[0])
-  );
+  // MAX_DIMS=1 has no carry correction. MAX_DIMS=2 needs D0 only, and
+  // MAX_DIMS=3 needs D0/D1. D2 never has a higher dimension to carry into.
+  if (MAX_DIMS > 1) begin : g_precalc_d0
+    VX_mul_u32_pipe #(
+      .OUT_REGS(0),
+      .A_WIDTH (32),
+      .B_WIDTH (BOUND_WIDTH)
+    ) mul_src_d0 (
+      .clk(clk),
+      .reset(reset),
+      .valid_in(multiplier_issue && multiplier_needed[PRECALC_SRC_D0]),
+      .a(multiplier_stride[PRECALC_SRC_D0]),
+      .b(multiplier_bound[PRECALC_SRC_D0] - BOUND_WIDTH'(1)),
+      .valid_out(precalc_valid[PRECALC_SRC_D0]),
+      .result(precalc_result[PRECALC_SRC_D0])
+    );
 
-  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d0 (
-    .clk(clk),
-    .reset(reset),
-    .valid_in(multiplier_issue && multiplier_needed[PRECALC_DST_D0]),
-    .a(multiplier_stride[PRECALC_DST_D0]),
-    .b(multiplier_bound[PRECALC_DST_D0] - 32'd1),
-    .valid_out(precalc_valid[1]),
-    .result(precalc_result[1])
-  );
+    VX_mul_u32_pipe #(
+      .OUT_REGS(0),
+      .A_WIDTH (32),
+      .B_WIDTH (BOUND_WIDTH)
+    ) mul_dst_d0 (
+      .clk(clk),
+      .reset(reset),
+      .valid_in(multiplier_issue && multiplier_needed[PRECALC_DST_D0]),
+      .a(multiplier_stride[PRECALC_DST_D0]),
+      .b(multiplier_bound[PRECALC_DST_D0] - BOUND_WIDTH'(1)),
+      .valid_out(precalc_valid[PRECALC_DST_D0]),
+      .result(precalc_result[PRECALC_DST_D0])
+    );
+  end else begin : g_no_precalc_d0
+    assign precalc_valid[PRECALC_SRC_D0] = 1'b0;
+    assign precalc_valid[PRECALC_DST_D0] = 1'b0;
+    assign precalc_result[PRECALC_SRC_D0] = '0;
+    assign precalc_result[PRECALC_DST_D0] = '0;
+  end
 
-  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d1 (
-    .clk(clk),
-    .reset(reset),
-    .valid_in(multiplier_issue && multiplier_needed[PRECALC_SRC_D1]),
-    .a(multiplier_stride[PRECALC_SRC_D1]),
-    .b(multiplier_bound[PRECALC_SRC_D1] - 32'd1),
-    .valid_out(precalc_valid[2]),
-    .result(precalc_result[2])
-  );
+  if (MAX_DIMS > 2) begin : g_precalc_d1
+    VX_mul_u32_pipe #(
+      .OUT_REGS(0),
+      .A_WIDTH (32),
+      .B_WIDTH (BOUND_WIDTH)
+    ) mul_src_d1 (
+      .clk(clk),
+      .reset(reset),
+      .valid_in(multiplier_issue && multiplier_needed[PRECALC_SRC_D1]),
+      .a(multiplier_stride[PRECALC_SRC_D1]),
+      .b(multiplier_bound[PRECALC_SRC_D1] - BOUND_WIDTH'(1)),
+      .valid_out(precalc_valid[PRECALC_SRC_D1]),
+      .result(precalc_result[PRECALC_SRC_D1])
+    );
 
-  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d1 (
-    .clk(clk),
-    .reset(reset),
-    .valid_in(multiplier_issue && multiplier_needed[PRECALC_DST_D1]),
-    .a(multiplier_stride[PRECALC_DST_D1]),
-    .b(multiplier_bound[PRECALC_DST_D1] - 32'd1),
-    .valid_out(precalc_valid[3]),
-    .result(precalc_result[3])
-  );
+    VX_mul_u32_pipe #(
+      .OUT_REGS(0),
+      .A_WIDTH (32),
+      .B_WIDTH (BOUND_WIDTH)
+    ) mul_dst_d1 (
+      .clk(clk),
+      .reset(reset),
+      .valid_in(multiplier_issue && multiplier_needed[PRECALC_DST_D1]),
+      .a(multiplier_stride[PRECALC_DST_D1]),
+      .b(multiplier_bound[PRECALC_DST_D1] - BOUND_WIDTH'(1)),
+      .valid_out(precalc_valid[PRECALC_DST_D1]),
+      .result(precalc_result[PRECALC_DST_D1])
+    );
+  end else begin : g_no_precalc_d1
+    assign precalc_valid[PRECALC_SRC_D1] = 1'b0;
+    assign precalc_valid[PRECALC_DST_D1] = 1'b0;
+    assign precalc_result[PRECALC_SRC_D1] = '0;
+    assign precalc_result[PRECALC_DST_D1] = '0;
+  end
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -682,9 +756,15 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         stride_bound_r[s][d] <= '0;
     end else if (cmd_start) begin
       foreach (bound_r[d]) begin
-        stride_r[0][d] <= cfg_reg_if.regs[5 + 2*d][31:0];
-        stride_r[1][d] <= cfg_reg_if.regs[6 + 2*d][31:0];
-        bound_r[d]     <= cfg_reg_if.regs[11 + d][31:0];
+        if (d < MAX_DIMS) begin
+          stride_r[0][d] <= cfg_reg_if.regs[5 + 2*d][31:0];
+          stride_r[1][d] <= cfg_reg_if.regs[6 + 2*d][31:0];
+          bound_r[d]     <= cfg_reg_if.regs[11 + d][BOUND_WIDTH-1:0];
+        end else begin
+          stride_r[0][d] <= '0;
+          stride_r[1][d] <= '0;
+          bound_r[d]     <= BOUND_WIDTH'(1);
+        end
       end
       foreach (stride_bound_r[s, d])
         stride_bound_r[s][d] <= '0;
@@ -697,13 +777,13 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         precalc_ready_r <= 4'b1111;
         precalc_pending_r <= 1'b0;
         stride_bound_r[0][0]
-            <= activate_cached_result[PRECALC_SRC_D0];
+            <= 64'(activate_cached_result[PRECALC_SRC_D0]);
         stride_bound_r[1][0]
-            <= activate_cached_result[PRECALC_DST_D0];
+            <= 64'(activate_cached_result[PRECALC_DST_D0]);
         stride_bound_r[0][1]
-            <= activate_cached_result[PRECALC_SRC_D1];
+            <= 64'(activate_cached_result[PRECALC_SRC_D1]);
         stride_bound_r[1][1]
-            <= activate_cached_result[PRECALC_DST_D1];
+            <= 64'(activate_cached_result[PRECALC_DST_D1]);
       end else begin
         precalc_ready_r <= ~cmd_precalc_needed;
         precalc_pending_r <= |cmd_precalc_needed;
@@ -717,13 +797,13 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           precalc_ready_r[p] <= 1'b1;
       end
       if (active_precalc_valid[PRECALC_SRC_D0])
-        stride_bound_r[0][0] <= precalc_result[0];
+        stride_bound_r[0][0] <= 64'(precalc_result[0]);
       if (active_precalc_valid[PRECALC_DST_D0])
-        stride_bound_r[1][0] <= precalc_result[1];
+        stride_bound_r[1][0] <= 64'(precalc_result[1]);
       if (active_precalc_valid[PRECALC_SRC_D1])
-        stride_bound_r[0][1] <= precalc_result[2];
+        stride_bound_r[0][1] <= 64'(precalc_result[2]);
       if (active_precalc_valid[PRECALC_DST_D1])
-        stride_bound_r[1][1] <= precalc_result[3];
+        stride_bound_r[1][1] <= 64'(precalc_result[3]);
     end
 
     if (!reset) begin
@@ -777,6 +857,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       if (prepare_fire)
         assert (!prep_owner_valid_r[lookahead_if.prepare_id])
           else $fatal(1, "%s: PREPARE reused a live prep_id", INSTANCE_ID);
+      if (prepare_fire && (MAX_DIMS == 1))
+        assert (lookahead_if.bound[1] == BOUND_WIDTH'(1))
+          else $fatal(1,
+              "%s: PREPARE inactive bound[1]=%0d must be one for MAX_DIMS=1",
+              INSTANCE_ID, lookahead_if.bound[1]);
 
       if (multiplier_result_cache && (|precalc_valid)) begin
         assert (prep_owner_valid_r[multiplier_result_id])
@@ -806,8 +891,20 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   //     are still draining. Without the split, each segment would serialize
   //     through S_PREP_SEG -> DECIDE -> S_ADV_SEG (~7–8 cycles / seg).
   // ------------------------------------------------------------
-  logic [31:0] rd_i_dim[NDIM];
-  logic [31:0] wr_i_dim[NDIM];
+  logic [BOUND_WIDTH-1:0] rd_i_dim[NDIM];
+  logic [BOUND_WIDTH-1:0] wr_i_dim[NDIM];
+  logic [BOUND_WIDTH-1:0] rd_i_dim_advance[NDIM];
+  logic [BOUND_WIDTH-1:0] wr_i_dim_advance[NDIM];
+  wire bounds_nonzero;
+  if (MAX_DIMS == 1) begin : g_bounds_1d
+    assign bounds_nonzero = (bound_r[0] != 0);
+  end else if (MAX_DIMS == 2) begin : g_bounds_2d
+    assign bounds_nonzero = (bound_r[0] != 0) && (bound_r[1] != 0);
+  end else begin : g_bounds_3d
+    assign bounds_nonzero = (bound_r[0] != 0)
+                         && (bound_r[1] != 0)
+                         && (bound_r[2] != 0);
+  end
   logic [31:0] out_off; // bytes within current WR segment [0 .. seg_size)
   logic        rd_rollover_pending_r;
   logic        wr_rollover_pending_r;
@@ -1104,16 +1201,76 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire [63:0] rd_next_ptr = rd_src_ptr_cur + 64'(rd_src_beat_bytes);
   wire        rd_crosses_seg = active_dir ? (rd_next_ptr >= lmem_rd_end)
                                                 : (rd_next_ptr >= dcache_rd_end);
-  wire        rd_is_last_seg = (rd_i_dim[0] + 32'd1 >= bound_r[0])
-                            && (rd_i_dim[1] + 32'd1 >= bound_r[1])
-                            && (rd_i_dim[2] + 32'd1 >= bound_r[2]);
-  logic [3:0] rd_rollover_dep_mask;
-  always_comb begin
-    rd_rollover_dep_mask = '0;
-    if (!(rd_i_dim[0] + 32'd1 < bound_r[0])) begin
-      rd_rollover_dep_mask[PRECALC_SRC_D0] = 1'b1;
-      if (!(rd_i_dim[1] + 32'd1 < bound_r[1]))
-        rd_rollover_dep_mask[PRECALC_SRC_D1] = 1'b1;
+  wire        rd_is_last_seg;
+  wire [3:0]  rd_rollover_dep_mask;
+  wire [63:0] rd_next_base;
+  if (MAX_DIMS == 1) begin : g_rd_dim1
+    assign rd_is_last_seg = (rd_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0]);
+    assign rd_rollover_dep_mask = '0;
+    assign rd_next_base = (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+        ? (rd_base_src_seg_r + 64'(stride_r[0][0])) : 64'd0;
+    always_comb begin
+      rd_i_dim_advance[0] = rd_i_dim[0] + BOUND_WIDTH'(1);
+      rd_i_dim_advance[1] = '0;
+      rd_i_dim_advance[2] = '0;
+    end
+  end else if (MAX_DIMS == 2) begin : g_rd_dim2
+    assign rd_is_last_seg = (rd_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0])
+                         && (rd_i_dim[1] + BOUND_WIDTH'(1) >= bound_r[1]);
+    assign rd_rollover_dep_mask =
+        (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? 4'b0000 : 4'b0001;
+    assign rd_next_base =
+        (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (rd_base_src_seg_r + 64'(stride_r[0][0]))
+            : ((rd_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (rd_base_src_seg_r + 64'(stride_r[0][1])
+                    - src_d0_correction)
+                : 64'd0);
+    always_comb begin
+      rd_i_dim_advance[0] = rd_i_dim[0];
+      rd_i_dim_advance[1] = rd_i_dim[1];
+      rd_i_dim_advance[2] = '0;
+      if (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) begin
+        rd_i_dim_advance[0] = rd_i_dim[0] + BOUND_WIDTH'(1);
+      end else begin
+        rd_i_dim_advance[0] = '0;
+        rd_i_dim_advance[1] = rd_i_dim[1] + BOUND_WIDTH'(1);
+      end
+    end
+  end else begin : g_rd_dim3
+    assign rd_is_last_seg = (rd_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0])
+                         && (rd_i_dim[1] + BOUND_WIDTH'(1) >= bound_r[1])
+                         && (rd_i_dim[2] + BOUND_WIDTH'(1) >= bound_r[2]);
+    assign rd_rollover_dep_mask =
+        (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) ? 4'b0000
+        : (rd_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1]) ? 4'b0001
+                                                       : 4'b0101;
+    assign rd_next_base =
+        (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (rd_base_src_seg_r + 64'(stride_r[0][0]))
+            : ((rd_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (rd_base_src_seg_r + 64'(stride_r[0][1])
+                    - src_d0_correction)
+                : ((rd_i_dim[2] + BOUND_WIDTH'(1) < bound_r[2])
+                    ? (rd_base_src_seg_r + 64'(stride_r[0][2])
+                        - src_d1_correction - src_d0_correction)
+                    : 64'd0));
+    always_comb begin
+      rd_i_dim_advance[0] = rd_i_dim[0];
+      rd_i_dim_advance[1] = rd_i_dim[1];
+      rd_i_dim_advance[2] = rd_i_dim[2];
+      if (rd_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) begin
+        rd_i_dim_advance[0] = rd_i_dim[0] + BOUND_WIDTH'(1);
+      end else begin
+        rd_i_dim_advance[0] = '0;
+        if (rd_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1]) begin
+          rd_i_dim_advance[1] = rd_i_dim[1] + BOUND_WIDTH'(1);
+        end else begin
+          rd_i_dim_advance[1] = '0;
+          rd_i_dim_advance[2] = rd_i_dim[2] + BOUND_WIDTH'(1);
+        end
+      end
     end
   end
   wire rd_rollover_ready = ((precalc_ready_now & rd_rollover_dep_mask)
@@ -1124,16 +1281,6 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire rd_rollover_advance = (src_req_fire && rd_crosses_seg
                            && !rd_is_last_seg && rd_rollover_ready)
                           || rd_rollover_release;
-  wire [63:0] rd_next_base =
-    (rd_i_dim[0] + 32'd1 < bound_r[0])
-      ? (rd_base_src_seg_r + 64'(stride_r[0][0]))
-      : ((rd_i_dim[1] + 32'd1 < bound_r[1])
-          ? (rd_base_src_seg_r + 64'(stride_r[0][1]) - src_d0_correction)
-          : ((rd_i_dim[2] + 32'd1 < bound_r[2])
-              ? (rd_base_src_seg_r + 64'(stride_r[0][2])
-                  - src_d1_correction - src_d0_correction)
-              : 64'd0));
-
   wire [RD_SLOT_BITS-1:0] rsp_slot_idx = active_dir
                                        ? lmem_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0]
                                        : dcache_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0];
@@ -1186,23 +1333,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                                 ? calc_src_bytes(out_off, valid_total, wr_nbytes_cur)
                                 : wr_nbytes_cur;
   assign wr_payload_needed = (wr_src_bytes_cur != 0);
-  wire        wr_is_last_seg    = (wr_i_dim[0] + 32'd1 >= bound_r[0])
-                               && (wr_i_dim[1] + 32'd1 >= bound_r[1])
-                               && (wr_i_dim[2] + 32'd1 >= bound_r[2]);
+  wire        wr_is_last_seg;
   wire        wr_seg_complete_fire = dst_req_fire
                                    && (out_off + wr_nbytes_cur >= seg_size_r);
-  logic [3:0] wr_rollover_dep_mask;
-  always_comb begin
-    wr_rollover_dep_mask = '0;
-    if (!(wr_i_dim[0] + 32'd1 < bound_r[0])) begin
-      wr_rollover_dep_mask[PRECALC_SRC_D0] = 1'b1;
-      wr_rollover_dep_mask[PRECALC_DST_D0] = 1'b1;
-      if (!(wr_i_dim[1] + 32'd1 < bound_r[1])) begin
-        wr_rollover_dep_mask[PRECALC_SRC_D1] = 1'b1;
-        wr_rollover_dep_mask[PRECALC_DST_D1] = 1'b1;
-      end
-    end
-  end
+  wire [3:0] wr_rollover_dep_mask;
   wire wr_rollover_ready = ((precalc_ready_now & wr_rollover_dep_mask)
                             == wr_rollover_dep_mask);
   wire wr_rollover_set = wr_seg_complete_fire
@@ -1211,24 +1345,98 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire wr_rollover_advance = (wr_seg_complete_fire
                            && !wr_is_last_seg && wr_rollover_ready)
                           || wr_rollover_release;
-  wire [63:0] wr_next_base_src =
-    (wr_i_dim[0] + 32'd1 < bound_r[0])
-      ? (wr_base_src_seg_r + 64'(stride_r[0][0]))
-      : ((wr_i_dim[1] + 32'd1 < bound_r[1])
-          ? (wr_base_src_seg_r + 64'(stride_r[0][1]) - src_d0_correction)
-          : ((wr_i_dim[2] + 32'd1 < bound_r[2])
-              ? (wr_base_src_seg_r + 64'(stride_r[0][2])
-                  - src_d1_correction - src_d0_correction)
-              : 64'd0));
-  wire [63:0] wr_next_base_dst =
-    (wr_i_dim[0] + 32'd1 < bound_r[0])
-      ? (wr_base_dst_seg_r + 64'(stride_r[1][0]))
-      : ((wr_i_dim[1] + 32'd1 < bound_r[1])
-          ? (wr_base_dst_seg_r + 64'(stride_r[1][1]) - dst_d0_correction)
-          : ((wr_i_dim[2] + 32'd1 < bound_r[2])
-              ? (wr_base_dst_seg_r + 64'(stride_r[1][2])
-                  - dst_d1_correction - dst_d0_correction)
-              : 64'd0));
+  wire [63:0] wr_next_base_src;
+  wire [63:0] wr_next_base_dst;
+  if (MAX_DIMS == 1) begin : g_wr_dim1
+    assign wr_is_last_seg = (wr_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0]);
+    assign wr_rollover_dep_mask = '0;
+    assign wr_next_base_src =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_src_seg_r + 64'(stride_r[0][0])) : 64'd0;
+    assign wr_next_base_dst =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_dst_seg_r + 64'(stride_r[1][0])) : 64'd0;
+    always_comb begin
+      wr_i_dim_advance[0] = wr_i_dim[0] + BOUND_WIDTH'(1);
+      wr_i_dim_advance[1] = '0;
+      wr_i_dim_advance[2] = '0;
+    end
+  end else if (MAX_DIMS == 2) begin : g_wr_dim2
+    assign wr_is_last_seg = (wr_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0])
+                         && (wr_i_dim[1] + BOUND_WIDTH'(1) >= bound_r[1]);
+    assign wr_rollover_dep_mask =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? 4'b0000 : 4'b0011;
+    assign wr_next_base_src =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_src_seg_r + 64'(stride_r[0][0]))
+            : ((wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (wr_base_src_seg_r + 64'(stride_r[0][1])
+                    - src_d0_correction)
+                : 64'd0);
+    assign wr_next_base_dst =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_dst_seg_r + 64'(stride_r[1][0]))
+            : ((wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (wr_base_dst_seg_r + 64'(stride_r[1][1])
+                    - dst_d0_correction)
+                : 64'd0);
+    always_comb begin
+      wr_i_dim_advance[0] = wr_i_dim[0];
+      wr_i_dim_advance[1] = wr_i_dim[1];
+      wr_i_dim_advance[2] = '0;
+      if (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) begin
+        wr_i_dim_advance[0] = wr_i_dim[0] + BOUND_WIDTH'(1);
+      end else begin
+        wr_i_dim_advance[0] = '0;
+        wr_i_dim_advance[1] = wr_i_dim[1] + BOUND_WIDTH'(1);
+      end
+    end
+  end else begin : g_wr_dim3
+    assign wr_is_last_seg = (wr_i_dim[0] + BOUND_WIDTH'(1) >= bound_r[0])
+                         && (wr_i_dim[1] + BOUND_WIDTH'(1) >= bound_r[1])
+                         && (wr_i_dim[2] + BOUND_WIDTH'(1) >= bound_r[2]);
+    assign wr_rollover_dep_mask =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) ? 4'b0000
+        : (wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1]) ? 4'b0011
+                                                       : 4'b1111;
+    assign wr_next_base_src =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_src_seg_r + 64'(stride_r[0][0]))
+            : ((wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (wr_base_src_seg_r + 64'(stride_r[0][1])
+                    - src_d0_correction)
+                : ((wr_i_dim[2] + BOUND_WIDTH'(1) < bound_r[2])
+                    ? (wr_base_src_seg_r + 64'(stride_r[0][2])
+                        - src_d1_correction - src_d0_correction)
+                    : 64'd0));
+    assign wr_next_base_dst =
+        (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0])
+            ? (wr_base_dst_seg_r + 64'(stride_r[1][0]))
+            : ((wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1])
+                ? (wr_base_dst_seg_r + 64'(stride_r[1][1])
+                    - dst_d0_correction)
+                : ((wr_i_dim[2] + BOUND_WIDTH'(1) < bound_r[2])
+                    ? (wr_base_dst_seg_r + 64'(stride_r[1][2])
+                        - dst_d1_correction - dst_d0_correction)
+                    : 64'd0));
+    always_comb begin
+      wr_i_dim_advance[0] = wr_i_dim[0];
+      wr_i_dim_advance[1] = wr_i_dim[1];
+      wr_i_dim_advance[2] = wr_i_dim[2];
+      if (wr_i_dim[0] + BOUND_WIDTH'(1) < bound_r[0]) begin
+        wr_i_dim_advance[0] = wr_i_dim[0] + BOUND_WIDTH'(1);
+      end else begin
+        wr_i_dim_advance[0] = '0;
+        if (wr_i_dim[1] + BOUND_WIDTH'(1) < bound_r[1]) begin
+          wr_i_dim_advance[1] = wr_i_dim[1] + BOUND_WIDTH'(1);
+        end else begin
+          wr_i_dim_advance[1] = '0;
+          wr_i_dim_advance[2] = wr_i_dim[2] + BOUND_WIDTH'(1);
+        end
+      end
+    end
+  end
   wire        dst_payload_fire = dst_req_fire && wr_payload_needed;
 
   // Slot-read stage. The selected response RAM slot remains SLOT_DRAINING and
@@ -1390,7 +1598,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [WIN_VALID_W-1:0] win_dcache_valid_next;
   logic [WIN_VALID_W-1:0] win_dcache_head_next;
   logic [31:0]            out_off_next;
-  logic [31:0]            wr_i_dim_next[NDIM];
+  logic [BOUND_WIDTH-1:0] wr_i_dim_next[NDIM];
   logic [63:0]            wr_base_src_seg_next;
   logic [63:0]            wr_base_dst_seg_next;
   wr_state_e              wr_state_next;
@@ -1495,17 +1703,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       end
 
       if (wr_rollover_advance) begin
-        if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
-          wr_i_dim_next[0] = wr_i_dim[0] + 32'd1;
-        end else begin
-          wr_i_dim_next[0] = 32'd0;
-          if (wr_i_dim[1] + 32'd1 < bound_r[1]) begin
-            wr_i_dim_next[1] = wr_i_dim[1] + 32'd1;
-          end else begin
-            wr_i_dim_next[1] = 32'd0;
-            wr_i_dim_next[2] = wr_i_dim[2] + 32'd1;
-          end
-        end
+        for (int d = 0; d < NDIM; ++d)
+          wr_i_dim_next[d] = wr_i_dim_advance[d];
         wr_base_src_seg_next = wr_next_base_src;
         wr_base_dst_seg_next = wr_next_base_dst;
         out_off_next = 32'd0;
@@ -1554,10 +1753,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         `TRACE(2, ("%m : [%0t] | DMA_SETUP_MUL_ISSUE | {inst=%s, needed=0x%0h, src_stride0=%0d, src_bound0_m1=%0d, src_stride1=%0d, src_bound1_m1=%0d, dst_stride0=%0d, dst_bound0_m1=%0d, dst_stride1=%0d, dst_bound1_m1=%0d}\n",
                   $time, INSTANCE_ID,
                   precalc_needed_r,
-                  stride_r[0][0], bound_r[0] - 32'd1,
-                  stride_r[0][1], bound_r[1] - 32'd1,
-                  stride_r[1][0], bound_r[0] - 32'd1,
-                  stride_r[1][1], bound_r[1] - 32'd1))
+                  stride_r[0][0], bound_r[0] - BOUND_WIDTH'(1),
+                  stride_r[0][1], bound_r[1] - BOUND_WIDTH'(1),
+                  stride_r[1][0], bound_r[0] - BOUND_WIDTH'(1),
+                  stride_r[1][1], bound_r[1] - BOUND_WIDTH'(1)))
       end
 
       if (|precalc_valid) begin
@@ -1987,8 +2186,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         data_max_beats_r <= lookahead_if.data_max_beats;
         pre_release_reads_r <= '0;
         foreach (rd_i_dim[d]) begin
-          rd_i_dim[d] <= 32'd0;
-          wr_i_dim[d] <= 32'd0;
+          rd_i_dim[d] <= '0;
+          wr_i_dim[d] <= '0;
         end
         out_off   <= 32'd0;
         rd_base_src_seg_r <= cmd_src_base;
@@ -2060,8 +2259,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           slot_valid_bytes_r[i] <= '0;
         end
 
-        if (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0
-            || seg_size_r == 0) begin
+        if (!bounds_nonzero || (seg_size_r == 0)) begin
           // Degenerate descriptor (no work) — short-circuit to DONE.
           rd_state <= RD_DONE;
           wr_state <= WR_DONE;
@@ -2107,17 +2305,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         //   Pre-condition: valid_total > 0 (else rd_state=RD_DONE from init).
         // -------------------------
         if (rd_rollover_release) begin
-          if (rd_i_dim[0] + 32'd1 < bound_r[0]) begin
-            rd_i_dim[0] <= rd_i_dim[0] + 32'd1;
-          end else begin
-            rd_i_dim[0] <= 32'd0;
-            if (rd_i_dim[1] + 32'd1 < bound_r[1]) begin
-              rd_i_dim[1] <= rd_i_dim[1] + 32'd1;
-            end else begin
-              rd_i_dim[1] <= 32'd0;
-              rd_i_dim[2] <= rd_i_dim[2] + 32'd1;
-            end
-          end
+          for (int d = 0; d < NDIM; ++d)
+            rd_i_dim[d] <= rd_i_dim_advance[d];
           rd_base_src_seg_r <= rd_next_base;
           rd_rollover_pending_r <= 1'b0;
           if (active_dir) begin
@@ -2142,17 +2331,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
               else                 dcache_rd_ptr <= rd_next_ptr;
             end else if (rd_rollover_ready) begin
               // Advance rd_i_dim, rd_base_src_seg_r, recompute rd_ptr/rd_end
-              if (rd_i_dim[0] + 32'd1 < bound_r[0]) begin
-                rd_i_dim[0] <= rd_i_dim[0] + 32'd1;
-              end else begin
-                rd_i_dim[0] <= 32'd0;
-                if (rd_i_dim[1] + 32'd1 < bound_r[1]) begin
-                  rd_i_dim[1] <= rd_i_dim[1] + 32'd1;
-                end else begin
-                  rd_i_dim[1] <= 32'd0;
-                  rd_i_dim[2] <= rd_i_dim[2] + 32'd1;
-                end
-              end
+              for (int d = 0; d < NDIM; ++d)
+                rd_i_dim[d] <= rd_i_dim_advance[d];
               rd_base_src_seg_r <= rd_next_base;
               if (active_dir) begin
                 lmem_rd_ptr <= align_down(rd_next_base, LMEM_BYTES);

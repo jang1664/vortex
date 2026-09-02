@@ -10,6 +10,9 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+OBJ ?= func
+MAX_DIMS ?= 3
+DIMS_ONLY := $(if $(filter dims,$(OBJ)),1,0)
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_dma_mem_unit
@@ -62,7 +65,12 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS ?=
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).DIMS_ONLY_P=$(DIMS_ONLY) \
+		  -pvalue+$(TOP_MODULE).MAX_DIMS_P=$(MAX_DIMS)
+else
+PARAMS := -GOBJ=$(OBJ) -GMAX_DIMS_P=$(MAX_DIMS)
+endif
 
 run: sim
 

@@ -247,12 +247,15 @@ module tb_VX_gemm_dma_ctrl;
     end
   endtask
 
-  localparam logic [7:0] OP_NOTIFY = 8'hF1;
-  localparam logic [7:0] OP_DMA_LD = 8'h10;
-  localparam logic [7:0] OP_DMA_ST = 8'h11;
+  localparam logic [3:0] OP_NOTIFY = 4'd3;
+  localparam logic [3:0] OP_DMA_LD = 4'd1;
+  localparam logic [3:0] OP_DMA_ST = 4'd2;
 
-  function automatic logic [31:0] make_instr(input logic [7:0] op);
-    return {24'd0, op};
+  function automatic logic [31:0] make_instr(
+    input logic [27:0] seg_size,
+    input logic [3:0] op
+  );
+    return {seg_size, op};
   endfunction
 
   function automatic logic [31:0] make_exp_ctrl(
@@ -279,11 +282,11 @@ module tb_VX_gemm_dma_ctrl;
       $fatal(1, "CONTROL owner/gen field width overflow: owner_w=%0d gen_w=%0d", CTRL_OWNER_W_TB, CTRL_GEN_W_TB);
 
     gemm_dma_ctrl_if.start <= 1'b0;
+    gemm_dma_ctrl_if.cmd_valid <= 1'b0;
+    gemm_dma_ctrl_if.cmd_tag <= '0;
+    gemm_dma_ctrl_if.prepare_valid <= 1'b0;
+    gemm_dma_ctrl_if.prepare_cmd <= '0;
     gemm_dma_ctrl_if.cmd   <= '0;
-    gemm_dma_ctrl_if.M_tot <= 32'd0;
-    gemm_dma_ctrl_if.N_tot <= 32'd0;
-    gemm_dma_ctrl_if.K_tot <= 32'd0;
-    gemm_dma_ctrl_if.entry_id <= 32'd0;
     clear_notify_req       <= 1'b0;
 
     reset = 1'b1;
@@ -297,18 +300,16 @@ module tb_VX_gemm_dma_ctrl;
     issue_base = issue_count;
 
     c = '0;
-    c.instr    = make_instr(OP_DMA_LD);
+    c.instr    = make_instr(28'd256, OP_DMA_LD);
     c.rd       = '0;   // T_INPUT
     c.rs1      = '0;   // mt_idx
     c.rs2      = '0;   // kt_idx
     c.rs1_data = 64'h0000_0000_0000_1000; // LMEM dst base
     c.rs2_data = 64'h0000_0000_0000_8000; // DRAM src base
+    c.stride   = {16'd256, 16'd256};
+    c.bound    = 16'd128;
 
     gemm_dma_ctrl_if.cmd   <= c;
-    gemm_dma_ctrl_if.M_tot <= 32'd128;
-    gemm_dma_ctrl_if.N_tot <= 32'd128;
-    gemm_dma_ctrl_if.K_tot <= 32'd128;
-    gemm_dma_ctrl_if.entry_id <= 32'd7;
 
     $display("[%0t] Send DMA_LD INPUT", $time);
     pulse_start();
@@ -351,18 +352,16 @@ module tb_VX_gemm_dma_ctrl;
     issue_base = issue_count;
 
     c = '0;
-    c.instr    = make_instr(OP_DMA_ST);
+    c.instr    = make_instr(28'd4, OP_DMA_ST);
     c.rd       = 32'd4; // T_OUTPUT
     c.rs1      = 32'd1; // mt_idx
     c.rs2      = 32'd1; // nt_idx
     c.rs1_data = 64'h0000_0000_0000_9000; // DRAM dst base
     c.rs2_data = 64'h0000_0000_0000_2000; // LMEM src base
+    c.stride   = {16'd260, 16'd256};
+    c.bound    = 16'd2;
 
     gemm_dma_ctrl_if.cmd   <= c;
-    gemm_dma_ctrl_if.M_tot <= 32'd130; // mt_eff=2
-    gemm_dma_ctrl_if.N_tot <= 32'd130; // nt_eff=2
-    gemm_dma_ctrl_if.K_tot <= 32'd128;
-    gemm_dma_ctrl_if.entry_id <= 32'd9;
 
     $display("[%0t] Send DMA_ST OUTPUT", $time);
     pulse_start();
@@ -414,7 +413,7 @@ module tb_VX_gemm_dma_ctrl;
     clear_notify_req <= 1'b0;
 
     c = '0;
-    c.instr    = make_instr(OP_NOTIFY);
+    c.instr    = make_instr(28'd0, OP_NOTIFY);
     c.rs1_data = 64'h0000_0000_0000_0003; // rid=3
     c.rs2_data = 64'h0000_0000_DEAD_BEEF; // value
 

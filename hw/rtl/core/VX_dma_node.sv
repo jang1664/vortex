@@ -9,6 +9,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   // See VX_dma_unit. Default 0 (aligned-only) to track the engine-level
   // convention; override to 1 on paths where SW still emits misaligned bases.
   parameter bit ENABLE_MISALIGN = 1'b0,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = 3,
   // Forwarded to VX_dma_unit — DC v2023 rejects `interface_inst.PARAM`
   // in parameter binding contexts, so the parent must pass these explicitly.
   // Defaults track the VX_core-side interface widths (see VX_core.sv:87-95).
@@ -46,7 +48,9 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   ) cfg_reg_if ();
 
   VX_node_done_if done_if ();
-  VX_dma_lookahead_if dma_lookahead_if ();
+  VX_dma_lookahead_if #(
+    .BOUND_WIDTH(BOUND_WIDTH)
+  ) dma_lookahead_if ();
 
   assign dma_lookahead_if.prepare_valid = 1'b0;
   assign dma_lookahead_if.prepare_id = '0;
@@ -96,6 +100,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_dma_unit #(
     .INSTANCE_ID      (INSTANCE_ID),
     .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+    .BOUND_WIDTH      (BOUND_WIDTH),
+    .MAX_DIMS         (MAX_DIMS),
     .DCACHE_ADDR_WIDTH(DMA_DCACHE_ADDR_WIDTH),
     .LMEM_ADDR_WIDTH  (DMA_LMEM_ADDR_WIDTH),
     .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),

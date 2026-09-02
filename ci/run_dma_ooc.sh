@@ -21,6 +21,7 @@ MISALIGN_PACK_BYTES_OVERRIDE=""
 DCACHE_BYTES_OVERRIDE=""
 LMEM_BYTES_OVERRIDE=""
 FIXED_DIR="-1"
+MAX_DIMS="3"
 EXTRA_SOURCES=()
 EXTRA_DEFINES=()
 PYTHON_BIN="${PYTHON:-python3}"
@@ -50,6 +51,7 @@ Options:
   --dcache-bytes N         Aggregate node-backend Dcache width in bytes (64..512)
   --lmem-bytes N           Aggregate node-backend LMEM width in bytes (64..512)
   --fixed-dir N            Direction mode: -1 (runtime), 0, or 1 (default: -1)
+  --max-dims N             Maximum DMA dimensions: 1, 2, or 3 (default: 3)
   --extra-source PATH      Append one explicit SystemVerilog source (repeatable)
   --extra-define NAME      Append one explicit synthesis define (repeatable)
   -h, --help               Show this help
@@ -142,6 +144,10 @@ while [[ $# -gt 0 ]]; do
       FIXED_DIR="${2:?missing value for --fixed-dir}"
       shift 2
       ;;
+    --max-dims)
+      MAX_DIMS="${2:?missing value for --max-dims}"
+      shift 2
+      ;;
     --extra-source)
       EXTRA_SOURCES+=("${2:?missing value for --extra-source}")
       shift 2
@@ -168,6 +174,8 @@ done
   || fail "--fixed-dir must be -1, 0, or 1"
 [[ "${PADDING_ENABLED}" == "0" || "${PADDING_ENABLED}" == "1" ]] \
   || fail "--padding-enabled must be 0 or 1"
+[[ "${MAX_DIMS}" == "1" || "${MAX_DIMS}" == "2" || "${MAX_DIMS}" == "3" ]] \
+  || fail "--max-dims must be 1, 2, or 3"
 if [[ -n "${MISALIGN_PACK_BYTES_OVERRIDE}" ]]; then
   [[ "${MISALIGN_PACK_BYTES_OVERRIDE}" =~ ^[1-9][0-9]*$ ]] \
     || fail "--misalign-pack-bytes must be a positive integer"
@@ -320,8 +328,10 @@ if [[ "${TARGET}" == "node-backend" ]]; then
   TOP_GENERICS="DCACHE_DATA_SIZE=${DCACHE_BYTES_OVERRIDE}"
   TOP_GENERICS+=" LMEM_DATA_SIZE=${LMEM_BYTES_OVERRIDE}"
   TOP_GENERICS+=" FIXED_DIR=${FIXED_DIR}"
+  TOP_GENERICS+=" MAX_DIMS=${MAX_DIMS}"
 else
   TOP_GENERICS="ENABLE_PADDING=${PADDING_ENABLED}"
+  TOP_GENERICS+=" MAX_DIMS=${MAX_DIMS}"
 fi
 
 mkdir -p "${OUTPUT_DIR}"
@@ -429,6 +439,7 @@ printf '\n' >> "${OUTPUT_DIR}/command.txt"
   echo "dcache_bytes=${DCACHE_BYTES_OVERRIDE:-wrapper-default}"
   echo "lmem_bytes=${LMEM_BYTES_OVERRIDE:-wrapper-default}"
   echo "fixed_dir=${FIXED_DIR}"
+  echo "max_dims=${MAX_DIMS}"
   echo "top_generics=${TOP_GENERICS:-none}"
   echo "extra_source_count=${#NORMALIZED_EXTRA_SOURCES[@]}"
   echo "extra_defines=${NORMALIZED_EXTRA_DEFINES[*]:-none}"
@@ -554,6 +565,7 @@ cat > "${OUTPUT_DIR}/comparison.md" <<EOF
 - Aggregate Dcache width: \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes
 - Aggregate LMEM width: \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes
 - Direction mode: \`${FIXED_DIR}\`
+- Maximum dimensions: \`${MAX_DIMS}\`
 - Padding enabled: \`${PADDING_ENABLED}\`
 - Top generics: \`${TOP_GENERICS:-none}\`
 - MISALIGN_PACK_BYTES: \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\`
@@ -596,6 +608,7 @@ cat > "${OUTPUT_DIR}/manifest.md" <<EOF
 | Aggregate Dcache width | \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes |
 | Aggregate LMEM width | \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes |
 | Direction mode | \`${FIXED_DIR}\` |
+| Maximum dimensions | \`${MAX_DIMS}\` |
 | Padding enabled | \`${PADDING_ENABLED}\` |
 | Top generics | \`${TOP_GENERICS:-none}\` |
 | MISALIGN_PACK_BYTES | \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\` |

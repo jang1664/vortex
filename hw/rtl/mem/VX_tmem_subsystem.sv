@@ -194,6 +194,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
         .AXI_ID_WIDTH   (AXI_ID_WIDTH),
         .TAG_WIDTH      (TAG_WIDTH),
+        .MAX_DIMS       (3),
         .ENABLE_PADDING (1'b0),
         .RD_OUTSTANDING (DMA_RD_OUTSTANDING)
     ) u_dma_engine (
@@ -717,6 +718,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Input local DMA
     VX_lmem_dma_input_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
+        .MAX_DIMS    (1),
         .TAG_WIDTH   (TAG_WIDTH),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
@@ -760,6 +762,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Weight local DMA
     VX_lmem_dma_weight_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
+        .MAX_DIMS    (1),
         .TAG_WIDTH   (TAG_WIDTH),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
@@ -804,6 +807,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Scale local DMA
     VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sc"}),
+        .MAX_DIMS    (1),
         .TAG_WIDTH   (TAG_WIDTH),
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
@@ -843,6 +847,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Zero-point local DMA
     VX_lmem_dma_qparam_overlap #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_zp"}),
+        .MAX_DIMS    (1),
         .TAG_WIDTH   (TAG_WIDTH),
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
@@ -882,6 +887,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Output local DMA (GEMM -> LMEM)
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
+        .MAX_DIMS    (1),
         .DIR         (1),
         .TAG_WIDTH   (TAG_WIDTH),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
