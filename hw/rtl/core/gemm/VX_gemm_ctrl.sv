@@ -135,6 +135,12 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [31:0] sync_regs_q[NUM_SYNC_REGS];
     logic [31:0] effective_sync[NUM_SYNC_REGS];
 
+    logic cmd_stage_valid_q;
+    logic [2:0] cmd_stage_child_q;
+    gemm_unified_cmd_t cmd_stage_cmd_q;
+    logic cmd_stage_drain;
+    logic cmd_stage_ready;
+
     logic fsm_idle;
     logic fsm_pending_work;
     logic [2:0] fsm_pending_child;
@@ -154,7 +160,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     for (genvar sched_wait = 0; sched_wait < 4; ++sched_wait) begin : g_sched_input_waits
       assign scheduler_input_waits[sched_wait]
-          = gemm_fsm_if.ctrl.cmd.input_admit_waits[sched_wait];
+          = cmd_stage_cmd_q.input_admit_waits[sched_wait];
     end
 
 `ifndef SYNTHESIS
@@ -175,7 +181,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 `endif
 `endif
 
-    wire scheduler_quiescent = (&child_q_empty_v)
+    wire scheduler_quiescent = !cmd_stage_valid_q
+                             && (&child_q_empty_v)
                              && (&child_inflight_empty_v);
     wire new_invocation_ready = fsm_idle && scheduler_quiescent;
     wire cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
@@ -208,12 +215,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // exactly: new_invocation_ready = fsm_idle && scheduler_quiescent.
     assign gemm_fsm_if.flag.done = scheduler_quiescent;
     assign gemm_fsm_if.flag.idle = 1'b1;
-    always_comb begin
-      gemm_fsm_if.flag.child_ready = ~child_q_full_v;
-      if (fsm_pending_scheduler_work && !scheduler_probe_ready
-       && (fsm_pending_child < N_CHILDREN))
-        gemm_fsm_if.flag.child_ready[fsm_pending_child] = 1'b0;
-    end
+    // The FSM only sees the elastic-stage acceptance condition.  Queue and
+    // readiness-scoreboard backpressure act on the registered stage output,
+    // keeping them out of the wide command-payload construction cone.
+    assign gemm_fsm_if.flag.child_ready = {6{cmd_stage_ready}};
     assign sched_source_priority_o = scheduler_source_priority;
     assign sched_input_source_enable_o = scheduler_input_source_enable;
 
@@ -266,36 +271,65 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       endcase
     endfunction
 
-    wire [2:0] fsm_target_child = command_child(gemm_fsm_if.ctrl.cmd);
+    wire [2:0] fsm_target_child = fsm_pending_child;
     wire fsm_target_valid = (fsm_target_child < N_CHILDREN);
-    wire scheduler_cmd_valid = fsm_target_valid
-        && (fsm_target_child <= ZP_CHILD_INDEX);
-    wire scheduler_cmd_fire = gemm_fsm_if.ctrl.start
-                            && scheduler_cmd_valid;
+    wire [2:0] fsm_decoded_child = command_child(gemm_fsm_if.ctrl.cmd);
+    wire fsm_cmd_accept = gemm_fsm_if.ctrl.start && cmd_stage_ready;
+    wire cmd_stage_target_valid = (cmd_stage_child_q < N_CHILDREN);
+    wire scheduler_cmd_valid = cmd_stage_valid_q
+        && cmd_stage_target_valid
+        && (cmd_stage_child_q <= ZP_CHILD_INDEX);
+    wire scheduler_cmd_fire = cmd_stage_drain && scheduler_cmd_valid;
     logic [1:0] scheduler_cmd_resource;
     logic scheduler_cmd_bank;
 
     always_comb begin
       scheduler_cmd_resource = GEMM_SCHED_RESOURCE_INPUT;
       scheduler_cmd_bank = 1'b0;
-      unique case (fsm_target_child)
+      unique case (cmd_stage_child_q)
         3'd0: begin
           scheduler_cmd_resource = GEMM_SCHED_RESOURCE_INPUT;
-          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[2];
+          scheduler_cmd_bank = cmd_stage_cmd_q.flags[2];
         end
         WEIGHT_CHILD_INDEX: begin
           scheduler_cmd_resource = GEMM_SCHED_RESOURCE_WEIGHT;
-          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[0];
+          scheduler_cmd_bank = cmd_stage_cmd_q.flags[0];
         end
         SCALE_CHILD_INDEX: begin
           scheduler_cmd_resource = GEMM_SCHED_RESOURCE_SCALE;
-          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[1];
+          scheduler_cmd_bank = cmd_stage_cmd_q.flags[1];
         end
         default: begin
           scheduler_cmd_resource = GEMM_SCHED_RESOURCE_ZP;
-          scheduler_cmd_bank = gemm_fsm_if.ctrl.cmd.flags[1];
+          scheduler_cmd_bank = cmd_stage_cmd_q.flags[1];
         end
       endcase
+    end
+
+    // Drain and refill may happen on the same edge.  The target child is
+    // captured beside the payload so neither child selection nor scoreboard
+    // admission can drift while downstream backpressure holds the stage.
+    always_comb begin
+      cmd_stage_drain = 1'b0;
+      if (cmd_stage_valid_q && cmd_stage_target_valid) begin
+        cmd_stage_drain = !child_q_full_v[cmd_stage_child_q]
+                       && (!scheduler_cmd_valid || scheduler_probe_ready);
+      end
+      cmd_stage_ready = !cmd_stage_valid_q || cmd_stage_drain;
+    end
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        cmd_stage_valid_q <= 1'b0;
+        cmd_stage_child_q <= '0;
+        cmd_stage_cmd_q <= '0;
+      end else if (cmd_stage_ready) begin
+        cmd_stage_valid_q <= gemm_fsm_if.ctrl.start;
+        if (gemm_fsm_if.ctrl.start) begin
+          cmd_stage_child_q <= fsm_target_child;
+          cmd_stage_cmd_q <= gemm_fsm_if.ctrl.cmd;
+        end
+      end
     end
 
     VX_microtile_readiness_scheduler #(
@@ -305,15 +339,15 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     ) u_microtile_readiness_scheduler (
       .clk(clk),
       .reset(reset || cfg_fire),
-      .probe_valid_i(fsm_pending_scheduler_work),
-      .probe_work_seq_i(fsm_pending_work_seq),
+      .probe_valid_i(scheduler_cmd_valid),
+      .probe_work_seq_i(cmd_stage_cmd_q.work_seq),
       .probe_ready_o(scheduler_probe_ready),
       .cmd_fire_i(scheduler_cmd_fire),
       .cmd_resource_i(scheduler_cmd_resource),
-      .cmd_work_seq_i(gemm_fsm_if.ctrl.cmd.work_seq),
+      .cmd_work_seq_i(cmd_stage_cmd_q.work_seq),
       .cmd_bank_i(scheduler_cmd_bank),
-      .cmd_target_i(gemm_fsm_if.ctrl.cmd.notify.value),
-      .cmd_writer_wait_i(gemm_fsm_if.ctrl.cmd.writer_wait),
+      .cmd_target_i(cmd_stage_cmd_q.notify.value),
+      .cmd_writer_wait_i(cmd_stage_cmd_q.writer_wait),
       .input_waits_i(scheduler_input_waits),
       .retire_valid_i(child_completion_pop_v[0]),
       .retire_work_seq_i(child_inflight_head[0].work_seq),
@@ -345,8 +379,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     always_comb begin
       child_q_push_v = '0;
-      if (gemm_fsm_if.ctrl.start && fsm_target_valid)
-        child_q_push_v[fsm_target_child] = 1'b1;
+      if (cmd_stage_drain)
+        child_q_push_v[cmd_stage_child_q] = 1'b1;
     end
 
     // Each completion source has a fixed architectural owner.  Build every
@@ -726,7 +760,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           .reset     (reset),
           .push      (child_q_push_v[i]),
           .pop       (child_q_pop_v[i]),
-          .data_in   (gemm_fsm_if.ctrl.cmd),
+          .data_in   (cmd_stage_cmd_q),
           .data_out  (child_q_dout),
           .empty     (child_q_empty_v[i]),
           .full      (child_q_full_v[i]),
@@ -808,21 +842,21 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         logic [31:0] dbg_child_fallthrough_opportunity_q;
         logic [31:0] dbg_child_full_block_cycles_q;
 
-        wire incoming_deps_ready = (gemm_fsm_if.ctrl.cmd.waits[0].valid
-              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[0].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[0].target) : 1'b1)
-          && (gemm_fsm_if.ctrl.cmd.waits[1].valid
-              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[1].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[1].target) : 1'b1)
-          && (gemm_fsm_if.ctrl.cmd.waits[2].valid
-              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[2].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[2].target) : 1'b1)
-          && (gemm_fsm_if.ctrl.cmd.waits[3].valid
-              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[3].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[3].target) : 1'b1)
-          && (gemm_fsm_if.ctrl.cmd.waits[4].valid
-              ? (effective_sync[gemm_fsm_if.ctrl.cmd.waits[4].reg_id]
-                 >= gemm_fsm_if.ctrl.cmd.waits[4].target) : 1'b1);
+        wire incoming_deps_ready = (cmd_stage_cmd_q.waits[0].valid
+              ? (effective_sync[cmd_stage_cmd_q.waits[0].reg_id]
+                 >= cmd_stage_cmd_q.waits[0].target) : 1'b1)
+          && (cmd_stage_cmd_q.waits[1].valid
+              ? (effective_sync[cmd_stage_cmd_q.waits[1].reg_id]
+                 >= cmd_stage_cmd_q.waits[1].target) : 1'b1)
+          && (cmd_stage_cmd_q.waits[2].valid
+              ? (effective_sync[cmd_stage_cmd_q.waits[2].reg_id]
+                 >= cmd_stage_cmd_q.waits[2].target) : 1'b1)
+          && (cmd_stage_cmd_q.waits[3].valid
+              ? (effective_sync[cmd_stage_cmd_q.waits[3].reg_id]
+                 >= cmd_stage_cmd_q.waits[3].target) : 1'b1)
+          && (cmd_stage_cmd_q.waits[4].valid
+              ? (effective_sync[cmd_stage_cmd_q.waits[4].reg_id]
+                 >= cmd_stage_cmd_q.waits[4].target) : 1'b1);
 
         always_ff @(posedge clk) begin
           if (reset || cfg_fire) begin
@@ -1244,7 +1278,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     localparam int DBG_TILE_MAX = 256;
 `endif
     localparam int DBG_CLASS_COUNT = 10;
-    localparam int DBG_QUEUE_DEPTH = DMA_CHILD_QUEUE_DEPTH;
+    localparam int DBG_QUEUE_DEPTH = DMA_CHILD_QUEUE_DEPTH + 1;
     localparam logic [3:0] DBG_C_DRAM_INPUT_LOAD  = 4'd0;
     localparam logic [3:0] DBG_C_DRAM_WEIGHT_LOAD = 4'd1;
     localparam logic [3:0] DBG_C_DRAM_SCALE_LOAD  = 4'd2;
@@ -1325,7 +1359,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     function automatic int unsigned dbg_child_depth(input int child);
       return (child == DMA_CHILD_INDEX)
-          ? DMA_CHILD_QUEUE_DEPTH : CHILD_QUEUE_DEPTH;
+          ? (DMA_CHILD_QUEUE_DEPTH + 1) : (CHILD_QUEUE_DEPTH + 1);
     endfunction
 
     function automatic logic [3:0] dbg_command_class(
@@ -1835,7 +1869,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           end
         end
 
-        if (gemm_fsm_if.ctrl.start) begin
+        if (fsm_cmd_accept) begin
           int uid;
           int child;
           uid = dbg_record_count_q;
@@ -1953,40 +1987,73 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [31:0] dbg_w_arm_issued_q [2];
     logic [31:0] dbg_sc_arm_issued_q [2];
     logic [31:0] dbg_zp_arm_issued_q [2];
+    logic dbg_cmd_stage_blocked_q;
+    logic [2:0] dbg_cmd_stage_child_q;
+    gemm_unified_cmd_t dbg_cmd_stage_cmd_q;
 
     always_ff @(posedge clk) begin
       if (reset || cfg_fire) begin
         dbg_invocation_active_cycles_q <= '0;
         dbg_fifo_full_blocks_ready_other_child_q <= '0;
+        dbg_cmd_stage_blocked_q <= 1'b0;
+        dbg_cmd_stage_child_q <= '0;
+        dbg_cmd_stage_cmd_q <= '0;
         for (int bank = 0; bank < 2; ++bank)
           dbg_w_arm_issued_q[bank] <= 32'd0;
         for (int bank = 0; bank < 2; ++bank) begin
           dbg_sc_arm_issued_q[bank] <= 32'd0;
           dbg_zp_arm_issued_q[bank] <= 32'd0;
         end
-      end else if (invocation_active_q) begin
-        dbg_invocation_active_cycles_q
-            <= dbg_invocation_active_cycles_q + 1;
-        if (fsm_pending_work
-         && child_q_full_v[fsm_pending_child]
-         && (|(child_q_empty_v & ~child_q_full_v))) begin
-          dbg_fifo_full_blocks_ready_other_child_q
-              <= dbg_fifo_full_blocks_ready_other_child_q + 1;
-        end
-        if (child_issue_fire_v[0]
-         && (child_q_cmd[0].instr[3:0] == 4'd7)) begin
-          dbg_w_arm_issued_q[child_q_cmd[0].flags[2]]
-              <= dbg_w_arm_issued_q[child_q_cmd[0].flags[2]] + 32'd1;
-          dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]]
-              <= dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]] + 32'd1;
-          dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]]
-              <= dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]] + 32'd1;
+      end else begin
+        dbg_cmd_stage_blocked_q <= cmd_stage_valid_q && !cmd_stage_drain;
+        dbg_cmd_stage_child_q <= cmd_stage_child_q;
+        dbg_cmd_stage_cmd_q <= cmd_stage_cmd_q;
+        if (invocation_active_q) begin
+          dbg_invocation_active_cycles_q
+              <= dbg_invocation_active_cycles_q + 1;
+          if (fsm_pending_work
+           && child_q_full_v[fsm_pending_child]
+           && (|(child_q_empty_v & ~child_q_full_v))) begin
+            dbg_fifo_full_blocks_ready_other_child_q
+                <= dbg_fifo_full_blocks_ready_other_child_q + 1;
+          end
+          if (child_issue_fire_v[0]
+           && (child_q_cmd[0].instr[3:0] == 4'd7)) begin
+            dbg_w_arm_issued_q[child_q_cmd[0].flags[2]]
+                <= dbg_w_arm_issued_q[child_q_cmd[0].flags[2]] + 32'd1;
+            dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]]
+                <= dbg_sc_arm_issued_q[child_q_cmd[0].flags[1]] + 32'd1;
+            dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]]
+                <= dbg_zp_arm_issued_q[child_q_cmd[0].flags[0]] + 32'd1;
+          end
         end
       end
     end
 
     always_ff @(posedge clk) begin
       if (!reset) begin
+        if (dbg_cmd_stage_blocked_q) begin
+          assert (cmd_stage_valid_q
+               && (cmd_stage_child_q == dbg_cmd_stage_child_q)
+               && (cmd_stage_cmd_q == dbg_cmd_stage_cmd_q))
+            else $fatal(1, "%s: blocked command stage payload changed",
+                        INSTANCE_ID);
+        end
+        assert ((|child_q_push_v) == cmd_stage_drain)
+          else $fatal(1, "%s: command-stage drain/push mismatch",
+                      INSTANCE_ID);
+        if (cmd_stage_drain) begin
+          assert ($onehot(child_q_push_v)
+               && cmd_stage_target_valid
+               && child_q_push_v[cmd_stage_child_q])
+            else $fatal(1, "%s: command-stage drain did not push exact child",
+                        INSTANCE_ID);
+          assert (scheduler_cmd_fire
+               == (cmd_stage_child_q <= ZP_CHILD_INDEX))
+            else $fatal(1,
+                "%s: command-stage scheduler admission/drain mismatch",
+                INSTANCE_ID);
+        end
         assert ((weight_consume_value0_o
                   == effective_sync[RID_W_CONSUME0])
              && (weight_consume_value1_o
@@ -2017,9 +2084,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         assert (!(cfg_fire && (|child_completion_pop_v)))
           else $fatal(1, "%s: implicit clear overlapped completion",
                       INSTANCE_ID);
-        assert (!(gemm_fsm_if.ctrl.start && !fsm_target_valid))
-          else $fatal(1, "%s: FSM emitted removed or invalid opcode 0x%0h",
-                      INSTANCE_ID, gemm_fsm_if.ctrl.cmd.instr[3:0]);
+        if (gemm_fsm_if.ctrl.start) begin
+          assert (fsm_target_valid
+               && (fsm_decoded_child == fsm_target_child))
+            else $fatal(1,
+                "%s: FSM target/opcode mismatch child=%0d decoded=%0d op=0x%0h",
+                INSTANCE_ID, fsm_target_child, fsm_decoded_child,
+                gemm_fsm_if.ctrl.cmd.instr[3:0]);
+        end
 
         for (int lhs = 0; lhs < N_CHILDREN; ++lhs) begin
           for (int rhs = lhs + 1; rhs < N_CHILDREN; ++rhs) begin
