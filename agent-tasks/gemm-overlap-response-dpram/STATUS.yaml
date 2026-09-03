@@ -1,0 +1,100 @@
+task: gemm-overlap-response-dpram
+status: complete
+spec: confirmed
+current_phase: completed_with_production_fallback
+iterations:
+  - iteration: 1
+    feature: "Stream queue and TMEM wide-read response DPRAM"
+    status: pass
+    tests:
+      - "gemm_stream_dma_queue FF/RAM VCS"
+      - "tmem_wide_read_switch FF VCS"
+      - "tmem_wide_read_switch RAM VCS"
+    error_summary: "none"
+    root_cause: "not applicable"
+    fix_applied: "not applicable"
+    lesson: "The existing registered sink stage hides stream payload RAM latency; the wide-switch scalar stage preserves one response per cycle after fill."
+  - iteration: 2
+    feature: "Overlap DMA wrapper FF/RAM regression"
+    status: pass
+    tests:
+      - "Input overlap FF and RAM VCS"
+      - "Weight overlap FF and RAM VCS"
+      - "Scale overlap FF and RAM VCS"
+      - "Zero-point overlap FF and RAM VCS"
+    error_summary: "none; 8/8 cases passed"
+    root_cause: "not applicable"
+    fix_applied: "not applicable"
+    lesson: "Payload RAM selection does not alter the existing writer fences, request ordering, or completion behavior in any production overlap wrapper."
+  - iteration: 3
+    feature: "Wide stream-queue cycle comparator"
+    status: sim_fail
+    tests:
+      - "gemm_stream_dma_queue 512/1024-bit FF/RAM VCS"
+    error_summary: "Comparator observed X in RAM payload while sink write_valid was zero."
+    root_cause: "The new TB compared inactive payload/tag fields even though synchronous RAM contents are intentionally not reset and are don't-care while invalid."
+    fix_applied: "Pending: mask inactive request, sink, writer-head, and completion fields in the comparator."
+    lesson: "Cycle-equivalence checks must compare payload ownership only when the associated valid is asserted."
+  - iteration: 4
+    feature: "Wide stream-queue slot-depth coverage"
+    status: sim_fail
+    tests:
+      - "gemm_stream_dma_queue 512/1024-bit, 8-slot FF/RAM VCS"
+    error_summary: "The 8-slot case failed the legacy mandatory same-cycle recycle coverage check."
+    root_cause: "Its five-beat command cannot fill eight slots, so a drain/reallocate collision is not expected; the check was written for the original four-slot case."
+    fix_applied: "Pending: retain recycle coverage in four-slot cases and disable only that coverage expectation in the 8-slot width pairs."
+    lesson: "A parameterized storage test must separate feature enablement from a stimulus-dependent coverage expectation."
+  - iteration: 5
+    feature: "Wide stream-queue FF/RAM cycle equivalence"
+    status: pass
+    tests:
+      - "gemm_stream_dma_queue 512-bit, 8-slot FF/RAM VCS with same-cycle recycle"
+      - "gemm_stream_dma_queue 1024-bit, 8-slot FF/RAM VCS without same-cycle recycle"
+    error_summary: "none"
+    root_cause: "not applicable"
+    fix_applied: "Masked invalid-cycle don't-care fields and made the recycle coverage expectation match each stimulus configuration."
+    lesson: "The direct RAM path remains cycle-equivalent to FF storage for valid traffic at both production-relevant payload widths."
+  - iteration: 6
+    feature: "Production GEMM xrt-vcs-sim A/B regression"
+    status: pass
+    tests:
+      - "M=4, N=256, K=256, QCOL: baseline 6325 cycles, RAM 6327 cycles"
+      - "M=4, N=256, K=256, QROW: baseline 6325 cycles, RAM 6325 cycles"
+      - "M=256, N=256, K=256, QCOL: baseline 23438 cycles, RAM 23438 cycles"
+      - "M=256, N=256, K=256, QROW: baseline 23439 cycles, RAM 23438 cycles"
+    error_summary: "none; numerical checks passed and worst cycle delta was +0.032%"
+    root_cause: "not applicable"
+    fix_applied: "not applicable"
+    lesson: "The registered RAM read paths preserve observable throughput within the 2% acceptance limit."
+  - iteration: 7
+    feature: "Four-way GEMM-node OOC synthesis and 7 ns setup gate"
+    status: synth_fail
+    tests:
+      - "FF/FF: WNS -4.244 ns"
+      - "RAM/FF: WNS -4.253 ns"
+      - "FF/RAM: WNS -4.244 ns"
+      - "RAM/RAM: WNS -4.247 ns"
+    error_summary: "All variants failed the absolute 7 ns setup gate; the combined design inferred RAM and reduced 21,036 LUT and 30,699 FF."
+    root_cause: "The common worst path is an existing GEMM child-command BRAM to output-DMA write_bytes_remaining arithmetic path, outside the response payload storage changed by this task."
+    fix_applied: "Removed the RAM opt-in from both production TH16 bigmem configs while retaining parameterized RAM modes, FF defaults, tests, and OOC overrides."
+    lesson: "Resource and functional goals were met, but production enablement must wait until the independent 7 ns OOC timing baseline is clean."
+  - iteration: 8
+    feature: "Production fallback and final audit"
+    status: pass
+    tests:
+      - "Production config has no response RAM opt-in"
+      - "Explicit FF baseline helper emits all four storage selects as zero"
+      - "run_gemm_node_ooc.sh and baseline helper pass bash -n"
+      - "git diff --check"
+    error_summary: "none"
+    root_cause: "not applicable"
+    fix_applied: "not applicable"
+    lesson: "The experiment remains reproducible without exposing a timing-gate-failing candidate as the production default."
+notes:
+  - "2026-09-02: plan.md accepted by user as implementation objective."
+  - "2026-09-02: focused FF/RAM VCS tests passed, including same-logical-lane response contention."
+  - "2026-09-02: all eight overlap wrapper FF/RAM VCS variants passed."
+  - "2026-09-02: focused stream queue width/depth equivalence passed after correcting invalid-cycle and coverage-only test expectations."
+  - "2026-09-02: four production xrt-vcs-sim A/B workloads passed; maximum cycle change was +0.032%."
+  - "2026-09-02: all four OOC variants inferred as intended and reduced target FF/LUT, but all failed the same unrelated 7 ns setup path."
+  - "2026-09-02: production RAM opt-in removed per plan fallback; full results are in results.md."
