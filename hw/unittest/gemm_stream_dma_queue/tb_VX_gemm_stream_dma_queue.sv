@@ -334,14 +334,13 @@ module tb_stream_dma_queue_case #(
             $fatal(1, "depth%0d missing registered sink coverage hold=%0d ahead=%0d",
                    DEPTH, saw_pipeline_hold, saw_pipeline_ready_ahead);
 
-        // A duplicate/stale response is backpressured and must remain held.
-        @(negedge clk);
-        fetch_if.rsp_valid = 1'b1;
-        fetch_if.rsp_tag = req_tags[0];
-        fetch_if.rsp_payload = 32'hdead0000;
-        repeat (2) @(posedge clk);
-        if (fetch_if.rsp_ready)
-            $fatal(1, "depth%0d stale response was accepted", DEPTH);
+        // The response source is contractually restricted to one response for
+        // each accepted request, so ready is intentionally unconditional. A
+        // duplicate/stale response is covered by the RTL protocol assertion
+        // and is not legal positive stimulus.
+        if (!fetch_if.rsp_ready)
+            $fatal(1, "depth%0d response channel was not unconditionally ready",
+                   DEPTH);
         @(negedge clk);
         reset = 1'b1;
         repeat (2) @(posedge clk);

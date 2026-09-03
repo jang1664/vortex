@@ -905,7 +905,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
-        .RD_OUTSTANDING(O_RD_OUTSTANDING)
+        .RD_OUTSTANDING(O_RD_OUTSTANDING),
+        .ENABLE_1D_WRITE_COUNTER(1'b1)
     ) u_ldma_output (
         .clk         (clk),
         .reset       (reset),

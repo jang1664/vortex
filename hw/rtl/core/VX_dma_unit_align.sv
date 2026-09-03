@@ -41,6 +41,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
   parameter int RD_OUTSTANDING = 2,
+  parameter bit ENABLE_1D_WRITE_COUNTER = 1'b0,
   // -1: use descriptor direction, 0/1: compile-time fixed direction.
   parameter int FIXED_DIR = -1
 ) (
@@ -103,6 +104,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   localparam int WIN_BYTES    = MAX_BYTES;
   localparam int WIN_VALID_W  = `CLOG2(WIN_BYTES + 1);
   localparam int SAME_WIDTH_FAST = (DCACHE_BYTES == LMEM_BYTES);
+  localparam bit FIXED_1D_WRITE_COUNTER = ENABLE_1D_WRITE_COUNTER
+                                        && (FIXED_DIR == 1)
+                                        && (MAX_DIMS == 1)
+                                        && SAME_WIDTH_FAST;
+  localparam int WR_BEAT_COUNT_W = 33 - DCACHE_LG2;
 
   initial begin
     if (!(((DCACHE_BYTES % LMEM_BYTES) == 0) || ((LMEM_BYTES % DCACHE_BYTES) == 0)))
@@ -110,6 +116,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     if (!ENABLE_PADDING && (DCACHE_BYTES != LMEM_BYTES))
       $fatal(1,
           "padding-disabled aligned DMA requires equal dcache/lmem bus widths");
+    if (ENABLE_1D_WRITE_COUNTER
+     && ((FIXED_DIR != 1) || (MAX_DIMS != 1) || !SAME_WIDTH_FAST))
+      $fatal(1,
+          "1D write counter requires FIXED_DIR=1, MAX_DIMS=1, equal widths");
   end
 
   function automatic logic [DCACHE_ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
@@ -355,6 +365,16 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire [31:0] cmd_valid_total = ENABLE_PADDING
                               ? (cfg_reg_if.regs[14] - cfg_reg_if.regs[15])
                               : cfg_reg_if.regs[14];
+  wire [32:0] cmd_wr_rounded_bytes = {1'b0, cfg_reg_if.regs[14]}
+                                         + 33'(DCACHE_BYTES - 1);
+  wire [WR_BEAT_COUNT_W-1:0] cmd_wr_beats_per_seg
+      = WR_BEAT_COUNT_W'(cmd_wr_rounded_bytes >> DCACHE_LG2);
+  wire [31:0] cmd_wr_partial_bytes
+      = cfg_reg_if.regs[14] & 32'(DCACHE_BYTES - 1);
+  wire [WIN_VALID_W-1:0] cmd_wr_final_bytes
+      = (cmd_wr_partial_bytes == 0)
+      ? WIN_VALID_W'(DCACHE_BYTES)
+      : WIN_VALID_W'(cmd_wr_partial_bytes);
   wire cmd_bounds_nonzero;
   if (MAX_DIMS == 1) begin : g_cmd_bounds_1d
     assign cmd_bounds_nonzero = (cfg_reg_if.regs[11] != 0);
@@ -906,6 +926,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                          && (bound_r[2] != 0);
   end
   logic [31:0] out_off; // bytes within current WR segment [0 .. seg_size)
+  logic [WR_BEAT_COUNT_W-1:0] wr_beats_per_seg_r;
+  logic [WR_BEAT_COUNT_W-1:0] wr_beats_remaining_r;
+  logic [WIN_VALID_W-1:0] wr_final_bytes_r;
   logic        rd_rollover_pending_r;
   logic        wr_rollover_pending_r;
 
@@ -1327,15 +1350,37 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   );
 
   wire [31:0] wr_dst_beat_bytes = active_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
-  wire [31:0] wr_remaining      = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
-  wire [31:0] wr_nbytes_cur     = umin32(wr_remaining, wr_dst_beat_bytes);
-  wire [31:0] wr_src_bytes_cur  = ENABLE_PADDING
-                                ? calc_src_bytes(out_off, valid_total, wr_nbytes_cur)
-                                : wr_nbytes_cur;
+  wire [31:0] wr_remaining;
+  wire [31:0] wr_nbytes_cur;
+  wire [31:0] wr_src_bytes_cur;
+  wire        wr_seg_complete_fire;
+  if (FIXED_1D_WRITE_COUNTER) begin : g_fixed_1d_write_count
+    // The output DMA has fixed DIR=1, equal bus widths, and zero padding.
+    // Descriptor-time division by the power-of-two beat size leaves only a
+    // small remaining-beat test on the per-beat request path.
+    assign wr_remaining = 32'd0;
+    assign wr_nbytes_cur = (wr_beats_remaining_r == 0)
+                         ? 32'd0
+                         : ((wr_beats_remaining_r == WR_BEAT_COUNT_W'(1))
+                            ? 32'(wr_final_bytes_r)
+                            : 32'(DCACHE_BYTES));
+    assign wr_src_bytes_cur = wr_nbytes_cur;
+    assign wr_seg_complete_fire = dst_req_fire
+                                && (wr_beats_remaining_r
+                                    == WR_BEAT_COUNT_W'(1));
+  end else begin : g_generic_write_count
+    assign wr_remaining = (out_off < seg_size_r)
+                        ? (seg_size_r - out_off) : 32'd0;
+    assign wr_nbytes_cur = umin32(wr_remaining, wr_dst_beat_bytes);
+    assign wr_src_bytes_cur = ENABLE_PADDING
+                            ? calc_src_bytes(out_off, valid_total,
+                                             wr_nbytes_cur)
+                            : wr_nbytes_cur;
+    assign wr_seg_complete_fire = dst_req_fire
+                                && (out_off + wr_nbytes_cur >= seg_size_r);
+  end
   assign wr_payload_needed = (wr_src_bytes_cur != 0);
   wire        wr_is_last_seg;
-  wire        wr_seg_complete_fire = dst_req_fire
-                                   && (out_off + wr_nbytes_cur >= seg_size_r);
   wire [3:0] wr_rollover_dep_mask;
   wire wr_rollover_ready = ((precalc_ready_now & wr_rollover_dep_mask)
                             == wr_rollover_dep_mask);
@@ -1691,7 +1736,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
       if (dst_req_fire) begin
         out_off_next = out_off + wr_nbytes_cur;
-        if (out_off_next >= seg_size_r) begin
+        if (wr_seg_complete_fire) begin
           if (wr_is_last_seg) begin
             wr_state_next = WR_DONE;
           end else if (wr_rollover_set) begin
@@ -2122,6 +2167,57 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       end
     endcase
   end
+
+  // Output-only descriptor-time write geometry.  The count reloads at a 1D
+  // segment boundary, so arbitrary bound0 values retain the generic engine's
+  // segment ordering without a per-beat seg_size subtraction/comparison.
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      wr_beats_per_seg_r <= '0;
+      wr_beats_remaining_r <= '0;
+      wr_final_bytes_r <= '0;
+    end else if (cmd_start) begin
+      wr_beats_per_seg_r <= cmd_wr_beats_per_seg;
+      wr_beats_remaining_r <= cmd_wr_beats_per_seg;
+      wr_final_bytes_r <= cmd_wr_final_bytes;
+    end else if (FIXED_1D_WRITE_COUNTER) begin
+      if (wr_rollover_advance) begin
+        wr_beats_remaining_r <= wr_beats_per_seg_r;
+      end else if (dst_req_fire && (wr_beats_remaining_r != 0)) begin
+        wr_beats_remaining_r <= wr_beats_remaining_r
+                              - WR_BEAT_COUNT_W'(1);
+      end
+    end
+  end
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (!reset && FIXED_1D_WRITE_COUNTER) begin
+      if (cfg_fire) begin
+        assert (cfg_reg_if.regs[15] == 0)
+          else $fatal(1,
+              "%s: fixed 1D write counter requires zero padding",
+              INSTANCE_ID);
+      end
+      if (dst_req_fire) begin
+        assert (wr_beats_remaining_r != 0)
+          else $fatal(1, "%s: fixed 1D write counter underflow", INSTANCE_ID);
+        assert (wr_nbytes_cur
+             == umin32((out_off < seg_size_r)
+                       ? (seg_size_r - out_off) : 32'd0,
+                       wr_dst_beat_bytes))
+          else $fatal(1,
+              "%s: fixed 1D final-byte state diverged from generic geometry",
+              INSTANCE_ID);
+        assert (wr_seg_complete_fire
+             == (out_off + wr_nbytes_cur >= seg_size_r))
+          else $fatal(1,
+              "%s: fixed 1D segment completion diverged from generic geometry",
+              INSTANCE_ID);
+      end
+    end
+  end
+`endif
 
   // ------------------------------------------------------------
   // Sequential: state, counters, windows, pointers

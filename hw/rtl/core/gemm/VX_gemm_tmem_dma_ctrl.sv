@@ -288,9 +288,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] cfg_fire_s;
     logic [PENDING_COUNT_W:0] pending_capacity_used;
 
+    // A prepared command remains the ordered DMA-child queue head until its
+    // release handshake.  Use that ownership contract for synthesis instead
+    // of rebuilding a full-width command comparator in the ready path.  The
+    // command identity is still checked at the handshake in simulation.
     wire prepared_release_match = work_data_prefetched_q
-                                && !work_data_released_q
-                                && (gemm_dma_ctrl_if.cmd == work_cmd_q);
+                                && !work_data_released_q;
     wire cmd_accept = gemm_dma_ctrl_if.cmd_valid
                    && gemm_dma_ctrl_if.cmd_ready;
     wire prepared_release_accept = cmd_accept

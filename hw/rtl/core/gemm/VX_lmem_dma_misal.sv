@@ -19,6 +19,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   parameter int RD_PREFETCH_DEPTH = 1,
   parameter int RD_OUTSTANDING = `LMEM_DMA_RD_OUTSTANDING_SLOTS,
   parameter bit ENABLE_MISALIGN = 1'b0,
+  parameter bit ENABLE_1D_WRITE_COUNTER = 1'b0,
   // Numeric width parameters are explicit because Synopsys DC cannot bind
   // child parameters from interface-instance parameters reliably.
   parameter int LMEM_ADDR_WIDTH_P = 1,
@@ -372,6 +373,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     .DCACHE_TAG_WIDTH    (LMEM_TAG_WIDTH_P),
     .LMEM_TAG_WIDTH      (GEMM_TAG_WIDTH_P),
     .RD_OUTSTANDING      (RD_OUTSTANDING),
+    .ENABLE_1D_WRITE_COUNTER(ENABLE_1D_WRITE_COUNTER),
     .FIXED_DIR           (DIR),
     .BOUND_WIDTH         (BOUND_WIDTH),
     .MAX_DIMS            (MAX_DIMS)

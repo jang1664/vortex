@@ -247,11 +247,15 @@ module VX_gemm_stream_dma_queue #(
         && cmd_valid_r[slot_owner_cmd_r[response_slot]]
         && (cmd_sequence_r[slot_owner_cmd_r[response_slot]]
             == slot_owner_sequence_r[response_slot]);
-    assign fetch_if.rsp_ready = fetch_if.rsp_owned;
+    // Every issued request owns a response slot until its single response
+    // arrives.  The source therefore never needs ownership feedback to decide
+    // whether the response channel is ready.  Simulation checks the protocol
+    // contract below without retaining the tag/state cone in synthesis.
+    assign fetch_if.rsp_ready = 1'b1;
     assign fetch_if.rsp_last = fetch_if.rsp_owned
         && ((cmd_response_r[slot_owner_cmd_r[response_slot]] + COUNTW'(1))
             == cmd_total_r[slot_owner_cmd_r[response_slot]]);
-    wire source_response_fire = fetch_if.rsp_valid && fetch_if.rsp_ready;
+    wire source_response_fire = fetch_if.rsp_valid;
     assign fetch_if.fetch_complete = source_response_fire
                                   && fetch_if.rsp_last;
 

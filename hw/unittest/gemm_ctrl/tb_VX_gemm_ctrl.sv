@@ -1113,6 +1113,12 @@ module tb_VX_gemm_ctrl;
       directed_scheduler_probe_valid = 1'b0;
       directed_scheduler_probe_work_seq = '0;
       directed_scheduler_probe_child = '0;
+      // The controller has a registered command-dispatch stage.  The accepted
+      // FSM command reaches the selected child queue on the following edge.
+      if (dut.child_q_empty_v[child]) begin
+        @(posedge clk);
+        #1;
+      end
       #1;
       if (dut.child_q_empty_v[child])
         $fatal(1, "SCHED_DIRECTED injection child %0d did not enqueue", child);
@@ -1425,6 +1431,12 @@ module tb_VX_gemm_ctrl;
       end
       directed_inject(c, child);
       held_cmd = dut.child_q_cmd[child];
+      // DMA prepare crosses an additional registered controller boundary;
+      // local-DMA children retain their combinational offer.
+      if ((child == 5) && !dut.child_prepare_valid_v[child]) begin
+        @(posedge clk);
+        #1;
+      end
       #1;
       if (!dut.child_prepare_deps_ready_v[child]
        || dut.child_deps_ready_v[child]

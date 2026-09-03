@@ -23,6 +23,9 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter int LMEM_TAG_WIDTH   = 1,
   parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
   parameter int RD_OUTSTANDING = 2,
+  // Use descriptor-time beat/final-byte state for a fixed-direction,
+  // same-width one-dimensional aligned writer.
+  parameter bit ENABLE_1D_WRITE_COUNTER = 1'b0,
   // -1: use descriptor direction, 0/1: compile-time fixed direction.
   parameter int FIXED_DIR = -1
 ) (
@@ -90,6 +93,7 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
       .RD_OUTSTANDING   (RD_OUTSTANDING),
+      .ENABLE_1D_WRITE_COUNTER(ENABLE_1D_WRITE_COUNTER),
       .FIXED_DIR        (FIXED_DIR)
     ) u_impl (
       .clk            (clk),

@@ -110,6 +110,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0] child_q_pop_v;
     logic [N_CHILDREN-1:0] child_deps_ready_v;
     logic [N_CHILDREN-1:0] child_prepare_deps_ready_v;
+    logic [N_CHILDREN-1:0] child_prepare_eligible_v;
     logic [N_CHILDREN-1:0] child_prepare_valid_v;
     logic [N_CHILDREN-1:0] child_prepare_ready_v;
     logic [N_CHILDREN-1:0] child_prepare_fire_v;
@@ -131,6 +132,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic dma_free_tag_valid;
     logic [GEMM_DMA_TAG_WIDTH-1:0] dma_free_tag;
     logic [GEMM_DMA_TAG_WIDTH-1:0] dma_issue_tag;
+    logic dma_prepare_valid_q;
+    gemm_unified_cmd_t dma_prepare_cmd_q;
 
     logic [31:0] sync_regs_q[NUM_SYNC_REGS];
     logic [31:0] effective_sync[NUM_SYNC_REGS];
@@ -648,10 +651,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       end
     end
 
-    // Direct folds retain same-cycle old-read/new-write behavior without
-    // inheriting the complete architectural sync array.
-    assign weight_consume_value0_o = sync_w_consume0_next;
-    assign weight_consume_value1_o = sync_w_consume1_next;
+    // Keep the Weight-DMA writer fence on the registered synchronization
+    // boundary.  A consume update becomes visible one cycle later, avoiding a
+    // compute-result -> sync reduction -> DMA scheduling path in one cycle.
+    assign weight_consume_value0_o = sync_regs_q[RID_W_CONSUME0];
+    assign weight_consume_value1_o = sync_regs_q[RID_W_CONSUME1];
     assign scale_consume_value0_o = sync_sc_consume0_next;
     assign scale_consume_value1_o = sync_sc_consume1_next;
     assign zero_point_consume_value0_o = sync_zp_consume0_next;
@@ -739,13 +743,19 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
         assign child_deps_ready_v[i] = deps_ready;
         assign child_prepare_deps_ready_v[i] = prepare_deps_ready;
-        assign child_prepare_valid_v[i]
+        assign child_prepare_eligible_v[i]
             = !child_q_empty_v[i]
            && child_q_cmd[i].prepare.valid
            && (child_q_cmd[i].prepare.mode == GEMM_PREPARE_SOURCE_READ)
            && prepare_deps_ready
            && !child_deps_ready_v[i]
            && !child_prepare_sent_q[i];
+        // The DMA child crosses a wide controller boundary.  Register only
+        // that speculative offer; the other local children retain their
+        // existing same-cycle prepare behavior.
+        assign child_prepare_valid_v[i] = (i == DMA_CHILD_INDEX)
+                                        ? dma_prepare_valid_q
+                                        : child_prepare_eligible_v[i];
         assign child_prepare_fire_v[i]
             = child_prepare_valid_v[i] && child_prepare_ready_v[i];
         assign child_dependency_eligible_v[i]
@@ -786,6 +796,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           assign child_single_active_ready_v[i] = 1'b1;
           assign gemm_cqueue_out[i].ctrl.start
               = child_single_active_ready_v[i]
+             && !dma_prepare_valid_q
              && (dma_issue_tag_reserved_q
               || (child_dependency_eligible_v[i] && dma_free_tag_valid));
           assign child_issue_fire_v[i]
@@ -918,6 +929,13 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                 $fatal(1, "%s: output child must never prepare", INSTANCE_ID);
             end
             if (i == DMA_CHILD_INDEX) begin
+              if (dma_prepare_valid_q) begin
+                assert (!child_q_empty_v[i]
+                     && (dma_prepare_cmd_q == child_q_cmd[i]))
+                  else $fatal(1,
+                      "%s: registered DMA prepare owner changed before acceptance",
+                      INSTANCE_ID);
+              end
               if (!child_q_empty_v[i]) begin
                 assert (!child_q_cmd[i].waits[1].valid
                      && !child_q_cmd[i].waits[2].valid
@@ -958,6 +976,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                      && !dma_issue_tag_reserved_q))
                 else $fatal(1, "%s: unresolved DMA dependency issued",
                             INSTANCE_ID);
+              assert (!(dma_prepare_valid_q
+                     && gemm_cqueue_out[i].ctrl.start))
+                else $fatal(1,
+                    "%s: DMA child issued before registered prepare acceptance",
+                    INSTANCE_ID);
               assert (child_q_pop_v[i] == child_issue_fire_v[i])
                 else $fatal(1, "%s: DMA child pop/handshake mismatch",
                             INSTANCE_ID);
@@ -1109,6 +1132,24 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       end
     endgenerate
 
+    // Capture the DMA queue head together with its offer.  While valid, issue
+    // is blocked above, so the ordered queue head cannot advance before the
+    // TMEM DMA controller accepts this registered command.
+    always_ff @(posedge clk) begin
+      if (reset || cfg_fire) begin
+        dma_prepare_valid_q <= 1'b0;
+        dma_prepare_cmd_q <= '0;
+      end else begin
+        if (dma_prepare_valid_q && child_prepare_ready_v[DMA_CHILD_INDEX]) begin
+          dma_prepare_valid_q <= 1'b0;
+        end else if (!dma_prepare_valid_q
+                  && child_prepare_eligible_v[DMA_CHILD_INDEX]) begin
+          dma_prepare_valid_q <= 1'b1;
+          dma_prepare_cmd_q <= child_q_cmd[DMA_CHILD_INDEX];
+        end
+      end
+    end
+
     always_ff @(posedge clk) begin
       if (reset || cfg_fire) begin
         child_prepare_sent_q <= '0;
@@ -1218,7 +1259,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.dma_ctrl.prepare_valid
         = child_prepare_valid_v[DMA_CHILD_INDEX];
     assign gemm_ctrl_if.dma_ctrl.prepare_cmd
-        = child_q_cmd[DMA_CHILD_INDEX];
+        = dma_prepare_cmd_q;
     assign child_prepare_ready_v[DMA_CHILD_INDEX]
         = gemm_ctrl_if.dma_flag.prepare_ready;
     assign gemm_cqueue_out[DMA_CHILD_INDEX].flag.idle
@@ -2055,9 +2096,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                 INSTANCE_ID);
         end
         assert ((weight_consume_value0_o
-                  == effective_sync[RID_W_CONSUME0])
+                  == sync_regs_q[RID_W_CONSUME0])
              && (weight_consume_value1_o
-                  == effective_sync[RID_W_CONSUME1])
+                  == sync_regs_q[RID_W_CONSUME1])
              && (scale_consume_value0_o
                   == effective_sync[RID_SC_CONSUME0])
              && (scale_consume_value1_o
