@@ -2,11 +2,13 @@
 
 `include "VX_define.vh"
 
-module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
+module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+) ();
 
   localparam int NDIM = 3;
-  localparam int BUS_BYTES = 128;
-  localparam int CMD_BEATS = 4;
+  localparam int BUS_BYTES = 64;
+  localparam int CMD_BEATS = 8;
   localparam int RESPONSE_SLOTS = 8;
   localparam int TAG_WIDTH = 8;
   localparam int BUS_ADDR_WIDTH = `MEM_ADDR_WIDTH - $clog2(BUS_BYTES);
@@ -45,10 +47,12 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
   VX_lmem_dma_weight_overlap #(
     .INSTANCE_ID("weight_overlap_tb"),
     .NDIM(NDIM),
+    .MAX_DIMS(1),
     .TAG_WIDTH(TAG_WIDTH),
     .CMD_FIFO_DEPTH(4),
     .CMD_BEATS(CMD_BEATS),
     .RESPONSE_SLOTS(RESPONSE_SLOTS),
+    .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM),
     .ENABLE_TMEM_URGENCY(1'b1),
     .READY_AHEAD_LOW_WATERMARK(2),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
@@ -406,8 +410,8 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     repeat (2) @(posedge clk);
 
     // Fill all four command entries before any source request can fire.  The
-    // later two entries remain descriptor-resident once the eight slots hold
-    // the first two complete command payloads.
+    // later entries remain descriptor-resident once the eight slots hold the
+    // first complete WLOAD4 command payload.
     enqueue_command(0);
     enqueue_command(1);
     enqueue_command(2);
@@ -435,9 +439,9 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
              BUS_BYTES);
     $display("PASS marker: four Weight descriptors enqueued before any completion");
 
-    // Hold the first source request, then accept two commands' reads.  The
+    // Hold the first source request, then accept one command's reads.  The
     // global tags must be exactly slots 0..7, all slots must be occupied, and
-    // commands 2 and 3 must remain valid at the read head without issuing.
+    // commands 1 through 3 must remain valid without issuing source reads.
     repeat (3) @(posedge clk);
     @(negedge clk);
     lmem_req_ready_r = 1'b1;
@@ -451,11 +455,11 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
      || (lmem_req_priority != GEMM_SCHED_PRIORITY_BACKGROUND))
       $fatal(1, "Weight tracked P0 request was re-promoted by WAIT_RSP urgency");
     if (dut.cmd_count_r != 4 || dut.cmd_valid_r !== 4'b1111
-     || dut.cmd_rd_done_r !== 4'b0011 || dut.rd_cmd_ptr_r != 2)
+     || dut.cmd_rd_done_r !== 4'b0001 || dut.rd_cmd_ptr_r != 1)
       $fatal(1, "four-descriptor/eight-slot residency mismatch count=%0d valid=%0h rd_done=%0h rd_ptr=%0d",
              dut.cmd_count_r, dut.cmd_valid_r, dut.cmd_rd_done_r,
              dut.rd_cmd_ptr_r);
-    $display("PASS marker: eight slots hold two payloads while two later descriptors remain resident");
+    $display("PASS marker: eight slots hold one WLOAD4 payload while three later descriptors remain resident");
 
     // Return high slots first so ready-ahead remains zero despite READY
     // occupancy, then release the writer head one beat at a time.
@@ -475,7 +479,7 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
     if (lmem_req_urgent)
       $fatal(1, "Weight urgency remained set with sufficient consecutive lead");
     $display("PASS marker: delayed reverse-order tagged source responses accepted");
-    $display("PASS marker: each queue response is one completed 128B Weight logical beat");
+    $display("PASS marker: each queue response is one completed 64B Weight logical beat");
     $display("PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP");
     $display("PASS marker: tracked Weight P0 is not re-promoted by local ready-ahead urgency");
 
@@ -538,12 +542,12 @@ module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; ();
       $fatal(1, "executor not empty after wrap test commands=%0d slots=%0d",
              dut.cmd_count_r, dut.slot_occupancy_r);
     $display("PASS marker: six commands wrapped command/slot pointers with ordered writes and completions");
-    $display("PASS marker: ready four-beat burst boundary idle cycles=%0d", first_boundary_gap);
+    $display("PASS marker: ready eight-beat burst boundary idle cycles=%0d", first_boundary_gap);
     $display("PASS marker: source and destination backpressure held requests stable");
     $display("PASS marker: Weight slot reuse follows release by exactly one cycle count=%0d",
              next_cycle_slot_reuse_count);
 
-    // A source-ready buffer-0 command may fill all four response slots while
+    // A source-ready buffer-0 command may fill all eight response slots while
     // its exact consume target remains unresolved.  A stale target and a
     // wrong-buffer newer target must not release the writer; only W0 target 4
     // permits destination traffic.

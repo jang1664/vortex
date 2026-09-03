@@ -4,8 +4,8 @@ This scaffold synthesizes the complete `VX_gemm_node` clock domain without
 modifying production RTL.  It is fixed to the U55C
 `xcu55c-fsvh2892-2L-e` part and a 7.000 ns `core_clock` constraint.
 
-The runner defaults to a manifest-only dry run.  It sources
-`configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh`, adds the
+The runner defaults to a manifest-only dry run.  It sources the WLOAD4 config
+`configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh`, adds the
 same XLEN/U55C synthesis-context defines used by the XRT flow, resolves the
 ordered RTL/IP source list, and records hashes, revision, dirty state, part,
 clock, Vivado path, and synthesis options.  Source, XCI, and every header
@@ -27,6 +27,11 @@ ci/run_gemm_node_ooc.sh \
   --jobs 8 \
   --run
 ```
+
+For an otherwise identical response-storage A/B matrix, pass
+`--stream-response-data-ram 0|1` and `--wide-response-data-ram 0|1`. The
+selected values replace the production config defines and are recorded in
+both `command.txt` and `defines.txt`.
 
 The synthesis run writes hierarchical utilization, max-delay setup timing
 summary and paths, methodology, a machine-readable setup gate, Vivado

@@ -7,13 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OOC_DIR="${ROOT_DIR}/hw/syn/xilinx/gemm_node_ooc"
 
-CONFIG_FILE="${ROOT_DIR}/configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh"
+CONFIG_FILE="${ROOT_DIR}/configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh"
 OUTPUT_DIR=""
 IP_DIR=""
 VIVADO_BIN=""
 JOBS=8
 RUN_SYNTHESIS=0
 WRITE_CHECKPOINT=0
+STREAM_RESPONSE_DATA_RAM=""
+WIDE_RESPONSE_DATA_RAM=""
 ORIGINAL_ARGS=("$@")
 
 TOP="VX_gemm_node_ooc"
@@ -35,10 +37,14 @@ Required:
   --ip-dir PATH           Generated Xilinx floating-point IP root
 
 Options:
-  --config-file PATH      Shell config to source (default: exact TH16 config)
+  --config-file PATH      Shell config to source (default: TH16 WLOAD4 config)
   --jobs N                Vivado synthesis jobs (default: 8)
   --vivado-bin PATH       Vivado executable for --run
   --write-checkpoint      Retain post_synth.dcp when running synthesis
+  --stream-response-data-ram 0|1
+                          Override all Input/Weight/S/Z overlap queue payloads
+  --wide-response-data-ram 0|1
+                          Override Weight wide-switch assembly payload storage
   --run                   Launch Vivado synthesis after manifest generation
   -h, --help              Show this help
 
@@ -77,6 +83,14 @@ while [[ $# -gt 0 ]]; do
       WRITE_CHECKPOINT=1
       shift
       ;;
+    --stream-response-data-ram)
+      STREAM_RESPONSE_DATA_RAM="${2:?missing value for --stream-response-data-ram}"
+      shift 2
+      ;;
+    --wide-response-data-ram)
+      WIDE_RESPONSE_DATA_RAM="${2:?missing value for --wide-response-data-ram}"
+      shift 2
+      ;;
     --run)
       RUN_SYNTHESIS=1
       shift
@@ -94,6 +108,10 @@ done
 [[ -n "${OUTPUT_DIR}" ]] || fail "--output-dir is required"
 [[ -n "${IP_DIR}" ]] || fail "--ip-dir is required"
 [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer"
+[[ -z "${STREAM_RESPONSE_DATA_RAM}" || "${STREAM_RESPONSE_DATA_RAM}" =~ ^[01]$ ]] \
+  || fail "--stream-response-data-ram must be 0 or 1"
+[[ -z "${WIDE_RESPONSE_DATA_RAM}" || "${WIDE_RESPONSE_DATA_RAM}" =~ ^[01]$ ]] \
+  || fail "--wide-response-data-ram must be 0 or 1"
 
 resolve_from_root() {
   local path="$1"
@@ -161,6 +179,28 @@ append_define() {
   done
   DEFINES+=("${requested}")
 }
+
+override_define() {
+  local requested="$1"
+  local requested_name="${requested%%=*}"
+  local index
+  for index in "${!DEFINES[@]}"; do
+    if [[ "${DEFINES[index]%%=*}" == "${requested_name}" ]]; then
+      DEFINES[index]="${requested}"
+      return
+    fi
+  done
+  DEFINES+=("${requested}")
+}
+
+if [[ -n "${STREAM_RESPONSE_DATA_RAM}" ]]; then
+  override_define "I_LMEM_DMA_RESPONSE_DATA_RAM=${STREAM_RESPONSE_DATA_RAM}"
+  override_define "W_LMEM_DMA_RESPONSE_DATA_RAM=${STREAM_RESPONSE_DATA_RAM}"
+  override_define "SZ_LMEM_DMA_RESPONSE_DATA_RAM=${STREAM_RESPONSE_DATA_RAM}"
+fi
+if [[ -n "${WIDE_RESPONSE_DATA_RAM}" ]]; then
+  override_define "W_TMEM_WIDE_RESPONSE_DATA_RAM=${WIDE_RESPONSE_DATA_RAM}"
+fi
 
 append_define "PLATFORM_MEMORY_DATA_SIZE=64"
 append_define "PLATFORM_MEMORY_ID_WIDTH=32"

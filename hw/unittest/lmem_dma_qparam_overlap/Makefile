@@ -11,6 +11,7 @@ export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 TEST_ZP ?= 0
+TB_RESPONSE_DATA_RAM ?= 1
 TIME_SCALE := 1ns/1ps
 TOP_MODULE := tb_VX_lmem_dma_qparam_overlap
 
@@ -27,8 +28,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 
 INCDIRS_ := $(RTL_DIR) $(RTL_DIR)/mem $(RTL_DIR)/core/gemm $(RTL_DIR)/libs
 DEFINES_ := SIMULATION NDEBUG DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64 \
-	MEM_ADDR_WIDTH=34 GEMM_IMPROVE MXU_WLOAD_NUM=8 \
-	W_LMEM_DMA_CMD_BEATS=4 W_LMEM_DMA_RESPONSE_SLOTS=8
+	MEM_ADDR_WIDTH=34 GEMM_IMPROVE MXU_WLOAD_NUM=4 \
+	W_LMEM_DMA_CMD_BEATS=8 W_LMEM_DMA_RESPONSE_SLOTS=8
 CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
 DEFINES_ += $(CONFIG_DEFINES)
 
@@ -40,9 +41,11 @@ empty :=
 space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
 ifeq ($(SIM_EXEC),vcs)
-PARAMS := -pvalue+$(TOP_MODULE).TEST_ZP=$(TEST_ZP)
+PARAMS := -pvalue+$(TOP_MODULE).TEST_ZP=$(TEST_ZP) \
+	-pvalue+$(TOP_MODULE).TB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
 else
-PARAMS := -GTEST_ZP=$(TEST_ZP)
+PARAMS := -GTEST_ZP=$(TEST_ZP) \
+	-GTB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
 endif
 
 setup:

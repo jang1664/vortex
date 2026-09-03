@@ -9,7 +9,8 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
     parameter int WIDE_DATA_SIZE = 64,
     parameter int TAG_WIDTH      = 8,
     parameter int MEM_ADDR_WIDTH = 34,
-    parameter int OUTSTANDING    = 8
+    parameter int OUTSTANDING    = 8,
+    parameter bit RESPONSE_DATA_RAM = 1'b1
 ) (
     input  logic clk,
     input  logic reset,
@@ -62,7 +63,8 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
         .WIDE_DATA_SIZE (WIDE_DATA_SIZE),
         .TAG_WIDTH      (TAG_WIDTH),
         .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH),
-        .OUTSTANDING    (OUTSTANDING)
+        .OUTSTANDING    (OUTSTANDING),
+        .RESPONSE_DATA_RAM(RESPONSE_DATA_RAM)
     ) dut (
         .clk        (clk),
         .reset      (dut_reset),
@@ -437,6 +439,10 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                     $fatal(1, "case%0d: WLOAD8 response completed after upper half only",
                            CASE_ID);
                 send_single_context_lane(batch, t, 0);
+                if (RESPONSE_DATA_RAM) begin
+                    @(posedge clk);
+                    @(negedge clk);
+                end
                 if (!wide_if.rsp_valid)
                     $fatal(1, "case%0d: WLOAD8 response missing after lower half",
                            CASE_ID);
@@ -452,6 +458,10 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                     $fatal(1, "case%0d: logical Weight response completed before all lanes",
                            CASE_ID);
                 send_context_lanes(batch, t, 1);
+                if (RESPONSE_DATA_RAM) begin
+                    @(posedge clk);
+                    @(negedge clk);
+                end
                 if (!wide_if.rsp_valid)
                     $fatal(1, "case%0d: logical Weight response missing after final lane",
                            CASE_ID);
@@ -461,6 +471,63 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                 send_context_lanes(batch, t, 0);
             end
         end
+    endtask
+
+    task automatic respond_same_lane_collision(input int batch);
+        int bank0;
+        int bank1;
+        int winner;
+        int loser;
+
+        if (!RESPONSE_DATA_RAM || (NUM_BANK_GROUPS < 2)
+         || (OUTSTANDING < 2)) begin
+            respond_reversed_skewed(batch);
+            return;
+        end
+
+        // Contexts zero and one target adjacent physical bank groups. Their
+        // lane-zero fragments therefore contend for the same lane RAM write
+        // port even though they arrive on different bank response ports.
+        bank0 = 0;
+        bank1 = BANKS_PER_BEAT;
+        @(negedge clk);
+        bank_rsp_valid = '0;
+        bank_rsp_valid[bank0] = 1'b1;
+        bank_rsp_valid[bank1] = 1'b1;
+        bank_rsp_data[bank0] = response_pattern(batch, 0, bank0);
+        bank_rsp_data[bank1] = response_pattern(batch, 1, bank1);
+        bank_rsp_tag[bank0] = OUT_TAG_WIDTH'(
+            {BANK_SEL_BITS'(bank0), transaction_tag(batch, 0)});
+        bank_rsp_tag[bank1] = OUT_TAG_WIDTH'(
+            {BANK_SEL_BITS'(bank1), transaction_tag(batch, 1)});
+        #1;
+        if (!(bank_rsp_ready[bank0] ^ bank_rsp_ready[bank1]))
+            $fatal(1, "case%0d: same-lane RAM collision did not select exactly one response",
+                   CASE_ID);
+        winner = bank_rsp_ready[bank0] ? bank0 : bank1;
+        loser = bank_rsp_ready[bank0] ? bank1 : bank0;
+        @(posedge clk);
+        @(negedge clk);
+        bank_rsp_valid[winner] = 1'b0;
+        #1;
+        if (!bank_rsp_valid[loser] || !bank_rsp_ready[loser])
+            $fatal(1, "case%0d: same-lane collision loser was not accepted next",
+                   CASE_ID);
+        @(posedge clk);
+        @(negedge clk);
+        bank_rsp_valid = '0;
+
+        // Finish the remaining logical lanes of the two partially completed
+        // contexts, then complete all other contexts normally.
+        if (BANKS_PER_BEAT > 1) begin
+            send_context_lanes(batch, 0, 1);
+            send_context_lanes(batch, 1, 1);
+        end
+        for (int t = 2; t < OUTSTANDING; ++t)
+            send_context_lanes(batch, t, 0);
+
+        $display("case%0d PASS: same logical lane collision held and retried the losing bank response",
+                 CASE_ID);
     endtask
 
     task automatic retire_batch(input int batch);
@@ -663,6 +730,13 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
                 respond_ordered(1);
                 retire_batch(1);
 
+                // Batch 3: RAM mode explicitly collides two physical response
+                // ports on one logical lane. Other modes retain the same
+                // functional batch without collision-specific expectations.
+                accept_batch(3, 1'b0);
+                respond_same_lane_collision(3);
+                retire_batch(3);
+
                 done = 1'b1;
                 $display("case%0d PASS: context urgency stayed identical across every partial bank lane",
                          CASE_ID);
@@ -674,7 +748,9 @@ module tmem_wide_read_case import VX_gpu_pkg::*; #(
 
 endmodule
 
-module tb_VX_tmem_wide_read_switch;
+module tb_VX_tmem_wide_read_switch #(
+    parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+);
     logic clk = 1'b0;
     logic reset = 1'b1;
     logic [3:0] done;
@@ -682,16 +758,20 @@ module tb_VX_tmem_wide_read_switch;
     always #5 clk = ~clk;
 
     tmem_wide_read_case #(
-        .CASE_ID(0), .WIDE_DATA_SIZE(64), .OUTSTANDING(8)
+        .CASE_ID(0), .WIDE_DATA_SIZE(64), .OUTSTANDING(8),
+        .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM)
     ) case_wload4 (.clk(clk), .reset(reset), .done(done[0]));
     tmem_wide_read_case #(
-        .CASE_ID(1), .WIDE_DATA_SIZE(128), .OUTSTANDING(8)
+        .CASE_ID(1), .WIDE_DATA_SIZE(128), .OUTSTANDING(8),
+        .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM)
     ) case_wload8 (.clk(clk), .reset(reset), .done(done[1]));
     tmem_wide_read_case #(
-        .CASE_ID(2), .WIDE_DATA_SIZE(256), .OUTSTANDING(2)
+        .CASE_ID(2), .WIDE_DATA_SIZE(256), .OUTSTANDING(2),
+        .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM)
     ) case_wload16 (.clk(clk), .reset(reset), .done(done[2]));
     tmem_wide_read_case #(
-        .CASE_ID(3), .WIDE_DATA_SIZE(512), .OUTSTANDING(1)
+        .CASE_ID(3), .WIDE_DATA_SIZE(512), .OUTSTANDING(1),
+        .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM)
     ) case_wload32 (.clk(clk), .reset(reset), .done(done[3]));
 
     initial begin

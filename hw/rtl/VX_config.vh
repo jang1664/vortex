@@ -1269,6 +1269,25 @@ for block_size in range(1, full_bitwidth+1):
 `define DMA_BOUND_WIDTH 21
 `endif
 
+// Block-RAM response payload storage is the production default for the improve
+// GEMM overlap paths.  Explicit zero overrides retain the cycle-compatible FF
+// implementation for focused A/B comparisons and debugging.
+`ifndef I_LMEM_DMA_RESPONSE_DATA_RAM
+`define I_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef W_LMEM_DMA_RESPONSE_DATA_RAM
+`define W_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef SZ_LMEM_DMA_RESPONSE_DATA_RAM
+`define SZ_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef W_TMEM_WIDE_RESPONSE_DATA_RAM
+`define W_TMEM_WIDE_RESPONSE_DATA_RAM 1
+`endif
+
 // The improve backend's dependency scheduler requires the existing TMEM
 // priority frontend to apply its registered source classes at the physical
 // banks.  Preserve legacy arbitration for non-improve configurations and

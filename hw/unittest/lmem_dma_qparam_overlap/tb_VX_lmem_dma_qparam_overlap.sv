@@ -3,7 +3,8 @@
 `include "VX_define.vh"
 
 module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
-  parameter bit TEST_ZP = 1'b0
+  parameter bit TEST_ZP = 1'b0,
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
 ) ();
 
   localparam int NDIM = 3;
@@ -37,9 +38,11 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   VX_lmem_dma_qparam_overlap #(
     .INSTANCE_ID("qparam_overlap_tb"),
     .NDIM(NDIM),
+    .MAX_DIMS(1),
     .TAG_WIDTH(TAG_WIDTH),
     .CMD_FIFO_DEPTH(4),
     .RESPONSE_SLOTS(8),
+    .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM),
     .WRITER_RID0(RID0),
     .WRITER_RID1(RID1),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),

@@ -16,6 +16,7 @@ TOP_MODULE := tb_VX_gemm_stream_dma_queue
 TB := $(SRC_DIR)/tb_VX_gemm_stream_dma_queue.sv
 RTLS := $(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
+	$(RTL_DIR)/libs/VX_dp_ram.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv
 
 INCDIRS_ := $(VORTEX_HOME)/build/hw $(VORTEX_HOME)/hw $(RTL_DIR) \

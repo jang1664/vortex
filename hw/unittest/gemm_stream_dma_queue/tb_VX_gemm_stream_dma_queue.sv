@@ -3,15 +3,20 @@
 module tb_stream_dma_queue_case #(
     parameter int DEPTH = 1,
     parameter int FETCH_TAGW = 2,
+    parameter int SLOTS = 4,
+    parameter int DATAW = 32,
     parameter bit RING_MODE = 1'b0,
-    parameter bit SINK_PIPE = 1'b0
+    parameter bit SINK_PIPE = 1'b0,
+    parameter bit RESPONSE_DATA_RAM = 1'b1,
+    parameter bit SAME_CYCLE_SLOT_RECYCLE = 1'b1,
+    parameter bit EXPECT_SLOT_RECYCLE = 1'b1
 ) (
-    output logic done
+    output logic done,
+    output wire compare_active,
+    output logic [1407:0] compare_bus
 );
-    localparam int SLOTS = 4;
     localparam int SOURCE_METAW = 8;
     localparam int DEST_METAW = 8;
-    localparam int DATAW = 32;
     localparam int COUNTW = 4;
     localparam int SEQW = 2;
 
@@ -64,7 +69,9 @@ module tb_stream_dma_queue_case #(
         .SEQW           (SEQW),
         .FETCH_TAGW     (FETCH_TAGW),
         .RING_SLOT_ORDER(RING_MODE),
-        .SINK_PIPELINE  (SINK_PIPE)
+        .SINK_PIPELINE  (SINK_PIPE),
+        .RESPONSE_DATA_RAM(RESPONSE_DATA_RAM),
+        .SAME_CYCLE_SLOT_RECYCLE(SAME_CYCLE_SLOT_RECYCLE)
     ) dut (
         .clk(clk),
         .reset(reset),
@@ -105,6 +112,36 @@ module tb_stream_dma_queue_case #(
     wire req_fire = fetch_if.req_valid && fetch_if.req_ready;
     wire write_fire = sink_if.write_valid && sink_if.write_ready;
 
+    assign compare_active = !reset;
+    always_comb begin
+        compare_bus = '0;
+        compare_bus = {
+            fetch_if.cmd_ready,
+            fetch_if.req_valid,
+            fetch_if.req_valid ? fetch_if.req_tag : '0,
+            fetch_if.req_valid ? fetch_if.req_payload : '0,
+            fetch_if.rsp_ready,
+            sink_if.write_valid,
+            sink_if.write_valid ? sink_if.write_tag : '0,
+            sink_if.write_valid ? sink_if.write_payload : '0,
+            sink_if.write_valid ? sink_if.write_last : 1'b0,
+            writer_head_valid,
+            writer_head_valid ? writer_head_id : '0,
+            writer_head_valid ? writer_head_payload : '0,
+            writer_head_valid ? writer_head_sequence : '0,
+            fetch_complete_valid,
+            fetch_complete_valid ? fetch_complete_id : '0,
+            fetch_complete_valid ? fetch_complete_sequence : '0,
+            install_complete_valid,
+            install_complete_valid ? install_complete_id : '0,
+            install_complete_valid ? install_complete_sequence : '0,
+            fetch_head_write_beats,
+            install_ready_ahead,
+            cmd_occupancy,
+            slot_occupancy
+        };
+    end
+
     always @(posedge clk) begin
         if (reset) begin
             ring_expected_slot = 0;
@@ -123,6 +160,10 @@ module tb_stream_dma_queue_case #(
                 req_count++;
             end
             if (write_fire) begin
+                if (sink_if.write_payload[DATAW-1:0]
+                    !== DATAW'(32'h80000000 + write_count))
+                    $fatal(1, "depth%0d write%0d payload mismatch",
+                           DEPTH, write_count);
                 if ((write_count != 0)
                  && (sink_if.write_tag[SEQW+COUNTW-1 -: SEQW] == 0))
                     saw_sequence_wrap = 1'b1;
@@ -137,10 +178,10 @@ module tb_stream_dma_queue_case #(
             if (req_fire && write_fire
              && (dut.request_slot == dut.drain_slot))
                 saw_slot_recycle = 1'b1;
-            if (SINK_PIPE && dut.drain_stage_valid_r
+            if ((SINK_PIPE || RESPONSE_DATA_RAM) && dut.drain_stage_valid_r
              && !sink_if.write_ready)
                 saw_pipeline_hold = 1'b1;
-            if (SINK_PIPE && dut.drain_stage_valid_r
+            if ((SINK_PIPE || RESPONSE_DATA_RAM) && dut.drain_stage_valid_r
              && (install_ready_ahead != 0))
                 saw_pipeline_ready_ahead = 1'b1;
         end
@@ -282,11 +323,13 @@ module tb_stream_dma_queue_case #(
             wait (install_complete_count == (DEPTH + 2 + cmd));
         end
 
-        if (!saw_pop_enqueue || !saw_slot_recycle || !saw_sequence_wrap)
+        if (!saw_pop_enqueue
+         || (EXPECT_SLOT_RECYCLE && !saw_slot_recycle)
+         || !saw_sequence_wrap)
             $fatal(1, "depth%0d missing turnover/wrap coverage pop=%0d recycle=%0d wrap=%0d",
                    DEPTH, saw_pop_enqueue, saw_slot_recycle,
                    saw_sequence_wrap);
-        if (SINK_PIPE
+        if ((SINK_PIPE || RESPONSE_DATA_RAM)
          && (!saw_pipeline_hold || !saw_pipeline_ready_ahead))
             $fatal(1, "depth%0d missing registered sink coverage hold=%0d ahead=%0d",
                    DEPTH, saw_pipeline_hold, saw_pipeline_ready_ahead);
@@ -325,32 +368,144 @@ module tb_stream_dma_queue_case #(
 endmodule
 
 module tb_VX_gemm_stream_dma_queue;
-    logic done_depth1;
-    logic done_depth2;
-    logic done_depth4;
-    logic done_input_mode;
+    logic [11:0] done;
+    wire input_ff_active;
+    wire input_ram_active;
+    wire [1407:0] input_ff_compare;
+    wire [1407:0] input_ram_compare;
+    wire wide512_ff_active;
+    wire wide512_ram_active;
+    wire [1407:0] wide512_ff_compare;
+    wire [1407:0] wide512_ram_compare;
+    wire wide1024_ff_active;
+    wire wide1024_ram_active;
+    wire [1407:0] wide1024_ff_compare;
+    wire [1407:0] wide1024_ram_compare;
 
-    tb_stream_dma_queue_case #(.DEPTH(1)) depth1 (
-        .done(done_depth1)
+    tb_stream_dma_queue_case #(
+        .DEPTH(1), .RESPONSE_DATA_RAM(1'b0)
+    ) depth1_ff (
+        .done(done[0]), .compare_active(), .compare_bus()
     );
-    tb_stream_dma_queue_case #(.DEPTH(2)) depth2 (
-        .done(done_depth2)
+    tb_stream_dma_queue_case #(
+        .DEPTH(2), .RESPONSE_DATA_RAM(1'b0)
+    ) depth2_ff (
+        .done(done[1]), .compare_active(), .compare_bus()
     );
-    tb_stream_dma_queue_case #(.DEPTH(4)) depth4 (
-        .done(done_depth4)
+    tb_stream_dma_queue_case #(
+        .DEPTH(4), .RESPONSE_DATA_RAM(1'b0)
+    ) depth4_ff (
+        .done(done[2]), .compare_active(), .compare_bus()
     );
     tb_stream_dma_queue_case #(
         .DEPTH      (4),
         .FETCH_TAGW (6),
         .RING_MODE  (1'b1),
-        .SINK_PIPE  (1'b1)
-    ) input_mode (
-        .done(done_input_mode)
+        .SINK_PIPE  (1'b1),
+        .RESPONSE_DATA_RAM(1'b0)
+    ) input_mode_ff (
+        .done(done[3]),
+        .compare_active(input_ff_active),
+        .compare_bus(input_ff_compare)
     );
 
+    tb_stream_dma_queue_case #(
+        .DEPTH(1), .RESPONSE_DATA_RAM(1'b1)
+    ) depth1_ram (
+        .done(done[4]), .compare_active(), .compare_bus()
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH(2), .RESPONSE_DATA_RAM(1'b1)
+    ) depth2_ram (
+        .done(done[5]), .compare_active(), .compare_bus()
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH(4), .RESPONSE_DATA_RAM(1'b1)
+    ) depth4_ram (
+        .done(done[6]), .compare_active(), .compare_bus()
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH      (4),
+        .FETCH_TAGW (6),
+        .RING_MODE  (1'b1),
+        .SINK_PIPE  (1'b1),
+        .RESPONSE_DATA_RAM(1'b1)
+    ) input_mode_ram (
+        .done(done[7]),
+        .compare_active(input_ram_active),
+        .compare_bus(input_ram_compare)
+    );
+
+    tb_stream_dma_queue_case #(
+        .DEPTH(2), .FETCH_TAGW(6), .SLOTS(8), .DATAW(512),
+        .RING_MODE(1'b1), .SINK_PIPE(1'b1),
+        .RESPONSE_DATA_RAM(1'b0),
+        .EXPECT_SLOT_RECYCLE(1'b0)
+    ) wide512_ff (
+        .done(done[8]), .compare_active(wide512_ff_active),
+        .compare_bus(wide512_ff_compare)
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH(2), .FETCH_TAGW(6), .SLOTS(8), .DATAW(512),
+        .RING_MODE(1'b1), .SINK_PIPE(1'b1),
+        .RESPONSE_DATA_RAM(1'b1),
+        .EXPECT_SLOT_RECYCLE(1'b0)
+    ) wide512_ram (
+        .done(done[9]), .compare_active(wide512_ram_active),
+        .compare_bus(wide512_ram_compare)
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH(4), .FETCH_TAGW(6), .SLOTS(8), .DATAW(1024),
+        .RING_MODE(1'b1), .SINK_PIPE(1'b1),
+        .RESPONSE_DATA_RAM(1'b0),
+        .SAME_CYCLE_SLOT_RECYCLE(1'b0),
+        .EXPECT_SLOT_RECYCLE(1'b0)
+    ) wide1024_ff (
+        .done(done[10]), .compare_active(wide1024_ff_active),
+        .compare_bus(wide1024_ff_compare)
+    );
+    tb_stream_dma_queue_case #(
+        .DEPTH(4), .FETCH_TAGW(6), .SLOTS(8), .DATAW(1024),
+        .RING_MODE(1'b1), .SINK_PIPE(1'b1),
+        .RESPONSE_DATA_RAM(1'b1),
+        .SAME_CYCLE_SLOT_RECYCLE(1'b0),
+        .EXPECT_SLOT_RECYCLE(1'b0)
+    ) wide1024_ram (
+        .done(done[11]), .compare_active(wide1024_ram_active),
+        .compare_bus(wide1024_ram_compare)
+    );
+
+    // Production overlap queues already use SINK_PIPELINE=1. With that stage
+    // present, replacing only the payload array with registered-read RAM must
+    // be externally cycle-exact. Both cases run the same deterministic
+    // stimulus, including OOO responses, writer stalls, turnover, and reset.
+    always @(posedge input_mode_ff.clk) begin
+        #1;
+        if (input_ff_active && input_ram_active
+         && (input_ff_compare !== input_ram_compare))
+            $fatal(1, "FF/RAM registered-sink cycle mismatch: ff=%0h ram=%0h",
+                   input_ff_compare, input_ram_compare);
+    end
+
+    always @(posedge wide512_ff.clk) begin
+        #1;
+        if (wide512_ff_active && wide512_ram_active
+         && (wide512_ff_compare !== wide512_ram_compare))
+            $fatal(1, "512-bit FF/RAM cycle mismatch: ff=%0h ram=%0h",
+                   wide512_ff_compare, wide512_ram_compare);
+    end
+
+    always @(posedge wide1024_ff.clk) begin
+        #1;
+        if (wide1024_ff_active && wide1024_ram_active
+         && (wide1024_ff_compare !== wide1024_ram_compare))
+            $fatal(1, "1024-bit FF/RAM cycle mismatch: ff=%0h ram=%0h",
+                   wide1024_ff_compare, wide1024_ram_compare);
+    end
+
     initial begin
-        wait (done_depth1 && done_depth2 && done_depth4 && done_input_mode);
-        $display("TEST PASSED: GEMM stream DMA queue depth1/depth2/depth4/Input-mode contracts");
+        wait (&done);
+        $display("TEST PASSED: GEMM stream DMA queue FF/RAM depth1/depth2/depth4/Input-mode contracts");
         $finish;
     end
 

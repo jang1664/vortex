@@ -16,6 +16,7 @@ TOP_MODULE := tb_VX_tmem_wide_read_switch
 TB := $(SRC_DIR)/tb_VX_tmem_wide_read_switch.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/mem/VX_mem_bus_if.sv \
+        $(RTL_DIR)/libs/VX_dp_ram.sv \
         $(RTL_DIR)/mem/VX_tmem_wide_read_switch.sv
 
 INCDIRS_ := $(RTL_DIR) $(RTL_DIR)/mem
@@ -29,7 +30,12 @@ VC_INCDIRS := $(foreach dir,$(INCDIRS_),+incdir+$(dir))
 empty :=
 space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
-PARAMS :=
+TB_RESPONSE_DATA_RAM ?= 1
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).TB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
+else
+PARAMS := -GTB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
+endif
 
 setup:
 	mkdir -p logs reports

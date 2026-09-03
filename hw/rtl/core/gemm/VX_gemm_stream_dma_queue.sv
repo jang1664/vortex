@@ -24,6 +24,9 @@ module VX_gemm_stream_dma_queue #(
     // Preserve backends whose response storage has one registered read stage.
     // Zero keeps the original direct slot-to-sink contract.
     parameter bit SINK_PIPELINE = 1'b0,
+    // Store wide response payloads in a registered-read 1R1W RAM.  Metadata
+    // remains in registers and the existing sink stage owns the RAM output.
+    parameter bit RESPONSE_DATA_RAM = 1'b1,
     // Most migrated executors can issue into a slot on the same edge that the
     // ordered sink releases it.  Legacy Weight exposes the newly FREE slot on
     // the following cycle, so it opts out to preserve its bank-offer schedule.
@@ -65,6 +68,7 @@ module VX_gemm_stream_dma_queue #(
     localparam int SLOT_COUNTW = $clog2(RESPONSE_SLOTS + 1);
     localparam int SINK_TAGW = SEQW + COUNTW;
     localparam int RESPONSE_RANGEW = FETCH_TAGW + 1;
+    localparam bit USE_SINK_STAGE = SINK_PIPELINE || RESPONSE_DATA_RAM;
 
     function automatic logic [CMD_PTRW-1:0] cmd_ptr_next(
         input logic [CMD_PTRW-1:0] ptr
@@ -102,7 +106,6 @@ module VX_gemm_stream_dma_queue #(
     logic [CMD_PTRW-1:0] slot_owner_cmd_r[RESPONSE_SLOTS];
     logic [SEQW-1:0] slot_owner_sequence_r[RESPONSE_SLOTS];
     logic [COUNTW-1:0] slot_owner_beat_r[RESPONSE_SLOTS];
-    logic [DATAW-1:0] slot_data_r[RESPONSE_SLOTS];
     logic [SLOT_COUNTW-1:0] slot_count_r;
 
     logic [SLOT_PTRW-1:0] alloc_slot_r;
@@ -139,10 +142,11 @@ module VX_gemm_stream_dma_queue #(
         end
     end
 
-    wire sink_owner_valid = SINK_PIPELINE
+    wire sink_owner_valid = USE_SINK_STAGE
         ? drain_stage_valid_r : drain_found;
-    wire [SLOT_PTRW-1:0] sink_slot = SINK_PIPELINE
+    wire [SLOT_PTRW-1:0] sink_slot = USE_SINK_STAGE
         ? drain_stage_slot_r : drain_slot;
+    wire [DATAW-1:0] sink_slot_data;
 
     wire sink_write_last = install_head_valid && sink_owner_valid
         && ((slot_owner_beat_r[sink_slot] + COUNTW'(1))
@@ -156,7 +160,7 @@ module VX_gemm_stream_dma_queue #(
     };
     assign sink_if.write_payload = {
         cmd_payload_r[install_ptr_r][DEST_METAW-1:0],
-        slot_owner_beat_r[sink_slot], slot_data_r[sink_slot]
+        slot_owner_beat_r[sink_slot], sink_slot_data
     };
     assign sink_if.write_owned = install_head_valid && sink_owner_valid;
     assign sink_if.writer_released = writer_release_i;
@@ -171,9 +175,10 @@ module VX_gemm_stream_dma_queue #(
     wire sink_write_fire = sink_if.write_valid && sink_if.write_ready;
     wire install_pop = sink_if.install_complete;
 
-    // Optional registered sink stage.  On a sink turnover, select the next
-    // ordered slot using the post-write command/beat without waiting for the
-    // registered counters to update.  This preserves one beat/cycle drain.
+    // Registered sink stage, selected explicitly or required by RAM storage.
+    // On a sink turnover, select the next ordered slot using the post-write
+    // command/beat without waiting for the registered counters to update.
+    // This preserves one beat/cycle drain.
     wire stage_ready = !drain_stage_valid_r || sink_write_fire;
     wire [CMD_PTRW-1:0] stage_cmd = install_pop
         ? cmd_ptr_next(install_ptr_r) : install_ptr_r;
@@ -188,7 +193,7 @@ module VX_gemm_stream_dma_queue #(
                                : install_slot_r)
             : '0;
         for (int slot = 0; slot < RESPONSE_SLOTS; ++slot) begin
-            if (!stage_found && SINK_PIPELINE && stage_ready
+            if (!stage_found && USE_SINK_STAGE && stage_ready
              && (!RING_SLOT_ORDER
               || (SLOT_PTRW'(slot) == stage_slot))
              && cmd_valid_r[stage_cmd]
@@ -250,6 +255,42 @@ module VX_gemm_stream_dma_queue #(
     assign fetch_if.fetch_complete = source_response_fire
                                   && fetch_if.rsp_last;
 
+    if (RESPONSE_DATA_RAM) begin : g_response_data_ram
+        VX_dp_ram #(
+            .DATAW     (DATAW),
+            .SIZE      (RESPONSE_SLOTS),
+            .WRENW     (1),
+            .OUT_REG   (1),
+            .LUTRAM    (0),
+            .RDW_MODE  ("R"),
+            .RADDR_REG (1),
+            .RESET_RAM (0)
+        ) response_payload_ram (
+            .clk   (clk),
+            .reset (reset),
+            .read  (stage_found),
+            .write (source_response_fire),
+            .wren  (1'b1),
+            .waddr (response_slot),
+            .wdata (fetch_if.rsp_payload),
+            .raddr (stage_slot),
+            .rdata (sink_slot_data)
+        );
+    end else begin : g_response_data_ff
+        logic [DATAW-1:0] slot_data_r[RESPONSE_SLOTS];
+
+        assign sink_slot_data = slot_data_r[sink_slot];
+
+        always_ff @(posedge clk) begin
+            if (reset) begin
+                for (int slot = 0; slot < RESPONSE_SLOTS; ++slot)
+                    slot_data_r[slot] <= '0;
+            end else if (source_response_fire) begin
+                slot_data_r[response_slot] <= fetch_if.rsp_payload;
+            end
+        end
+    end
+
     wire zero_size_cmd = fetch_if.cmd_total_beats == 0;
     assign fetch_if.cmd_ready = zero_size_cmd
                              || (cmd_count_r < CMD_COUNTW'(CMD_FIFO_DEPTH))
@@ -283,10 +324,10 @@ module VX_gemm_stream_dma_queue #(
     // Count the registered sink beat, when enabled, and the consecutive READY
     // ring prefix behind it.  WAIT_RSP occupancy is intentionally excluded.
     always_comb begin
-        install_ready_ahead = SINK_PIPELINE
+        install_ready_ahead = USE_SINK_STAGE
             ? SLOT_COUNTW'(drain_stage_valid_r) : '0;
         for (int offset = 0; offset < RESPONSE_SLOTS; ++offset) begin
-            if ((offset >= ((SINK_PIPELINE && drain_stage_valid_r) ? 1 : 0))
+            if ((offset >= ((USE_SINK_STAGE && drain_stage_valid_r) ? 1 : 0))
              && (slot_state_r[SLOT_PTRW'(install_slot_r
                                       + SLOT_PTRW'(offset))]
                  == SLOT_READY)
@@ -353,7 +394,6 @@ module VX_gemm_stream_dma_queue #(
                 slot_owner_cmd_r[slot] <= '0;
                 slot_owner_sequence_r[slot] <= '0;
                 slot_owner_beat_r[slot] <= '0;
-                slot_data_r[slot] <= '0;
             end
         end else begin
             unique case ({command_enqueue, install_pop})
@@ -369,7 +409,6 @@ module VX_gemm_stream_dma_queue #(
 
             if (source_response_fire) begin
                 slot_state_r[response_slot] <= SLOT_READY;
-                slot_data_r[response_slot] <= fetch_if.rsp_payload;
                 cmd_response_r[slot_owner_cmd_r[response_slot]]
                     <= cmd_response_r[slot_owner_cmd_r[response_slot]]
                      + COUNTW'(1);
@@ -391,7 +430,7 @@ module VX_gemm_stream_dma_queue #(
                 end
             end
 
-            if (SINK_PIPELINE) begin
+            if (USE_SINK_STAGE) begin
                 if (sink_write_fire && !stage_found)
                     drain_stage_valid_r <= 1'b0;
                 if (stage_found) begin
@@ -440,6 +479,10 @@ module VX_gemm_stream_dma_queue #(
 `ifndef SYNTHESIS
     logic [CMD_COUNTW-1:0] live_cmd_count;
     logic [SLOT_COUNTW-1:0] live_slot_count;
+    logic sink_stall_r;
+    logic [SINK_TAGW-1:0] sink_stall_tag_r;
+    logic [SINK_PAYLOADW-1:0] sink_stall_payload_r;
+    logic sink_stall_last_r;
     always_comb begin
         live_cmd_count = '0;
         live_slot_count = '0;
@@ -452,7 +495,12 @@ module VX_gemm_stream_dma_queue #(
     end
 
     always_ff @(posedge clk) begin
-        if (!reset) begin
+        if (reset) begin
+            sink_stall_r <= 1'b0;
+            sink_stall_tag_r <= '0;
+            sink_stall_payload_r <= '0;
+            sink_stall_last_r <= 1'b0;
+        end else begin
             assert (cmd_count_r <= CMD_COUNTW'(CMD_FIFO_DEPTH))
                 else $fatal(1, "%s: stream DMA descriptor overflow",
                             INSTANCE_ID);
@@ -487,6 +535,19 @@ module VX_gemm_stream_dma_queue #(
                     else $fatal(1, "%s: response exceeded descriptor",
                                 INSTANCE_ID);
             end
+            if (RESPONSE_DATA_RAM && source_response_fire && stage_found) begin
+                assert (response_slot != stage_slot)
+                    else $fatal(1, "%s: response RAM read/write collision slot=%0d",
+                                INSTANCE_ID, response_slot);
+            end
+            if (sink_stall_r) begin
+                assert (sink_if.write_valid
+                     && (sink_if.write_tag == sink_stall_tag_r)
+                     && (sink_if.write_payload == sink_stall_payload_r)
+                     && (sink_if.write_last == sink_stall_last_r))
+                    else $fatal(1, "%s: destination write changed while stalled",
+                                INSTANCE_ID);
+            end
             if (sink_write_fire) begin
                 assert (install_head_valid && sink_owner_valid
                      && writer_release_i)
@@ -506,6 +567,13 @@ module VX_gemm_stream_dma_queue #(
                         else $fatal(1, "%s: descriptor progress invariant failed cmd=%0d",
                                     INSTANCE_ID, cmd);
                 end
+            end
+
+            sink_stall_r <= sink_if.write_valid && !sink_if.write_ready;
+            if (sink_if.write_valid && !sink_if.write_ready) begin
+                sink_stall_tag_r <= sink_if.write_tag;
+                sink_stall_payload_r <= sink_if.write_payload;
+                sink_stall_last_r <= sink_if.write_last;
             end
         end
     end

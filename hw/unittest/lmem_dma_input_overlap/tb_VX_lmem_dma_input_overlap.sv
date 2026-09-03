@@ -2,7 +2,9 @@
 
 `include "VX_define.vh"
 
-module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
+module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+) ();
 
   localparam int NDIM = 3;
   localparam int BUS_BYTES = 64;
@@ -40,9 +42,11 @@ module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; ();
   VX_lmem_dma_input_overlap #(
     .INSTANCE_ID("input_overlap_tb"),
     .NDIM(NDIM),
+    .MAX_DIMS(1),
     .TAG_WIDTH(TAG_WIDTH),
     .CMD_FIFO_DEPTH(4),
     .RESPONSE_SLOTS(8),
+    .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM),
     .ENABLE_TMEM_URGENCY(1'b1),
     .ENABLE_SCHED_SOURCE_GATE(1'b1),
     .READY_AHEAD_LOW_WATERMARK(4),

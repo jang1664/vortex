@@ -24,7 +24,8 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     parameter WIDE_DATA_SIZE = NUM_BANKS * DATA_SIZE,
     parameter TAG_WIDTH      = 8,
     parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
-    parameter int OUTSTANDING = 1
+    parameter int OUTSTANDING = 1,
+    parameter bit RESPONSE_DATA_RAM = 1'b1
 ) (
     input wire clk,
     input wire reset,
@@ -88,9 +89,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_bank_mask_r, ctx_bank_mask_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_issued_r, ctx_issued_n;
     logic [OUTSTANDING-1:0][NUM_BANKS-1:0]             ctx_rsp_seen_r, ctx_rsp_seen_n;
-    logic [OUTSTANDING-1:0][BANKS_PER_BEAT-1:0][DATA_WIDTH-1:0]
-                                                            ctx_rsp_data_r, ctx_rsp_data_n;
-
     logic [OUTSTANDING-1:0][CTX_BITS-1:0] issue_fifo_r, issue_fifo_n;
     logic [OUTSTANDING-1:0][CTX_BITS-1:0] order_fifo_r, order_fifo_n;
     logic [CTX_BITS-1:0] issue_rd_ptr_r, issue_rd_ptr_n;
@@ -124,6 +122,15 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
     wire [NUM_BANKS-1:0][TAG_WIDTH-1:0] rsp_original_tag;
     wire [NUM_BANKS-1:0][CTX_BITS-1:0] rsp_ctx_id;
     wire [NUM_BANKS-1:0] rsp_legal;
+    logic [NUM_BANKS-1:0] rsp_grant_bank;
+    logic [BANKS_PER_BEAT-1:0][GROUP_SEL_BITS-1:0] lane_rr_r;
+    logic [BANKS_PER_BEAT-1:0] lane_ram_write;
+    logic [BANKS_PER_BEAT-1:0][CTX_BITS-1:0] lane_ram_waddr;
+    logic [BANKS_PER_BEAT-1:0][DATA_WIDTH-1:0] lane_ram_wdata;
+
+    wire rsp_output_valid;
+    wire [WIDE_DATA_SIZE*8-1:0] rsp_output_data;
+    wire [TAG_WIDTH-1:0] rsp_output_tag;
 
     wire [NUM_BANKS-1:0] issue_issued_next =
         ctx_issued_r[issue_head_ctx] | req_fire_bank;
@@ -142,9 +149,9 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
                               && (order_count_r < FIFO_CNT_W'(OUTSTANDING));
     wire req_accept = bus_in_if.req_valid && bus_in_if.req_ready;
 
-    assign bus_in_if.rsp_valid = order_head_valid && ctx_complete[order_head_ctx];
-    assign bus_in_if.rsp_data.data = ctx_rsp_data_r[order_head_ctx];
-    assign bus_in_if.rsp_data.tag = ctx_tag_r[order_head_ctx];
+    assign bus_in_if.rsp_valid = rsp_output_valid;
+    assign bus_in_if.rsp_data.data = rsp_output_data;
+    assign bus_in_if.rsp_data.tag = rsp_output_tag;
     wire rsp_retire = bus_in_if.rsp_valid && bus_in_if.rsp_ready;
 
     for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_bank
@@ -189,9 +196,53 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
                            && ctx_bank_mask_r[rsp_ctx_id[b]][b]
                            && ctx_issued_r[rsp_ctx_id[b]][b]
                            && !ctx_rsp_seen_r[rsp_ctx_id[b]][b];
-        assign bus_out_if[b].rsp_ready = rsp_legal[b];
+        assign bus_out_if[b].rsp_ready = rsp_legal[b]
+                                            && rsp_grant_bank[b];
         assign rsp_fire_bank[b] = bus_out_if[b].rsp_valid
                                 && bus_out_if[b].rsp_ready;
+    end
+
+    // FF mode can accept every legal bank response independently. RAM mode
+    // has one write port per logical lane, so responses from physical bank
+    // groups that share a lane are admitted one at a time in round-robin
+    // order. Different lanes remain fully parallel.
+    always_comb begin
+        rsp_grant_bank = RESPONSE_DATA_RAM ? '0 : {NUM_BANKS{1'b1}};
+        if (RESPONSE_DATA_RAM) begin
+            for (int lane = 0; lane < BANKS_PER_BEAT; ++lane) begin
+                bit lane_found;
+                lane_found = 1'b0;
+                for (int offset = 0; offset < NUM_BANK_GROUPS; ++offset) begin
+                    int group_idx;
+                    int bank_idx;
+                    group_idx = (lane_rr_r[lane] + offset)
+                              & (NUM_BANK_GROUPS - 1);
+                    bank_idx = group_idx * BANKS_PER_BEAT + lane;
+                    if (!lane_found && rsp_valid_bank[bank_idx]
+                     && rsp_legal[bank_idx]) begin
+                        rsp_grant_bank[bank_idx] = 1'b1;
+                        lane_found = 1'b1;
+                    end
+                end
+            end
+        end
+    end
+
+    always_comb begin
+        lane_ram_write = '0;
+        lane_ram_waddr = '0;
+        lane_ram_wdata = '0;
+        for (int lane = 0; lane < BANKS_PER_BEAT; ++lane) begin
+            for (int group = 0; group < NUM_BANK_GROUPS; ++group) begin
+                int bank_idx;
+                bank_idx = group * BANKS_PER_BEAT + lane;
+                if (rsp_fire_bank[bank_idx]) begin
+                    lane_ram_write[lane] = 1'b1;
+                    lane_ram_waddr[lane] = rsp_ctx_id[bank_idx];
+                    lane_ram_wdata[lane] = rsp_data_bank[bank_idx];
+                end
+            end
+        end
     end
 
     function automatic logic [CTX_BITS-1:0] next_fifo_ptr(
@@ -205,6 +256,157 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         end
     endfunction
 
+    generate
+        if (!RESPONSE_DATA_RAM) begin : g_response_data_ff
+            logic [OUTSTANDING-1:0][BANKS_PER_BEAT-1:0][DATA_WIDTH-1:0]
+                ctx_rsp_data_r;
+
+            assign rsp_output_valid = order_head_valid
+                                   && ctx_complete[order_head_ctx];
+            assign rsp_output_data = ctx_rsp_data_r[order_head_ctx];
+            assign rsp_output_tag = ctx_tag_r[order_head_ctx];
+
+            always_ff @(posedge clk) begin
+                if (reset) begin
+                    ctx_rsp_data_r <= '0;
+                end else begin
+                    for (int b = 0; b < NUM_BANKS; ++b) begin
+                        if (rsp_fire_bank[b]) begin
+                            ctx_rsp_data_r[rsp_ctx_id[b]]
+                                          [b % BANKS_PER_BEAT]
+                                <= rsp_data_bank[b];
+                        end
+                    end
+                    if (rsp_retire)
+                        ctx_rsp_data_r[order_head_ctx] <= '0;
+                    if (req_accept)
+                        ctx_rsp_data_r[incoming_ctx_id] <= '0;
+                end
+            end
+        end else begin : g_response_data_ram
+            logic wide_rsp_stage_valid_r;
+            logic [CTX_BITS-1:0] wide_rsp_stage_ctx_r;
+            logic lane_ram_read;
+            logic [CTX_BITS-1:0] lane_ram_raddr;
+            wire [BANKS_PER_BEAT-1:0][DATA_WIDTH-1:0] lane_ram_rdata;
+            wire [CTX_BITS-1:0] order_next_ctx =
+                order_fifo_r[next_fifo_ptr(order_rd_ptr_r)];
+            wire next_order_complete = (order_count_r > FIFO_CNT_W'(1))
+                                    && ctx_complete[order_next_ctx];
+
+            always_comb begin
+                lane_ram_read = 1'b0;
+                lane_ram_raddr = '0;
+                if (!wide_rsp_stage_valid_r) begin
+                    if (order_head_valid && ctx_complete[order_head_ctx]) begin
+                        lane_ram_read = 1'b1;
+                        lane_ram_raddr = order_head_ctx;
+                    end
+                end else if (bus_in_if.rsp_ready && next_order_complete) begin
+                    lane_ram_read = 1'b1;
+                    lane_ram_raddr = order_next_ctx;
+                end
+            end
+
+            for (genvar lane = 0; lane < BANKS_PER_BEAT; ++lane) begin : g_lane_ram
+                VX_dp_ram #(
+                    .DATAW     (DATA_WIDTH),
+                    .SIZE      (OUTSTANDING),
+                    .WRENW     (1),
+                    .OUT_REG   (1),
+                    .LUTRAM    (0),
+                    .RDW_MODE  ("R"),
+                    .RADDR_REG (1),
+                    .RESET_RAM (0)
+                ) response_lane_ram (
+                    .clk   (clk),
+                    .reset (reset),
+                    .read  (lane_ram_read),
+                    .write (lane_ram_write[lane]),
+                    .wren  (1'b1),
+                    .waddr (lane_ram_waddr[lane]),
+                    .wdata (lane_ram_wdata[lane]),
+                    .raddr (lane_ram_raddr),
+                    .rdata (lane_ram_rdata[lane])
+                );
+            end
+
+            assign rsp_output_valid = wide_rsp_stage_valid_r;
+            assign rsp_output_data = lane_ram_rdata;
+            assign rsp_output_tag = ctx_tag_r[wide_rsp_stage_ctx_r];
+
+            always_ff @(posedge clk) begin
+                if (reset) begin
+                    wide_rsp_stage_valid_r <= 1'b0;
+                    wide_rsp_stage_ctx_r <= '0;
+                    lane_rr_r <= '0;
+                end else begin
+                    if (lane_ram_read) begin
+                        wide_rsp_stage_valid_r <= 1'b1;
+                        wide_rsp_stage_ctx_r <= lane_ram_raddr;
+                    end else if (rsp_retire) begin
+                        wide_rsp_stage_valid_r <= 1'b0;
+                    end
+
+                    for (int lane = 0; lane < BANKS_PER_BEAT; ++lane) begin
+                        for (int group = 0; group < NUM_BANK_GROUPS; ++group) begin
+                            int bank_idx;
+                            bank_idx = group * BANKS_PER_BEAT + lane;
+                            if (rsp_fire_bank[bank_idx]) begin
+                                if (NUM_BANK_GROUPS == 1
+                                 || group == (NUM_BANK_GROUPS - 1))
+                                    lane_rr_r[lane] <= '0;
+                                else
+                                    lane_rr_r[lane] <= GROUP_SEL_BITS'(group + 1);
+                            end
+                        end
+                    end
+                end
+            end
+
+`ifndef SYNTHESIS
+            logic output_stall_r;
+            logic [WIDE_DATA_SIZE*8-1:0] output_stall_data_r;
+            logic [TAG_WIDTH-1:0] output_stall_tag_r;
+
+            always_ff @(posedge clk) begin
+                if (reset) begin
+                    output_stall_r <= 1'b0;
+                    output_stall_data_r <= '0;
+                    output_stall_tag_r <= '0;
+                end else begin
+                    if (output_stall_r) begin
+                        assert (bus_in_if.rsp_valid
+                             && (bus_in_if.rsp_data.data == output_stall_data_r)
+                             && (bus_in_if.rsp_data.tag == output_stall_tag_r))
+                            else $fatal(1, "%t: %s RAM response changed under output stall",
+                                        $time, INSTANCE_ID);
+                    end
+                    if (lane_ram_read) begin
+                        for (int lane = 0; lane < BANKS_PER_BEAT; ++lane) begin
+                            assert (!(lane_ram_write[lane]
+                                   && (lane_ram_waddr[lane] == lane_ram_raddr)))
+                                else $fatal(1, "%t: %s lane RAM read/write collision: lane=%0d ctx=%0d",
+                                            $time, INSTANCE_ID, lane,
+                                            lane_ram_raddr);
+                        end
+                    end
+                    if (rsp_retire) begin
+                        assert (wide_rsp_stage_ctx_r == order_head_ctx)
+                            else $fatal(1, "%t: %s RAM response stage/order mismatch: stage=%0d head=%0d",
+                                        $time, INSTANCE_ID,
+                                        wide_rsp_stage_ctx_r, order_head_ctx);
+                    end
+                    output_stall_r <= bus_in_if.rsp_valid
+                                   && !bus_in_if.rsp_ready;
+                    output_stall_data_r <= bus_in_if.rsp_data.data;
+                    output_stall_tag_r <= bus_in_if.rsp_data.tag;
+                end
+            end
+`endif
+        end
+    endgenerate
+
     always_comb begin
         ctx_valid_n = ctx_valid_r;
         ctx_tag_n = ctx_tag_r;
@@ -216,7 +418,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         ctx_bank_mask_n = ctx_bank_mask_r;
         ctx_issued_n = ctx_issued_r;
         ctx_rsp_seen_n = ctx_rsp_seen_r;
-        ctx_rsp_data_n = ctx_rsp_data_r;
 
         issue_fifo_n = issue_fifo_r;
         issue_rd_ptr_n = issue_rd_ptr_r;
@@ -236,8 +437,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
         for (int b = 0; b < NUM_BANKS; ++b) begin
             if (rsp_fire_bank[b]) begin
                 ctx_rsp_seen_n[rsp_ctx_id[b]][b] = 1'b1;
-                ctx_rsp_data_n[rsp_ctx_id[b]][b % BANKS_PER_BEAT] =
-                    rsp_data_bank[b];
             end
         end
 
@@ -252,7 +451,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_bank_mask_n[order_head_ctx] = '0;
             ctx_issued_n[order_head_ctx] = '0;
             ctx_rsp_seen_n[order_head_ctx] = '0;
-            ctx_rsp_data_n[order_head_ctx] = '0;
             order_rd_ptr_n = next_fifo_ptr(order_rd_ptr_r);
         end
 
@@ -271,7 +469,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_bank_mask_n[incoming_ctx_id] = incoming_bank_mask;
             ctx_issued_n[incoming_ctx_id] = '0;
             ctx_rsp_seen_n[incoming_ctx_id] = '0;
-            ctx_rsp_data_n[incoming_ctx_id] = '0;
 
             issue_fifo_n[issue_wr_ptr_r] = incoming_ctx_id;
             issue_wr_ptr_n = next_fifo_ptr(issue_wr_ptr_r);
@@ -304,7 +501,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_bank_mask_r <= '0;
             ctx_issued_r <= '0;
             ctx_rsp_seen_r <= '0;
-            ctx_rsp_data_r <= '0;
             issue_fifo_r <= '0;
             issue_rd_ptr_r <= '0;
             issue_wr_ptr_r <= '0;
@@ -324,7 +520,6 @@ module VX_tmem_wide_read_switch import VX_gpu_pkg::*; #(
             ctx_bank_mask_r <= ctx_bank_mask_n;
             ctx_issued_r <= ctx_issued_n;
             ctx_rsp_seen_r <= ctx_rsp_seen_n;
-            ctx_rsp_data_r <= ctx_rsp_data_n;
             issue_fifo_r <= issue_fifo_n;
             issue_rd_ptr_r <= issue_rd_ptr_n;
             issue_wr_ptr_r <= issue_wr_ptr_n;

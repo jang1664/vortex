@@ -46,6 +46,11 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RESPONSE_SLOTS,
     parameter int SZ_RD_OUTSTANDING = `SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int O_RD_OUTSTANDING = `O_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+    parameter bit I_RESPONSE_DATA_RAM = `I_LMEM_DMA_RESPONSE_DATA_RAM,
+    parameter bit W_RESPONSE_DATA_RAM = `W_LMEM_DMA_RESPONSE_DATA_RAM,
+    parameter bit SZ_RESPONSE_DATA_RAM = `SZ_LMEM_DMA_RESPONSE_DATA_RAM,
+    parameter bit W_SWITCH_RESPONSE_DATA_RAM =
+        `W_TMEM_WIDE_RESPONSE_DATA_RAM,
     parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT,
     parameter bit TMEM_ARB_URGENCY_ENABLE = `TMEM_ARB_URGENCY_ENABLE,
     parameter int INPUT_READY_AHEAD_LOW_WATERMARK =
@@ -491,7 +496,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .DATA_SIZE      (DATA_SIZE),
         .WIDE_DATA_SIZE (GEMM_WEIGHT_DATA_SIZE),
         .TAG_WIDTH      (TAG_WIDTH),
-        .OUTSTANDING    (W_RD_OUTSTANDING)
+        .OUTSTANDING    (W_RD_OUTSTANDING),
+        .RESPONSE_DATA_RAM(W_SWITCH_RESPONSE_DATA_RAM)
     ) u_switch_weight (
         .clk        (clk),
         .reset      (reset),
@@ -726,6 +732,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(I_RD_OUTSTANDING),
+        .RESPONSE_DATA_RAM(I_RESPONSE_DATA_RAM),
         .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
         .ENABLE_SCHED_SOURCE_GATE(1'b1),
         .READY_AHEAD_LOW_WATERMARK(INPUT_READY_AHEAD_LOW_WATERMARK)
@@ -771,6 +778,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .CMD_BEATS   (W_CMD_BEATS),
         .RESPONSE_SLOTS(W_RD_OUTSTANDING),
+        .RESPONSE_DATA_RAM(W_RESPONSE_DATA_RAM),
         .ENABLE_TMEM_URGENCY(TMEM_ARB_URGENCY_ENABLE),
         .READY_AHEAD_LOW_WATERMARK(WEIGHT_READY_AHEAD_LOW_WATERMARK)
     ) u_ldma_weight (
@@ -811,6 +819,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH   (TAG_WIDTH),
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
+        .RESPONSE_DATA_RAM(SZ_RESPONSE_DATA_RAM),
         .WRITER_RID0 (GEMM_RID_SC_CONSUME0),
         .WRITER_RID1 (GEMM_RID_SC_CONSUME1),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
@@ -851,6 +860,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH   (TAG_WIDTH),
         .CMD_FIFO_DEPTH(LDMA_CMD_FIFO_DEPTH),
         .RESPONSE_SLOTS(SZ_RD_OUTSTANDING),
+        .RESPONSE_DATA_RAM(SZ_RESPONSE_DATA_RAM),
         .WRITER_RID0 (GEMM_RID_ZP_CONSUME0),
         .WRITER_RID1 (GEMM_RID_ZP_CONSUME1),
         .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
