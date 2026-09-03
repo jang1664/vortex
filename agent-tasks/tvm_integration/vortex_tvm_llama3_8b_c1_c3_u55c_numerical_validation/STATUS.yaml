@@ -1,0 +1,292 @@
+task: vortex_tvm_llama3_8b_c1_c3_u55c_numerical_validation
+spec: ../vortex_tvm_llama3_8b_c1_c3_u55c_numerical_validation_plan.md
+current_phase: milestone_f_evidence_and_regression
+state: complete
+updated_at: "2026-09-03 13:23"
+summary: >-
+  GPU-only acceptance evidence is complete for every successful row. C3 passes
+  the full S1-S4 canonical/free matrix, persistent S1, and compiled S1. C1 S1,
+  S2, and S4 canonical pass, but the backend verdict is FAIL: four independent
+  S3 canonical attempts each lost one resident output element, and the first
+  S4 free run timed out at 300 seconds. Fixed input/readback, resident reread,
+  100,000 residual calls, repeated checkpoint graphs, and a full-resident
+  canonical chain narrowed the defect to production allocation/lifetime/device
+  state/launch-sequence sensitivity rather than a deterministic primitive.
+  Fresh S4 canonical and free-running processes both completed, which records
+  the intermittent boundary but does not erase the zero-timeout acceptance
+  failure. C4 host regressions and the pinned C4 physical smoke pass. No CPU
+  evidence contributes to the C1/C3 verdicts, and no RTL/FSM/xclbin changed.
+log:
+  - timestamp: "2026-09-03 13:23"
+    phase: milestone_f_final_evidence
+    result: fail
+    details: >-
+      C1 S4 canonical job 4773 completed all 128 layer comparisons exactly
+      against the GPU reference with fixed device inputs and exact pre-invoke
+      readback, one device open, one parameter upload, and exit 0:0 on BDF
+      0000:2a:00.1. Fresh diagnostic S4 free job 4779 also completed all four
+      phases with cache lengths 7/8/9/10 and token rows [0,0,0], but remains
+      counterevidence rather than accepted retry evidence for failed job 4766.
+      The full touched test set passes 65 tests with 43 skips; the C4 host suite
+      passes 27 tests and the pinned C4 U55C smoke passes. Final backend
+      verdicts are C3 PASS and C1 FAIL, with missing accepted coverage limited
+      to C1 S3 canonical/free and C1 S4 free-running.
+  - timestamp: "2026-09-03 09:57"
+    phase: milestone_e_c1_s2_s4_and_full_resident_probe
+    result: in_progress
+    details: >-
+      C1 S2 job 4749 completed all four canonical and all four free-running
+      phases against the GPU-only reference in one process. It recorded 272 VM
+      invocations, exact token zero in every phase, no retry, and no timeout on
+      BDF 0000:2a:00.1. The full-resident follow-up job 4769 then uploaded the
+      complete archive, replayed all 32 distinct canonical prefill-layer
+      inputs, and passed 32 decode-checkpoint repetitions with one stable hash
+      vector across 32 output-address vectors. In contrast, C1 S4 free job
+      4766 reached a real 300-second kernel timeout in its first prefill layer
+      and terminated with device-poisoned status; it is retained as a failed
+      acceptance attempt and was not retried in-process. The corrected S4
+      canonical job 4773 is active and has passed layer 0. Setup-only jobs 4759,
+      4767, and 4768 exited before opening hardware because VORTEX_DRIVER was
+      missing and are excluded from hardware outcomes. Corrected C4 job 4774
+      passed the pinned C4_v3 S1/fused one-layer physical smoke in 1.97 seconds
+      after a 48.89-second build.
+  - timestamp: "2026-09-03 02:35"
+    phase: milestone_e_c1_s3_checkpoint_sequence
+    result: pass
+    details: >-
+      Job 4765 passed 32 exact repetitions of the production prefill layer and
+      then 32 exact repetitions of the decode checkpoint graph in one process
+      and one U55C programming event. Each decode repetition compared 15 float
+      checkpoints and seven cache states against the GPU-only reference, for
+      704 checked decode tensors after the prefill warmup. All 32 checkpoint
+      hash vectors were identical while the VM cycled through 32 distinct
+      output-address vectors; only the intentional masked-score floating-point
+      calculation differed at 9.84e-8 maximum relative error. This does not
+      reproduce the production one-zero and excludes a fixed checkpoint
+      primitive defect under the reduced allocation. Added an opt-in probe
+      mode that uploads the full archive and replays the 32 distinct GPU
+      canonical prefill inputs before decode checkpoints. Job 4768 is queued
+      after the active C1 S4 free run to test that closer memory/address and
+      input-sequence condition without delaying S4 acceptance.
+  - timestamp: "2026-09-03 01:20"
+    phase: milestone_e_c1_s3_output_reread_and_stage_localization
+    result: in_progress
+    details: >-
+      The address-recording S3 canonical run passed prefill and decode-1 layers
+      0-2, then reproduced exactly one missing value at batch 1/hidden 3647 in
+      layer 3: GPU expected -18.09375 while the resident U55C output contained
+      zero. The 0xdd528000 output address is 4 KiB aligned, does not overlap the
+      fixed input, and two immediate device rereads were byte-identical to the
+      first read, including the same zero. All seven KV outputs remained exact.
+      Across four full-run failures, the layer and address move but the logical
+      hidden coordinate always ends in lane mod 32 = 31. This excludes input
+      staging, output alignment/overlap, and transient D2H observation. A new
+      S3 decode-checkpoint artifact exposes 15 float stages and seven cache
+      states. Job 4765 first executes 32 exact production prefill-layer warmups
+      in one device process, then repeats the decode checkpoint graph 32 times
+      to identify the first damaged substage. C1 S2 job 4749 continues in
+      parallel; hardened S4 canonical/free jobs remain dependency-queued.
+  - timestamp: "2026-09-03 00:04"
+    phase: milestone_e_c1_s3_fixed_input_result
+    result: in_progress
+    details: >-
+      The fixed-address, exact-input-readback S3 run passed all canonical
+      prefill layers and decode-1 layers 0-20, including both earlier failure
+      points, but layer 21 again returned exactly one zero instead of -18.09375
+      at batch 1/hidden 2591. All seven KV outputs remained byte-identical. The
+      three observed failures are at hidden 2719, 3935, and 2591, always
+      flattened FP16 lane mod 64 = 31, with identical aggregate metrics. This
+      excludes input H2D/address staging but not output/intermediate allocation
+      or prior-kernel state. A fixed-buffer production residual stress on job
+      4760 then passed 100,000/100,000 alternating-input calls with exact input
+      readback, two stable output hashes, and no timeout in 1525.51 seconds.
+      Job 4762 is rerunning exact S3 canonical validation with per-layer input
+      and output device addresses plus two post-failure output rereads.
+  - timestamp: "2026-09-02 22:40"
+    phase: milestone_e_c1_s4_scheduling
+    result: in_progress
+    details: >-
+      Replaced the pending combined S4 run with independent canonical and
+      free-running jobs. Job 4759 runs hardened canonical validation after S2;
+      job 4758 runs free-running prefill plus three decode steps after S3. Each
+      execution still preserves one process, one device open, one parameter
+      upload, and continuous state from prefill through decode, while allowing
+      the two released U55Cs to validate S4 in parallel.
+  - timestamp: "2026-09-02 22:11"
+    phase: milestone_e_c1_batch2_stability
+    result: in_progress
+    details: >-
+      The original pooled C1 S3 run passed canonical prefill and decode layers
+      0-3, then produced one unexpected zero at batch 1/index 3935 in layer 4;
+      a prior naive run had the same one-element signature at layer 10/index
+      2719. Each first-failing layer passed bit-exact in a fresh isolated
+      process. The original pooled S4 run passed prefill layers 0-6 before a
+      layer-7 timeout, while a fresh layer-7 probe passed. A same-process S4
+      layer-7 stress then completed all 16 repetitions with one fixed input
+      address, one identical output-hash vector, hidden relative-L2 zero, and
+      no failure. Standalone residual stress also passed 512/512. Hardened S3
+      and S4 acceptance reruns now use fixed input buffers plus exact hidden/KV
+      readback before every invocation; thresholds remain unchanged and no
+      failed run is accepted.
+  - timestamp: "2026-09-02 20:58"
+    phase: milestone_e_c1_s1_persistent
+    result: pass
+    details: >-
+      C1 completed two full free-running S1 repetitions in one process with one
+      device open and one parameter upload. Both repetitions completed prefill
+      plus three decode steps with token zero, identical recorded hashes, zero
+      retry, zero timeout, finite state, and exact cache-length progression.
+      Pooled C1 S2 and S3 matrix runs now execute concurrently on the two U55Cs.
+  - timestamp: "2026-09-02 20:16"
+    phase: milestone_e_c3_matrix_complete
+    result: pass
+    details: >-
+      C3 S4 completed all four canonical and all four free-running phases with
+      explicit batch-2 evidence under pooled VM allocation. It passed the old
+      layer-21 poison point and finished without timeout, retry, non-finite
+      state, or token mismatch. Together with completed S1-S3 traces, C3 now
+      passes the full GPU-versus-Vortex S1-S4 matrix. A fresh isolated C1 S3
+      phase-1/layer-10 probe also reproduced the previously missing coordinate
+      bit-exactly; the full pooled C1 S3 run is active.
+  - timestamp: "2026-09-02 20:15"
+    phase: milestone_f_regression
+    result: pass
+    details: >-
+      The full touched Llama application/compiler/evidence test set passed 57
+      tests with 43 hardware-dependent skips in 97.74 seconds. Both TVM and
+      Vortex worktrees also pass git diff --check at this checkpoint.
+  - timestamp: "2026-09-02 18:57"
+    phase: milestone_e_c3_s2_s4_expansion
+    result: in_progress
+    details: >-
+      C3 S2 and batch-2 S3 both completed canonical plus free-running bytecode
+      validation against GPU-only references. S3 includes explicit per-batch
+      hidden, normalized, logits, and free-running hash evidence. C3 S4 passed
+      canonical prefill layers 0-20 bit-exact, then layer 21 exceeded the
+      300-second kernel wait and poisoned the process. Queued a fresh isolated
+      layer-21 probe followed by a full pooled-allocator S4 run to distinguish
+      primitive latency from cumulative naive-allocation state. No failed run
+      is accepted or retried inside the same process.
+  - timestamp: "2026-09-02 18:42"
+    phase: milestone_d_s1_compiled
+    result: pass
+    details: >-
+      C1 and C3 representative S1 compiled-VM canonical runs both completed
+      prefill plus three decode phases. Every layer hidden comparison reported
+      relative-L2 zero and all final top-1 values matched the GPU reference.
+  - timestamp: "2026-09-02 16:12"
+    phase: milestone_f_evidence_and_regression
+    result: in_progress
+    details: >-
+      Rebuilt C1/C3 S2-S4 bytecode packages and generated all six GPU-only
+      references with two deterministic replays. The touched Llama application
+      and compiler test set passed 53 tests with 43 hardware-dependent skips.
+      Added a fail-closed evidence collector and three passing unit tests; its
+      preliminary JSON currently lists only the still-running physical coverage.
+      One concurrent C3 S4 GPU generation attempt exhausted the shared RTX 3090
+      memory and was rerun successfully alone; no U55C acceptance run retried.
+  - timestamp: "2026-09-02 15:58"
+    phase: milestone_e_c3_s1_persistent
+    result: pass
+    details: >-
+      C3 completed two full free-running S1 repetitions in one process with one
+      device open, zero retry, zero timeout, finite state, and identical token
+      selections. This satisfies the C3 S1 persistent-process gate; compiled-VM
+      canonical validation is now active.
+  - timestamp: "2026-09-02 15:57"
+    phase: milestone_d_s1_bytecode_canonical
+    result: pass
+    details: >-
+      C1 and C3 both completed S1 prefill plus three decode steps across all 32
+      layers using GPU-only reference artifacts. Every reported hidden-state
+      relative-L2 value was zero, cache/top-1 checks passed, and neither run
+      used retries or encountered a timeout. C1 took approximately 2 hours 27
+      minutes; C3 completed after the quant-direction-N tiling repair.
+  - timestamp: "2026-09-02 15:50"
+    phase: milestone_c_c3_s1_canonical
+    result: in_progress
+    details: >-
+      A native fpint_gemm_ffn_hw_naive blackbox proved that the deployed C3
+      xclbin writes only columns 0-31 for M=1,N=128,K=8,QBLK=128,QDIR=1,
+      while the same test passes two repetitions at N=32. Added C3 compiler
+      lowering that compacts each V payload/qparam N tile and submits one-row,
+      32-column descriptors directly into the logical output. Standalone PV
+      passed twice in one persistent process, softmax-to-PV passed, and the
+      complete layer checkpoint probe passed every GPU checkpoint. Rebuilt the
+      C3 S1 bytecode/compiled package, regenerated its deterministic GPU-only
+      reference, and started the full canonical U55C run.
+  - timestamp: "2026-09-02 15:35"
+    phase: milestone_c_c3_failure_localization
+    result: pass
+    details: >-
+      Confirmed the original 75 percent violation as exactly columns 32-127
+      being zero for every attention head. Exact-binary reruns, persistent
+      repetitions, explicit xclbin reprogramming, and a managed hot reset ruled
+      out reference drift, process restart, and recoverable device poison. The
+      matching native blackbox signature assigned the failure to multi-tile
+      quant-direction-N execution in the deployed C3 image rather than TVM
+      tensor shaping or the GPU oracle.
+  - timestamp: "2026-09-02 13:27"
+    phase: milestone_c_c1_s1_canonical
+    result: in_progress
+    details: >-
+      Root-caused the C1 layer heap corruption to redundant device reshape
+      materialization around rank-5 cache dequantization. Added a direct rank-5
+      INT4-to-FP16 TIR path and removed no-op rank-2 dequant reshapes. Exact GPU
+      comparisons now pass for raw dequant, dequant-to-QK, context-only
+      attention, the production prefill layer, and decode layer 0. The full
+      32-layer, four-phase C1 S1 canonical run is active in one U55C process.
+  - timestamp: "2026-09-02 12:55"
+    phase: milestone_c_c1_failure_localization
+    result: pass
+    details: >-
+      Q/K/V projection sequence, K/V quantization and cache update, QK, causal
+      softmax, and PV all passed separately against the GPU oracle. The first
+      failing composed boundary was cache dequantization consumed by QK; a
+      direct matrix probe proved the dequant arithmetic correct once redundant
+      reshape copies were eliminated.
+  - timestamp: "2026-09-02 12:24"
+    phase: validation_oracle_policy
+    result: pass
+    details: >-
+      Confirmed that final acceptance is GPU versus Vortex only. The normal
+      matrix has no CPU leg, reference artifacts must carry the gpu device
+      label, and every U55C runner rejects diagnostic_cpu artifacts. CPU remains
+      available solely through an explicit diagnostic flag and cannot satisfy
+      any numerical exit gate.
+  - timestamp: "2026-09-02 11:45"
+    phase: milestone_b_gpu_oracle
+    result: pass
+    details: >-
+      Generated C1 and C3 S1 GPU artifacts on an RTX 3090 with TF32 disabled,
+      deterministic algorithms enabled, and CUBLAS_WORKSPACE_CONFIG=:4096:8.
+      Both backends produced 1,236 tensors and passed exact hash replay,
+      finite-state, cache length/prefix/suffix, top-k, and artifact validation.
+  - timestamp: "2026-09-02 11:44"
+    phase: milestone_a_runtime_loading
+    result: pass
+    details: >-
+      Added fail-closed C1/C3 package/reference utilities, an explicit GPU or
+      diagnostic_cpu reference generator, and a canonical/free-running U55C
+      runner. The focused application test file passes 15/15.
+  - timestamp: "2026-09-02 11:30"
+    phase: milestone_a_discovery
+    result: in_progress
+    details: >-
+      Read the complete numerical-validation plan and repository execution
+      rules. Confirmed that the plan file is currently untracked in vortex_base
+      and that the adjacent TVM worktree starts clean.
+pitfalls:
+  - >-
+    The synthetic C1/C3 fixture produces tied all-zero final logits and GPU
+    top-1 margins of zero. Stable argmax still provides a deterministic control
+    token, but this fixture cannot demonstrate robustness to a nonzero logit
+    margin; preserve this limitation in the final evidence.
+  - >-
+    Causal masked-score checkpoints contain intentional negative infinity.
+    The reference validator permits only negative-infinity mask sentinels at
+    that named boundary and rejects NaN, positive infinity, or non-finite model
+    state everywhere else.
+  - >-
+    The C1/C3 physical parameter archives are multi-gigabyte build artifacts;
+    inspect manifests and stream tensors instead of copying or dumping them.

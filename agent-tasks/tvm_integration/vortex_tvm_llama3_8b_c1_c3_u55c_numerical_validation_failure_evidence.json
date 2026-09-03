@@ -1,0 +1,136 @@
+{
+  "format": "vortex-llama3-c1-c3-u55c-failure-evidence",
+  "schema_version": 1,
+  "failures": [
+    {
+      "id": "c1-s3-intermittent-resident-single-zero",
+      "alias": "C1",
+      "case": "S3",
+      "category": "numerical_mismatch",
+      "counts_against_acceptance": true,
+      "reference_device": "gpu",
+      "reference_npz_sha256": "4768f59db39de8e60733d8039bcd9939627eb8d76f5d2b97a285a69e1593ed4d",
+      "summary": "Four independent canonical runs each lost exactly one batch-1 hidden element in decode phase 1; the failing layer and coordinate moved, while every coordinate was lane 31 modulo 32 and all seven cache outputs remained exact.",
+      "observations": {
+        "expected_value": -18.09375,
+        "actual_value": 0.0,
+        "violation_fraction": 0.0001220703125,
+        "relative_l2": 0.011048543456039804,
+        "cosine": 0.9999389629809912,
+        "nonfinite_count": 0,
+        "attempts": [
+          {"allocator": "naive", "phase": 1, "layer": 10, "coordinate": [1, 0, 2719]},
+          {"allocator": "pooled", "phase": 1, "layer": 4, "coordinate": [1, 0, 3935]},
+          {"allocator": "pooled_fixed_input_readback", "phase": 1, "layer": 21, "coordinate": [1, 0, 2591]},
+          {"allocator": "pooled_fixed_input_address_reread", "phase": 1, "layer": 3, "coordinate": [1, 0, 3647], "output_address": 3713171456, "reread_1": 0.0, "reread_2": 0.0}
+        ],
+        "reduced_probe_result": "Both the 32-prefill plus 32-decode checkpoint sequence and the full-resident varied-prefill-chain version passed all exposed checkpoints."
+      },
+      "package_identity": {
+        "alias": "C1",
+        "backend_policy": "c1_all_fp16_tcu",
+        "layout_policy": "not_applicable",
+        "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+        "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+        "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+        "model": {
+          "head_dim": 128,
+          "hidden_size": 4096,
+          "intermediate_size": 14336,
+          "kv_group_size": 128,
+          "model": "llama3-8b",
+          "num_attention_heads": 32,
+          "num_key_value_heads": 8,
+          "num_layers": 32,
+          "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+          "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+          "synthetic_seed": 20260902,
+          "vocabulary_size": 128256,
+          "weight_group_size": 32
+        },
+        "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+        "revisions": {"tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0", "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"},
+        "shape": {"batch_size": 2, "cache_capacity": 8, "prompt_length": 1},
+        "shape_case": "S3",
+        "workload_variant": "all_sgemm_tcu",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+      },
+      "artifacts": [
+        {"role": "mismatch_naive_layer10", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3/canonical-p1-l10.npz", "sha256": "ae7c4574a0803951cf21f2a14ef6e4b82914db858f1f2ea9406a75bebfaf10f4"},
+        {"role": "mismatch_pooled_layer4", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-pooled/canonical-p1-l4.npz", "sha256": "69f1621bc2cc6d0181feb9fa449deb6edb08326119a8657eb6a2321d8b13f6ee"},
+        {"role": "mismatch_fixed_readback_layer21", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-fixed-verified/canonical-p1-l21.npz", "sha256": "b50795b6ec68f6bd696ba4f50022fed2ddd2ae9686f8314cf494a9e54c5f2dd2"},
+        {"role": "mismatch_addressed_reread_layer3", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-fixed-addressed/canonical-p1-l3.npz", "sha256": "6f2859eb917e2c4c386abfcd28fdc0beaae66f86b96bccd96c0442bab6ed80a4"},
+        {"role": "passing_reduced_checkpoint_sequence", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S3-prefill32-decode-checkpoints32.json", "sha256": "fb16f1eef7c6112ebea361ec1716f026f9029873c6315ce6b722b62381dc3aef"},
+        {"role": "passing_full_resident_canonical_chain", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S3-fullresident-prefillchain1-decodecheckpoints32.json", "sha256": "d8b40732772b8d68b707554209f80654983588d30e9454c57d51c456fa7d2bc0"}
+      ]
+    },
+    {
+      "id": "c1-s4-free-prefill-layer0-timeout",
+      "alias": "C1",
+      "case": "S4",
+      "category": "kernel_timeout",
+      "counts_against_acceptance": true,
+      "reference_device": "gpu",
+      "reference_npz_sha256": "5ec94796b3c6024e6afa5c3decdb9f55bf2847f00ba34ef9458b39d98887f473",
+      "summary": "The free-running S4 process exceeded the 300-second kernel wait in prefill layer 0 and exited with device-poisoned status without an in-process retry.",
+      "observations": {
+        "slurm_job_id": "4766",
+        "slurm_state": "FAILED",
+        "slurm_exit_code": "1:0",
+        "elapsed": "00:05:56",
+        "xrt_device_bdf": "0000:3d:00.1",
+        "vx_ready_timeout_ms": 300000,
+        "phase": 0,
+        "layer": 0,
+        "runtime_error": "Vortex kernel wait failed with error -1; the device is poisoned and the process must be restarted",
+        "fresh_process_counterexample": {
+          "slurm_job_id": "4779",
+          "slurm_state": "COMPLETED",
+          "slurm_exit_code": "0:0",
+          "elapsed": "03:21:51",
+          "xrt_device_bdf": "0000:3d:00.1",
+          "phase_cache_lengths": [7, 8, 9, 10],
+          "generated_token_ids": [[0, 0, 0], [0, 0, 0]],
+          "device_open_count": 1,
+          "parameter_upload_count": 1,
+          "total_vm_invocation_count": 136
+        }
+      },
+      "package_identity": {
+        "alias": "C1",
+        "backend_policy": "c1_all_fp16_tcu",
+        "layout_policy": "not_applicable",
+        "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+        "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+        "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+        "model": {
+          "head_dim": 128,
+          "hidden_size": 4096,
+          "intermediate_size": 14336,
+          "kv_group_size": 128,
+          "model": "llama3-8b",
+          "num_attention_heads": 32,
+          "num_key_value_heads": 8,
+          "num_layers": 32,
+          "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+          "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+          "synthetic_seed": 20260902,
+          "vocabulary_size": 128256,
+          "weight_group_size": 32
+        },
+        "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+        "revisions": {"tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0", "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"},
+        "shape": {"batch_size": 2, "cache_capacity": 16, "prompt_length": 7},
+        "shape_case": "S4",
+        "workload_variant": "all_sgemm_tcu",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+      },
+      "artifacts": [
+        {"role": "slurm_and_runtime_failure_summary", "path": "vortex_tvm_llama3_8b_c1_c3_u55c_numerical_validation/c1_s4_free_job4766_failure.txt", "sha256": "5ba734552deea23e1db645229587cde2ee6237753ce5db774c36b40f40d25f4f"},
+        {"role": "passing_fresh_process_counterexample", "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S4-free-diagnostic-rerun.json", "sha256": "9ee399e26da04beab76ca73418a5231443242ce2830051cdd581c4df411a8ea1"}
+      ]
+    }
+  ]
+}
