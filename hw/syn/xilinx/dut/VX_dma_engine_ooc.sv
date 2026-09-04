@@ -8,6 +8,9 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
     parameter int TAG_WIDTH      = GEMM_BASE_TAG_WIDTH,
     parameter int MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter int CFG_REGS       = `DMA_CFG_REG_NUM,
+    parameter bit ENABLE_PADDING = 1'b1,
+    parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+    parameter int MAX_DIMS = 3,
     parameter int MISALIGN_PACK_BYTES = `MISALIGN_PACK_BYTES,
     parameter int AXI_DATA_WIDTH = DATA_SIZE * 8,
     parameter int MEM_ADDR_WORD_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)
@@ -89,6 +92,21 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
     ) cfg_if [NUM_CHANNELS] ();
 
     VX_node_done_if done_if [NUM_CHANNELS] ();
+    VX_dma_lookahead_if #(
+        .BOUND_WIDTH (BOUND_WIDTH)
+    ) lookahead_if [NUM_CHANNELS] ();
+
+    for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+        assign lookahead_if[ch].prepare_valid = 1'b0;
+        assign lookahead_if[ch].prepare_id = '0;
+        assign lookahead_if[ch].src_stride = '0;
+        assign lookahead_if[ch].dst_stride = '0;
+        assign lookahead_if[ch].bound = '0;
+        assign lookahead_if[ch].activate = 1'b0;
+        assign lookahead_if[ch].activate_id = '0;
+        assign lookahead_if[ch].data_release = 1'b1;
+        assign lookahead_if[ch].data_max_beats = '0;
+    end
 
     AXI_BUS #(
         .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
@@ -190,11 +208,15 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH),
         .TAG_WIDTH      (TAG_WIDTH),
         .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
-        .ENABLE_MISALIGN     (ENABLE_MISALIGN)
+        .ENABLE_MISALIGN     (ENABLE_MISALIGN),
+        .ENABLE_PADDING      (ENABLE_PADDING),
+        .BOUND_WIDTH         (BOUND_WIDTH),
+        .MAX_DIMS            (MAX_DIMS)
     ) u_dma_engine (
         .clk         (clk),
         .reset       (reset),
         .cfg_reg_if  (cfg_if),
+        .lookahead_if(lookahead_if),
         .done_if     (done_if),
         .axi_m       (axi_if),
         .tmem_bus_if (tmem_if)

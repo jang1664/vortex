@@ -1,0 +1,71 @@
+task: tmem-ldma-queue-depth-sweep
+updated: "2026-09-01 22:34 KST"
+status: complete
+confirmed_spec: agent-tasks/tmem-ldma-queue-depth-sweep/tmem-ldma-queue-depth-sweep-spec.md
+goal: "Compare the current TMEM LDMA queue configuration against command depth 2 with all response slots set to 4 or 8."
+iterations:
+  - id: rtl-implementation-1
+    timestamp: "2026-09-01 22:12 KST"
+    status: complete
+    role: RTL Implementation
+    summary: "Added a default-preserving TMEM LDMA command-depth override, allowed depth 2 and independent power-of-two response slots, and added depth-2 common queue coverage."
+    changed_files:
+      - hw/rtl/VX_config.vh
+      - hw/rtl/mem/VX_tmem_subsystem.sv
+      - hw/rtl/core/gemm/VX_gemm_stream_dma_queue.sv
+      - hw/rtl/core/gemm/VX_lmem_dma_misal.sv
+      - hw/unittest/gemm_stream_dma_queue/tb_VX_gemm_stream_dma_queue.sv
+      - docs/rtl/VX_tmem_subsystem.md
+    default_behavior: "LMEM_DMA_CMD_FIFO_DEPTH remains 4; response-slot defaults remain Input/Scale/ZP=8 and Weight=2*W_CMD_BEATS=16 for WLOAD4."
+    static_check: "git diff --check passed"
+  - id: focused-verification-1
+    timestamp: "2026-09-01 22:20 KST"
+    status: pass_with_warning
+    role: Verification
+    simulator: "VCS W-2024.09-SP1 via tools/verify_rtl.py"
+    tests:
+      common_queue: "PASS at 815000 ps; depth1/depth2/depth4/Input-mode contracts"
+      depth2_slots4_qcol: "1024/1024 PASS; job done 12225 ns; commands=64 packets=256 bubbles=636 stalled_valid=569"
+      depth2_slots4_qrow: "1024/1024 PASS; job done 12225 ns; commands=64 packets=256 bubbles=636 stalled_valid=567"
+      depth2_slots8_qcol: "1024/1024 PASS; job done 8845 ns; commands=64 packets=256 bubbles=248 stalled_valid=184"
+      depth2_slots8_qrow: "1024/1024 PASS; job done 8845 ns; commands=64 packets=256 bubbles=248 stalled_valid=184"
+    warning: "D2/S4 exposed a 3-bit queue occupancy output connected to the public 4-bit input occupancy port. Function passed; Implementation added explicit zero-extension for re-verification."
+    logs:
+      common_queue: build/hw/unittest/gemm_stream_dma_queue/logs/sim.log
+      slots4: build/verify_tmem_queue_slots4/hw/unittest/gemm_node_improve/logs
+      slots8: build/verify_tmem_queue_slots8/hw/unittest/gemm_node_improve/logs
+  - id: focused-verification-2
+    timestamp: "2026-09-01 22:27 KST"
+    status: pass
+    role: Verification
+    simulator: "VCS W-2024.09-SP1 via tools/verify_rtl.py"
+    summary: "Explicit Input occupancy zero-extension removed the D2/S4 port-width mismatch with no functional or performance change."
+    tests:
+      depth2_slots4_qcol: "1024/1024 PASS; job done 12225 ns; commands=64 packets=256 bubbles=636 stalled_valid=569"
+      depth2_slots4_qrow: "1024/1024 PASS; job done 12225 ns; commands=64 packets=256 bubbles=636 stalled_valid=567"
+      depth2_slots8_qcol: "1024/1024 PASS; job done 8845 ns; commands=64 packets=256 bubbles=248 stalled_valid=184"
+    warning_check: "PCWM-W=0, port-width mismatch=0, compile errors/fatals=0"
+    rtl_sha256: 8d2a1a7b129e1ac64d8d6e70542c82568b168312aecce212d733e6c2db59797f
+  - id: blackbox-xrt-vcs-3
+    timestamp: "2026-09-01 22:34 KST"
+    status: pass
+    role: Verification
+    test_name: "fpint_gemm_ffn_hw/M4_N256_K256_QBLK32_WTRANS0/QCOL_QROW"
+    simulator: xrt-vcs-sim
+    effective_target: "GEMM_IMPROVE TH16 MXU_COL_TILE=32 MXU_WLOAD_NUM=4 bigmem PERF=3"
+    results:
+      baseline_qcol: "PASS; total=762 busy=6505 overlap=76.437%(532/696) IPC=0.973278"
+      baseline_qrow: "PASS; total=763 busy=6507 overlap=76.327%(532/697) IPC=0.972977"
+      depth2_slots4_qcol: "PASS; total=1095, +333/+43.701%; busy=6807 overlap=86.789%(900/1037) IPC=0.933442"
+      depth2_slots4_qrow: "PASS; total=1096, +333/+43.644%; busy=6806 overlap=86.898%(902/1038) IPC=0.933579"
+      depth2_slots8_qcol: "PASS; total=762, +0/+0.000%; busy=6505 overlap=76.437%(532/696) IPC=0.973278"
+      depth2_slots8_qrow: "PASS; total=762, -1/-0.131%; busy=6506 overlap=76.437%(532/696) IPC=0.973127"
+    traffic: "Every case: Input 256/0, Weight 512/0, Output 32/0 fire/stall; ACC read/write 168/256; no psum underflow or read/write conflict."
+    compile_fingerprints:
+      baseline: efd0b85d3ec1e8c18ee16bc238ff9bb5e4e8877c8f4fd918012debb8d5d62cee
+      depth2_slots4: 8be3d1ebce8b9c57dd8453757d97b6ef0c721b734d9be0876da190422b0568a7
+      depth2_slots8: c03b4e63bf7b1d84337dd33cf486bddd23e60f8564a91b65657e8e629df9b941
+    artifacts: build/run_logs/tmem-ldma-queue-depth-sweep
+    conclusion: "D2/S8 is cycle-neutral for M4. D2/S4 raises latency by about 43.7% and reduces effective throughput by about 30.4%."
+result_report: agent-tasks/tmem-ldma-queue-depth-sweep/results.md
+next_action: "Prefer command depth 2 with eight response slots if physical-design results confirm the expected resource/congestion benefit."

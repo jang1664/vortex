@@ -1,0 +1,423 @@
+task: gemm-command-schedule-opt
+state: pass
+source: docs/future_optim/gemv/gemm_improve/command_schedule_opt.md
+spec: agent-tasks/gemm-command-schedule-opt/gemm-command-schedule-opt-spec.md
+updated: "2026-08-06 19:41"
+phase: "Complete: DMA-union denominator implemented; VCS and XRT-VCS pass"
+iterations:
+  - timestamp: "2026-08-06 16:01"
+    iteration: 1
+    status: compile_error
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 1
+      - **Status**: compile_error
+      - **Error summary**: All three requested VCS unittests stopped during RTL compilation before simulation or Phase-5 coverage could run.
+      - **Root cause**: `VX_gemm_fsm.sv:2156` references block-local `can_emit` outside its declaration scope; `VX_gemm_ctrl.sv:400` uses undefined macro `STATIC_ASSERT`.
+      - **Fix applied**: Replaced every module-scope reference to block-local `can_emit` with the equivalent module-scope `state_child_ready` handshake predicate, while retaining `can_emit` within the FSM combinational block. Replaced unsupported `` `STATIC_ASSERT`` uses with repository-supported `` `VX_STATIC_ASSERT`` elaboration assertions for both controller parameter constraints.
+      - **Lesson**: Compile the standalone FSM first; controller and node both share the controller macro failure, so no runtime scheduler invariant can be claimed until both RTL compile blockers are fixed.
+    tests:
+      - name: gemm_fsm
+        status: compile_error
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs"
+        log: hw/unittest/gemm_fsm/logs/compile.log
+        error: "VX_gemm_fsm.sv:2156: Identifier 'can_emit' has not been declared."
+      - name: gemm_ctrl
+        status: compile_error
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs"
+        log: hw/unittest/gemm_ctrl/logs/compile.log
+        error: "VX_gemm_ctrl.sv:400: Undefined macro 'STATIC_ASSERT'."
+      - name: gemm_node_improve
+        status: compile_error
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs"
+        log: hw/unittest/gemm_node_improve/logs/compile.log
+        error: "VX_gemm_ctrl.sv:400: Undefined macro 'STATIC_ASSERT'."
+  - timestamp: "2026-08-06 16:17"
+    iteration: 2
+    status: sim_fail
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 2
+      - **Status**: sim_fail
+      - **Error summary**: `gemm_fsm` and `gemm_ctrl` passed VCS simulation. `gemm_node_improve` compiled and elaborated, then exceeded the verification runner's 600-second simulation limit; the zero-byte buffered sim log provided no mismatch or fatal excerpt.
+      - **Root cause**: Not established by verification. The only authoritative failure evidence is the `verify_rtl.py` `sim_fail` result after the 600-second run limit with an empty `error_log` and empty `logs/sim.log`.
+      - **Fix applied**: Verification removed obsolete uninstantiated `VX_gemm_sync.sv` sources from the controller/node unittest Makefiles and added the configured `build/hw` include path for generated `VX_config.h`. No RTL was modified.
+      - **Lesson**: The source-tree node unittest must consume generated configuration headers explicitly; its default M=256, N=1024, K=256 run does not produce a diagnostic before the deterministic 600-second runner limit.
+    tests:
+      - name: gemm_fsm
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs"
+        log: hw/unittest/gemm_fsm/logs/sim.log
+        coverage: "144 work commands; DMA_LD=8, DMA_ST=4, ARM=32, ACC2LMEM=4, WAIT=0, NOTIFY=0; removed-opcode guard, RID bounds, ARM W/SZ waits, and ARM PLUS-one notify metadata executed. The full opcode/state metadata matrix was not yet checked."
+      - name: gemm_ctrl
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs"
+        log: hw/unittest/gemm_ctrl/logs/sim.log
+        coverage: "One complete natural invocation; starts observed on input=128, weight=128, quant=256, output=16, DMA=48; no explicit sync opcode; input start/done lifecycle and always-on scheduler assertions executed. Directed four-wait, same-cycle resolve, two-entry full/full+done, notify-invalid occupancy, collision/stray-done, and back-to-back checks did not execute."
+      - name: gemm_node_improve
+        status: sim_fail
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs"
+        log: hw/unittest/gemm_node_improve/logs/sim.log
+        error: "Runner returned sim_fail after its 600-second limit; error_log was empty and sim.log remained zero bytes."
+        coverage: "Compilation/elaboration passed; no runtime Phase-5 coverage marker was emitted."
+  - timestamp: "2026-08-06 16:21"
+    iteration: 3
+    status: pass
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 3
+      - **Status**: pass
+      - **Error summary**: None. The targeted node integration compiled, elaborated, and completed VCS simulation in 29 seconds.
+      - **Root cause**: The iteration-2 failure was limited to the impractical default-shape runner timeout; the authoritative M=4,N=256,K=256,QDIR=1 target completes within the deterministic limit.
+      - **Fix applied**: None in iteration 3. No RTL or verification files changed.
+      - **Lesson**: Use the authoritative scheduling trace shape for focused node integration; the default node workload is not appropriate for the 600-second deterministic runner gate.
+    tests:
+      - name: gemm_node_improve
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs --params \"M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1\""
+        log: hw/unittest/gemm_node_improve/logs/sim.log
+        evidence: "Configured M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1 at 0ns; JOB DONE at 26785ns; TILED OUTPUT CHECK PASSED for 1024 elements and CONFIG GEMM PASSED at 36785ns; VCS elapsed time 29 seconds."
+        markers: "No explicit qualified-input-idle, tagged-final-writeback, weight/SZ/output last-write, all-channel DMA done, psum-underflow, or read/write-conflict marker was emitted by this invocation. Their zero counts are therefore not claimed from this log."
+  - timestamp: "2026-08-06 16:31"
+    iteration: 4
+    status: pass
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 4
+      - **Status**: pass
+      - **Error summary**: None. Both the positive directed scheduler test and the node input-completion test passed VCS simulation.
+      - **Root cause**: No RTL failure was observed. The first directed invocation silently ran the legacy default test because the controller unittest did not forward `EXTRA_SIM_ARGS`; absence of directed markers exposed that verification-infrastructure issue before the result was accepted.
+      - **Fix applied**: Added a verification-only `+SCHED_DIRECTED` scheduler injection/observation mode, isolated directed ready/done driving from the existing executor model, and forwarded `EXTRA_SIM_ARGS` through the controller VCS Makefile. No RTL was modified.
+      - **Lesson**: A runner pass is insufficient for a mode-specific gate; require the mode command line and explicit coverage markers in `sim.log` before accepting directed coverage.
+    tests:
+      - name: gemm_ctrl/SCHED_DIRECTED
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\""
+        log: hw/unittest/gemm_ctrl/logs/sim.log
+        coverage:
+          - "Four valid waits all ready: count=4 and issue observed."
+          - "One of four blocked masked start; producer SET completion made the head ready and start in that same cycle."
+          - "Producer PLUS completion made a dependent head ready and start in that same cycle; resulting value=1."
+          - "Dependency-ready head retained for 3 ready-low cycles with stable payload and no pop; start/pop occurred together after ready rose."
+          - "Two notify-invalid entries filled inflight and blocked quiescence; a third head was capacity-gated; full+done retired/issued simultaneously; all three entries drained."
+          - "RID_O child 3 SET odd=1 followed by child 4 PLUS-one even=2 with serialized completions."
+          - "Outstanding notify-invalid inflight blocked config-ready and done for 2 observed cycles; done occurred only after drain and config readiness returned."
+          - "A nonzero scoreboard was implicitly cleared on config accept; two real M=4,N=32,K=64 invocations completed back-to-back with configs=2, done=2, input starts=4."
+          - "Collision and stray-done fatal assertions elaborated at VX_gemm_ctrl.sv:378 and :256. Positive run established serialized same-RID and empty-inflight/no-done preconditions; runtime fatal triggering was intentionally not executed and is not claimed."
+        markers: "Eight SCHED_DIRECTED_*_PASS markers plus final TEST PASSED at 9925ns."
+      - name: gemm_node_improve/I4_INPUT_METADATA
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs --params \"TEST=I4_INPUT_METADATA M=1 N=32 K=64 QBLK=32 WTRANS=0 QDIR=0\" --extra-sim-args \"+REQUIRE_INPUT_METADATA +NO_WAVE\""
+        log: hw/unittest/gemm_node_improve/logs/sim_I4_INPUT_METADATA.log
+        coverage: "commands=2, packets=2, last_admission=2, last_write=2, done=2, nonfinal qualified-idle done=1, final tagged-writeback done=1, scheduler_retire=2, ingress bubbles=20; JOB DONE at 3385ns; numerical output passed for 32 elements at 13385ns."
+        markers: "INPUT_METADATA_PASSED and CONFIG GEMM PASSED. No psum-underflow/read-write-conflict marker was emitted, so no zero-count claim is made from this test."
+  - timestamp: "2026-08-06 16:39"
+    iteration: 5
+    status: pass
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 5
+      - **Status**: pass
+      - **Error summary**: None. The standalone FSM passed the complete emitted-command metadata matrix. Both controller negative modes returned the required `sim_fail` result only after their intended assertion fired, with the arming marker preceding the exact fatal signature and no earlier unrelated error.
+      - **Root cause**: No RTL defect was found. Iteration 4 had validated ARM metadata and positive assertion preconditions but had not executed every opcode-specific metadata invariant or the two fatal assertion paths.
+      - **Fix applied**: Extended verification-only FSM checks across DMA-load, W, SC, ZP, ARM, ACC2LMEM, and DMA-store commands, including wait ordering/targets, SET/PLUS notify metadata, RID_O sequencing, global tile completion, buffer reuse, and invalid trailing slots. Added isolated `+EXPECT_COLLISION_FATAL` and `+EXPECT_STRAY_FATAL` controller modes. No RTL was modified.
+      - **Lesson**: Negative assertion gates must prove both setup and identity: retain an explicit pre-fatal arming marker, the exact assertion message and simulation time, and the runner JSON status so an unrelated failure cannot be mistaken for coverage.
+    tests:
+      - name: gemm_fsm/full_metadata_matrix
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs"
+        log: hw/unittest/gemm_fsm/logs/sim.log
+        result: "verify_rtl.py status=pass, test_name=gemm_fsm"
+        coverage: "212 emitted work commands: DMA_LD=12, W=48, SC=48, ZP=48, ARM=48, ACC2LMEM=4, DMA_ST=4, WAIT=0, NOTIFY=0. Checks covered W tile/prior-G waits and RID_W SET; SC waits/no notify; ZP waits and RID_SZ SET; ARM W/SZ/prior-G waits and RID_G PLUS-one; ACC2LMEM current-compute/even-RID_O waits and odd-RID_O SET; DMA-store odd-RID_O wait and PLUS-one; tile-final global ZP RID_TILE SET; post-warmup buffer-reuse prior-compute waits; coherent ordering/targets/modes; and invalid trailing wait slots."
+        markers: "FSM_FULL_METADATA_MATRIX_PASS dma_ld=12 w=48 sc=48 zp=48 arm=48 acc=4 dma_st=4 rid_o_even=8; final TEST PASSED."
+      - name: gemm_ctrl/EXPECT_COLLISION_FATAL
+        status: expected_fatal_pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+EXPECT_COLLISION_FATAL\""
+        log: hw/unittest/gemm_ctrl/logs/sim_EXPECT_COLLISION_FATAL.log
+        result: "verify_rtl.py JSON: status=sim_fail, test_name=gemm_ctrl, log_file=hw/unittest/gemm_ctrl/logs/sim.log; error_log identified VX_gemm_ctrl.sv:372 at 195000 ps and only the intended simultaneous-collision assertion."
+        setup: "EXPECT_COLLISION_FATAL_ARMED rid=9 children=1,2"
+        fatal: "tb_gemm_ctrl: simultaneous sync collision children 1/2 rid=9"
+        evidence: "Fatal at 195000 ps from VX_gemm_ctrl.sv:372; the arming marker precedes it and inspection found no earlier unrelated error. The original mode log was preserved before the next invocation overwrote logs/sim.log."
+      - name: gemm_ctrl/EXPECT_STRAY_FATAL
+        status: expected_fatal_pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+EXPECT_STRAY_FATAL\""
+        log: hw/unittest/gemm_ctrl/logs/sim_EXPECT_STRAY_FATAL.log
+        result: "verify_rtl.py JSON: status=sim_fail, test_name=gemm_ctrl, log_file=hw/unittest/gemm_ctrl/logs/sim.log; error_log identified VX_gemm_ctrl.sv:254 at 155000 ps and only the intended stray-completion assertion."
+        setup: "EXPECT_STRAY_FATAL_ARMED child=0 inflight_empty=1"
+        fatal: "tb_gemm_ctrl: stray completion from child 0"
+        evidence: "Fatal at 155000 ps from VX_gemm_ctrl.sv:254; the arming marker precedes it and inspection found no earlier unrelated error. The original mode log was preserved as the final negative-mode artifact."
+  - timestamp: "2026-08-06 18:50"
+    iteration: 6
+    status: pass
+    report: |-
+      ### GEMM Command Schedule Optimization — Iteration 6
+      - **Status**: pass
+      - **Error summary**: None. All five focused VCS gates passed under the sourced WLOAD8 GEMM_IMPROVE configuration. The collision, stray-completion, and removed-DMA-OP_NOTIFY negative modes also fired only their intended RTL assertions.
+      - **Root cause**: No RTL defect was found. Intermediate failures were verification infrastructure defects: the controller checked its registered done handshake one cycle early; the local-DMA source list omitted VX_rr_arbiter/VX_onehot_encoder; and the small-unit Makefiles did not forward sourced CONFIGS into VCS defines.
+      - **Fix applied**: Reconciled the controller directed oracle with max-one-active/in-order rollover; strengthened RID_O, cfg-ready, entry-ID, QDIR=1 prior-G, exact completion endpoint, local write_done, and global current-cycle all-channel checks; repaired only testbench/Makefile infrastructure. No RTL was modified.
+      - **Lesson**: A sourced shell configuration is not evidence that VCS consumed it. Inspect the compile command for GEMM_IMPROVE and require endpoint-specific runtime markers before accepting the result.
+    tests:
+      - name: gemm_ctrl/SCHED_DIRECTED
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\""
+        log: hw/unittest/gemm_ctrl/logs/sim.log
+        coverage: "Physical inflight depth=2 retained; second same-child command blocked by max-one-active; oldest completion/new issue rolled over in one cycle; SET then PLUS retired in order. RID_O store was queued and visibly blocked before ACC completion, then released by the same-cycle ACC SET. cfg ready was low for fsm_nonidle+quiescent, and two back-to-back completions returned entry IDs 11,12. Collision and stray negative modes reproduced the exact expected assertions at 195000ps and 155000ps."
+        markers: "SCHED_DIRECTED_SINGLE_ACTIVE_INORDER_PASS, SCHED_DIRECTED_RID_O_QUEUED_STORE_PASS, SCHED_DIRECTED_CFG_READY_EXACT_PASS, SCHED_DIRECTED_IMPLICIT_CLEAR_BACK_TO_BACK_PASS."
+      - name: gemm_fsm/QDIR1_full_metadata_matrix
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs"
+        log: hw/unittest/gemm_fsm/logs/sim.log
+        coverage: "QDIR=1 full matrix: DMA_LD=12, W=48, SC=48, ZP=48, ARM=48, ACC=4, DMA_ST=4. Required prior-G waits were independently exercised for DMA/W/SZ/ARM as 1/46/92/47."
+        markers: "FSM_FULL_METADATA_MATRIX_PASS qdir=1."
+      - name: gemm_node_improve/exact_completion_integration
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs --params \"M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1\" --extra-sim-args \"+REQUIRE_COMPLETION_ENDPOINTS +REQUIRE_DUAL_BANK_PREFETCH +NO_WAVE\""
+        log: hw/unittest/gemm_node_improve/logs/sim.log
+        coverage: "Exact start/done identity: weight=64/64, SZ=128/128, output=8/8, global=24/24; 200 delayed legacy wrapper-done observations caused no scheduler retirement. Dual-bank checker observed accept/response/consume={56,56,56,56}, conflict=0, underflow=0. Numerical tiled output passed."
+        markers: "COMPLETION_ENDPOINTS_PASSED and DUAL_BANK_PREFETCH_PASSED."
+      - name: lmem_dma_misal/exact_terminal_write
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/lmem_dma_misal --sim vcs"
+        log: hw/unittest/lmem_dma_misal/logs/sim.log
+        coverage: "DIR0 and DIR1 each emitted 18 exact write_done pulses, each coincident with the independently tracked final accepted destination write and earlier than wrapper done. Four zero-size descriptors emitted no write_done or memory request. GEMM_IMPROVE emitted sync0=0, sync1=0 and never entered S_SYNC."
+        markers: "LMEM_DMA_EXACT_COMPLETION_PASS dir0_write_done=18 dir1_write_done=18 sync0=0 sync1=0 s_sync_entries=0."
+      - name: gemm_tmem_dma_ctrl/current_cycle_completion
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_tmem_dma_ctrl --sim vcs"
+        log: hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+        coverage: "Five LD/ST descriptors exercised single- and eight-channel current-cycle final completion bypass. Exactly five DMA done pulses and two store_done pulses were observed, with no repeated pulse. +EXPECT_NOTIFY_FATAL rejected opcode 3 at 75000ps with the exact removed/invalid DMA opcode assertion."
+        markers: "TMEM_DMA_CURRENT_CYCLE_PASS for every descriptor and TMEM_DMA_EXACT_COMPLETION_PASS dma_done_pulses=5 store_done_pulses=2 notify_removed=1."
+  - timestamp: "2026-08-06 19:34"
+    iteration: 7
+    status: pass
+    report: |-
+      ### DMA+MXU Overlap Denominator — Iteration 7
+      - **Status**: pass
+      - **Error summary**: None. The configured VCS CSR unittest compiled and simulated successfully.
+      - **Root cause**: The old metric had no DMA-union-active denominator counter and divided overlap by GEMM total cycles.
+      - **Fix applied**: Added the DMA union-active counter and ACCEL_MXU B18/B98 mapping; runtime and analysis formulas now divide the unchanged overlap numerator by DMA union-active cycles.
+      - **Lesson**: The existing CSR unittest covers the new mapping's compile path but does not issue a directed B18 read; the requested XRT-VCS perf-class-3 run is the end-to-end counter/readout gate.
+    tests:
+      - name: csr_unit
+        status: pass
+        command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/csr_unit --sim vcs"
+        log: hw/unittest/csr_unit/logs/sim.log
+        compile_log: hw/unittest/csr_unit/logs/compile.log
+        coverage: "PERF_ENABLE compile path includes VX_csr_data.sv and the new ACCEL_MXU B18 mapping. No directed B18 functional-read marker exists in this testbench, so that coverage is not claimed."
+dma_mxu_overlap_followup:
+  spec: agent-tasks/gemm-command-schedule-opt/dma-mxu-overlap-metric-spec.md
+  implementation: "Added a per-core dma_union_active_cycles counter using the existing any_dma_busy union predicate, exposed it through accel_perf_t and ACCEL_MXU CSR B18/B98, summed it in runtime/stub/utils.cpp, and changed all runtime/analysis overlap percentages to overlap_dma_mxu / dma_union_active_cycles with zero guards. The numerator remains unchanged."
+  static_checks: "git diff --check PASS; runtime/stub/utils.cpp g++17 syntax-only PASS using the new generated-header macro value; cycle_util.py AST and cycle_analysis.ipynb JSON parsing PASS. A standalone CSR Verilator attempt was abandoned after environment-only missing FPU/interface inputs; no source error was reported and the verification request owns configured VCS compilation."
+  test_requests:
+    - test_type: unittest
+      test_path: hw/unittest/csr_unit
+      test_params: "PERF_ENABLE=1, ACCEL_MXU class"
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/VX_types.vh
+        - hw/rtl/VX_gpu_pkg.sv
+        - hw/rtl/core/VX_core.sv
+        - hw/rtl/core/VX_csr_data.sv
+        - runtime/stub/utils.cpp
+        - analysis_workspace/latency/cycle_util.py
+        - analysis_workspace/latency/README.md
+        - analysis_workspace/latency/cycle_analysis.ipynb
+      notes: "Regenerate VX_types.h through the configured build flow. Drive a known 64-bit accel_perf.dma_union_active_cycles value and prove ACCEL_MXU B18/B98 returns it without disturbing B11/B91 overlap. Exercise zero and nonzero denominator formatting/derivation."
+    - test_type: blackbox
+      test_path: fpint_gemm_ffn_hw
+      test_params: "WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1 PERF_CLASS=3"
+      sim_tool: vcs
+      changed_files:
+        - hw/rtl/VX_types.vh
+        - hw/rtl/VX_gpu_pkg.sv
+        - hw/rtl/core/VX_core.sv
+        - hw/rtl/core/VX_csr_data.sv
+        - runtime/stub/utils.cpp
+        - analysis_workspace/latency/cycle_util.py
+      notes: "Use run-bb-common/xrt-vcs-sim; implementation agent did not run blackbox. Verify dma_union_active_cycles equals the FSDB count of OR(cpu_dma.busy,hbm_dma.aggregate.busy,lmem input/weight/sz/output busy), concurrent engines count once, overlap numerator is unchanged, overlap<=dma_union_active, and printed raw/percentage values are overlap/dma_union_active with zero guard. Preserve numerical PASS and existing scheduler metrics."
+  verification:
+    status: pass
+    vcs_csr_unit: "PASS; configured PERF_ENABLE compile/simulation path includes ACCEL_MXU B18 mapping. Existing TB has no directed B18 read marker, so only compile-path coverage is claimed."
+    xrt_vcs_sim:
+      command: "source ../configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && PATH=/usr/bin:$PATH CC=/usr/bin/gcc CXX=/usr/bin/g++ timeout 1800 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 1\" --cores 1 --perf 3 --configs-extra \"-DDISABLE_FSDB\""
+      build: build_cmd_schedule
+      compile_log: build_cmd_schedule/sim/xrtsim_vcs/compile.log
+      simv_log: build_cmd_schedule/sim/xrtsim_vcs/simv.log
+      numerical: pass
+      total_cycles: 2237
+      busy_cycles: 8562
+      app_cycles: 8531
+      overlap_cycles: 1197
+      dma_union_active_cycles: 2176
+      overlap_pct_dma_active: "55.009%"
+      invariant: "1197 <= 2176; the simulation-only RTL assertion remained quiet."
+    stale_build_diagnosis: "The first run reused the 18:36 simv because simv's Makefile prerequisites omit library-searched RTL sources; it therefore read B18 as zero while the rebuilt runtime used the new formula. After a forced RTL rebuild, VCS explicitly recompiled VX_gpu_pkg/VX_core/VX_csr_data and the authoritative rerun produced 1197/2176 and PASS."
+phase6_provisional_baseline:
+  status: "PASS before final completion-source and child-4-depth fixes; rerun required"
+  configuration: "WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1"
+  performance:
+    total_cycles: "2554 vs prior 3131 (-577, -18.43%)"
+    app_cycles: "8831 vs prior 9429 (-598, -6.34%)"
+    busy_cycles: "8862 vs prior 9460"
+    overlap: "47.298% vs prior 33.791% (historical legacy denominator: GEMM total cycles)"
+    fsdb_active_cycles: 2555
+  functional:
+    jobs_input_weight_output_writes: "256/256/256/32/256"
+    psum_underflow: 0
+    rd_wr_conflict: 0
+  scheduler:
+    child_command_counts: "64/64/128/8/24; every child push=issue=complete"
+    child_empty_cycles: "459/539/479/2113/1629"
+    child_fallthrough_opportunities: "0/1/1/0/1"
+    child_fifo_full_block_candidate_cycles: "0/0/1632/0/301"
+    aggregate_cross_child_hol_candidate: "1914; known overcount and not a real-HOL metric"
+    same_cycle_completion_and_issue_rows: 123
+    push_to_eligible_min_p50_max:
+      child0: "28/45/74"
+      child1: "1/62/89"
+      child2: "1/49/81"
+      child3: "101/139/215"
+      child4: "1/90/235"
+    eligible_to_issue_min_p50_max:
+      child0: "0/0/0"
+      child1: "0/0/29"
+      child2: "0/15/16"
+      child3: "0/0/0"
+      child4: "0/19/37"
+    push_to_issue_min_p50_max:
+      child0: "28/45/74"
+      child1: "1/63/94"
+      child2: "1/63/82"
+      child3: "101/139/215"
+      child4: "1/115/235"
+  exact_offline_hol:
+    full_segments: "126 total; child2=1632 cycles, child4=301 cycles"
+    real_hol: "one 39-cycle interval: child4 full blocked the immediately-ready next child1 weight command at 71.245-71.625 us"
+    implementation_response: "Increase only child4 command FIFO from 4 to 8; retain depth 4 for children 0-3."
+phase6_final:
+  status: pass
+  configuration: "WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1"
+  build: build_cmd_schedule
+  debug_command: "source ../configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ FSDB_DUMP=1 timeout 1800 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 1\" --cores 1 --debug 3"
+  perf_command: "source ../configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ timeout 1800 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 1\" --cores 1 --perf 3 --configs-extra \"-DDISABLE_FSDB\""
+  artifacts:
+    debug_run: build_cmd_schedule/evidence/run_debug_final.log
+    debug_simv: build_cmd_schedule/evidence/simv_debug_final.log
+    debug_fsdb: build_cmd_schedule/evidence/vcs_cosim_debug_final.fsdb
+    perf_run: build_cmd_schedule/evidence/run_perf3_final.log
+    perf_simv: build_cmd_schedule/evidence/simv_perf3_final.log
+  performance:
+    total_cycles: "2237 vs pre-optimization 3131 (-894, -28.55%); vs provisional 2554 (-317, -12.41%)"
+    app_cycles: "8532 vs pre-optimization 9429 (-897, -9.51%); vs provisional 8831 (-299, -3.39%)"
+    busy_cycles: "8563 vs pre-optimization 9460 (-897, -9.48%); vs provisional 8862 (-299, -3.37%)"
+    overlap: "53.509% vs pre-optimization 33.791% (+19.718 pp); vs provisional 47.298% (+6.211 pp). Historical legacy denominator: GEMM total cycles; superseded by dma_mxu_overlap_followup.verification.xrt_vcs_sim."
+    repeat_observation: "A preceding PASS measured 2238/8531/8562 and 53.485%; the preserved final rerun differs by only one cycle and is authoritative for the values above."
+    fsdb_active_cycles: 2244
+  functional:
+    numerical: pass
+    jobs_input_weight_output_writes: "256/256/256/32/256"
+    psum_underflow: 0
+    rd_wr_conflict: 0
+    early_or_duplicate_completion_assertions: 0
+  scheduler:
+    child_command_counts: "64/64/128/8/24; every child push=issue=complete"
+    fsm_accept_to_child_enqueue: "0 cycles; FSM start directly drives the selected registered child FIFO push"
+    completion_to_dependent_eligible: "0 cycles in directed SET/PLUS and RID_O checks through effective_sync; the final FSDB contains 97 cycles with completion and issue together"
+    child_empty_cycles: "186/218/192/1838/1361 (8.29%/9.71%/8.56%/81.91%/60.65% of 2244 active cycles)"
+    child_fallthrough_opportunities: "0/0/0/0/1"
+    fallthrough_followup: "Only child4 had an observed opportunity, and it occurred once; no fall-through RTL is justified. Child3 was often empty but had zero simultaneous enqueue-ready opportunities."
+    child_fifo_full_block_candidate_cycles: "0/0/1654/0/0"
+    aggregate_cross_child_hol_candidate: "1485; known overcount, not the exact HOL metric"
+    same_cycle_completion_and_issue_rows: 97
+    push_to_eligible_min_p50_max:
+      child0: "39/39/106"
+      child1: "55/56/122"
+      child2: "45/45/112"
+      child3: "93/157/205"
+      child4: "1/134/310"
+    eligible_to_issue_min_p50_max:
+      child0: "0/0/0"
+      child1: "0/9/28"
+      child2: "0/14/15"
+      child3: "0/0/0"
+      child4: "0/19/35"
+    push_to_issue_min_p50_max:
+      child0: "39/39/106"
+      child1: "59/65/136"
+      child2: "59/59/127"
+      child3: "93/157/205"
+      child4: "1/148/329"
+  exact_offline_hol:
+    full_segments: "123 total, all child2, 1654 cycles; child4 full cycles=0 after depth 8"
+    reconstruction: "Of child2 full cycles, the next serialized command was child2 for 783 cycles, child0 for 835, and child1 for 36. Every cross-child case found the target queue non-empty at the block start, so the four-condition immediately-ready HOL predicate was false."
+    real_hol: "0 cycles; the former 39-cycle child4->child1 interval is eliminated"
+verification_request:
+  owner: verification
+  status: completed
+  note: "RTL implementation intentionally did not modify tests or run VCS/simulation in the final pass."
+  focused_tests:
+    - name: "gemm_ctrl scheduler/lifecycle"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\""
+      require: "Reconcile the old two-active-entry directed case with the confirmed current single-active executor boundary: allow only empty->issue or same-cycle oldest-completion->new-issue; retain the physical 2-entry FIFO and verify in-order oldest retirement. Check exact cfg ready = fsm_idle && scheduler_quiescent and back-to-back entry IDs."
+    - name: "gemm_node exact completion integration"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve --sim vcs --params \"M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1\""
+      require: "Emit and compare endpoint markers proving child1 done coincides with the last actual weight-register write, child2 done with the last SC/ZP-register write, child3 done with the final accepted destination write, and child4 done with the current-cycle effective all-channel completion. Prove one done per start and no scheduler retirement from legacy ctrl.done/S_SYNC/S_DONE."
+    - name: "local DMA terminal-write unit"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/lmem_dma_misal --sim vcs"
+      require: "For DIR=0 and DIR=1, verify write_done is exactly the final accepted destination write, one pulse per descriptor, earlier than wrapper S_DONE, and GEMM_IMPROVE never enters/uses legacy S_SYNC."
+    - name: "global TMEM DMA unit"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh && CC=/usr/bin/gcc CXX=/usr/bin/g++ /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_tmem_dma_ctrl --sim vcs"
+      require: "Update expectations to direct all-channel completion in S_WAIT_DONE; cover both DMA_LD and DMA_ST, current-cycle final-channel bypass, single done pulse, store_done alignment, and rejection of removed OP_NOTIFY."
+  phase6_rerun:
+    command: "From a configured build directory, use ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw with the established WLOAD8 M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1 arguments, following run-bb-common."
+    require: "Numerical PASS; psum_underflow=0; rd_wr_conflict=0; all child push=issue=complete; no early/duplicate completion assertion; collect the same performance/latency tables; reconstruct exact four-condition HOL instead of treating the aggregate candidate counter as real HOL; confirm the former 39-cycle child4->child1 interval is eliminated with child4 depth 8."
+history:
+  - timestamp: "2026-08-06 18:55"
+    action: "Completed the final WLOAD8 M=4 XRT-VCS functional, performance, FSDB latency, and exact HOL rerun."
+    result: "Both debug/FSDB and repeated perf-class-3 runs passed numerically. The preserved final total/app/busy cycles are 2237/8532/8563; the historical 53.509% overlap used GEMM total cycles as denominator and is superseded by the DMA-union denominator follow-up. psum_underflow and rd_wr_conflict are zero, all child push/issue/complete counts match, and exact reconstructed HOL is zero."
+    learned: "The child4 depth increase removed the only prior real HOL interval. Child2 still reports 1654 serialized full-block candidate cycles, but every cross-child successor already had a non-empty target queue, so increasing child2 depth is not justified by the document's exact HOL criterion."
+  - timestamp: "2026-08-06 18:42"
+    action: "Completed the exact architectural completion, dormant-notify removal, strict lifecycle, and trace-proven HOL RTL pass without changing verification infrastructure."
+    result: "Weight and SC/ZP scheduler done now come from counted final register-write pulses exported by VX_gemm_unit_v2; output done comes from the final accepted local-DMA destination write; global DMA done comes from the current-cycle effective all-channel completion. GEMM_IMPROVE local DMA bypasses legacy S_SYNC, and VX_gemm_tmem_dma_ctrl no longer decodes OP_NOTIFY or contains S_NOTIFY. Child4 command FIFO depth is parameterized to 8 while children 0-3 remain 4. Config ready is exactly fsm_idle && scheduler_quiescent, with separate active/done entry IDs for same-cycle old completion/new accept."
+    learned: "The 2-entry per-child inflight FIFO is an in-order metadata boundary, not permission for two currently active executor commands. RTL now gates issue to empty or same-cycle oldest completion and asserts that boundary; completion tags remain unnecessary."
+  - timestamp: "2026-08-06 18:40"
+    action: "Ran implementation-side static integration checks only."
+    result: "git diff --check passed. Verilator lint passed with exit 0 for VX_gemm_ctrl, VX_gemm_tmem_dma_ctrl, VX_lmem_dma_misal, and the full VX_gemm_node source set under the WLOAD8 improve configuration. The full-node pass reported pre-existing/project-wide warnings (FSM local-variable latch diagnostics, DMA helper missing idle pins, and known combinational-loop warnings), but no syntax, missing-new-pin, or new multi-driver error. VCS compile/simulation was deliberately deferred to verification."
+    learned: "The first full-node lint attempts failed only because standalone lint lacked project common_cells/FPNEW/platform defines; after matching the build includes/defines, the source set elaborated successfully."
+  - timestamp: "2026-08-06 17:18"
+    action: "Recorded the user's completion-order decision and resumed the RTL improvement loop."
+    result: "Inflight metadata remains a separate two-entry FIFO per child. Current executors allow at most one active command per child; future two-entry use must still complete in order. Completion tags are deferred until out-of-order completion becomes possible."
+    learned: "The scheduler does not need to distinguish completion identities under the confirmed per-child in-order contract; executor-boundary assertions must preserve that contract."
+  - timestamp: "2026-08-06 17:12"
+    action: "Stopped implementation after the final requirement audit found a contradiction in the confirmed completion contract."
+    result: "The source design simultaneously assumes in-order completion within each child and requires a scheduler out-of-order-completion assertion, but executors return only an untagged done bit. The scheduler cannot distinguish an A/B completion swap across its two inflight entries. No architectural choice was made."
+    learned: "Continuation requires an explicit decision: retain in-order completion as an executor contract and replace the scheduler assertion with executor-local order checks, or add issue/completion sequence tags across the interfaces."
+  - timestamp: "2026-08-06 17:12"
+    action: "Preserved the independent audit evidence and interrupted the implementation role under the specification hard rule."
+    result: "The audit also found delayed W/SZ/output completion sources, one 39-cycle real child-4 HOL interval, weak prior-G/RID_O test oracles, and incomplete non-input source-identity coverage. A partial unverified write_done patch remains in the worktree; child-4 depth and global completion fixes were not applied."
+    learned: "The earlier WLOAD8 PASS and 2554 total-cycle result are provisional because they predate exact architectural completion-source verification."
+  - timestamp: "2026-08-06 15:33"
+    action: "Loaded the authoritative design, repository rules, and rtl-improve workflow."
+    result: "Created a confirmed implementation specification without narrowing the source design."
+    learned: "The worktree contains uncommitted command-finish optimization changes that must be preserved; feat/gemv-opt contains related but broader reference code."
+  - timestamp: "2026-08-06 15:49"
+    action: "Implemented the confirmed Phase 0-4 command scheduling architecture without running verification."
+    result: "Added four waits plus one SET/PLUS notify to every command payload; moved the legacy dependency matrix onto work commands; removed WAIT/NOTIFY/CLEAR emission and the parent staging/FIFO/sync dispatcher; added direct registered child enqueue, same-cycle effective sync, two-entry per-child inflight metadata, architectural completion retirement, strict quiescence/implicit clear, lifecycle and scheduler assertions, and scheduling counters."
+    learned: "The prior command-finish optimization already exposes the required input completion split (qualified LDMA idle versus tagged final writeback); the other four executors already expose their architectural DMA completion pulses, so no confirmed-architecture change was required."
+  - timestamp: "2026-08-06 16:03"
+    action: "Fixed the two RTL compile blockers reported by verification iteration 1."
+    result: "FSM assertions and debug/trace issue detection now use the module-scope state-child readiness handshake; controller parameter constraints now use VX_STATIC_ASSERT. Static git diff checking passes; verification was not run by the RTL implementation agent."
+    learned: "Variables declared inside the large FSM always_comb block cannot be referenced by simulation-only assertions or trace logic outside that block; shared handshake predicates must be declared at module scope."
+  - timestamp: "2026-08-06 16:19"
+    action: "Triaged the iteration 2 gemm_node_improve timeout without changing RTL or tests."
+    result: "Confirmed compilation/elaboration succeeded, sim.log is zero bytes, and no fatal, mismatch, or RTL root cause was reported. Refined only the verification request from the impractical default M=256,N=1024,K=256 shape to the authoritative command-scheduling trace target M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1."
+    learned: "A deterministic runner timeout with no runtime diagnostic is insufficient evidence for an RTL fix; focused node integration should use the source design's target shape before escalating to RTL changes."
+pitfalls:
+  - "Resolved by user: do not add completion tags while each child completes in order; add tags only if a future executor can complete out of order."
+  - "The provisional Phase-6 result remains historical evidence only; the authoritative final result is phase6_final."
+  - "Do not overwrite or discard the existing uncommitted command-finish optimization."
+  - "Do not copy the feat/gemv-opt commit wholesale; it also removes gemm_unit_v2 and introduces unrelated issue-window/output-drain changes."
+  - "Stop immediately if the confirmed scheduling architecture itself proves inconsistent."
+  - "The standalone gemm_fsm testbench must now drive flag.child_ready and flag.done; verification owns that focused test update."
+  - "Legacy synchronization interface pins remain as compatibility wiring, but GEMM_IMPROVE executors drive no notify request: node pins are inert, local DMA bypasses S_SYNC, and TMEM DMA OP_NOTIFY/S_NOTIFY decode/state are removed."
+  - "Iteration 1 cannot reach simulation: VX_gemm_fsm references block-local can_emit from an assertion, and VX_gemm_ctrl uses an undefined STATIC_ASSERT macro."
+  - "harness/rules/testbench.md and harness/skills/run-test/add-test-case are referenced by the verification agent guide but absent from this worktree."
+  - "The obsolete VX_gemm_sync.sv source must not remain in focused scheduler unittest source lists after the controller removes its instance; VCS otherwise elaborates it as an unconnected top."
+  - "The source-tree gemm_node_improve DPI build needs build/hw on its include path for generated VX_config.h."
+  - "The default gemm_node_improve shape M=256, N=1024, K=256 exceeded verify_rtl.py's 600-second run timeout with a zero-byte buffered sim.log in iteration 2."
+  - "Use M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1 for the next node integration attempt; this is the authoritative source-design trace shape, not a scope reduction."

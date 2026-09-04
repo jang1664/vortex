@@ -49,6 +49,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam logic [3:0] OP_DMA_LD  = 4'd1;
   localparam logic [3:0] OP_DMA_ST  = 4'd2;
   localparam logic [3:0] OP_NOTIFY  = 4'd3;
+  // Local zero-point loads use this opcode in the unified command stream.
+  // This external-DMA executor intentionally does not consume it.
+  localparam logic [3:0] OP_ZP_LDMA_MXU = GEMM_OP_ZP_LDMA_MXU;
+  `UNUSED_PARAM (OP_ZP_LDMA_MXU)
 
   // ============================================================
   // 엔트리 내부 레지스터 인덱스 (32-bit regs)
@@ -146,6 +150,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   endfunction
 
   gemm_unified_cmd_t cmd_q;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] cmd_tag_q;
   wire logic [3:0] cmd_op = cmd_q.instr[3:0];
 
   // ============================================================
@@ -162,7 +167,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   logic [15:0] dram_stride0, lmem_stride0;
   logic [31:0] src_s0, src_s1, src_s2;
   logic [31:0] dst_s0, dst_s1, dst_s2;
-  logic [31:0] bnd0, bnd1, bnd2;
+  logic [`DMA_BOUND_WIDTH-1:0] bnd0, bnd1, bnd2;
   logic [31:0] seg_size;
   logic [31:0] padding;
 
@@ -175,7 +180,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
     src_s0 = 0; src_s1 = 0; src_s2 = 0;
     dst_s0 = 0; dst_s1 = 0; dst_s2 = 0;
-    bnd0 = 1; bnd1 = 1; bnd2 = 1;
+    bnd0 = `DMA_BOUND_WIDTH'(1);
+    bnd1 = `DMA_BOUND_WIDTH'(1);
+    bnd2 = `DMA_BOUND_WIDTH'(1);
     seg_size = 0;
     padding  = 0;
 
@@ -183,7 +190,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       dir_is_st = (cmd_op == OP_DMA_ST);
       src_base  = cmd_q.rs2_data;
       dst_base  = cmd_q.rs1_data;
-      bnd0      = {16'd0, cmd_q.bound};
+      bnd0      = `DMA_BOUND_WIDTH'(cmd_q.bound);
       seg_size  = {4'd0, cmd_q.instr[31:4]};
 
       if (cmd_op == OP_DMA_LD) begin
@@ -223,9 +230,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         DMA_R_SRC_ST2:     v32 = src_s2;
         DMA_R_DST_ST2:     v32 = dst_s2;
 
-        DMA_R_BND0:        v32 = bnd0;
-        DMA_R_BND1:        v32 = bnd1;
-        DMA_R_BND2:        v32 = bnd2;
+        DMA_R_BND0:        v32 = 32'(bnd0);
+        DMA_R_BND1:        v32 = 32'(bnd1);
+        DMA_R_BND2:        v32 = 32'(bnd2);
         DMA_R_SEG_SIZE:    v32 = seg_size;
         DMA_R_PAD:         v32 = padding;
         DMA_R_DIR:         v32 = {31'd0, dir_is_st};
@@ -264,7 +271,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   logic [CTRL_GEN_W-1:0]   alloc_gen_q, alloc_gen_d;
 
   assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
+  assign gemm_dma_ctrl_if.cmd_ready = (state_q == S_IDLE);
+  assign gemm_dma_ctrl_if.prepare_ready = 1'b0;
   assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
+  assign gemm_dma_ctrl_if.done_tag = cmd_tag_q;
 
   // ============================================================
   // Comb
@@ -508,6 +518,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       poll_gap_q    <= 0;
       alloc_gap_q   <= 0;
       cmd_q         <= '0;
+      cmd_tag_q     <= '0;
       entry_id_q    <= '0;
       alloc_owner_q <= '0;
       alloc_gen_q   <= '0;
@@ -522,6 +533,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         cmd_q        <= gemm_dma_ctrl_if.cmd;
+        cmd_tag_q    <= gemm_dma_ctrl_if.cmd_tag;
       end
     end
   end

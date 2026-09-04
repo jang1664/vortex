@@ -65,6 +65,18 @@ csrc/
 simv
 simv.daidir/
 simv.vdb/
+# Locally named VCS binaries produced by GEMM node experiments.
+**/compile_fpnew
+**/simv_fpnew
+**/simv_fpnew.daidir/
+# Waveform databases and their tool-generated sidecars are reproducible task
+# evidence; retain derived summaries rather than committing binary captures.
+/agent-tasks/**/*.fsdb*
+# Raw synthesis and simulation run directories. Durable task specifications,
+# status files, and interpreted result summaries live outside these paths.
+/agent-tasks/dma-bound21-native-product/results/
+/agent-tasks/gemm-command-stage-timing/results/
+/agent-tasks/gemm-response-ram-default-w4/results/
 ucli.key
 work.lib++/
 .vcs/

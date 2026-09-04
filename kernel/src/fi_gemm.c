@@ -46,16 +46,98 @@ static const int NO_TP = 0; // no transpose
 
 
 #define GMEM_SIZE (512*1024)
-#define GMEM_IBUF0_BASE 0x100000
-#define GMEM_IBUF1_BASE 0x180000
-#define GMEM_WBUF0_BASE 0x200000
-#define GMEM_WBUF1_BASE 0x280000
-#define GMEM_OBUF0_BASE 0x300000
-#define GMEM_OBUF1_BASE 0x380000
-#define GEMM_SCBUF0_BASE  0x400000
-#define GEMM_ZP0_BASE  0x480000
-#define GEMM_SCBUF1_BASE  0x500000
-#define GEMM_ZP1_BASE  0x580000
+
+// Compile-time TMEM bank-phase controls.  Ordinary resources rotate in one
+// 64-byte bank unit; Weight rotates in its configured native wide-beat unit.
+// Defaults preserve the historical layout.
+#ifndef TMEM_NUM_BANKS
+#define TMEM_NUM_BANKS 8
+#endif
+#ifndef TMEM_BANK_BYTES
+#define TMEM_BANK_BYTES 64
+#endif
+#ifndef MXU_COL
+#define MXU_COL 32
+#endif
+#ifndef MXU_WLOAD_NUM
+#define MXU_WLOAD_NUM 4
+#endif
+#ifndef W_BIT_WIDTH
+#define W_BIT_WIDTH 4
+#endif
+#ifndef TMEM_INPUT_BANK_SKEW
+#define TMEM_INPUT_BANK_SKEW 0
+#endif
+#ifndef TMEM_WEIGHT_GROUP_SKEW
+#define TMEM_WEIGHT_GROUP_SKEW 0
+#endif
+#ifndef TMEM_SCALE_BANK_SKEW
+#define TMEM_SCALE_BANK_SKEW 0
+#endif
+#ifndef TMEM_ZP_BANK_SKEW
+#define TMEM_ZP_BANK_SKEW 0
+#endif
+#ifndef TMEM_OUTPUT_BANK_SKEW
+#define TMEM_OUTPUT_BANK_SKEW 0
+#endif
+
+#define GEMM_WEIGHT_DATA_SIZE ((MXU_COL * MXU_WLOAD_NUM * W_BIT_WIDTH) / 8)
+#define TMEM_WEIGHT_BANKS_PER_BEAT (GEMM_WEIGHT_DATA_SIZE / TMEM_BANK_BYTES)
+#define TMEM_WEIGHT_BANK_GROUPS (TMEM_NUM_BANKS / TMEM_WEIGHT_BANKS_PER_BEAT)
+#define TMEM_BANK_SKEW_BYTES(phase) ((phase) * TMEM_BANK_BYTES)
+#define TMEM_WEIGHT_SKEW_BYTES(phase) ((phase) * GEMM_WEIGHT_DATA_SIZE)
+
+#define GMEM_IBUF0_BASE (0x100000 + TMEM_BANK_SKEW_BYTES(TMEM_INPUT_BANK_SKEW))
+#define GMEM_IBUF1_BASE (0x180000 + TMEM_BANK_SKEW_BYTES(TMEM_INPUT_BANK_SKEW))
+#define GMEM_WBUF0_BASE (0x200000 + TMEM_WEIGHT_SKEW_BYTES(TMEM_WEIGHT_GROUP_SKEW))
+#define GMEM_WBUF1_BASE (0x280000 + TMEM_WEIGHT_SKEW_BYTES(TMEM_WEIGHT_GROUP_SKEW))
+#define GMEM_OBUF0_BASE (0x300000 + TMEM_BANK_SKEW_BYTES(TMEM_OUTPUT_BANK_SKEW))
+#define GMEM_OBUF1_BASE (0x380000 + TMEM_BANK_SKEW_BYTES(TMEM_OUTPUT_BANK_SKEW))
+#define GEMM_SCBUF0_BASE (0x400000 + TMEM_BANK_SKEW_BYTES(TMEM_SCALE_BANK_SKEW))
+#define GEMM_ZP0_BASE (0x480000 + TMEM_BANK_SKEW_BYTES(TMEM_ZP_BANK_SKEW))
+#define GEMM_SCBUF1_BASE (0x500000 + TMEM_BANK_SKEW_BYTES(TMEM_SCALE_BANK_SKEW))
+#define GEMM_ZP1_BASE (0x580000 + TMEM_BANK_SKEW_BYTES(TMEM_ZP_BANK_SKEW))
+
+// Maximum tile footprints for the fixed MT/NT/KT=128 kernel contract above.
+// Keep these as integer constant expressions so overlap failures are compile
+// errors even in the device compiler.
+#define TMEM_INPUT_MAX_BYTES  (128 * 128 * 2)
+#define TMEM_WEIGHT_MAX_BYTES (128 * 128 * W_BIT_WIDTH / 8)
+#define TMEM_OUTPUT_MAX_BYTES (128 * 128 * 2)
+#define TMEM_SCALE_MAX_BYTES  (128 * 128 * 2)
+#define TMEM_ZP_MAX_BYTES     (128 * 128)
+
+_Static_assert((GEMM_WEIGHT_DATA_SIZE % TMEM_BANK_BYTES) == 0,
+               "Weight beat must contain whole TMEM banks");
+_Static_assert((TMEM_NUM_BANKS % TMEM_WEIGHT_BANKS_PER_BEAT) == 0,
+               "Weight bank group must divide TMEM banks");
+_Static_assert(TMEM_INPUT_BANK_SKEW < TMEM_NUM_BANKS,
+               "Input bank skew is out of range");
+_Static_assert(TMEM_SCALE_BANK_SKEW < TMEM_NUM_BANKS,
+               "Scale bank skew is out of range");
+_Static_assert(TMEM_ZP_BANK_SKEW < TMEM_NUM_BANKS,
+               "Zero-point bank skew is out of range");
+_Static_assert(TMEM_OUTPUT_BANK_SKEW < TMEM_NUM_BANKS,
+               "Output bank skew is out of range");
+_Static_assert(TMEM_WEIGHT_GROUP_SKEW < TMEM_WEIGHT_BANK_GROUPS,
+               "Weight wide-bank-group skew is out of range");
+_Static_assert((GMEM_WBUF0_BASE % GEMM_WEIGHT_DATA_SIZE) == 0
+            && (GMEM_WBUF1_BASE % GEMM_WEIGHT_DATA_SIZE) == 0,
+               "Weight buffers must remain native-beat aligned");
+_Static_assert((GMEM_IBUF0_BASE + TMEM_INPUT_MAX_BYTES) <= 0x180000
+            && (GMEM_IBUF1_BASE + TMEM_INPUT_MAX_BYTES) <= 0x200000,
+               "Input skew overlaps a neighboring reserved region");
+_Static_assert((GMEM_WBUF0_BASE + TMEM_WEIGHT_MAX_BYTES) <= 0x280000
+            && (GMEM_WBUF1_BASE + TMEM_WEIGHT_MAX_BYTES) <= 0x300000,
+               "Weight skew overlaps a neighboring reserved region");
+_Static_assert((GMEM_OBUF0_BASE + TMEM_OUTPUT_MAX_BYTES) <= 0x380000
+            && (GMEM_OBUF1_BASE + TMEM_OUTPUT_MAX_BYTES) <= 0x400000,
+               "Output skew overlaps a neighboring reserved region");
+_Static_assert((GEMM_SCBUF0_BASE + TMEM_SCALE_MAX_BYTES) <= 0x480000
+            && (GEMM_ZP0_BASE + TMEM_ZP_MAX_BYTES) <= 0x500000
+            && (GEMM_SCBUF1_BASE + TMEM_SCALE_MAX_BYTES) <= 0x580000
+            && (GEMM_ZP1_BASE + TMEM_ZP_MAX_BYTES) <= 0x600000,
+               "Qparam skew overlaps a neighboring reserved region");
 
 #define QDIR_COL 0
 #define QDIR_ROW 1

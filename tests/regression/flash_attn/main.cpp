@@ -500,7 +500,7 @@ int main(int argc, char **argv) {
   args.query_position_base = g_query_position_base;
   args.attention_scale = attention_scale;
 
-  const uint64_t tensor_mem_size = uint64_t(TMEM_BANK_SIZE) * NUM_DMA_CHANNELS;
+  const uint64_t tensor_mem_size = uint64_t(TMEM_BANK_SIZE) * NUM_TMEM_BANKS;
   if (!allocate_tmem(args, tensor_mem_size)) {
     std::cerr << "TMEM layout exceeds " << tensor_mem_size << " bytes" << std::endl;
     cleanup();

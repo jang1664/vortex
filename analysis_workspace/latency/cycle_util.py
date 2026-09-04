@@ -1555,6 +1555,12 @@ def build_mpm_accel_counters(paths=DEFAULT_GEMM_PATHS):
         'overlap_dma_mxu',
         _perf_vec(paths.core, 'perf_overlap_r'),
     ))
+    counters.append(MpmCounter(
+        MpmAccelClass.ACCEL_MXU,
+        'VX_CSR_MPM_DMA_UNION_ACTIVE_CYC',
+        'dma_union_active_cycles',
+        _perf_vec(paths.core, 'perf_dma_union_active_r'),
+    ))
 
     add_common(MpmAccelClass.ACCEL_DMA)
     for name, (csr_suffix, reg) in DMA_COUNTER_REGS.items():
@@ -1654,6 +1660,7 @@ def analyze_mpm_accel(fsdb_path=DEFAULT_FSDB, paths=DEFAULT_GEMM_PATHS, bt=None,
     busy = values.get('busy_cycles', 0)
     total = values.get('gemm_total_cycles', 0)
     compute = values.get('gemm_compute_cycles', 0)
+    dma_active = values.get('dma_union_active_cycles', 0)
     macs = values.get('mxu_mac_count', 0)
     flops = macs * 2
 
@@ -1665,7 +1672,9 @@ def analyze_mpm_accel(fsdb_path=DEFAULT_FSDB, paths=DEFAULT_GEMM_PATHS, bt=None,
     add('mxu', 'mxu_mac_count', macs, 'mac')
     add('mxu', 'flops', flops, 'flop')
     add('mxu', 'achieved_flops_per_cycle_total', _ratio(flops, total), 'flop/cycle')
-    add('mxu', 'overlap_dma_mxu_pct_total', _pct(values.get('overlap_dma_mxu', 0), total), 'pct')
+    add('mxu', 'dma_union_active_cycles', dma_active, 'cycles')
+    add('mxu', 'overlap_dma_mxu_pct_dma_active',
+        _pct(values.get('overlap_dma_mxu', 0), dma_active), 'pct')
 
     for port in ('input', 'weight', 'psum', 'output'):
         fire = values.get(f'mxu_{port}_fire', 0)

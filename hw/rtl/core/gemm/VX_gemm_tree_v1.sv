@@ -23,8 +23,8 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
     input logic resetn_i,
     input logic [ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
     input logic [WEIGHT_LOAD_ROW_NUM-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,
-    input logic in_weight_sel_i,
-    input logic out_weight_sel_i,
+    input gemm_wreg_idx_t in_weight_sel_i,
+    input gemm_wreg_idx_t out_weight_sel_i,
     input logic ready_weight_i,
     input logic input_valid_i,
     input logic weight_load_dir_i,  // 0: row direction (top to bottom), 1: column direction (left to right)
@@ -50,7 +50,7 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
   
   // Valid and weight_sel signal propagation (column direction)
   logic [COL_SIZE/TILE_COL_SIZE-1:0] in_valid_q;
-  logic [COL_SIZE/TILE_COL_SIZE-1:0] out_weight_sel_q;
+  gemm_wreg_idx_t out_weight_sel_q [COL_SIZE/TILE_COL_SIZE-1:0];
   
   // Centralized weight registers output
   logic [ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weights;
@@ -62,7 +62,7 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
         always_ff @(posedge clk_i or negedge resetn_i) begin
           if (!resetn_i) begin
             in_valid_q[j] <= 1'b0;
-            out_weight_sel_q[j] <= 1'b0;
+            out_weight_sel_q[j] <= '0;
           end else begin
             // First column receives inputs directly
             if (input_valid_i) begin
@@ -77,7 +77,7 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
         always_ff @(posedge clk_i or negedge resetn_i) begin
           if (!resetn_i) begin
             in_valid_q[j] <= 1'b0;
-            out_weight_sel_q[j] <= 1'b0;
+            out_weight_sel_q[j] <= '0;
           end else begin
             // Subsequent columns propagate from previous column
             if (in_valid_q[j-1]) begin

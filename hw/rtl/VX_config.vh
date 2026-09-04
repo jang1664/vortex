@@ -298,6 +298,10 @@
 `define LMEM_DMA_RD_PREFETCH_DEPTH 4
 `endif
 
+`ifndef LMEM_DMA_CMD_FIFO_DEPTH
+`define LMEM_DMA_CMD_FIFO_DEPTH 4
+`endif
+
 `ifndef I_LMEM_DMA_RD_PREFETCH_DEPTH
 `define I_LMEM_DMA_RD_PREFETCH_DEPTH `LMEM_DMA_RD_PREFETCH_DEPTH
 `endif
@@ -320,10 +324,6 @@
 
 `ifndef I_LMEM_DMA_RD_OUTSTANDING_SLOTS
 `define I_LMEM_DMA_RD_OUTSTANDING_SLOTS `LMEM_DMA_RD_OUTSTANDING_SLOTS
-`endif
-
-`ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
-`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `LMEM_DMA_RD_OUTSTANDING_SLOTS
 `endif
 
 `ifndef SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS
@@ -1240,6 +1240,7 @@ for block_size in range(1, full_bitwidth+1):
 `ifndef MXU_COL_TILE
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
 `endif
+`ifndef MXU_WLOAD_NUM
 `ifdef GEMM_NAIVE
 `define MXU_WLOAD_NUM 4           // Naive LMEM gather loads four weight rows per request
 `else
@@ -1248,6 +1249,73 @@ for block_size in range(1, full_bitwidth+1):
 `else
 `define MXU_WLOAD_NUM 4           // Number of weight loads per cycle
 `endif
+`endif
+`endif
+
+// A Weight LDMA command always covers one complete MXU K dimension.  Keep
+// that layout invariant separate from the shared response capacity used to
+// overlap the next command's source reads with the current command's writes.
+`ifndef W_LMEM_DMA_CMD_BEATS
+`define W_LMEM_DMA_CMD_BEATS (`MXU_ROW / `MXU_WLOAD_NUM)
+`endif
+
+`ifndef W_LMEM_DMA_RESPONSE_SLOTS
+`define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
+`endif
+
+// DMA descriptors retain 32-bit software-visible bound words, while the
+// internal iterator contract uses only the range required by MM_MAX_LOG_DIM.
+`ifndef DMA_BOUND_WIDTH
+`define DMA_BOUND_WIDTH 21
+`endif
+
+// Block-RAM response payload storage is the production default for the improve
+// GEMM overlap paths.  Explicit zero overrides retain the cycle-compatible FF
+// implementation for focused A/B comparisons and debugging.
+`ifndef I_LMEM_DMA_RESPONSE_DATA_RAM
+`define I_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef W_LMEM_DMA_RESPONSE_DATA_RAM
+`define W_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef SZ_LMEM_DMA_RESPONSE_DATA_RAM
+`define SZ_LMEM_DMA_RESPONSE_DATA_RAM 1
+`endif
+
+`ifndef W_TMEM_WIDE_RESPONSE_DATA_RAM
+`define W_TMEM_WIDE_RESPONSE_DATA_RAM 1
+`endif
+
+// The improve backend's dependency scheduler requires the existing TMEM
+// priority frontend to apply its registered source classes at the physical
+// banks.  Preserve legacy arbitration for non-improve configurations and
+// retain an explicit build override for focused comparisons.
+`ifndef TMEM_ARB_URGENCY_ENABLE
+`ifdef GEMM_IMPROVE
+`define TMEM_ARB_URGENCY_ENABLE 1
+`else
+`define TMEM_ARB_URGENCY_ENABLE 0
+`endif
+`endif
+
+`ifndef I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK
+`define I_LMEM_DMA_READY_AHEAD_LOW_WATERMARK 4
+`endif
+
+`ifndef W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK
+`define W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK 2
+`endif
+
+`ifndef TMEM_ARB_MAX_CONSECUTIVE_URGENT
+`define TMEM_ARB_MAX_CONSECUTIVE_URGENT 4
+`endif
+
+// Legacy single-command DMA capacity remains one command.  The improve TMEM
+// Weight path selects W_LMEM_DMA_RESPONSE_SLOTS explicitly.
+`ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
+`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `W_LMEM_DMA_CMD_BEATS
 `endif
 
 // -------------------------------------------------------
@@ -1307,7 +1375,13 @@ for block_size in range(1, full_bitwidth+1):
 // Configuration Registers
 // -------------------------------------------------------
 `ifndef NUM_DMA_CHANNELS
-`define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core (TMEM banks)
+`define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core
+`endif
+`ifndef NUM_TMEM_BANKS
+`define NUM_TMEM_BANKS 8          // Number of physical TMEM SRAM banks
+`endif
+`ifndef NUM_HBM_PORTS
+`define NUM_HBM_PORTS 8           // Number of external HBM AXI ports
 `endif
 `ifndef TMEM_BANK_SIZE
 `define TMEM_BANK_SIZE (64 * 1024) // 64KB
@@ -1317,9 +1391,14 @@ for block_size in range(1, full_bitwidth+1):
 `define MISALIGN_PACK_BYTES LSU_WORD_SIZE
 `endif
 
-// HBM interleave stride (bytes): consecutive MEM_BLOCK_SIZE blocks round-robin
-// across all DMA channels before advancing to the next stripe within one HBM bank.
-`define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
+// Logical block stripes.  DMA ownership and HBM-port remap are independent:
+// a DMA channel revisits its ownership class every NUM_DMA_CHANNELS blocks,
+// while an HBM port is revisited every NUM_HBM_PORTS blocks.
+`define DMA_CHANNEL_STRIDE_BYTES (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
+`define HBM_PORT_STRIPE_BYTES    (`MEM_BLOCK_SIZE * `NUM_HBM_PORTS)
+// Backward-compatible name used by the GEMM DMA descriptor generator.  Its
+// meaning is the DMA-channel stripe, not the HBM-port stripe.
+`define HBM_BUS_STRIDE `DMA_CHANNEL_STRIDE_BYTES
 
 `ifdef GEMM_NAIVE
 `define GEMM_CFG_REG_NUM 44       // Naive LMEM backend register map + reserved tile regs + output progress
@@ -1363,6 +1442,37 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_ALLOC_OWNER_BITS `JOB_MMIO_OWNER_W
 `define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
 `define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
+
+// Maximum chunk size for chunkable GEMM output stores, in beats per HBM
+// channel.  Blackbox builds override this through CONFIGS, for example:
+//   -DGEMM_DMA_STORE_MAX_CHUNK_BEATS=16
+`ifndef GEMM_DMA_STORE_MAX_CHUNK_BEATS
+`define GEMM_DMA_STORE_MAX_CHUNK_BEATS 8
+`endif
+
+// Maximum source-read beats issued before architectural release.  These
+// values are encoded in GEMM command metadata and may be overridden through
+// the normal CONFIGS flow.
+`ifndef GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS 4
+`endif
+
+`ifndef GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS 4
+`endif
+
+`ifndef GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS 1
+`endif
+
+`ifndef GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS
+`define GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS 1
+`endif
+
+// Applied independently by every active channel of a tile-DMA load.
+`ifndef GEMM_TILE_DMA_PREFETCH_MAX_BEATS
+`define GEMM_TILE_DMA_PREFETCH_MAX_BEATS 4
+`endif
 
 `ifdef GEMM_NAIVE
 // Naive controller compile-time tile dimensions.

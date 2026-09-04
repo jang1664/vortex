@@ -34,6 +34,7 @@ def make_args(**overrides):
         "debug": None,
         "profile": False,
         "disable_congestion_fail_fast": False,
+        "ultrathreads": False,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -73,6 +74,23 @@ class GenVitisIniTest(unittest.TestCase):
             )
             self.assertFalse(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
 
+    def test_ultrathreads_adds_place_and_route_options_for_hw(self):
+        lines = self.vivado_lines(ultrathreads=True)
+        self.assertIn(
+            "prop=run.impl_1.{STEPS.PLACE_DESIGN.ARGS.MORE OPTIONS}="
+            "{-ultrathreads}",
+            lines,
+        )
+        self.assertIn(
+            "prop=run.impl_1.{STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS}="
+            "{-ultrathreads}",
+            lines,
+        )
+
+    def test_ultrathreads_is_not_added_for_hw_emu(self):
+        lines = self.vivado_lines(target="hw_emu", ultrathreads=True)
+        self.assertFalse(any("-ultrathreads" in line for line in lines))
+
     def test_makefile_tracks_and_validates_gate_setting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir) / "gate"
@@ -108,7 +126,10 @@ class GenVitisIniTest(unittest.TestCase):
             enabled = run_make()
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
-            self.assertEqual("CONGESTION_FAIL_FAST=1\n", link_stamp.read_text())
+            self.assertEqual(
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1\n",
+                link_stamp.read_text(),
+            )
             stable_mtimes = tuple(
                 path.stat().st_mtime_ns
                 for path in (config_stamp, backup_stamp, link_stamp, generated_ini)
@@ -140,7 +161,10 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertNotIn("PLACE_DESIGN.TCL.POST", disabled_ini)
             self.assertIn("OPT_DESIGN.TCL.PRE", disabled_ini)
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
-            self.assertEqual("CONGESTION_FAIL_FAST=0\n", link_stamp.read_text())
+            self.assertEqual(
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0\n",
+                link_stamp.read_text(),
+            )
             self.assertEqual(
                 compile_side_mtimes,
                 tuple(path.stat().st_mtime_ns for path in (config_stamp, backup_stamp)),
@@ -152,12 +176,37 @@ class GenVitisIniTest(unittest.TestCase):
             reenabled = run_make()
             self.assertEqual(reenabled.returncode, 0, reenabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
-            self.assertEqual("CONGESTION_FAIL_FAST=1\n", link_stamp.read_text())
+            self.assertEqual(
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1\n",
+                link_stamp.read_text(),
+            )
+            self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
+
+            fast = run_make(0, FAST_MODE=1)
+            self.assertEqual(fast.returncode, 0, fast.stderr)
+            fast_ini = generated_ini.read_text()
+            self.assertIn("PLACE_DESIGN.TCL.POST", fast_ini)
+            self.assertIn(
+                "STEPS.PLACE_DESIGN.ARGS.MORE OPTIONS}={-ultrathreads}",
+                fast_ini,
+            )
+            self.assertIn(
+                "STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS}={-ultrathreads}",
+                fast_ini,
+            )
+            self.assertEqual(
+                "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1\n",
+                link_stamp.read_text(),
+            )
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
 
             invalid = run_make(2)
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("CONGESTION_FAIL_FAST must be 0 or 1", invalid.stderr)
+
+            invalid_fast = run_make(FAST_MODE=2)
+            self.assertNotEqual(invalid_fast.returncode, 0)
+            self.assertIn("FAST_MODE must be 0 or 1", invalid_fast.stderr)
 
 
 if __name__ == "__main__":

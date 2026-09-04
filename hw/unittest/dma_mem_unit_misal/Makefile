@@ -15,6 +15,9 @@ TB_DCACHE_BYTES ?= 64
 TB_LMEM_BYTES ?= 128
 TB_THROUGHPUT ?= 0
 TB_NO_BACKPRESSURE ?= 0
+OBJ ?= func
+MAX_DIMS ?= 3
+DIMS_ONLY := $(if $(filter dims,$(OBJ)),1,0)
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_dma_mem_unit_misal
@@ -26,6 +29,7 @@ TOP_MODULE := tb_VX_dma_mem_unit_misal
 
 TB   := $(SRC_DIR)/tb_VX_dma_mem_unit_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_gearbox.sv \
 				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
@@ -53,9 +57,11 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
+				$(RTL_DIR)/libs/VX_rr_arbiter.sv \
 				$(RTL_DIR)/libs/VX_shift_register.sv \
 				$(RTL_DIR)/libs/VX_priority_arbiter.sv \
 				$(RTL_DIR)/libs/VX_priority_encoder.sv \
+				$(RTL_DIR)/libs/VX_onehot_encoder.sv \
 				$(RTL_DIR)/libs/VX_lzc.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv
@@ -81,12 +87,15 @@ ifeq ($(SIM_EXEC),vcs)
 PARAMS := -pvalue+$(TOP_MODULE).DCACHE_BYTES_P=$(TB_DCACHE_BYTES) \
 		  -pvalue+$(TOP_MODULE).LMEM_BYTES_P=$(TB_LMEM_BYTES) \
 		  -pvalue+$(TOP_MODULE).THROUGHPUT_P=$(TB_THROUGHPUT) \
-		  -pvalue+$(TOP_MODULE).NO_BACKPRESSURE_P=$(TB_NO_BACKPRESSURE)
+		  -pvalue+$(TOP_MODULE).NO_BACKPRESSURE_P=$(TB_NO_BACKPRESSURE) \
+		  -pvalue+$(TOP_MODULE).DIMS_ONLY_P=$(DIMS_ONLY) \
+		  -pvalue+$(TOP_MODULE).MAX_DIMS_P=$(MAX_DIMS)
 else
 PARAMS := -GDCACHE_BYTES_P=$(TB_DCACHE_BYTES) \
 		  -GLMEM_BYTES_P=$(TB_LMEM_BYTES) \
 		  -GTHROUGHPUT_P=$(TB_THROUGHPUT) \
-		  -GNO_BACKPRESSURE_P=$(TB_NO_BACKPRESSURE)
+		  -GNO_BACKPRESSURE_P=$(TB_NO_BACKPRESSURE) \
+		  -GOBJ=$(OBJ) -GMAX_DIMS_P=$(MAX_DIMS)
 endif
 
 setup:

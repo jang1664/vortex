@@ -1,0 +1,689 @@
+task: wreg-db-opt
+state: IN_PROGRESS
+updated: "2026-08-13 01:46"
+spec: agent-tasks/wreg-db-opt/wreg-db-opt-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/wreg_db_opt.md
+current_phase: weight_command_depth4_functional_pass_fsdb_pending
+iteration_limit: 10
+pitfalls:
+  - "The source plan is authoritative; do not replace separate W/SC/Z consume RIDs with RID_G or one shared consumer event."
+  - "Non-final input-command completion proves ingress completion, not GEMM-tree weight consumption."
+  - "QCOL scale consumes late; all post-snapshot datapath reads must use immutable pipelined values rather than mutable scale_regs."
+  - "The current worktree contains unrelated untracked planning files; preserve them."
+  - "A two-entry descriptor queue is insufficient unless source requests for command N+1 execute while command N drains; passive storage alone does not remove start-to-first-write latency."
+  - "W_RD_OUTSTANDING currently conflates beats per Weight command, aligned-DMA payload slots, and TMEM wide-read contexts; the new implementation must separate layout invariants from shared capacity."
+  - "The confirmed follow-up removes W/S/Z index equality: Weight has four banks, Scale/ZP remain independent two-bank snapshot resources, and ARM has five wait dependencies."
+  - "Same-cycle Weight overwrite is legal only for the exact matching final consume with no other incoming/earlier same-bank consumer."
+  - "gemm_ctrl has no Makefile lint target and gemm_sync has no vlt.mk; use a direct configured Verilator lint command for implementation-only static checks."
+  - "Input overlap must move W/S/Z/ACC readiness to a per-command admission fence; simply deleting prior_g_wait would permit unsafe GEMM admission."
+  - "VX_gemm_unit_v2 currently defines input_fire as req_valid because ready is tied high; admission backpressure requires converting every input-side state update to a true valid-ready handshake."
+  - "Eight Input response slots can hold two M=4 payloads, but four descriptor contexts are required to hide source startup across four consecutive bursts."
+  - "Qparam final-write completion and full-FIFO capacity must cross a registered causal boundary; same-cycle GEMM-ready/completion/scheduler feedback recreates the hierarchy zero-time loop."
+iterations:
+  - timestamp: "2026-08-11 01:03"
+    iteration: 0
+    phase: specification
+    status: confirmed
+    test: "Directed VCS unittests, M={4,256} x QDIR={0,1} XRT-VCS, and M=4 QCOL/QROW FSDB analysis."
+    error_summary: "Global prior_g_wait over-serializes register loads, while RID_G alone can complete before resource consumption."
+    root_cause: "Input command lifetime and W/SC/Z physical-register read lifetime are represented by one completion dependency."
+    fix_applied: "Confirmed six resource/buffer consume RIDs, qparam snapshot pipelines, exact weight-consume tracking, and target-specific LOAD waits."
+    verification: "Pending RTL implementation and iteration 1 verification."
+    lesson: "Command completion, immutable operand capture, and physical-register consumption require distinct architectural events."
+  - timestamp: "2026-08-11 01:03"
+    iteration: 1
+    phase: implementation
+    status: pending_verification
+    test: "Directed VCS requests cover gemm_unit_v2, gemm_fsm, gemm_ctrl, gemm_sync, gemm_node_improve, and lmem_dma_misal before the XRT-VCS matrix."
+    error_summary: "No implementation blocker; static source audit completed."
+    root_cause: "The old design coupled physical-register reuse to prior GEMM command completion instead of the last resource consumer."
+    fix_applied: "Added six W/SC/Z consume RIDs, per-admission immutable qparam snapshots, PREALIGN-bounded weight lifetime, same-cycle controller folding, and resource-specific FSM waits."
+    verification: "git diff --check passed; QROW stage alignment, 5-bit RID propagation, mutable qparam reads, and retained prior_g_wait sites were statically audited. VCS is pending."
+    lesson: "Keep consume ownership resource-specific and make release depend on the exact buffer target, not a global GEMM completion token."
+  - timestamp: "2026-08-11 01:31"
+    iteration: 1
+    phase: verification
+    status: sim_fail
+    test: "gemm_unit_v2 via tools/verify_rtl.py with VCS; later tests were not run after the first failure."
+    error_summary: "At 235 ns, a new unit-level W/S/Z index equality assertion killed the existing independent scale/ZP port test."
+    root_cause: "The production ARM invariant was asserted too broadly on every low-level gemm_unit input admission; the unit interface intentionally permits independent qparam register indices for directed testing."
+    fix_applied: "Pending: keep the invariant at accepted GEMM ARM and remove the redundant unit-level equality assertion; add the missing consume/snapshot directed coverage."
+    verification: "Production RTL functionality is not disproven; this is assertion-scope/test-interface drift. Iteration 2 is pending."
+    lesson: "Protocol invariants must be asserted at the architectural boundary that guarantees them, not at a reusable lower-level datapath interface."
+  - timestamp: "2026-08-11 01:49"
+    iteration: 2
+    phase: implementation
+    status: pending_verification
+    test: "Added directed gemm_unit_v2, gemm_fsm, gemm_ctrl, and gemm_sync coverage; requested the complete VCS unit sequence."
+    error_summary: "Iteration-1 assertion scope was too broad; directed consume/snapshot coverage was also absent."
+    root_cause: "A production ARM invariant leaked into the reusable unit interface, and legacy TBs did not observe the new consume contract."
+    fix_applied: "Removed only the unit equality assertion, retained FSM/node production invariants, and added both-buffer/QDIR consume, snapshot, RID-target, same-cycle-fold, and no-alias tests."
+    verification: "git diff --check passed; no VCS was run by the implementation agent."
+    lesson: "Pair lifetime optimizations with direct event-count, snapshot-integrity, and dependency-target scoreboards."
+  - timestamp: "2026-08-11 01:54"
+    iteration: 2
+    phase: verification
+    status: sim_fail
+    test: "gemm_unit_v2 via VCS; later tests were not run after the first failure."
+    error_summary: "At 315 ns the new directed two-packet stimulus violated the pre-existing accumulator address progression assertion."
+    root_cause: "Both packets used address zero with acc_rd_en disabled, which is neither strict row progression nor legal same-address accumulation."
+    fix_applied: "Pending TB-only correction to make the second packet use the next accumulator row while preserving the resource-lifetime scenario."
+    verification: "Legacy independent qparam-port marker passed; first weight consume trace appeared; new snapshot markers were not reached."
+    lesson: "Directed lifetime tests must also satisfy unrelated stream-address protocol invariants."
+  - timestamp: "2026-08-11 01:57"
+    iteration: 3
+    phase: implementation
+    status: pending_verification
+    test: "Rerun full gemm_unit_v2 first, then continue the remaining VCS unit sequence."
+    error_summary: "Iteration-2 failure was isolated to directed TB packet/address encoding."
+    root_cause: "Second packet repeated address zero without accumulation; held bank-1 W write also needed explicit address-bit encoding."
+    fix_applied: "Advanced packet 2 by ACC_ROW_BYTES and explicitly encoded W register bank in address bit 0 with QDIR bit 1 cleared."
+    verification: "git diff --check passed; production RTL unchanged; VCS pending."
+    lesson: "Use the DUT's documented register-address bit mapping explicitly in lifetime-directed stimuli."
+  - timestamp: "2026-08-11 02:03"
+    iteration: 3
+    phase: verification
+    status: compile_error
+    test: "gemm_unit_v2 PASS, gemm_fsm PASS, then gemm_ctrl compile stopped the sequence."
+    error_summary: "VCS rejected `buf` as a loop variable at VX_gemm_ctrl.sv:1512."
+    root_cause: "The debug assertion used the SystemVerilog primitive keyword `buf` as an identifier."
+    fix_applied: "Pending identifier-only rename; no architectural change."
+    verification: "Both resource snapshot markers and the FSM full metadata matrix passed before the controller compile error."
+    lesson: "Avoid Verilog primitive keywords in assertion-local loop identifiers."
+  - timestamp: "2026-08-11 02:05"
+    iteration: 4
+    phase: implementation
+    status: pending_verification
+    test: "Resume VCS at gemm_ctrl, then gemm_sync, node QCOL/QROW, and lmem_dma_misal."
+    error_summary: "Iteration-3 controller failure was one reserved-word identifier."
+    root_cause: "Assertion loop variable used `buf`."
+    fix_applied: "Renamed the loop variable and references to `buf_idx` only."
+    verification: "git diff --check passed; VCS pending."
+    lesson: "Keep syntax-only recovery isolated from functional RTL changes."
+  - timestamp: "2026-08-11 02:08"
+    iteration: 4
+    phase: verification
+    status: compile_error
+    test: "gemm_ctrl compile; later suites were not run."
+    error_summary: "VCS found another reserved-word `buf`, this time in tb_VX_gemm_ctrl.sv:1940."
+    root_cause: "The directed controller TB repeated the same invalid loop identifier."
+    fix_applied: "Pending TB-only identifier rename."
+    verification: "Controller RTL parsed past the previous error; testbench compilation stopped before simulation."
+    lesson: "Search both design and directed TB sources when correcting language-keyword identifiers."
+  - timestamp: "2026-08-11 02:10"
+    iteration: 5
+    phase: implementation
+    status: pending_verification
+    test: "Restart gemm_ctrl and continue the remaining VCS suites on pass."
+    error_summary: "Iteration-4 failure was the controller TB's sole reserved-word identifier."
+    root_cause: "The TB used `buf` as a loop variable."
+    fix_applied: "Renamed it to `buf_idx` and confirmed no whole-word `buf` remains in the TB."
+    verification: "git diff --check passed; VCS pending."
+    lesson: "Perform a complete-file keyword audit after a compiler identifies one occurrence."
+  - timestamp: "2026-08-11 02:13"
+    iteration: 5
+    phase: verification
+    status: compile_error
+    test: "gemm_ctrl compile; later suites were not run."
+    error_summary: "VCS rejected variable-index references to the gemm_sync interface array in consume folding and assertions."
+    root_cause: "This compiler permits only constant indices when selecting interface-array instances."
+    fix_applied: "Pending constant-index expansion for sync nodes 1, 2, and 3 without changing consume semantics."
+    verification: "Compile stopped before controller simulation; earlier unit/FSM PASS remains valid."
+    lesson: "Use constant interface-array indices in synthesizable/controller code for VCS compatibility."
+  - timestamp: "2026-08-11 02:16"
+    iteration: 6
+    phase: implementation
+    status: pending_verification
+    test: "Restart gemm_ctrl and continue all remaining VCS suites."
+    error_summary: "Iteration-5 failure was variable interface-array indexing unsupported by VCS."
+    root_cause: "Runtime loop indices were used to dereference interface instances."
+    fix_applied: "Expanded consume folding, per-node assertions, and collision checks with constant indices 1/2/3."
+    verification: "git diff --check passed; only the genvar-based ready assignment retains symbolic indexing."
+    lesson: "Preserve semantic reduction order while expanding interface access into compiler-portable constant-index code."
+  - timestamp: "2026-08-11 02:24"
+    iteration: 6
+    phase: verification
+    status: pass
+    test: "gemm_ctrl, gemm_sync, gemm_node_improve M4 QCOL/QROW N=K=256 QBLK=32, and lmem_dma_misal via VCS."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "Constant-index controller implementation from iteration 6."
+    verification: "All requested unit suites passed; consume fold/no-alias markers, both QDIR numerical checks (1024 elements each), and LDMA exact-completion markers were present."
+    lesson: "The six-RID consume contract and immutable qparam snapshots are functional in directed unit and node integration tests."
+  - timestamp: "2026-08-11 02:49"
+    iteration: 6
+    phase: blackbox
+    status: pass
+    test: "ci/run_target_gemm.sh xrt-vcs-sim matrix: M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "No additional change."
+    verification: "All four runs exited zero with PASSED; M4 fired 256 input/weight operations, M256 fired 16384 inputs and 512 weights for each QDIR."
+    lesson: "The consume-based reuse protocol preserves end-to-end numerical correctness for shallow and sustained M workloads."
+  - timestamp: "2026-08-11 02:55"
+    iteration: 7
+    phase: fsdb_analysis
+    status: blocked
+    test: "M=4 QCOL/QROW FSDB generated with ci/run_target_gemm.sh fsdb-gemm and analyzed with tools/fsdb_cli against build/sim/xrtsim_vcs/vcs_cosim.fsdb."
+    error_summary: "The last-consumer protocol is correct, but the required Weight-LDMA double-buffer latency improvement is not achieved in steady state."
+    root_cause: "The next weight command is prepare-eligible while its consume dependency is unresolved, but the single-context Weight LDMA remains in S_COPY for the preceding command and prepare_ready is low. When the consume event makes the dependency ready, prepare_valid is withdrawn; after the executor becomes idle the command therefore takes the normal seven-cycle start-to-request path with no prefetched slot data. Overlapping the two commands requires another descriptor/data context or an equivalent architectural change."
+    fix_applied: "None. RTL work and downstream verification stopped under the plan's Hard Rule pending design review."
+    verification: "QCOL and QROW each produced 64 weight consume events with 32 updates per buffer; effective_sync updated in the consume cycle and wreg_busy cleared one cycle later. In the 56-67 us steady-state window Weight prepare_fire was 0/64, consume-to-same-buffer start was 9 cycles for 55 samples, consume-to-first-request was 16 cycles for 55 samples, and 62 normal four-beat bursts retained a 10-cycle inter-burst gap. req_valid/req_ready stall ratio was 0%. The baseline's isolated 19-cycle gap disappeared, but the planned <=1-cycle prepared release path and reduction of the 14-cycle target-free delay were not met."
+    lesson: "A resource-specific dependency can expose the safe overwrite point without improving throughput when the producer engine cannot hold or execute the next prepared context concurrently with the current transfer."
+  - timestamp: "2026-08-11 12:38"
+    iteration: 8
+    phase: specification
+    status: confirmed
+    test: "Pending directed VCS shared-slot/FIFO tests, preserved consume regressions, XRT-VCS matrix, and M=4 QCOL/QROW FSDB analysis."
+    error_summary: "The previous design review assumed a passive prepared context under a single-active controller, which cannot execute command N+1 source reads while command N writes."
+    root_cause: "The required optimization is cross-command source/write execution overlap, not faster S_DONE handoff or descriptor storage alone."
+    fix_applied: "User confirmed a depth-2 Weight command FIFO, independent read/write command pointers, one shared eight-entry response RAM, command-granular in-order read/write issue, and dependency-ready actual issue. The task spec was replaced with this confirmed architecture."
+    verification: "Specification confirmed; RTL implementation pending."
+    lesson: "A shared slot pool plus separate read/write heads provides overlap without duplicating the payload RAM or interleaving source requests across commands."
+  - timestamp: "2026-08-11 13:00"
+    iteration: 8
+    phase: implementation
+    status: pending_verification
+    test: "Requested a new Weight-overlap VCS TB, TMEM wide-read 8-context regression, controller two-inflight coverage, node QCOL/QROW integration, preserved consume suites, XRT-VCS matrix, and FSDB timing checks."
+    error_summary: "No Hard Rule blocker or static source failure."
+    root_cause: "The prior single-command Weight executor could not issue command N+1 source reads while command N drained destination writes."
+    fix_applied: "Added a Weight-only depth-2 command executor with independent read/write heads, one shared eight-entry payload RAM, three-bit global slot tags, ordered actual-register completion tracking, and Weight-only two-inflight controller acceptance. Split four command beats from eight shared slots."
+    verification: "Full-worktree git diff --check passed; module balance and stale single-command Weight metadata searches passed. No simulation was run by the implementation agent."
+    lesson: "The existing controller notify FIFO can preserve architectural order while a Weight-specific executor overlaps source and destination phases underneath it."
+  - timestamp: "2026-08-11 13:08"
+    iteration: 8
+    phase: verification
+    status: sim_fail
+    test: "New hw/unittest/lmem_dma_weight_overlap via tools/verify_rtl.py with VCS; downstream suites were not run after the first production assertion failure."
+    error_summary: "At 465 ns the slot-owner assertion rejected the legal preload of command N+1 slot 4 on command N's final destination-write cycle."
+    root_cause: "The datapath intentionally reads the next command's first READY slot while retiring the current command's final staged beat, but the assertion compared the read owner only against the pre-edge current wr_cmd_ptr."
+    fix_applied: "Pending assertion-only boundary awareness; functional datapath and confirmed overlap architecture remain unchanged."
+    verification: "Compile passed. The TB proved two-command FIFO/full behavior, source order seq0 slots0..3 then seq1 slots4..7, all eight slots occupied, and reverse-tag response acceptance before the assertion fired."
+    lesson: "Boundary-preload assertions must compare the new RAM read against the next writer command when the current destination beat is the command's last write."
+  - timestamp: "2026-08-11 13:10"
+    iteration: 9
+    phase: implementation
+    status: pending_verification
+    test: "Rerun the new Weight-overlap TB, then continue the TMEM switch, controller, preserved GEMM suites, and node QCOL/QROW sequence."
+    error_summary: "Iteration-8 assertion used only the pre-edge writer pointer during legal cross-command RAM preload."
+    root_cause: "On the current command's final destination fire, the response RAM read port intentionally selects the next command's beat zero before wr_cmd_ptr advances at the edge."
+    fix_applied: "Made the assertion transition-aware and added exact expected owner pointer, sequence, and beat checks for initial, intra-command, and command-boundary reads. Functional datapath is unchanged."
+    verification: "git diff --check passed; VCS pending."
+    lesson: "Assertions around pipelined handoff must model the same-cycle next state without weakening steady-state ownership checks."
+  - timestamp: "2026-08-11 13:14"
+    iteration: 9
+    phase: verification
+    status: sim_fail
+    test: "Weight-overlap and TMEM wide-read-switch VCS suites passed; gemm_ctrl stopped the remaining regression sequence."
+    error_summary: "The new controller directed test injected RID_W_CONSUME0 without maintaining a complete invocation-level ARM/SC/ZP accounting context, triggering the production consume-count assertion."
+    root_cause: "Directed mode disables the natural ARM-to-consume model. The isolated artificial Weight consume event therefore exceeded the test's ARM-issued debug count; forcing invocation_active instead exposed the equally incomplete SC/ZP bookkeeping at invocation completion."
+    fix_applied: "Pending testbench-only sequencing repair. Production assertions and overlap datapath remain unchanged."
+    verification: "Weight shared-slot TB passed FIFO/full, slots 0..7, reverse responses, six-command wrap, ordered completion, backpressure, live reset, and a zero-idle-cycle write boundary. TMEM wide-read switch passed the WLOAD8 eight-context case. Downstream GEMM/node suites were not run after the controller failure."
+    lesson: "A directed consume-dependency test must establish the same complete invocation accounting contract enforced in production, or explicitly isolate and reset its synthetic scoreboard state."
+  - timestamp: "2026-08-11 13:22"
+    iteration: 10
+    phase: verification
+    status: pass
+    test: "gemm_ctrl, gemm_unit_v2, gemm_fsm, gemm_sync, lmem_dma_misal, and gemm_node_improve M4 QCOL/QROW N=K=256 QBLK=32 through VCS."
+    error_summary: "None after testbench-only invocation-accounting repair."
+    root_cause: "The iteration-9 controller failure was incomplete synthetic ARM/W/SC/Z bookkeeping, not production overlap RTL."
+    fix_applied: "Held a legal ARM inflight context, supplied matching W/SC/Z consume events, and corrected test-only VCS top/force timing. Production RTL and assertions were unchanged."
+    verification: "All unit and node suites passed. Controller covered two Weight issues before completion, consume blocking, same-cycle pop/push, and ordered notifications 11/18/23. QCOL/QROW each matched 1024 output elements."
+    lesson: "The shared-slot executor is functionally correct in directed isolation and preserves numerical behavior, but end-to-end FSDB is still required to prove that the scheduler supplies commands early enough."
+  - timestamp: "2026-08-11 13:30"
+    iteration: 10
+    phase: blackbox
+    status: pass
+    test: "ci/run_target_gemm.sh XRT-VCS matrix M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "No additional change."
+    verification: "All four tests exited zero with PASSED. M4 reported 256 Weight fires and zero stalls; M256 reported 512 Weight fires and zero stalls for both QDIRs."
+    lesson: "The overlap executor preserves full XRT-VCS numerical correctness and external Weight-bus backpressure behavior."
+  - timestamp: "2026-08-11 13:41"
+    iteration: 10
+    phase: fsdb_analysis
+    status: blocked
+    test: "M=4 QCOL/QROW GEMM-only FSDB generated with ci/run_target_gemm.sh and analyzed with tools/fsdb_cli."
+    error_summary: "The confirmed implementation does not achieve steady-state cross-command Weight overlap: only 1 of 63 command boundaries overlaps command N+1 source reads with command N destination writes, and the median destination burst gap remains 9 cycles."
+    root_cause: "The controller presents the unresolved Weight head as prepare for 788 cycles, but VX_lmem_dma_weight_overlap advertises prepare_ready=0 and accepts no prepared command. In steady state the real command enqueue occurs exactly in the consume-completion cycle; source reads begin one cycle later, after the prior command has usually drained. Thus the depth-2 FIFO and eight shared slots are populated early only for the initial dependency-free pair."
+    fix_applied: "None. Work stopped under the plan Hard Rule because fixing this requires changing the command-lifetime concept: accept the predependency Weight descriptor/source phase while keeping destination writes and architectural completion release-gated."
+    verification: "Both QDIRs had 64 ordered four-beat commands, alternating WREG0/WREG1, no same-buffer early write, and 0% req_valid&&!req_ready stall. max command FIFO occupancy was 2, max sampled slot occupancy 7, source boundary gap median 9 cycles, destination boundary gap median 9 cycles (only 1/63 <=1), and consume-to-first-write latency median 7 cycles."
+    lesson: "A two-head executor cannot overlap steady-state commands if the scheduler withholds the next descriptor until the overwrite dependency resolves. The existing prepare channel must feed the Weight command/source context, with only the writer side gated by release."
+  - timestamp: "2026-08-11 15:51"
+    iteration: 0
+    loop: writer_side_fence
+    phase: specification
+    status: confirmed
+    test: "Directed VCS source-before-consume/writer-fence tests, preserved overlap and consume regressions, XRT-VCS M={4,256} x QDIR={0,1}, and M=4 QCOL/QROW FSDB."
+    error_summary: "The depth-2/eight-slot executor exists, but W_CONSUME in child issue eligibility prevents steady-state source prefetch."
+    root_cause: "Source readiness and destination overwrite safety are represented by one Weight command wait set, so the stricter consume lifetime blocks the pure source-read phase."
+    fix_applied: "User confirmed split eligibility: keep tile-ready for child issue, carry exact W_CONSUME RID/target as per-command writer metadata, gate destination write with consume release plus wreg_busy, and retain actual-write completion."
+    verification: "Specification and source plan confirmed; writer-fence RTL implementation pending."
+    lesson: "For a pure-input DMA, execute the bounded read phase early but preserve future-consumer safety at the irreversible destination commit point."
+  - timestamp: "2026-08-11 16:10"
+    iteration: 1
+    loop: writer_side_fence
+    phase: implementation
+    status: pending_verification
+    test: "VCS Weight-overlap, GEMM FSM/controller, preserved consume/DMA regressions, and M4 QCOL/QROW node integration."
+    error_summary: "No Hard Rule blocker; full node hierarchy remains to be compiled by the configured VCS verifier."
+    root_cause: "W_CONSUME was encoded as a normal Weight issue wait, preventing the existing depth-2/eight-slot executor from receiving source-ready commands before overwrite release."
+    fix_applied: "Added per-command writer_wait metadata, moved Current/Next Weight consume targets out of issue waits, exported same-cycle effective W_CONSUME0/1 levels, stored writer_wait in each executor FIFO entry, and gated only destination request validity on the entry-specific target compare."
+    verification: "git diff --check and targeted Verilator lint for Weight overlap, GEMM FSM, and controller passed. No VCS was run by the implementation subagent."
+    lesson: "Architectural consume levels plus per-entry RID/target avoid lost consume-before-accept events and controller-head/executor-head skew without introducing out-of-order completion."
+  - timestamp: "2026-08-11 16:16"
+    iteration: 1
+    loop: writer_side_fence
+    phase: verification
+    status: pass
+    test: "VCS: lmem_dma_weight_overlap, gemm_fsm, gemm_ctrl, tmem_wide_read_switch, gemm_unit_v2, gemm_sync, lmem_dma_misal, and gemm_node_improve M4 QCOL/QROW."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "Writer-side fence implementation from iteration 1."
+    verification: "All nine configured VCS runs passed. Directed Weight coverage proved source-before-consume, stale/wrong release rejection, consume-before-accept retention, two inflight commands/eight slots, exact release, ordered completion, zero-gap released boundary, and reset cleanup. QCOL/QROW node runs each matched 1024 elements."
+    lesson: "Moving W_CONSUME from issue eligibility to an entry-specific writer compare enables bounded source streaming without weakening destination ownership or existing consume/qparam behavior."
+  - timestamp: "2026-08-11 16:25"
+    iteration: 1
+    loop: writer_side_fence
+    phase: blackbox
+    status: pass
+    test: "ci/run_target_gemm.sh XRT-VCS matrix M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "No additional change."
+    verification: "All four runs exited zero with PASSED. M4 input/Weight fire-stall were 256/0 and 256/0; M256 were 16384/0 and 512/0 for both QDIRs. No VCS fatal, functional assertion, numerical failure, or timeout."
+    lesson: "The writer-side consume fence preserves shallow and sustained XRT-VCS numerical behavior without adding external Weight-bus stalls."
+  - timestamp: "2026-08-11 16:40"
+    iteration: 1
+    loop: writer_side_fence
+    phase: fsdb_analysis
+    status: blocked
+    test: "M=4 QCOL/QROW GEMM-only FSDB generation; QCOL waveform analyzed with tools/fsdb_cli before Hard Rule stop."
+    error_summary: "Correctness and consume-to-write latency pass, but the confirmed steady-state source-streaming/source-write-overlap performance target fails."
+    root_cause: "Moving W_CONSUME to the writer removes post-consume source latency, but Weight source bursts are still scheduled with a median nine-cycle command-boundary gap and almost never coincide with the preceding destination burst. The existing child/FSM command production cadence therefore does not saturate the two-command/eight-slot source executor."
+    fix_applied: "None. RTL changes and QROW waveform analysis stopped immediately under the Hard Rule."
+    verification: "QCOL: 64 commands, 256 source responses/writes, 62/62 fenced commands source-prefetched before consume, zero early/mismatched/busy writes, exact W0/W1 alternation, consume-to-first-write exactly one cycle, max FIFO/slot occupancy 2/8. However source-over-write overlap was only 2/63, source gap median 9 cycles, and destination gap median 9 cycles. QROW simulation passed numerically and FSDB was preserved but not analyzed after the QCOL failure."
+    lesson: "A writer-side fence can remove the critical post-consume read latency without making the source engine continuously busy; executor capacity and early acceptance are insufficient when upstream command production remains bursty."
+  - timestamp: "2026-08-11 17:25"
+    iteration: 0
+    loop: four_bank_versioning
+    phase: specification
+    status: confirmed
+    test: "Directed VCS four-bank/same-cycle/independent-pointer/five-wait tests, preserved overlap regressions, XRT-VCS M={4,256} x QDIR={0,1}, and M=4 QCOL/QROW FSDB."
+    error_summary: "Two Weight banks cannot hide the fixed input-admission-to-GEMM-tree final-read lifetime; final consume also leaves a conservative one-cycle ready bubble."
+    root_cause: "Weight, Scale, and ZP share one mxu_buf pointer despite different lifetimes, and Weight reuses a bank before the pre-tree consumer pipeline has released it."
+    fix_applied: "User confirmed four circular Weight banks, two independent Scale/ZP snapshot banks, separate W/S/Z pointers and ARM metadata, five ARM wait dependencies, and exact same-cycle final-consume overwrite."
+    verification: "Specification and source-plan contracts updated; RTL implementation pending."
+    lesson: "Version count should follow resource lifetime: snapshot operands need only two staging banks, while a large non-snapshotted Weight resource can use deeper versioning to hide consumer latency."
+  - timestamp: "2026-08-11 21:44"
+    iteration: 1
+    loop: four_bank_versioning
+    phase: implementation
+    status: pending_verification
+    test: "Directed VCS Weight overlap, GEMM unit/FSM/controller/sync, DMA regressions, and M4 QCOL/QROW node integration before the XRT-VCS matrix."
+    error_summary: "No Hard Rule blocker; configured VCS compile and runtime verification remain pending."
+    root_cause: "Two Weight versions are reused sooner than the input-to-GEMM-tree consumer latency, while the final consume remained conservatively busy for one additional cycle."
+    fix_applied: "Expanded Weight storage and selectors to four banks, split W/S/Z/G allocation pointers, appended W2/W3 load and consume RIDs without renumbering existing RIDs, expanded ARM waits to five independent entries, propagated four writer consume levels, and added the exact final-consume/no-earlier-consumer same-cycle overwrite gate."
+    verification: "git diff --check passed. The selected improve WLOAD8 config leaves WLOAD_AT_ONCE disabled, so the direct exact same-cycle path is active. Directed TB coverage was added for W2/S0/Z1, W3/S1/Z0, W0-W3 writer fences, five ARM waits, and final-consume/write coincidence. No VCS was run by the implementation subagent."
+    lesson: "Deeper Weight versioning removes the long reuse fence, while a local final-reader lookahead removes the remaining one-cycle busy bubble without weakening the per-command writer RID/target fence."
+  - timestamp: "2026-08-11 21:52"
+    iteration: 1
+    loop: four_bank_versioning
+    phase: verification
+    status: compile_error
+    test: "VCS lmem_dma_weight_overlap, gemm_unit_v2, gemm_fsm, then gemm_ctrl; stopped before later suites at the first failure."
+    error_summary: "gemm_ctrl TB failed VCS elaboration because two stale hierarchical references still use removed `dbg_arm_issued_q[0]`."
+    root_cause: "The controller scoreboard was split into independent `dbg_w_arm_issued_q`, `dbg_sc_arm_issued_q`, and `dbg_zp_arm_issued_q`, but the pre-existing directed Weight sequence retained the old combined debug name."
+    fix_applied: "Pending TB-only identifier correction to `dbg_w_arm_issued_q[0]`; also statically identified the gemm_sync 21-register expectation and legacy VX_gemm_unit address compatibility for cleanup before iteration 2."
+    verification: "Weight overlap, gemm_unit_v2, and gemm_fsm passed. They proved W0-W3 destinations/RIDs, source-before-consume fences, exact final-consume same-cycle req_ready plus actual write, independent W2/S0/Z1 and W3/S1/Z0 tuples, and five ARM waits with no RID_SZ ARM dependency. gemm_ctrl did not simulate; later suites were not run."
+    lesson: "When one architectural scoreboard is split by resource, all directed hierarchical probes must migrate to the resource-specific name before VCS elaboration."
+  - timestamp: "2026-08-11 21:50"
+    iteration: 2
+    loop: four_bank_versioning
+    phase: implementation
+    status: pending_verification
+    test: "Restart VCS at gemm_ctrl, then gemm_sync and the remaining unrun DMA/node/XRT suites; preserve the iteration-1 PASS results for lmem_dma_weight_overlap, gemm_unit_v2, and gemm_fsm."
+    error_summary: "No production four-bank design failure. Iteration-1 stopped on a stale controller TB hierarchy name; static audit also found a 21-register sync-TB expectation and an unintended legacy VX_gemm_unit address-protocol widening."
+    root_cause: "Resource-specific controller accounting renamed the Weight issued counter, while compatibility-only tests and the legacy non-improve unit were mechanically widened beyond the confirmed v2-only four-bank scope."
+    fix_applied: "Updated the controller TB to dbg_w_arm_issued_q, expanded sync-TB storage/coverage through RIDs 21..24 with an explicit no-alias marker, and restored legacy VX_gemm_unit to one-bit wreg plus addr[0]/addr[1] decoding while retaining the four-bank v2 path."
+    verification: "git diff --check and stale-name/21-RID/legacy-address targeted searches passed. Direct configured Verilator lint passed for gemm_ctrl and gemm_sync. No VCS or simulation was run by the implementation subagent."
+    lesson: "Keep four-bank selector propagation scoped to gemm_unit_v2/improve and preserve the legacy node/unit bus protocol unless that architecture is explicitly migrated."
+  - timestamp: "2026-08-11 21:59"
+    iteration: 2
+    loop: four_bank_versioning
+    phase: verification
+    status: pass
+    test: "VCS: gemm_ctrl, gemm_sync, legacy gemm_unit, tmem_wide_read_switch, lmem_dma_misal, and gemm_node_improve M4 QCOL/QROW; iteration-1 Weight overlap, gemm_unit_v2, and gemm_fsm PASSes preserved."
+    error_summary: "None after compatibility-only iteration-2 fixes."
+    root_cause: "Not applicable."
+    fix_applied: "Controller TB hierarchy, 25-register sync TB, and legacy one-bit Weight address compatibility fixes from iteration 2."
+    verification: "All directed and preserved VCS tests passed. Coverage includes four Weight banks/RIDs, exact final-consume same-cycle write, independent W2/S0/Z1 and W3/S1/Z0 tuples, five ARM waits, 25 sync registers without aliasing, two-command/eight-slot overlap, legacy GEMM compatibility, DMA exact completion, and QCOL/QROW numerical comparison of 1024 outputs each."
+    lesson: "The four-bank resource split composes with the existing writer-side source/commit pipeline and preserves both improve and legacy functional paths under configured VCS."
+  - timestamp: "2026-08-11 22:06"
+    iteration: 2
+    loop: four_bank_versioning
+    phase: blackbox
+    status: pass
+    test: "ci/run_target_gemm.sh XRT-VCS matrix M={4,256}, QDIR={QCOL,QROW}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: "No additional change."
+    verification: "All four configured XRT-VCS runs exited zero with PASSED. M4 input/Weight fire-stall were 256/0 and 256/0; M256 were 16384/0 and 512/0 for both quantization directions. No numerical failure, fatal, assertion, or timeout occurred."
+    lesson: "Four-bank Weight versioning and independent qparam pointers preserve both shallow-latency and sustained-throughput target behavior before waveform performance qualification."
+  - timestamp: "2026-08-11 22:16"
+    iteration: 2
+    loop: four_bank_versioning
+    phase: fsdb_analysis
+    status: pass
+    test: "M=4 QCOL/QROW GEMM-only FSDB generated with ci/run_target_gemm.sh and analyzed with tools/fsdb_cli at cycle granularity."
+    error_summary: "None. Correctness, exact same-cycle overwrite, four-bank circulation, and bounded streaming criteria all passed."
+    root_cause: "The previous two-bank gap came from reusing a Weight bank before the fixed input-to-final-tree-consumer latency elapsed. Four circular banks extend reuse distance, while the exact final-consume gate removes the conservative one-cycle ready bubble."
+    fix_applied: "Four Weight banks with independent W/S/Z allocation, five ARM waits, W2/W3 LOAD and consume RIDs, four writer consume levels, and exact final-consume same-cycle overwrite."
+    verification: "Both QDIRs had 64 commands, 256 source requests/writes, and 64 W/SC/Z consume events. W0..W3 each received 16 commands in circular order; 62/63 next-command source bursts overlapped the preceding destination write; max FIFO/slot occupancy was 2/8; writer-ready boundary gaps were 0,0,1,1 cycles; 59/60 reuse writes with prefetched payload committed in the consume cycle; early writes and req_valid&&!req_ready cycles were zero."
+    lesson: "Finite four-bank versioning hides the fixed consumer pipeline latency during the initial/available-bank window; once all banks are live, remaining gaps correctly reflect the real same-bank consumer rate rather than DMA startup or a conservative ready bubble."
+  - timestamp: "2026-08-11 23:33"
+    iteration: 0
+    loop: input_ldma_overlap
+    phase: specification
+    status: confirmed
+    test: "Directed VCS Input overlap/handshake/accumulator-boundary tests, preserved Weight/resource regressions, XRT-VCS M={4,256} x QDIR={0,1}, and M=4 QCOL/QROW zero-gap FSDB qualification."
+    error_summary: "Four-bank Weight versioning is correct, but M=4 Input commands remain serialized and four-beat bursts retain a median nine-cycle idle gap."
+    root_cause: "Input ARM W/S/Z/prior-G/ACC issue waits, a single-active controller child, one DMA descriptor, and one node packet context prevent source reads for later Input commands from overlapping the current command."
+    fix_applied: "User confirmed a depth-four Input command/context FIFO, one shared eight-slot response RAM, tile-ready-only source issue, exact per-command W/S/Z/ACC admission waits, removal of prior_g_wait from the next Input path, valid-ready GEMM admission, and writer-side ordered completion."
+    verification: "Specification and source plan confirmed; RTL implementation pending."
+    lesson: "Pure Input data may be prefetched early, but version and accumulator safety must move to the irreversible GEMM admission boundary rather than be deleted."
+  - timestamp: "2026-08-11 23:57"
+    iteration: 1
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "A focused Input-overlap VCS test must cover depth-four/eight-slot operation, source-before-admission, wrong and stale fences, stalled stability, ordered 4x4 bursts, variable lengths, backpressure, response reordering, wrap, reset, and both completion modes before GEMM unit/FSM/controller/node regressions."
+    error_summary: "No Hard Rule blocker was found. Production RTL and a focused executor testbench scaffold are implemented; VCS and functional simulation remain pending."
+    root_cause: "The former Input path combined source issue, operand readiness, one DMA descriptor, one packet context, and architectural completion into one serialized command lifetime."
+    fix_applied: "Moved Input source issue to exact RID_TILE plus executor capacity, added four per-command W/SC/Z/ACC admission waits, a depth-four descriptor/context flow, one shared eight-slot tagged response RAM, independent ordered source/admission/completion heads, valid-ready GEMM admission, registered Scale/ZP completion fencing, and final-admission or tagged-writeback completion."
+    verification: "Verilator static lint completed without errors for gemm_unit_v2, gemm_node_improve, and the focused lmem_dma_input_overlap target. Static searches and git diff --check passed. Per task restriction, no VCS or simulation was run."
+    lesson: "Input payload storage and command context must advance independently, while exact operand versions and accumulator ownership are enforced only at the irreversible writer-head admission boundary."
+  - timestamp: "2026-08-12 00:00"
+    iteration: 1
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "Focused hw/unittest/lmem_dma_input_overlap via tools/verify_rtl.py with VCS; downstream tests were not run after the first failure."
+    error_summary: "At 125 ns the new TB reported Input depth-four/eight-slot preload coverage with observed occupancy seven after eight source handshakes."
+    root_cause: "The TB woke in the active region when its blocking source counter reached eight and sampled DUT slot_occupancy_r before the eighth allocation's nonblocking update committed. The trace already showed four descriptors and ordered slots 0..7; this is a TB observation race, not a production RTL failure."
+    fix_applied: "Pending TB-only sampling correction; production RTL and the confirmed architecture remain unchanged."
+    verification: "VCS compile passed. Four enqueue events and eight ordered source requests were observed before the race. Per Hard Rule the sequence stopped and no downstream tests ran."
+    lesson: "Directed occupancy checks must sample after DUT NBA updates rather than trigger directly from a same-edge blocking monitor counter."
+  - timestamp: "2026-08-12 00:01"
+    iteration: 2
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun the focused hw/unittest/lmem_dma_input_overlap VCS test through tools/verify_rtl.py before any downstream regression."
+    error_summary: "Iteration 1 failed only because the TB sampled DUT occupancy in the active region before the eighth allocation NBA committed."
+    root_cause: "The blocking source_count increment released wait(source_count == 8) on the same posedge as the DUT nonblocking slot_occupancy_r update, so the immediate hierarchical check could observe seven after eight valid handshakes."
+    fix_applied: "Added a one-time-unit post-wait sampling delay before the depth-four/eight-slot preload assertion. Production RTL, command sequencing, stimulus, and the confirmed architecture are unchanged."
+    verification: "Static scheduling review confirms the check now occurs after NBA commit. git diff --check and targeted source review passed; VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "A TB counter updated with blocking assignment must not be used to immediately sample same-edge DUT state updated through nonblocking assignments."
+  - timestamp: "2026-08-12 00:04"
+    iteration: 2
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "Focused Input overlap PASS, gemm_unit_v2 PASS, then gemm_fsm VCS stopped the sequence."
+    error_summary: "At 6515 ns the FSM TB reported ARM #14 independent W/SC/Z dependencies are incoherent."
+    root_cause: "The legacy TB still expected W/SC/Z/prior-G/ACC in Input issue waits[0:4]. The confirmed RTL intentionally emits only RID_TILE as an issue wait and stores W/SC/Z/ACC in input_admit_waits[0:3], with no Input prior-G wait."
+    fix_applied: "Pending TB-only scoreboard migration to the split source-issue/admission contract. Production RTL assertions already enforce the new metadata."
+    verification: "Focused depth-four/eight-slot executor and gemm_unit_v2 passed before the stale gemm_fsm expectation. No controller or downstream test ran after the failure."
+    lesson: "When dependencies move from command issue to an irreversible destination fence, directed scoreboards must validate both namespaces rather than treating the old issue array as authoritative."
+  - timestamp: "2026-08-12 00:06"
+    iteration: 3
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun gemm_fsm with VCS through tools/verify_rtl.py, then continue controller and node regressions only after it passes."
+    error_summary: "Iteration 2 reached gemm_fsm and failed because the TB scoreboard still decoded the retired five-slot Input issue-wait layout."
+    root_cause: "The command log omitted input_admit_waits and therefore expected W/SC/Z, prior-G, and ACC dependencies in waits[0:4], contradicting the confirmed tile-only source and exact four-fence admission contract."
+    fix_applied: "Recorded input_admit_waits in the TB command log; changed Input ARM checks to require exact RID_TILE only in waits[0], invalid waits[1:4], exact W/SC/Z/ACC targets in input_admit_waits[0:3], and no Input prior-G marker. Existing next-tile DMA and ACC2LMEM prior-G checks remain intact. Production RTL is unchanged."
+    verification: "Production assertions at VX_gemm_fsm.sv lines 2466-2497 and the updated scoreboard were statically compared. git diff --check passed; VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Source readiness and irreversible destination admission are separate metadata namespaces and must be logged and checked independently."
+  - timestamp: "2026-08-12 00:07"
+    iteration: 3
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "gemm_fsm PASS, then gemm_ctrl VCS stopped the sequence."
+    error_summary: "At 915 ns the production controller assertion reported that the directed Input source issue was not tile-ready-only."
+    root_cause: "The legacy controller TB built an Input command with an arbitrary general dependency and no admission metadata to test passive prepare. The confirmed model requires RID_TILE-only issue waits and W/S/Z/ACC input_admit_waits, so the production assertion correctly rejected the stale stimulus."
+    fix_applied: "Pending TB-only replacement of the old Input prepare case with source-tile blocking and admission-fence nonblocking coverage."
+    verification: "Focused Input overlap, gemm_unit_v2, and gemm_fsm pass. The sequence stopped before gemm_sync or integration tests."
+    lesson: "Input prepare tests must distinguish source producer readiness from destination admission readiness after the lifetime split."
+  - timestamp: "2026-08-12 00:14"
+    iteration: 4
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun gemm_ctrl with VCS through tools/verify_rtl.py, then continue remaining sync/node regressions only after it passes."
+    error_summary: "Iteration 3 reached gemm_ctrl and failed because its directed Input stimulus still encoded an arbitrary general issue wait and passive prepare without admission metadata."
+    root_cause: "The controller TB had not migrated Input from the former unresolved-general-wait model to exact RID_TILE source readiness plus four downstream W/SC/Z/ACC admission fences."
+    fix_applied: "Added a legal directed Input command constructor; replaced Input passive-prepare coverage with tile-blocked source issue followed by issue while all admission targets remain blocked; checked intact downstream metadata; added depth-four Input inflight, full-boundary same-cycle pop/push, and ordered notification coverage. General five-wait and RID_SZ bypass tests now use a non-Input child, and ACC tests verify that ACC admission targets do not gate Input source issue. Weight and all other prepare matrix cases remain unchanged. Production RTL is unchanged."
+    verification: "The controller production assertions and all remaining OP_I_LDMA_ARM construction sites were statically audited. git diff --check passed; VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Controller verification must treat Input issue capacity/order and downstream admission readiness as independent contracts, including at the depth-four rollover boundary."
+  - timestamp: "2026-08-12 00:37"
+    iteration: 4
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "gemm_ctrl, gemm_sync, Weight overlap, generic LDMA, and TMEM wide-read PASS; gemm_node_improve QCOL M4 timed out before QROW."
+    error_summary: "The QCOL node simulation consumed the 1200-second timeout while simulation time stopped after the 1115 ns job-done poll, with no fatal, completion, or numerical output."
+    root_cause: "Pending implementation diagnosis. simv remained runnable at 99.9% CPU with CPU time tracking wall time, suggesting an integration combinational-convergence loop or severe zero-time livelock in the new Input ready/context path rather than an idle process."
+    fix_applied: "Pending. No files were edited by verification."
+    verification: "Controller proved five Input issues, depth-four occupancy, same-cycle pop/push, and ordered notifications. All lower-level executor/resource regressions passed. QROW was not run after the QCOL timeout."
+    lesson: "Passing isolated handshake and executor tests does not exclude a hierarchy-level combinational loop introduced by ready/idle/context wiring."
+  - timestamp: "2026-08-12 00:52"
+    iteration: 5
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun gemm_node_improve QCOL M4 first with VCS, then QROW and the preserved Input/Weight/controller regressions only after QCOL advances and completes."
+    error_summary: "Static Verilator diagnostics identified hierarchy-level admission feedback after the QCOL timeout; VCS was not run by the implementation agent."
+    root_cause: "Same-cycle feedback edges closed the loop: current final Input admission bypassed its registered context into controller completion/effective_sync, and a newly admitted beat immediately marked its Weight/ACC resources busy, which could block the final Weight write or ACC output read whose effective completion was enabling that same admission."
+    fix_applied: "Normal Input completion now retires from the registered ingress_complete bit on the cycle after final actual admission. A just-admitted Input beat no longer contributes to combinational Weight/ACC busy; the registered ctrl_pipe consumer fences begin on the next cycle, allowing safe final-release/new-consumer same-edge handoffs. Added assertions/comments and updated the node/TMEM review. Resource ownership, exact W/S/Z/ACC admission targets, ordered contexts, and tagged writeback completion are unchanged."
+    verification: "The first full configured Verilator lint reproduced the input_admission_ready UNOPTFLAT path and completed without errors. Source-path review isolated and removed both feedback edges. A post-fix lint progressed through parsing/elaboration and all ordinary warnings without an error, but was stopped before final UNOPTFLAT reporting at the orchestration deadline; git diff --check and targeted static searches passed. No VCS/simulation was run."
+    lesson: "Same-cycle resource release is safe only when the new consumer cannot observe the resource until a registered later stage; ingress must not be fed back as current-cycle busy to the completion event that admits it."
+  - timestamp: "2026-08-12 00:55"
+    iteration: 5
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "QCOL node PASS, QROW node PASS, focused Input overlap PASS, then gemm_unit_v2 stopped the sequence."
+    error_summary: "The GEMM-unit TB expected incoming Input to assert accumulator-group busy combinationally on the admission edge and immediately block a same-group output request."
+    root_cause: "The intentional SCC cut now starts Weight/ACC busy protection from registered ctrl_pipe[0]. Same-edge output handoff before the new packet enters the compute pipeline is legal, while next-cycle and later same-group access must remain blocked. The TB still encoded the former combinational incoming-busy rule."
+    fix_applied: "Pending TB-only timing migration to allow same-edge handoff and verify registered next-cycle hazard protection."
+    verification: "The prior QCOL integration hang is removed: QCOL completed in about 38 seconds and QROW in about 27 seconds with numerical PASS. Focused depth-four/eight-slot Input overlap also passed. FSM/controller/sync/Weight reruns did not run after the unit failure."
+    lesson: "A registered hazard boundary must be tested at the first cycle where the resource is actually consumed, while distinguishing a safe admission-edge handoff from a true pipeline conflict."
+  - timestamp: "2026-08-12 00:58"
+    iteration: 6
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun gemm_unit_v2 with VCS first, then continue FSM/controller/sync/Weight and node regressions only after it passes."
+    error_summary: "Iteration-5 production behavior was correct, but two group-arbitration TB checks still required combinational ACC busy on the Input admission edge."
+    root_cause: "The stale checks conflated Input admission with registered ACC use. The admitted packet has no physical ACC access on that edge; ownership begins at ctrl_pipe[0] immediately after the edge and remains through final writeback."
+    fix_applied: "Updated only gemm_unit_v2 TB expectations. Same-group coverage now accepts a real admission-edge output handshake, then uses a separate packet to prove blocking from ctrl_pipe[0] through every registered stage and release after pipeline drain. Different-group phase-zero coverage now expects no incoming combinational busy and explicitly checks registered ctrl_pipe[0] ownership on the following cycle."
+    verification: "Production pipeline timing and physical ACC read/write scheduling were statically audited; no next-cycle hazard gap was found. Targeted source review, STATUS YAML parsing, and git diff --check passed. VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Test admission-edge handoff and registered resource ownership as separate phases so response occupancy cannot mask the actual group-conflict fence."
+  - timestamp: "2026-08-12 00:59"
+    iteration: 6
+    loop: input_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "gemm_unit_v2 VCS; downstream preserved regressions were not run after the final accounting failure."
+    error_summary: "All migrated group-arbitration and resource markers passed, but final last_write accounting expected 36 and observed 40."
+    root_cause: "The updated same-group test intentionally admits a handoff packet and a registered-fence packet for each of four group/bank combinations, adding exactly four writes that were not added to the TB constant."
+    fix_applied: "Pending TB-only expected-count update from 36 to 40. Production RTL behavior passed the directed timing checks."
+    verification: "Group arbitration passed all 15 same-group stages and six different-group phases; qparam ports, both snapshot directions, independent resource indices, and Weight behavior also passed."
+    lesson: "When a timing test adds accepted packets, global event-accounting constants must be updated by the exact new stimulus cardinality."
+  - timestamp: "2026-08-12 01:02"
+    iteration: 7
+    loop: input_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun gemm_unit_v2 with VCS first, then continue FSM/controller/sync/Weight and node regressions after it passes."
+    error_summary: "No design blocker; iteration 6 passed all directed behavior and failed only the stale final last_write bookkeeping constant."
+    root_cause: "ARBITRATION_COMPUTE_PACKETS still counted one packet for each of four same-group cases. The migrated test accepts two packets per case, while the six different-group phase packets are unchanged, so the exact arbitration total is 4*2+6=14 rather than 10."
+    fix_applied: "Updated only the gemm_unit_v2 TB arbitration packet expression to (2 groups * 2 bank offsets * 2 same-group packets) + (2 groups * 3 different-group phases), raising EXPECTED_LAST_WRITES from 36 to the observed and source-derived 40. Production RTL and timing semantics are unchanged."
+    verification: "Targeted static searches confirmed the four same-group invocations, two accepted packets per invocation, and six different-group invocations. git diff --check and STATUS YAML parsing passed. VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Derive global pulse totals from directed-loop cardinality so a deliberate stimulus expansion cannot silently leave a magic count stale."
+  - timestamp: "2026-08-12 01:05"
+    iteration: 7
+    loop: input_ldma_overlap
+    phase: verification
+    status: pass
+    test: "VCS gemm_unit_v2, gemm_fsm, gemm_ctrl, gemm_sync, Input overlap, Weight overlap, generic LDMA, and TMEM wide-read regressions; preserved iteration-5 QCOL/QROW M4 numerical passes."
+    error_summary: "No production/core failure. The corrected final accounting now matches all 40 accepted compute packets."
+    root_cause: "The only iteration-6 failure was stale testbench cardinality after adding the admission-edge handoff packet to each of four same-group cases."
+    fix_applied: "No additional fix during verification. The iteration-7 TB-only expression derived the total from loop cardinality; production RTL remained unchanged."
+    verification: "All eight directed VCS suites passed. Markers include 15-stage same-group fencing, six different-group phases, exact Input source/admission split, depth-four ordered Input inflight with same-cycle pop/push, Input and Weight shared-slot executors, generic DMA exact completion, and TMEM 8-context coverage."
+    lesson: "The Input lifetime split is now covered independently at unit, scheduler, executor, and node integration levels before blackbox timing analysis."
+  - timestamp: "2026-08-12 01:14"
+    iteration: 1
+    loop: input_ldma_overlap_blackbox
+    phase: blackbox
+    status: pass
+    test: "XRT-VCS target GEMM M={4,256} x QDIR={0,1}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "No numerical, RTL assertion, runtime, or timeout failure in all four cases."
+    root_cause: "Not applicable; the functional blackbox matrix is green after the Input source/admission lifetime split."
+    fix_applied: "No changes during blackbox verification."
+    verification: "All manifests report exit_status=0 and PASSED. M=4 Input/Weight fire-stall is 256/0 and 256/0; M=256 is 16384/0 and 512/0 for both quantization directions."
+    lesson: "Functional no-stall counters validate end-to-end progress but do not prove the strict zero-idle-cycle burst-boundary target, which requires FSDB event analysis."
+  - timestamp: "2026-08-12 01:35"
+    iteration: 1
+    loop: input_ldma_overlap_fsdb
+    phase: waveform_verification
+    status: blocked
+    test: "M=4 QCOL and QROW GEMM-only FSDB with tools/fsdb_cli, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "Correctness and conditional Input streaming pass, but the user-level zero-idle-cycle target fails: only 2 of 63 Input burst boundaries have zero gap; median is 5 cycles and maximum is 32."
+    root_cause: "The Input executor is not starved: whenever admission targets are ready it supplies valid continuously. Most nonzero boundaries wait for registered Scale/ZP load completion, with two also waiting for Weight and one tile boundary additionally waiting for context/ACC."
+    fix_applied: "No additional RTL change was made after the performance failure, per Hard Rule. Results and artifacts were recorded for design review."
+    verification: "Both directions numerical PASS with 64 ordered commands and 256 ordered fires, max executor/context/slot occupancy 4/4/8, zero early admissions, and exact completion counts. CMD1-4 fire at cycles 13-16, 17-20, 26-29, and 37-40, giving gaps 0, 5, and 7."
+    lesson: "Input source overlap removes command-start starvation but cannot create fully back-to-back admission while Scale/ZP producer completion remains later than the next payload arrival."
+  - timestamp: "2026-08-12 11:38"
+    iteration: 0
+    loop: qparam_ldma_overlap
+    phase: specification
+    status: confirmed
+    test: "Scale and Zero-point depth-four/eight-slot ordered overlap executors, directed VCS coverage, existing regressions, XRT-VCS matrix, and M=4 QCOL/QROW FSDB zero-gap analysis."
+    error_summary: "The prior blocked state is resumed after user confirmation of a Scale/ZP source-read versus destination-write lifetime split."
+    root_cause: "Each one-beat qparam command still uses a single-command executor and repeats a nine-cycle read/response/write/done/S_DONE/S_IDLE lifecycle; Zero-point usually trails Scale by one TMEM arbitration cycle."
+    fix_applied: "Confirmed resource-local depth-four descriptor FIFOs and eight-slot rings. Source issue keeps tile readiness but drops consume waits; exact SC/ZP consume targets become per-command writer fences; completion remains final actual register write and registered LOAD completion preserves no same-cycle snapshot."
+    verification: "Pending RTL implementation iteration 1. The source plan, specification, and design review were updated before code changes."
+    lesson: "Qparam source bandwidth is sufficient; the performance loss is descriptor-lifetime serialization, so source execution must overlap while register overwrite remains version-fenced."
+  - timestamp: "2026-08-12 12:03"
+    iteration: 1
+    loop: qparam_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Run the focused Scale/Zero-point overlap VCS test first, then FSM, controller, GEMM-unit, node QCOL/QROW, preserved Input/Weight/generic-DMA/TMEM regressions, and finally the XRT-VCS matrix plus M4 FSDB gap analysis."
+    error_summary: "No Hard Rule blocker. Initial full-hierarchy static lint exposed a material same-cycle qparam ready/completion/scheduler SCC before verification handoff."
+    root_cause: "The legacy single-command Scale/Zero-point lifetime serialized source reads behind destination overwrite. After adding overlap, using final destination write as both same-cycle FIFO capacity and controller completion connected GEMM req_ready back through effective_sync and scheduler issue, reproducing the zero-time-loop risk seen in the earlier Input integration."
+    fix_applied: "Added separate depth-four ordered Scale and Zero-point descriptor pipelines, each with a private eight-slot tagged payload ring, exact registered SC/ZP consume writer fences, in-order variable-length source/destination progress, and actual-register-write ownership queues. Source issue retains exact tile readiness and drops consume waits. Qparam full-FIFO capacity now updates through registered count, and the final actual register write causes a registered controller completion pulse on the following cycle. Added production assertions, named non-synthesis probes, a focused new testbench scaffold, interface-drift updates, and RTL documentation. Existing Weight four-bank/two-command overlap and Input depth-four overlap remain resource-local and unchanged."
+    verification: "Focused configured qparam-executor lint in both Scale and Zero-point RID modes, directed FSM lint, and full configured gemm_node_improve hierarchy lint completed with warnings and no errors. The pre-cut full lint identified the newly participating qparam SCC; after the registered cuts every Scale/ZP/qparam instance disappeared from the UNOPTFLAT report. Remaining reported SCCs are the preserved Weight/Input, output/global-DMA, and FP-library paths. STATUS YAML parsing, git diff --check, and targeted metadata/address/port searches passed. VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Source-read overlap is independent of destination overwrite, but the irreversible final write must enter scheduler accounting through a registered causal edge; registered consume observation alone does not break a completion feedback loop."
+  - timestamp: "2026-08-12 12:20"
+    iteration: 1
+    loop: qparam_ldma_overlap
+    phase: verification
+    status: sim_fail
+    test: "Focused Scale-mode VCS test at hw/unittest/lmem_dma_qparam_overlap with TEST_ZP=0; all later tests were stopped."
+    error_summary: "Four commands and their source payloads were accepted with fences blocked, but after release sequence 2 emitted its only destination beat with last=0, then sequence 3 and completion never appeared before the test timeout."
+    root_cause: "Pending iteration-2 implementation diagnosis. The failure may be production per-entry total/write-count or writer-pointer state, but the TB also reasserts destination ready in the posedge active region and may race the DUT handshake."
+    fix_applied: "None during verification. The verifier stopped without editing or rerunning."
+    verification: "Sequence 0..3 source requests used slots 0..3; pre-release writes were zero; later-bank release did not release the head. Exact release produced seq0 and seq1 last writes, followed by seq2 with last=0 and a 19.995 us timeout."
+    lesson: "A one-beat overlap test must sample ready/last on race-free edges and independently expose per-entry total/write counters before classifying a writer-head stall."
+  - timestamp: "2026-08-12 12:25"
+    iteration: 2
+    loop: qparam_ldma_overlap
+    phase: implementation
+    status: pending_verification
+    test: "Rerun the focused Scale VCS test first, then the Zero-point mode; continue downstream regressions only after both pass."
+    error_summary: "The iteration-1 focused Scale timeout was a testbench scheduling race, not corrupted production descriptor metadata."
+    root_cause: "Sequence 2 was stably queued with total_beats=1 and write_count=0, so production destination_last_write must be true whenever that write fires. The TB changed destination_ready from zero to one in the posedge active region. That allowed destination_write_fire to update while destination_last_write could still be sampled from its prior delta value, so the DUT observed fire=1/last=0, advanced sequence 2 to write_count=1, and waited forever for a nonexistent second beat while sequence 3 remained ordered behind it. The response model also changed payload-valid state with blocking posedge assignments and had the same class of ambiguity."
+    fix_applied: "Moved reset release, consume-level changes, response release, and destination-ready changes to negedges; changed response-driving payload-valid updates to nonblocking assignments. Added stable writer sequence/total/count probes plus descriptor-bound and one-beat-last assertions. Extended the focused TB with a two-beat descriptor that checks non-final completion suppression, destination-stride address progress, ordered final completion, and live-reset cleanup. Production dataflow and the confirmed depth-four/eight-slot architecture are unchanged."
+    verification: "Configured Verilator lint passed for TEST_ZP=0 and TEST_ZP=1 with warnings and no errors or UNOPTFLAT diagnostics. git diff --check passed. VCS/simulation was intentionally not run by the implementation agent."
+    lesson: "Ready signals feeding combinational fire/last chains must be established before the DUT sampling edge; active-region TB drives can manufacture an impossible split observation between two causally related combinational signals."
+  - timestamp: "2026-08-12 12:33"
+    iteration: 2
+    loop: qparam_ldma_overlap
+    phase: verification
+    status: pass
+    test: "Focused Scale and Zero-point overlap VCS tests, GEMM FSM/controller/sync/unit, preserved Input/Weight/generic DMA/TMEM regressions, and M=4 QCOL/QROW node integration."
+    error_summary: "No production/core failure after the race-free TB correction; all twelve requested VCS runs passed."
+    root_cause: "The sole iteration-1 timeout was the active-region TB ready/last race. Production qparam executor metadata and ordered writer behavior are correct under race-free stimulus."
+    fix_applied: "No additional fix during verification. The iteration-2 TB correction and non-synthesis assertions were exercised unchanged."
+    verification: "Scale and genuine TEST_ZP=1 Zero-point modes prefetched four blocked commands and completed in order; a two-beat descriptor produced last=0 then last=1. FSM/controller proved tile-only source issue and exact qparam writer metadata. Node QCOL/QROW each passed 1024 elements at 18065 ns with active assertions tying DMA write_done to final actual register write and controller done to the following registered cycle. No zero-time hang or assertion occurred."
+    lesson: "The resource-local qparam overlap contract is now independently proven at executor, scheduler, GEMM-unit, and node levels before end-to-end timing measurement."
+  - timestamp: "2026-08-12 12:42"
+    iteration: 1
+    loop: qparam_ldma_overlap_blackbox
+    phase: blackbox
+    status: pass
+    test: "XRT-VCS target GEMM M={4,256} x QDIR={0,1}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8."
+    error_summary: "No numerical, RTL assertion, runtime, timeout, or zero-time convergence failure in all four cases."
+    root_cause: "Not applicable; the qparam overlap design is functionally green end to end."
+    fix_applied: "No changes during blackbox verification."
+    verification: "All manifests report exit_status=0 and PASSED. M=4 Input/Weight fire-stall is 256/0 and 256/0; M=256 is 16384/0 and 512/0 in both quantization directions. Scale/ZP timing counters are not exposed in run mode and remain for FSDB analysis."
+    lesson: "Functional no-stall counters and numerical PASS establish correctness, while qparam prefetch residency and strict burst-boundary latency still require cycle-level waveform evidence."
+  - timestamp: "2026-08-12 12:59"
+    iteration: 1
+    loop: qparam_ldma_overlap_fsdb
+    phase: waveform_verification
+    status: blocked
+    test: "M=4 QCOL GEMM-only FSDB with tools/fsdb_cli, N=K=256, QBLK=32, WTRANS=0, WLOAD=8; QROW was stopped after QCOL performance failure."
+    error_summary: "Scale/ZP overlap and correctness pass, but the user-level zero-idle-cycle target still fails: first four Input burst gaps are 0, 5, and 1 cycles; only 18 of 63 boundaries are zero-gap."
+    root_cause: "Scale/ZP are no longer ordinary steady-state admission blockers. All 44 ordinary nonzero boundaries are now blocked only by Weight readiness; one 77-cycle tile boundary also waits for context, all operands, ACC, and an Input slot."
+    fix_applied: "No additional RTL change was made after the performance failure, per Hard Rule. QCOL metrics and artifacts were recorded; QROW waveform generation was not run."
+    verification: "Scale/ZP each reached FIFO occupancy 4 and slot occupancy 4/8, prefetched the first four commands, overlapped next source before prior write in 62/63 and 61/63 boundaries, produced zero early writes, and completed exactly one cycle after final actual write. Input gap statistics are min/median/p75/max 0/2/5/77 with histogram {0:18,1:10,2:8,3:6,4:5,5:12,6:2,7:1,77:1}."
+    lesson: "The qparam source/commit split removed its nine-cycle producer cadence; the next design discussion must address Weight readiness rather than further qparam buffering."
+  - timestamp: "2026-08-13 01:40"
+    iteration: 1
+    loop: weight_command_depth4
+    phase: implementation
+    status: pending_verification
+    test: "Focused Weight-overlap and controller VCS tests first, then GEMM node QCOL/QROW, preserved unit regressions, XRT-VCS M={4,256} x QDIR={0,1}, and M=4 FSDB timing analysis."
+    error_summary: "No Hard Rule blocker or focused static lint error; configured VCS and timing verification remain pending."
+    root_cause: "Four physical Weight banks were backed by only two executor descriptors, two controller inflight records, and two node actual-write boundaries. The third Weight command therefore could not become descriptor-resident until the oldest command retired, exposing TMEM response latency to Input admission."
+    fix_applied: "Increased only the Weight descriptor FIFO, controller Weight child inflight FIFO, and node actual-write boundary FIFO to four. Kept eight shared response slots, three-bit slot tags, eight TMEM wide-read contexts, command-granular ordered source/write issue, exact writer fences, final actual-write completion, and four WREG banks unchanged. Updated directed tests and RTL documentation for four resident descriptors with at most two complete payloads."
+    verification: "git diff --check passed. Focused Verilator lint passed for the Weight executor/TB and GEMM controller/TB with warnings and no errors. A configured full-node lint was started and emitted no design errors in the captured output, but was stopped before final completion to honor the requested handoff deadline. No VCS simulation was run by the implementation agent."
+    lesson: "Descriptor lookahead depth and payload residency are independent capacities: four commands can remain ordered and resident while an eight-slot pool bounds payload storage to two four-beat commands."
+  - timestamp: "2026-08-13 01:44"
+    iteration: 1
+    loop: weight_command_depth4
+    phase: verification
+    status: pass
+    test: "VCS Weight-overlap, GEMM controller, TMEM wide-read, GEMM node M=4 QCOL/QROW, and preserved GEMM unit/FSM/sync/generic-LDMA regressions."
+    error_summary: "No compile, simulation, production assertion, ordering, or numerical failure in the requested sequence."
+    root_cause: "Not applicable; the four-descriptor/eight-slot capacity change is functionally consistent across executor, controller metadata, node completion ownership, and integration."
+    fix_applied: "No verification-time fix was required."
+    verification: "The focused Weight test filled four descriptor entries while exactly eight slots held two complete payloads, retained two descriptor-only commands, and passed ordered refill/wrap/fence/completion coverage. gemm_ctrl proved four Weight inflight records, full blocking, same-cycle pop/push, and ordered notifications. TMEM kept eight contexts. Node QCOL/QROW each passed 1024 numerical outputs, and all preserved smoke suites passed."
+    lesson: "All three command-lifetime queues must grow together; retaining the eight-slot payload bound does not require a wider slot tag or more TMEM read contexts."
+  - timestamp: "2026-08-13 01:46"
+    iteration: 1
+    loop: weight_command_depth4_blackbox
+    phase: blackbox
+    status: pass
+    test: "XRT-VCS target GEMM M=4, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={0,1}."
+    error_summary: "Both quantization directions completed with exit status zero and numerical PASSED."
+    root_cause: "Not applicable; the depth-four Weight command experiment is functionally green in the target flow."
+    fix_applied: "No blackbox-time change was required."
+    verification: "QCOL and QROW each reported Input fire/stall=256/0 and Weight fire/stall=256/0. Artifacts are build/run_logs/target_gemm/20260813-014506_run_wload8_m4_n256_k256_q32_t0_d0_pid3159433 and build/run_logs/target_gemm/20260813-014627_run_wload8_m4_n256_k256_q32_t0_d1_pid3175379."
+    lesson: "Functional PASS establishes safety and progress; a new FSDB is still required to measure whether four descriptor contexts reduce Weight-ready and Input burst-boundary gaps."
+design_review:
+  status: confirmed
+  memo: agent-tasks/wreg-db-opt/design-review.md
+  recommended_option: "Preserve the existing Weight/Input overlap and add independent source-ready depth-four/eight-slot Scale and Zero-point executors with exact per-command consume writer fences and actual-write completion."
+  rejected_shortcuts:
+    - "Increasing W_RD_OUTSTANDING from 4 to 8 without adding a second descriptor/address context."
+    - "Adding only another controller child queue while retaining one Weight LDMA context."
+  reason: "The confirmed design saturates bounded source storage before consume while preserving exact overwrite safety, command-granular ordering, and actual-write completion."

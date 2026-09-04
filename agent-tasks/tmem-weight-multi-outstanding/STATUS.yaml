@@ -1,0 +1,106 @@
+task: tmem-weight-multi-outstanding
+state: COMPLETE
+updated: "2026-08-09 01:26"
+spec: agent-tasks/tmem-weight-multi-outstanding/tmem-weight-multi-outstanding-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/2026-08-08-001-perf-tmem-weight-multi-outstanding-plan.md
+current_phase: complete
+iteration_limit: 10
+pitfalls:
+  - "Preserve the user's unrelated untracked sim/xrtsim_vcs/gemm_unit.rc file."
+  - "Do not widen the bank tag or change the aligned bank-group mapping."
+  - "The wide switch is read-only in this scope; a need for write compatibility is a hard-stop condition."
+  - "The focused unittest vcs.mk run recipe did not forward EXTRA_SIM_ARGS; verification-only TB/Makefile/*.mk files are now explicitly in scope, while application and kernel sources remain excluded."
+iterations:
+  - timestamp: "2026-08-08 21:27"
+    iteration: 0
+    phase: specification
+    status: confirmed
+    test: "Focused VCS unittest, configured GEMM integration tests, target GEMM xrt-vcs-sim runs, and FSDB acceptance-spacing analysis."
+    error_summary: "The existing wide switch permits only one live request and spaces WLOAD8 source requests four cycles apart."
+    root_cause: "VX_tmem_wide_read_switch has one request/response context and keeps req_ready low until the assembled response retires."
+    fix_applied: "Confirmed a tag-indexed context array with issue and in-order response FIFOs. No RTL change has been made yet."
+    verification: "The approved plan fixes WLOAD4/8/16/32 outstanding depths at 8/4/2/1 and defines hard-stop conditions."
+    lesson: "The local DMA already exposes a unique live slot ID in tag.value; reusing it avoids increasing the TMEM bank tag width."
+  - timestamp: "2026-08-08 21:40"
+    iteration: 1
+    phase: implementation
+    status: pending_verification
+    test: "Update the focused testbench for OUTSTANDING=8/4/2/1, then run the VCS unittest through tools/verify_rtl.py."
+    error_summary: "The single request/response context serialized every weight wide read until its response retired."
+    root_cause: "Request metadata, bank issue tracking, response collection, and retirement state were stored in one set of registers."
+    fix_applied: "Derived the weight outstanding count from MXU dimensions, passed it to the wide switch, and replaced the single context with tag-indexed context storage plus issue and in-order retirement FIFOs. Runtime protocol violations now terminate with fatal assertions."
+    verification: "RTL-only Verilator lint exited 0 and targeted git diff --check passed. No simulation was run by the RTL implementation agent."
+    lesson: "The existing DMA slot ID and bank-tag prefix are sufficient for multi-context response routing without widening any TMEM interface."
+  - timestamp: "2026-08-08 21:51"
+    iteration: 1
+    phase: focused_unittest
+    status: pass
+    test: "python3 tools/verify_rtl.py unittest --path build/hw/unittest/tmem_wide_read_switch --sim vcs --timeout 600"
+    error_summary: "None; the focused VCS regression passed on the first attempt."
+    root_cause: "Not applicable."
+    fix_applied: "Reworked the focused testbench into a multi-context scoreboard for OUTSTANDING=8/4/2/1."
+    verification: "WLOAD4/8/16/32 passed consecutive accepts, one-extra backpressure, aligned masks including WLOAD8 03/0c/30/c0, partial bank readiness, ordered/reversed/skewed/simultaneous responses, in-order retirement, response stability, and ready recovery."
+    lesson: "The context array and two-FIFO control preserve aligned bank issue and in-order upstream behavior across every supported WLOAD width."
+  - timestamp: "2026-08-08 21:54"
+    iteration: 2
+    phase: integration_unittest
+    status: pass
+    test: "Configured WLOAD8 VCS runs for lmem_dma_misal with RD_OUTSTANDING=4/reordered responses/backpressure and gemm_node_improve M4/N256/K256/Q32."
+    error_summary: "None; both integration tests passed."
+    root_cause: "Not applicable."
+    fix_applied: "No implementation change was required after focused verification."
+    verification: "lmem_dma_misal reported TEST PASSED and exact completion counts; gemm_node_improve compared 1024 outputs and reported CONFIG GEMM PASSED."
+    lesson: "The new switch concurrency composes correctly with the existing four-slot local DMA response path and the integrated GEMM node."
+  - timestamp: "2026-08-08 22:00"
+    iteration: 3
+    phase: xrt_vcs_blackbox
+    status: pass
+    test: "ci/run_target_gemm.sh run --wload 8 for M4/N256/K256 and M256/N256/K256 with QBLK32, WTRANS0, QDIR1."
+    error_summary: "None; both xrt-vcs-sim target GEMM runs passed numerical comparison."
+    root_cause: "Not applicable."
+    fix_applied: "No implementation change was required after integration unittests."
+    verification: "M4 artifact 20260808-215543_run_wload8_m4_n256_k256_q32_t0_d1_pid3847200 reported weight fire=256 stall=0. M256 artifact 20260808-215717_run_wload8_m256_n256_k256_q32_t0_d1_pid3863715 reported weight fire=512 stall=0. No fatal, X propagation, mismatch, or timeout occurred."
+    lesson: "The effective switch-induced weight source stall is removed in both the short and full-M target workloads without numerical regressions."
+  - timestamp: "2026-08-08 22:09"
+    iteration: 4
+    phase: fsdb_waveform
+    status: pass
+    test: "WLOAD8 M4/N256/K256 fsdb-gemm run followed by tools/fsdb_cli event analysis."
+    error_summary: "None; waveform generation and acceptance-spacing checks passed."
+    root_cause: "Not applicable."
+    fix_applied: "No implementation change was required after blackbox verification."
+    verification: "The new FSDB contains 256 wide accepts in 64 four-cycle bursts, 256 source fires with zero source stalls, 512 narrow-bank request fires, 256 GEMM weight fires, and 256 response retires. The first accepts occurred at 57.435/57.445/57.455/57.465 us with masks 03/0c/30/c0; the first GEMM weight fires occupied four consecutive cycles from 57.485 through 57.515 us."
+    lesson: "The multi-context switch removes the previous four-cycle request spacing while preserving the exact aligned bank-pair sequence and transaction counts."
+  - timestamp: "2026-08-08 22:13"
+    iteration: 5
+    phase: negative_assertion_unittest
+    status: blocked
+    test: "Positive focused rerun followed by verify_rtl with --extra-sim-args +NEGATIVE=write."
+    error_summary: "The positive regression passed, but the required negative command also passed because the NEGATIVE plusarg never reached simv."
+    root_cause: "hw/unittest/tmem_wide_read_switch/vcs.mk invokes ./simv without $(EXTRA_SIM_ARGS), even though tools/verify_rtl.py correctly supplies the make variable."
+    fix_applied: "The testbench now contains isolated expected-fatal modes, but no out-of-scope vcs.mk or Makefile change was made. Work stopped under the plan Hard rule."
+    verification: "build/hw/unittest/tmem_wide_read_switch/logs/sim.log shows './simv -reportstats -l logs/sim.log' with no +NEGATIVE=write and then runs all four positive cases. Other negative modes were not attempted."
+    lesson: "Expected-fatal modes require simulator-argument propagation in the unittest run recipe; a passing command without the selected plusarg is not negative-test coverage."
+  - timestamp: "2026-08-09 01:22"
+    iteration: 5
+    phase: scope_resume
+    status: in_progress
+    test: "Propagate EXTRA_SIM_ARGS through the focused VCS run recipe, rerun the positive test, and execute each isolated expected-fatal mode through verify_rtl."
+    error_summary: "The prior blocker is authorized for correction because verification-only TB/Makefile/*.mk files are now in scope by default."
+    root_cause: "The original file-scope rule incorrectly excluded simulator run infrastructure needed solely for verification."
+    fix_applied: "Updated the plan and confirmed spec to include verification-only files, explicitly exclude main.cpp/kernel.cpp and equivalent workload sources, and remove synthesis QoR verification."
+    verification: "Pending."
+    lesson: "Verification infrastructure belongs in the default test scope, but product application and kernel sources must remain a separate authorization boundary."
+  - timestamp: "2026-08-09 01:26"
+    iteration: 6
+    phase: negative_assertion_unittest
+    status: pass
+    test: "Default focused VCS regression plus isolated verify_rtl runs for write, duplicate_context, free_context_response, unissued_response, and duplicate_response modes."
+    error_summary: "None; the positive regression passed and every negative mode reached its intended first fatal."
+    root_cause: "The prior blocker was limited to missing EXTRA_SIM_ARGS forwarding in the focused VCS run recipe."
+    fix_applied: "Forwarded EXTRA_SIM_ARGS through the source and configured-build vcs.mk run recipes. No product RTL, config, application, or kernel source was changed in this iteration."
+    verification: "write failed at 75 ns, duplicate_context at 85 ns, free_context_response at 75 ns, unissued_response at 85 ns, and duplicate_response at 105 ns; each first fatal matched the intended protocol assertion with no earlier unrelated fatal."
+    lesson: "Plusarg-selected expected-failure tests remain isolated from the default positive regression when simulator arguments are forwarded by the unittest runner."
+notes:
+  - "Synthesis QoR was explicitly excluded by the user on 2026-08-09 and was not run."
+  - "Application and kernel workload sources such as main.cpp and kernel.cpp were not modified."

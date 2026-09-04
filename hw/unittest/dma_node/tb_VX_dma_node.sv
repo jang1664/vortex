@@ -1289,7 +1289,11 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       run_roundtrip_case_cfg(
         "hbw_active_lane_misaligned_roundtrip",
         4,
-        48, 2, 2, 2, 3,
+        // Keep this probe descriptor below the deliberately blocked final
+        // 8-byte lane.  With the clean 32-lane configuration the former
+        // 2x2x2 footprint wrapped the 256-byte aggregate and legitimately
+        // activated lane31, invalidating the test's "inactive" premise.
+        48, 2, 1, 1, 3,
         3, 5, 7,
         1'b0, 1'b0, 1'b0
       );

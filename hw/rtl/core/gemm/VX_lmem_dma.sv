@@ -26,7 +26,9 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   parameter DIR      = 0,        // 0: LMEM->GEMM (read), 1: GEMM->LMEM (write)
   parameter LMEM_DW  = 32,       // LMEM data width in bits
   parameter GEMM_DW  = 32,       // GEMM data width in bits
-  parameter NDIM     = 3         // Number of dimensions for nested loop
+  parameter NDIM     = 3,        // Descriptor dimensions
+  parameter BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter MAX_DIMS = NDIM      // Implemented nested-loop dimensions
 ) (
   input wire clk,
   input wire reset,
@@ -50,6 +52,11 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
         INSTANCE_ID, lmem_bus_if.DATA_SIZE, gemm_bus_if.DATA_SIZE
       );
     end
+    if ((MAX_DIMS < 1) || (MAX_DIMS > NDIM))
+      $fatal(1, "%s: MAX_DIMS(%0d) must be in 1..%0d",
+             INSTANCE_ID, MAX_DIMS, NDIM);
+    if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
+      $fatal(1, "%s: bound width mismatch", INSTANCE_ID);
   end
 
   localparam int BUS_BYTES = lmem_bus_if.DATA_SIZE;
@@ -78,8 +85,8 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
 
   // unpacked parameters
   logic [31:0] base_addr_r[2];  //src, dst
-  logic [31:0] stride_r[2][NDIM];  //src, dst
-  logic [31:0] bound_r[NDIM];
+  logic [31:0] stride_r[2][MAX_DIMS];  //src, dst
+  logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bound_r;
   logic [31:0] seg_size_r;
   logic [31:0] reg_idx_r;
   logic [31:0] reg_value_r;
@@ -94,7 +101,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
       seg_size_r     <= '0;
       reg_idx_r      <= '0;
       reg_value_r    <= '0;
-      for (int d=0; d<NDIM; d++) begin
+      for (int d=0; d<MAX_DIMS; d++) begin
         stride_r[0][d] <= '0;
         stride_r[1][d] <= '0;
         bound_r[d]     <= '0;
@@ -102,7 +109,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
     end else if (cmd_start) begin
       base_addr_r[0] <= ctrl_if.src_base_addr;
       base_addr_r[1] <= ctrl_if.dst_base_addr;
-      for (int d=0; d<NDIM; d++) begin
+      for (int d=0; d<MAX_DIMS; d++) begin
         stride_r[0][d] <= ctrl_if.src_strides[d];
         stride_r[1][d] <= ctrl_if.dst_strides[d];
         bound_r[d]     <= ctrl_if.bounds[d];
@@ -117,23 +124,45 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   always_comb begin
     ctrl_if.idle = (state == S_IDLE);
     ctrl_if.done = (state == S_DONE);
+    ctrl_if.prepare_ready = 1'b0;
   end
 
   // ------------------------------------------------------------
   // 3D loop counters + segment beat offset
   // ------------------------------------------------------------
 
-  logic [31:0] i_dim[NDIM];   // i0,i1,i2
+  logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] i_dim;
   logic [31:0] seg_rem;       // remaining bytes in current segment
 
   logic [BUS_BYTES*8-1:0] rd_buf;
   logic [31:0] beat_off;
 
+  function automatic logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0]
+      advance_dims(
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] indices,
+          input logic [MAX_DIMS-1:0][BOUND_WIDTH-1:0] bounds);
+    logic carry;
+    begin
+      advance_dims = indices;
+      carry = 1'b1;
+      for (int d = 0; d < MAX_DIMS; ++d) begin
+        if (carry) begin
+          if ((indices[d] + BOUND_WIDTH'(1)) < bounds[d]) begin
+            advance_dims[d] = indices[d] + BOUND_WIDTH'(1);
+            carry = 1'b0;
+          end else begin
+            advance_dims[d] = '0;
+          end
+        end
+      end
+    end
+  endfunction
+
   logic at_last_idx;
   always_comb begin
     at_last_idx = 1'b1;
-    for (int d=0; d<NDIM; d++) begin
-      if (i_dim[d] != (bound_r[d] - 32'd1))
+    for (int d=0; d<MAX_DIMS; d++) begin
+      if (i_dim[d] != (bound_r[d] - BOUND_WIDTH'(1)))
         at_last_idx = 1'b0;
     end
   end
@@ -142,23 +171,24 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   wire wr_ack_fire = (state == S_WR_WAIT) &&
                      ((DIR && lmem_bus_if.rsp_valid) ||
                       (!DIR && gemm_bus_if.rsp_valid));
+  assign ctrl_if.write_done = wr_ack_fire && last_done_after_write;
 
   // src/dst addr generation (byte address)
+  localparam int ADDR_PRODUCT_WIDTH = BOUND_WIDTH + 32;
+  wire [ADDR_PRODUCT_WIDTH-1:0] src_dim_stride[MAX_DIMS];
+  wire [ADDR_PRODUCT_WIDTH-1:0] dst_dim_stride[MAX_DIMS];
+  for (genvar addr_dim = 0; addr_dim < MAX_DIMS; ++addr_dim) begin : g_addr_product
+    assign src_dim_stride[addr_dim] = i_dim[addr_dim] * stride_r[0][addr_dim];
+    assign dst_dim_stride[addr_dim] = i_dim[addr_dim] * stride_r[1][addr_dim];
+  end
   logic [31:0] src_byte_addr, dst_byte_addr;
   always_comb begin
-    src_byte_addr =
-        base_addr_r[0]
-      + i_dim[0] * stride_r[0][0]
-      + i_dim[1] * stride_r[0][1]
-      + i_dim[2] * stride_r[0][2]
-      + beat_off;
-
-    dst_byte_addr =
-        base_addr_r[1]
-      + i_dim[0] * stride_r[1][0]
-      + i_dim[1] * stride_r[1][1]
-      + i_dim[2] * stride_r[1][2]
-      + beat_off;
+    src_byte_addr = base_addr_r[0] + beat_off;
+    dst_byte_addr = base_addr_r[1] + beat_off;
+    for (int d = 0; d < MAX_DIMS; ++d) begin
+      src_byte_addr += 32'(src_dim_stride[d]);
+      dst_byte_addr += 32'(dst_dim_stride[d]);
+    end
   end
 
   // ------------------------------------------------------------
@@ -273,7 +303,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
     if (reset) begin
       state <= S_IDLE;
 
-      for (int d = 0; d < NDIM; d++) begin
+      for (int d = 0; d < MAX_DIMS; d++) begin
         i_dim[d] <= '0;
       end
 
@@ -285,7 +315,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
 
       // On start: init loop counters
       if (cmd_start) begin
-        for (int d = 0; d < NDIM; d++) begin
+        for (int d = 0; d < MAX_DIMS; d++) begin
           i_dim[d] <= '0;
         end
         seg_rem  <= ctrl_if.seg_size; // bytes remaining in this segment
@@ -312,26 +342,36 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
           seg_rem  <= seg_size_r;
           beat_off <= 32'd0;
 
-          // advance 3D indices with carry
-          if (i_dim[0] + 1 < bound_r[0]) begin
-            i_dim[0] <= i_dim[0] + 1;
-          end else begin
-            i_dim[0] <= 32'd0;
-            if (i_dim[1] + 1 < bound_r[1]) begin
-              i_dim[1] <= i_dim[1] + 1;
-            end else begin
-              i_dim[1] <= 32'd0;
-              if (i_dim[2] + 1 < bound_r[2]) begin
-                i_dim[2] <= i_dim[2] + 1;
-              end else begin
-                // all dimensions done
-                i_dim[2] <= 32'd0;
-              end
-            end
-          end
+          i_dim <= advance_dims(i_dim, bound_r);
         end
       end
     end
   end
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (!reset && cmd_start) begin
+      if (MAX_DIMS == 1) begin
+        assert ((ctrl_if.bounds[1] == BOUND_WIDTH'(1))
+             && (ctrl_if.bounds[2] == BOUND_WIDTH'(1)))
+          else $fatal(1, "%s: 1D local DMA requires BND1/BND2=1",
+                      INSTANCE_ID);
+      end else if (MAX_DIMS == 2) begin
+        assert (ctrl_if.bounds[2] == BOUND_WIDTH'(1))
+          else $fatal(1, "%s: 2D local DMA requires BND2=1", INSTANCE_ID);
+      end
+    end
+    if (!reset && (state == S_RD_REQ)) begin
+      for (int d = 0; d < MAX_DIMS; ++d) begin
+        assert ((src_dim_stride[d] >> 32) == 0)
+          else $fatal(1, "%s: source dimension product exceeds 32 bits",
+                      INSTANCE_ID);
+        assert ((dst_dim_stride[d] >> 32) == 0)
+          else $fatal(1, "%s: destination dimension product exceeds 32 bits",
+                      INSTANCE_ID);
+      end
+    end
+  end
+`endif
 
 endmodule

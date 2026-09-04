@@ -1,0 +1,40 @@
+task: gemv-gemm-unit-v2-forwarding
+status: complete
+spec: agent-tasks/gemv-gemm-unit-v2-forwarding/gemm-unit-v2-forwarding-spec.md
+current_phase: done
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    test: gemm_unit_v2_forwarding
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required after forwarding implementation."
+    lesson: "The dedicated VCS unittest proves two consecutive same-address accumulation packets use one SRAM read plus one forwarded consume and produce the cumulative FP32 value 65.0."
+  - iteration: 2
+    test: gemm_node_improve_k32_partial_weight
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required after partial-K weight stimulus repair."
+    lesson: "Ceiling DMA-K tiling and final-tile microtile bounds restore the M32/N32/K32 node numerical test."
+  - iteration: 3
+    test: gemm_node_improve_forwarding_k128_regression
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required."
+    lesson: "The existing K128 accumulation scheduling and numerical path remain green after adding forwarding."
+notes:
+  - "2026-08-04: Confirmed that V2 currently has no writeback forwarding and that its tests only cover strictly advancing ACC addresses."
+  - "2026-08-04: Confirmed the K32 all-zero node test cause: write_dram_tiled_weight computes 32/128 as zero K tiles, leaving weight DRAM uninitialized."
+  - "2026-08-04: Verification scope remains RTL unittests only."
+  - "2026-08-04: Implemented V2 immediate same-address forwarding with admission dependency detection, fixed-latency sideband alignment, forwarded-read suppression, aligned writeback selection, and simulation assertions for source validity/address and legal stream progression."
+  - "2026-08-04: Extended the independent gemm_unit_v2 scoreboard to model forwarding and added a two-packet nonzero cumulative same-address test that expects one SRAM read, one forwarded consume, two writes, and a final FP32 value of 65.0."
+  - "2026-08-04: Repaired gemm_node_improve partial-K weight stimulus with ceiling DMA K tiles, final-tile valid MXU microtile count, and guarded weight_mat indices; adapted the node read checker to account for forwarded consumes."
+  - "2026-08-04: Implementation handoff complete; formal VCS verification was intentionally not run by the implementation agent."
+  - "2026-08-04: Final audit added an elaboration assertion that WRITE_CTRL_IDX == SCALER_CTRL_IDX + 1, which guarantees the forwarded source writeback is concurrent with the dependent accumulator input. The dedicated test still requires exactly one SRAM read and checks raw FP32 0x42820000 (65.0)."
+  - "2026-08-04: Verification iteration 1 passed the configured-build gemm_unit_v2 forwarding VCS unittest."
+  - "2026-08-04: Verification iteration 2 passed the configured-build M32/N32/K32 node numerical VCS unittest."
+  - "2026-08-04: Verification iteration 3 passed the configured-build M32/N32/K128 node numerical VCS regression."
+  - "2026-08-04: Final audit completed; the requested RTL-unittest scope is green and the legacy V1/naive files are unchanged."

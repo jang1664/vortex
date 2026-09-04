@@ -449,7 +449,17 @@ run_app() {
             echo "Waiting for Verdi to close (PID: $VERDI_PID)..."
             wait $VERDI_PID 2>/dev/null
         fi
-        kill $VCS_PID 2>/dev/null
+        # The host sends CMD_SHUTDOWN before returning.  Give simv a bounded
+        # window to flush waveforms and reach $finish before falling back to
+        # SIGTERM; killing immediately can truncate the terminal FSDB state.
+        vcs_wait_count=0
+        while kill -0 $VCS_PID 2>/dev/null && [ $vcs_wait_count -lt 50 ]; do
+            sleep 0.1
+            vcs_wait_count=$((vcs_wait_count + 1))
+        done
+        if kill -0 $VCS_PID 2>/dev/null; then
+            kill $VCS_PID 2>/dev/null
+        fi
         wait $VCS_PID 2>/dev/null
     fi
 

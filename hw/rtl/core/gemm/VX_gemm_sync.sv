@@ -2,9 +2,9 @@
 
 module VX_gemm_sync import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
-    parameter int N_CHILDREN    = 5,
-    parameter int N_NODE        = 5,
-    parameter int NUM_SYNC_REGS = 11
+    parameter int N_CHILDREN    = 6,
+    parameter int N_NODE        = 6,
+    parameter int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS
 ) (
     input  wire               clk,
     input  wire               reset,
@@ -15,8 +15,11 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
 );
 
   initial begin
-    if (N_CHILDREN != 5) $fatal(1, "%s: This version assumes N_CHILDREN=5", INSTANCE_ID);
-    if (N_NODE     != 5) $fatal(1, "%s: This version assumes N_NODE=5", INSTANCE_ID);
+    if (N_CHILDREN != 6) $fatal(1, "%s: This version assumes N_CHILDREN=6", INSTANCE_ID);
+    if (N_NODE     != 6) $fatal(1, "%s: This version assumes N_NODE=6", INSTANCE_ID);
+    if (NUM_SYNC_REGS != GEMM_NUM_SYNC_REGS)
+      $fatal(1, "%s: This version assumes NUM_SYNC_REGS=%0d",
+             INSTANCE_ID, GEMM_NUM_SYNC_REGS);
   end
 
   // --------------------------------------------------------------------------
@@ -27,15 +30,23 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   localparam logic [3:0] OP_NOTIFY        = 4'd3;
   localparam logic [3:0] OP_WAIT          = 4'd4;
   localparam logic [3:0] OP_W_LDMA_MXU    = 4'd5;
-  localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
+  localparam logic [3:0] OP_SC_LDMA_MXU   = GEMM_OP_SC_LDMA_MXU;
   localparam logic [3:0] OP_I_LDMA_ARM    = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM    = 4'd8;
   localparam logic [3:0] OP_CLEAR         = 4'd9;
+  localparam logic [3:0] OP_ZP_LDMA_MXU   = GEMM_OP_ZP_LDMA_MXU;
 
   // --------------------------------------------------------------------------
   // Sync registers
   // --------------------------------------------------------------------------
   logic [31:0] sync_regs [NUM_SYNC_REGS];
+  logic [31:0] sync_regs_n [NUM_SYNC_REGS];
+  localparam int RID_SZ0 = GEMM_RID_SZ0;
+  localparam int RID_SZ1 = GEMM_RID_SZ1;
+  localparam int RID_SC0 = GEMM_RID_SC0;
+  localparam int RID_ZP0 = GEMM_RID_ZP0;
+  localparam int RID_SC1 = GEMM_RID_SC1;
+  localparam int RID_ZP1 = GEMM_RID_ZP1;
 
   // --------------------------------------------------------------------------
   // Decode incoming command
@@ -51,11 +62,12 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   wire [31:0] wait_target = gemm_fsm_slv_if.ctrl.cmd.rs2_data[31:0];
 
   wire        wait_reg_in_range = (wait_reg_id < NUM_SYNC_REGS);
-  wire [31:0] wait_reg_val      = wait_reg_in_range ? sync_regs[wait_reg_id] : 32'd0;
+  wire [31:0] wait_reg_val
+      = wait_reg_in_range ? sync_regs_n[wait_reg_id] : 32'd0;
   wire        wait_satisfied    = (!wait_reg_in_range) ? 1'b1 : (wait_reg_val >= wait_target);
 
   // --------------------------------------------------------------------------
-  // Route decode (0:i,1:w,2:sz,3:o,4:dma)
+  // Route decode (0:i,1:w,2:scale,3:zero-point,4:o,5:dma)
   // --------------------------------------------------------------------------
   localparam int ROUTE_W = 3;
   logic [ROUTE_W-1:0] cmd_route;
@@ -70,10 +82,11 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       unique case (opcode)
         OP_I_LDMA_ARM:   cmd_route = 3'd0;
         OP_W_LDMA_MXU:   cmd_route = 3'd1;
-        OP_SZ_LDMA_MXU:  cmd_route = 3'd2;
-        OP_O_ACC2LMEM:   cmd_route = 3'd3;
+        OP_SC_LDMA_MXU:  cmd_route = 3'd2;
+        OP_ZP_LDMA_MXU:  cmd_route = 3'd3;
+        OP_O_ACC2LMEM:   cmd_route = 3'd4;
         OP_DMA_LD,
-        OP_DMA_ST:       cmd_route = 3'd4;
+        OP_DMA_ST:       cmd_route = 3'd5;
         default: begin
           cmd_valid = 1'b0;
           cmd_route = 3'd0;
@@ -102,6 +115,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       3'd2: child_idle_sel = gemm_fsm_mas_if[2].flag.idle;
       3'd3: child_idle_sel = gemm_fsm_mas_if[3].flag.idle;
       3'd4: child_idle_sel = gemm_fsm_mas_if[4].flag.idle;
+      3'd5: child_idle_sel = gemm_fsm_mas_if[5].flag.idle;
       default: child_idle_sel = 1'b0;
     endcase
   end
@@ -189,6 +203,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   assign gemm_sync_slv_if[2].ready = 1'b1;
   assign gemm_sync_slv_if[3].ready = 1'b1;
   assign gemm_sync_slv_if[4].ready = 1'b1;
+  assign gemm_sync_slv_if[5].ready = 1'b1;
 
   // --------------------------------------------------------------------------
   // Sync updates from nodes (unrolled, NO iface_array[var])
@@ -201,42 +216,45 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   wire [7:0] rid2 = gemm_sync_slv_if[2].reg_idx[7:0];
   wire [7:0] rid3 = gemm_sync_slv_if[3].reg_idx[7:0];
   wire [7:0] rid4 = gemm_sync_slv_if[4].reg_idx[7:0];
+  wire [7:0] rid5 = gemm_sync_slv_if[5].reg_idx[7:0];
 
   wire [31:0] val0 = gemm_sync_slv_if[0].value;
   wire [31:0] val1 = gemm_sync_slv_if[1].value;
   wire [31:0] val2 = gemm_sync_slv_if[2].value;
   wire [31:0] val3 = gemm_sync_slv_if[3].value;
   wire [31:0] val4 = gemm_sync_slv_if[4].value;
+  wire [31:0] val5 = gemm_sync_slv_if[5].value;
 
   wire upd0_valid = gemm_sync_slv_if[0].valid && (rid0 < NUM_SYNC_REGS);
   wire upd1_valid = gemm_sync_slv_if[1].valid && (rid1 < NUM_SYNC_REGS);
   wire upd2_valid = gemm_sync_slv_if[2].valid && (rid2 < NUM_SYNC_REGS);
   wire upd3_valid = gemm_sync_slv_if[3].valid && (rid3 < NUM_SYNC_REGS);
   wire upd4_valid = gemm_sync_slv_if[4].valid && (rid4 < NUM_SYNC_REGS);
-
-  logic [31:0] sync_regs_n [NUM_SYNC_REGS];
+  wire upd5_valid = gemm_sync_slv_if[5].valid && (rid5 < NUM_SYNC_REGS);
 
   function automatic [31:0] reduce_updates(
     input logic [31:0] cur,
     input logic [7:0]  reg_id
   );
-    logic hit0, hit1, hit2, hit3, hit4;
-    logic set0, set1, set2, set3, set4;
+    logic hit0, hit1, hit2, hit3, hit4, hit5;
+    logic set0, set1, set2, set3, set4, set5;
     logic [31:0] base;
-    logic [31:0] add0, add1, add2, add3, add4;
-    logic [31:0] sum01, sum23, sum4base;
+    logic [31:0] add0, add1, add2, add3, add4, add5;
+    logic [31:0] sum01, sum23, sum45base;
     begin
       hit0 = upd0_valid && (rid0 == reg_id);
       hit1 = upd1_valid && (rid1 == reg_id);
       hit2 = upd2_valid && (rid2 == reg_id);
       hit3 = upd3_valid && (rid3 == reg_id);
       hit4 = upd4_valid && (rid4 == reg_id);
+      hit5 = upd5_valid && (rid5 == reg_id);
 
       set0 = hit0 && val0[31];
       set1 = hit1 && val1[31];
       set2 = hit2 && val2[31];
       set3 = hit3 && val3[31];
       set4 = hit4 && val4[31];
+      set5 = hit5 && val5[31];
 
       base = cur;
       if (set0) base = {1'b0, val0[30:0]};
@@ -244,19 +262,21 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       if (set2) base = {1'b0, val2[30:0]};
       if (set3) base = {1'b0, val3[30:0]};
       if (set4) base = {1'b0, val4[30:0]};
+      if (set5) base = {1'b0, val5[30:0]};
 
       // An add contributes only when no later node overwrites it with SET.
-      add0 = (hit0 && !val0[31] && !(set1 || set2 || set3 || set4)) ? val0 : 32'd0;
-      add1 = (hit1 && !val1[31] && !(set2 || set3 || set4)) ? val1 : 32'd0;
-      add2 = (hit2 && !val2[31] && !(set3 || set4)) ? val2 : 32'd0;
-      add3 = (hit3 && !val3[31] && !set4) ? val3 : 32'd0;
-      add4 = (hit4 && !val4[31]) ? val4 : 32'd0;
+      add0 = (hit0 && !val0[31] && !(set1 || set2 || set3 || set4 || set5)) ? val0 : 32'd0;
+      add1 = (hit1 && !val1[31] && !(set2 || set3 || set4 || set5)) ? val1 : 32'd0;
+      add2 = (hit2 && !val2[31] && !(set3 || set4 || set5)) ? val2 : 32'd0;
+      add3 = (hit3 && !val3[31] && !(set4 || set5)) ? val3 : 32'd0;
+      add4 = (hit4 && !val4[31] && !set5) ? val4 : 32'd0;
+      add5 = (hit5 && !val5[31]) ? val5 : 32'd0;
 
-      // Six operands reduce through three balanced 32-bit adder levels.
+      // Six updates plus the current value reduce through three adder levels.
       sum01 = add0 + add1;
       sum23 = add2 + add3;
-      sum4base = add4 + base;
-      reduce_updates = (sum01 + sum23) + sum4base;
+      sum45base = (add4 + add5) + base;
+      reduce_updates = (sum01 + sum23) + sum45base;
     end
   endfunction
 
@@ -264,6 +284,10 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     for (int k = 0; k < NUM_SYNC_REGS; k++) begin
       sync_regs_n[k] = reduce_updates(sync_regs[k], 8'(k));
     end
+    sync_regs_n[RID_SZ0] = (sync_regs_n[RID_SC0] < sync_regs_n[RID_ZP0])
+                         ? sync_regs_n[RID_SC0] : sync_regs_n[RID_ZP0];
+    sync_regs_n[RID_SZ1] = (sync_regs_n[RID_SC1] < sync_regs_n[RID_ZP1])
+                         ? sync_regs_n[RID_SC1] : sync_regs_n[RID_ZP1];
   end
 
   always_ff @(posedge clk) begin
@@ -279,6 +303,21 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   end
 
 `ifndef SYNTHESIS
+  wire any_node_update_fire
+      = (gemm_sync_slv_if[0].valid && gemm_sync_slv_if[0].ready)
+      || (gemm_sync_slv_if[1].valid && gemm_sync_slv_if[1].ready)
+      || (gemm_sync_slv_if[2].valid && gemm_sync_slv_if[2].ready)
+      || (gemm_sync_slv_if[3].valid && gemm_sync_slv_if[3].ready)
+      || (gemm_sync_slv_if[4].valid && gemm_sync_slv_if[4].ready)
+      || (gemm_sync_slv_if[5].valid && gemm_sync_slv_if[5].ready);
+
+  always @(posedge clk) begin
+    if (reset === 1'b0 && clear_fire) begin
+      assert (!any_node_update_fire)
+        else $fatal(1, "GEMM sync CLEAR coincided with a node update handshake");
+    end
+  end
+
   // Simulation-only provenance tracker for WAIT/NOTIFY debugging.
   // NOTIFY is routed to the child selected by the last accepted normal command;
   // keep that command's payload so waveforms can show what the NOTIFY belongs to.
@@ -488,6 +527,16 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
         dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[4];
         dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[4];
       end
+      if (upd5_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd5;
+        dbg_update_reg_id_q     <= rid5;
+        dbg_update_value_q      <= gemm_sync_slv_if[5].value;
+        dbg_update_next_value_q <= sync_regs_n[rid5];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[5];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[5];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[5];
+      end
     end
   end
 `endif
@@ -526,16 +575,19 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       gemm_fsm_mas_if[2].ctrl.start,
       gemm_fsm_mas_if[3].ctrl.start,
       gemm_fsm_mas_if[4].ctrl.start,
+      gemm_fsm_mas_if[5].ctrl.start,
       gemm_fsm_mas_if[0].flag.idle,
       gemm_fsm_mas_if[1].flag.idle,
       gemm_fsm_mas_if[2].flag.idle,
       gemm_fsm_mas_if[3].flag.idle,
       gemm_fsm_mas_if[4].flag.idle,
+      gemm_fsm_mas_if[5].flag.idle,
       upd0_valid,
       upd1_valid,
       upd2_valid,
       upd3_valid,
-      upd4_valid
+      upd4_valid,
+      upd5_valid
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P1_W-1:0] dbg_gemm_sync_probe1 = {
       32'(wait_reg_id),
@@ -551,7 +603,11 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       sync_regs[7],
       sync_regs[8],
       sync_regs[9],
-      sync_regs[10]
+      sync_regs[10],
+      sync_regs[11],
+      sync_regs[12],
+      sync_regs[13],
+      sync_regs[14]
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P2_W-1:0] dbg_gemm_sync_probe2 = {
       32'(gemm_sync_slv_if[0].reg_idx),
@@ -563,7 +619,9 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       32'(gemm_sync_slv_if[3].reg_idx),
       gemm_sync_slv_if[3].value,
       32'(gemm_sync_slv_if[4].reg_idx),
-      gemm_sync_slv_if[4].value
+      gemm_sync_slv_if[4].value,
+      32'(gemm_sync_slv_if[5].reg_idx),
+      gemm_sync_slv_if[5].value
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P3_W-1:0] dbg_gemm_sync_probe3 = {
       sync_regs_n[0],
@@ -576,7 +634,11 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       sync_regs_n[7],
       sync_regs_n[8],
       sync_regs_n[9],
-      sync_regs_n[10]
+      sync_regs_n[10],
+      sync_regs_n[11],
+      sync_regs_n[12],
+      sync_regs_n[13],
+      sync_regs_n[14]
   };
 
   ila_gemm_sync ila_gemm_sync_inst (
@@ -607,6 +669,9 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       if (upd4_valid)
         `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=4, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
                  $time, INSTANCE_ID, rid4, gemm_sync_slv_if[4].value, sync_regs_n[rid4]))
+      if (upd5_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=5, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid5, gemm_sync_slv_if[5].value, sync_regs_n[rid5]))
     end
   end
 `endif

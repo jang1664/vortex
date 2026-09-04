@@ -30,12 +30,12 @@ module tb_vcs_xrtsim #(
   parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
   parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
   parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-  parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_DMA_CHANNELS
+  parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_HBM_PORTS
 );
 
   localparam int CLK_HALF_PERIOD_NS = 5;
   localparam int DATA_SIZE = `PLATFORM_MEMORY_DATA_SIZE;
-  localparam int NUM_PORTS = `NUM_DMA_CHANNELS;
+  localparam int NUM_PORTS = `NUM_HBM_PORTS;
 
   // Response queue depth limit for backpressure
   localparam int RSP_QUEUE_LIMIT = 16;
@@ -234,7 +234,7 @@ module tb_vcs_xrtsim #(
 `ifdef VCS_POST_IMPL
   ulp_vortex_afu_1_0 dut (
     .ap_clk(ap_clk), .ap_rst_n(ap_rst_n),
-    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_HBM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),
@@ -263,7 +263,7 @@ module tb_vcs_xrtsim #(
     .C_M_AXI_MEM_ADDR_WIDTH(C_M_AXI_MEM_ADDR_WIDTH)
   ) dut (
     .clk(ap_clk), .reset(~ap_rst_n),
-    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_HBM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),
@@ -284,6 +284,12 @@ module tb_vcs_xrtsim #(
     if (!$value$plusargs("fsdb_file=%s", fsdb_file)) fsdb_file = "vcs_cosim.fsdb";
     $fsdbDumpfile(fsdb_file);
 `ifdef FSDB_GEMM_ONLY
+`ifdef GEMM_IMPROVE
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node,
+      "+all");
+`else
     $fsdbDumpvars(2,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
         .g_sockets[0].socket.g_cores[0].core.gemm_node_naive,
@@ -313,6 +319,7 @@ module tb_vcs_xrtsim #(
         .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
         .u_weight_gather_dma,
       "+all");
+`endif
 `elsif FSDB_DMA_ONLY
     $fsdbDumpvars(0,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
@@ -639,6 +646,14 @@ module tb_vcs_xrtsim #(
         if (cmd_type == CMD_SHUTDOWN) begin
           $display("[TB] Received SHUTDOWN command");
           socket_server_close();
+`ifdef FSDB_DUMP
+`ifndef DISABLE_FSDB
+          // A short simulation can finish before the periodic GEMM/DMA dump
+          // flush interval.  Flush explicitly so terminal dependency and
+          // quiescence state is available in the saved waveform.
+          $fsdbDumpflush;
+`endif
+`endif
           $finish;
         end
         begin

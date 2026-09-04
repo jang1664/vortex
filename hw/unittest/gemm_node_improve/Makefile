@@ -21,6 +21,7 @@ AXI_DIR := $(THIRD_PARTY_DIR)/axi
 RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(AXI_DIR)/src/axi_intf.sv \
         $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \
@@ -42,8 +43,11 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
         $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_internal.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_compute_core.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_unit_v2.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_unit_v2_if.sv \
         $(RTL_DIR)/core/gemm/VX_prealigner.sv \
         $(RTL_DIR)/core/gemm/VX_pint2fp.sv \
         $(RTL_DIR)/core/gemm/VX_f32_to_f16.sv \
@@ -59,12 +63,15 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
+        $(RTL_DIR)/core/gemm/VX_microtile_readiness_scheduler.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
         $(RTL_DIR)/core/gemm/VX_cmd_constructor.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_sync.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \
@@ -127,6 +134,7 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/libs/VX_index_buffer.sv \
         $(RTL_DIR)/libs/VX_axi_adapter.sv \
         $(RTL_DIR)/libs/VX_axi_write_ack.sv \
+        $(RTL_DIR)/mem/VX_tmem_wide_read_switch.sv \
         $(RTL_DIR)/mem/VX_tmem_subsystem.sv \
         $(RTL_DIR)/mem/VX_dma_engine.sv \
         $(RTL_DIR)/mem/VX_tensor_mem_bank.sv \
@@ -201,7 +209,7 @@ CVFPU_RTLS := $(RTL_DIR)/fpu/patched_cvfpu/fpnew_pkg.sv \
 RTLS := $(CVFPU_RTLS) $(RTLS)
 endif
 
-CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
+CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/build/hw -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS := 
 
 PARAMS_  := 

@@ -30,6 +30,7 @@
 module VX_dma_engine import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID   = "",
     parameter NUM_CHANNELS          = 8,
+    parameter NUM_HBM_PORTS         = `NUM_HBM_PORTS,
     parameter DATA_WIDTH            = 512,
     parameter AXI_ADDR_WIDTH        = `PLATFORM_MEMORY_ADDR_WIDTH,
     parameter AXI_DATA_WIDTH        = `PLATFORM_MEMORY_DATA_SIZE * 8,
@@ -42,6 +43,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     // semantics. Default 0 (aligned-only) to match the chip-level SW
     // convention; parents that still need byte-misalign must override.
     parameter bit ENABLE_MISALIGN   = 1'b0,
+    parameter bit ENABLE_PADDING    = 1'b1,
+    parameter int BOUND_WIDTH       = `DMA_BOUND_WIDTH,
+    parameter int MAX_DIMS          = 3,
     parameter int RD_OUTSTANDING    = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
@@ -49,6 +53,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 
     // Config register interface per channel (from gemm_dma_ctrl)
     VX_config_reg_if.slave  cfg_reg_if [NUM_CHANNELS],
+    VX_dma_lookahead_if.slave lookahead_if [NUM_CHANNELS],
 
     // Done interface per channel
     VX_node_done_if.master  done_if [NUM_CHANNELS],
@@ -153,6 +158,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         VX_dma_unit #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+            .ENABLE_PADDING   (ENABLE_PADDING),
+            .BOUND_WIDTH      (BOUND_WIDTH),
+            .MAX_DIMS         (MAX_DIMS),
             .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
             .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
             .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),
@@ -163,6 +171,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             .clk            (clk),
             .reset          (reset),
             .cfg_reg_if     (cfg_reg_if[ch]),
+            .lookahead_if   (lookahead_if[ch]),
             .dcache_bus_if  (hbm_bus_if),
             .lmem_bus_if    (tmem_bus_if[ch]),
             .done_if        (internal_done_if)
@@ -206,7 +215,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign hbm_req_byte_addr = AXI_ADDR_WIDTH'(hbm_req_addr) << LOG2_DATA_SIZE;
 
         VX_mem_remap #(
-            .ADDR_W (AXI_ADDR_WIDTH)
+            .ADDR_W    (AXI_ADDR_WIDTH),
+            .NUM_PORTS (NUM_HBM_PORTS)
         ) u_mem_remap (
             .m_address   (hbm_req_byte_addr),
             .hbm_address (hbm_req_remap_byte_addr)
@@ -216,6 +226,19 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // Descriptor latch — BND0 carries the AXI burst length (in beats).
         // --------------------------------------------------------
         wire cfg_fire = cfg_reg_if[ch].valid && cfg_reg_if[ch].ready;
+
+    `ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset && lookahead_if[ch].prepare_valid
+                && !cfg_reg_if[ch].valid)
+                assert (!cfg_fire)
+                    else $fatal(1, "%m: PREPARE caused cfg_fire on ch=%0d", ch);
+            if (!reset && lookahead_if[ch].activate
+                && !cfg_reg_if[ch].valid)
+                assert (!cfg_fire)
+                    else $fatal(1, "%m: ACTIVATE caused cfg_fire without cfg on ch=%0d", ch);
+        end
+    `endif
 
         logic [BURST_LEN_W-1:0] burst_len_r;
 
@@ -318,6 +341,16 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // Done gate — hold done until every outstanding B has drained.
         // --------------------------------------------------------
         wire wr_drain_complete = (aw_outstanding_r == b_drained_r);
+
+    `ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset && cfg_fire && lookahead_if[ch].activate)
+                assert (wr_drain_complete)
+                    else $fatal(1,
+                        "%m: chained ACTIVATE preceded AXI B drain on ch=%0d",
+                        ch);
+        end
+    `endif
 
         assign done_if[ch].valid      = internal_done_if.valid & wr_drain_complete;
         assign done_if[ch].entry_id   = internal_done_if.entry_id;

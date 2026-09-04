@@ -28,6 +28,7 @@ TOP_MODULE := tb_VX_lmem_dma_misal
 
 TB   := $(SRC_DIR)/tb_VX_lmem_dma_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_gearbox.sv \
 				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
@@ -36,6 +37,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/core/VX_dma_unit.sv \
+				$(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+				$(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
@@ -58,6 +61,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
+					$(RTL_DIR)/libs/VX_rr_arbiter.sv \
+					$(RTL_DIR)/libs/VX_onehot_encoder.sv \
 					$(RTL_DIR)/libs/VX_shift_register.sv \
 					$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
 					$(RTL_DIR)/libs/VX_priority_arbiter.sv \
@@ -71,6 +76,8 @@ DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM \
 				TB_ENABLE_MISALIGN=$(ENABLE_MISALIGN) \
 				TB_REORDER_RESPONSES=$(REORDER_RESPONSES) \
 				TB_GEMM_REQ_BACKPRESSURE=$(GEMM_REQ_BACKPRESSURE)
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 
 ifeq ($(GENERALIZED),1)
 DEFINES_ += DMA_MISAL_GENERALIZED

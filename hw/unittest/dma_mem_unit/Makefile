@@ -10,6 +10,9 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+OBJ ?= func
+MAX_DIMS ?= 3
+DIMS_ONLY := $(if $(filter dims,$(OBJ)),1,0)
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_dma_mem_unit
@@ -21,6 +24,7 @@ TOP_MODULE := tb_VX_dma_mem_unit
 
 TB   := $(SRC_DIR)/tb_VX_dma_mem_unit.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
@@ -40,9 +44,11 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
+				$(RTL_DIR)/libs/VX_rr_arbiter.sv \
 				$(RTL_DIR)/libs/VX_shift_register.sv \
 				$(RTL_DIR)/libs/VX_priority_arbiter.sv \
 				$(RTL_DIR)/libs/VX_priority_encoder.sv \
+				$(RTL_DIR)/libs/VX_onehot_encoder.sv \
 				$(RTL_DIR)/libs/VX_lzc.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
@@ -59,7 +65,12 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS ?=
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).DIMS_ONLY_P=$(DIMS_ONLY) \
+		  -pvalue+$(TOP_MODULE).MAX_DIMS_P=$(MAX_DIMS)
+else
+PARAMS := -GOBJ=$(OBJ) -GMAX_DIMS_P=$(MAX_DIMS)
+endif
 
 run: sim
 

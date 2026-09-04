@@ -169,8 +169,15 @@ module VX_fcvt_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
 `ifdef SIMULATION
     always @(negedge clk) begin
-        if (enable && !is_itof_s1
-            && !fclass_s1.is_nan && !fclass_s1.is_inf) begin
+        if ((reset === 1'b0)
+         && (enable === 1'b1)
+         && (is_itof_s1 === 1'b0)
+         && (fclass_s1.is_nan === 1'b0)
+         && (fclass_s1.is_inf === 1'b0)
+         && !$isunknown({
+                overflow, input_exp_s1, denorm_shamt,
+                input_sign_s1, is_signed_s1
+            })) begin
             assert (!(overflow && ($signed(input_exp_s1) < 0)))
                 else $fatal(1,
                     "FCVT finite fraction misclassified as overflow: input_exp=%0d denorm_shamt=0x%0h sign=%b signed=%b",

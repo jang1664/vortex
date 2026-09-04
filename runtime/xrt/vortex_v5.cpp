@@ -876,7 +876,7 @@ public:
       &vx_device::hw_debug_read32,
       &vx_device::hw_debug_write32
     };
-    (void)vx_hw_debug_dump(stderr, &io, NUM_DMA_CHANNELS, HW_DEBUG_PC_RING_DEPTH, "[VXDRV-HWDBG]");
+    (void)vx_hw_debug_dump(stderr, &io, NUM_HBM_PORTS, HW_DEBUG_PC_RING_DEPTH, "[VXDRV-HWDBG]");
   }
 
   void poll_hw_debug_flags(vx_hw_debug_flag_snapshot_t *previous) {
@@ -888,7 +888,7 @@ public:
       &vx_device::hw_debug_read32,
       &vx_device::hw_debug_write32
     };
-    int err = vx_hw_debug_poll_flags(stderr, &io, NUM_DMA_CHANNELS, previous, "[VXDRV-HWDBG]");
+    int err = vx_hw_debug_poll_flags(stderr, &io, NUM_HBM_PORTS, previous, "[VXDRV-HWDBG]");
     if (err != 0) {
       fprintf(stderr, "[VXDRV-HWDBG] flag poll failed: %d\n", err);
     }
@@ -1056,13 +1056,13 @@ private:
   int get_bank_info_remap(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
     // Mirror of hw/rtl/core/VX_mem_remap.sv. Parameter names kept in sync:
     //   NUM_BANKS      = total HBM banks
-    //   NUM_PORTS      = AXI / HBM ports (= NUM_DMA_CHANNELS)
+    //   NUM_PORTS      = AXI / HBM ports (= NUM_HBM_PORTS)
     //   BANKS_PER_PORT = NUM_BANKS / NUM_PORTS
     // Decompose block_idx = q*NUM_PORTS + r, then
     //   bank   = BANKS_PER_PORT*r + (q % BANKS_PER_PORT)
     //   offset = (q / BANKS_PER_PORT) * BLOCK + byte_off
     constexpr uint32_t NUM_BANKS      = PLATFORM_MEMORY_NUM_BANKS;
-    constexpr uint32_t NUM_PORTS      = NUM_DMA_CHANNELS;
+    constexpr uint32_t NUM_PORTS      = NUM_HBM_PORTS;
     constexpr uint32_t BANKS_PER_PORT = NUM_BANKS / NUM_PORTS;
     static_assert(NUM_BANKS % NUM_PORTS == 0,
                   "NUM_BANKS must be a multiple of NUM_PORTS");

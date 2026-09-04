@@ -1,0 +1,650 @@
+`timescale 1ns/1ps
+
+`include "VX_define.vh"
+
+module tb_VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+) ();
+
+  localparam int NDIM = 3;
+  localparam int BUS_BYTES = 64;
+  localparam int CMD_BEATS = 8;
+  localparam int RESPONSE_SLOTS = 8;
+  localparam int TAG_WIDTH = 8;
+  localparam int BUS_ADDR_WIDTH = `MEM_ADDR_WIDTH - $clog2(BUS_BYTES);
+  localparam int MAIN_COMMANDS = 6;
+  localparam int MAIN_BEATS = MAIN_COMMANDS * CMD_BEATS;
+
+  logic clk = 1'b0;
+  logic reset = 1'b1;
+  gemm_wait_meta_t writer_wait_i;
+  logic [31:0] weight_consume_value0_i;
+  logic [31:0] weight_consume_value1_i;
+  always #5 clk = ~clk;
+
+  VX_lmem_dma_ctrl_if #(.NDIM(NDIM)) ctrl_if();
+  VX_gemm_sync_if sync_if();
+  VX_mem_bus_if #(
+    .DATA_SIZE(BUS_BYTES),
+    .TAG_WIDTH(TAG_WIDTH)
+  ) lmem_bus_if();
+  VX_mem_bus_if #(
+    .DATA_SIZE(BUS_BYTES),
+    .TAG_WIDTH(TAG_WIDTH)
+  ) gemm_bus_if();
+  wire lmem_req_urgent;
+  wire [GEMM_SCHED_PRIORITY_WIDTH-1:0] lmem_req_priority;
+  wire [3:0] ready_ahead;
+  wire sched_source_valid;
+  wire [31:0] sched_source_work_seq;
+  wire [31:0] sched_source_total_beats;
+  wire [31:0] sched_source_request_beats;
+  wire [31:0] sched_source_response_beats;
+  wire [31:0] sched_source_writer_beats;
+  wire sched_fetch_complete;
+  wire [31:0] sched_fetch_complete_work_seq;
+
+  VX_lmem_dma_weight_overlap #(
+    .INSTANCE_ID("weight_overlap_tb"),
+    .NDIM(NDIM),
+    .MAX_DIMS(1),
+    .TAG_WIDTH(TAG_WIDTH),
+    .CMD_FIFO_DEPTH(4),
+    .CMD_BEATS(CMD_BEATS),
+    .RESPONSE_SLOTS(RESPONSE_SLOTS),
+    .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM),
+    .ENABLE_TMEM_URGENCY(1'b1),
+    .READY_AHEAD_LOW_WATERMARK(2),
+    .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(TAG_WIDTH)
+  ) dut (
+    .clk(clk),
+    .reset(reset),
+    .sched_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
+    .ctrl_if(ctrl_if),
+    .writer_wait_i(writer_wait_i),
+    .weight_consume_value0_i(weight_consume_value0_i),
+    .weight_consume_value1_i(weight_consume_value1_i),
+    .gemm_sync_if(sync_if),
+    .lmem_bus_if(lmem_bus_if),
+    .gemm_bus_if(gemm_bus_if),
+    .lmem_req_urgent_o(lmem_req_urgent),
+    .lmem_req_priority_o(lmem_req_priority),
+    .ready_ahead_o(ready_ahead),
+    .sched_source_valid_o(sched_source_valid),
+    .sched_source_work_seq_o(sched_source_work_seq),
+    .sched_source_total_beats_o(sched_source_total_beats),
+    .sched_source_request_beats_o(sched_source_request_beats),
+    .sched_source_response_beats_o(sched_source_response_beats),
+    .sched_source_writer_beats_o(sched_source_writer_beats),
+    .sched_slot_occupancy_o(),
+    .sched_fetch_complete_o(sched_fetch_complete),
+    .sched_fetch_complete_work_seq_o(sched_fetch_complete_work_seq)
+  );
+
+  logic lmem_req_ready_r;
+  logic lmem_rsp_valid_r;
+  logic [BUS_BYTES*8-1:0] lmem_rsp_data_r;
+  logic [TAG_WIDTH-1:0] lmem_rsp_tag_r;
+  logic gemm_req_ready_r;
+
+  assign lmem_bus_if.req_ready = lmem_req_ready_r;
+  assign lmem_bus_if.rsp_valid = lmem_rsp_valid_r;
+  assign lmem_bus_if.rsp_data.data = lmem_rsp_data_r;
+  assign lmem_bus_if.rsp_data.tag = lmem_rsp_tag_r;
+  assign gemm_bus_if.req_ready = gemm_req_ready_r;
+  assign gemm_bus_if.rsp_valid = 1'b0;
+  assign gemm_bus_if.rsp_data = '0;
+  assign sync_if.ready = 1'b1;
+
+  function automatic logic [63:0] command_src_base(input int seq);
+    return 64'h0001_0000 + 64'(seq * 16'h1000);
+  endfunction
+
+  function automatic logic [63:0] command_dst_base(input int seq);
+    // Match the node's {load_dir, wreg_idx} selector encoding.  This test uses
+    // load_dir=0 and alternates the two physical Weight registers.
+    return 64'(seq & 1) << $clog2(BUS_BYTES);
+  endfunction
+
+  function automatic logic [GEMM_SYNC_REG_ID_WIDTH-1:0]
+      weight_consume_rid(input int seq);
+    return (seq & 1)
+         ? GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME1)
+         : GEMM_SYNC_REG_ID_WIDTH'(GEMM_RID_W_CONSUME0);
+  endfunction
+
+  function automatic logic [BUS_BYTES*8-1:0] response_payload(
+    input int seq,
+    input int beat
+  );
+    logic [BUS_BYTES*8-1:0] value;
+    value = '0;
+    for (int word = 0; word < BUS_BYTES / 4; ++word)
+      value[word*32 +: 32] = 32'((seq << 16) | (beat << 8) | word);
+    return value;
+  endfunction
+
+  task automatic set_descriptor(input int seq);
+    ctrl_if.src_base_addr = command_src_base(seq);
+    ctrl_if.dst_base_addr = command_dst_base(seq);
+    ctrl_if.seg_size = CMD_BEATS * BUS_BYTES;
+    ctrl_if.reg_idx = 32'(100 + seq);
+    ctrl_if.reg_value = 32'(200 + seq);
+    ctrl_if.scheduler_work_seq = 32'(seq);
+    writer_wait_i = '0;
+    // Commands 2..5 arrive after value 3 is already visible, covering
+    // consume-before-accept. Command 6 deliberately waits for a new buffer-0
+    // target so its complete source phase can be checked independently of the
+    // destination writer fence.
+    if ((seq >= 2) && (seq <= 5)) begin
+      writer_wait_i.valid = 1'b1;
+      writer_wait_i.reg_id = weight_consume_rid(seq);
+      writer_wait_i.target = 32'd3;
+    end else if (seq == 6) begin
+      writer_wait_i.valid = 1'b1;
+      writer_wait_i.reg_id = weight_consume_rid(seq);
+      writer_wait_i.target = 32'd4;
+    end
+    for (int d = 0; d < NDIM; ++d) begin
+      ctrl_if.src_strides[d] = '0;
+      ctrl_if.dst_strides[d] = '0;
+      ctrl_if.bounds[d] = 32'd1;
+    end
+  endtask
+
+  integer enqueue_count;
+  integer pop_push_count;
+  task automatic enqueue_command(input int seq);
+    bit boundary_pop;
+    @(negedge clk);
+    while (ctrl_if.idle !== 1'b1)
+      @(negedge clk);
+    set_descriptor(seq);
+    ctrl_if.start = 1'b1;
+    #1;
+    if (!ctrl_if.idle)
+      $fatal(1, "command %0d lost idle before enqueue edge", seq);
+    boundary_pop = dut.destination_last_write;
+    @(posedge clk);
+    enqueue_count = enqueue_count + 1;
+    if (boundary_pop)
+      pop_push_count = pop_push_count + 1;
+    @(negedge clk);
+    ctrl_if.start = 1'b0;
+  endtask
+
+  integer source_req_count;
+  integer destination_req_count;
+  integer completion_count;
+  integer cycle_count;
+  integer first_boundary_gap;
+  integer previous_command_last_cycle;
+  integer source_stall_cycles;
+  integer destination_stall_cycles;
+  integer logical_response_count;
+  integer scheduler_fetch_complete_count;
+  logic scheduler_fetch_complete_seen[16];
+  logic source_stall_active_r;
+  logic [BUS_ADDR_WIDTH-1:0] source_stall_addr_r;
+  logic [TAG_WIDTH-1:0] source_stall_tag_r;
+  logic destination_stall_active_r;
+  logic [BUS_ADDR_WIDTH-1:0] destination_stall_addr_r;
+  logic [BUS_BYTES*8-1:0] destination_stall_data_r;
+  logic previous_destination_fire_r;
+  logic [TAG_WIDTH-`UP(UUID_WIDTH)-1:0]
+        previous_destination_slot_r;
+  integer next_cycle_slot_reuse_count;
+
+  always @(posedge clk) begin
+    int seq;
+    int beat;
+    bit dst_fire;
+    bit expected_last;
+
+    cycle_count = cycle_count + 1;
+    if (!reset) begin
+      if (sched_source_valid) begin
+        if ((sched_source_total_beats != CMD_BEATS)
+         || (sched_source_request_beats >= sched_source_total_beats)
+         || (sched_source_response_beats > sched_source_request_beats)
+         || (sched_source_writer_beats > sched_source_total_beats))
+          $fatal(1, "Weight scheduler progress invalid seq=%0d total=%0d req=%0d rsp=%0d writer=%0d",
+                 sched_source_work_seq, sched_source_total_beats,
+                 sched_source_request_beats, sched_source_response_beats,
+                 sched_source_writer_beats);
+      end
+      if (sched_fetch_complete) begin
+        if ((sched_fetch_complete_work_seq >= 16)
+         || scheduler_fetch_complete_seen[sched_fetch_complete_work_seq])
+          $fatal(1, "Weight scheduler fetch-complete identity duplicate/invalid seq=%0d",
+                 sched_fetch_complete_work_seq);
+        scheduler_fetch_complete_seen[sched_fetch_complete_work_seq] = 1'b1;
+        scheduler_fetch_complete_count = scheduler_fetch_complete_count + 1;
+      end
+      if (source_stall_active_r) begin
+        if (!lmem_bus_if.req_valid
+         || lmem_bus_if.req_data.addr !== source_stall_addr_r
+         || lmem_bus_if.req_data.tag !== source_stall_tag_r)
+          $fatal(1, "source request changed under backpressure");
+      end
+      source_stall_active_r = lmem_bus_if.req_valid
+                           && !lmem_bus_if.req_ready;
+      source_stall_addr_r = lmem_bus_if.req_data.addr;
+      source_stall_tag_r = lmem_bus_if.req_data.tag;
+      if (source_stall_active_r)
+        source_stall_cycles = source_stall_cycles + 1;
+
+      if (lmem_bus_if.req_valid && lmem_bus_if.req_ready) begin
+        seq = source_req_count / CMD_BEATS;
+        beat = source_req_count % CMD_BEATS;
+        if (lmem_bus_if.req_data.rw !== 1'b0)
+          $fatal(1, "source request %0d is not a read", source_req_count);
+        if (lmem_bus_if.req_data.addr !== BUS_ADDR_WIDTH'(
+              (command_src_base(seq) + 64'(beat * BUS_BYTES))
+              >> $clog2(BUS_BYTES)))
+          $fatal(1, "source address order mismatch seq=%0d beat=%0d got=%0h",
+                 seq, beat, lmem_bus_if.req_data.addr);
+        if (lmem_bus_if.req_data.tag.value
+            !== (source_req_count % RESPONSE_SLOTS))
+          $fatal(1, "source slot order mismatch request=%0d tag=%0h",
+                 source_req_count, lmem_bus_if.req_data.tag.value);
+        source_req_count = source_req_count + 1;
+      end
+      if (lmem_bus_if.req_valid && lmem_bus_if.req_ready
+       && gemm_bus_if.req_valid && gemm_bus_if.req_ready
+       && (lmem_bus_if.req_data.tag.value == dut.drain_slot_r))
+        $fatal(1, "Weight reused a destination slot on its release edge");
+      if (previous_destination_fire_r
+       && lmem_bus_if.req_valid && lmem_bus_if.req_ready
+       && (lmem_bus_if.req_data.tag.value == previous_destination_slot_r))
+        next_cycle_slot_reuse_count = next_cycle_slot_reuse_count + 1;
+      if (lmem_bus_if.rsp_valid && lmem_bus_if.rsp_ready) begin
+        if ($bits(lmem_bus_if.rsp_data.data) != BUS_BYTES * 8)
+          $fatal(1, "Weight queue accepted a non-logical-width response");
+        logical_response_count = logical_response_count + 1;
+      end
+
+      if (destination_stall_active_r) begin
+        if (!gemm_bus_if.req_valid
+         || gemm_bus_if.req_data.addr !== destination_stall_addr_r
+         || gemm_bus_if.req_data.data !== destination_stall_data_r)
+          $fatal(1, "destination request changed under backpressure");
+      end
+      destination_stall_active_r = gemm_bus_if.req_valid
+                                && !gemm_bus_if.req_ready;
+      destination_stall_addr_r = gemm_bus_if.req_data.addr;
+      destination_stall_data_r = gemm_bus_if.req_data.data;
+      if (destination_stall_active_r)
+        destination_stall_cycles = destination_stall_cycles + 1;
+
+      dst_fire = gemm_bus_if.req_valid && gemm_bus_if.req_ready;
+      seq = destination_req_count / CMD_BEATS;
+      beat = destination_req_count % CMD_BEATS;
+      expected_last = dst_fire && (beat == CMD_BEATS - 1);
+      if (ctrl_if.write_done !== expected_last || ctrl_if.done !== expected_last)
+        $fatal(1, "completion pulse mismatch dst_count=%0d done=%0b write_done=%0b expected=%0b",
+               destination_req_count, ctrl_if.done, ctrl_if.write_done,
+               expected_last);
+
+      if (dst_fire) begin
+        if (gemm_bus_if.req_data.rw !== 1'b1)
+          $fatal(1, "destination request %0d is not a write",
+                 destination_req_count);
+        if (gemm_bus_if.req_data.addr !== BUS_ADDR_WIDTH'(
+              command_dst_base(seq) >> $clog2(BUS_BYTES)))
+          $fatal(1, "destination address order mismatch seq=%0d beat=%0d got=%0h",
+                 seq, beat, gemm_bus_if.req_data.addr);
+        if (gemm_bus_if.req_data.data !== response_payload(seq, beat))
+          $fatal(1, "destination data mismatch seq=%0d beat=%0d", seq, beat);
+        if (gemm_bus_if.req_data.byteen !== '1)
+          $fatal(1, "destination byte enable mismatch seq=%0d beat=%0d", seq, beat);
+        if (beat == 0 && seq == 1) begin
+          first_boundary_gap = cycle_count - previous_command_last_cycle - 1;
+          if (first_boundary_gap > 1)
+            $fatal(1, "ready destination burst boundary gap=%0d exceeds one cycle",
+                   first_boundary_gap);
+        end
+        if (beat == CMD_BEATS - 1) begin
+          previous_command_last_cycle = cycle_count;
+          if (sync_if.reg_idx !== 32'(100 + seq)
+           || sync_if.value !== 32'(200 + seq))
+            $fatal(1, "completion metadata mismatch seq=%0d reg=%0d value=%0d",
+                   seq, sync_if.reg_idx, sync_if.value);
+          completion_count = completion_count + 1;
+        end
+        destination_req_count = destination_req_count + 1;
+      end
+      previous_destination_fire_r = dst_fire;
+      if (dst_fire)
+        previous_destination_slot_r = dut.drain_slot_r;
+    end else begin
+      source_stall_active_r = 1'b0;
+      destination_stall_active_r = 1'b0;
+      previous_destination_fire_r = 1'b0;
+    end
+  end
+
+  task automatic send_response(input int request_index);
+    int seq;
+    int beat;
+    int slot;
+    seq = request_index / CMD_BEATS;
+    beat = request_index % CMD_BEATS;
+    slot = request_index % RESPONSE_SLOTS;
+    @(negedge clk);
+    lmem_rsp_valid_r = 1'b1;
+    lmem_rsp_data_r = response_payload(seq, beat);
+    lmem_rsp_tag_r = '0;
+    lmem_rsp_tag_r[TAG_WIDTH-`UP(UUID_WIDTH)-1:0] = slot;
+    // Sample the response handshake on the accepting edge.  In reverse-tag
+    // traffic, rsp_ready can be low for the previously consumed tag when this
+    // task changes the tag at a negedge, then rise for the new owned tag before
+    // the next posedge.  Waiting only on negedges misses that legal fire and
+    // incorrectly holds the already-consumed response into a second posedge.
+    @(posedge clk);
+    while (lmem_bus_if.rsp_ready !== 1'b1)
+      @(posedge clk);
+    @(negedge clk);
+    lmem_rsp_valid_r = 1'b0;
+  endtask
+
+  task automatic wait_source_count(input int expected);
+    while (source_req_count < expected)
+      @(negedge clk);
+  endtask
+
+  task automatic wait_destination_count(input int expected);
+    while (destination_req_count < expected)
+      @(negedge clk);
+  endtask
+
+  initial begin
+    ctrl_if.start = 1'b0;
+    ctrl_if.prepare = 1'b0;
+    ctrl_if.prepare_max_beats = '0;
+    ctrl_if.src_base_addr = '0;
+    ctrl_if.dst_base_addr = '0;
+    ctrl_if.seg_size = '0;
+    ctrl_if.reg_idx = '0;
+    ctrl_if.reg_value = '0;
+    ctrl_if.scheduler_work_seq = '0;
+    writer_wait_i = '0;
+    weight_consume_value0_i = 32'd0;
+    weight_consume_value1_i = 32'd0;
+    for (int d = 0; d < NDIM; ++d) begin
+      ctrl_if.src_strides[d] = '0;
+      ctrl_if.dst_strides[d] = '0;
+      ctrl_if.bounds[d] = '0;
+    end
+    lmem_req_ready_r = 1'b0;
+    lmem_rsp_valid_r = 1'b0;
+    lmem_rsp_data_r = '0;
+    lmem_rsp_tag_r = '0;
+    gemm_req_ready_r = 1'b0;
+    enqueue_count = 0;
+    pop_push_count = 0;
+    source_req_count = 0;
+    destination_req_count = 0;
+    completion_count = 0;
+    cycle_count = 0;
+    first_boundary_gap = -1;
+    previous_command_last_cycle = -1;
+    source_stall_cycles = 0;
+    destination_stall_cycles = 0;
+    logical_response_count = 0;
+    scheduler_fetch_complete_count = 0;
+    for (int seq = 0; seq < 16; ++seq)
+      scheduler_fetch_complete_seen[seq] = 1'b0;
+    source_stall_active_r = 1'b0;
+    destination_stall_active_r = 1'b0;
+    previous_destination_fire_r = 1'b0;
+    previous_destination_slot_r = '0;
+    next_cycle_slot_reuse_count = 0;
+
+    repeat (5) @(posedge clk);
+    @(negedge clk);
+    reset = 1'b0;
+    repeat (2) @(posedge clk);
+
+    // Fill all four command entries before any source request can fire.  The
+    // later entries remain descriptor-resident once the eight slots hold the
+    // first complete WLOAD4 command payload.
+    enqueue_command(0);
+    enqueue_command(1);
+    enqueue_command(2);
+    enqueue_command(3);
+    @(negedge clk);
+    if (ctrl_if.idle !== 1'b0 || dut.cmd_count_r != 4)
+      $fatal(1, "Weight command FIFO did not report full after four enqueues");
+    if (!dut.dbg_overlap_shared_queue_bound
+     || (dut.dbg_overlap_fetch_tag_width
+         != $bits(lmem_bus_if.req_data.tag.value))
+     || (dut.dbg_overlap_logical_beat_bytes != BUS_BYTES)
+     || !dut.dbg_overlap_ring_slot_order
+     || !dut.dbg_overlap_sink_pipeline
+     || dut.dbg_overlap_same_cycle_slot_recycle)
+      $fatal(1, "Weight shared-queue mode binding mismatch");
+    for (int entry = 0; entry < 4; ++entry) begin
+      if (!dut.u_stream_queue.cmd_valid_r[entry]
+       || dut.u_stream_queue.cmd_total_r[entry] != CMD_BEATS
+       || dut.u_stream_queue.cmd_request_r[entry] != 0
+       || dut.u_stream_queue.cmd_response_r[entry] != 0
+       || dut.u_stream_queue.cmd_write_r[entry] != 0)
+        $fatal(1, "Weight shared-queue descriptor mismatch entry=%0d", entry);
+    end
+    $display("PASS marker: Weight owns independent VX_gemm_stream_dma_queue depth4/slots8 logical_bytes=%0d",
+             BUS_BYTES);
+    $display("PASS marker: four Weight descriptors enqueued before any completion");
+
+    // Hold the first source request, then accept one command's reads.  The
+    // global tags must be exactly slots 0..7, all slots must be occupied, and
+    // commands 1 through 3 must remain valid without issuing source reads.
+    repeat (3) @(posedge clk);
+    @(negedge clk);
+    lmem_req_ready_r = 1'b1;
+    wait_source_count(8);
+    @(negedge clk);
+    lmem_req_ready_r = 1'b0;
+    if (dut.slot_occupancy_r != RESPONSE_SLOTS)
+      $fatal(1, "shared slot pool occupancy=%0d expected=%0d",
+             dut.slot_occupancy_r, RESPONSE_SLOTS);
+    if ((ready_ahead != 0) || lmem_req_urgent
+     || (lmem_req_priority != GEMM_SCHED_PRIORITY_BACKGROUND))
+      $fatal(1, "Weight tracked P0 request was re-promoted by WAIT_RSP urgency");
+    if (dut.cmd_count_r != 4 || dut.cmd_valid_r !== 4'b1111
+     || dut.cmd_rd_done_r !== 4'b0001 || dut.rd_cmd_ptr_r != 1)
+      $fatal(1, "four-descriptor/eight-slot residency mismatch count=%0d valid=%0h rd_done=%0h rd_ptr=%0d",
+             dut.cmd_count_r, dut.cmd_valid_r, dut.cmd_rd_done_r,
+             dut.rd_cmd_ptr_r);
+    $display("PASS marker: eight slots hold one WLOAD4 payload while three later descriptors remain resident");
+
+    // Return high slots first so ready-ahead remains zero despite READY
+    // occupancy, then release the writer head one beat at a time.
+    for (int request_index = 7; request_index >= 2; --request_index)
+      send_response(request_index);
+    if ((ready_ahead != 0) || lmem_req_urgent)
+      $fatal(1, "Weight tracked P0 request was re-promoted by nonconsecutive READY state");
+    send_response(0);
+    if ((ready_ahead != 1) || lmem_req_urgent)
+      $fatal(1, "Weight tracked P0 request was re-promoted at ready-ahead=1 count=%0d",
+             ready_ahead);
+    send_response(1);
+    wait (ready_ahead == RESPONSE_SLOTS);
+    if (logical_response_count != RESPONSE_SLOTS)
+      $fatal(1, "Weight complete logical response count=%0d expected=%0d",
+             logical_response_count, RESPONSE_SLOTS);
+    if (lmem_req_urgent)
+      $fatal(1, "Weight urgency remained set with sufficient consecutive lead");
+    $display("PASS marker: delayed reverse-order tagged source responses accepted");
+    $display("PASS marker: each queue response is one completed 64B Weight logical beat");
+    $display("PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP");
+    $display("PASS marker: tracked Weight P0 is not re-promoted by local ready-ahead urgency");
+
+    // The writer has a valid staged request but must preserve it while the
+    // destination is stalled.
+    wait (gemm_bus_if.req_valid === 1'b1);
+    repeat (3) @(posedge clk);
+    @(negedge clk);
+    gemm_req_ready_r = 1'b1;
+    lmem_req_ready_r = 1'b1;
+    // Later commands carry valid writer waits whose targets were reached
+    // before their descriptors are accepted.  The executor must observe the
+    // current level at accept rather than wait for a new release pulse.
+    weight_consume_value0_i = 32'd3;
+    weight_consume_value1_i = 32'd3;
+
+    // Keep the command FIFO full by enqueueing on command-boundary pop cycles.
+    // In parallel, return later responses in request order as their slots wrap.
+    fork
+      begin
+        for (int seq = 4; seq < MAIN_COMMANDS; ++seq)
+          enqueue_command(seq);
+      end
+      begin
+        for (int request_index = 8; request_index < MAIN_BEATS;
+             ++request_index) begin
+          wait_source_count(request_index + 1);
+          if ((request_index == 10) || (request_index == 19))
+            repeat (2) @(posedge clk);
+          send_response(request_index);
+        end
+      end
+      begin
+        wait_destination_count(9);
+        @(negedge clk);
+        gemm_req_ready_r = 1'b0;
+        repeat (2) @(posedge clk);
+        @(negedge clk);
+        gemm_req_ready_r = 1'b1;
+      end
+    join
+
+    wait_destination_count(MAIN_BEATS);
+    @(negedge clk);
+    if (completion_count != MAIN_COMMANDS)
+      $fatal(1, "completion count=%0d expected=%0d",
+             completion_count, MAIN_COMMANDS);
+    if (enqueue_count != MAIN_COMMANDS || pop_push_count < 2)
+      $fatal(1, "command wrap/pop-push coverage missing enq=%0d pop_push=%0d",
+             enqueue_count, pop_push_count);
+    if (source_stall_cycles == 0 || destination_stall_cycles == 0)
+      $fatal(1, "backpressure coverage missing source=%0d destination=%0d",
+             source_stall_cycles, destination_stall_cycles);
+    if (first_boundary_gap < 0 || first_boundary_gap > 1)
+      $fatal(1, "ready burst boundary coverage missing gap=%0d",
+             first_boundary_gap);
+    if (next_cycle_slot_reuse_count == 0)
+      $fatal(1, "legacy next-cycle Weight slot reuse was not exercised");
+    if (dut.cmd_count_r != 0 || dut.slot_occupancy_r != 0)
+      $fatal(1, "executor not empty after wrap test commands=%0d slots=%0d",
+             dut.cmd_count_r, dut.slot_occupancy_r);
+    $display("PASS marker: six commands wrapped command/slot pointers with ordered writes and completions");
+    $display("PASS marker: ready eight-beat burst boundary idle cycles=%0d", first_boundary_gap);
+    $display("PASS marker: source and destination backpressure held requests stable");
+    $display("PASS marker: Weight slot reuse follows release by exactly one cycle count=%0d",
+             next_cycle_slot_reuse_count);
+
+    // A source-ready buffer-0 command may fill all eight response slots while
+    // its exact consume target remains unresolved.  A stale target and a
+    // wrong-buffer newer target must not release the writer; only W0 target 4
+    // permits destination traffic.
+    enqueue_command(6);
+    wait_source_count(MAIN_BEATS + CMD_BEATS);
+    @(negedge clk);
+    lmem_req_ready_r = 1'b0;
+    for (int request_index = MAIN_BEATS;
+         request_index < MAIN_BEATS + CMD_BEATS; ++request_index)
+      send_response(request_index);
+    wait (dut.drain_valid_r === 1'b1);
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    if (source_req_count != MAIN_BEATS + CMD_BEATS
+     || destination_req_count != MAIN_BEATS
+     || gemm_bus_if.req_valid)
+      $fatal(1, "unreleased writer was not held after complete source preload");
+    weight_consume_value1_i = 32'd4;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    if (destination_req_count != MAIN_BEATS || gemm_bus_if.req_valid)
+      $fatal(1, "wrong-buffer consume value released buffer-0 writer");
+    weight_consume_value0_i = 32'd3;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    if (destination_req_count != MAIN_BEATS || gemm_bus_if.req_valid)
+      $fatal(1, "stale buffer-0 consume value released writer");
+    weight_consume_value0_i = 32'd4;
+    lmem_req_ready_r = 1'b1;
+    wait_destination_count(MAIN_BEATS + CMD_BEATS);
+    if (completion_count != MAIN_COMMANDS + 1)
+      $fatal(1, "writer-fence command completion count mismatch got=%0d",
+             completion_count);
+    if (scheduler_fetch_complete_count != MAIN_COMMANDS + 1)
+      $fatal(1, "Weight logical fetch completion count=%0d expected=%0d",
+             scheduler_fetch_complete_count, MAIN_COMMANDS + 1);
+    if (logical_response_count != MAIN_BEATS + CMD_BEATS)
+      $fatal(1, "Weight logical response total=%0d expected=%0d",
+             logical_response_count, MAIN_BEATS + CMD_BEATS);
+    for (int seq = 0; seq <= MAIN_COMMANDS; ++seq) begin
+      if (!scheduler_fetch_complete_seen[seq])
+        $fatal(1, "Weight logical fetch completion missing seq=%0d", seq);
+    end
+    $display("PASS marker: Weight scheduler logical response completed once per descriptor after all composite responses");
+    $display("PASS marker: source-before-consume, wrong/stale release rejection, and matching writer release");
+
+    // Reset while a source request is stalled, one response is live, and one
+    // destination payload is staged. No pre-reset owner may leak afterward.
+    gemm_req_ready_r = 1'b0;
+    lmem_req_ready_r = 1'b1;
+    enqueue_command(7);
+    enqueue_command(8);
+    wait_source_count(MAIN_BEATS + CMD_BEATS + 3);
+    @(negedge clk);
+    lmem_req_ready_r = 1'b0;
+    send_response(MAIN_BEATS + CMD_BEATS);
+    wait (dut.drain_valid_r && gemm_bus_if.req_valid);
+    @(negedge clk);
+    lmem_rsp_valid_r = 1'b1;
+    lmem_rsp_data_r = response_payload(7, 1);
+    lmem_rsp_tag_r = '0;
+    lmem_rsp_tag_r[TAG_WIDTH-`UP(UUID_WIDTH)-1:0] = 5;
+    if (!lmem_bus_if.req_valid || !gemm_bus_if.req_valid)
+      $fatal(1, "reset-live setup lacks source request or destination drain");
+    reset = 1'b1;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    lmem_rsp_valid_r = 1'b0;
+    repeat (2) @(posedge clk);
+    @(negedge clk);
+    reset = 1'b0;
+    repeat (3) @(posedge clk);
+    @(negedge clk);
+    if (lmem_bus_if.req_valid || gemm_bus_if.req_valid
+     || ctrl_if.done || ctrl_if.write_done || dut.cmd_count_r != 0
+     || dut.slot_occupancy_r != 0
+     || dut.u_stream_queue.cmd_count_r != 0
+     || dut.u_stream_queue.slot_count_r != 0
+     || ctrl_if.idle !== 1'b1)
+      $fatal(1, "stale activity survived live reset");
+    $display("PASS marker: live request/response/drain reset emitted no stale output");
+
+    $display("PASSED: Weight LDMA four-command/eight-slot two-head overlap directed test");
+    $finish;
+  end
+
+  initial begin
+    repeat (5000) @(posedge clk);
+    $display("timeout state: reset=%0b idle=%0b enq=%0d src=%0d dst=%0d done=%0d cmd_count=%0d slots=%0d rd_ptr=%0d wr_ptr=%0d tail=%0d req=%0b/%0b rsp=%0b/%0b dst_req=%0b/%0b",
+             reset, ctrl_if.idle, enqueue_count, source_req_count,
+             destination_req_count, completion_count, dut.cmd_count_r,
+             dut.slot_occupancy_r, dut.rd_cmd_ptr_r, dut.wr_cmd_ptr_r,
+             dut.cmd_tail_ptr_r, lmem_bus_if.req_valid,
+             lmem_bus_if.req_ready, lmem_bus_if.rsp_valid,
+             lmem_bus_if.rsp_ready, gemm_bus_if.req_valid,
+             gemm_bus_if.req_ready);
+    $fatal(1, "timeout in Weight LDMA overlap directed test");
+  end
+
+endmodule

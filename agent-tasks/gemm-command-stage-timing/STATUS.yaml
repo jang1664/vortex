@@ -1,0 +1,87 @@
+task: gemm-command-stage-timing
+status: in_progress
+updated: "2026-09-03 02:31"
+goal: >-
+  Add an elastic GEMM command stage that breaks the 7 ns FSM-to-child-queue
+  critical path while preserving one-command-per-cycle steady-state issue.
+iterations:
+  - iteration: 1
+    verification: partial
+    command: >-
+      python3 ../tools/verify_rtl.py unittest --path
+      hw/unittest/gemm_node_improve --sim vcs --params
+      "TEST=CMD_STAGE_M32_N32_K32 M=32 N=32 K=32 QBLK=32 WTRANS=0 QDIR=0"
+      --extra-sim-args "+NO_WAVE" --timeout 900
+    evidence: >-
+      Job completed at 3255 ns and all 1024 tiled output elements passed at
+      13255 ns with no fatal, assertion, syntax, or elaboration errors.
+    ooc_7ns:
+      status: fail
+      wns_ns: -0.653
+      tns_ns: -90.520
+      failing_endpoints: 783
+      improvement_from_baseline_ns: 1.264
+      worst_path: >-
+        tile_cur_mt_q_reg[0] through output-store address arithmetic to
+        cmd_stage_cmd_q_reg[rs1_data][51], 7.635 ns and 30 logic levels.
+      conclusion: >-
+        The original readiness-probe-to-child-command-BRAM path is gone, but
+        output address arithmetic now limits the FSM-to-elastic-stage capture.
+  - iteration: 2
+    status: verifying
+    objective: >-
+      Pipeline output-store address calculation across the existing
+      WAIT_GEMM_DONE and ACC2LMEM states without adding command issue cycles.
+    implementation: >-
+      Capture per-output-tile geometry in S_MXU_WAIT_GEMM_DONE, then capture
+      the selected microtile LMEM/DRAM addresses when S_O_ACC2LMEM is accepted.
+      S_O_LMEM2DRAM consumes only those registered final addresses.
+    focused_vcs:
+      status: pass
+      cases:
+        - name: CMD_STAGE_I2_M32_N32_K32_QCOL
+          job_done_ns: 3255
+          output_elements: 1024
+        - name: CMD_STAGE_I2_M33_N64_K32_QROW
+          job_done_ns: 4555
+          output_elements: 2112
+      evidence: >-
+        Both cases completed with exact output matches and no fatal,
+        assertion, syntax, or elaboration errors.  The second case covers a
+        partial M tile and multiple output N microtiles.
+    xrt_vcs_sim:
+      status: pass
+      build: build_gemm_cmd_stage_i2
+      baseline_cycles: 5873
+      qcol_cycles: 5874
+      qrow_cycles: 5874
+      delta_percent: 0.017
+      performance_target_percent: 2.0
+verification:
+  focused_vcs: pass
+  xrt_vcs_sim:
+    status: pass
+    build: build_gemm_cmd_stage
+    baseline_cycles: 5873
+    qcol_cycles: 5873
+    qcol_delta_percent: 0.0
+    qrow_cycles: 5874
+    qrow_delta_percent: 0.017
+    performance_target_percent: 2.0
+  ooc_7ns: pending
+implementation:
+  status: complete
+  files:
+    - hw/rtl/core/gemm/VX_gemm_ctrl.sv
+    - hw/rtl/core/gemm/VX_gemm_fsm.sv
+  summary: >-
+    Added a one-entry full-command elastic stage with simultaneous drain/refill.
+    Readiness admission and child queue push now use the same staged command,
+    while FSM command payload construction is independent of downstream ready.
+pitfalls:
+  - >-
+    The worktree contains unrelated response-payload DPRAM experiments; do not
+    modify, stage, or discard those changes.
+  - >-
+    Registering probe_ready without its work sequence or a reservation would
+    create stale admission decisions when the FSM switches microtiles.

@@ -11,12 +11,18 @@
 
 `include "VX_define.vh"
 
-module tb_VX_gemm_tmem_dma_ctrl_misalign;
+module tb_VX_gemm_tmem_dma_ctrl_misalign #(
+  parameter int TB_PENDING_DEPTH = 4
+);
   import VX_gpu_pkg::*;
 
   localparam int CLK_PERIOD_NS = 10;
   localparam int NUM_CHANNELS  = 8;
   localparam int CFG_NUM       = `DMA_CFG_REG_NUM;
+  localparam int STORE_TMEM_BEAT_STRIDE =
+    (`PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS) * `MEM_BLOCK_SIZE;
+  localparam int STORE_HBM_BEAT_STRIDE =
+    `PLATFORM_MEMORY_NUM_BANKS * `MEM_BLOCK_SIZE;
 
   localparam int DMA_R_DST_BASE_LO = 1;
   localparam int DMA_R_SRC_BASE_LO = 3;
@@ -24,8 +30,11 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   localparam int DMA_R_DST_ST0     = 6;
   localparam int DMA_R_SRC_ST1     = 7;
   localparam int DMA_R_DST_ST1     = 8;
+  localparam int DMA_R_SRC_ST2     = 9;
+  localparam int DMA_R_DST_ST2     = 10;
   localparam int DMA_R_BND0        = 11;
   localparam int DMA_R_BND1        = 12;
+  localparam int DMA_R_BND2        = 13;
   localparam int DMA_R_SEG_SIZE    = 14;
   localparam int DMA_R_DIR         = 16;
 
@@ -46,17 +55,44 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   ) cfg_reg_if [NUM_CHANNELS] ();
 
   VX_node_done_if done_if [NUM_CHANNELS] ();
+  VX_dma_lookahead_if dma_lookahead_if [NUM_CHANNELS] ();
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_ready_drive;
+  logic [NUM_CHANNELS-1:0][1:0] lookahead_result_ready_drive;
+  logic [NUM_CHANNELS-1:0] lookahead_activate_seen_s;
+  logic [NUM_CHANNELS-1:0] lookahead_prepare_valid_seen_s;
+  logic [NUM_CHANNELS-1:0] lookahead_data_release_s;
+  logic [NUM_CHANNELS-1:0][GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0]
+    lookahead_data_max_beats_s;
+  for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+    // Model the Phase-5 channel cache contract at the controller boundary:
+    // accept each tagged PREPARE and report both source/destination groups
+    // ready.  Backend cache timing is covered by the aligned-unit test.
+    assign dma_lookahead_if[ch].prepare_ready =
+      lookahead_prepare_ready_drive[ch];
+    assign dma_lookahead_if[ch].result_ready =
+      lookahead_result_ready_drive[ch];
+    assign lookahead_activate_seen_s[ch] = dma_lookahead_if[ch].activate;
+    assign lookahead_prepare_valid_seen_s[ch] =
+      dma_lookahead_if[ch].prepare_valid;
+    assign lookahead_data_release_s[ch] = dma_lookahead_if[ch].data_release;
+    assign lookahead_data_max_beats_s[ch] =
+      dma_lookahead_if[ch].data_max_beats;
+  end
+  logic store_done;
 
   VX_gemm_tmem_dma_ctrl #(
     .INSTANCE_ID("tb_misalign"),
-    .NUM_CHANNELS(NUM_CHANNELS)
+    .NUM_CHANNELS(NUM_CHANNELS),
+    .PENDING_DEPTH(TB_PENDING_DEPTH)
   ) dut (
     .clk(clk),
     .reset(reset),
+    .compute_active_i(1'b0),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
-    .store_done(),
+    .store_done(store_done),
     .gemm_sync_if(gemm_sync_if),
     .cfg_reg_if(cfg_reg_if),
+    .lookahead_if(dma_lookahead_if),
     .done_if(done_if)
   );
 
@@ -64,12 +100,181 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   logic [NUM_CHANNELS-1:0][CFG_NUM-1:0][31:0] cfg_regs_seen;
   logic [NUM_CHANNELS-1:0]                     cfg_valid_s;
   logic [NUM_CHANNELS-1:0]                     cfg_ready_s;
+  logic [NUM_CHANNELS-1:0]                     cfg_ready_drive;
   logic [NUM_CHANNELS-1:0][CFG_NUM-1:0][31:0] cfg_regs_s;
   logic [NUM_CHANNELS-1:0]                     done_valid_s;
   logic [NUM_CHANNELS-1:0][31:0]               done_entry_s;
   logic                                        notify_seen;
   logic [31:0]                                 notify_reg_seen;
   logic [31:0]                                 notify_val_seen;
+  integer dma_done_pulse_count;
+  integer store_done_pulse_count;
+  logic dma_done_prev;
+  integer last_done_issue_count;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] next_cmd_tag;
+  integer descriptor_issue_count;
+  integer data_prepare_accept_count;
+  integer invalid_data_prepare_count;
+  logic [127:0][NUM_CHANNELS-1:0] descriptor_active;
+  logic [127:0][NUM_CHANNELS-1:0][CFG_NUM-1:0][31:0]
+    descriptor_regs;
+  wire shadow_high_prepared = dut.shadow_owner_live
+                           && (dut.shadow_owner_id_q == 1'b0)
+                           && dut.shadow_prepared_q;
+  wire shadow_fallback_prepared = dut.shadow_owner_live
+                               && (dut.shadow_owner_id_q == 1'b1)
+                               && dut.shadow_prepared_q;
+
+  task automatic run_data_prepare_release_case(input logic [2:0] rd);
+    gemm_unified_cmd_t c;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] release_tag;
+    int wait_cycles;
+    begin
+      wait_idle("data_prepare_start");
+      clear_cfg_scoreboard();
+      clear_done_inputs();
+      c = '0;
+      c.instr = make_instr(OP_DMA_LD, 28'd1024);
+      c.rd = rd;
+      c.rs1_data = 64'h0000_0000_0000_1000 + (64'(rd) << 12);
+      c.rs2_data = 64'h0000_0000_0010_0000 + (64'(rd) << 16);
+      c.stride = {16'd512, 16'd64};
+      c.bound = 16'd1;
+      c.dma_priority = 1'b1;
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+          GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+
+      @(negedge clk);
+      if (!gemm_dma_ctrl_if.prepare_ready)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d controller not ready", rd);
+      gemm_dma_ctrl_if.prepare_cmd = c;
+      gemm_dma_ctrl_if.prepare_valid = 1'b1;
+      @(posedge clk);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_valid = 1'b0;
+
+      wait_cycles = 0;
+      while ((dut.state_q != 3'd5) && (wait_cycles < 40)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      #1;
+      if (dut.state_q != 3'd5 || !dut.work_data_prefetched_q
+       || dut.work_data_released_q)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d did not reach held WAIT_DONE", rd);
+      expect_cfg_count(8, "data_prepare_cfg");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (lookahead_data_release_s[ch]
+         || lookahead_data_max_beats_s[ch]
+            !== GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+                GEMM_TILE_DMA_PREFETCH_MAX_BEATS))
+          $fatal(1,
+            "TMEM_DATA_PREPARE rd=%0d ch=%0d gate/credit mismatch release=%0b max=%0d",
+            rd, ch, lookahead_data_release_s[ch],
+            lookahead_data_max_beats_s[ch]);
+      end
+
+      // Model every channel completing its prepared transfer.
+      // Completion may become sticky internally, but it must remain invisible
+      // until the exact architectural command is released with its real tag.
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        done_valid_s[ch] = 1'b1;
+        done_entry_s[ch] = 32'd0;
+      end
+      #1;
+      if (gemm_dma_ctrl_if.done || store_done)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d completed before release", rd);
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+      #1;
+      if (gemm_dma_ctrl_if.done || store_done
+       || dut.done_sticky_q !== {NUM_CHANNELS{1'b1}})
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d lost held responses", rd);
+
+      // The integrated controller keeps the prepared command as the ordered
+      // DMA-child queue head. A mismatched release is therefore an upstream
+      // protocol violation checked by the RTL assertion, not backpressure
+      // behavior in this positive test.
+      release_tag = GEMM_DMA_TAG_WIDTH'(rd + 1);
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd = c;
+      gemm_dma_ctrl_if.cmd_tag = release_tag;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      #1;
+      if (!gemm_dma_ctrl_if.cmd_ready)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d exact release not accepted", rd);
+      @(posedge clk);
+      #1;
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+      if (!dut.work_data_released_q || !gemm_dma_ctrl_if.done
+       || gemm_dma_ctrl_if.done_tag !== release_tag || store_done)
+        $fatal(1,
+          "TMEM_DATA_PREPARE rd=%0d release/tag completion mismatch done=%0b tag=%0d",
+          rd, gemm_dma_ctrl_if.done, gemm_dma_ctrl_if.done_tag);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (!lookahead_data_release_s[ch])
+          $fatal(1, "TMEM_DATA_PREPARE rd=%0d ch=%0d release gate stayed closed",
+                 rd, ch);
+      end
+      @(posedge clk);
+      #1;
+      if (gemm_dma_ctrl_if.done || dut.work_data_prefetched_q
+       || dut.work_data_released_q)
+        $fatal(1, "TMEM_DATA_PREPARE rd=%0d did not retire cleanly", rd);
+      wait_idle("data_prepare_retire");
+      $display("TMEM_DATA_PREPARE_RD%0d_PASS max_beats_per_channel=%0d pre_release_commit=0 pre_release_done=0 exact_match=1 tag_bound=1 buffered_drain=1",
+               rd, GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+    end
+  endtask
+
+  task automatic run_data_prepare_reset_invalidate_case();
+    gemm_unified_cmd_t c;
+    int wait_cycles;
+    begin
+      wait_idle("data_prepare_reset_start");
+      c = '0;
+      c.instr = make_instr(OP_DMA_LD, 28'd64);
+      c.rd = 3'd0;
+      c.rs2_data = 64'h0020_0000;
+      c.stride = {16'd512, 16'd64};
+      c.bound = 16'd1;
+      c.dma_priority = 1'b1;
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(
+          GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_cmd = c;
+      gemm_dma_ctrl_if.prepare_valid = 1'b1;
+      @(posedge clk);
+      @(negedge clk);
+      gemm_dma_ctrl_if.prepare_valid = 1'b0;
+      wait_cycles = 0;
+      while (!dut.work_data_prefetched_q && (wait_cycles < 10)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.work_data_prefetched_q)
+        $fatal(1, "TMEM_DATA_PREPARE reset setup failed");
+      @(negedge clk);
+      reset = 1'b1;
+      repeat (3) @(posedge clk);
+      @(negedge clk);
+      reset = 1'b0;
+      repeat (2) @(posedge clk);
+      #1;
+      if (dut.work_data_prefetched_q || dut.work_data_released_q
+       || dut.state_q != 3'd0 || !gemm_dma_ctrl_if.prepare_ready)
+        $fatal(1, "TMEM_DATA_PREPARE reset did not invalidate owner/state");
+      $display("TMEM_DATA_PREPARE_RESET_INVALIDATE_PASS prefetched=0 released=0 tag_stale=0");
+    end
+  endtask
 
   function automatic logic [31:0] make_instr(input logic [3:0] op, input logic [27:0] size_bytes);
     return {size_bytes, op};
@@ -110,44 +315,89 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
   endtask
 
   task automatic pulse_start;
-    gemm_dma_ctrl_if.start <= 1'b1;
-    @(posedge clk);
-    gemm_dma_ctrl_if.start <= 1'b0;
+    begin
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd.dma_priority =
+        (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_LD);
+      gemm_dma_ctrl_if.cmd.dma_max_chunk_log2p1 =
+        (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_ST) ? 4'd4 : 4'd0;
+      gemm_dma_ctrl_if.cmd_tag = next_cmd_tag;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      do @(posedge clk); while (!gemm_dma_ctrl_if.cmd_ready);
+      next_cmd_tag++;
+      @(negedge clk);
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+    end
   endtask
 
-  task automatic wait_done_or_timeout(input int unsigned max_cycles, input string tag);
-    int unsigned c;
-    c = 0;
-    while (gemm_dma_ctrl_if.idle && (c < max_cycles)) begin
-      @(posedge clk);
-      c++;
-    end
-    if (c >= max_cycles)
-      $fatal(1, "[%s] timeout: never left idle", tag);
-
-    while (!gemm_dma_ctrl_if.done && (c < max_cycles)) begin
-      @(posedge clk);
-      c++;
-    end
-    if (c >= max_cycles)
-      $fatal(1, "[%s] timeout: done not asserted", tag);
-
-    @(posedge clk);
-  endtask
-
-  task automatic drive_done_for_active_channels;
+  task automatic complete_active_channels_exact(
+    input bit expect_store,
+    input string tag
+  );
+    int final_ch;
+    int active_count;
+    int done_before;
+    int store_before;
+    int wait_cycles;
+    final_ch = -1;
+    active_count = 0;
+    done_before = dma_done_pulse_count;
+    store_before = store_done_pulse_count;
     for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
       if (cfg_seen[ch]) begin
-        done_valid_s[ch] = 1'b1;
-        done_entry_s[ch] = 32'd0;
+        final_ch = ch;
+        active_count++;
       end
     end
+    if (final_ch < 0)
+      $fatal(1, "[%s] no active channel to complete", tag);
+
+    // Make every channel except the final one sticky first.
+    @(negedge clk);
+    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+      done_valid_s[ch] = cfg_seen[ch] && (ch != final_ch);
+    #1;
+    if (active_count > 1 && gemm_dma_ctrl_if.done)
+      $fatal(1, "[%s] DMA completed before final channel", tag);
     @(posedge clk);
+
+    // The final channel completion must be visible combinationally in this
+    // same cycle through done_sticky | done_or_inactive.
+    @(negedge clk);
     clear_done_inputs();
+    done_valid_s[final_ch] = 1'b1;
+    #1;
+    if (!dut.done_all_valid || !gemm_dma_ctrl_if.done)
+      $fatal(1, "[%s] current-cycle final channel did not assert DMA done", tag);
+    if (store_done !== expect_store)
+      $fatal(1, "[%s] store_done mismatch got=%0b expected=%0b",
+             tag, store_done, expect_store);
+    @(posedge clk);
+    #1;
+    clear_done_inputs();
+    if (gemm_dma_ctrl_if.done || store_done)
+      $fatal(1, "[%s] completion pulse repeated after one cycle", tag);
+
+    wait_cycles = 0;
+    while (!gemm_dma_ctrl_if.idle && wait_cycles < 20) begin
+      @(posedge clk);
+      wait_cycles++;
+    end
+    if (!gemm_dma_ctrl_if.idle)
+      $fatal(1, "[%s] controller did not return idle", tag);
+    if (dma_done_pulse_count != done_before + 1)
+      $fatal(1, "[%s] DMA done pulse count mismatch", tag);
+    if (store_done_pulse_count != store_before + (expect_store ? 1 : 0))
+      $fatal(1, "[%s] store_done pulse count mismatch", tag);
+    $display("TMEM_DMA_CURRENT_CYCLE_PASS tag=%s active_channels=%0d store=%0d one_pulse=1",
+             tag, active_count, expect_store);
   endtask
 
   task automatic expect_cfg_count(input int exp_count, input string tag);
     int got_count;
+    #1;
     got_count = 0;
     for (int ch = 0; ch < NUM_CHANNELS; ++ch)
       if (cfg_seen[ch])
@@ -168,8 +418,1020 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       $fatal(1, "[%s] ch%0d reg[%0d] mismatch: got=0x%08x exp=0x%08x", tag, ch, reg_idx, got, exp);
   endtask
 
+  function automatic gemm_unified_cmd_t make_dma_cmd(
+    input logic [3:0] op,
+    input logic [27:0] size_bytes,
+    input logic [63:0] dst_addr,
+    input logic [63:0] src_addr,
+    input logic [3:0] max_chunk_log2p1
+  );
+    gemm_unified_cmd_t c;
+    begin
+      c = '0;
+      c.instr = make_instr(op, size_bytes);
+      c.rs1_data = dst_addr;
+      c.rs2_data = src_addr;
+      c.bound = 16'd1;
+      c.dma_priority = (op == OP_DMA_LD);
+      c.dma_max_chunk_log2p1 = (op == OP_DMA_ST)
+        ? max_chunk_log2p1 : 4'd0;
+      return c;
+    end
+  endfunction
+
+  task automatic send_tagged_cmd(
+    input gemm_unified_cmd_t c,
+    input logic [GEMM_DMA_TAG_WIDTH-1:0] tag
+  );
+    begin
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd = c;
+      gemm_dma_ctrl_if.cmd_tag = tag;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      do @(posedge clk); while (!gemm_dma_ctrl_if.cmd_ready);
+      @(negedge clk);
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+    end
+  endtask
+
+  task automatic wait_descriptor(
+    input int target_count,
+    input string tag
+  );
+    int cycles;
+    begin
+      cycles = 0;
+      while ((descriptor_issue_count < target_count) && (cycles < 100)) begin
+        @(posedge clk);
+        #1;
+        cycles++;
+      end
+      if (descriptor_issue_count < target_count)
+        $fatal(1, "[%s] descriptor issue timeout target=%0d got=%0d",
+               tag, target_count, descriptor_issue_count);
+    end
+  endtask
+
+  task automatic complete_descriptor(
+    input int issue_idx,
+    input bit expect_logical_done,
+    input bit expect_store_done,
+    input logic [GEMM_DMA_TAG_WIDTH-1:0] expected_tag,
+    input string tag
+  );
+    int cycles;
+    begin
+      cycles = 0;
+      while (!done_if[0].ready && cycles < 20) begin
+        @(posedge clk);
+        cycles++;
+      end
+      if (!done_if[0].ready)
+        $fatal(1, "[%s] descriptor never entered WAIT_DONE", tag);
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[issue_idx][ch];
+      #1;
+      if (gemm_dma_ctrl_if.done !== expect_logical_done)
+        $fatal(1, "[%s] logical done mismatch got=%0b expected=%0b",
+               tag, gemm_dma_ctrl_if.done, expect_logical_done);
+      if (store_done !== expect_store_done)
+        $fatal(1, "[%s] store done mismatch got=%0b expected=%0b",
+               tag, store_done, expect_store_done);
+      if (expect_logical_done && gemm_dma_ctrl_if.done_tag !== expected_tag)
+        $fatal(1, "[%s] done tag mismatch got=%0d expected=%0d",
+               tag, gemm_dma_ctrl_if.done_tag, expected_tag);
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+    end
+  endtask
+
+  task automatic run_phase6_chain_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t next_cmd;
+    gemm_unified_cmd_t third_cmd;
+    int first_issue;
+    int final_ch;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                                 64'h0000_0000_0000_0000,
+                                 64'h0000_0000_0060_0000, 4'd0);
+      next_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                              64'h0000_0000_0000_0200,
+                              64'h0000_0000_0061_0000, 4'd0);
+      third_cmd = make_dma_cmd(OP_DMA_ST, 28'd512,
+                               64'h0000_0000_0062_0000,
+                               64'h0000_0000_0000_0400, 4'd4);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h30));
+      wait_descriptor(first_issue + 1, "phase6_chain_current");
+      send_tagged_cmd(next_cmd, GEMM_DMA_TAG_WIDTH'(6'h31));
+
+      wait_cycles = 0;
+      while ((!dut.candidate_valid_q[0]
+           || !shadow_high_prepared) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || !shadow_high_prepared)
+        $fatal(1, "[phase6_chain] prepared high candidate timeout");
+
+      final_ch = -1;
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (descriptor_active[first_issue][ch])
+          final_ch = ch;
+      end
+      if (final_ch < 0)
+        $fatal(1, "[phase6_chain] no active final channel");
+
+      // Retire early channels first.  They represent aligned units already in
+      // S_IDLE when the final channel reaches S_DONE.
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch]
+                         && (ch != final_ch);
+      @(posedge clk);
+
+      // Accept C while A is still waiting for its final channel.  The command
+      // becomes pending on the acceptance edge; drive A's final completion in
+      // the following half-cycle so completion/activation and the independent
+      // pending-to-ID1 capture transact on exactly the same edge.
+      send_tagged_cmd(third_cmd, GEMM_DMA_TAG_WIDTH'(6'h32));
+      clear_done_inputs();
+      done_valid_s[final_ch] = 1'b1;
+      #1;
+      if (!dut.chain_candidate_select || dut.chain_candidate_id != 1'b0)
+        $fatal(1, "[phase6_chain] prepared ID0 did not chain");
+      if (!dut.completion_event || !dut.chain_candidate_fire
+       || !dut.candidate_capture || !dut.candidate_capture_from_pending
+       || dut.candidate_capture_id != 1'b1
+       || !dut.background_pending_dequeue)
+        $fatal(1, "[phase6_chain] completion/chain/capture were not independent same-edge transactions");
+      if (!gemm_dma_ctrl_if.done || !lookahead_activate_seen_s[final_ch])
+        $fatal(1, "[phase6_chain] completion and ACTIVATE were not paired");
+      @(posedge clk);
+      #1;
+      clear_done_inputs();
+      if (descriptor_issue_count != first_issue + 2)
+        $fatal(1, "[phase6_chain] chained descriptor was not accepted");
+      if (!dut.candidate_valid_q[1]
+       || dut.candidate_owner_q[1].tag != GEMM_DMA_TAG_WIDTH'(6'h32)
+       || dut.candidate_owner_q[1].cmd != third_cmd)
+        $fatal(1, "[phase6_chain] independently captured ID1 owner was lost");
+
+      wait_cycles = 0;
+      while (!shadow_fallback_prepared && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!shadow_fallback_prepared)
+        $fatal(1, "[phase6_chain] third command did not prepare under chained owner");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h31),
+                          "phase6_chain_next");
+      wait_descriptor(first_issue + 3, "phase6_chain_third");
+      if (descriptor_regs[first_issue + 2][0][DMA_R_DST_BASE_LO]
+          != third_cmd.rs1_data[31:0])
+        $fatal(1, "[phase6_chain] third descriptor ownership changed");
+      complete_descriptor(first_issue + 2, 1'b1, 1'b1,
+                          GEMM_DMA_TAG_WIDTH'(6'h32),
+                          "phase6_chain_third");
+      wait_idle("phase6_chain_third");
+      $display("TMEM_DMA_PHASE6_CHAIN_PASS completion_to_activate=0 cache=hit id=0 early_channels=%0d last_channel=%0d atomic_cfg=1 independent_id1_capture=1 third_owner=1",
+               final_ch, final_ch);
+    end
+  endtask
+
+  task automatic run_completion_capture_miss_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t pending_cmd;
+    int first_issue;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0600,
+                                 64'h0000_0000_0063_0000, 4'd0);
+      pending_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0800,
+                                 64'h0000_0000_0064_0000, 4'd0);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h33));
+      wait_descriptor(first_issue + 1, "completion_capture_miss_current");
+
+      // The pending command is accepted one edge before completion and is not
+      // yet resident in either candidate slot.  Completion must retire the
+      // current descriptor while the independent capture transaction moves
+      // the pending owner into ID0 for the subsequent slow path.
+      send_tagged_cmd(pending_cmd, GEMM_DMA_TAG_WIDTH'(6'h34));
+      clear_done_inputs();
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (!dut.completion_event || dut.chain_candidate_fire
+       || !dut.candidate_capture || !dut.candidate_capture_from_pending
+       || dut.candidate_capture_id != 1'b0
+       || !dut.background_pending_dequeue)
+        $fatal(1, "[completion_capture_miss] completion/capture arbitration mismatch");
+      @(posedge clk);
+      #1;
+      clear_done_inputs();
+      if (!dut.candidate_valid_q[0]
+       || dut.candidate_owner_q[0].tag != GEMM_DMA_TAG_WIDTH'(6'h34)
+       || dut.candidate_owner_q[0].cmd != pending_cmd)
+        $fatal(1, "[completion_capture_miss] captured owner was discarded");
+
+      wait_descriptor(first_issue + 2, "completion_capture_miss_next");
+      if (descriptor_regs[first_issue + 1][0][DMA_R_SRC_BASE_LO]
+          != pending_cmd.rs2_data[31:0])
+        $fatal(1, "[completion_capture_miss] slow-path descriptor ownership changed");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h34),
+                          "completion_capture_miss_next");
+      wait_idle("completion_capture_miss_next");
+      $display("TMEM_DMA_COMPLETION_CAPTURE_MISS_PASS completion=1 capture_id0=1 dequeue_committed=1 slow_path=1 owner=1");
+    end
+  endtask
+
+  task automatic run_phase6_unprepared_high_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t next_cmd;
+    int first_issue;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                                 64'h0000_0000_0000_0400,
+                                 64'h0000_0000_0062_0000, 4'd0);
+      next_cmd = make_dma_cmd(OP_DMA_LD, 28'd64,
+                              64'h0000_0000_0000_0600,
+                              64'h0000_0000_0063_0000, 4'd0);
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h32));
+      wait_descriptor(first_issue + 1, "phase6_miss_current");
+
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(next_cmd, GEMM_DMA_TAG_WIDTH'(6'h33));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[0] && (wait_cycles < 20)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || shadow_high_prepared)
+        $fatal(1, "[phase6_miss] high candidate readiness model failed");
+
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (dut.chain_candidate_select)
+        $fatal(1, "[phase6_miss] unprepared high candidate chained");
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+
+      wait_cycles = 0;
+      while (!(|cfg_valid_s) && (wait_cycles < 20)) begin
+        @(negedge clk);
+        wait_cycles++;
+      end
+      #1;
+      if (!(|cfg_valid_s) || !(|lookahead_activate_seen_s)
+       || shadow_high_prepared)
+        $fatal(1, "[phase6_miss] unprepared high did not use slow ACTIVATE");
+      @(posedge clk);
+      #1;
+      lookahead_result_ready_drive = '1;
+      wait_descriptor(first_issue + 2, "phase6_miss_next");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h33),
+                          "phase6_miss_next");
+      wait_idle("phase6_miss_next");
+      $display("TMEM_DMA_PHASE6_CACHE_MISS_PASS cache=miss id=0 late_high_suppressed_fallback=1 slow_path=1");
+    end
+  endtask
+
+  task automatic run_phase7_channel_skew_case;
+    gemm_unified_cmd_t current_cmd;
+    gemm_unified_cmd_t fallback_cmd;
+    gemm_unified_cmd_t high_cmd;
+    int first_issue;
+    int wait_cycles;
+    begin
+      first_issue = descriptor_issue_count;
+      current_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                                 64'h0000_0000_0000_0800,
+                                 64'h0000_0000_0070_0000, 4'd0);
+      fallback_cmd = make_dma_cmd(OP_DMA_ST, 28'd512,
+                                  64'h0000_0000_0071_0000,
+                                  64'h0000_0000_0000_0c00, 4'd4);
+      high_cmd = make_dma_cmd(OP_DMA_LD, 28'd512,
+                              64'h0000_0000_0000_1000,
+                              64'h0000_0000_0072_0000, 4'd0);
+
+      send_tagged_cmd(current_cmd, GEMM_DMA_TAG_WIDTH'(6'h34));
+      wait_descriptor(first_issue + 1, "phase7_skew_current");
+
+      // ID1 is a real fallback candidate.  Accept its per-channel PREPARE
+      // messages one channel at a time, then return the two result groups one
+      // channel at a time.  A channel which accepted must not be presented the
+      // same PREPARE again while the remaining channels catch up.
+      lookahead_prepare_ready_drive = '0;
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(fallback_cmd, GEMM_DMA_TAG_WIDTH'(6'h35));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[1] && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[1])
+        $fatal(1, "[phase7_skew] fallback candidate was not reserved");
+      wait_cycles = 0;
+      while ((!dut.prepare_active_q || !dut.shadow_owner_live
+           || (dut.shadow_owner_id_q != 1'b1)) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.prepare_active_q || dut.shadow_owner_id_q != 1'b1)
+        $fatal(1, "[phase7_skew] fallback shadow PREPARE did not start");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        @(negedge clk);
+        lookahead_prepare_ready_drive[ch] = 1'b1;
+        @(posedge clk);
+        #1;
+        if (!dut.shadow_prepare_accept_q[ch])
+          $fatal(1, "[phase7_skew] ch%0d PREPARE was not accepted", ch);
+        for (int prev = 0; prev <= ch; ++prev) begin
+          if (lookahead_prepare_valid_seen_s[prev])
+            $fatal(1, "[phase7_skew] accepted ch%0d PREPARE repeated", prev);
+        end
+      end
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        @(negedge clk);
+        lookahead_result_ready_drive[ch] = 2'b11;
+        @(posedge clk);
+      end
+      #1;
+      if (!shadow_fallback_prepared)
+        $fatal(1, "[phase7_skew] fallback did not collect skewed results");
+
+      // A later high-priority load is deliberately left unprepared.  It must
+      // suppress the fully prepared fallback at the completion boundary.
+      lookahead_prepare_ready_drive = '1;
+      lookahead_result_ready_drive = '0;
+      send_tagged_cmd(high_cmd, GEMM_DMA_TAG_WIDTH'(6'h36));
+      wait_cycles = 0;
+      while (!dut.candidate_valid_q[0] && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!dut.candidate_valid_q[0] || shadow_high_prepared)
+        $fatal(1, "[phase7_skew] late high readiness setup failed");
+
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch];
+      #1;
+      if (dut.chain_candidate_select)
+        $fatal(1, "[phase7_skew] prepared fallback bypassed late high");
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+
+      // The slow high ACTIVATE is one global transaction.  An early-ready
+      // channel must not consume cfg/ACTIVATE while the final channel blocks.
+      cfg_ready_drive = '1;
+      cfg_ready_drive[NUM_CHANNELS-1] = 1'b0;
+      wait_cycles = 0;
+      while ((dut.state_q != 3'd4) && (wait_cycles < 30)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (dut.state_q != 3'd4)
+        $fatal(1, "[phase7_skew] high candidate did not reach S_PROG");
+      repeat (3) begin
+        @(negedge clk);
+        #1;
+        if ((|cfg_valid_s) || (|lookahead_activate_seen_s))
+          $fatal(1, "[phase7_skew] partial cfg/ACTIVATE under ready skew");
+        @(posedge clk);
+      end
+      @(negedge clk);
+      cfg_ready_drive[NUM_CHANNELS-1] = 1'b1;
+      lookahead_result_ready_drive = '1;
+      wait_descriptor(first_issue + 2, "phase7_skew_high");
+      if (descriptor_regs[first_issue + 1][0][DMA_R_SRC_BASE_LO]
+          != high_cmd.rs2_data[31:0])
+        $fatal(1, "[phase7_skew] late high did not issue before fallback");
+      complete_descriptor(first_issue + 1, 1'b1, 1'b0,
+                          GEMM_DMA_TAG_WIDTH'(6'h36), "phase7_skew_high");
+
+      wait_descriptor(first_issue + 3, "phase7_skew_fallback");
+      if (descriptor_regs[first_issue + 2][0][DMA_R_DST_BASE_LO]
+          != fallback_cmd.rs1_data[31:0])
+        $fatal(1, "[phase7_skew] fallback descriptor ownership changed");
+      complete_descriptor(first_issue + 2, 1'b1, 1'b1,
+                          GEMM_DMA_TAG_WIDTH'(6'h35),
+                          "phase7_skew_fallback");
+      wait_idle("phase7_skew_fallback");
+      $display("TMEM_DMA_PHASE7_SKEW_PRIORITY_PASS prepare_accept_skew=%0d result_skew=%0d activate_ready_skew=1 late_high_blocks_prepared_fallback=1 no_partial_cfg=1",
+               NUM_CHANNELS, NUM_CHANNELS);
+    end
+  endtask
+
+  task automatic check_chunk_address_set(
+    input int first_issue,
+    input int chunk_count,
+    input logic [63:0] orig_src_base,
+    input logic [63:0] orig_dst_base,
+    input string tag
+  );
+    integer src_hits [longint unsigned];
+    integer dst_hits [longint unsigned];
+    longint unsigned key;
+    longint unsigned addr;
+    int total;
+    begin
+      src_hits.delete();
+      dst_hits.delete();
+      total = 0;
+      for (int n = 0; n < chunk_count; ++n) begin
+        int issue_idx;
+        issue_idx = first_issue + n;
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+          if (!descriptor_active[issue_idx][ch])
+            $fatal(1, "[%s] chunk %0d channel %0d unexpectedly inactive",
+                   tag, n, ch);
+          for (int i2 = 0;
+               i2 < descriptor_regs[issue_idx][ch][DMA_R_BND2]; ++i2) begin
+            for (int i1 = 0;
+                 i1 < descriptor_regs[issue_idx][ch][DMA_R_BND1]; ++i1) begin
+              for (int i0 = 0;
+                   i0 < descriptor_regs[issue_idx][ch][DMA_R_BND0]; ++i0) begin
+                addr = descriptor_regs[issue_idx][ch][DMA_R_SRC_BASE_LO]
+                     + i0 * descriptor_regs[issue_idx][ch][DMA_R_SRC_ST0]
+                     + i1 * descriptor_regs[issue_idx][ch][DMA_R_SRC_ST1]
+                     + i2 * descriptor_regs[issue_idx][ch][DMA_R_SRC_ST2];
+                key = (longint'(ch) << 56) | addr;
+                src_hits[key]++;
+                addr = descriptor_regs[issue_idx][ch][DMA_R_DST_BASE_LO]
+                     + i0 * descriptor_regs[issue_idx][ch][DMA_R_DST_ST0]
+                     + i1 * descriptor_regs[issue_idx][ch][DMA_R_DST_ST1]
+                     + i2 * descriptor_regs[issue_idx][ch][DMA_R_DST_ST2];
+                key = (longint'(ch) << 56) | addr;
+                dst_hits[key]++;
+                total++;
+              end
+            end
+          end
+        end
+      end
+      if (total != 576)
+        $fatal(1, "[%s] chunk transfer count got=%0d expected=576", tag, total);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        for (int i2 = 0; i2 < 4; ++i2) begin
+          for (int i1 = 0; i1 < 9; ++i1) begin
+            for (int i0 = 0; i0 < 2; ++i0) begin
+              addr = orig_src_base + i0 * 256 + i1 * 512 + i2 * 64;
+              key = (longint'(ch) << 56) | addr;
+              if (src_hits[key] != 1)
+                $fatal(1, "[%s] source address multiplicity ch=%0d addr=0x%0h hits=%0d",
+                       tag, ch, addr, src_hits[key]);
+              addr = orig_dst_base + ch * 64
+                   + i0 * 2048 + i1 * 4096 + i2 * 512;
+              key = (longint'(ch) << 56) | addr;
+              if (dst_hits[key] != 1)
+                $fatal(1, "[%s] destination address multiplicity ch=%0d addr=0x%0h hits=%0d",
+                       tag, ch, addr, dst_hits[key]);
+            end
+          end
+        end
+      end
+    end
+  endtask
+
+  task automatic wait_idle(input string tag);
+    int cycles;
+    begin
+      cycles = 0;
+      while (!gemm_dma_ctrl_if.idle && cycles < 100) begin
+        @(posedge clk);
+        cycles++;
+      end
+      if (!gemm_dma_ctrl_if.idle)
+        $fatal(1, "[%s] idle timeout", tag);
+    end
+  endtask
+
+  task automatic run_chunk_case(
+    input int max_chunk_beats,
+    input logic [3:0] chunk_encoding,
+    input logic [GEMM_DMA_TAG_WIDTH-1:0] tag
+  );
+    gemm_unified_cmd_t c;
+    int first_issue;
+    int expected_chunks;
+    int cursor;
+    int remaining;
+    int bank_budget;
+    int exp_bnd0;
+    int exp_bnd1;
+    int chunk_bpb;
+    string case_tag;
+    begin
+      case_tag = $sformatf("chunk_%0d", max_chunk_beats);
+      case (max_chunk_beats)
+        4: expected_chunks = 18;
+        8: expected_chunks = 9;
+        16: expected_chunks = 5;
+        32: expected_chunks = 3;
+        default: $fatal(1, "unsupported directed chunk size %0d",
+                        max_chunk_beats);
+      endcase
+      first_issue = descriptor_issue_count;
+      c = make_dma_cmd(OP_DMA_ST, 28'd36864,
+                       64'h0000_0000_0010_1000,
+                       64'h0000_0000_0000_0000,
+                       chunk_encoding);
+      send_tagged_cmd(c, tag);
+      cursor = 0;
+      remaining = 18;
+      bank_budget = max_chunk_beats / 4;
+      for (int n = 0; n < expected_chunks; ++n) begin
+        wait_descriptor(first_issue + n + 1, case_tag);
+        if (bank_budget >= 2) begin
+          exp_bnd0 = 2;
+          exp_bnd1 = ((remaining / 2) <= (bank_budget / 2))
+                   ? (remaining / 2) : (bank_budget / 2);
+        end else begin
+          exp_bnd0 = bank_budget;
+          exp_bnd1 = 1;
+        end
+        chunk_bpb = exp_bnd0 * exp_bnd1;
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+          if (descriptor_regs[first_issue+n][ch][DMA_R_BND0] != exp_bnd0
+           || descriptor_regs[first_issue+n][ch][DMA_R_BND1] != exp_bnd1
+           || descriptor_regs[first_issue+n][ch][DMA_R_BND2] != 4)
+            $fatal(1, "[%s] chunk %0d bounds mismatch ch=%0d got=%0d/%0d/%0d exp=%0d/%0d/4",
+                   case_tag, n, ch,
+                   descriptor_regs[first_issue+n][ch][DMA_R_BND0],
+                   descriptor_regs[first_issue+n][ch][DMA_R_BND1],
+                   descriptor_regs[first_issue+n][ch][DMA_R_BND2],
+                   exp_bnd0, exp_bnd1);
+          if (descriptor_regs[first_issue+n][ch][DMA_R_SRC_BASE_LO]
+                != cursor * 256
+           || descriptor_regs[first_issue+n][ch][DMA_R_DST_BASE_LO]
+                != 32'h0010_1000 + ch * 64 + cursor * 2048)
+            $fatal(1, "[%s] chunk %0d base cursor mismatch ch=%0d cursor=%0d",
+                   case_tag, n, ch, cursor);
+        end
+        complete_descriptor(first_issue+n, n == expected_chunks-1,
+                            n == expected_chunks-1, tag, case_tag);
+        cursor += chunk_bpb;
+        remaining -= chunk_bpb;
+      end
+      if (remaining != 0 || cursor != 18)
+        $fatal(1, "[%s] cursor completion mismatch cursor=%0d rem=%0d",
+               case_tag, cursor, remaining);
+      check_chunk_address_set(first_issue, expected_chunks,
+                              64'h0, 64'h0010_1000, case_tag);
+      wait_idle(case_tag);
+      $display("TMEM_DMA_CHUNK_PASS max=%0d chunks=%0d address_set=exact logical_done=1",
+               max_chunk_beats, expected_chunks);
+    end
+  endtask
+
+  task automatic run_nonchunkable_cases;
+    gemm_unified_cmd_t c;
+    int issue_idx;
+    begin
+      issue_idx = descriptor_issue_count;
+      c = make_dma_cmd(OP_DMA_ST, 28'd256,
+                       64'h0000_0000_0020_0000,
+                       64'h0000_0000_0000_0000, 4'd3);
+      send_tagged_cmd(c, 3'd5);
+      wait_descriptor(issue_idx + 1, "fallback_256");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (descriptor_active[issue_idx][ch] !== (ch < 4))
+          $fatal(1, "[fallback_256] active mask mismatch ch=%0d", ch);
+        if (ch < 4
+         && (descriptor_regs[issue_idx][ch][DMA_R_BND0] != 1
+          || descriptor_regs[issue_idx][ch][DMA_R_BND1] != 1
+          || descriptor_regs[issue_idx][ch][DMA_R_BND2] != 1))
+          $fatal(1, "[fallback_256] descriptor mismatch ch=%0d", ch);
+      end
+      complete_descriptor(issue_idx, 1'b1, 1'b1, 3'd5,
+                          "fallback_256");
+      wait_idle("fallback_256");
+
+      issue_idx = descriptor_issue_count;
+      c = make_dma_cmd(OP_DMA_ST, 28'd2112,
+                       64'h0000_0000_0030_1000,
+                       64'h0000_0000_0000_0000, 4'd3);
+      send_tagged_cmd(c, 3'd6);
+      wait_descriptor(issue_idx + 1, "mixed_33_beats");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        if (!descriptor_active[issue_idx][ch])
+          $fatal(1, "[mixed_33_beats] inactive channel %0d", ch);
+        if (ch == 0) begin
+          if (descriptor_regs[issue_idx][ch][DMA_R_BND0] != 1
+           || descriptor_regs[issue_idx][ch][DMA_R_BND1] != 5
+           || descriptor_regs[issue_idx][ch][DMA_R_BND2] != 1)
+            $fatal(1, "[mixed_33_beats] fallback channel changed");
+        end else begin
+          if (descriptor_regs[issue_idx][ch][DMA_R_BND0] != 1
+           || descriptor_regs[issue_idx][ch][DMA_R_BND1] != 1
+           || descriptor_regs[issue_idx][ch][DMA_R_BND2] != 4)
+            $fatal(1, "[mixed_33_beats] burst channel %0d changed", ch);
+        end
+      end
+      complete_descriptor(issue_idx, 1'b1, 1'b1, 3'd6,
+                          "mixed_33_beats");
+      wait_idle("mixed_33_beats");
+      $display("TMEM_DMA_NONCHUNK_PASS fallback_256=exact mixed=exact issues=1");
+    end
+  endtask
+
+  task automatic run_priority_pause_case;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    int first_issue;
+    begin
+      first_issue = descriptor_issue_count;
+      c = make_dma_cmd(OP_DMA_ST, 28'd8192,
+                       64'h0000_0000_0040_1000,
+                       64'h0000_0000_0000_0000, 4'd4);
+      send_tagged_cmd(c, 3'd0);
+      wait_descriptor(first_issue + 1, "priority_store_first");
+
+      for (int j = 1; j <= 4; ++j) begin
+        c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                         64'(j * 32'h200),
+                         64'h0000_0000_0050_0000 + j * 32'h1000, 4'd0);
+        send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
+      end
+      #1;
+      if ((dut.pending_count_q + dut.candidate_valid_q[0])
+            != TB_PENDING_DEPTH
+       || gemm_dma_ctrl_if.cmd_ready)
+        $fatal(1, "[priority_pause] pending queue did not reach full");
+      if (!dut.candidate_valid_q[0] || !shadow_high_prepared
+       || !dut.candidate_valid_q[1])
+        $fatal(1, "[priority_pause] compact candidates/high shadow not ready");
+      if (dut.store_bank_beat_cursor_q != 0
+       || dut.candidate_store_cursor_q[1] != 32'd2
+       || dut.candidate_store_remaining_q[1] != 32'd2
+       || dut.candidate_owner_q[1].cmd.rs2_data != 64'd0
+       || dut.candidate_owner_q[1].cmd.rs1_data != 64'h0040_1000
+       || (64'(dut.candidate_store_cursor_q[1])
+           * 64'(STORE_TMEM_BEAT_STRIDE)) != 64'd512
+       || (64'(dut.candidate_owner_q[1].cmd.rs1_data)
+           + (64'(dut.candidate_store_cursor_q[1])
+              * 64'(STORE_HBM_BEAT_STRIDE))) != 64'h0040_2000)
+        $fatal(1, "[priority_pause] speculative store cursor committed early or descriptor mismatch");
+      $display("TMEM_DMA_SHADOW_TABLE_PASS id0=oldest_high id1=paused_store high_shadow_ready=1 cursor_speculative=1");
+
+      c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                       64'h0000_0000_0000_0a00,
+                       64'h0000_0000_0050_5000, 4'd0);
+      @(negedge clk);
+      gemm_dma_ctrl_if.cmd = c;
+      gemm_dma_ctrl_if.cmd_tag = 3'd5;
+      gemm_dma_ctrl_if.start = 1'b1;
+      gemm_dma_ctrl_if.cmd_valid = 1'b1;
+      held_cmd = gemm_dma_ctrl_if.cmd;
+      repeat (3) begin
+        @(posedge clk);
+        #1;
+        if (gemm_dma_ctrl_if.cmd_ready
+         || gemm_dma_ctrl_if.cmd !== held_cmd
+         || gemm_dma_ctrl_if.cmd_tag !== 3'd5)
+          $fatal(1, "[priority_pause] queue-full command/tag not retained");
+      end
+
+      complete_descriptor(first_issue, 1'b0, 1'b0, 3'd0,
+                          "priority_store_pause");
+      do @(posedge clk); while (!gemm_dma_ctrl_if.cmd_ready);
+      @(negedge clk);
+      gemm_dma_ctrl_if.start = 1'b0;
+      gemm_dma_ctrl_if.cmd_valid = 1'b0;
+
+      for (int j = 1; j <= 5; ++j) begin
+        wait_descriptor(first_issue + j + 1, "priority_load_fifo");
+        if (descriptor_regs[first_issue+j][0][DMA_R_SRC_BASE_LO]
+              != 32'h0050_0000 + j * 32'h1000)
+          $fatal(1, "[priority_load_fifo] order mismatch j=%0d src=0x%0h",
+                 j, descriptor_regs[first_issue+j][0][DMA_R_SRC_BASE_LO]);
+        complete_descriptor(first_issue+j, 1'b1, 1'b0,
+                            GEMM_DMA_TAG_WIDTH'(j), "priority_load_fifo");
+      end
+
+      wait_descriptor(first_issue + 7, "priority_store_resume");
+      if (descriptor_regs[first_issue+6][0][DMA_R_SRC_BASE_LO] != 32'd512
+       || descriptor_regs[first_issue+6][0][DMA_R_DST_BASE_LO]
+            != 32'h0040_2000)
+        $fatal(1, "[priority_store_resume] paused cursor not preserved");
+      complete_descriptor(first_issue+6, 1'b1, 1'b1, 3'd0,
+                          "priority_store_resume");
+      wait_idle("priority_store_resume");
+      $display("TMEM_DMA_PRIORITY_PASS store_paused=1 high_fifo=5 queue_full=1 stable=1 resumed=1");
+    end
+  endtask
+
+  task automatic run_cfg_backpressure_case;
+    gemm_unified_cmd_t c;
+    int issue_idx;
+    logic [CFG_NUM-1:0][31:0] held_regs;
+    begin
+      issue_idx = descriptor_issue_count;
+      cfg_ready_drive = '0;
+      c = make_dma_cmd(OP_DMA_LD, 28'd512,
+                       64'h0000_0000_0000_0000,
+                       64'h0000_0000_0060_0000, 4'd0);
+      send_tagged_cmd(c, 3'd7);
+      // Atomic ACTIVATE intentionally keeps every channel valid low until all
+      // active channels are ready.  Wait for the held descriptor to reach the
+      // program state rather than waiting for a forbidden partial valid.
+      while (dut.state_q != 3'd4) @(posedge clk);
+      held_regs = cfg_reg_if[0].regs;
+      repeat (3) begin
+        @(posedge clk);
+        #1;
+        if (cfg_reg_if[0].valid || (|lookahead_activate_seen_s)
+         || cfg_reg_if[0].regs !== held_regs
+         || gemm_dma_ctrl_if.idle)
+          $fatal(1, "[cfg_backpressure] partial valid/ACTIVATE, unstable descriptor, or idle early");
+      end
+      @(negedge clk);
+      cfg_ready_drive = '1;
+      wait_descriptor(issue_idx + 1, "cfg_backpressure");
+      complete_descriptor(issue_idx, 1'b1, 1'b0, 3'd7,
+                          "cfg_backpressure");
+      wait_idle("cfg_backpressure");
+      $display("TMEM_DMA_BACKPRESSURE_PASS cfg_stable_cycles=3 atomic_valid=1 idle_drain=1");
+    end
+  endtask
+
+  task automatic run_pending_depth_smoke;
+    gemm_unified_cmd_t c;
+    int first_issue;
+    begin
+      first_issue = descriptor_issue_count;
+      c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                       64'h0000_0000_0000_0000,
+                       64'h0000_0000_0070_0000, 4'd0);
+      send_tagged_cmd(c, 3'd0);
+      wait_descriptor(first_issue + 1, "depth_active");
+      for (int j = 1; j <= TB_PENDING_DEPTH; ++j) begin
+        c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                         64'(j * 32'h200),
+                         64'h0000_0000_0070_0000 + j * 32'h1000, 4'd0);
+        send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
+      end
+      // At depth one, the sole queued load is accepted one edge before the
+      // background reservation transfers it from pending_q into ID0.  Wait
+      // for that ownership transfer, then check that total capacity stayed
+      // full throughout; this is not extra command capacity.
+      for (int wait_cycles = 0;
+           !dut.candidate_valid_q[0] && (wait_cycles < 10);
+           ++wait_cycles)
+        @(posedge clk);
+      #1;
+      if ((dut.pending_count_q + dut.candidate_valid_q[0])
+            != TB_PENDING_DEPTH
+       || !dut.candidate_valid_q[0] || gemm_dma_ctrl_if.cmd_ready)
+        $fatal(1, "[depth_%0d] queue full contract mismatch", TB_PENDING_DEPTH);
+      for (int wait_cycles = 0;
+           !shadow_high_prepared && (wait_cycles < 10);
+           ++wait_cycles)
+        @(posedge clk);
+      #1;
+      if (!shadow_high_prepared)
+        $fatal(1, "[depth_%0d] high candidate was not prepared", TB_PENDING_DEPTH);
+      complete_descriptor(first_issue, 1'b1, 1'b0, 3'd0, "depth_active");
+      for (int j = 1; j <= TB_PENDING_DEPTH; ++j) begin
+        wait_descriptor(first_issue + j + 1, "depth_fifo");
+        complete_descriptor(first_issue+j, 1'b1, 1'b0,
+                            GEMM_DMA_TAG_WIDTH'(j), "depth_fifo");
+      end
+      wait_idle("depth_fifo");
+      $display("TMEM_DMA_DEPTH_PASS depth=%0d high_slot=1 full=1 fifo=1 drain=1",
+               TB_PENDING_DEPTH);
+    end
+  endtask
+
+  task automatic run_multiple_low_store_order_case;
+    gemm_unified_cmd_t c;
+    int first_issue;
+    int done_before;
+    int store_done_before;
+    begin
+      first_issue = descriptor_issue_count;
+      done_before = dma_done_pulse_count;
+      store_done_before = store_done_pulse_count;
+
+      // Hold the executor with one active load while three low-priority stores
+      // accumulate in the pending queue.
+      c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                       64'h0000_0000_0000_0000,
+                       64'h0000_0000_0080_0000, 4'd0);
+      send_tagged_cmd(c, 3'd0);
+      wait_descriptor(first_issue + 1, "multi_low_active_load");
+      for (int j = 1; j <= 3; ++j) begin
+        c = make_dma_cmd(OP_DMA_ST, 28'd256,
+                         64'h0000_0000_0080_0000 + j * 32'h1000,
+                         64'(j * 32'h200), 4'd4);
+        send_tagged_cmd(c, GEMM_DMA_TAG_WIDTH'(j));
+      end
+      if ((dut.pending_count_q + dut.candidate_valid_q[1]) != 3)
+        $fatal(1, "[multi_low] expected three reserved/queued stores, got %0d+%0d",
+               dut.pending_count_q, dut.candidate_valid_q[1]);
+
+      complete_descriptor(first_issue, 1'b1, 1'b0, 3'd0,
+                          "multi_low_active_load");
+      for (int j = 1; j <= 3; ++j) begin
+        wait_descriptor(first_issue + j + 1, "multi_low_store_fifo");
+        if (descriptor_regs[first_issue+j][0][DMA_R_DST_BASE_LO]
+              != 32'h0080_0000 + j * 32'h1000)
+          $fatal(1, "[multi_low] issue order mismatch j=%0d dst=0x%0h",
+                 j, descriptor_regs[first_issue+j][0][DMA_R_DST_BASE_LO]);
+        complete_descriptor(first_issue+j, 1'b1, 1'b1,
+                            GEMM_DMA_TAG_WIDTH'(j),
+                            "multi_low_store_fifo");
+      end
+      wait_idle("multi_low_store_fifo");
+      if (dma_done_pulse_count != done_before + 4
+       || store_done_pulse_count != store_done_before + 3)
+        $fatal(1, "[multi_low] completion counts reordered/lost done=%0d store=%0d",
+               dma_done_pulse_count - done_before,
+               store_done_pulse_count - store_done_before);
+      $display("TMEM_DMA_MULTI_LOW_STORE_ORDER_PASS queued=3 issue_order=1 completion_tags=1,2,3 logical_once=1");
+    end
+  endtask
+
+  task automatic run_nonchunkable_pending_load_case;
+    gemm_unified_cmd_t c;
+    int first_issue;
+    int done_before;
+    int store_done_before;
+    int final_ch;
+    begin
+      first_issue = descriptor_issue_count;
+      done_before = dma_done_pulse_count;
+      store_done_before = store_done_pulse_count;
+
+      // A 256-byte store activates four channels and is non-chunkable.
+      c = make_dma_cmd(OP_DMA_ST, 28'd256,
+                       64'h0000_0000_0090_0000,
+                       64'h0000_0000_0000_0000, 4'd3);
+      send_tagged_cmd(c, 3'd4);
+      wait_descriptor(first_issue + 1, "nonchunk_pending_store");
+
+      c = make_dma_cmd(OP_DMA_LD, 28'd64,
+                       64'h0000_0000_0000_0200,
+                       64'h0000_0000_0091_0000, 4'd0);
+      send_tagged_cmd(c, 3'd5);
+      c = make_dma_cmd(OP_DMA_ST, 28'd256,
+                       64'h0000_0000_0092_0000,
+                       64'h0000_0000_0000_0400, 4'd4);
+      send_tagged_cmd(c, 3'd6);
+      if ((dut.pending_count_q + dut.candidate_valid_q[0]
+           + dut.candidate_valid_q[1]) != 2)
+        $fatal(1, "[nonchunk_pending] reserved/pending count mismatch");
+
+      // Retire all but the final active channel, then hold the final response.
+      // The high load must remain queued and no descriptor may be reissued.
+      final_ch = 3;
+      while (!done_if[0].ready) @(posedge clk);
+      @(negedge clk);
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        done_valid_s[ch] = descriptor_active[first_issue][ch]
+                         && (ch != final_ch);
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+      repeat (4) begin
+        @(posedge clk);
+        #1;
+        if (descriptor_issue_count != first_issue + 1
+         || (dut.pending_count_q + dut.candidate_valid_q[0]
+           + dut.candidate_valid_q[1]) != 2
+         || gemm_dma_ctrl_if.done || store_done || gemm_dma_ctrl_if.idle)
+          $fatal(1, "[nonchunk_pending] arbitration escaped before final response drain");
+      end
+
+      @(negedge clk);
+      done_valid_s[final_ch] = 1'b1;
+      #1;
+      if (!gemm_dma_ctrl_if.done || !store_done
+       || gemm_dma_ctrl_if.done_tag != 3'd4)
+        $fatal(1, "[nonchunk_pending] store tagged completion mismatch");
+      @(posedge clk);
+      @(negedge clk);
+      clear_done_inputs();
+
+      // The queued high-priority load must beat the later low store.
+      wait_descriptor(first_issue + 2, "nonchunk_pending_load");
+      if (descriptor_regs[first_issue+1][0][DMA_R_SRC_BASE_LO]
+            != 32'h0091_0000)
+        $fatal(1, "[nonchunk_pending] high load was not selected first");
+      complete_descriptor(first_issue+1, 1'b1, 1'b0, 3'd5,
+                          "nonchunk_pending_load");
+      wait_descriptor(first_issue + 3, "nonchunk_pending_later_store");
+      if (descriptor_regs[first_issue+2][0][DMA_R_DST_BASE_LO]
+            != 32'h0092_0000)
+        $fatal(1, "[nonchunk_pending] later low store descriptor mismatch");
+      complete_descriptor(first_issue+2, 1'b1, 1'b1, 3'd6,
+                          "nonchunk_pending_later_store");
+      wait_idle("nonchunk_pending_later_store");
+
+      if (dma_done_pulse_count != done_before + 3
+       || store_done_pulse_count != store_done_before + 2)
+        $fatal(1, "[nonchunk_pending] logical completion multiplicity mismatch");
+      $display("TMEM_DMA_NONCHUNK_PENDING_LOAD_PASS fallback=256 response_hold=4 load_first=1 later_low_store=1 tags=4,5,6 logical_once=1");
+    end
+  endtask
+
+  task automatic check_sched_perf_counters;
+`ifdef DBG_TRACE_GEMM
+    int observed_store_descriptors;
+    begin
+      observed_store_descriptors = 0;
+      for (int issue = 0; issue < descriptor_issue_count; ++issue) begin
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+          if (descriptor_active[issue][ch]) begin
+            if (descriptor_regs[issue][ch][DMA_R_DIR] == 1)
+              observed_store_descriptors++;
+            break;
+          end
+        end
+      end
+      repeat (2) @(posedge clk);
+      #1;
+      if (!gemm_dma_ctrl_if.idle)
+        $fatal(1, "[sched_perf] final counter check was not idle");
+      if (dut.dbg_cmd_accept_count_q != dma_done_pulse_count
+       || dut.dbg_logical_complete_count_q != dma_done_pulse_count)
+        $fatal(1, "[sched_perf] logical counts mismatch accept=%0d complete=%0d observed=%0d",
+               dut.dbg_cmd_accept_count_q,
+               dut.dbg_logical_complete_count_q, dma_done_pulse_count);
+      if (dut.dbg_descriptor_issue_count_q != descriptor_issue_count
+       || dut.dbg_descriptor_complete_count_q != descriptor_issue_count)
+        $fatal(1, "[sched_perf] descriptor counts mismatch issue=%0d complete=%0d observed=%0d",
+               dut.dbg_descriptor_issue_count_q,
+               dut.dbg_descriptor_complete_count_q,
+               descriptor_issue_count);
+      if (dut.dbg_store_chunk_issue_count_q != observed_store_descriptors
+       || dut.dbg_store_chunk_complete_count_q != observed_store_descriptors)
+        $fatal(1, "[sched_perf] store descriptor counts mismatch issue=%0d complete=%0d observed=%0d",
+               dut.dbg_store_chunk_issue_count_q,
+               dut.dbg_store_chunk_complete_count_q,
+               observed_store_descriptors);
+      if (dut.dbg_pending_occupancy_max_q != TB_PENDING_DEPTH
+       || dut.dbg_pending_occupancy_samples_q == 0
+       || dut.dbg_pending_occupancy_sum_q < TB_PENDING_DEPTH)
+        $fatal(1, "[sched_perf] pending occupancy mismatch samples=%0d sum=%0d max=%0d depth=%0d",
+               dut.dbg_pending_occupancy_samples_q,
+               dut.dbg_pending_occupancy_sum_q,
+               dut.dbg_pending_occupancy_max_q, TB_PENDING_DEPTH);
+      if (TB_PENDING_DEPTH == 4) begin
+        if (dut.dbg_store_to_load_switch_count_q != 1
+         || dut.dbg_switch_latency_count_q != 1
+         || dut.dbg_switch_latency_sum_q == 0
+         || dut.dbg_switch_latency_max_q != dut.dbg_switch_latency_sum_q)
+          $fatal(1, "[sched_perf] store/load switch mismatch switches=%0d latency_count=%0d sum=%0d max=%0d",
+                 dut.dbg_store_to_load_switch_count_q,
+                 dut.dbg_switch_latency_count_q,
+                 dut.dbg_switch_latency_sum_q,
+                 dut.dbg_switch_latency_max_q);
+      end else begin
+        if (dut.dbg_store_to_load_switch_count_q != 0
+         || dut.dbg_switch_latency_count_q != 0
+         || dut.dbg_switch_latency_sum_q != 0
+         || dut.dbg_switch_latency_max_q != 0)
+          $fatal(1, "[sched_perf] unexpected switch in depth-only run");
+      end
+      $display("TMEM_DMA_SCHED_PERF_CHECK_PASS depth=%0d accepted=%0d descriptors=%0d stores=%0d logical=%0d pending_max=%0d switches=%0d latency_count=%0d latency_sum=%0d latency_max=%0d final_idle=1",
+               TB_PENDING_DEPTH, dut.dbg_cmd_accept_count_q,
+               dut.dbg_descriptor_issue_count_q,
+               dut.dbg_store_chunk_issue_count_q,
+               dut.dbg_logical_complete_count_q,
+               dut.dbg_pending_occupancy_max_q,
+               dut.dbg_store_to_load_switch_count_q,
+               dut.dbg_switch_latency_count_q,
+               dut.dbg_switch_latency_sum_q,
+               dut.dbg_switch_latency_max_q);
+    end
+`else
+    begin
+      $fatal(1, "scheduler performance counter test requires DBG_TRACE_GEMM");
+    end
+`endif
+  endtask
+
   for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_if
-    assign cfg_reg_if[ch].ready = 1'b1;
+    assign cfg_reg_if[ch].ready = cfg_ready_drive[ch];
     assign cfg_valid_s[ch]      = cfg_reg_if[ch].valid;
     assign cfg_ready_s[ch]      = cfg_reg_if[ch].ready;
     assign cfg_regs_s[ch]       = cfg_reg_if[ch].regs;
@@ -183,7 +1445,44 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     if (reset) begin
       clear_cfg_scoreboard();
       clear_notify_scoreboard();
+      dma_done_pulse_count = 0;
+      store_done_pulse_count = 0;
+      dma_done_prev = 1'b0;
+      last_done_issue_count = -1;
+      descriptor_issue_count = 0;
+      data_prepare_accept_count = 0;
+      invalid_data_prepare_count = 0;
+      descriptor_active = '0;
+      descriptor_regs = '0;
     end else begin
+      if (gemm_dma_ctrl_if.prepare_valid
+       && gemm_dma_ctrl_if.prepare_ready) begin
+        data_prepare_accept_count++;
+        if ((gemm_dma_ctrl_if.prepare_cmd.instr[3:0] != OP_DMA_LD)
+         || (gemm_dma_ctrl_if.prepare_cmd.rd > 3))
+          invalid_data_prepare_count++;
+      end
+      if (gemm_dma_ctrl_if.done) begin
+        if (dma_done_prev
+         && (descriptor_issue_count <= last_done_issue_count))
+          $fatal(1, "DMA done repeated without a chained descriptor");
+        dma_done_pulse_count++;
+        last_done_issue_count = descriptor_issue_count;
+      end
+      if (store_done)
+        store_done_pulse_count++;
+      dma_done_prev = gemm_dma_ctrl_if.done;
+      if (|(cfg_valid_s & cfg_ready_s)) begin
+        if (descriptor_issue_count >= 128)
+          $fatal(1, "descriptor capture overflow");
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+          descriptor_active[descriptor_issue_count][ch] =
+            cfg_valid_s[ch] && cfg_ready_s[ch];
+          if (cfg_valid_s[ch] && cfg_ready_s[ch])
+            descriptor_regs[descriptor_issue_count][ch] = cfg_regs_s[ch];
+        end
+        descriptor_issue_count++;
+      end
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         if (cfg_valid_s[ch] && cfg_ready_s[ch]) begin
           cfg_seen[ch]      <= 1'b1;
@@ -207,9 +1506,17 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
 
   initial begin
     gemm_dma_ctrl_if.start = 1'b0;
+    gemm_dma_ctrl_if.cmd_valid = 1'b0;
+    gemm_dma_ctrl_if.cmd_tag = '0;
     gemm_dma_ctrl_if.cmd   = '0;
+    gemm_dma_ctrl_if.prepare_valid = 1'b0;
+    gemm_dma_ctrl_if.prepare_cmd = '0;
+    next_cmd_tag = '0;
 
     reset = 1'b1;
+    cfg_ready_drive = '1;
+    lookahead_prepare_ready_drive = '1;
+    lookahead_result_ready_drive = '1;
     clear_done_inputs();
     clear_cfg_scoreboard();
     clear_notify_scoreboard();
@@ -217,6 +1524,31 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     repeat (5) @(posedge clk);
     reset = 1'b0;
     repeat (2) @(posedge clk);
+
+    if ($test$plusargs("EXPECT_NOTIFY_FATAL")) begin
+      gemm_unified_cmd_t c;
+      c = '0;
+      c.instr = make_instr(OP_NOTIFY, 28'd0);
+      gemm_dma_ctrl_if.cmd = c;
+      $display("EXPECT_TMEM_NOTIFY_FATAL_ARMED opcode=3");
+      pulse_start();
+      repeat (5) @(posedge clk);
+      $fatal(1, "EXPECT_NOTIFY_FATAL intended assertion did not fire");
+    end
+
+    if (TB_PENDING_DEPTH == 4) begin
+      for (int rd = 0; rd < 4; ++rd)
+        run_data_prepare_release_case(3'(rd));
+      run_data_prepare_reset_invalidate_case();
+      if (data_prepare_accept_count != 0) begin
+        // The reset-invalidation case resets the cumulative monitor.  The
+        // per-rd PASS markers above prove the four accepted commands.
+        $fatal(1, "TMEM_DATA_PREPARE reset did not clear acceptance monitor");
+      end
+      if (invalid_data_prepare_count != 0)
+        $fatal(1, "TMEM_DATA_PREPARE observed forbidden ST/rd4 prepare");
+      $display("TMEM_DATA_PREPARE_FORBIDDEN_PASS dma_store=0 dma_rd4=0 invalid_accept=0 legacy_store_normal=1");
+    end
 
     begin
       gemm_unified_cmd_t c;
@@ -230,7 +1562,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (3) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "ld_single_word");
       expect_channel_active(0, 1'b1, "ld_single_word");
       expect_cfg_reg(0, DMA_R_SRC_BASE_LO, 32'h0001_0000, "ld_single_word");
@@ -242,8 +1574,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       expect_cfg_reg(0, DMA_R_DST_ST0, 32'd0, "ld_single_word");
       expect_cfg_reg(0, DMA_R_SRC_ST1, 32'(`HBM_BUS_STRIDE), "ld_single_word");
       expect_cfg_reg(0, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "ld_single_word");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "ld_single_word");
+      complete_active_channels_exact(1'b0, "ld_single_word");
     end
 
     begin
@@ -258,7 +1589,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (3) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(8, "ld_full_8ch");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         expect_channel_active(ch, 1'b1, "ld_full_8ch");
@@ -268,8 +1599,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_cfg_reg(ch, DMA_R_BND0, 32'd1, "ld_full_8ch");
         expect_cfg_reg(ch, DMA_R_BND1, 32'd1, "ld_full_8ch");
       end
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "ld_full_8ch");
+      complete_active_channels_exact(1'b0, "ld_full_8ch");
     end
 
     begin
@@ -284,7 +1614,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (3) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(8, "st_full_8ch");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
         expect_channel_active(ch, 1'b1, "st_full_8ch");
@@ -297,24 +1627,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_cfg_reg(ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "st_full_8ch");
         expect_cfg_reg(ch, DMA_R_DST_ST1, 32'(`HBM_BUS_STRIDE), "st_full_8ch");
       end
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "st_full_8ch");
-    end
-
-    begin
-      gemm_unified_cmd_t c;
-      clear_cfg_scoreboard();
-      clear_notify_scoreboard();
-      c = '0;
-      c.instr    = make_instr(OP_NOTIFY, 28'd0);
-      c.rs1_data = 64'h0000_0000_0000_0012;
-      c.rs2_data = 64'h0000_0000_dead_beef;
-      gemm_dma_ctrl_if.cmd = c;
-      pulse_start();
-      wait_done_or_timeout(100, "notify");
-      expect_cfg_count(0, "notify");
-      if (!notify_seen || notify_reg_seen != 32'h12 || notify_val_seen != 32'hdead_beef)
-        $fatal(1, "[notify] mismatch seen=%0b reg=0x%08x val=0x%08x", notify_seen, notify_reg_seen, notify_val_seen);
+      complete_active_channels_exact(1'b1, "st_full_8ch");
     end
 
     begin
@@ -342,7 +1655,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (3) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "tmem_misaligned_ld_cfg");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch)
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_ld_cfg");
@@ -351,8 +1664,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       // 2D form: fallback DST_ST1 is MEM_BLOCK_SIZE (TMEM bank stride),
       // independent of user s0.
       expect_cfg_reg(exp_ch, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_ld_cfg");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "tmem_misaligned_ld_cfg");
+      complete_active_channels_exact(1'b0, "tmem_misaligned_ld_cfg");
     end
 
     begin
@@ -379,7 +1691,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
-      repeat (3) @(posedge clk);
+      repeat (5) @(posedge clk);
       expect_cfg_count(1, "tmem_misaligned_st_cfg");
       for (int ch = 0; ch < NUM_CHANNELS; ++ch)
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_st_cfg");
@@ -387,11 +1699,33 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       expect_cfg_reg(exp_ch, DMA_R_DST_BASE_LO, hbm_byte_addr[31:0], "tmem_misaligned_st_cfg");
       // 2D form: fallback SRC_ST1 is MEM_BLOCK_SIZE, independent of user s0.
       expect_cfg_reg(exp_ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_st_cfg");
-      drive_done_for_active_channels();
-      wait_done_or_timeout(100, "tmem_misaligned_st_cfg");
+      complete_active_channels_exact(1'b1, "tmem_misaligned_st_cfg");
     end
 
+    run_pending_depth_smoke();
+
+    if (TB_PENDING_DEPTH == 4) begin
+      run_phase6_chain_case();
+      run_completion_capture_miss_case();
+      run_phase6_unprepared_high_case();
+      run_phase7_channel_skew_case();
+      run_chunk_case(4, 4'd3, 3'd0);
+      run_chunk_case(8, 4'd4, 3'd1);
+      run_chunk_case(16, 4'd5, 3'd2);
+      run_chunk_case(32, 4'd6, 3'd3);
+      run_nonchunkable_cases();
+      run_priority_pause_case();
+      run_multiple_low_store_order_case();
+      run_nonchunkable_pending_load_case();
+      run_cfg_backpressure_case();
+    end
+
+    check_sched_perf_counters();
+
+    $display("TMEM_DMA_EXACT_COMPLETION_PASS dma_done_pulses=%0d store_done_pulses=%0d notify_removed=1",
+             dma_done_pulse_count, store_done_pulse_count);
     $display("All VX_gemm_tmem_dma_ctrl misalign tests passed");
+    $display("TEST PASSED");
     $finish;
   end
 endmodule
