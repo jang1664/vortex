@@ -182,7 +182,7 @@ static inline size_t scale_slot_bytes_host(uint32_t cur_k,
                                            uint32_t qdir) {
   const uint32_t ng_per_mxu_nt = ceil_div_pow2_u32(TILE_DMA_MXU_NT, qblk);
   const size_t actual = (qdir == 0)
-      ? size_t(cur_k >> log2_u32(qblk)) * cur_n * TILE_ELEM_BYTES
+      ? size_t(ceil_div_pow2_u32(cur_k, qblk)) * cur_n * TILE_ELEM_BYTES
       : size_t(cur_n >> log2_u32(TILE_DMA_MXU_NT)) * cur_k * ng_per_mxu_nt * TILE_ELEM_BYTES;
   return align_up_u32_host((uint32_t)actual, TILE_SCALE_SLOT_ALIGN);
 }

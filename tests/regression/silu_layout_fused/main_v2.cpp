@@ -177,7 +177,8 @@ int main(int argc, char** argv) {
   karg.size   = in_elems;       // plain silu: M*K elements only
   karg.log2_mt     = log2_u32(TILE_DMA_MT);
   karg.log2_kt     = log2_u32(TILE_DMA_KT);
-  karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
+  // Field name is historical; this GEMM-C producer/consumer needs MXU_NT.
+  karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_NT);
 
   // -------------- Plain silu --------------
   karg.kernel_id    = KERNEL_SILU;
@@ -200,7 +201,7 @@ int main(int argc, char** argv) {
          mean_silu_us, in_elems);
 
   // -------------- Fused silu on GEMM-C tiled input/output (real rows only) --------------
-  // Launch a capped 1D grid over real 32-element N chunks. Pad rows are left
+  // Launch a capped 1D grid over real MXU_NT-element chunks. Pad rows are left
   // uninitialized because downstream GEMM output for those rows is discarded.
   RT_CHECK(vx_copy_to_dev(src_buf, h_in_tiled.data(), 0, out_bytes));
   uint32_t total_chunks = M * (K / TILE_DMA_MXU_NT);

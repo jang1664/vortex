@@ -773,7 +773,8 @@ KV_FUSED_HELPER uint32_t scale_slot_body_bytes(uint32_t cur_k,
                                       uint32_t QDIR) {
   const uint32_t ng_per_mxu_nt = 1u << log2_ng_per_mxu_nt;
   if (QDIR == 0) {
-    return (cur_k >> log2_qblk) * cur_n * TILE_ELEM_BYTES;
+    const uint32_t qblk = 1u << log2_qblk;
+    return ((cur_k + qblk - 1u) >> log2_qblk) * cur_n * TILE_ELEM_BYTES;
   }
   return (cur_n >> log2_mxu_nt) * cur_k * ng_per_mxu_nt * TILE_ELEM_BYTES;
 }
@@ -840,7 +841,8 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
     const uint32_t cur_k = min_u32(out_K - kt_start, kt_size);
     uint32_t elem_in_slot;
     if (GEMM_QDIR == 0) {
-      const uint32_t cur_groups = cur_k >> log2_qblk;
+      const uint32_t cur_groups =
+          (cur_k + (1u << log2_qblk) - 1u) >> log2_qblk;
       const uint32_t group = (param_k - kt_start) >> log2_qblk;
       const uint32_t local_n = dst_param_n - nt_start;
       const uint32_t nb = local_n >> log2_mxu_nt;
@@ -1309,7 +1311,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     if (GEMM_QDIR == 0) {
       const uint32_t col = elem_in_slot & (TILE_DMA_MXU_NT - 1u);
       const uint32_t nb_g = elem_in_slot >> log2_mxu_nt;
-      const uint32_t cur_groups = cur_k >> log2_qblk;
+      const uint32_t cur_groups =
+          (cur_k + (1u << log2_qblk) - 1u) >> log2_qblk;
       uint32_t g;
       uint32_t nb;
       if (cur_k == kt_size) {

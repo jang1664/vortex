@@ -85,7 +85,7 @@ static uint32_t output_N() {
 static uint32_t slot_body_bytes(uint32_t ck, uint32_t cn) {
   const uint32_t ng_per_mxu_nt = ceil_div_pow2(TILE_DMA_MXU_NT, QBLK);
   if (GEMM_QDIR == 0) {
-    return (ck >> log2_u32(QBLK)) * cn * TILE_ELEM_BYTES;
+    return ceil_div_pow2(ck, QBLK) * cn * TILE_ELEM_BYTES;
   }
   return (cn >> log2_u32(TILE_DMA_MXU_NT)) * ck * ng_per_mxu_nt * TILE_ELEM_BYTES;
 }

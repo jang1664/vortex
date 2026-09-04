@@ -48,19 +48,21 @@ public:
   static constexpr uint8_t OP_MXU_STORE_OUTPUT = 8;
   static constexpr uint8_t OP_CLEAR            = 9;
 
-  // Fixed tile geometry (MXU is 32x32 in this branch)
-  static constexpr uint32_t MXU_KT      = 32;   // K dimension per compute
-  static constexpr uint32_t MXU_NT      = 32;   // N columns
+  // Compile-time tile geometry, shared with the generated RTL profile.
+  static constexpr uint32_t MXU_KT      = MXU_ROW;  // K dimension per compute
+  static constexpr uint32_t MXU_NT      = MXU_COL;  // N columns
   static constexpr uint32_t SCALE_BYTES = 2;    // FP16
   static constexpr uint32_t ZP_BYTES    = 2;    // INT16
 
-  // TMEM: 8 banks x 32KB = 256KB (flat in our model)
-  static constexpr uint64_t TMEM_SIZE = 256ULL * 1024ULL;
+  // Physical bank organization is flattened in the functional model.
+  static constexpr uint64_t TMEM_SIZE =
+      uint64_t(TMEM_BANK_SIZE) * NUM_TMEM_BANKS;
 
   // Accumulator memory (simx flat float array).
-  // RTL: 4 banks x 1024 depth x 128 bytes(32*FP32) = 512KB of storage.
+  // Size follows the configured RTL accumulator geometry.
   // We model it as a flat FP32 array, indexed by byte addr / 4.
-  static constexpr uint32_t ACC_MEM_FP32_COUNT = 131072;  // 512KB / 4B
+  static constexpr uint32_t ACC_MEM_FP32_COUNT =
+      GEMM_ACC_MEM_TOT_SIZE / sizeof(float);
 
   GemmNode(Core* core);
 
@@ -226,12 +228,12 @@ private:
 
   // MXU internal state — dual-buffered
   struct MxuRegs {
-    // INT4 packed weights (MXU_KT * MXU_NT / 2 = 512 bytes per bank is the minimum;
+    // INT4 packed weights (MXU_KT * MXU_NT / 2 bytes per microtile;
     // kernel can load multiple K-blocks but always writes sequentially → keep large buffer).
     std::vector<uint8_t> weight_reg[2];
-    // Scale registers — MXU_NT FP16 each, per MXU_LOAD_QPARAM bank
+    // Scale registers — max(MXU_KT, MXU_NT) FP16 values per bank
     std::vector<uint8_t> scale_reg[2];
-    // Zero-point registers — MXU_NT INT16 each
+    // Zero-point registers — max(MXU_KT, MXU_NT) INT16 values per bank
     std::vector<uint8_t> zp_reg[2];
     // Transpose flag captured at weight load
     bool wtrans[2] = {false, false};

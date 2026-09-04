@@ -126,7 +126,7 @@ static uint32_t slot_body_bytes(uint32_t ck, uint32_t cn) {
   const uint32_t ng_per_mxu_nt = ceil_div_pow2(MXU_NT, QBLK);
 
   if (GEMM_QDIR == 0) {
-    return (ck >> log2_u32(QBLK)) * cn * TILE_ELEM_BYTES;
+    return ceil_div_pow2(ck, QBLK) * cn * TILE_ELEM_BYTES;
   }
   return (cn >> log2_u32(MXU_NT)) * ck * ng_per_mxu_nt * TILE_ELEM_BYTES;
 }
@@ -198,7 +198,7 @@ static void cpu_tile_scale_zp(const std::vector<uint16_t>& src,
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
     uint32_t cur_k = (out_k_total - kt * DMA_KT < DMA_KT)
                        ? (out_k_total - kt * DMA_KT) : DMA_KT;
-    uint32_t cur_groups = cur_k >> log2_u32(QBLK);
+    uint32_t cur_groups = ceil_div_pow2(cur_k, QBLK);
     for (uint32_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
       uint32_t n_start = nt_dma * DMA_NT;
       uint32_t cur_n_dma = (out_n_total - n_start < DMA_NT)

@@ -2,12 +2,13 @@
 #define _HEAD_CONCAT_LAYOUT_FUSED_COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 #define KERNEL_HEAD_CONCAT_LAYOUT_FUSED 0
 
 #define TILE_DMA_MT       128
-#define TILE_DMA_MXU_KT    32
-#define TILE_DMA_MXU_NT    32
+#define TILE_DMA_MXU_KT    MXU_ROW
+#define TILE_DMA_MXU_NT    MXU_COL
 #define TILE_M_PAD_ALIGN    8
 
 typedef struct {

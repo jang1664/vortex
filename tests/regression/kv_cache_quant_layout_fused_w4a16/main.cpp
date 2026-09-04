@@ -326,7 +326,7 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
     const uint32_t kt_start = kt * dma_kt;
     const uint32_t cur_k = std::min(out_K - kt_start, dma_kt);
-    const uint32_t cur_groups = cur_k >> log2_u32(QBLK);
+    const uint32_t cur_groups = ceil_div_pow2_u32(cur_k, QBLK);
     for (uint32_t nt_dma = 0; nt_dma < n_dma_tiles; ++nt_dma) {
       const uint32_t nt_start = nt_dma * dma_nt;
       const uint32_t cur_n = std::min(out_N - nt_start, dma_nt);

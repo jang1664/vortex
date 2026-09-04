@@ -3,7 +3,7 @@
 #include <vx_intrinsics.h>
 
 ///////////////////////////////////////////////////////////////////////////////
-// tile_weight_w4a16 — fast version (3D grid + 16-B per thread)
+// tile_weight_w4a16 — fast version (3D grid + one packed N microtile per thread)
 //
 // Reorders packed-int4 weight from row-major [K, N/2] to the tile-major
 // layout the fpint_gemm_ffn_hw kernel expects in DRAM. Mirrors
@@ -23,8 +23,9 @@
 //   blockIdx.y = nt                                   ∈ [0, n_tiles)
 //   blockIdx.x * blockDim.x + threadIdx.x = cnk       ∈ [0, cur_kb*MXU_KT)
 //
-// Each thread copies ONE 16-byte chunk (the inner "pair" loop, flattened).
-// Inside-block divisions are by MXU_KT (compile-time = 32 → shift).
+// WTRANS=0 copies MXU_NT/2 bytes per thread (8 B for MXU16, 16 B for
+// MXU32). WTRANS=1 writes one repacked byte per thread.
+// Inside-block divisions are by the generated MXU_KT (a power-of-two shift).
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
@@ -89,7 +90,7 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
 
   if (arg->flat_source_transposed == 2u) {
     // Full prefill WTRANS=0 fast path. Flatten (k, nt) chunks onto a small
-    // persistent grid and copy the already packed 16-byte N tile directly.
+    // persistent grid and copy the already packed N microtile directly.
     const uint32_t log2_n_tiles = arg->log2_n - log2_mxu_nt;
     const uint32_t total_chunks = K << log2_n_tiles;
     const uint32_t total_threads = gridDim.x * blockDim.x;
@@ -113,7 +114,8 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
           reinterpret_cast<const uint64_t*>(src + src_off);
       uint64_t* dst64 = reinterpret_cast<uint64_t*>(dst + dst_off);
       dst64[0] = src64[0];
-      dst64[1] = src64[1];
+      if (pair_per_n_sub == 16u)
+        dst64[1] = src64[1];
     }
     return;
   }
@@ -187,22 +189,16 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t gk = kt_start + (kb << log2_mxu_kt) + k_in_sub;
     const uint64_t dst_off = kt_base + nt_base + (uint64_t)tid * pair_per_n_sub;
 
-    uint64_t* dp = reinterpret_cast<uint64_t*>(dst + dst_off);
     const uint32_t src_pair = nt * pair_per_n_sub;
-    if (gk < K && src_pair + pair_per_n_sub <= src_row_bytes) {
-      // 16-byte copy: two 64-bit loads/stores (src/dst are both 16-B aligned).
-      const uint64_t src_off = (uint64_t)gk * src_row_bytes + src_pair;
-      uint64_t* sp = reinterpret_cast<uint64_t*>(src + src_off);
-      dp[0] = sp[0];
-      dp[1] = sp[1];
-    } else {
-      for (uint32_t pair = 0; pair < pair_per_n_sub; ++pair) {
-        const uint32_t source_byte = src_pair + pair;
-        dst[dst_off + pair] =
-            (gk < K && source_byte < src_row_bytes)
-                ? src[(uint64_t)gk * src_row_bytes + source_byte]
-                : 0;
-      }
+    // Non-power-of-two N gives a packed source row stride that is not
+    // necessarily 64-bit aligned. Keep this tail-capable path byte-granular;
+    // the aligned full-tile case above retains the wide-copy fast path.
+    for (uint32_t pair = 0; pair < pair_per_n_sub; ++pair) {
+      const uint32_t source_byte = src_pair + pair;
+      dst[dst_off + pair] =
+          (gk < K && source_byte < src_row_bytes)
+              ? src[(uint64_t)gk * src_row_bytes + source_byte]
+              : 0;
     }
     return;
   }

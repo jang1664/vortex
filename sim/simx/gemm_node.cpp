@@ -27,14 +27,22 @@ using namespace vortex;
 
 namespace {
 
-// Total bytes per MXU weight buffer we track. Kernel weight_reg stores
-// (MXU_KT * MXU_NT / 2) bytes per micro-tile, but multiple K-blocks can be
-// loaded back-to-back — allocate a generous buffer.
-constexpr uint32_t WEIGHT_REG_BYTES = 64 * 1024;
+constexpr uint32_t CONFIGURED_MXU_MAX_DIM =
+    (MXU_ROW > MXU_COL) ? MXU_ROW : MXU_COL;
+constexpr uint32_t WEIGHT_MICROTILE_BYTES = MXU_ROW * MXU_COL / 2;
 
-// Scale/ZP register file per bank. RTL: MAX(MXU_ROW, MXU_COL) * WIDTH/8 = 32*2 = 64 bytes.
-// Keep it at a power-of-two that fits the MMIO map (0x40 per bank × 2 banks).
-constexpr uint32_t SZ_REG_BYTES     = 0x40;
+// Preserve the MXU32 capacity while scaling the functional register storage
+// with the configured packed weight microtile.
+constexpr uint32_t WEIGHT_REG_BYTES = 128 * WEIGHT_MICROTILE_BYTES;
+
+// Register bases match VX_gemm_unit.sv and shrink from 64B to 32B per bank
+// when the generated profile changes from MXU32 to MXU16.
+constexpr uint32_t SZ_REG_BYTES = CONFIGURED_MXU_MAX_DIM * 2;
+constexpr uint32_t SCALE_REG0_BASE = 0;
+constexpr uint32_t SCALE_REG1_BASE = SZ_REG_BYTES;
+constexpr uint32_t ZP_REG0_BASE = SZ_REG_BYTES * 2;
+constexpr uint32_t ZP_REG1_BASE = SZ_REG_BYTES * 3;
+constexpr uint32_t SZ_REG_END = SZ_REG_BYTES * 4;
 
 // Small fixed completion delay after CLEAR (cycles) so that the SW polling loop
 // can observe occupied_=1 at least once.
@@ -442,7 +450,7 @@ uint64_t GemmNode::scale_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_
 
   auto slot_bytes = [&](uint32_t ck, uint32_t cn) -> uint64_t {
     uint64_t actual = (qdir == 0)
-                    ? uint64_t(ck / qblk) * cn * 2
+                    ? uint64_t(ceil_div(ck, qblk)) * cn * 2
                     : uint64_t(cn / MXU_NT) * ck * ng_per_mxu_nt * 2;
     return align_up_u64(actual, 512);
   };
@@ -465,7 +473,7 @@ uint64_t GemmNode::scale_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_
   const uint32_t n_in_mxu = gn % MXU_NT;
   const uint32_t k_in_tile = gk - kt * dma_kt;
   if (qdir == 0) {
-    const uint32_t groups_per_kt = cur_k / qblk;
+    const uint32_t groups_per_kt = ceil_div(cur_k, qblk);
     const uint32_t group = k_in_tile / qblk;
     offset += uint64_t(nb) * groups_per_kt * MXU_NT * 2;
     offset += uint64_t(group) * MXU_NT * 2;
@@ -989,8 +997,8 @@ void GemmNode::handle_dma_store(const uint64_t* w) {
 
 // MXU_LOAD_WEIGHT word encoding (kernel common.h):
 //   w0: [op:4 @0] [tmem_base:24 @4] [stride:16 @28] [bound:16 @44] [reg_idx:1 @60] [wtrans:1 @61]
-// Unit: stride/bound are in bytes; seg_size is implicit = MXU_KT * (MXU_NT/2) = 512 bytes
-// per micro-tile (INT4 packed 32x32 weight matrix).
+// Unit: stride/bound are in bytes; seg_size is implicit =
+// MXU_KT * (MXU_NT/2) bytes per packed INT4 microtile.
 void GemmNode::handle_mxu_load_weight(const uint64_t* w) {
   uint64_t w0 = w[0];
   uint32_t tmem_base = uint32_t((w0 >> 4)  & 0xFFFFFFu);
@@ -999,7 +1007,7 @@ void GemmNode::handle_mxu_load_weight(const uint64_t* w) {
   uint32_t reg_idx   = uint32_t((w0 >> 60) & 0x1u);
   uint32_t wtrans    = uint32_t((w0 >> 61) & 0x1u);
 
-  const uint32_t seg_size = MXU_KT * (MXU_NT / 2);  // 32 * 16 = 512 bytes (INT4 packed)
+  const uint32_t seg_size = MXU_KT * (MXU_NT / 2);
 
   DP(2, "GemmNode: MXU_LOAD_WEIGHT reg=" << reg_idx << " wtrans=" << wtrans
         << " tmem=0x" << std::hex << tmem_base
@@ -1029,13 +1037,13 @@ void GemmNode::handle_mxu_load_weight(const uint64_t* w) {
 //   w1: [bound:16 @0] [mxu_stride:16 @16] [tmem_stride:16 @32]
 //
 // The MXU scale/zp register file layout (per VX_gemm_unit.sv):
-//   SCALE_REG0_BASE = 0x00 (MXU_NT * SCALE_BYTES = 64B)
-//   SCALE_REG1_BASE = 0x40 (next 64B)
-//   ZP_REG0_BASE    = 0x80
-//   ZP_REG1_BASE    = 0xC0
+//   SCALE_REG0_BASE = 0
+//   SCALE_REG1_BASE = SZ_REG_BYTES
+//   ZP_REG0_BASE    = 2 * SZ_REG_BYTES
+//   ZP_REG1_BASE    = 3 * SZ_REG_BYTES
 //
-// The kernel sends bound=2 with mxu_dst_stride = 0x80: so two iterations write
-// [SCALE_REGn][ZP_REGn] for the chosen double-buffer bank.
+// The kernel sends bound=2 with a profile-sized scale-to-ZP stride, so two
+// iterations write [SCALE_REGn][ZP_REGn] for the selected buffer bank.
 void GemmNode::handle_mxu_load_qparam(const uint64_t* w) {
   uint64_t w0 = w[0], w1 = w[1];
   uint32_t tmem_base   = uint32_t((w0 >> 4)  & 0xFFFFFFu);
@@ -1044,7 +1052,7 @@ void GemmNode::handle_mxu_load_qparam(const uint64_t* w) {
   uint32_t mxu_stride  = uint32_t((w1 >> 16) & 0xFFFFu);
   uint32_t tmem_stride = uint32_t((w1 >> 32) & 0xFFFFu);
 
-  const uint32_t seg_size = MXU_NT * SCALE_BYTES;  // 32 * 2 = 64 bytes
+  const uint32_t seg_size = MXU_NT * SCALE_BYTES;
 
   DP(2, "GemmNode: MXU_LOAD_QPARAM mxu=0x" << std::hex << mxu_base
         << " <- tmem=0x" << tmem_base
@@ -1059,16 +1067,22 @@ void GemmNode::handle_mxu_load_qparam(const uint64_t* w) {
       return;
     }
     // Route dst to the appropriate register. Register map:
-    //   [0x00..0x40) -> scale_reg[0]
-    //   [0x40..0x80) -> scale_reg[1]
-    //   [0x80..0xC0) -> zp_reg[0]
-    //   [0xC0..0x100) -> zp_reg[1]
+    // The four register windows are contiguous and profile-sized.
     std::vector<uint8_t>* target = nullptr;
     uint32_t target_off = dst;
-    if (dst < 0x40) { target = &mxu_.scale_reg[0]; target_off = dst; }
-    else if (dst < 0x80) { target = &mxu_.scale_reg[1]; target_off = dst - 0x40; }
-    else if (dst < 0xC0) { target = &mxu_.zp_reg[0];    target_off = dst - 0x80; }
-    else if (dst < 0x100){ target = &mxu_.zp_reg[1];    target_off = dst - 0xC0; }
+    if (dst < SCALE_REG1_BASE) {
+      target = &mxu_.scale_reg[0];
+      target_off = dst - SCALE_REG0_BASE;
+    } else if (dst < ZP_REG0_BASE) {
+      target = &mxu_.scale_reg[1];
+      target_off = dst - SCALE_REG1_BASE;
+    } else if (dst < ZP_REG1_BASE) {
+      target = &mxu_.zp_reg[0];
+      target_off = dst - ZP_REG0_BASE;
+    } else if (dst < SZ_REG_END) {
+      target = &mxu_.zp_reg[1];
+      target_off = dst - ZP_REG1_BASE;
+    }
     else {
       DP(1, "GemmNode: MXU_LOAD_QPARAM dst 0x" << std::hex << dst << " out of range");
       return;
@@ -1131,7 +1145,7 @@ void GemmNode::handle_mxu_load_input(const uint64_t* w) {
   const bool wtrans = mxu_.wtrans[wreg_idx];
 
   // acc_mem is indexed as flat FP32 array. byte_off / 4 = float index.
-  // Each M row takes MXU_NT FP32 values = 128 bytes.
+  // Each M row takes MXU_NT FP32 values.
   if ((acc_mem_base & 0x3) != 0) {
     DP(1, "GemmNode: acc_mem_base 0x" << std::hex << acc_mem_base << " not FP32-aligned");
     return;
@@ -1204,7 +1218,7 @@ void GemmNode::handle_mxu_load_input(const uint64_t* w) {
 //   w1: [bound:16 @0] [stride:16 @16]
 //
 // Per VX_gemm_node.sv: seg_size = MXU_NT * 2 * bound (entire M×N tile as one
-// segment). Each M row contributes MXU_NT FP16 values = 64 bytes, written
+// segment). Each M row contributes MXU_NT FP16 values, written
 // contiguously starting at tmem_base. The `stride` field is currently unused
 // by the kernel (sent as 0) — if non-zero, treat it as per-row byte stride.
 void GemmNode::handle_mxu_store_output(const uint64_t* w) {
@@ -1213,7 +1227,7 @@ void GemmNode::handle_mxu_store_output(const uint64_t* w) {
   uint32_t tmem_base    = uint32_t((w0 >> 28) & 0xFFFFFFu);
   uint32_t bound        = uint32_t(w1        & 0xFFFFu);
   uint32_t stride       = uint32_t((w1 >> 16) & 0xFFFFu);
-  const uint32_t row_bytes = MXU_NT * 2;  // 64 bytes
+  const uint32_t row_bytes = MXU_NT * 2;
   if (stride == 0) stride = row_bytes;
 
   DP(2, "GemmNode: MXU_STORE_OUTPUT tmem=0x" << std::hex << tmem_base

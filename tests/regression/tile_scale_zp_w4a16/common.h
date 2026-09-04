@@ -2,12 +2,13 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 #define DEFAULT_DMA_MT       128
 #define DEFAULT_DMA_KT       128
 #define DEFAULT_DMA_NT       128
-#define TILE_DMA_MXU_KT       32
-#define TILE_DMA_MXU_NT       32
+#define TILE_DMA_MXU_KT       MXU_ROW
+#define TILE_DMA_MXU_NT       MXU_COL
 #define TILE_SCALE_SLOT_ALIGN 512
 #define TILE_ELEM_BYTES        2
 

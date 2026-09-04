@@ -32,7 +32,7 @@ DEVICE = "vortex"
 #  Tile-major DRAM layout helpers
 #
 #  The fpint_gemm_ffn_hw kernel does NOT consume a plain row-major
-#  [K, N/2] / [K/QBLK, N] / ... tensor. The host harness in
+#  [K, N/2] / [ceil(K/QBLK), N] / ... tensor. The host harness in
 #  tests/regression/fpint_gemm_ffn_hw/main.cpp pre-tiles each input into a
 #  tile-major layout before uploading to DRAM:
 #
@@ -146,7 +146,7 @@ def tile_scale_zp_w4a16(s_raw: torch.Tensor, K: int, N: int, qblk: int,
     fpint_gemm_ffn_hw expects in DRAM.
 
     QDIR=0 (column-grouped, K-axis groups):
-        source shape [K/QBLK, N]
+        source shape [ceil(K/QBLK), N]
         slot body: for nb in 0..cur_nb-1:
                      for g in 0..groups_per_kt-1:
                        for col in 0..MXU_NT-1:
@@ -187,14 +187,14 @@ def tile_scale_zp_w4a16(s_raw: torch.Tensor, K: int, N: int, qblk: int,
     chunks = []
 
     if qdir == 0:
-        num_groups_total   = K // qblk
+        num_groups_total   = (K + qblk - 1) // qblk
         assert s_raw.shape == (num_groups_total, N), \
             f"qdir=0: shape={tuple(s_raw.shape)} != ({num_groups_total}, {N})"
         groups_per_kt_full = DMA_KT // qblk
 
         for kt in range(k_tiles):
             cur_k_kt   = min(K - kt * DMA_KT, DMA_KT)
-            cur_groups = cur_k_kt // qblk
+            cur_groups = (cur_k_kt + qblk - 1) // qblk
             g_start    = kt * groups_per_kt_full
             s_kt       = s_raw[g_start : g_start + cur_groups]   # [cur_groups, N]
 

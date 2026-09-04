@@ -25,6 +25,19 @@ static constexpr uint32_t kRegisterCount = 44;
 static constexpr uint32_t kEntryCount = 4;
 static constexpr uint32_t kEntryStride =
     ((kRegisterCount + kWordsPerBeat - 1) / kWordsPerBeat) * kBeatBytes;
+static constexpr uint32_t kTileM = 128;
+static constexpr uint32_t kTileN = 128;
+static constexpr uint32_t kTileK = 128;
+static constexpr uint32_t kMxuK = MXU_ROW;
+static constexpr uint32_t kMxuN = MXU_COL;
+
+static_assert(kMxuK != 0 && kMxuN != 0, "MXU dimensions must be nonzero");
+static_assert((kTileK % kMxuK) == 0,
+              "DMA K tile must be divisible by MXU_ROW");
+static_assert((kTileN % kMxuN) == 0,
+              "DMA N tile must be divisible by MXU_COL");
+static_assert(((kMxuK * kMxuN) % 2) == 0,
+              "packed INT4 MXU tile must contain an even element count");
 
 enum Register : uint32_t {
   kControl = 0,
@@ -104,22 +117,24 @@ struct Scratch {
 
 static inline bool allocate_scratch(Scratch* scratch, uint32_t qblock,
                                     uint32_t quant_direction, uint32_t mode) {
-  constexpr uint64_t tile_m = 128;
-  constexpr uint64_t tile_n = 128;
-  constexpr uint64_t tile_k = 128;
-  const uint64_t groups_k = (tile_k + qblock - 1) / qblock;
-  const uint64_t groups_n = (tile_n + qblock - 1) / qblock;
-  const uint64_t input_bytes = tile_m * tile_k * 2;
-  const uint64_t weight_bytes = tile_k * ((tile_n + 1) / 2);
-  const uint64_t qparam_bytes =
-      quant_direction == 0 ? groups_k * tile_n * 2 : tile_k * groups_n * 2;
-  const uint64_t output_bytes = tile_m * tile_n * 2;
-  const uint64_t partial_sum_bytes = tile_m * tile_n * 4;
+  const uint64_t groups_k = (kTileK + qblock - 1) / qblock;
+  const uint64_t groups_n = (kTileN + qblock - 1) / qblock;
+  const uint64_t groups_per_mxu_n = (kMxuN + qblock - 1) / qblock;
+  const uint64_t n_microtiles = kTileN / kMxuN;
+  const uint64_t input_bytes = uint64_t(kTileM) * kTileK * 2;
+  const uint64_t weight_bytes = uint64_t(kTileK) * ((kTileN + 1) / 2);
+  const uint64_t qparam_bytes = quant_direction == 0
+      ? groups_k * kTileN * 2
+      : (mode == VX_TVM_GEMM_MODE_IMPROVE
+          ? uint64_t(kTileK) * n_microtiles * groups_per_mxu_n * 2
+          : uint64_t(kTileK) * groups_n * 2);
+  const uint64_t output_bytes = uint64_t(kTileM) * kTileN * 2;
+  const uint64_t partial_sum_bytes = uint64_t(kTileM) * kTileN * 4;
   const uint64_t local_memory_base = uint64_t(LMEM_BASE_ADDR);
   uint64_t cursor = mode == VX_TVM_GEMM_MODE_NAIVE ? local_memory_base : 0;
   const uint64_t limit = mode == VX_TVM_GEMM_MODE_NAIVE
                              ? local_memory_base + (uint64_t(1) << LMEM_LOG_SIZE)
-                             : uint64_t(TMEM_BANK_SIZE) * NUM_DMA_CHANNELS;
+                             : uint64_t(TMEM_BANK_SIZE) * NUM_TMEM_BANKS;
 
   auto allocate = [&](uint64_t bytes, uint64_t* address) {
     cursor = align_up(cursor, 64);
@@ -159,7 +174,8 @@ static inline int submit(const void* input, const void* weight, const void* scal
 #endif
   if (m == 0 || n == 0 || k == 0 || qblock == 0 ||
       (qblock & (qblock - 1)) != 0 || weight_transpose > 1 ||
-      quant_direction > 1 || (quant_direction == 0 && (128 % qblock) != 0)) {
+      quant_direction > 1 ||
+      (quant_direction == 0 && (kTileK % qblock) != 0)) {
     return -3;
   }
 
@@ -201,9 +217,9 @@ static inline int submit(const void* input, const void* weight, const void* scal
   if (mode == VX_TVM_GEMM_MODE_NAIVE) {
     write64(entry, kModeRegister40, scratch.partial_sum);
   } else {
-    write32(entry, kModeRegister40, 7);
-    write32(entry, kModeRegister41, 7);
-    write32(entry, kModeRegister42, 7);
+    write32(entry, kModeRegister40, log2_pow2(kTileM));
+    write32(entry, kModeRegister41, log2_pow2(kTileK));
+    write32(entry, kModeRegister42, log2_pow2(kTileN));
   }
   write32(entry, kControl, 1);
 

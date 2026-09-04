@@ -2,6 +2,7 @@
 #define _QK_ASYM_CORRECTION_COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 #define KERNEL_QK_ASYM_CORRECTION 0
 #define QK_SCORES_LAYOUT_ROW_MAJOR 0
@@ -9,7 +10,7 @@
 #define QK_QUERY_LAYOUT_ROW_MAJOR 0
 #define QK_QUERY_LAYOUT_GEMM_A_TILED 1
 #define QK_TILE_DMA_MT 128
-#define QK_TILE_MXU_NT 32
+#define QK_TILE_MXU_NT MXU_COL
 
 typedef struct {
   uint32_t kernel_id;

@@ -103,7 +103,8 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t cur_k = ((out_K - kt_start) < kt_size) ? (out_K - kt_start) : kt_size;
   const uint32_t cur_n = ((out_N - nt_start) < nt_size) ? (out_N - nt_start) : nt_size;
   const uint32_t cur_nb = cur_n >> log2_mxu_nt;
-  const uint32_t cur_groups = cur_k >> log2_qblk;
+  const uint32_t cur_groups =
+      (cur_k + QBLK - 1u) >> log2_qblk;
   const uint32_t ng_per_mxu_nt = 1u << log2_ng_per_mxu_nt;
 
   uint32_t body_bytes;
