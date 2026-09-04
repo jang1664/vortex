@@ -20,8 +20,11 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     // and registered fence). Different-group: 2 groups * 3 phases.
     localparam int ARBITRATION_COMPUTE_PACKETS
         = (2 * 2 * 2) + (2 * 3);
+    localparam int M3_D3_RAW_LAST_WRITES = 2;
+    localparam int M5_READ_WRITE_ARB_LAST_WRITES = 2;
     localparam int EXPECTED_LAST_WRITES
-        = 22 + RANDOM_COMMAND_COUNT + ARBITRATION_COMPUTE_PACKETS;
+        = 22 + RANDOM_COMMAND_COUNT + ARBITRATION_COMPUTE_PACKETS
+        + M3_D3_RAW_LAST_WRITES + M5_READ_WRITE_ARB_LAST_WRITES;
 
     typedef logic [`MXU_ROW-1:0][`IFP_WIDTH-1:0] input_vector_t;
     typedef logic [`MXU_COL-1:0][FP32_WIDTH-1:0] psum_vector_t;
@@ -75,6 +78,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
     int coincident_read_count;
     int forward_count;
     int history_forward_count;
+    int d3_raw_stall_count;
+    int acc_write_backpressure_count;
     int last_write_count;
     int weight_consume_count [2];
     int scale_consume_count [2];
@@ -106,6 +111,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         group = address[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
         bank_offset = address[`CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)];
         return {group, bank_offset};
+    endfunction
+
+    function automatic logic [FP32_WIDTH-1:0] fp32_from_int(
+        input int value
+    );
+        shortreal converted;
+        converted = value;
+        return $shortrealtobits(converted);
     endfunction
 
     function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]
@@ -194,6 +207,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             coincident_read_count <= 0;
             forward_count <= 0;
             history_forward_count <= 0;
+            d3_raw_stall_count <= 0;
+            acc_write_backpressure_count <= 0;
             weight_consume_count[0] <= 0;
             weight_consume_count[1] <= 0;
             scale_consume_count[0] <= 0;
@@ -249,6 +264,11 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX].valid
              && u_dut.u_compute_core.history_forward_pipe[u_dut.u_compute_core.SCALER_CTRL_IDX])
                 history_forward_count <= history_forward_count + 1;
+            if (u_dut.u_compute_core.post_head_d3_raw_stall)
+                d3_raw_stall_count <= d3_raw_stall_count + 1;
+            if (u_dut.acc_if.wr_req_valid && !u_dut.acc_if.wr_req_ready)
+                acc_write_backpressure_count
+                    <= acc_write_backpressure_count + 1;
             if (gemm_unit_v2_if.last_write)
                 last_write_count <= last_write_count + 1;
             if (gemm_unit_v2_if.weight_consume_valid)
@@ -281,6 +301,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         logic schedule_early;
         logic schedule_forward;
         logic schedule_history_forward;
+        logic schedule_d3_raw_stall;
 
         if (reset) begin
             scoreboard_cycle = 0;
@@ -295,6 +316,49 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             history_entry.acc_wr_en = 1'b0;
             history_entry.write_bank = '0;
             history_entry.write_address = '0;
+            schedule_d3_raw_stall = 1'b0;
+
+            if ((!u_dut.u_compute_core.int2fp_result_empty
+              || u_dut.u_compute_core.int2fp_result_push)
+             && u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_en
+             && (post_history_q.size()
+                 > u_dut.u_compute_core.K_LOOKBACK)) begin
+                current_read_bank = scoreboard_acc_bank(
+                    u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr);
+                schedule_d3_raw_stall
+                    = !(post_history_q[0].valid
+                      && post_history_q[0].acc_wr_en
+                      && (post_history_q[0].write_address
+                       == u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr))
+                   && !(post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].valid
+                      && post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].acc_wr_en
+                      && (post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].write_address
+                       == u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr))
+                   && post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].valid
+                   && post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].acc_wr_en
+                   && (post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK-1].write_bank
+                       == current_read_bank)
+                   && post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK].valid
+                   && post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK].acc_wr_en
+                   && (post_history_q[
+                        u_dut.u_compute_core.K_LOOKBACK].write_address
+                       == u_dut.u_compute_core.int2fp_result_data_out.ctrl.acc_rd_addr);
+            end
+            if (u_dut.u_compute_core.post_head_d3_raw_stall
+                !== schedule_d3_raw_stall) begin
+                $error("d=3 RAW stall classification mismatch cycle=%0d expected=%0b actual=%0b",
+                       scoreboard_cycle, schedule_d3_raw_stall,
+                       u_dut.u_compute_core.post_head_d3_raw_stall);
+                test_failed = 1'b1;
+            end
 
             if (u_dut.output_read_fire === 1'b1)
                 scoreboard_output_read_count
@@ -308,28 +372,30 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 scoreboard_stalled_input_cycles
                     = scoreboard_stalled_input_cycles + 1;
 
-            // Every accepted transaction reaches the write boundary in order,
-            // including packets with acc_wr_en deasserted.
-            if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid) begin
+            // Every accepted transaction commits through the ordered result
+            // queue, including packets with acc_wr_en deasserted.  Checking the
+            // commit boundary permits the backend to backpressure a same-bank
+            // physical write without changing transaction order.
+            if (u_dut.u_compute_core.acc_result_commit) begin
                 scoreboard_retire_count = scoreboard_retire_count + 1;
                 if (write_expect_q.size() == 0) begin
                     $error("unexpected ACC write/control transaction cycle=%0d addr=%h",
                            scoreboard_cycle,
-                           u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr);
+                           u_dut.u_compute_core.acc_result_data_out.ctrl.acc_wr_addr);
                     test_failed = 1'b1;
                 end else begin
                     write_expect = write_expect_q.pop_front();
                     expected_write_en[write_expect.bank]
                         = write_expect.acc_wr_en;
-                    if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en
+                    if (u_dut.u_compute_core.acc_result_data_out.ctrl.acc_wr_en
                           !== write_expect.acc_wr_en
-                     || u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr
+                     || u_dut.u_compute_core.acc_result_data_out.ctrl.acc_wr_addr
                           !== write_expect.address) begin
                         $error("write control order/address mismatch cycle=%0d exp_en=%0b exp_addr=%h actual_en=%0b actual_addr=%h",
                                scoreboard_cycle, write_expect.acc_wr_en,
                                write_expect.address,
-                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_en,
-                               u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr);
+                               u_dut.u_compute_core.acc_result_data_out.ctrl.acc_wr_en,
+                               u_dut.u_compute_core.acc_result_data_out.ctrl.acc_wr_addr);
                         test_failed = 1'b1;
                     end
                     if (u_dut.acc_write_fire !== write_expect.acc_wr_en
@@ -372,14 +438,13 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                             = scoreboard_write_count + 1;
                 end
             end else begin
-                if (u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid !== 1'b0
-                 || u_dut.acc_write_fire !== 1'b0
+                if (u_dut.acc_write_fire !== 1'b0
                  || u_dut.acc_mem_wr_en !== '0
                  || gemm_unit_v2_if.last_write !== 1'b0
                  || gemm_unit_v2_if.tagged_final_writeback !== 1'b0) begin
-                    $error("unexpected ACC write/control cycle=%0d valid=%0b fire=%0b banks=%b last=%0b",
+                    $error("unexpected ACC write/control cycle=%0d commit=%0b fire=%0b banks=%b last=%0b",
                            scoreboard_cycle,
-                           u_dut.u_compute_core.ctrl_pipe[u_dut.u_compute_core.WRITE_CTRL_IDX].valid,
+                           u_dut.u_compute_core.acc_result_commit,
                            u_dut.acc_write_fire, u_dut.acc_mem_wr_en,
                            gemm_unit_v2_if.last_write);
                     test_failed = 1'b1;
@@ -688,7 +753,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             end
 
             post_history_q.push_front(history_entry);
-            while (post_history_q.size() > u_dut.u_compute_core.K_LOOKBACK)
+            while (post_history_q.size()
+                   > u_dut.u_compute_core.K_LOOKBACK + 1)
                 void'(post_history_q.pop_back());
 
             if (gemm_unit_v2_if.pipeline_empty
@@ -1816,7 +1882,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                        quant_dir, reg_idx, n, ref_output[n], dut_output[n]);
                 test_failed = 1'b1;
             end
-            ref_psum[n] = 32'h4200_0000;
+            ref_psum[n] = fp32_from_int(`MXU_ROW);
         end
 
         ref_output = '{default: '0};
@@ -1931,8 +1997,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                    check_name, write_count - writes_before);
             test_failed = 1'b1;
         end
-        // Initial 1.0 plus two dot products of 32.0 = 65.0.
-        check_memory(address, 1, 32'h4282_0000);
+        // Initial 1.0 plus two MXU_ROW-wide unit dot products.
+        check_memory(address, 1, fp32_from_int(1 + 2 * `MXU_ROW));
     endtask
 
     task automatic test_same_address_d1_chain();
@@ -1988,8 +2054,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                    write_count - writes_before);
             test_failed = 1'b1;
         end
-        // Initial 1.0 plus three dot products of 32.0 = 97.0.
-        check_memory(address, 1, 32'h42c2_0000);
+        // Initial 1.0 plus three MXU_ROW-wide unit dot products.
+        check_memory(address, 1, fp32_from_int(1 + 3 * `MXU_ROW));
     endtask
 
     task automatic test_same_bank_different_address_d2();
@@ -2053,9 +2119,9 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                    write_count - writes_before);
             test_failed = 1'b1;
         end
-        // Each row starts at 1.0 and receives one dot product of 32.0.
-        check_memory(address_a, 1, 32'h4204_0000);
-        check_memory(address_b, 1, 32'h4204_0000);
+        // Each row starts at 1.0 and receives one MXU_ROW-wide dot product.
+        check_memory(address_a, 1, fp32_from_int(1 + `MXU_ROW));
+        check_memory(address_b, 1, fp32_from_int(1 + `MXU_ROW));
     endtask
 
     task automatic test_m2_seamless_micro_k_d2();
@@ -2130,9 +2196,165 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                    last_write_count - last_writes_before);
             test_failed = 1'b1;
         end
-        // Each row starts at 1.0 and accumulates both K-tile products: 65.0.
-        check_memory(row0_address, 1, 32'h4282_0000);
-        check_memory(row1_address, 1, 32'h4282_0000);
+        // Each row starts at 1.0 and accumulates two unit dot products.
+        check_memory(row0_address, 1, fp32_from_int(1 + 2 * `MXU_ROW));
+        check_memory(row1_address, 1, fp32_from_int(1 + 2 * `MXU_ROW));
+    endtask
+
+    task automatic test_m3_seamless_micro_k_d3_raw();
+        input_vector_t input_data;
+        psum_vector_t initial_value;
+        logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
+            weight_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] base_address;
+        logic [FP32_WIDTH-1:0] expected_value;
+        int early_before;
+        int nominal_before;
+        int forwards_before;
+        int history_forwards_before;
+        int raw_stalls_before;
+        int writes_before;
+
+        input_data = '{default: 16'h3c00};
+        weight_data = '{default: `W_BIT_WIDTH'(1)};
+        scale_data = '{default: 16'h3c00};
+        zero_data = '0;
+        initial_value = '0;
+        base_address = `GEMM_ACC_MEM_ADDR_WIDTH'(184 * ACC_ROW_BYTES);
+        expected_value = fp32_from_int(2 * `MXU_ROW);
+
+        if (scoreboard_acc_bank(base_address)
+            != scoreboard_acc_bank(`GEMM_ACC_MEM_ADDR_WIDTH'(
+                 base_address + 2 * ACC_ROW_BYTES))) begin
+            $error("M=3 seamless micro-K rows 0/2 must alias one ACC bank");
+            test_failed = 1'b1;
+            return;
+        end
+
+        write_scale_reg(1'b0, scale_data);
+        write_zero_reg(1'b0, zero_data);
+        write_weight_matrix(1'b0, weight_data);
+        u_dut.initialize_acc_mem(base_address, 3, initial_value);
+
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
+        forwards_before = forward_count;
+        history_forwards_before = history_forward_count;
+        raw_stalls_before = d3_raw_stall_count;
+        writes_before = write_count;
+
+        // This is the MXU16 M=3, K-tail command shape: the first micro-K
+        // loads rows 0/1/2 and the next accumulates the same rows without a
+        // bubble.  For row2, the d=2 row0 aliases its bank while the exact
+        // row2 producer is at d=3; the read must remain nominal.
+        for (int row = 0; row < 3; ++row) begin
+            drive_packet(input_data,
+                         `GEMM_ACC_MEM_ADDR_WIDTH'(
+                           base_address + row * ACC_ROW_BYTES),
+                         1'b1, `QDIR_ROW, 1'b0, 1'b0, 1'b0, row == 2);
+        end
+        for (int row = 0; row < 3; ++row) begin
+            drive_packet(input_data,
+                         `GEMM_ACC_MEM_ADDR_WIDTH'(
+                           base_address + row * ACC_ROW_BYTES),
+                         1'b0, `QDIR_ROW, 1'b0, 1'b0, 1'b0, row == 2);
+        end
+        end_stream();
+        wait_for_last_write();
+        wait_for_empty();
+        check_scoreboard_empty("M=3 seamless micro-K d=3 RAW");
+
+        if ((early_read_count - early_before) != 0
+         || (nominal_read_count - nominal_before) != 3
+         || (forward_count - forwards_before) != 0
+         || (history_forward_count - history_forwards_before) != 0
+         || (d3_raw_stall_count - raw_stalls_before) != 1
+         || (write_count - writes_before) != 6) begin
+            $error("M=3 seamless micro-K event mismatch early=%0d nominal=%0d immediate=%0d history=%0d d3_stalls=%0d writes=%0d",
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before,
+                   forward_count - forwards_before,
+                   history_forward_count - history_forwards_before,
+                   d3_raw_stall_count - raw_stalls_before,
+                   write_count - writes_before);
+            test_failed = 1'b1;
+        end
+        check_memory(base_address, 3, expected_value);
+        $display("M3_D3_RAW_STALL_PASSED | rows=3 qdir=row stalls=1 early=0 nominal=3 writes=6");
+    endtask
+
+    task automatic test_m5_seamless_read_write_arbitration();
+        input_vector_t input_data;
+        psum_vector_t initial_value;
+        logic [`MXU_ROW-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]
+            weight_data;
+        logic [`MXU_MAX_DIM-1:0][`SCALE_WIDTH-1:0] scale_data;
+        logic [`MXU_MAX_DIM-1:0][`ZP_WIDTH-1:0] zero_data;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] base_address;
+        logic [FP32_WIDTH-1:0] expected_value;
+        int early_before;
+        int nominal_before;
+        int backpressure_before;
+        int writes_before;
+        int last_writes_before;
+
+        input_data = '{default: 16'h3c00};
+        weight_data = '{default: `W_BIT_WIDTH'(1)};
+        scale_data = '{default: 16'h3c00};
+        zero_data = '0;
+        initial_value = '0;
+        base_address = `GEMM_ACC_MEM_ADDR_WIDTH'(200 * ACC_ROW_BYTES);
+        expected_value = fp32_from_int(2 * `MXU_ROW);
+
+        write_scale_reg(1'b0, scale_data);
+        write_zero_reg(1'b0, zero_data);
+        write_weight_matrix(1'b0, weight_data);
+        u_dut.initialize_acc_mem(base_address, 5, initial_value);
+
+        early_before = early_read_count;
+        nominal_before = nominal_read_count;
+        backpressure_before = acc_write_backpressure_count;
+        writes_before = write_count;
+        last_writes_before = last_write_count;
+
+        // The fifth load row and the early read of accumulate row 2 share a
+        // physical ACC bank but have different addresses.  The scheduled read
+        // must win while the ordered result queue retains the load write.
+        for (int row = 0; row < 5; ++row) begin
+            drive_packet(input_data,
+                         `GEMM_ACC_MEM_ADDR_WIDTH'(
+                           base_address + row * ACC_ROW_BYTES),
+                         1'b1, `QDIR_ROW, 1'b0, 1'b0, 1'b0, row == 4);
+        end
+        for (int row = 0; row < 5; ++row) begin
+            drive_packet(input_data,
+                         `GEMM_ACC_MEM_ADDR_WIDTH'(
+                           base_address + row * ACC_ROW_BYTES),
+                         1'b0, `QDIR_ROW, 1'b0, 1'b0, 1'b0, row == 4);
+        end
+        end_stream();
+        wait_for_last_write();
+        wait_for_empty();
+        check_scoreboard_empty("M=5 seamless ACC read/write arbitration");
+
+        if ((early_read_count - early_before)
+              + (nominal_read_count - nominal_before) != 5
+         || (acc_write_backpressure_count - backpressure_before) == 0
+         || (write_count - writes_before) != 10
+         || (last_write_count - last_writes_before) != 2) begin
+            $error("M=5 ACC arbitration event mismatch early=%0d nominal=%0d write_stalls=%0d writes=%0d last_writes=%0d",
+                   early_read_count - early_before,
+                   nominal_read_count - nominal_before,
+                   acc_write_backpressure_count - backpressure_before,
+                   write_count - writes_before,
+                   last_write_count - last_writes_before);
+            test_failed = 1'b1;
+        end
+        check_memory(base_address, 5, expected_value);
+        $display("M5_ACC_READ_WRITE_ARBITRATION_PASSED | rows=5 qdir=row write_stalls=%0d writes=10",
+                 acc_write_backpressure_count - backpressure_before);
     endtask
 
     task automatic test_full_rate_load(input logic quant_dir);
@@ -2668,6 +2890,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         test_same_address_d1_chain();
         test_same_bank_different_address_d2();
         test_m2_seamless_micro_k_d2();
+        test_m3_seamless_micro_k_d3_raw();
+        test_m5_seamless_read_write_arbitration();
         test_full_rate_load(`QDIR_COL);
         test_full_rate_load(`QDIR_ROW);
         test_accumulate_scheduler();

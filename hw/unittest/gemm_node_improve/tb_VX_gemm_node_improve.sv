@@ -3304,13 +3304,13 @@ module tb_VX_gemm_node_improve
       // zero until its driver is reevaluated, deadlocking a held response.
       // The production value is unconditionally one, so drive that value
       // explicitly during open windows and release only after the test ends.
-      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b1;
+      force u_dut.u_tmem_subsystem.ldma_gemm_output.rsp_ready = 1'b1;
       output_stall_forced = 1'b0;
     end else if ((tb_cycle % output_stall_period) < output_stall_cycles) begin
-      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b0;
+      force u_dut.u_tmem_subsystem.ldma_gemm_output.rsp_ready = 1'b0;
       output_stall_forced = 1'b1;
     end else begin
-      force u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready = 1'b1;
+      force u_dut.u_tmem_subsystem.ldma_gemm_output.rsp_ready = 1'b1;
       output_stall_forced = 1'b0;
     end
   end
@@ -3405,7 +3405,7 @@ module tb_VX_gemm_node_improve
       output_backpressure_enable = 1'b0;
       @(negedge clk);
       #1;
-      release u_dut.u_tmem_subsystem.ldma_gemm[3].rsp_ready;
+      release u_dut.u_tmem_subsystem.ldma_gemm_output.rsp_ready;
       if ((((test_m + DMA_MT - 1) / DMA_MT)
          * ((test_n + DMA_NT - 1) / DMA_NT)) < 3
           || ((test_k + DMA_KT - 1) / DMA_KT) < 2
