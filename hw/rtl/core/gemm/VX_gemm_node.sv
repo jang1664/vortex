@@ -66,6 +66,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // MXU micro tile sizes
     localparam int MXU_KT = `MXU_ROW;
     localparam int MXU_NT = `MXU_COL;
+    localparam int TMEM_PHYSICAL_DATA_SIZE = `GEMM_INPUT_DATA_SIZE;
 
     // localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     // localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
@@ -672,7 +673,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
     assign input_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
-    assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
+    assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment
     assign input_dma_ctrl_if.reg_idx = '0;
     assign input_dma_ctrl_if.reg_value = '0;
     assign input_dma_ctrl_if.scheduler_work_seq
@@ -1391,9 +1392,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .NUM_BANKS      (NUM_TMEM_BANKS),
       .NUM_DMA_CHANNELS(NUM_DMA_CHANNELS),
       .BANK_SIZE      (`TMEM_BANK_SIZE),
-      .DATA_SIZE      (`MEM_BLOCK_SIZE),
-      .GEMM_DATA_SIZE (`MEM_BLOCK_SIZE),
-      .GEMM_WEIGHT_DATA_SIZE (`GEMM_WEIGHT_DATA_SIZE),
+      .DATA_SIZE      (TMEM_PHYSICAL_DATA_SIZE),
+      .HBM_DMA_DATA_SIZE (`MEM_BLOCK_SIZE),
+      .INPUT_DATA_SIZE (`GEMM_INPUT_DATA_SIZE),
+      .WEIGHT_DATA_SIZE (`GEMM_WEIGHT_DATA_SIZE),
+      .SCALE_ZERO_DATA_SIZE (`GEMM_SCALE_ZERO_DATA_SIZE),
+      .OUTPUT_DATA_SIZE (`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)
     ) u_tmem_subsystem (
       .clk            (clk),
@@ -1583,6 +1587,24 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_node_perf.lmem_rd_bytes = '0;
     assign gemm_node_perf.lmem_wr_bytes = '0;
 `endif
+
+    `VX_STATIC_ASSERT((MXU_KT == MXU_NT)
+                   && ((MXU_KT == 16) || (MXU_KT == 32)),
+      ("GEMM improve currently supports square 16x16 or 32x32 MXUs"));
+    `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0,
+      ("HBM-DMA width must be an integer multiple of the physical TMEM width"));
+    `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE)
+                   == (NUM_TMEM_BANKS / NUM_DMA_CHANNELS),
+      ("HBM/physical width ratio must match TMEM banks per DMA channel"));
+    `VX_STATIC_ASSERT((`GEMM_SCALE_ZERO_DATA_SIZE
+                     == TMEM_PHYSICAL_DATA_SIZE)
+                   && (`GEMM_OUTPUT_DATA_SIZE
+                     == TMEM_PHYSICAL_DATA_SIZE),
+      ("Input, scale/zero, and output logical beats must match TMEM banks"));
+    `VX_STATIC_ASSERT((NUM_TMEM_BANKS * `TMEM_BANK_SIZE) == (512 * 1024),
+      ("supported TMEM organizations must preserve 512 KiB total capacity"));
+    `VX_STATIC_ASSERT((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024,
+      ("supported TMEM organizations must preserve 1024 words per bank"));
 
     // `UNUSED_VAR (weight_wtrans)
     // `UNUSED_PARAM (MT)

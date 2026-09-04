@@ -83,15 +83,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   VX_gemm_fsm.sv — Bring-up FSM Assumptions / Contract
   ================================================================================
 
-  [1] Scope / Feature gating (bring-up fixed)
-  - Quantization direction(QDIR_COL) = column-wise 로 "고정" (QDIR_COL=0).
+  [1] Scope / Feature gating
+  - Quantization direction is selected by CFG_R_QDIR: column-wise is zero and
+    row-wise is one.
   - weight transpose는 cfg register(CFG_R_WTRANS)로 제어.
   - bias 사용하지 않음 (IS_BIAS_FIXED=0), bias DMA/LDMA 경로 없음.
   - activation = fp16, weight = int4(packed), scale = fp16, zp = int16 를 가정.
 
   [2] Tiling parameters are compile-time constants
   - DMA tile: MT=128, NT=128, KT=128 로 고정.
-  - MXU micro tile: MXU_KT=32, MXU_NT=32 로 고정. (바뀔수도 있지만 컴파일 타임에 고정됨)
+  - MXU micro tile is compile-time selected from MXU_ROW/MXU_COL; supported
+    improve profiles are square 16x16 and 32x32.
   - KT는 MXU_KT로 정확히 나누어떨어진다고 가정 (kt_mxu_dim = kt_eff_cur / MXU_KT, remainder 미지원).
   - NT 역시 MXU_NT 단위로 쪼개되며 마지막 N-tile은 nt_eff로 처리.
 
@@ -114,8 +116,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     DMA size만 kt_eff/nt_eff/mt_eff로 줄여 읽고/쓴다.
 
   [5] Quantization block(qblk) 관련 가정
-  - MXU 단에서는 groups_mxu = ceil_div(MXU_KT, qblk)를 사용하며,
-    일반적으로 qblk=32, MXU_KT=32 => groups_mxu=1을 기대.
+  - MXU 단에서는 groups_mxu = ceil_div(MXU_KT, qblk)를 사용한다.
+    qblk=32이면 MXU_KT=16과 32 모두 groups_mxu=1이다.
   - PBUF 내 scale/zp 오프셋은 "mxu_linear(= MXU_NT × MXU_KT) 단위로 연속 배치"된다고 가정.
 
   [6] Command interface / backpressure model
@@ -426,6 +428,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     make_instr = {size_bytes[27:0], op};
   endfunction
 
+  function automatic u32_t align_hbm_bytes(input u32_t value);
+    begin
+      align_hbm_bytes = (value + u32_t'(`MEM_BLOCK_SIZE - 1))
+                      & ~u32_t'(`MEM_BLOCK_SIZE - 1);
+    end
+  endfunction
+
   function automatic gemm_wait_meta_t make_wait_meta(input mm_rid_t reg_id, input u32_t target);
     gemm_wait_meta_t t;
     begin
@@ -492,7 +501,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c = '0;
       flags    = {gen[6:0], buf_sel};
       c.flags  = flags;
-      c.instr  = make_instr(OP_DMA_LD, size_bytes);
+      c.instr  = make_instr(OP_DMA_LD, align_hbm_bytes(size_bytes));
       c.rs1_data = lmem_dst;
       c.rs2_data = dram_src;
       c.bound    = 16'd1;
@@ -517,7 +526,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c = '0;
       flags    = {gen[6:0], buf_sel};
       c.flags  = flags;
-      c.instr  = make_instr(OP_DMA_ST, size_bytes);
+      c.instr  = make_instr(OP_DMA_ST, align_hbm_bytes(size_bytes));
       c.rs1_data = dram_dst;
       c.rs2_data = lmem_src;
       c.bound    = 16'd1;
@@ -601,7 +610,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       if (!j.qdir) begin
         // QCOL slot body: [nb][ceil(KT/qblk)][MXU_NT] fp16.
-        actual = 64'(div_log2(ck, j.orig_qblk[5:0])) * 64'(cn) * FP16_BYTES;
+        actual = 64'(ceil_div_log2(ck, j.orig_qblk[5:0]))
+               * 64'(cn) * FP16_BYTES;
       end else begin
         // QROW slot body: [nb][KT][ceil(MXU_NT/qblk)] fp16.
         actual = 64'(nb_per_nt) * 64'(ck) * 64'(ng_per_mxu_nt) * FP16_BYTES;
@@ -617,7 +627,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       nb_per_nt     = cn >> `CLOG2(MXU_NT);
       ng_per_mxu_nt = ceil_div_log2(MXU_NT, job_q.orig_qblk[5:0]);
-      // QROW LMEM layout is per 32-wide MXU N microtile, even when multiple
+      // QROW LMEM layout is per MXU N microtile, even when multiple
       // microtiles share one logical QBLK group (e.g. QBLK=64 or 128).
       qrow_qparam_tile_bytes = ck * nb_per_nt * ng_per_mxu_nt * elem_bytes;
     end
@@ -700,7 +710,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   endfunction
 
   // Scale/Zero register address map
-  localparam SCALE_REG_SIZE  = `MAX(`MXU_ROW, `MXU_COL) * (`SCALE_WIDTH >> 3); // in bytes, 64bytes
+  localparam SCALE_REG_SIZE  = `MAX(`MXU_ROW, `MXU_COL) * (`SCALE_WIDTH >> 3); // in bytes
   localparam ZP_REG_SIZE     = `MAX(`MXU_ROW, `MXU_COL) * (`ZP_WIDTH >> 3); // in bytes
   localparam SCALE_REG0_BASE = 0;
   localparam SCALE_REG1_BASE = SCALE_REG_SIZE;
@@ -1360,7 +1370,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     mxu_linear = mm_mxu_linear_t'((mm_mxu_linear_t'(nt_mxu_q) * mm_mxu_linear_t'(kt_mxu_dim))
                              +  mm_mxu_linear_t'(kt_mxu_q));
 
-    // next mxu indices: kb fastest within each 32-wide N microtile.
+    // next mxu indices: kb fastest within each MXU_NT-wide N microtile.
     n_kt_mxu = (kt_mxu_q + 1 == kt_mxu_dim) ? 0 : (kt_mxu_q + 1);
     n_nt_mxu = (kt_mxu_q + 1 == kt_mxu_dim) ? (nt_mxu_q + 1) : nt_mxu_q;
 
@@ -1424,7 +1434,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     acc_group_base = acc_group ? u32_t'(ACC_DBUF_STRIDE) : 32'd0;
     acc_base_nb      = acc_group_base + (u32_t'(nt_mxu_q) * acc_nb_stride);
 
-    // Accum/output slice base. Each 32-wide N microtile accumulates in its own
+    // Accum/output slice base. Each MXU_NT-wide N microtile accumulates in its own
     // disjoint acc-memory region, matching the cmd-stream reference path.
     lmem_out_slice = 64'(acc_base_nb);
 
@@ -3086,6 +3096,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   `VX_STATIC_ASSERT(DMA_STORE_MAX_CHUNK_BEATS > 0,
     ("DMA store chunk size must be positive"));
+  `VX_STATIC_ASSERT((MXU_KT == MXU_NT)
+                 && ((MXU_KT == 16) || (MXU_KT == 32)),
+    ("GEMM improve FSM supports square 16x16 or 32x32 MXUs"));
+  `VX_STATIC_ASSERT(`IS_POW2(`MEM_BLOCK_SIZE),
+    ("external DMA block size must be a power of two"));
   `VX_STATIC_ASSERT(`IS_POW2(DMA_STORE_MAX_CHUNK_BEATS),
     ("DMA store chunk size must be a power of two"));
   `VX_STATIC_ASSERT((GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS > 0)

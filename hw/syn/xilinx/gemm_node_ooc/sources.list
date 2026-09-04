@@ -125,6 +125,7 @@ hw/rtl/libs/VX_index_buffer.sv
 hw/rtl/libs/VX_axi_adapter.sv
 hw/rtl/libs/VX_axi_write_ack.sv
 hw/rtl/mem/VX_tmem_wide_read_switch.sv
+hw/rtl/mem/VX_tmem_dma_pair_adapter.sv
 hw/rtl/mem/VX_tmem_subsystem.sv
 hw/rtl/mem/VX_dma_engine.sv
 hw/rtl/mem/VX_tensor_mem_bank.sv

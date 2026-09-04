@@ -20,7 +20,7 @@
 module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter SIZE       = 4*1024,   // Bank size in bytes (4KB default)
-    parameter DATA_SIZE  = 64,       // Data width in bytes (512-bit = 64 bytes)
+    parameter DATA_SIZE  = 64,       // Physical bank word width in bytes
     parameter NUM_PORTS  = 6,        // Number of requestors
     parameter TAG_WIDTH  = 8,
     parameter `STRING ARBITER = "R", // Round-robin arbitration
@@ -37,7 +37,7 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     VX_mem_bus_if.slave mem_bus_if [NUM_PORTS]
 );
 
-    localparam DATA_WIDTH    = DATA_SIZE * 8;           // 512 bits
+    localparam DATA_WIDTH    = DATA_SIZE * 8;
     localparam NUM_WORDS     = SIZE / DATA_SIZE;        // Number of SRAM words
     localparam ADDR_WIDTH    = `CLOG2(NUM_WORDS);       // Word address width
     localparam ARB_SEL_BITS  = `ARB_SEL_BITS(NUM_PORTS, 1);
@@ -51,6 +51,10 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     `UNUSED_SPARAM (INSTANCE_ID)
 
     initial begin
+        if ((DATA_SIZE < 1) || ((DATA_SIZE & (DATA_SIZE - 1)) != 0)
+         || ((SIZE % DATA_SIZE) != 0))
+            $fatal(1, "%s: invalid bank size/data width (%0d/%0d)",
+                   INSTANCE_ID, SIZE, DATA_SIZE);
         if (MAX_CONSECUTIVE_URGENT < 1)
             $fatal(1, "%s: MAX_CONSECUTIVE_URGENT must be positive",
                    INSTANCE_ID);
@@ -223,10 +227,9 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     // Single-port bank: sram_read and sram_write are mutually exclusive
     // (gated by req_rw), so RDW_MODE has no observable effect. We set
-    // RDW_MODE="R" and USE_URAM=1 to force URAM mapping — URAM primitives
-    // only support read-first / no-change semantics, and 8 banks of
-    // 512-word x 512-bit fit into 64 URAM288 (8 per bank). This offloads
-    // the 512 RAMB36 that would otherwise be consumed by these banks.
+    // RDW_MODE="R" and USE_URAM=1 to force URAM mapping; URAM primitives
+    // support read-first/no-change semantics and keep the configurable
+    // 32B/64B TMEM organizations from consuming the main BRAM budget.
     VX_sp_ram #(
         .DATAW    (DATA_WIDTH),
         .SIZE     (NUM_WORDS),

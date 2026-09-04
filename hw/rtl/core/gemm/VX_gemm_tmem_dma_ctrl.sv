@@ -296,6 +296,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                                 && !work_data_released_q;
     wire cmd_accept = gemm_dma_ctrl_if.cmd_valid
                    && gemm_dma_ctrl_if.cmd_ready;
+    wire [31:0] cmd_accept_size_bytes
+        = {4'd0, gemm_dma_ctrl_if.cmd.instr[31:4]};
     wire prepared_release_accept = cmd_accept
                                  && work_data_prefetched_q
                                  && !work_data_released_q;
@@ -707,15 +709,27 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_decode_channels
         wire [NUM_CH_SHIFT-1:0] logical_ch = ch - decode_start_ch;
+        // Removing the channel bits from a TMEM byte address also removes the
+        // carry when a linear transfer starts on a nonzero channel and wraps
+        // back to channel zero.  Advance the wrapped channels by one bank-local
+        // word so every channel starts at the address of its first logical
+        // beat.  Subsequent beats already advance through the programmed TMEM
+        // stride.
+        wire [NUM_CH_SHIFT:0] logical_ch_sum =
+            {1'b0, decode_start_ch} + {1'b0, logical_ch};
+        wire [63:0] ch_tmem_base = tmem_bank_local_addr(
+            decode_is_store ? decode_src_base : decode_dst_base)
+            + (logical_ch_sum[NUM_CH_SHIFT]
+               ? 64'(`MEM_BLOCK_SIZE) : 64'd0);
         wire [31:0] ch_words = decode_words_quot
             + ((logical_ch < decode_words_rem) ? 32'd1 : 32'd0);
         wire ch_active = (ch_words != 0);
         wire [63:0] ch_src_base = decode_is_store
-            ? tmem_bank_local_addr(decode_src_base)
+            ? ch_tmem_base
             : (decode_src_base + (64'(logical_ch) << BUS_WORD_SHIFT));
         wire [63:0] ch_dst_base = decode_is_store
             ? (decode_dst_base + (64'(logical_ch) << BUS_WORD_SHIFT))
-            : tmem_bank_local_addr(decode_dst_base);
+            : ch_tmem_base;
         wire [63:0] ch_hbm_base = decode_is_store
             ? ch_dst_base : ch_src_base;
         `UNUSED_VAR ({ch_hbm_base[63:17], ch_hbm_base[10:0]})
@@ -1588,6 +1602,13 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 assert (gemm_dma_ctrl_if.cmd.bound == 16'd1)
                     else $fatal(1, "%s: DMA bound must remain one",
                                 INSTANCE_ID);
+                assert ((cmd_accept_size_bytes != 0)
+                     && ((cmd_accept_size_bytes
+                        & 32'(`MEM_BLOCK_SIZE - 1)) == 0))
+                    else $fatal(1,
+                        "%s: DMA size must be nonzero and a multiple of %0d bytes (got %0d)",
+                        INSTANCE_ID, `MEM_BLOCK_SIZE,
+                        cmd_accept_size_bytes);
                 assert (gemm_dma_ctrl_if.cmd.rs1_data[
                             BUS_WORD_SHIFT +: NUM_CH_SHIFT]
                      == gemm_dma_ctrl_if.cmd.rs2_data[

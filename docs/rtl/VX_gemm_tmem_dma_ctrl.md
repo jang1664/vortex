@@ -41,6 +41,12 @@ A command is accepted only on `cmd_valid && cmd_ready`. The controller keeps
 the command and tag stable while backpressured. `done` is a logical-command
 completion, not a descriptor-chunk completion.
 
+Accepted external commands must encode a nonzero byte count divisible by
+`MEM_BLOCK_SIZE` (64B in the supported profiles). The FSM rounds only external
+HBM LD/ST command sizes to this boundary; local I/W/S/Z/O DMA command sizes
+remain their logical vector sizes. The existing assertion that HBM and TMEM
+bases select the same channel slot remains active.
+
 The legacy `start` signal remains on the shared interface for the older
 single-command adapter, but this module performs acceptance exclusively with
 the valid/ready handshake.
