@@ -2,6 +2,7 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 // Kernel IDs — both compiled into the same .vxbin for apples-to-apples
 // perf comparison (no compile-time differences).
@@ -13,8 +14,8 @@
 // tests/regression/fpint_gemm_ffn_hw/common.h
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
-#define TILE_DMA_MXU_KT    32
-#define TILE_DMA_MXU_NT    32
+#define TILE_DMA_MXU_KT   MXU_ROW
+#define TILE_DMA_MXU_NT   MXU_COL
 
 typedef struct {
   uint32_t kernel_id;
@@ -32,7 +33,7 @@ typedef struct {
 
   uint32_t log2_mt;
   uint32_t log2_kt;
-  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_kt;  // Legacy name: MXU_KT for v1, MXU_NT for GEMM-C v2.
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 #endif // _COMMON_H_

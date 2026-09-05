@@ -25,6 +25,7 @@ from spinquant_inference.layer_accuracy.run_artifacts import (  # noqa: E402
     save_decode_run,
 )
 from spinquant_inference.layer_accuracy.specs import (  # noqa: E402
+    ALL_ASYMMETRIC_WKV4,
     CacheGeometry,
     CacheState,
     DecodeConfig,
@@ -255,6 +256,29 @@ class FixedCapacitySemanticCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale cache generation"):
             cache.get_kv(generation=old_generation)
 
+    def test_all_asymmetric_value_cache_retains_int16_zero_points(self):
+        cache = FixedCapacityKVQuantizedCache(
+            batch_size=2,
+            num_kv_heads=2,
+            head_dim=8,
+            max_sequence_length=8,
+            device="cpu",
+            k_mode="asym",
+            v_mode="asym",
+        )
+        key, value = self._values(3, offset=0.375)
+        cache.prefill(key, value)
+        _, value_cache = cache.get_kv()
+        self.assertIsNotNone(value_cache[2])
+        self.assertEqual(torch.int16, value_cache[2].dtype)
+        self.assertGreater(torch.count_nonzero(value_cache[2]).item(), 0)
+        torch.testing.assert_close(
+            cache.v_zero[:, :, 3:],
+            torch.zeros_like(cache.v_zero[:, :, 3:]),
+            rtol=0,
+            atol=0,
+        )
+
 
 class DecodeExecutorTests(unittest.TestCase):
     def setUp(self):
@@ -269,6 +293,27 @@ class DecodeExecutorTests(unittest.TestCase):
         self.assertEqual(len(result.steps), 1)
         self.assertEqual(result.steps[0].stage_order[-1], "qk")
         self.assertEqual(result.cache_descriptor["logical_length"], 4)
+
+    def test_all_asymmetric_prefill_and_decode_capture_both_zero_points(self):
+        layer = LayerConfig(
+            **{
+                **tiny_layer_config().to_dict(),
+                "quantization_policy": ALL_ASYMMETRIC_WKV4,
+            }
+        )
+        case = create_random_decode_case(DecodeConfig(layer, 3, 2, 8), seed=47)
+        result = DecodeExecutor(TorchBackend("cpu")).run(case)
+        for step in (result.prefill, *result.steps):
+            self.assertIn("cache_update.k_zero", step.auxiliary_captures)
+            self.assertIn("cache_update.v_zero", step.auxiliary_captures)
+            self.assertEqual(
+                torch.int16,
+                step.auxiliary_captures["cache_update.k_zero"].dtype,
+            )
+            self.assertEqual(
+                torch.int16,
+                step.auxiliary_captures["cache_update.v_zero"].dtype,
+            )
 
     def test_incremental_outputs_match_full_prefix_recomputation(self):
         result = DecodeExecutor(TorchBackend("cpu")).run(self.case)

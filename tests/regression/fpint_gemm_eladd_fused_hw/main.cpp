@@ -49,8 +49,8 @@ static constexpr float FP16_TOL = 0.01f;
 static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
 static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (full N-tile for TMEM sizing)
 static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
-static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
-static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32
+static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;
+static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;
 
 static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 512;
 static constexpr uint64_t DRAM_ALIGN_BYTES = 512;
@@ -406,7 +406,7 @@ static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
 static size_t scale_slot_bytes(uint32_t ck, uint32_t cn) {
   uint32_t ng_per_mxu_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
   size_t actual = (QDIR == 0)
-                    ? (size_t(ck / QBLK) * cn * 2)
+                    ? (size_t((ck + QBLK - 1) / QBLK) * cn * 2)
                     : (size_t(cn / DMA_MXU_NT) * ck * ng_per_mxu_nt * 2);
   return (actual + 511u) & ~size_t(511u);
 }
@@ -426,7 +426,7 @@ static void fill_scale_zp_slot(const std::vector<T>& h_src,
   for (uint32_t nb = 0; nb < cur_nb_per_nt; nb++) {
     uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
     if (QDIR == 0) {
-      uint32_t cur_groups = cur_k / QBLK;
+      uint32_t cur_groups = (cur_k + QBLK - 1) / QBLK;
       for (uint32_t g = 0; g < cur_groups; g++) {
         for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
           uint32_t global_g = kt * full_groups_per_kt + g;
@@ -695,7 +695,7 @@ int main(int argc, char *argv[]) {
   if (N > DMA_MXU_NT) {
     uint32_t first_ck = (K < DMA_KT) ? K : DMA_KT;
     uint32_t wkt = first_ck * (DMA_MXU_NT / 2);  // weight bytes per (kt=0,nt)
-    uint32_t groups_per_kt = first_ck / QBLK;
+    uint32_t groups_per_kt = (first_ck + QBLK - 1) / QBLK;
     uint32_t skt = (QDIR == 0) ? (groups_per_kt * DMA_MXU_NT * 2)
                                 : (first_ck * ((DMA_MXU_NT + QBLK - 1) / QBLK) * 2);
     printf("DEBUG tiled sizes: weight_per_nt=%u, scale_per_nt=%u\n", wkt, skt);

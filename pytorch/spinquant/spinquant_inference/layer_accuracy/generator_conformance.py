@@ -13,8 +13,12 @@ from typing import Any
 
 
 GENERATOR_VARIANTS = {
-    "standalone": "all_fpint_gemm_improve_alone_layout_spinquant",
-    "fused": "all_fpint_gemm_improve_fused_layout_spinquant",
+    "standalone": (
+        "all_fpint_gemm_improve_alone_layout_spinquant_all_asym_wkv4"
+    ),
+    "fused": (
+        "all_fpint_gemm_improve_fused_layout_spinquant_all_asym_wkv4"
+    ),
 }
 
 
@@ -77,6 +81,7 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
         "kv_cache_quant_v_cache_to_attn_pv": {
             "K": 32, "N": 128, "QBLK": 128, "QDIR": 1,
             "gemm_QDIR": 1, "WTRANS": 0,
+            "quant_mode": "spinquant_signed_asymmetric",
         },
         "attn_pv": {"M": 32, "N": 128, "K": 32, "WTRANS": 0, "QDIR": 1},
         "attn_head_concat": {"batch": 1, "seq": 32, "heads": 32,
@@ -106,7 +111,7 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
         },
         "attn_softmax": {"layout_from": "gemm_c_tiled", "layout_to": "gemm_a_tiled"},
         "kv_cache_quant_v_cache_to_attn_pv": {
-            "quant_mode": "spinquant_signed_symmetric",
+            "quant_mode": "spinquant_signed_asymmetric",
             "source_total_n": 4096,
             "layout_from": "gemm_c_tiled",
         },
@@ -116,7 +121,7 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
         },
         "residual_attn": {"layout_from": "gemm_c_tiled", "layout_to": "row_major"},
         "spinquant_r4_mlp_hadamard": {
-            "layout_from": "row_major_fp16",
+            "layout_from": "gemm_a_tiled",
             "layout_to": "gemm_a_tiled",
         },
         "residual_ffn": {"layout_from": "gemm_c_tiled", "layout_to": "row_major"},
@@ -184,20 +189,20 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
             },
             "attn_qkT": {
                 "M": 1,
-                "N": 128,
+                "N": 34,
                 "K": 128,
                 "cache_capacity": 64,
             },
             "attn_softmax": {
                 "seqq": 1,
-                "seqk": 64,
+                "seqk": 34,
                 "mask": 0,
                 "capacity_stride": 64,
             },
             "attn_pv": {
                 "M": 1,
                 "N": 128,
-                "K": 128,
+                "K": 34,
                 "cache_capacity": 64,
             },
             "rope_q": {"seq": 1, "offset": 33},

@@ -2,6 +2,7 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 // Kernel IDs — all three compiled into the same .vxbin so timing is
 // apples-to-apples.
@@ -19,7 +20,7 @@
 // tests/regression/fpint_gemm_ffn_hw/common.h
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
-#define TILE_DMA_MXU_KT    32
+#define TILE_DMA_MXU_KT   MXU_ROW
 
 typedef struct {
   uint32_t kernel_id;

@@ -12,10 +12,15 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 
 | 파라미터 | 기본값 | 설명 |
 |----------|--------|------|
-| `NUM_BANKS` | 8 | TMEM 뱅크 수 (HBM 채널 수와 동일) |
-| `BANK_SIZE` | 32KB | 뱅크당 크기 (총 256KB) |
-| `DATA_SIZE` | 64 | membus 데이터 폭 (64B = 512-bit) |
-| `GEMM_DATA_SIZE` | 64 | GEMM 유닛 포트 폭 |
+| `NUM_BANKS` | 8 | Physical TMEM bank 수 |
+| `NUM_DMA_CHANNELS` | `NUM_BANKS` | 64B HBM-DMA channel 수 |
+| `BANK_SIZE` | 32KB | Physical bank당 byte capacity |
+| `DATA_SIZE` | 64 | Physical bank/local-switch beat width |
+| `HBM_DMA_DATA_SIZE` | 64 | DMA engine과 HBM 쪽 aggregate beat width |
+| `INPUT_DATA_SIZE` | `DATA_SIZE` | GEMM input logical beat width |
+| `WEIGHT_DATA_SIZE` | `DATA_SIZE` | GEMM weight logical beat width |
+| `SCALE_ZERO_DATA_SIZE` | `DATA_SIZE` | GEMM scale/zero logical beat width |
+| `OUTPUT_DATA_SIZE` | `DATA_SIZE` | GEMM output logical beat width |
 | `TAG_WIDTH` | 8 | 태그 비트폭 |
 | `AXI_ADDR_WIDTH` | `PLATFORM_MEMORY_ADDR_WIDTH` | AXI 주소 폭 |
 | `LDMA_CMD_FIFO_DEPTH` | `LMEM_DMA_CMD_FIFO_DEPTH` (4) | Input/Weight/Scale/Zero-point command FIFO depth |
@@ -44,15 +49,30 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 
 ### 1. DMA Engine (`u_dma_engine`)
 
-8채널 HBM(AXI) ↔ TMEM(membus) 변환.
+8채널 HBM(AXI) ↔ TMEM(membus) 변환. DMA engine의 aggregate TMEM port와
+AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
 
 - `cfg_reg_if`로 각 채널의 전송 설정(시작 주소, 길이, 방향)을 받음
-- `axi_m[ch]` ↔ `dma_to_tmem[ch]` 1:1 매핑
+- 32x32 profile에서는 `dma_to_tmem[ch]`가 physical bank `ch`에 직접 연결된다.
+- 16x16 profile에서는 `VX_tmem_dma_pair_adapter`가 하나의 64B request를
+  32B low/high lane으로 나누어 consecutive bank `2*ch`, `2*ch+1`에 보낸다.
+  두 lane은 동일한 aggregate bank-local word address를 사용하며 lane bit를
+  주소에 추가하지 않는다.
+- pair request는 두 physical bank가 모두 accept해야 완료된다. 한쪽이 먼저
+  accept하면 per-lane sent bit가 중복 발행을 막는다. Read/write response는
+  lane별 depth-2 ordered FIFO의 head tag가 같을 때만 64B로 join된다.
+- 이 pair adapter는 associative reorder나 mask context를 두지 않는다.
 - 각 채널이 독립적으로 동작하며, 완료 시 `dma_done_if[ch]`로 통지
-- The production HBM-to-TMEM engine sets `ENABLE_PADDING=0`. HBM and TMEM
-  have equal beat widths, and production descriptors use `PAD=0`, so response
-  RAM data drives destination writes directly. Generic DMA users retain the
-  default padding-enabled zero-fill behavior.
+- The production HBM-to-TMEM engine sets `ENABLE_PADDING=0`; its aggregate
+  input/output remains 64B even when the physical banks and local buses are
+  32B. Generic DMA users retain the default padding-enabled behavior.
+
+지원되는 organization은 우선 square 32x32와 16x16으로 제한된다.
+
+| MXU | Physical organization | HBM-DMA organization | Words/bank | Total |
+|---|---|---|---:|---:|
+| 32x32 | 8 banks x 64B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
+| 16x16 | 16 banks x 32B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
 
 ### 2. Switches (`u_switch_*`, x5)
 
@@ -60,19 +80,21 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 
 | 인스턴스 | 입력 | 출력 | 용도 |
 |----------|------|------|------|
-| `u_switch_input` | `ldma_to_switch[0]` | `in_switch_to_tmem[0..7]` | 입력 데이터 뱅크 분산 |
-| `u_switch_weight` | `ldma_to_switch[1]` | `wt_switch_to_tmem[0..7]` | 가중치 뱅크 분산 |
-| `u_switch_scale` | `ldma_to_switch[2]` | `sc_switch_to_tmem[0..7]` | scale 뱅크 분산 |
-| `u_switch_zero_point` | `ldma_to_switch[3]` | `zp_switch_to_tmem[0..7]` | zero-point 뱅크 분산 |
-| `u_switch_output` | `ldma_to_switch[4]` | `out_switch_to_tmem[0..7]` | 출력 데이터 뱅크 분산 |
+| `u_switch_input` | `ldma_to_switch[0]` | `in_switch_to_tmem[0..NUM_BANKS-1]` | 입력 데이터 뱅크 분산 |
+| `u_switch_weight` | `ldma_to_switch[1]` | `wt_switch_to_tmem[0..NUM_BANKS-1]` | 가중치 뱅크 분산 |
+| `u_switch_scale` | `ldma_to_switch[2]` | `sc_switch_to_tmem[0..NUM_BANKS-1]` | scale 뱅크 분산 |
+| `u_switch_zero_point` | `ldma_to_switch[3]` | `zp_switch_to_tmem[0..NUM_BANKS-1]` | zero-point 뱅크 분산 |
+| `u_switch_output` | `ldma_to_switch[4]` | `out_switch_to_tmem[0..NUM_BANKS-1]` | 출력 데이터 뱅크 분산 |
 
 스위치는 태그에 뱅크 선택 비트(`BANK_SEL_BITS`)를 추가하여, 응답 매핑에 사용한다.
 
 #### Weight wide-read switch
 
 `u_switch_weight`는 weight beat 하나를 임의의 sliding bank window가 아니라
-정렬된 bank group으로만 fan-out한다. `NUM_BANKS=8`, `DATA_SIZE=64B`일 때
-지원 설정의 mapping은 다음과 같다.
+정렬된 bank group으로만 fan-out한다. `WEIGHT_DATA_SIZE/DATA_SIZE`가 1이면
+tag-indexed ordering logic을 보존한 direct-width path가 되고, 더 넓은 logical
+weight beat에서는 aligned bank group에 fan-out한다. 기존 32x32 설정의 mapping은
+다음과 같다.
 
 | `MXU_WLOAD_NUM` | Weight beat | Banks per beat | Legal bank groups | Command beats | Shared slots |
 |---:|---:|---:|---|---:|---:|
@@ -137,20 +159,22 @@ flags, and tag UUID are reconstructed as read constants at the switch side.
 The readiness scheduler likewise uses four elaboration-time-static resource
 matches and applies each priority policy locally to its corresponding source.
 
-### 3. TMEM Banks (`u_bank`, x8)
+### 3. TMEM Banks (`u_bank`, x`NUM_BANKS`)
 
 각 뱅크는 6포트 중재(arbitration)를 가진 SRAM.
 
 | 포트 | 접속 | 태그 폭 |
 |------|------|---------|
-| port[0] | DMA direct (ch b → bank b, 1:1) | `SWITCH_TAG_WIDTH` |
+| port[0] | DMA direct(32x32) 또는 pair lane(16x16) | `SWITCH_TAG_WIDTH` |
 | port[1] | input switch | `SWITCH_TAG_WIDTH` |
 | port[2] | weight switch | `SWITCH_TAG_WIDTH` |
 | port[3] | scale switch | `SWITCH_TAG_WIDTH` |
 | port[4] | zero-point switch | `SWITCH_TAG_WIDTH` |
 | port[5] | output switch | `SWITCH_TAG_WIDTH` |
 
-- DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춤
+- DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춘다.
+  16x16 pair의 두 lane은 동일하게 padded된 tag를 사용하며 join 시 equality를
+  assertion으로 확인한다.
 - 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
 
 Input/Weight optimization을 enable하면 각 bank는 urgent/normal class별 독립
@@ -168,11 +192,15 @@ TMEM과 GEMM 유닛 간 실제 데이터 이동을 수행. 방향에 따라 읽�
 
 | 인스턴스 | DIR | 방향 | lmem 포트 | gemm 포트 |
 |----------|-----|------|-----------|-----------|
-| `u_ldma_input` | overlap | LMEM→GEMM | `ldma_to_switch[0]` | `ldma_gemm[0]` → `gemm_input_if` |
+| `u_ldma_input` | overlap | LMEM→GEMM | `ldma_to_switch[0]` | `ldma_gemm_input` → `gemm_input_if` |
 | `u_ldma_weight` | overlap | LMEM→GEMM | `ldma_weight_to_tmem` | `ldma_gemm_weight` → `gemm_weight_if` |
-| `u_ldma_scale` | overlap | LMEM→GEMM | `ldma_to_switch[2]` | `ldma_gemm[2]` → `gemm_scale_if` |
-| `u_ldma_zero_point` | overlap | LMEM→GEMM | `ldma_to_switch[3]` | `ldma_gemm[3]` → `gemm_zp_if` |
-| `u_ldma_output` | 1 | GEMM→LMEM | `ldma_to_switch[4]` | `ldma_gemm[4]` → `gemm_output_if` |
+| `u_ldma_scale` | overlap | LMEM→GEMM | `ldma_to_switch[2]` | `ldma_gemm_scale` → `gemm_scale_if` |
+| `u_ldma_zero_point` | overlap | LMEM→GEMM | `ldma_to_switch[3]` | `ldma_gemm_zero_point` → `gemm_zp_if` |
+| `u_ldma_output` | 1 | GEMM→LMEM | `ldma_to_switch[4]` | `ldma_gemm_output` → `gemm_output_if` |
+
+16x16 profile의 I/W/S/Z/O local beat와 switch/bank datapath는 32B이다.
+주소의 byte-to-word shift는 각 physical/logical interface width에서 유도한다.
+Accumulator/psum path는 별도이며 16x16에서도 64B를 유지한다.
 
 Scale and zero point have independent switch request ports and local-DMA
 pipelines. Each physical TMEM bank is still single-port, so simultaneous
@@ -258,12 +286,13 @@ beyond the transfer end.
 HBM[0..7]
   → AXI bus
   → DMA Engine (8ch, AXI→membus 변환)
-  → dma_to_tmem[0..7] (1:1, bank 직접 접근)
-  → TMEM Bank[0..7] port[0]
-  → TMEM Bank[0..7] port[1..5]
+  → dma_to_tmem[0..7] (64B aggregate)
+  → direct bank(32x32) 또는 consecutive pair adapter(16x16)
+  → TMEM Bank[0..NUM_BANKS-1] port[0]
+  → TMEM Bank[0..NUM_BANKS-1] port[1..5]
   → switch_to_tmem 역방향
   → Local DMA (ctrl_if 제어)
-  → ldma_gemm[0..3]
+  → resource별 named ldma_gemm_* bus
   → gemm_input_if / gemm_weight_if / gemm_scale_if / gemm_zp_if
   → GEMM Unit
 ```
@@ -273,14 +302,14 @@ HBM[0..7]
 ```
 GEMM Unit
   → gemm_output_if
-  → ldma_gemm[4]
+  → ldma_gemm_output
   → Local DMA output (DIR=1, GEMM→LMEM)
   → ldma_to_switch[4]
   → u_switch_output (1:N 뱅크 분산)
-  → out_switch_to_tmem[0..7]
-  → TMEM Bank[0..7] port[5] (쓰기)
-  → TMEM Bank[0..7] port[0] (DMA 읽기)
-  → dma_to_tmem[0..7]
+  → out_switch_to_tmem[0..NUM_BANKS-1]
+  → TMEM Bank[0..NUM_BANKS-1] port[5] (쓰기)
+  → TMEM Bank[0..NUM_BANKS-1] port[0] (DMA 읽기)
+  → direct/pair join → dma_to_tmem[0..7]
   → DMA Engine (membus→AXI 변환)
   → AXI bus
   → HBM[0..7]

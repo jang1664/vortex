@@ -127,10 +127,10 @@ def _execute_layer_schedule(
     k = backend.hadamard(k)
     record("k_r3", k)
 
-    k_quantized = backend.quantize(k, "asym")
+    k_quantized = backend.quantize(k, config.key_quant_mode)
     record_quantized("k_quant", k_quantized)
     value_states = backend.split_heads(v_linear)
-    v_quantized = backend.quantize(value_states, "sym")
+    v_quantized = backend.quantize(value_states, config.value_quant_mode)
     record_quantized("v_quant", v_quantized)
     if cache_update is not None:
         k_quantized, v_quantized, cache_capture, cache_extra = cache_update(
@@ -521,6 +521,8 @@ class DecodeExecutor:
             v_quantized: QuantizedActivation,
         ) -> tuple[QuantizedActivation, QuantizedActivation, object, dict]:
             assert k_quantized.zero is not None
+            if config.value_quant_mode == "asym":
+                assert v_quantized.zero is not None
             if update == "prefill":
                 cache.prefill_quantized(
                     k_quantized.packed,
@@ -528,6 +530,7 @@ class DecodeExecutor:
                     k_quantized.zero,
                     v_quantized.packed,
                     v_quantized.scale,
+                    v_quantized.zero,
                 )
             elif update == "append":
                 cache.append_quantized(
@@ -536,13 +539,14 @@ class DecodeExecutor:
                     k_quantized.zero,
                     v_quantized.packed,
                     v_quantized.scale,
+                    v_quantized.zero,
                     position=cache.logical_length,
                 )
             else:
                 raise AssertionError(f"unsupported cache update {update!r}")
             key_cache, value_cache = cache.get_kv()
             qkey, k_scale, k_zero = key_cache
-            qvalue, v_scale, _ = value_cache
+            qvalue, v_scale, v_zero = value_cache
             semantic_key, semantic_value = cache.dequantized_kv()
             cached_key = QuantizedActivation(
                 packed=qkey,
@@ -558,12 +562,16 @@ class DecodeExecutor:
             cached_value = QuantizedActivation(
                 packed=qvalue,
                 scale=v_scale,
-                zero=None,
-                mode="sym",
+                zero=v_zero,
+                mode=config.value_quant_mode,
                 logical_shape=tuple(semantic_value.shape),
                 weight_tiled=getattr(qvalue, "attachments", {}).get("weight_tiled"),
                 scale_tiled=getattr(v_scale, "attachments", {}).get("scale_tiled"),
-                zero_tiled=getattr(v_scale, "attachments", {}).get("zero_tiled"),
+                zero_tiled=(
+                    getattr(v_zero, "attachments", {}).get("zero_tiled")
+                    if v_zero is not None
+                    else None
+                ),
                 dequantized=semantic_value,
             )
             return (
@@ -576,6 +584,7 @@ class DecodeExecutor:
                     "k_zero": k_zero,
                     "v_packed": qvalue,
                     "v_scale": v_scale,
+                    **({"v_zero": v_zero} if v_zero is not None else {}),
                 },
             )
 

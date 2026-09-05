@@ -47,6 +47,36 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   localparam int unsigned TB_ACC_DBUF_STRIDE
       = `GEMM_ACC_MEM_DEPTH * (4 * 2 * `MXU_COL);
+  localparam int unsigned DIRECTED_M = 128;
+  localparam int unsigned DIRECTED_FULL_N = 128;
+  localparam int unsigned DIRECTED_EDGE_N = 32;
+  localparam int unsigned DIRECTED_N
+      = (2 * DIRECTED_FULL_N) + DIRECTED_EDGE_N;
+  localparam int unsigned DIRECTED_K = 384;
+  localparam int unsigned DIRECTED_FULL_N_MICROTILES
+      = (DIRECTED_FULL_N + `MXU_COL - 1) / `MXU_COL;
+  localparam int unsigned DIRECTED_EDGE_N_MICROTILES
+      = (DIRECTED_EDGE_N + `MXU_COL - 1) / `MXU_COL;
+  localparam int unsigned DIRECTED_GROUP0_COPIES
+      = DIRECTED_FULL_N_MICROTILES + DIRECTED_EDGE_N_MICROTILES;
+  localparam int unsigned DIRECTED_GROUP1_COPIES
+      = DIRECTED_FULL_N_MICROTILES;
+  localparam int unsigned DIRECTED_STORES
+      = DIRECTED_GROUP0_COPIES + DIRECTED_GROUP1_COPIES;
+  localparam int unsigned RESET_CHECK_M = 64;
+  localparam int unsigned RESET_CHECK_N = 32;
+  localparam int unsigned RESET_CHECK_K = 384;
+  localparam int unsigned RESET_CHECK_STORES
+      = (RESET_CHECK_N + `MXU_COL - 1) / `MXU_COL;
+  localparam int unsigned MXU16_TAIL_M = 1;
+  localparam int unsigned MXU16_TAIL_N = 16;
+  localparam int unsigned MXU16_TAIL_K = 16;
+  localparam int unsigned MXU16_TAIL_QBLK_LOG2 = 5;
+  localparam int unsigned MXU16_TAIL_WEIGHT_BYTES
+      = MXU16_TAIL_K * ((MXU16_TAIL_N + 1) / 2);
+  localparam int unsigned MXU16_TAIL_WEIGHT_XFER_BYTES
+      = ((MXU16_TAIL_WEIGHT_BYTES + `MEM_BLOCK_SIZE - 1)
+         / `MEM_BLOCK_SIZE) * `MEM_BLOCK_SIZE;
   // Keep this value synchronized with the DUT state_t declaration.  The
   // directed final-drain stimulus intentionally observes this internal state.
   localparam logic [7:0] DUT_S_O_WAIT_LMEM2DRAM_FINAL = 8'd36;
@@ -197,7 +227,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     input int unsigned M,
     input int unsigned N,
     input int unsigned K,
-    input int unsigned qblk
+    input int unsigned qblk,
+    input bit qdir
   );
     begin
       // 0) wait until ready is 1 at a posedge boundary
@@ -267,7 +298,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       cfg_reg_if.regs[36] = 32'd0;
       cfg_reg_if.regs[37] = 32'd0;
       cfg_reg_if.regs[38] = 32'd0;
-      cfg_reg_if.regs[39] = 32'd1; // QDIR=1 directed metadata matrix
+      cfg_reg_if.regs[39] = 32'(qdir);
       cfg_reg_if.regs[40] = 32'd7;
       cfg_reg_if.regs[41] = 32'd7;
       cfg_reg_if.regs[42] = 32'd7;
@@ -395,6 +426,12 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                                      OP_I_LDMA_ARM, OP_O_ACC2LMEM}))
           $fatal(1, "Removed or invalid opcode emitted at command %0d: op=%0d",
                  i, cmd_log[i].op);
+        if ((cmd_log[i].op inside {OP_DMA_LD, OP_DMA_ST})
+            && ((cmd_log[i].size == 0)
+                || ((cmd_log[i].size % `MEM_BLOCK_SIZE) != 0)))
+          $fatal(1,
+                 "External DMA command #%0d size=%0d is not a nonzero %0d-byte multiple",
+                 i, cmd_log[i].size, `MEM_BLOCK_SIZE);
         for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; dep++) begin
           if (cmd_log[i].waits[dep].valid
               && cmd_log[i].waits[dep].reg_id >= GEMM_NUM_SYNC_REGS)
@@ -741,7 +778,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                 directed_owner_arm_count[0]++;
               else if (acc_group == 1 && reuse_target == 0)
                 directed_owner_arm_count[1]++;
-              else if (acc_group == 0 && reuse_target == 4)
+              else if (acc_group == 0
+                       && reuse_target == DIRECTED_FULL_N_MICROTILES)
                 directed_owner_arm_count[2]++;
               else
                 $fatal(1, "Unexpected directed owner signature group=%0d target=%0d",
@@ -834,15 +872,16 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
         int unsigned full_owner_arms;
         int unsigned edge_owner_arms;
 
-        full_owner_arms = (128 / `MXU_COL) * (384 / `MXU_ROW);
-        edge_owner_arms = ((32 + `MXU_COL - 1) / `MXU_COL)
-                        * (384 / `MXU_ROW);
+        full_owner_arms = DIRECTED_FULL_N_MICROTILES
+                        * (DIRECTED_K / `MXU_ROW);
+        edge_owner_arms = DIRECTED_EDGE_N_MICROTILES
+                        * (DIRECTED_K / `MXU_ROW);
         if (!first_arm_seen[1]
             || (owner_count[0] + owner_count[1]) < 3
             || owner_count[0] < 2
-            || acc_copy_target[0] != 5
-            || acc_copy_target[1] != 4
-            || output_store_issue != 9)
+            || acc_copy_target[0] != DIRECTED_GROUP0_COPIES
+            || acc_copy_target[1] != DIRECTED_GROUP1_COPIES
+            || output_store_issue != DIRECTED_STORES)
           $fatal(1, "Three-tile edge/reuse coverage incomplete owners={%0d,%0d} copies={%0d,%0d} stores=%0d",
                  owner_count[0], owner_count[1],
                  acc_copy_target[0], acc_copy_target[1],
@@ -879,6 +918,95 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS,
                GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS,
                GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
+    end
+  endtask
+
+  task automatic check_mxu16_qcol_tail_sizes;
+    int dma_ld_count;
+    int dma_st_count;
+    int weight_count;
+    int scale_count;
+    int zp_count;
+    int input_arm_count;
+    int acc_copy_count;
+    int unsigned expected_dma_size;
+    begin
+      dma_ld_count = 0;
+      dma_st_count = 0;
+      weight_count = 0;
+      scale_count = 0;
+      zp_count = 0;
+      input_arm_count = 0;
+      acc_copy_count = 0;
+
+      foreach (cmd_log[i]) begin
+        unique case (cmd_log[i].op)
+          OP_DMA_LD: begin
+            dma_ld_count++;
+            expected_dma_size = (cmd_log[i].rd == 1)
+                              ? MXU16_TAIL_WEIGHT_XFER_BYTES
+                              : `MEM_BLOCK_SIZE;
+            if (cmd_log[i].size != expected_dma_size)
+              $fatal(1,
+                     "MXU16 QCOL DMA load role=%0d size=%0d expected=%0d",
+                     cmd_log[i].rd, cmd_log[i].size, expected_dma_size);
+          end
+          OP_DMA_ST: begin
+            dma_st_count++;
+            if (cmd_log[i].size != `MEM_BLOCK_SIZE)
+              $fatal(1, "MXU16 QCOL DMA store size=%0d expected=%0d",
+                     cmd_log[i].size, `MEM_BLOCK_SIZE);
+          end
+          OP_W_LDMA_MXU: begin
+            weight_count++;
+            if (cmd_log[i].size != MXU16_TAIL_WEIGHT_BYTES)
+              $fatal(1, "MXU16 QCOL Weight local size=%0d expected=%0d",
+                     cmd_log[i].size, MXU16_TAIL_WEIGHT_BYTES);
+          end
+          OP_SC_LDMA_MXU: begin
+            scale_count++;
+            if (cmd_log[i].flags[2]
+                || cmd_log[i].size != `GEMM_SCALE_ZERO_DATA_SIZE)
+              $fatal(1, "MXU16 QCOL Scale local flags/size=%0h/%0d expected qdir=0 size=%0d",
+                     cmd_log[i].flags, cmd_log[i].size,
+                     `GEMM_SCALE_ZERO_DATA_SIZE);
+          end
+          OP_ZP_LDMA_MXU: begin
+            zp_count++;
+            if (cmd_log[i].flags[2]
+                || cmd_log[i].size != `GEMM_SCALE_ZERO_DATA_SIZE)
+              $fatal(1, "MXU16 QCOL ZP local flags/size=%0h/%0d expected qdir=0 size=%0d",
+                     cmd_log[i].flags, cmd_log[i].size,
+                     `GEMM_SCALE_ZERO_DATA_SIZE);
+          end
+          OP_I_LDMA_ARM: begin
+            input_arm_count++;
+            if (cmd_log[i].flags[6] || cmd_log[i].size != MXU16_TAIL_M)
+              $fatal(1, "MXU16 QCOL Input ARM flags/rows=%0h/%0d expected qdir=0 rows=%0d",
+                     cmd_log[i].flags, cmd_log[i].size, MXU16_TAIL_M);
+          end
+          OP_O_ACC2LMEM: begin
+            acc_copy_count++;
+            if (cmd_log[i].size != `GEMM_OUTPUT_DATA_SIZE)
+              $fatal(1, "MXU16 QCOL output local size=%0d expected=%0d",
+                     cmd_log[i].size, `GEMM_OUTPUT_DATA_SIZE);
+          end
+          default:;
+        endcase
+      end
+
+      if (dma_ld_count != 4 || dma_st_count != 1
+          || weight_count != 1 || scale_count != 1 || zp_count != 1
+          || input_arm_count != 1 || acc_copy_count != 1)
+        $fatal(1,
+               "MXU16 QCOL tail command counts mismatch dma={ld:%0d,st:%0d} local={w:%0d,sc:%0d,zp:%0d,i:%0d,o:%0d}",
+               dma_ld_count, dma_st_count, weight_count, scale_count,
+               zp_count, input_arm_count, acc_copy_count);
+
+      $display("FSM_MXU16_QCOL_TAIL_SIZE_PASS external={i:64,w:%0d,sc:64,zp:64,o:64} local={i:32,w:%0d,sc:%0d,zp:%0d,o:%0d}",
+               MXU16_TAIL_WEIGHT_XFER_BYTES, MXU16_TAIL_WEIGHT_BYTES,
+               `GEMM_SCALE_ZERO_DATA_SIZE, `GEMM_SCALE_ZERO_DATA_SIZE,
+               `GEMM_OUTPUT_DATA_SIZE);
     end
   endtask
 
@@ -968,17 +1096,19 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       64'hD000_0000, // lmem_zpbuf1_base
       64'hE000_0000, // lmem_obuf_base
 
-      128,           // M
-      288,           // N = 128 + 128 + 32 edge
-      384,           // K
-      5              // log2(qblk=32)
+      DIRECTED_M,
+      DIRECTED_N,
+      DIRECTED_K,
+      5,             // log2(qblk=32)
+      1'b1           // QDIR row
     );
 
     hold_and_release_final_drain(first_store_count);
     sanity_check(1'b1, 3);
-    if (first_store_count != 9)
-      $fatal(1, "Directed three-tile invocation issued %0d stores, expected 9",
-             first_store_count);
+    if (first_store_count != DIRECTED_STORES)
+      $fatal(1,
+             "Directed three-tile invocation issued %0d stores, expected %0d",
+             first_store_count, DIRECTED_STORES);
 
     // A new accepted invocation must restart all issue-side and captured
     // dependency state.  Use another multi-K job so the reset metadata is
@@ -994,7 +1124,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       64'hA100_0000, 64'hB100_0000,
       64'hC100_0000, 64'hD100_0000,
       64'hE100_0000,
-      64, 32, 384, 5
+      RESET_CHECK_M, RESET_CHECK_N, RESET_CHECK_K, 5, 1'b1
     );
 
     if (dut.o_store_issue_q != 0
@@ -1005,9 +1135,33 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     hold_and_release_final_drain(second_store_count);
     sanity_check(1'b0, 1);
-    if (second_store_count != 1)
-      $fatal(1, "Reset-check invocation issued %0d stores, expected 1",
-             second_store_count);
+    if (second_store_count != RESET_CHECK_STORES)
+      $fatal(1, "Reset-check invocation issued %0d stores, expected %0d",
+             second_store_count, RESET_CHECK_STORES);
+
+    if ((`MXU_ROW == 16) && (`MXU_COL == 16)) begin
+      int unsigned qcol_tail_store_count;
+
+      cmd_log.delete();
+      @(negedge clk);
+      completed_output_store_count = 0;
+      drive_cfg_once(
+        64'h1200_0000, 64'h2200_0000, 64'h3200_0000,
+        64'h4200_0000, 64'h5200_0000,
+        64'h6200_0000, 64'h7200_0000,
+        64'h8200_0000, 64'h9200_0000,
+        64'hA200_0000, 64'hB200_0000,
+        64'hC200_0000, 64'hD200_0000,
+        64'hE200_0000,
+        MXU16_TAIL_M, MXU16_TAIL_N, MXU16_TAIL_K,
+        MXU16_TAIL_QBLK_LOG2, 1'b0
+      );
+      hold_and_release_final_drain(qcol_tail_store_count);
+      check_mxu16_qcol_tail_sizes();
+      if (qcol_tail_store_count != 1)
+        $fatal(1, "MXU16 QCOL tail issued %0d stores, expected 1",
+               qcol_tail_store_count);
+    end
 
     $display("FSM_OUTPUT_DOUBLE_BUFFER_METADATA_PASS first_stores=%0d second_stores=%0d",
              first_store_count, second_store_count);

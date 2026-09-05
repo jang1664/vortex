@@ -11,6 +11,12 @@ from typing import Mapping, Optional, Protocol, Tuple
 LLAMA2_MODEL = "llama2-7b"
 LLAMA3_MODEL = "llama3-8b"
 SUPPORTED_MODELS = (LLAMA2_MODEL, LLAMA3_MODEL)
+HISTORICAL_SPINQUANT_W4KV4 = "historical_spinquant_w4kv4_v1"
+ALL_ASYMMETRIC_WKV4 = "signed_all_asymmetric_wkv4_v1"
+QUANTIZATION_POLICIES = (
+    HISTORICAL_SPINQUANT_W4KV4,
+    ALL_ASYMMETRIC_WKV4,
+)
 MODEL_LAYER_COUNTS = {
     LLAMA2_MODEL: 32,
     LLAMA3_MODEL: 32,
@@ -32,6 +38,7 @@ class LayerConfig:
     rope_theta: float = 10000.0
     # Appended to preserve the positional constructor used before GQA support.
     num_key_value_heads: int | None = None
+    quantization_policy: str = HISTORICAL_SPINQUANT_W4KV4
 
     def __post_init__(self) -> None:
         if self.num_key_value_heads is None:
@@ -52,6 +59,10 @@ class LayerConfig:
             raise ValueError("intermediate_size must be divisible by weight_group_size")
         if self.head_dim != self.kv_group_size:
             raise ValueError("v1 uses one KV quantization group per attention head")
+        if self.quantization_policy not in QUANTIZATION_POLICIES:
+            raise ValueError(
+                f"unsupported quantization policy {self.quantization_policy!r}"
+            )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -63,6 +74,18 @@ class LayerConfig:
     @property
     def kv_hidden_size(self) -> int:
         return self.num_key_value_heads * self.head_dim
+
+    @property
+    def weight_quant_mode(self) -> str:
+        return "asym" if self.quantization_policy == ALL_ASYMMETRIC_WKV4 else "sym"
+
+    @property
+    def key_quant_mode(self) -> str:
+        return "asym"
+
+    @property
+    def value_quant_mode(self) -> str:
+        return "asym" if self.quantization_policy == ALL_ASYMMETRIC_WKV4 else "sym"
 
     @classmethod
     def for_model(cls, model: str, **overrides) -> "LayerConfig":
@@ -298,7 +321,13 @@ class PersistentCache(Protocol):
     def descriptor(self) -> dict: ...
 
     def prefill_quantized(
-        self, qkey: object, k_scale: object, k_zero: object, qvalue: object, v_scale: object
+        self,
+        qkey: object,
+        k_scale: object,
+        k_zero: object,
+        qvalue: object,
+        v_scale: object,
+        v_zero: object,
     ) -> None: ...
 
     def append_quantized(
@@ -308,6 +337,7 @@ class PersistentCache(Protocol):
         k_zero: object,
         qvalue: object,
         v_scale: object,
+        v_zero: object,
         *,
         position: int,
     ) -> None: ...

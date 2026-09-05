@@ -2,6 +2,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <math.h>
+#include <VX_config.h>
+
+// This legacy raw command-stream kernel emits external DMA segment sizes
+// directly and does not round 32-byte MXU16 logical vectors to the required
+// 64-byte HBM transfer granularity. Keep it available for the MXU32 profile,
+// but fail the build instead of emitting an invalid MXU16 command stream.
+#if MXU_ROW != 32 || MXU_COL != 32
+#error "kernel/src/fi_gemm.c supports only the legacy MXU32 profile; use the descriptor/FSM GEMM path for MXU16"
+#endif
 
 /*  
     This kernel is designed for fp16 activation - int4 static quantized weight gemm operation. 
@@ -29,7 +38,7 @@
     Applied Double buffering in DMA-tile level and MXU-tile level
 
     Constraints:
-      - M, N are multiples of MXU_NT(32), K is a multiple of KT(128).
+      - M, N are multiples of MXU_NT, K is a multiple of KT(128).
       - KT % quant_blk_size == 0 for QDIR_COL, NT % quant_blk_size == 0 for QDIR_ROW
 
 */
@@ -38,8 +47,8 @@
 static const int MT = 128;
 static const int NT = 128;
 static const int KT = 128;
-static const int MXU_KT = 32;
-static const int MXU_NT = 32;
+static const int MXU_KT = MXU_ROW;
+static const int MXU_NT = MXU_COL;
 
 static const int TP = 1; // transpose
 static const int NO_TP = 0; // no transpose
@@ -51,13 +60,10 @@ static const int NO_TP = 0; // no transpose
 // 64-byte bank unit; Weight rotates in its configured native wide-beat unit.
 // Defaults preserve the historical layout.
 #ifndef TMEM_NUM_BANKS
-#define TMEM_NUM_BANKS 8
+#define TMEM_NUM_BANKS NUM_TMEM_BANKS
 #endif
 #ifndef TMEM_BANK_BYTES
-#define TMEM_BANK_BYTES 64
-#endif
-#ifndef MXU_COL
-#define MXU_COL 32
+#define TMEM_BANK_BYTES GEMM_INPUT_DATA_SIZE
 #endif
 #ifndef MXU_WLOAD_NUM
 #define MXU_WLOAD_NUM 4
@@ -81,7 +87,9 @@ static const int NO_TP = 0; // no transpose
 #define TMEM_OUTPUT_BANK_SKEW 0
 #endif
 
+#ifndef GEMM_WEIGHT_DATA_SIZE
 #define GEMM_WEIGHT_DATA_SIZE ((MXU_COL * MXU_WLOAD_NUM * W_BIT_WIDTH) / 8)
+#endif
 #define TMEM_WEIGHT_BANKS_PER_BEAT (GEMM_WEIGHT_DATA_SIZE / TMEM_BANK_BYTES)
 #define TMEM_WEIGHT_BANK_GROUPS (TMEM_NUM_BANKS / TMEM_WEIGHT_BANKS_PER_BEAT)
 #define TMEM_BANK_SKEW_BYTES(phase) ((phase) * TMEM_BANK_BYTES)
@@ -225,15 +233,15 @@ static void fi_fpint_gemm_tile_layout_general(
     const int kt_dim = CEIL(K, KT);
     const int tile_total = mt_dim * nt_dim * kt_dim;
 
-    // padding is needed by 32
-    const int M_PAD = CEIL(M, 32) * 32;  //padding 붙인 M 크기
+    // Preserve the legacy MXU-width row padding.
+    const int M_PAD = CEIL(M, MXU_NT) * MXU_NT;  //padding 붙인 M 크기
     const int m_padding = M_PAD - M;  // 얼만큼 padding 해야하는지
     const int N_PAD = CEIL(N, MXU_NT) * MXU_NT;  //padding 붙인 N 크기
     const int n_padding = N_PAD - N;  // 얼만큼 padding 해야하는지
     // padding is needed by KT
     const int K_PAD = CEIL(K, KT) * KT;  //padding 붙인 K 크기
     const int k_padding = K_PAD - K;  // 얼만큼 padding 해야하는지
-    // 사실 패딩 필요없음, 들어올 때부터 M, N은 32의 배수로, K는 128의 배수로 들어온다고 가정
+    // Inputs are expected to arrive padded to MXU_NT for M/N and KT for K.
 
     // size of last DMA tile
     const int m_last = M_PAD - (mt_dim - 1) * MT;

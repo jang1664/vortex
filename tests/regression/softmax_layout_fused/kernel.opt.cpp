@@ -322,7 +322,7 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   if (tid == 0) {
     dma_copy_2d(reinterpret_cast<uint64_t>(io_lmem),
                 reinterpret_cast<uint64_t>(input + base_q_in),
-                kSoftmaxSegBytes,                        // 32 fp16 = 64 B
+                kSoftmaxSegBytes,                        // MXU_KT fp16 values
                 in_groups,                               // causal-clamped segments
                 cm * mxu_nt * (uint32_t)sizeof(data_t),  // src stride (tiled): cm*64 B
                 kSoftmaxSlotBytes,                       // dst stride: LMEM beat-aligned slot

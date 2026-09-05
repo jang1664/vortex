@@ -1,0 +1,804 @@
+task: mxu-16x16-support
+state: COMPLETE
+updated: "2026-09-04 23:27"
+goal: >-
+  Implement the confirmed GEMM_IMPROVE MXU 16x16 plan with 32-byte local TMEM
+  banks, paired 64-byte HBM DMA access, tile-major layout correctness, and the
+  required five-case xrt-vcs-sim numerical acceptance matrix.
+specification: agent-tasks/mxu-16x16-support/mxu-16x16-support-spec.md
+plan: agent-tasks/mxu-16x16-support/mxu-16x16-support-plan.md
+verification_results: agent-tasks/mxu-16x16-support/verification-results.md
+configuration:
+  baseline: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+  target: configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh
+iterations:
+  - timestamp: "2026-09-04 20:15"
+    phase: specification
+    status: pass
+    summary: >-
+      Confirmed the user-approved compile-time MXU16 organization, 64-byte HBM
+      contract, paired consecutive 32-byte TMEM banks, local 32-byte I/W/S/Z/O
+      paths, tile-major ABI constraints, and five-case functional gate.
+    lesson: >-
+      Physical bank width, HBM DMA beat width, and local MXU vector width must
+      be named and converted independently; one shared DATA_SIZE contract is
+      not valid for MXU16.
+  - timestamp: "2026-09-04 20:45"
+    phase: baseline_blackbox
+    status: pass
+    summary: >-
+      The frozen MXU32 source at HEAD 204e20d8 compiled all 168 VCS RTL modules
+      and passed fpint_gemm_ffn_hw for M=2, N=32, K=128, QBLK=32, WTRANS=0,
+      both QDIR=0 and QDIR=1 with numerical reference checking and application
+      PASSED results against one frozen simv.
+    verification: >-
+      /tmp/vortex-mxu32-baseline-src/build_mxu32_baseline: ci/run_black.sh
+      xrt-vcs-sim --app fpint_gemm_ffn_hw --args
+      '-m 2 -n 32 -k 128 -q 32 -t 0 -d 0 -r 1' --debug 3
+    lesson: >-
+      A detached source worktree is needed to preserve an authoritative
+      pre-change simv while implementation edits continue in the main tree.
+  - timestamp: "2026-09-04 21:00"
+    phase: pair_adapter_verification
+    status: compile_error
+    summary: >-
+      Iteration 1/10 stopped before VCS compilation because the new focused
+      unittest Makefile included vcs.mk from a path that does not exist in the
+      source test directory.
+    verification: >-
+      /usr/bin/python3 tools/verify_rtl.py unittest --path
+      hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: >-
+      The new test Makefile did not follow the repository's configured-build
+      include convention for the common simulator make fragment.
+    fix_applied: >-
+      Added the local vcs.mk fragment used by neighboring source unittests; the
+      adapter RTL and test request remained unchanged.
+    lesson: >-
+      A configure-generated build does not repair an invalid include path in a
+      newly added source unittest Makefile; copy the convention from an active
+      neighboring unittest.
+  - timestamp: "2026-09-04 21:04"
+    phase: pair_adapter_verification
+    status: compile_error
+    summary: >-
+      Iteration 2/10 reached VCS but failed parsing the focused testbench at
+      line 6 before any directed case executed.
+    verification: >-
+      /usr/bin/python3 tools/verify_rtl.py unittest --path
+      hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: >-
+      The no-port testbench declared a package import in its module header form,
+      which this VCS parser rejected before the first localparam.
+    fix_applied: >-
+      Changed the testbench to the repository's conventional no-port module
+      declaration with the package import inside the module body; DUT behavior
+      is unchanged.
+    lesson: >-
+      Match the exact module declaration style used by neighboring VCS
+      testbenches, even when a broader SystemVerilog grammar may permit a form.
+  - timestamp: "2026-09-04 21:08"
+    phase: gemm_fsm_verification
+    status: sim_fail
+    summary: >-
+      Iteration 1/10 compiled successfully with MXU16 defines and emitted
+      32-byte scale/zero local commands, then the directed metadata scoreboard
+      rejected accumulator owner target 8.
+    verification: >-
+      build_mxu16_verify_gemm_fsm_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs
+    root_cause: >-
+      The existing directed owner-signature checks encode MXU32 target/copy
+      counts (target 4, copies 5/4, stores 9) and have not yet been scaled for
+      the doubled number of MXU16 N microtiles.
+    fix_applied: >-
+      Parameterized reuse/copy/store expectations from MXU dimensions while
+      preserving MXU32 values, and added an MXU16 QCOL K=16 tail case checking
+      external 64-byte and local 32-byte sizing.
+    lesson: >-
+      Metadata target counts can scale with microtiles per DMA N tile even when
+      the logical outer-tile count is unchanged; directed scoreboards must
+      derive both values rather than hardcode the MXU32 trace.
+  - timestamp: "2026-09-04 21:11"
+    phase: pair_adapter_verification
+    status: compile_error
+    summary: >-
+      Iteration 3/10 compiled the testbench further but VCS rejected a
+      procedural assertion loop that dynamically indexed the bank interface
+      array; no directed case executed.
+    verification: >-
+      /usr/bin/python3 tools/verify_rtl.py unittest --path
+      hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: >-
+      VCS requires constant indices for interface-array selection even inside
+      a fixed-bound procedural loop.
+    fix_applied: >-
+      Moved the assertion into a generate block with a constant lane index;
+      functional data-path logic is unchanged.
+    lesson: >-
+      Assertions that inspect unpacked interface arrays must use generate-time
+      indices or packed mirrors for VCS portability.
+  - timestamp: "2026-09-04 21:15"
+    phase: pair_adapter_verification
+    status: pass
+    summary: >-
+      Iteration 4/10 passed the focused VCS test after rebuilding the current
+      adapter and testbench. Directed request acceptance covered lane-ready
+      sequences 01, 10, and 11 with exact-once handshakes; response tests
+      covered skew, FIFO-full backpressure, recovery, and ordered tag joins.
+    verification: >-
+      /usr/bin/python3 tools/verify_rtl.py unittest --path
+      hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: >-
+      The three preceding failures were test integration/parser portability
+      issues rather than pair-adapter data-path failures.
+    fix_applied: >-
+      Added the simulator fragment, normalized the no-port module declaration,
+      and replaced dynamic interface assertion indexing with generate-time
+      constant indexing.
+    lesson: >-
+      A two-entry ordered FIFO per fixed bank lane is sufficient to absorb the
+      directed response skew while preserving one aggregate response per
+      matching tag pair.
+  - timestamp: "2026-09-04 21:17"
+    phase: gemm_fsm_verification
+    status: pass
+    summary: >-
+      Iteration 2/10 passed from a fresh MXU16 build. The added QCOL tail case
+      M=1,N=16,K=16,QBLK=32 observed external I/W/SC/ZP/O sizes
+      64/128/64/64/64 bytes and local sizes 32/128/32/32/32 bytes, with the
+      128-byte Weight command comprising four 32-byte beats.
+    verification: >-
+      build_mxu16_verify_gemm_fsm_iter2: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_fsm --sim vcs
+    root_cause: >-
+      The first failure was confined to MXU32-specific directed scoreboard
+      constants; the parameterized FSM command stream is valid for MXU16.
+    fix_applied: >-
+      Derived owner/copy/store expectations from MXU geometry and added explicit
+      external-versus-local size checks for the smallest QCOL tail.
+    lesson: >-
+      The Weight instruction carries the complete 128-byte microtile command,
+      while WLOAD4 and the local bus realize it as four 32-byte physical beats.
+  - timestamp: "2026-09-04 21:23"
+    phase: gemm_node_improve_verification
+    status: compile_error
+    summary: >-
+      Iteration 1/10 stopped before VCS compilation because the current
+      worktree's nested CVFPU common_cells submodule was not initialized.
+      MXU16 defines and pair-adapter source-list inclusion were confirmed.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      third_party/cvfpu/src/common_cells was empty at its recorded gitlink, so
+      cf_math_pkg.sv was unavailable to the unittest Makefile.
+    fix_applied: >-
+      Initialized the recursively pinned CVFPU submodules in the current
+      worktree; no project source or RTL behavior changed.
+    lesson: >-
+      Fresh configured builds still depend on initialized nested RTL-library
+      submodules in VORTEX_HOME.
+  - timestamp: "2026-09-04 21:29"
+    phase: gemm_node_improve_verification
+    status: compile_error
+    summary: >-
+      Iteration 2/10 advanced past CVFPU common_cells, then stopped before VCS
+      because the current worktree's top-level AXI submodule was not
+      initialized. The active MXU16 defines and pair-adapter source remained
+      unchanged.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      third_party/axi was empty at gitlink 9402c8a9, so axi_pkg.sv was
+      unavailable to the common FP compilation prerequisite.
+    fix_applied: >-
+      Initialized the recursively pinned AXI submodule in the current
+      worktree; no project source, test request, or RTL behavior changed.
+    lesson: >-
+      gemm_node_improve reaches both CVFPU's nested common_cells checkout and
+      the repository's top-level AXI checkout before VCS compiles the DUT.
+  - timestamp: "2026-09-04 21:35"
+    phase: gemm_node_improve_verification
+    status: compile_error
+    summary: >-
+      Iteration 3/10 reached VCS with current MXU16 RTL and failed four
+      cross-module references in the existing output-backpressure testbench;
+      simulation did not start.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      The testbench still forces u_tmem_subsystem.ldma_gemm[3].rsp_ready, but
+      the width-decoupled subsystem now exposes resource-specific local-DMA
+      interfaces, including ldma_gemm_output.
+    fix_applied: >-
+      Updated the three force paths and one release path to
+      u_tmem_subsystem.ldma_gemm_output.rsp_ready, preserving the same output
+      local-DMA response-backpressure probe.
+    lesson: >-
+      Width-specialized local interfaces also require hierarchical directed
+      probes to use the resource-specific signal name; this is a test
+      integration failure before any data-path behavior is sampled.
+  - timestamp: "2026-09-04 21:43"
+    phase: gemm_node_improve_verification
+    status: compile_error
+    summary: >-
+      Iteration 4/10 rebuilt and parsed the current MXU16 node, subsystem,
+      adapter, and testbench, then failed while compiling float_dpi.cpp because
+      the fresh configured build lacked its generated VX_config.h artifact.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      configure populated build/hw/Makefile but did not run its config target;
+      the unittest's DPI CFLAGS search build/hw for VX_config.h.
+    fix_applied: >-
+      Sourced the MXU16 profile and ran make config in the configured build/hw
+      directory, generating VX_config.h and VX_types.h without changing source.
+    lesson: >-
+      A fresh configured node unittest requires the build/hw config target
+      before VCS can compile DPI sources that include VX_config.h.
+  - timestamp: "2026-09-04 21:48"
+    phase: gemm_node_improve_verification
+    status: sim_fail
+    summary: >-
+      Iteration 5/10 compiled and elaborated the integrated MXU16 node, then
+      failed at 177845 ns in channel 0's pair adapter after a partial physical
+      bank acceptance. Numerical completion was not reached.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      VX_dma_unit_align permits the semantically unused req_data.data field of
+      a read request to vary while its valid control request is stalled. The
+      adapter compared the entire packed request and falsely classified that
+      don't-care read payload as an aggregate request replacement.
+    fix_applied: >-
+      Kept the request handshake unchanged and scoped partial-request
+      stability to valid/rw/address/byte-enable/flags/tag for every request,
+      plus data only when the saved request is a write.
+    lesson: >-
+      The focused adapter test's compliant held-valid source was insufficient
+      to establish the integrated VX_dma_engine request contract under real
+      bank arbitration; partial lane acceptance must be handled against the
+      actual upstream behavior.
+  - timestamp: "2026-09-04 22:02"
+    phase: tmem_dma_controller_verification
+    status: pass
+    summary: >-
+      MXU16 VCS controller verification completed 40 logical commands, 72
+      descriptors, and 48 store chunks. All issued descriptor segments were
+      64 bytes, full eight-channel and selected-channel address mappings
+      passed, and the nonzero/64-byte-integral assertion remained active.
+    verification: >-
+      build_mxu16_verify_tmem_ctrl_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_tmem_dma_ctrl
+      --sim vcs
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      Rounding at the external FSM boundary preserves the existing controller's
+      64-byte descriptor and channel-slot mapping contract under MXU16.
+  - timestamp: "2026-09-04 22:09"
+    phase: gemm_node_improve_verification
+    status: pass
+    summary: >-
+      A targeted integrated MXU16 smoke run passed 256-element numerical
+      checking for M=16,N=16,K=128,QBLK=32,WTRANS=0,QDIR=0. The current pair
+      adapter and sixteen-bank subsystem elaborated, all internal assertions
+      stayed clean, and the test completed at 13905 ns.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs --params "TEST=MXU16_SMOKE M=16 N=16 K=128 QBLK=32
+      WTRANS=0 QDIR=0 EXTRA_SIM_ARGS='+NO_WAVE'" --timeout 600
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      Ignoring semantically unused read payload data in the stability assertion
+      removes the false positive while preserving integrated numerical
+      correctness and every pair-adapter control assertion.
+  - timestamp: "2026-09-04 22:14"
+    phase: pair_adapter_verification
+    status: pass
+    summary: >-
+      Iteration 5/10 rebuilt the assertion-refined adapter and retained all
+      directed request skew, exact-once, data/byte-enable slice, tag, response
+      skew, FIFO-full backpressure/recovery, and ordered-join checks.
+    verification: >-
+      /usr/bin/python3 tools/verify_rtl.py unittest --path
+      hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      Scoping read stability to semantically meaningful fields did not weaken
+      the focused split/join checks or write-payload stability coverage.
+  - timestamp: "2026-09-04 22:20"
+    phase: gemm_node_improve_verification
+    status: timeout
+    summary: >-
+      Iteration 6/10 compiled and linked the current MXU16 integrated node but
+      the no-parameter M=256,N=1024,K=256 simulation exceeded the verifier's
+      600-second limit. Its buffered sim.log remained empty, so this run is
+      neither a functional failure nor a PASS.
+    verification: >-
+      build_mxu16_verify_gemm_node_iter1: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_node_improve
+      --sim vcs
+    root_cause: >-
+      The legacy default unittest workload is too large for the fixed
+      600-second verify_rtl simulation limit under the doubled MXU16
+      microtile count; no RTL assertion or numerical mismatch was emitted.
+    fix_applied: >-
+      No design change. A separate targeted integrated M=16,N=16,K=128 run
+      already completed numerical checking with the same rebuilt simv.
+    lesson: >-
+      Use bounded directed node cases for iteration diagnostics and reserve the
+      required larger correctness shapes for the explicit blackbox gate with
+      appropriately sized wrappers.
+  - timestamp: "2026-09-04 22:27"
+    phase: pair_adapter_verification
+    status: pass
+    summary: >-
+      Iteration 6/10 passed after adding a three-beat no-stall sequence. With
+      both banks ready, three distinct aggregate writes completed on three
+      consecutive cycles and each lane accepted each request exactly once.
+    verification: >-
+      build_mxu16_accept: /usr/bin/python3 ../tools/verify_rtl.py unittest
+      --path hw/unittest/tmem_dma_pair_adapter --sim vcs
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      The sent-bit completion definition adds no bubble when both physical
+      banks accept together, preserving one 64-byte aggregate beat per cycle.
+  - timestamp: "2026-09-04 22:28"
+    phase: local_tmem_switch_verification
+    status: compile_error
+    summary: >-
+      Iteration 1/10 of the new sixteen-bank, 32-byte switch test stopped at
+      elaboration because two VX_elastic_buffer implementation dependencies
+      were absent from the new Makefile source list.
+    verification: >-
+      build_mxu16_accept: /usr/bin/python3 ../tools/verify_rtl.py unittest
+      --path hw/unittest/tmem_switch_16bank --sim vcs
+    root_cause: >-
+      VX_stream_buffer.sv and VX_pipe_buffer.sv were omitted even though
+      VX_elastic_buffer.sv instantiates both branches.
+    fix_applied: >-
+      Added VX_pipe_buffer.sv and VX_stream_buffer.sv before
+      VX_elastic_buffer.sv in the focused test source list; no DUT or test
+      behavior changed.
+    lesson: >-
+      Focused unit source lists must include both implementation branches of a
+      parameterized library module because VCS resolves cells before pruning.
+  - timestamp: "2026-09-04 22:35"
+    phase: local_tmem_switch_verification
+    status: compile_error
+    summary: >-
+      Iteration 2/10 repeated the same missing-cell error because it ran the
+      configure-generated Makefile copy created before the source dependency
+      fix; simulation again did not start.
+    verification: >-
+      build_mxu16_accept: /usr/bin/python3 ../tools/verify_rtl.py unittest
+      --path hw/unittest/tmem_switch_16bank --sim vcs
+    root_cause: >-
+      The source Makefile was correct, but build_mxu16_accept/hw/unittest held
+      a stale configure-time copy without VX_pipe_buffer/VX_stream_buffer.
+    fix_applied: >-
+      Use a new separately configured switch-verification build so the updated
+      source Makefile is materialized without touching the active blackbox
+      acceptance build.
+    lesson: >-
+      Unittest Makefiles are configure-generated copies; source changes require
+      reconfigure or a fresh build before verification.
+  - timestamp: "2026-09-04 22:38"
+    phase: local_tmem_switch_verification
+    status: sim_fail
+    summary: >-
+      Iteration 3/10 compiled from a fresh configured build and passed routing
+      checks for byte addresses 0..480 to banks 0..15 plus byte 512 to bank 0
+      local word 1. The first reverse response was not visible in the same
+      combinational cycle expected by the testbench.
+    verification: >-
+      build_mxu16_verify_switch_iter3: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/tmem_switch_16bank
+      --sim vcs
+    root_cause: >-
+      With sixteen inputs, VX_stream_arb selects its registered fanout tree;
+      bank-side response acceptance and aggregate-side response presentation
+      are distinct handshakes separated by pipeline latency.
+    fix_applied: >-
+      Changed the testbench to hold each bank response until bank acceptance,
+      verify bank acceptance exactly once, and independently wait for and
+      check the restored aggregate response in reverse request order.
+    lesson: >-
+      A bank-routing test must honor response-pipeline latency rather than
+      assuming OUT_BUF=0 removes internal fanout registers at every bank count.
+  - timestamp: "2026-09-04 22:40"
+    phase: mxu16_blackbox_acceptance
+    status: compile_error
+    summary: >-
+      Five-case matrix case 1 attempt 1 built the MXU16 kernel but stopped in
+      the first xrt-vcs vlogan invocation before compiling project RTL.
+    verification: >-
+      build_mxu16_accept: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 2 -n 32 -k 128 -q 32 -t 0 -d 0 -r 1'
+    root_cause: >-
+      The ignored third_party/axi Bender checkout was absent, so VCS could not
+      open common_cells-3e2fcccecd7aee7b/src/cf_math_pkg.sv.
+    fix_applied: >-
+      Ran bender update in third_party/axi and confirmed the exact generated
+      common_cells path plus its cf_math_pkg.sv now exist. No project RTL or
+      application source changed.
+    lesson: >-
+      Configure does not materialize AXI's ignored Bender dependencies; their
+      absence is an infrastructure compile failure and must be repaired before
+      interpreting xrt-vcs results.
+  - timestamp: "2026-09-04 22:43"
+    phase: local_tmem_switch_verification
+    status: pass
+    summary: >-
+      Iteration 4/10 passed from a fresh configured build. It selected every
+      physical 32-byte bank for byte addresses 0..480, wrapped byte 512 to bank
+      0 local word 1, then accepted all seventeen responses in reverse request
+      order while restoring each original tag and data payload.
+    verification: >-
+      build_mxu16_verify_switch_iter4: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/tmem_switch_16bank
+      --sim vcs
+    root_cause: >-
+      The prior same-cycle expectation ignored the registered fanout latency;
+      no DUT routing defect remained after using independent handshake checks.
+    fix_applied: none
+    lesson: >-
+      Sixteen-bank routing and interleaved-address wrap are correct at the
+      32-byte physical-bank granularity, including response tag restoration.
+  - timestamp: "2026-09-04 22:45"
+    phase: mxu16_blackbox_acceptance
+    status: pass
+    summary: >-
+      Matrix case 1 compiled and linked all 166 current MXU16 RTL modules,
+      including the pair adapter and sixteen-bank TMEM subsystem, then passed
+      host numerical comparison for M=2,N=32,K=128,QBLK=32,WTRANS=0,QDIR=0.
+    verification: >-
+      build_mxu16_accept: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 2 -n 32 -k 128 -q 32 -t 0 -d 0 -r 1'
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      The integrated 64-byte HBM to paired 32-byte TMEM path executes a
+      multi-N-microtile QCOL workload correctly in full xrt-vcs simulation.
+  - timestamp: "2026-09-04 22:47"
+    phase: mxu16_blackbox_acceptance
+    status: pass
+    summary: >-
+      Matrix case 2 passed numerical comparison against the unchanged MXU16
+      simv for M=1,N=16,K=16,QBLK=32,WTRANS=1,QDIR=0. This is the partial
+      QCOL-group and smallest logical-vector transfer case.
+    verification: >-
+      build_mxu16_accept: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 1 -n 16 -k 16 -q 32 -t 1 -d 0 -r 1'
+    root_cause: none
+    fix_applied: none
+    lesson: >-
+      K smaller than QBLK still emits one QCOL parameter group, and the
+      transposed weight layout survives 32-byte local versus 64-byte external
+      padding without a numerical mismatch.
+  - timestamp: "2026-09-04 22:50"
+    phase: mxu16_blackbox_acceptance
+    status: sim_fail
+    summary: >-
+      Matrix case 3 attempt 1 reached integrated GEMM execution but VCS stopped
+      at 50.505 us on an internal accumulator same-bank read/write assertion;
+      the XRT register-read error was a downstream symptom of the dead server.
+    verification: >-
+      build_mxu16_accept: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 3 -n 17 -k 17 -q 32 -t 0 -d 1 -r 1'
+    root_cause: >-
+      FSDB shows an accumulating read of address 0x80 is three result-pop
+      positions behind its load producer. Existing immediate and d2 forwarding
+      do not recognize that producer; the read is classified from an unrelated
+      same-bank dependency and launches on bank 0 with the producer's 0x80
+      write, asserting acc_mem_rd_en=0001 and acc_mem_wr_en=0001 together.
+    fix_applied: >-
+      Iteration 1 detected the exact d=3 writer and forced the request from the
+      early slot to the nominal slot. Fresh verification showed that delaying
+      only the physical read was insufficient because the nominal slot met the
+      following same-bank writer.
+    lesson: >-
+      An odd three-row tail exposes one additional bounded accumulator history
+      distance that M=1/2 and full pipelines do not exercise; the fix must use
+      exact-address dependency metadata rather than suppressing the collision.
+  - timestamp: "2026-09-04 22:52"
+    phase: gemm_unit_v2_d3_raw_verification
+    status: sim_fail
+    summary: >-
+      Fresh MXU16 VCS compiled the first defer-early fix, then existing
+      numerical checks reported MXU32-sized expected values and the new M=3
+      directed sequence stopped at 8.365 us on the ACC read/write assertion.
+    verification: >-
+      build_mxu16_verify_unit_d3: /usr/bin/python3 ../tools/verify_rtl.py
+      unittest --path hw/unittest/gemm_unit_v2 --sim vcs --timeout 600
+    root_cause: >-
+      The first mismatch at sim.log lines 7574-7575 expected fp16 0x5200 but
+      observed 0x5000 because the test seeded the reference psum with the
+      MXU32-only value 32 instead of MXU_ROW=16. Later 65/97/33 literals had
+      the same stale geometry assumption. At 8.365 us, moving row2's read to
+      nominal avoided its load-producer write but collided on bank 0 with the
+      following row0 accumulator write (addresses 0x2e80 and 0x2e00).
+    fix_applied: >-
+      Parameterized the affected reference psum and directed expected FP32
+      values from MXU_ROW. Replaced the defer-only read classification with a
+      one-cycle result-FIFO head hold for the exact d=3 RAW plus d=2 bank-alias
+      pattern, before any ACC read request is issued.
+    lesson: >-
+      In a full-rate three-row recurrence, both the early and immediately
+      following nominal slots can be occupied by bank-0 writes; the safe
+      boundary is before int2fp_result_pop, where the result FIFO can retain
+      the complete transaction without changing backend latency.
+  - timestamp: "2026-09-04 22:54"
+    phase: mxu16_blackbox_acceptance
+    status: sim_fail
+    summary: >-
+      Matrix case 3 attempt 2 used a freshly rebuilt simv containing the
+      defer-early RTL but still stopped at 50.755 us on a same-bank collision.
+    verification: >-
+      build_mxu16_accept_final: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 3 -n 17 -k 17 -q 32 -t 0 -d 1 -r 1'
+    root_cause: >-
+      FSDB at 50.755 us shows nominal_read_req=0001 and acc_mem_rd_en=0001 for
+      the delayed address-0x80 read while acc_mem_wr_en=0001 writes tag 3 at
+      address 0x0. This is the integrated form of the unit-test 0x2e80 versus
+      0x2e00 bank-0 collision.
+    fix_applied: >-
+      The current iteration holds only the proven exact-d3/d2-bank-alias FIFO
+      head for one cycle, then lets the unchanged nominal backend path issue
+      after both conflicting writes have advanced. Immediate/d2 forwarding
+      and unrelated same-bank early reads remain unchanged.
+    lesson: >-
+      Rebuilding proved the initial assertion moved by one cycle rather than
+      disappearing; checking both physical slots is required when changing
+      fixed-latency ACC scheduling.
+  - timestamp: "2026-09-04 22:58"
+    phase: gemm_unit_v2_d3_raw_verification
+    status: sim_fail
+    summary: >-
+      Fresh MXU16 VCS completed the directed and random numerical checks with
+      no ACC collision or numerical mismatch. The M3_D3_RAW_STALL_PASSED
+      marker reported stalls=1, early=0, nominal=3, and writes=6; only the
+      final aggregate last_write count failed with expected=40 actual=42.
+    verification: >-
+      build_mxu16_verify_unit_d3_iter2: /usr/bin/python3
+      ../tools/verify_rtl.py unittest --path hw/unittest/gemm_unit_v2
+      --sim vcs --timeout 600
+    root_cause: >-
+      The new M=3 directed scenario contains two command boundaries and thus
+      contributes two last_write pulses, but EXPECTED_LAST_WRITES still used
+      the pre-scenario aggregate of 40.
+    fix_applied: >-
+      Added the named M3_D3_RAW_LAST_WRITES contribution and included its two
+      pulses in EXPECTED_LAST_WRITES. No RTL behavior changed.
+    lesson: >-
+      Final aggregate event checks must name each directed scenario's
+      contribution so adding a scenario cannot silently leave a stale total.
+  - timestamp: "2026-09-04 23:00"
+    phase: mxu16_blackbox_acceptance
+    status: sim_fail
+    summary: >-
+      Final2 used one fresh simv image: cases 1, 2, and 3 passed, while case 4
+      M=31, N=48, K=80, WTRANS=1, QDIR=1 stopped at 51.985 us on the internal
+      ACC same-bank read/write assertion.
+    verification: >-
+      build_mxu16_accept_final2: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 31 -n 48 -k 80 -q 32 -t 1 -d 1 -r 1'
+    root_cause: >-
+      FSDB at 51.975 us shows an early read of 0x80 on bank 0 and a nominal
+      read of 0x40 on bank 1 while load write tag 30 targets 0x780 on bank 0.
+      The read and write addresses differ, so this is not a d=3 RAW: the
+      fixed-latency read schedule and always-ready write path contended for
+      the same single-port ACC bank.
+    fix_applied: >-
+      VX_gemm_acc_internal now gives a scheduled compute read priority and
+      deasserts wr_req_ready for an unrelated same-bank write. The existing
+      ordered core result queue retains the stable write until acceptance. An
+      exact-address collision is fatal rather than being hidden by arbitration.
+      Added an M=5 seamless QROW load/accumulate test that requires write
+      backpressure, ordered completion, ten writes, two command-final pulses,
+      and correct data for all five rows.
+    lesson: >-
+      Early scheduling avoids a future producer slot but can still collide
+      with an unrelated older write on the physical single-port bank. Resolve
+      that structural conflict at the backend handshake, while preserving RAW
+      failures as assertions.
+  - timestamp: "2026-09-04 23:05"
+    phase: mxu16_blackbox_fixed_seed
+    status: sim_fail
+    summary: >-
+      After the required five-case matrix passed on one frozen image, the
+      fixed-seed M=18, N=78, K=22, QBLK=32, WTRANS=1, QDIR=0 case completed
+      without an RTL assertion but reported 226/1440 numerical mismatches.
+      A reduced N=32 diagnostic reproduced the first failure at m=8,n=16 and
+      reported 110/576 mismatches.
+    verification: >-
+      build_mxu16_accept_final3: ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw --args
+      '-m 18 -n 78 -k 22 -q 32 -t 1 -d 0 -r 1' --debug 1
+    root_cause: >-
+      The output FSM and host detiler agree on an 8-row-aligned 768-byte
+      stride between 18x16 output slots. Such a slot starts at 64-byte DMA
+      channel 4 and its nine-beat payload wraps through channels 0..3. The
+      DMA descriptor decoder stripped the start-channel bits from the TMEM
+      base but assigned that same bank-local base to every channel, omitting
+      the one-word carry for wrapped channels. Consequently rows 8..15 of the
+      affected N microtile read the preceding bank-local word.
+    fix_applied: >-
+      VX_gemm_tmem_dma_ctrl now adds one 64-byte bank-local word to channels
+      whose first logical beat wraps past channel 7, for both load and store
+      descriptors. Added a directed nine-beat store starting on channel 4;
+      it checks channels 0..3 receive the carried TMEM base, channel 4 receives
+      two beats, all HBM bases remain in logical order, and emits the
+      TMEM_START_CHANNEL_WRAP_PASS marker.
+    lesson: >-
+      Removing interleaved channel bits is not just a shift of the common base:
+      a nonzero start channel needs a per-channel quotient carry when the
+      linear transfer wraps. Aligned starts and transfers of at most one beat
+      per active channel cannot expose this alias.
+  - timestamp: "2026-09-04 23:20"
+    phase: mxu16_standalone_weight_layout
+    status: sim_fail
+    summary: >-
+      The standalone tile_weight_w4a16 case K=17, N=18, WTRANS=0 completed but
+      reported 121/512 byte mismatches. The first mismatch was destination
+      byte 8, got 0x08 instead of 0x09. The earlier N=17 attempt is excluded
+      because packed INT4 storage requires an even N.
+    verification: >-
+      build_mxu16_accept_final4: ci/run_black.sh xrt-vcs-sim --app
+      tile_weight_w4a16 --args '-k 17 -n 18 -t 0' --debug 3
+    root_cause: >-
+      Both WTRANS=0 kernel paths retained an MXU32-specific 16-byte copy. An
+      MXU16 packed N microtile is only MXU_NT/2 = 8 bytes. In the general tail
+      path, adjacent threads therefore overlapped destination chunks and a
+      non-power-of-two N also made later packed source rows unsuitable for
+      uint64_t pointer assumptions. The flat full-prefill path had the same
+      extra second 64-bit store. WTRANS=1 and source-transposed WTRANS=1 use
+      explicit nibble repacking or one-byte copies and do not share this bug.
+    fix_applied: >-
+      The general WTRANS=0 path now copies exactly pair_per_n_sub bytes with
+      byte-granular tail-safe accesses. The aligned flat path retains one
+      64-bit transfer for MXU16 and conditionally emits the second transfer
+      only for the supported MXU32 profile. The PyTorch launcher struct was
+      also brought back into exact alignment with the shared kernel ABI by
+      adding the log2_n and flat-mode fields; it explicitly selects the
+      general 3-D path. Comments now describe the logical packed-microtile
+      width instead of a fixed 16-byte chunk.
+    lesson: >-
+      INT4 weight vector bytes scale as MXU_NT/2. Parameterizing only loop
+      indices is insufficient when a fast path still has a fixed number of
+      machine-word loads or stores; tail paths must also avoid assuming that
+      packed row strides are naturally aligned.
+  - timestamp: "2026-09-04 23:27"
+    phase: final_functional_acceptance
+    status: pass
+    summary: >-
+      Fresh MXU16 controller verification proved the nonzero-start-channel
+      quotient carry. A new current-source xrt-vcs-sim image then passed the
+      original failing random case, all five required numerical matrix cases,
+      four fixed-seed random cases, and a 192x160x256 QROW/transpose stress
+      case. All MXU16 blackbox results used one simv sha256
+      42b6e97232df507abb75f362536ad4593b2bb24d40348cd0fee0aa38417573fa.
+    verification: >-
+      build_mxu16_accept_final4 with the target config and ci/run_black.sh
+      xrt-vcs-sim; exact commands and retained logs are listed in
+      agent-tasks/mxu-16x16-support/verification-results.md.
+    lesson: >-
+      Required boundary cases and randomized cases are complementary. The
+      original five-case matrix covered configuration, tails, QDIR/WTRANS,
+      and outer tiles, while a non-power-of-two output-slot stride was needed
+      to expose the interleaved-channel quotient carry.
+  - timestamp: "2026-09-04 23:27"
+    phase: compatibility_and_software_closure
+    status: pass
+    summary: >-
+      Current-source MXU32 QCOL and QROW cases passed one forced-rebuilt image.
+      Standalone MXU16 input, output, scale/ZP, and five weight-layout variants
+      passed byte-for-byte checks after correcting the weight copy width.
+      Generated-geometry simx passed the differential fpint case, legacy
+      fi_gemm rejects MXU16 explicitly and preprocesses for MXU32, and XRT
+      remains unchanged at its 64-byte physical mapping.
+    verification: >-
+      See agent-tasks/mxu-16x16-support/verification-results.md and its linked
+      wrapper/application/focused-test logs.
+    lesson: >-
+      Keeping the 64-byte contract at the HBM/XRT boundary localizes width
+      conversion to the TMEM pair adapter. Software layout code must still
+      derive every packed microtile byte count from MXU geometry, including
+      optimized flat-copy paths and launcher ABI fields.
+results:
+  - name: focused_rtl_suite
+    status: pass
+    tests:
+      - tmem_dma_pair_adapter
+      - tmem_switch_16bank
+      - gemm_fsm
+      - gemm_tmem_dma_ctrl
+      - gemm_unit_v2
+      - gemm_node_improve_mxu16_smoke
+    logs: agent-tasks/mxu-16x16-support/logs/focused
+  - name: mxu16_required_matrix
+    status: pass
+    build: build_mxu16_accept_final4
+    simv_sha256: 42b6e97232df507abb75f362536ad4593b2bb24d40348cd0fee0aa38417573fa
+    cases: 5
+    logs: agent-tasks/mxu-16x16-support/logs/mxu16_final4_case*_app.log
+  - name: mxu16_fixed_seed_random
+    status: pass
+    seed: "0x16"
+    build: build_mxu16_accept_final4
+    simv_sha256: 42b6e97232df507abb75f362536ad4593b2bb24d40348cd0fee0aa38417573fa
+    cases: 4
+    logs: agent-tasks/mxu-16x16-support/logs/mxu16_final4_random_seed16_case*_app.log
+  - name: mxu16_functional_stress
+    status: pass
+    args: "-m 192 -n 160 -k 256 -q 32 -t 1 -d 1 -r 1"
+    log: agent-tasks/mxu-16x16-support/logs/mxu16_final4_stress_app.log
+  - name: mxu32_current_source_compatibility
+    status: pass
+    build: build_mxu32_compat_final
+    simv_sha256: f3fa06eaece942d535ab3e37882ff461225bc0d1a5ae249bba31522d6982bcf1
+    cases: 2
+    logs:
+      - agent-tasks/mxu-16x16-support/logs/mxu32_final4_qcol_rebuild_app.log
+      - agent-tasks/mxu-16x16-support/logs/mxu32_final4_qrow_app.log
+  - name: mxu16_standalone_layout_contracts
+    status: pass
+    coverage: input, output, QCOL/QROW scale-zero, weight general/flat/transpose
+    logs: agent-tasks/mxu-16x16-support/logs/layout_*_app.log
+  - name: mxu16_simx_differential
+    status: pass
+    args: "-m 18 -n 78 -k 22 -q 32 -t 1 -d 0 -r 1"
+    log: agent-tasks/mxu-16x16-support/logs/simx_mxu16_m18_n78_k22_t1_d0.log
+  - name: legacy_fi_gemm_profile_contract
+    status: pass
+    mxu16: explicit_compile_time_rejection
+    mxu32: preprocess_pass
+    logs:
+      - agent-tasks/mxu-16x16-support/logs/fi_gemm_mxu16_rejection.log
+      - agent-tasks/mxu-16x16-support/logs/fi_gemm_mxu32_preprocess.log
+pitfalls:
+  - >-
+    A generic buffered splitter can report wide acceptance before both physical
+    bank writes commit, allowing early DMA completion.
+  - >-
+    The existing multi-bank mapping c+k*NUM_DMA_CHANNELS does not produce the
+    required consecutive bank pairs; MXU16 must map channel c to 2*c and 2*c+1.
+  - >-
+    QCOL floor division loses the K=16, QBLK=32 group; all producers and the
+    RTL stride calculation must use ceiling division.
+  - >-
+    VCS generated artifacts can be stale. Baseline and target profiles require
+    separate configured build directories and a forced fresh RTL image.
+  - >-
+    A detached git worktree does not automatically contain ignored Bender
+    checkouts or initialized submodule contents. SoftFloat must also be built
+    with position-independent code before linking libxrtsim_vcs.so.
+  - >-
+    gemm_node_improve requires CVFPU's nested common_cells submodule even when
+    the target change is in TMEM; initialize recursive RTL dependencies before
+    treating a missing source as a design compile failure.
+  - >-
+    The same unittest also imports third_party/axi through its common FP build
+    prerequisite; an empty AXI gitlink is another infrastructure failure, not
+    evidence against the MXU16 RTL.

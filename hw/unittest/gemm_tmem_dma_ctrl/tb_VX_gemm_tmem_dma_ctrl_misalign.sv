@@ -1634,6 +1634,46 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign #(
       gemm_unified_cmd_t c;
       logic [63:0] tmem_byte_addr;
       logic [63:0] hbm_byte_addr;
+      logic [63:0] bank_local_base;
+      int logical_ch;
+      clear_cfg_scoreboard();
+      // Nine 64-byte beats starting on channel 4 wrap through channels 0..3.
+      // Wrapped channels must advance one bank-local word; otherwise the
+      // second eight-row output stripe aliases the preceding N microtile.
+      tmem_byte_addr = 64'h0000_0000_0000_0300;
+      hbm_byte_addr  = 64'h0000_0000_0004_0300;
+      bank_local_base = exp_tmem_bank_local_byte_addr(tmem_byte_addr);
+      c = '0;
+      c.instr    = make_instr(OP_DMA_ST, 28'd576);
+      c.rs1_data = hbm_byte_addr;
+      c.rs2_data = tmem_byte_addr;
+      c.stride   = {16'd512, 16'd64};
+      c.bound    = 16'd1;
+      gemm_dma_ctrl_if.cmd = c;
+      pulse_start();
+      repeat (5) @(posedge clk);
+      expect_cfg_count(8, "st_nonzero_start_wrap");
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        logical_ch = (ch + NUM_CHANNELS - 4) % NUM_CHANNELS;
+        expect_channel_active(ch, 1'b1, "st_nonzero_start_wrap");
+        expect_cfg_reg(ch, DMA_R_SRC_BASE_LO,
+          bank_local_base[31:0]
+            + ((ch < 4) ? 32'(`MEM_BLOCK_SIZE) : 32'd0),
+          "st_nonzero_start_wrap");
+        expect_cfg_reg(ch, DMA_R_DST_BASE_LO,
+          hbm_byte_addr[31:0] + logical_ch * 32'(`MEM_BLOCK_SIZE),
+          "st_nonzero_start_wrap");
+        expect_cfg_reg(ch, DMA_R_BND1,
+          (ch == 4) ? 32'd2 : 32'd1, "st_nonzero_start_wrap");
+      end
+      $display("TMEM_START_CHANNEL_WRAP_PASS start_ch=4 words=9 wrapped_channels=0xf");
+      complete_active_channels_exact(1'b1, "st_nonzero_start_wrap");
+    end
+
+    begin
+      gemm_unified_cmd_t c;
+      logic [63:0] tmem_byte_addr;
+      logic [63:0] hbm_byte_addr;
       logic [63:0] spec_bank_local_byte;
       logic [31:0] tmem_byte_stride;
       int          exp_ch;

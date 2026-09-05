@@ -23,6 +23,7 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/VX_node_done_if.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
         $(RTL_DIR)/mem/VX_mem_bus_if.sv \
+        $(RTL_DIR)/mem/VX_tmem_dma_pair_adapter.sv \
         $(RTL_DIR)/mem/VX_tmem_subsystem.sv
 
 INCDIRS_ := $(ROOT_DIR)/hw \

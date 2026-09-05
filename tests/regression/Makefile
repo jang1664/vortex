@@ -6,6 +6,7 @@ TEST_DIRS := \
 	basic \
 	conv3 \
 	cta \
+	cta_resource \
 	dequant_hbm_energy \
 	dequantize_pt_int4 \
 	demo \

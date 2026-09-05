@@ -185,6 +185,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         ("ACC launch must retain the two-cycle post-pop schedule"))
     `VX_STATIC_ASSERT(L_R == 1 && L_A == 1 && L_P == 0,
         ("same-address history forwarding requires fixed 1/1/0 ACC latency"))
+    `VX_STATIC_ASSERT(MERGER_CTRL_IDX + K_LOOKBACK == WRITE_CTRL_IDX - 1,
+        ("d=3 ACC RAW hold must precede the producer write by one cycle"))
     `VX_STATIC_ASSERT(MXU_OUT_DLY == 5,
         ("GEMM-tree and correction latency contract must be five cycles"))
     `VX_STATIC_ASSERT(MERGED_RESULT_FIFO_DEPTH
@@ -552,6 +554,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic [7:0] zreg_pending_count [0:1];
     logic post_launch_forward;
     logic post_launch_history_forward;
+    logic post_head_d3_raw_stall;
     logic post_launch_early;
     gemm_input_ctrl_t acc_launch_ctrl_q;
     logic acc_launch_valid_q;
@@ -787,6 +790,37 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
        && ctrl_pipe[MERGER_CTRL_IDX+1].valid
        && ctrl_pipe[MERGER_CTRL_IDX+1].acc_wr_en
        && (ctrl_pipe[MERGER_CTRL_IDX+1].acc_wr_addr
+        == int2fp_result_data_out.ctrl.acc_rd_addr);
+    // A full-rate three-row stream can have an exact-address producer at d=3
+    // while the d=2 transaction merely aliases its physical ACC bank.  The
+    // d=2 alias would select the producer's write slot for an early read; a
+    // nominal read would then collide with the following same-bank write.
+    // Hold the result-FIFO head for one cycle so both writes advance before
+    // the request enters the fixed-latency ACC read path.
+    assign post_head_d3_raw_stall
+        = (!int2fp_result_empty || int2fp_result_push)
+       && int2fp_result_data_out.ctrl.acc_rd_en
+       && !(ctrl_pipe[MERGER_CTRL_IDX].valid
+         && ctrl_pipe[MERGER_CTRL_IDX].acc_wr_en
+         && (ctrl_pipe[MERGER_CTRL_IDX].acc_wr_addr
+          == int2fp_result_data_out.ctrl.acc_rd_addr))
+       && !(ctrl_pipe[MERGER_CTRL_IDX+1].valid
+         && ctrl_pipe[MERGER_CTRL_IDX+1].acc_wr_en
+         && (ctrl_pipe[MERGER_CTRL_IDX+1].acc_wr_addr
+          == int2fp_result_data_out.ctrl.acc_rd_addr))
+       && ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK-1].valid
+       && ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK-1].acc_wr_en
+       && ({ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK-1].acc_wr_addr[
+                  `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1],
+             ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK-1].acc_wr_addr[
+                  `CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)]}
+        == {int2fp_result_data_out.ctrl.acc_rd_addr[
+                  `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1],
+             int2fp_result_data_out.ctrl.acc_rd_addr[
+                  `CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)]})
+       && ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].valid
+       && ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].acc_wr_en
+       && (ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].acc_wr_addr
         == int2fp_result_data_out.ctrl.acc_rd_addr);
     // Immediate and history forwarding are arithmetic-pipeline dependencies
     // and remain in the core.  The backend alone classifies whether a
@@ -1691,6 +1725,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         = (!int2fp_result_empty || int2fp_result_push)
        && post_txn_space
        && !rd_hold_valid
+       && !post_head_d3_raw_stall
        && ((int2fp_result_data_out.ctrl.quant_dir == `QDIR_ROW)
         || (qcol_scale_ready && out_scaler_input_ready));
     assign scaler_consumer_fire = int2fp_result_pop;
@@ -2550,6 +2585,16 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                 assert (ctrl_pipe[MERGER_CTRL_IDX+1].acc_wr_addr
                      == int2fp_result_data_out.ctrl.acc_rd_addr)
                     else $fatal(1, "GEMM v2 history forwarding launch address mismatch");
+            end
+            if (post_head_d3_raw_stall === 1'b1) begin
+                assert (ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].valid
+                     && ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].acc_wr_en)
+                    else $fatal(1, "GEMM v2 d=3 RAW stall has no prior writer");
+                assert (ctrl_pipe[MERGER_CTRL_IDX+K_LOOKBACK].acc_wr_addr
+                     == int2fp_result_data_out.ctrl.acc_rd_addr)
+                    else $fatal(1, "GEMM v2 d=3 RAW stall address mismatch");
+                assert (!int2fp_result_pop)
+                    else $fatal(1, "GEMM v2 d=3 RAW hazard escaped result FIFO");
             end
             if (post_txn_launch
              && post_txn_forward[post_txn_rd_ptr]) begin

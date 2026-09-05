@@ -77,10 +77,10 @@ static void cpu_detile_output(const std::vector<uint16_t>& h_src,
     uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
                     ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
     for (uint32_t n = 0; n < N_real; n++) {
-      uint32_t nt32 = n / TILE_DMA_MXU_NT;
+      uint32_t nt_mxu = n / TILE_DMA_MXU_NT;
       uint32_t n_in_sub = n % TILE_DMA_MXU_NT;
       uint64_t src_elem = uint64_t(mt) * TILE_DMA_MT * N_pad
-                        + uint64_t(nt32) * cm * TILE_DMA_MXU_NT
+                        + uint64_t(nt_mxu) * cm * TILE_DMA_MXU_NT
                         + uint64_t(m0) * TILE_DMA_MXU_NT
                         + n_in_sub;
       uint16_t v = h_src[src_elem];

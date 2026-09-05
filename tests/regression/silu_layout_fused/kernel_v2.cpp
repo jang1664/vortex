@@ -61,8 +61,8 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
   const uint32_t log2_mt     = arg->log2_mt;
-  const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
-  // Current fpint tiles use MXU_KT == MXU_NT == 32; reuse the existing ABI field.
+  // The legacy field name is retained, but GEMM-C layout uses the generated
+  // MXU_NT value supplied by the host.
   const uint32_t log2_mxu_nt = arg->log2_mxu_kt;
   const uint64_t layout_mask =
       (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) ? ~uint64_t(0) : uint64_t(0);
@@ -81,8 +81,8 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   if (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) {
 #ifdef SILU_LINEAR_SKIP_PAD_ROWS
     if (M_real != M_pad && M_real < mt && is_power_of_two(M_real)) {
-      // Generation uses M=1/2/4 with M_pad=8. Compact useful elements in a
-      // 32-column slot occupy [M_real][32]; insert each [M_pad][32] tile gap
+      // Generation uses M=1/2/4 with M_pad=8. Compact useful elements in an
+      // MXU_NT-column slot occupy [M_real][MXU_NT]; insert each padded tile gap
       // with shifts while avoiding all padded-row SiLU evaluations.
       const uint32_t log2_m = __builtin_ctz(M_real);
       const uint32_t log2_compact_group = log2_m + log2_mxu_nt;

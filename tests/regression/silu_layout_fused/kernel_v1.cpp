@@ -67,10 +67,10 @@ void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
 
-  constexpr uint32_t MXU_KT      = TILE_DMA_MXU_KT;     // 32
-  constexpr uint32_t LOG2_MXU_KT = 5;
+  constexpr uint32_t MXU_KT      = TILE_DMA_MXU_KT;
   constexpr uint32_t MXU_KT_MASK = MXU_KT - 1;
-  constexpr uint32_t DMA_KT      = TILE_DMA_KT;          // 128
+  constexpr uint32_t DMA_KT      = TILE_DMA_KT;
+  const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
 
   const uint32_t kt = blockIdx.z;
   const uint32_t kb = blockIdx.y;
@@ -78,7 +78,7 @@ void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   if (mk >= M_real * MXU_KT) return;          // real rows only
 
-  const uint32_t m        = mk >> LOG2_MXU_KT;
+  const uint32_t m        = mk >> log2_mxu_kt;
   const uint32_t k_in_sub = mk & MXU_KT_MASK;
   const uint32_t gk       = kt * DMA_KT + kb * MXU_KT + k_in_sub;
 

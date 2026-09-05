@@ -2,12 +2,13 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 // Tile-layout constants — must match
 // tests/regression/fpint_gemm_ffn_hw/common.h
 #define TILE_DMA_MT      128
 #define TILE_DMA_KT      128
-#define TILE_DMA_MXU_KT   32
+#define TILE_DMA_MXU_KT  MXU_ROW
 
 // Input A is fp16 (2 bytes per element).
 #define TILE_ELEM_BYTES 2

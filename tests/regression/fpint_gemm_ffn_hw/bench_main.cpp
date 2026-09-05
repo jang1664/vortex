@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <vortex.h>
 #include "common.h"
+#include "layout.h"
 #include "bench_util.h"
 
 #define RT_CHECK(_expr)                                         \
@@ -57,19 +58,12 @@ static vx_buffer_h C_buffer = nullptr;
 static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
 static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (full N-tile for TMEM sizing)
 static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
-static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
-static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32
+static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;
+static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;
+static constexpr uint32_t DMA_MXU_COL_TILE = GEMM_MXU_COL_TILE;
 
 static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 512;
 static constexpr uint64_t DRAM_ALIGN_BYTES = 512;
-
-static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
-  return (a == 0) ? x : ((x + a - 1) / a) * a;
-}
-
-static constexpr uint32_t align_up8_u32(uint32_t x) {
-  return (x + 7u) & ~7u;
-}
 
 static void cleanup() {
   if (A_buffer) vx_mem_free(A_buffer);
@@ -207,16 +201,17 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 static size_t input_total_bytes() {
   uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
   uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
-  size_t total = 0;
+  uint64_t total = 0;
   for (uint32_t mt = 0; mt < m_tiles; ++mt) {
     uint32_t cur_m = std::min(DMA_MT, M - mt * DMA_MT);
-    uint32_t cur_m_slot = align_up8_u32(cur_m);
     for (uint32_t kt = 0; kt < k_tiles; ++kt) {
       uint32_t cur_k = std::min(DMA_KT, K - kt * DMA_KT);
-      total += size_t(cur_m_slot) * cur_k * 2;
+      const auto bytes = fpint_gemm_layout::input_slot_bytes(cur_m, cur_k);
+      assert(bytes.transfer <= bytes.reserved);
+      total = fpint_gemm_layout::checked_add(total, bytes.reserved);
     }
   }
-  return total;
+  return fpint_gemm_layout::to_size(total);
 }
 
 static void convert_input_tiled(const std::vector<uint16_t>& h_A,
@@ -224,23 +219,25 @@ static void convert_input_tiled(const std::vector<uint16_t>& h_A,
   uint32_t m_tiles  = (M + DMA_MT - 1) / DMA_MT;
   uint32_t k_tiles  = (K + DMA_KT - 1) / DMA_KT;
 
-  size_t total = 0;
+  uint64_t total = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    uint32_t cur_m_slot = align_up8_u32(cur_m);
     for (uint32_t kt = 0; kt < k_tiles; kt++) {
       uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-      total += size_t(cur_m_slot) * cur_k * 2;
+      const auto bytes = fpint_gemm_layout::input_slot_bytes(cur_m, cur_k);
+      assert(bytes.transfer <= bytes.reserved);
+      total = fpint_gemm_layout::checked_add(total, bytes.reserved);
     }
   }
-  tiled.assign(total, 0);
+  tiled.assign(fpint_gemm_layout::to_size(total), 0);
 
   size_t slot_off = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    uint32_t cur_m_slot = align_up8_u32(cur_m);
     for (uint32_t kt = 0; kt < k_tiles; kt++) {
       uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+      const auto bytes = fpint_gemm_layout::input_slot_bytes(cur_m, cur_k);
+      assert(bytes.transfer <= bytes.reserved);
       uint32_t k_micros = cur_k / DMA_MXU_KT;
       size_t idx = slot_off;
       for (uint32_t kb = 0; kb < k_micros; kb++) {
@@ -254,7 +251,7 @@ static void convert_input_tiled(const std::vector<uint16_t>& h_A,
           }
         }
       }
-      slot_off += size_t(cur_m_slot) * cur_k * 2;
+      slot_off += fpint_gemm_layout::to_size(bytes.reserved);
     }
   }
 }
@@ -263,14 +260,18 @@ static void convert_input_tiled(const std::vector<uint16_t>& h_A,
 static size_t weight_total_bytes() {
   uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles = N / DMA_MXU_NT;
-  size_t seg = (WTRANS == 0) ? DMA_MXU_KT * (DMA_MXU_NT / 2)
-                              : DMA_MXU_NT * (DMA_MXU_KT / 2);
-  size_t total = 0;
+  const auto microtile =
+      fpint_gemm_layout::weight_microtile_bytes(DMA_MXU_KT, DMA_MXU_NT);
+  assert(microtile.transfer <= microtile.reserved);
+  const uint64_t seg = microtile.payload;
+  uint64_t total = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
     uint32_t cur_k = std::min(DMA_KT, K - kt * DMA_KT);
-    total += n_tiles * (cur_k / DMA_MXU_KT) * seg;
+    total = fpint_gemm_layout::checked_add(
+        total, fpint_gemm_layout::checked_mul3(
+            n_tiles, cur_k / DMA_MXU_KT, seg));
   }
-  return total;
+  return fpint_gemm_layout::to_size(total);
 }
 
 static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
@@ -278,14 +279,18 @@ static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
   uint32_t k_tiles   = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles   = N / DMA_MXU_NT;
 
-  size_t seg = (WTRANS == 0) ? DMA_MXU_KT * (DMA_MXU_NT / 2)
-                              : DMA_MXU_NT * (DMA_MXU_KT / 2);
-  size_t total = 0;
+  const auto microtile =
+      fpint_gemm_layout::weight_microtile_bytes(DMA_MXU_KT, DMA_MXU_NT);
+  assert(microtile.transfer <= microtile.reserved);
+  const uint64_t seg = microtile.payload;
+  uint64_t total = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
     uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-    total += n_tiles * (ck / DMA_MXU_KT) * seg;
+    total = fpint_gemm_layout::checked_add(
+        total, fpint_gemm_layout::checked_mul3(
+            n_tiles, ck / DMA_MXU_KT, seg));
   }
-  tiled.resize(total);
+  tiled.resize(fpint_gemm_layout::to_size(total));
   size_t idx = 0;
 
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
@@ -323,11 +328,10 @@ static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
 
 // Scale/zp tiled: 512B-aligned slot per (kt, nt_dma).
 static size_t scale_slot_bytes(uint32_t ck, uint32_t cn) {
-  uint32_t ng_per_mxu_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-  size_t actual = (QDIR == 0)
-                    ? (size_t(ck / QBLK) * cn * 2)
-                    : (size_t(cn / DMA_MXU_NT) * ck * ng_per_mxu_nt * 2);
-  return (actual + 511u) & ~size_t(511u);
+  const auto bytes = fpint_gemm_layout::qparam_slot_bytes(
+      ck, cn, DMA_MXU_NT, QBLK, QDIR);
+  assert(bytes.transfer <= bytes.reserved);
+  return fpint_gemm_layout::to_size(bytes.reserved);
 }
 
 template <typename T>
@@ -338,14 +342,15 @@ static void fill_scale_zp_slot(const std::vector<T>& h_src,
                                uint32_t cur_nb_per_nt) {
   uint32_t ng_total            = (N + QBLK - 1) / QBLK;
   uint32_t full_groups_per_kt  = DMA_KT / QBLK;
-  uint32_t ng_per_mxu_nt       = (DMA_MXU_NT + QBLK - 1) / QBLK;
+  uint32_t ng_per_mxu_nt =
+      fpint_gemm_layout::qrow_groups_per_mxu_nt(DMA_MXU_NT, QBLK);
   uint32_t mxu_per_dma_nt      = DMA_NT / DMA_MXU_NT;
 
   size_t idx = slot_off;
   for (uint32_t nb = 0; nb < cur_nb_per_nt; nb++) {
     uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
     if (QDIR == 0) {
-      uint32_t cur_groups = cur_k / QBLK;
+      uint32_t cur_groups = fpint_gemm_layout::qcol_groups(cur_k, QBLK);
       for (uint32_t g = 0; g < cur_groups; g++) {
         for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
           uint32_t global_g = kt * full_groups_per_kt + g;
@@ -371,15 +376,16 @@ static void fill_scale_zp_slot(const std::vector<T>& h_src,
 static size_t scale_total_bytes() {
   uint32_t k_tiles     = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles_dma = (N + DMA_NT - 1) / DMA_NT;
-  size_t total = 0;
+  uint64_t total = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
     uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
     for (uint32_t nt_dma = 0; nt_dma < n_tiles_dma; nt_dma++) {
       uint32_t cur_n = ((N - nt_dma * DMA_NT) < DMA_NT) ? (N - nt_dma * DMA_NT) : DMA_NT;
-      total += scale_slot_bytes(cur_k, cur_n);
+      total = fpint_gemm_layout::checked_add(
+          total, scale_slot_bytes(cur_k, cur_n));
     }
   }
-  return total;
+  return fpint_gemm_layout::to_size(total);
 }
 
 static void convert_scale_tiled(const std::vector<uint16_t>& h_scales,
@@ -427,23 +433,30 @@ static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
 static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
   uint32_t groups_tile = DMA_KT / QBLK;
   uint32_t nb_per_nt = DMA_NT / DMA_MXU_NT;
-  uint32_t ng_per_mxu_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
+  uint32_t ng_per_mxu_nt =
+      fpint_gemm_layout::qrow_groups_per_mxu_nt(DMA_MXU_NT, QBLK);
 
-  uint64_t tmem_ibuf_bytes  = uint64_t(DMA_MT) * DMA_KT * 2;
-  uint64_t tmem_wbuf_bytes  = uint64_t(DMA_KT) * ((DMA_NT + 1) / 2);
+  uint64_t tmem_ibuf_bytes =
+      fpint_gemm_layout::checked_mul3(DMA_MT, DMA_KT, 2);
+  uint64_t tmem_wbuf_bytes = fpint_gemm_layout::checked_mul(
+      DMA_KT, (DMA_NT + 1) / 2);
   uint64_t tmem_scbuf_bytes = (QDIR == 0)
-                                ? (uint64_t(groups_tile) * DMA_NT * 2)
-                                : (uint64_t(DMA_KT) * nb_per_nt * ng_per_mxu_nt * 2);
+      ? fpint_gemm_layout::checked_mul3(groups_tile, DMA_NT, 2)
+      : fpint_gemm_layout::checked_mul3(
+            fpint_gemm_layout::checked_mul(DMA_KT, nb_per_nt),
+            ng_per_mxu_nt, 2);
   uint64_t tmem_zpbuf_bytes = tmem_scbuf_bytes;
-  uint64_t tmem_obuf_bytes  = uint64_t(DMA_MT) * DMA_NT * 2;
+  uint64_t tmem_obuf_bytes =
+      fpint_gemm_layout::checked_mul3(DMA_MT, DMA_NT, 2);
 
   uint64_t cur = 0;
 
   auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
-    cur = align_up_u64(cur, TMEM_LAYOUT_ALIGN_BYTES);
-    if (bytes > (tensor_mem_size - cur)) return false;
+    cur = fpint_gemm_layout::align_up(cur, TMEM_LAYOUT_ALIGN_BYTES);
+    if (cur > tensor_mem_size || bytes > (tensor_mem_size - cur)) return false;
     out_base = cur;
-    cur += align_up_u64(bytes, TMEM_LAYOUT_ALIGN_BYTES);
+    cur = fpint_gemm_layout::checked_add(
+        cur, fpint_gemm_layout::align_up(bytes, TMEM_LAYOUT_ALIGN_BYTES));
     return true;
   };
 
@@ -555,6 +568,8 @@ int main(int argc, char *argv[]) {
              static_cast<unsigned long long>(bench.power_csv_max_bytes));
     }
     printf("\n");
+    printf("Active MXU profile: MXU_ROW=%u MXU_COL=%u MXU_COL_TILE=%u\n",
+           DMA_MXU_KT, DMA_MXU_NT, DMA_MXU_COL_TILE);
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -594,13 +609,19 @@ int main(int argc, char *argv[]) {
   const size_t qparam_bytes = scale_total_bytes();
 
   // Reserve padded output slots; the kernel writes only real M rows in each slot.
-  uint32_t m_tiles = (M_pad + DMA_MT - 1) / DMA_MT;
+  uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
   uint32_t n_tiles = N / DMA_MXU_NT;
-  size_t out_total_bytes = 0;
+  uint64_t out_total_bytes_u64 = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
-    out_total_bytes += n_tiles * cur_m_pad * DMA_MXU_NT * 2;
+    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
+    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, DMA_MXU_NT);
+    assert(bytes.transfer <= bytes.reserved);
+    out_total_bytes_u64 = fpint_gemm_layout::checked_add(
+        out_total_bytes_u64,
+        fpint_gemm_layout::checked_mul(n_tiles, bytes.reserved));
   }
+  const size_t out_total_bytes =
+      fpint_gemm_layout::to_size(out_total_bytes_u64);
 
   // ---- Allocate device buffers ----
   RT_CHECK(vx_mem_alloc_aligned(device, input_bytes,         DRAM_ALIGN_BYTES, VX_MEM_READ,  &A_buffer));

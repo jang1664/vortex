@@ -13,6 +13,7 @@
 
 #define GEMM_MXU_KT MXU_ROW
 #define GEMM_MXU_NT MXU_COL
+#define GEMM_MXU_COL_TILE MXU_COL_TILE
 
 // Job descriptor register indices.
 #define REG_CONTROL             0

@@ -1,0 +1,17 @@
+C1 S4 free-running acceptance failure
+timestamp_kst: 2026-09-03 02:40
+slurm_job_id: 4766
+slurm_job_name: c1-s4-free
+slurm_state: FAILED
+slurm_exit_code: 1:0
+slurm_elapsed: 00:05:56
+slurm_node: fpga
+xrt_device_bdf: 0000:3d:00.1
+xrt_xclbin_path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin
+case: S4
+mode: free-running
+phase: 0
+layer: 0
+vx_ready_timeout_ms: 300000
+last_runtime_error: Vortex kernel wait failed with error -1; the device is poisoned and the process must be restarted
+acceptance_policy: The failed process was terminated without an in-process retry and does not produce an accepted trace.

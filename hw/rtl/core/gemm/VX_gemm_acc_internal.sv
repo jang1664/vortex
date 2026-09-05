@@ -49,6 +49,8 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     logic [2:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0] read_rsp_addr_pipe;
     logic [2:0][1:0] read_rsp_bank_pipe;
     logic [2:0] read_rsp_early_pipe;
+    logic compute_write_bank_conflict;
+    logic compute_write_exact_conflict;
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
     logic [`MXU_COL-1:0] fp16_out_valid;
 
@@ -87,10 +89,11 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
                     `CLOG2(`GEMM_PSUM_DATA_SIZE)];
     endfunction
 
-    // The Phase-1 adapter is intentionally always-accept.  Later phases may
-    // replace it with a variable-latency backend without changing the channel.
+    // Reads retain the fixed-latency always-accept contract.  A scheduled
+    // physical read wins an unrelated same-bank collision; the core's bounded
+    // result queue holds the write request until the bank is free.
     assign acc_if.rd_req_ready = 1'b1;
-    assign acc_if.wr_req_ready = 1'b1;
+    assign acc_if.wr_req_ready = !compute_write_bank_conflict;
     assign acc_if.rd_req_early
         = acc_if.rd_req_valid
        && acc_if.rd_dependency_valid
@@ -217,6 +220,11 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
         = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready
        && !o_lmem_bus_if.req_data.rw;
     assign compute_bank_read_req = early_read_req | nominal_read_req;
+    assign compute_write_bank_conflict
+        = acc_if.wr_req_valid && compute_bank_read_req[write_bank];
+    assign compute_write_exact_conflict
+        = compute_write_bank_conflict
+       && (read_req_addr[write_bank] == acc_if.wr_req_addr);
     assign output_bank_read_req
         = output_read_fire ? (4'b0001 << output_read_bank) : '0;
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
@@ -295,8 +303,12 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
         if (reset === 1'b0) begin
             assert (!(acc_if.rd_req_valid && !acc_if.rd_req_ready))
                 else $fatal(1, "internal ACC unexpectedly stalled read request");
-            assert (!(acc_if.wr_req_valid && !acc_if.wr_req_ready))
-                else $fatal(1, "internal ACC unexpectedly stalled write request");
+            if (acc_if.wr_req_valid && !acc_if.wr_req_ready) begin
+                assert (compute_write_bank_conflict)
+                    else $fatal(1, "internal ACC write stalled without a scheduled bank read");
+                assert (!compute_write_exact_conflict)
+                    else $fatal(1, "internal ACC cannot arbitrate an exact-address read/write RAW");
+            end
             if (acc_if.rd_rsp_valid && !acc_if.rd_rsp_ready) begin
                 $fatal(1, "Phase-1 internal ACC response must be consumed immediately");
             end

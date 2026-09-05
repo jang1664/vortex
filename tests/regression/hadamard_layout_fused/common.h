@@ -2,11 +2,12 @@
 #define _HADAMARD_LAYOUT_FUSED_COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 #define KERNEL_HADAMARD_LAYOUT_FUSED 0
 
 #define HADAMARD_TILE_DMA_MT 128
-#define HADAMARD_TILE_MXU_KT 32
+#define HADAMARD_TILE_MXU_KT MXU_ROW
 
 #define HADAMARD_INPUT_ROW_MAJOR    0
 #define HADAMARD_INPUT_GEMM_A_TILED 1

@@ -2,12 +2,13 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 // Tile-layout constants — must match
 // tests/regression/fpint_gemm_ffn_hw/common.h
 #define TILE_DMA_KT       128
-#define TILE_DMA_MXU_KT    32
-#define TILE_DMA_MXU_NT    32
+#define TILE_DMA_MXU_KT   MXU_ROW
+#define TILE_DMA_MXU_NT   MXU_COL
 
 typedef struct {
   uint32_t grid_dim[3];
@@ -19,7 +20,7 @@ typedef struct {
   uint32_t K;            // weight rows (K)
   uint32_t N;            // weight output channels (N) — packed dim is N/2
   uint32_t WTRANS;       // 0: pack n-pairs, 1: pack k-pairs
-  uint32_t SOURCE_TRANSPOSED; // 1: src is physical W^T [N, K] row-major
+  uint32_t SOURCE_TRANSPOSED; // 1: src [K,N] storage is physical W^T; logical axes swap
 
   uint32_t log2_kt;
   uint32_t log2_mxu_kt;

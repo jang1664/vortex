@@ -187,7 +187,8 @@ int main(int argc, char *argv[]) {
   kernel_arg.size = input_elems;
   kernel_arg.log2_mt = log2_u32(TILE_DMA_MT);
   kernel_arg.log2_kt = log2_u32(TILE_DMA_KT);
-  kernel_arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
+  // Field name is historical; this GEMM-C producer/consumer needs MXU_NT.
+  kernel_arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_NT);
 
   uint32_t total_chunks = M * (K / TILE_DMA_MXU_NT);
   uint32_t blocks = (total_chunks + tpb - 1) / tpb;
