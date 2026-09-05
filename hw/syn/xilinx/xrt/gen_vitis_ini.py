@@ -12,6 +12,10 @@ Options:
     --sp SPEC        Memory connectivity (repeatable)
     --hook-dir DIR   Directory containing hook TCL scripts
     --clock-freq MHZ  Kernel clock frequency in MHz (optional)
+    --place-directive NAME
+                     Select the place_design directive
+    --route-directive NAME
+                     Select the route_design directive
     --ultrathreads   Enable place/route ultrathreads for hardware builds
 """
 
@@ -54,11 +58,24 @@ def build_ini(args):
             hooks.insert(2, ("PLACE_DESIGN", "POST", "post_place_hook.tcl"))
         for step, when, tcl in hooks:
             vivado.append(f"prop=run.impl_1.STEPS.{step}.TCL.{when}={args.hook_dir}/{tcl}")
-    if args.target == "hw" and args.ultrathreads:
-        vivado.extend([
-            "prop=run.impl_1.{STEPS.PLACE_DESIGN.ARGS.MORE OPTIONS}={-ultrathreads}",
-            "prop=run.impl_1.{STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS}={-ultrathreads}",
-        ])
+    if args.target == "hw":
+        if args.place_directive:
+            vivado.append(
+                "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE="
+                f"{args.place_directive}"
+            )
+        if args.route_directive:
+            vivado.append(
+                "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE="
+                f"{args.route_directive}"
+            )
+        if args.ultrathreads:
+            vivado.extend([
+                "prop=run.impl_1.{STEPS.PLACE_DESIGN.ARGS.MORE OPTIONS}="
+                "{-ultrathreads}",
+                "prop=run.impl_1.{STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS}="
+                "{-ultrathreads}",
+            ])
     if args.target == "hw_emu":
         if args.simulator == "xsim":
             if args.debug:
@@ -171,6 +188,10 @@ def main():
                         help="Disable the hardware post-place congestion gate")
     parser.add_argument("--ultrathreads", action="store_true",
                         help="Enable place/route ultrathreads for hardware builds")
+    parser.add_argument("--place-directive", default=None, metavar="NAME",
+                        help="place_design directive (hardware only)")
+    parser.add_argument("--route-directive", default=None, metavar="NAME",
+                        help="route_design directive (hardware only)")
     parser.add_argument("--clock-freq", default=None, metavar="MHZ",
                         help="Kernel clock frequency in MHz")
     parser.add_argument("--simulator", default="xsim", choices=["xsim", "vcs"],

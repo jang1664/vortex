@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
+
+PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1
+TARGET=hw
+CLOCK_FREQ_HZ=100
+
+CONFIG_ARG=""
+POSTFIX=""
+PERF_VALUE=""
+DEBUG_VALUE=""
+FAST_MODE_VALUE="${FAST_MODE:-0}"
+NO_EARLY_FAIL=0
+
+usage() {
+  cat <<'EOF'
+Usage: run_hw.sh --config NAME_OR_PATH [--postfix VALUE] [--perf [VALUE]] [--debug [VALUE]] [--fast_mode] [--no-early-fail]
+
+Options:
+  -c, --config NAME_OR_PATH  Config name or path. A bare name is resolved from
+                             the repository's configs/ directory.
+      --postfix VALUE        Append _VALUE to the config-derived PREFIX.
+      --perf [VALUE]         Pass PERF to make (default value: 1).
+      --debug [VALUE]        Pass DEBUG to make (default value: 3).
+      --fast_mode            Pass FAST_MODE=1 to make, enabling optimize=0,
+                             implementation ultrathreads, and fail-fast.
+      --no-early-fail        Disable the post-place congestion fail-fast gate.
+                             Routing continues at congestion level 7 or higher.
+  -h, --help                 Show this help.
+
+Assignment-style arguments are also accepted:
+  CONFIG=improve_th16_tcol32_hwexp_dcache PERF=1
+  CONFIG=configs/improve_th16_tcol32_hwexp_dcache.sh DEBUG=3
+
+Examples:
+  ./run_hw.sh --config improve_th16_tcol32_hwexp_dcache --perf
+  ./run_hw.sh --config improve_th16_tcol32_hwexp_dcache --fast_mode
+  ./run_hw.sh --config configs/improve_th16_tcol32_hwexp_dcache.sh --debug 3
+  ./run_hw.sh --config improve_th16_tcol32_hwexp_dcache --no-early-fail
+  ./run_hw.sh --config improve_th16_tcol32_hwexp_dcache --postfix v2
+
+The same gate can be controlled with the CONGESTION_FAIL_FAST environment
+variable (1: enabled, 0: disabled). Implementation QoR options may be supplied
+by the sourced config using DMA_CHANNEL_FLOORPLAN, PLACE_DESIGN_DIRECTIVE,
+ROUTE_DESIGN_DIRECTIVE, and IMPL_ULTRATHREADS.
+EOF
+}
+
+fail() {
+  echo "error: $*" >&2
+  exit 2
+}
+
+while (($# > 0)); do
+  case "$1" in
+    -c|--config)
+      (($# >= 2)) || fail "$1 requires a value"
+      CONFIG_ARG="$2"
+      shift 2
+      ;;
+    --config=*)
+      CONFIG_ARG="${1#*=}"
+      shift
+      ;;
+    --postfix)
+      (($# >= 2)) || fail "$1 requires a value"
+      [[ -n "$2" ]] || fail "$1 requires a non-empty value"
+      POSTFIX="$2"
+      shift 2
+      ;;
+    --postfix=*)
+      POSTFIX="${1#*=}"
+      [[ -n "${POSTFIX}" ]] || fail "--postfix requires a non-empty value"
+      shift
+      ;;
+    --perf)
+      PERF_VALUE=1
+      if (($# >= 2)) && [[ "$2" != -* ]]; then
+        PERF_VALUE="$2"
+        shift
+      fi
+      shift
+      ;;
+    --perf=*)
+      PERF_VALUE="${1#*=}"
+      shift
+      ;;
+    --debug)
+      DEBUG_VALUE=3
+      if (($# >= 2)) && [[ "$2" != -* ]]; then
+        DEBUG_VALUE="$2"
+        shift
+      fi
+      shift
+      ;;
+    --debug=*)
+      DEBUG_VALUE="${1#*=}"
+      shift
+      ;;
+    --fast_mode)
+      FAST_MODE_VALUE=1
+      shift
+      ;;
+    --no-early-fail)
+      NO_EARLY_FAIL=1
+      shift
+      ;;
+    CONFIG=*|CONFIG_FILE=*)
+      CONFIG_ARG="${1#*=}"
+      shift
+      ;;
+    PERF=*)
+      PERF_VALUE="${1#*=}"
+      shift
+      ;;
+    DEBUG=*)
+      DEBUG_VALUE="${1#*=}"
+      shift
+      ;;
+    FAST_MODE=*)
+      FAST_MODE_VALUE="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "${CONFIG_ARG}" ]] || {
+  usage >&2
+  exit 2
+}
+[[ -z "${PERF_VALUE}" || "${PERF_VALUE}" =~ ^[0-9]+$ ]] || fail "PERF must be an integer"
+[[ -z "${DEBUG_VALUE}" || "${DEBUG_VALUE}" =~ ^[0-9]+$ ]] || fail "DEBUG must be an integer"
+[[ "${FAST_MODE_VALUE}" =~ ^[01]$ ]] || fail "FAST_MODE must be 0 or 1"
+[[ "${FAST_MODE_VALUE}" == 0 || "${NO_EARLY_FAIL}" == 0 ]] || \
+  fail "--fast_mode cannot be combined with --no-early-fail"
+[[ -z "${POSTFIX}" || "${POSTFIX}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
+  fail "postfix must contain only letters, digits, '.', '_', or '-' and start with a letter or digit"
+
+resolve_config() {
+  local candidate="$1"
+
+  if [[ -f "${candidate}" ]]; then
+    readlink -f "${candidate}"
+    return
+  fi
+  if [[ -f "${REPO_ROOT}/${candidate}" ]]; then
+    readlink -f "${REPO_ROOT}/${candidate}"
+    return
+  fi
+  if [[ "${candidate}" != *.sh ]]; then
+    candidate="${candidate}.sh"
+  fi
+  if [[ -f "${REPO_ROOT}/configs/${candidate}" ]]; then
+    readlink -f "${REPO_ROOT}/configs/${candidate}"
+    return
+  fi
+
+  fail "config not found: $1"
+}
+
+CONFIG_FILE="$(resolve_config "${CONFIG_ARG}")"
+PREFIX="$(basename "${CONFIG_FILE}" .sh)"
+if [[ -n "${POSTFIX}" ]]; then
+  PREFIX="${PREFIX}_${POSTFIX}"
+fi
+
+# Some config files source another file with a repository-relative path.
+cd "${REPO_ROOT}"
+source "${CONFIG_FILE}"
+cd "${SCRIPT_DIR}"
+
+if [[ "${FAST_MODE_VALUE}" == 1 ]]; then
+  CONGESTION_FAIL_FAST_VALUE=1
+elif ((NO_EARLY_FAIL)); then
+  CONGESTION_FAIL_FAST_VALUE=0
+else
+  CONGESTION_FAIL_FAST_VALUE="${CONGESTION_FAIL_FAST:-1}"
+fi
+[[ "${CONGESTION_FAIL_FAST_VALUE}" =~ ^[01]$ ]] || \
+  fail "CONGESTION_FAIL_FAST must be 0 or 1"
+
+DMA_CHANNEL_FLOORPLAN_VALUE="${DMA_CHANNEL_FLOORPLAN:-0}"
+PLACE_DESIGN_DIRECTIVE_VALUE="${PLACE_DESIGN_DIRECTIVE:-}"
+ROUTE_DESIGN_DIRECTIVE_VALUE="${ROUTE_DESIGN_DIRECTIVE:-}"
+IMPL_ULTRATHREADS_VALUE="${IMPL_ULTRATHREADS:-0}"
+[[ "${DMA_CHANNEL_FLOORPLAN_VALUE}" =~ ^[01]$ ]] || \
+  fail "DMA_CHANNEL_FLOORPLAN must be 0 or 1"
+[[ "${IMPL_ULTRATHREADS_VALUE}" =~ ^[01]$ ]] || \
+  fail "IMPL_ULTRATHREADS must be 0 or 1"
+
+OUTPUT_DIR="${PREFIX}_${PLATFORM}_${TARGET}"
+mkdir -p "${OUTPUT_DIR}"
+
+MAKE_ENV=(
+  "PREFIX=${PREFIX}"
+  "PLATFORM=${PLATFORM}"
+  "CONFIGS=${CONFIGS:-}"
+  "TARGET=${TARGET}"
+  "CLOCK_FREQ_HZ=${CLOCK_FREQ_HZ}"
+  "FAST_MODE=${FAST_MODE_VALUE}"
+  "CONGESTION_FAIL_FAST=${CONGESTION_FAIL_FAST_VALUE}"
+  "DMA_CHANNEL_FLOORPLAN=${DMA_CHANNEL_FLOORPLAN_VALUE}"
+  "PLACE_DESIGN_DIRECTIVE=${PLACE_DESIGN_DIRECTIVE_VALUE}"
+  "ROUTE_DESIGN_DIRECTIVE=${ROUTE_DESIGN_DIRECTIVE_VALUE}"
+  "IMPL_ULTRATHREADS=${IMPL_ULTRATHREADS_VALUE}"
+)
+[[ -z "${PERF_VALUE}" ]] || MAKE_ENV+=("PERF=${PERF_VALUE}")
+[[ -z "${DEBUG_VALUE}" ]] || MAKE_ENV+=("DEBUG=${DEBUG_VALUE}")
+
+echo "Config: ${CONFIG_FILE}"
+echo "Prefix: ${PREFIX}"
+echo "PERF:   ${PERF_VALUE:-disabled}"
+echo "DEBUG:  ${DEBUG_VALUE:-disabled}"
+echo "Fast mode: $([[ "${FAST_MODE_VALUE}" == 1 ]] && echo enabled || echo disabled)"
+echo "Congestion early fail: $([[ "${CONGESTION_FAIL_FAST_VALUE}" == 1 ]] && echo enabled || echo disabled)"
+echo "DMA channel floorplan: $([[ "${DMA_CHANNEL_FLOORPLAN_VALUE}" == 1 ]] && echo enabled || echo disabled)"
+echo "Place directive: ${PLACE_DESIGN_DIRECTIVE_VALUE:-default}"
+echo "Route directive: ${ROUTE_DESIGN_DIRECTIVE_VALUE:-default}"
+echo "Implementation ultrathreads: $([[ "${IMPL_ULTRATHREADS_VALUE}" == 1 ]] && echo enabled || echo disabled)"
+
+env "${MAKE_ENV[@]}" make 2>&1 | tee "${OUTPUT_DIR}/${PREFIX}.log"

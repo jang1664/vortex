@@ -117,18 +117,36 @@ proc vortex_dma_channel_cells {channels} {
 # ---------------------------------------------------------------
 # DMA channel placement spread
 #
-# The no-floorplan failing run placed u_tmem_subsystem/u_dma_engine in SLR0
-# and reported overlap nodes in g_channel[4].u_dma_unit together with HMSS
-# path_13 nets. Keep the engine near the SLR0 memory/HMSS interface, but
-# spread channel groups across SLR0 clock regions so channel 4 does not fight
-# neighboring channels in the same route window.
+# The opt_v4 placed checkpoint shows DMA channels 2 and 3 competing in the
+# center of SLR0. Channel 2 fans into HBM ports 8..11 and channel 3 into ports
+# 12..15, so give them separate, adjacent placement neighborhoods. These are
+# deliberately soft placement hints: unrelated logic may share the regions,
+# channel cells may escape when necessary, and routing remains unconstrained.
+# Other DMA channels already form useful local clusters and remain under the
+# placer's control.
 # ---------------------------------------------------------------
-# set dma_ch0_1 [vortex_dma_channel_cells {0 1}]
-# set dma_ch2_3 [vortex_dma_channel_cells {2 3}]
-# set dma_ch4_5 [vortex_dma_channel_cells {4 5}]
-# set dma_ch6_7 [vortex_dma_channel_cells {6 7}]
+set dma_channel_floorplan 0
+if {[info exists ::env(VORTEX_DMA_CHANNEL_FLOORPLAN)]} {
+    set dma_channel_floorplan $::env(VORTEX_DMA_CHANNEL_FLOORPLAN)
+}
+if {$dma_channel_floorplan ni {0 1}} {
+    error "VORTEX_DMA_CHANNEL_FLOORPLAN must be 0 or 1, got '$dma_channel_floorplan'"
+}
 
-# vortex_soft_pblock pblock_dma_ch0_1 CLOCKREGION_X0Y0:CLOCKREGION_X1Y1 $dma_ch0_1
-# vortex_soft_pblock pblock_dma_ch2_3 CLOCKREGION_X2Y0:CLOCKREGION_X3Y1 $dma_ch2_3
-# vortex_soft_pblock pblock_dma_ch4_5 CLOCKREGION_X0Y2:CLOCKREGION_X2Y3 $dma_ch4_5
-# vortex_soft_pblock pblock_dma_ch6_7 CLOCKREGION_X3Y2:CLOCKREGION_X5Y3 $dma_ch6_7
+if {$dma_channel_floorplan} {
+    set design_part [string tolower [get_property PART [current_design]]]
+    if {![string match "xcu55c-*" $design_part]} {
+        error "DMA channel floorplan is calibrated only for XCU55C, got '$design_part'"
+    }
+
+    set dma_ch2 [vortex_dma_channel_cells {2}]
+    set dma_ch3 [vortex_dma_channel_cells {3}]
+    if {[llength $dma_ch2] == 0 || [llength $dma_ch3] == 0} {
+        error "DMA channel floorplan requires non-empty channel 2 and 3 cell sets"
+    }
+
+    vortex_soft_pblock pblock_dma_ch2_hbm8_11 \
+        CLOCKREGION_X0Y1:CLOCKREGION_X1Y3 $dma_ch2
+    vortex_soft_pblock pblock_dma_ch3_hbm12_15 \
+        CLOCKREGION_X2Y1:CLOCKREGION_X3Y3 $dma_ch3
+}

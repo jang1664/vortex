@@ -35,6 +35,8 @@ def make_args(**overrides):
         "profile": False,
         "disable_congestion_fail_fast": False,
         "ultrathreads": False,
+        "place_directive": None,
+        "route_directive": None,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -91,6 +93,31 @@ class GenVitisIniTest(unittest.TestCase):
         lines = self.vivado_lines(target="hw_emu", ultrathreads=True)
         self.assertFalse(any("-ultrathreads" in line for line in lines))
 
+    def test_hw_adds_place_and_route_directives(self):
+        lines = self.vivado_lines(
+            place_directive="Explore",
+            route_directive="AlternateCLBRouting",
+        )
+        self.assertIn(
+            "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE="
+            "Explore",
+            lines,
+        )
+        self.assertIn(
+            "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE="
+            "AlternateCLBRouting",
+            lines,
+        )
+
+    def test_implementation_directives_are_not_added_for_hw_emu(self):
+        lines = self.vivado_lines(
+            target="hw_emu",
+            place_directive="Explore",
+            route_directive="AlternateCLBRouting",
+        )
+        self.assertFalse(any("PLACE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
+        self.assertFalse(any("ROUTE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
+
     def test_makefile_tracks_and_validates_gate_setting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir) / "gate"
@@ -127,7 +154,9 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
-                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1\n",
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
+                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
             stable_mtimes = tuple(
@@ -162,7 +191,9 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("OPT_DESIGN.TCL.PRE", disabled_ini)
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
             self.assertEqual(
-                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0\n",
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0 "
+                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
             self.assertEqual(
@@ -177,9 +208,30 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(reenabled.returncode, 0, reenabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
-                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1\n",
+                "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
+                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
+
+            qor = run_make(
+                0,
+                DMA_CHANNEL_FLOORPLAN=1,
+                PLACE_DESIGN_DIRECTIVE="Explore",
+                ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting",
+                IMPL_ULTRATHREADS=0,
+            )
+            self.assertEqual(qor.returncode, 0, qor.stderr)
+            qor_ini = generated_ini.read_text()
+            self.assertIn(
+                "STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore",
+                qor_ini,
+            )
+            self.assertIn(
+                "STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=AlternateCLBRouting",
+                qor_ini,
+            )
+            self.assertNotIn("-ultrathreads", qor_ini)
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
 
             fast = run_make(0, FAST_MODE=1)
@@ -195,7 +247,9 @@ class GenVitisIniTest(unittest.TestCase):
                 fast_ini,
             )
             self.assertEqual(
-                "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1\n",
+                "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1 "
+                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=1\n",
                 link_stamp.read_text(),
             )
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
@@ -207,6 +261,28 @@ class GenVitisIniTest(unittest.TestCase):
             invalid_fast = run_make(FAST_MODE=2)
             self.assertNotEqual(invalid_fast.returncode, 0)
             self.assertIn("FAST_MODE must be 0 or 1", invalid_fast.stderr)
+
+            invalid_floorplan = run_make(DMA_CHANNEL_FLOORPLAN=2)
+            self.assertNotEqual(invalid_floorplan.returncode, 0)
+            self.assertIn("DMA_CHANNEL_FLOORPLAN must be 0 or 1", invalid_floorplan.stderr)
+
+            invalid_route = run_make(ROUTE_DESIGN_DIRECTIVE="NotADirective")
+            self.assertNotEqual(invalid_route.returncode, 0)
+            self.assertIn("unsupported ROUTE_DESIGN_DIRECTIVE", invalid_route.stderr)
+
+            invalid_place = run_make(PLACE_DESIGN_DIRECTIVE="NotADirective")
+            self.assertNotEqual(invalid_place.returncode, 0)
+            self.assertIn("unsupported PLACE_DESIGN_DIRECTIVE", invalid_place.stderr)
+
+            invalid_ultrathreads = run_make(
+                IMPL_ULTRATHREADS=1,
+                PLACE_DESIGN_DIRECTIVE="Explore",
+            )
+            self.assertNotEqual(invalid_ultrathreads.returncode, 0)
+            self.assertIn(
+                "IMPL_ULTRATHREADS=1 cannot be combined",
+                invalid_ultrathreads.stderr,
+            )
 
 
 if __name__ == "__main__":

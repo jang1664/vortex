@@ -18,4 +18,20 @@ CONFIGS+=" -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_
 # CONFIGS+=" -DENABLE_HW_DEBUG_AXI"
 # CONFIGS+=" -DENABLE_HW_DEBUG_PC"
 # CONFIGS+=" -DENABLE_HW_DEBUG_GEMM"
+
+# Full implementation QoR settings for the U55C th16 build. Keep DMA channels
+# 2 and 3 in separate, soft SLR0 neighborhoods, raise general placement QoR
+# effort, and use the alternate UltraScale CLB routing algorithm. XCU55C does
+# not support Advanced Flow place_design subdirectives, so use only the
+# compatible Explore directive. Leave implementation ultrathreads
+# off because it favors runtime over repeatable QoR.
+DMA_CHANNEL_FLOORPLAN=1
+PLACE_DESIGN_DIRECTIVE=Explore
+ROUTE_DESIGN_DIRECTIVE=AlternateCLBRouting
+IMPL_ULTRATHREADS=0
+
 export CONFIGS
+export DMA_CHANNEL_FLOORPLAN
+export PLACE_DESIGN_DIRECTIVE
+export ROUTE_DESIGN_DIRECTIVE
+export IMPL_ULTRATHREADS
