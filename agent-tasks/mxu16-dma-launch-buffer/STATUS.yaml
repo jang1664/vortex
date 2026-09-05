@@ -1,0 +1,66 @@
+task: mxu16-dma-launch-buffer
+state: complete
+updated: "2026-09-05 13:55 +0900"
+goal: >-
+  Add a registered elastic stage at the GEMM-to-TMEM-DMA command boundary and
+  measure cycle impact for xrt-vcs-sim M4 K256 N256.
+spec: agent-tasks/mxu16-dma-launch-buffer/dma-launch-buffer-spec.md
+baseline:
+  app: fpint_gemm_ffn_hw
+  args: "-m 4 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+  result: PASS
+  perf_cycles: 7524
+iterations:
+  - id: 1
+    test: configured gemm_node unittest via tools/verify_rtl.py
+    status: compile_error
+    error_summary: >-
+      Existing VX_gemm_node_naive.sv failed on undeclared output_mt_eff before
+      the modified GEMM_IMPROVE path could be validated.
+    root_cause: >-
+      The aggregate unittest compiles an unrelated naive GEMM implementation
+      with a pre-existing source error; the changed VX_gemm_node.sv produced no
+      reported compile error.
+    fix_applied: >-
+      None; do not expand scope into the unrelated naive implementation. Use
+      the requested GEMM_IMPROVE xrt-vcs-sim blackbox as the authoritative
+      compile, functional, and cycle test.
+    lesson: >-
+      The aggregate gemm_node unittest is not an isolated compile check for the
+      selected GEMM_IMPROVE implementation.
+  - id: 2
+    test: >-
+      Fresh configured-build xrt-vcs-sim blackbox, fpint_gemm_ffn_hw
+      -m 4 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      Added a one-entry registered elastic buffer for DMA command and tag at
+      the GEMM-controller to TMEM-DMA-controller boundary.
+    lesson: >-
+      The registered launch stage adds no throughput penalty inside either
+      compute phase. It adds three cycles at the inter-phase handoff and one
+      cycle between each of the final eight serialized output-store launches.
+results:
+  fresh_build: build_mxu16_dma_launch_buffer
+  functional: PASS
+  repeated_runs: 5
+  all_runs_passed: true
+  baseline_perf_cycles_range: [7525, 7533]
+  buffered_perf_cycles_range: [7526, 7532]
+  baseline_perf_median: 7529
+  buffered_perf_median: 7528
+  baseline_input_span: 1530
+  buffered_input_span: [1533, 1534]
+  baseline_compute_fire_span: 1529
+  buffered_compute_fire_span: [1532, 1533]
+  baseline_final_store_accept_span: 196
+  buffered_final_store_accept_span: 203
+  baseline_dma_first_accept_to_last_complete: 1839
+  buffered_dma_first_accept_to_last_complete: [1849, 1863]
+conclusion: >-
+  The stable compute-schedule cost is three cycles (about 0.20%), entirely at
+  the 128-column phase transition. The final serialized output-store launch
+  train grows by seven cycles. End-to-end PERF counter distributions overlap,
+  so no total-program slowdown is measurable above simulator jitter.
