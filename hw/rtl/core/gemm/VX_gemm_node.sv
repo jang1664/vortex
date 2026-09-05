@@ -1218,17 +1218,39 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // External DMA control: VX_gemm_tmem_dma_ctrl translates GEMM DMA
     // commands into VX_config_reg_if writes for the DMA engine.
-    assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
-    assign gemm_dma_ctrl_if.cmd_valid  = gemm_ctrl_if.dma_ctrl.cmd_valid;
-    assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
-    assign gemm_dma_ctrl_if.cmd_tag    = gemm_ctrl_if.dma_ctrl.cmd_tag;
+    localparam int GEMM_DMA_LAUNCH_DATAW = $bits(gemm_unified_cmd_t)
+                                            + GEMM_DMA_TAG_WIDTH;
+    wire gemm_dma_launch_ready;
+    wire gemm_dma_launch_valid;
+    wire [GEMM_DMA_LAUNCH_DATAW-1:0] gemm_dma_launch_data;
+
+    VX_elastic_buffer #(
+        .DATAW   (GEMM_DMA_LAUNCH_DATAW),
+        .SIZE    (1),
+        .OUT_REG (1)
+    ) u_gemm_dma_launch_buffer (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (gemm_ctrl_if.dma_ctrl.cmd_valid),
+        .ready_in  (gemm_dma_launch_ready),
+        .data_in   ({gemm_ctrl_if.dma_ctrl.cmd_tag,
+                     gemm_ctrl_if.dma_ctrl.cmd}),
+        .valid_out (gemm_dma_launch_valid),
+        .ready_out (gemm_dma_ctrl_if.cmd_ready),
+        .data_out  (gemm_dma_launch_data)
+    );
+
+    assign gemm_dma_ctrl_if.start     = gemm_dma_launch_valid;
+    assign gemm_dma_ctrl_if.cmd_valid = gemm_dma_launch_valid;
+    assign {gemm_dma_ctrl_if.cmd_tag, gemm_dma_ctrl_if.cmd}
+        = gemm_dma_launch_data;
     assign gemm_dma_ctrl_if.prepare_valid
         = gemm_ctrl_if.dma_ctrl.prepare_valid;
     assign gemm_dma_ctrl_if.prepare_cmd = gemm_ctrl_if.dma_ctrl.prepare_cmd;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
-    assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_ctrl_if.cmd_ready;
+    assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_launch_ready;
     assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
     assign gemm_ctrl_if.dma_flag.prepare_ready
         = gemm_dma_ctrl_if.prepare_ready;
