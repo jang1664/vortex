@@ -1,0 +1,44 @@
+task: mxu16-m4-k256-n256-perf
+state: COMPLETE
+updated: "2026-09-05 00:22:00 +0900"
+goal: >-
+  Measure the MXU16 fpint_gemm_ffn_hw M=4 K=256 N=256 execution in
+  xrt-vcs-sim, quantify HBM input-DMA/compute overlap, and quantify bubbles
+  at the gemm_unit input and compute-fire boundaries.
+scope:
+  config: configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh
+  build: build_mxu16_accept_final4
+  app: fpint_gemm_ffn_hw
+  args: "-m 4 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+assumptions:
+  - The requested shape is analyzed on the current MXU16 profile.
+  - QBLK=32, WTRANS=0, and QDIR=0 are the default comparison point.
+  - Performance is functional RTL-simulation cycle behavior, not wall-clock simulation speed.
+measurements:
+  - Built-in TMEM_DMA_SCHED_PERF counters for input-load active, compute active, and their overlap.
+  - GEMM_INPUT_PACKET acceptance timestamps for ingress burst bubbles.
+  - GEMM_V2_COMPUTE_FIRE timestamps for actual compute issue bubbles.
+iterations:
+  - id: 1
+    command: >-
+      ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw
+      --args '-m 4 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1' --debug 3
+    result: PASS
+    evidence:
+      - "PERF: instrs=6385, cycles=7524, IPC=0.848618"
+      - "1024 GEMM_INPUT_PACKET events and 1024 GEMM_V2_COMPUTE_FIRE events"
+      - "TMEM_DMA_SCHED_PERF: load_active=264 compute_active=1436 overlap=202"
+    analysis: agent-tasks/mxu16-m4-k256-n256-perf/analysis.md
+summary:
+  input_span_cycles: 1530
+  input_fire: 1024
+  input_bubbles: 506
+  compute_active_cycles: 1436
+  compute_fire: 1024
+  compute_active_bubbles: 412
+  hbm_load_active_cycles: 264
+  hbm_store_active_cycles: 179
+  hbm_compute_overlap_cycles: 251
+pitfalls:
+  - Separate burst-internal bubbles from intentional gaps between commands.
+  - Do not infer hardware throughput from VCS wall-clock runtime.
