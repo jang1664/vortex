@@ -77,6 +77,26 @@ simv.vdb/
 /agent-tasks/dma-bound21-native-product/results/
 /agent-tasks/gemm-command-stage-timing/results/
 /agent-tasks/gemm-response-ram-default-w4/results/
+
+# Agent-task execution evidence can contain multi-gigabyte VCS logs, waveform
+# databases, and machine-generated metric dumps. Keep task plans and written
+# summaries trackable, but never add reproducible raw execution artifacts.
+/agent-tasks/**/execution/
+/agent-tasks/**/results/
+/agent-tasks/**/logs/
+/agent-tasks/**/*.fsdb*
+/agent-tasks/**/*.vcd
+/agent-tasks/**/*.vpd
+/agent-tasks/**/*.wdb
+/agent-tasks/**/*.wlf
+/agent-tasks/**/*.fst
+/agent-tasks/**/*.json
+/agent-tasks/**/*.csv
+/agent-tasks/**/*.tsv
+/agent-tasks/**/*.rpt
+/agent-tasks/**/*.jou
+/agent-tasks/**/*.dcp
+/agent-tasks/**/*.xpr
 ucli.key
 work.lib++/
 .vcs/
