@@ -53,7 +53,18 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
 
 - `cfg_reg_if`로 각 채널의 전송 설정(시작 주소, 길이, 방향)을 받음
-- 32x32 profile에서는 `dma_to_tmem[ch]`가 physical bank `ch`에 직접 연결된다.
+- With 32x32 and one bank per DMA channel, `dma_to_tmem[ch]` connects
+  directly to physical bank `ch`.
+- With 32x32, four DMA channels, and eight banks, each 64B request selects
+  exactly one owned bank: `bank = ch + NUM_DMA_CHANNELS * addr[0]` and
+  `bank_row = addr >> 1`, where `addr` is the channel-local 64B word address.
+  Channel `ch` therefore owns banks `ch` and `ch+4`, not consecutive banks.
+  A two-input round-robin response mux returns original tags unchanged.
+  Three control flip-flops per channel retain round-robin priority and lock
+  a stalled response grant; there is no payload FIFO or reorder buffer.
+  The DMA engine's existing tagged response RAM accepts out-of-order bank
+  responses and preserves destination order. Write ACKs are filtered before
+  this mux, as on the original direct path.
 - 16x16 profile에서는 `VX_tmem_dma_pair_adapter`가 하나의 64B request를
   32B low/high lane으로 나누어 consecutive bank `2*ch`, `2*ch+1`에 보낸다.
   두 lane은 동일한 aggregate bank-local word address를 사용하며 lane bit를
@@ -75,6 +86,17 @@ AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
 |---|---|---|---:|---:|
 | 32x32 | 8 banks x 64B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
 | 16x16 | 16 banks x 32B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
+| 32x32 | 8 banks x 64B x 1024 | 4 channels x 64B, selected bank | 1024 | 512 KiB |
+| 16x16 | 8 banks x 32B x 2048 | 4 channels x 64B, paired banks | 2048 | 512 KiB |
+
+The DMA controller removes only the channel-select bits from the flat TMEM
+byte address. For the equal-width two-bank case, one remaining bank-select
+bit must therefore be removed by the subsystem. For half-width pairs, that
+bit instead belongs to the physical lane within one 64B aggregate word and
+the adapter does not shift the channel-local row. Local DMA addressing
+continues to select `NUM_BANKS` using physical-word interleaving. The bank
+SRAM address width derives from `BANK_SIZE / DATA_SIZE`; increasing depth to
+2048 preserves all 512 KiB with eight 32B banks.
 
 ### 2. Switches (`u_switch_*`, x5)
 
@@ -167,7 +189,7 @@ matches and applies each priority policy locally to its corresponding source.
 
 | 포트 | 접속 | 태그 폭 |
 |------|------|---------|
-| port[0] | DMA direct(32x32) 또는 pair lane(16x16) | `SWITCH_TAG_WIDTH` |
+| port[0] | DMA direct/selected bank (32x32), or pair lane (16x16) | `SWITCH_TAG_WIDTH` |
 | port[1] | input switch | `SWITCH_TAG_WIDTH` |
 | port[2] | weight switch | `SWITCH_TAG_WIDTH` |
 | port[3] | scale switch | `SWITCH_TAG_WIDTH` |
@@ -180,7 +202,7 @@ matches and applies each priority policy locally to its corresponding source.
   HBM DMA read-response channel or the fixed-pair response FIFOs. Read tags
   are unchanged. This protects immediate G2L-to-L2G descriptor transitions
   without waiting for write acknowledgements or changing physical-write
-  completion. Both direct-width and paired-width DMA routes use this filter;
+  completion. Direct, selected-bank, and paired-width DMA routes use this filter;
   local-DMA ports retain their original write-response behavior.
 - 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
 

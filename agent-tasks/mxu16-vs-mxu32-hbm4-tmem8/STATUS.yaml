@@ -1,0 +1,21 @@
+task: mxu16-vs-mxu32-hbm4-tmem8
+state: DONE
+scope: Create MXU32/thread16/HBM4/TMEM8 configuration and compare GEMM node cycles against MXU16 for M1,4,256 and K=N256.
+current_phase: Complete; both configs and RTL support ready, six directed runs plus18 blackbox launches PASS, cycle comparison recorded.
+log:
+  - timestamp: '2026-09-06 16:42'
+    message: 'All18 xrt-vcs-sim --perf3 launches PASS with zero strict errors and unchanged369-file source/config snapshots, simulator/kernel hashes. All3 repeats identical: M1 m16/m32=1821/791; M4=1896/822; M256=72032/18077. Cycle speedups2.30x,2.31x,3.98x. Six directed runs include upper/lowerrow retention at1023/2047. Both configs HBM4/DMA4/TMEM8, bank64KiB,total512KiB; m16depth2048/m32depth1024. No PnR/hardware/commit. Report and machine-readable results complete.'
+  - timestamp: '2026-09-06 16:30'
+    message: 'Iteration1 PASS: five fresh configured VCS unit profiles via verify_rtl.py: selected-bank release/debug, deep2048 pair, legacy pair, legacy direct. Additional case-insensitive simulator/compile scan finds zero Error:/Fatal:/Error-[. No RTL correction required. Proceed to18 performance launches with --perf3 and strict log checks.'
+  - timestamp: '2026-09-06 16:25'
+    message: 'Iteration1 implementation ready: inline1-to2 bank select for m32, three response control FF/channel, no payload reorder, legacy direct/pair and writeACK filter retained. Main reviewed mapping/handshake and prepared equal-capacity configs plus strict-error performance runner. Config difference checks PASS; collector negative regression detects historical mixed-case Error:. Verification agent preparing directed tests; no simulation results yet.'
+  - timestamp: '2026-09-06 16:20'
+    message: 'User directed DMA4 and retained total capacity through deeper banks. Confirmed spec: m16=8x32B x2048 words, m32=8x64B x1024 words, both512KiB andHBM4. RTL-improve loop will implement address-selected two-bank routing for m32 and relax only valid depth/geometry constraints, retaining C2 cuts and ACK filtering.'
+  - timestamp: '2026-09-06 16:16'
+    message: 'Read project-context/run-bb-common and shared rules. MXU32 physical TMEM bank width is64B, requiring8 DMA channels for8 banks. Vortex_axi rejects DMA channels greater than HBM ports and has no D>H routing branch. Using4 DMA channels instead violates the TMEM width-ratio constraint. No invalid config or simulation launched; request direction before RTL expansion.'
+  - timestamp: '2026-09-06 16:16'
+    message: 'Also found prior8-bank/32KiB logs contain nonfatal Error: at time0 from the fixed512KiB capacity assertion. Previous collector only matched uppercase ERROR:, missing this error despite application PASSED. Corrected prior report; raw counters/logs remain unchanged.'
+pitfalls:
+  - 'Do not infer DMA channel count from external HBM port count alone. MXU width fixes physical bank width and the DMA-to-bank width ratio.'
+  - 'Application PASSED and process exit0 do not imply an error-free RTL run. Scan mixed-case Error: and assertion messages.'
+  - 'Reducing TMEM capacity requires revisiting hardcoded capacity/depth assertions; do not disable assertions merely to pass a run.'
