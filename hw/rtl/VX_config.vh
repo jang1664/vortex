@@ -1454,6 +1454,41 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_DMA_STORE_MAX_CHUNK_BEATS 8
 `endif
 
+// The measured C2 profile enables the seven selected control/transport cuts.
+// Per-cut overrides remain available for independent experiments. Other
+// configurations retain their previous defaults unless they select this profile.
+`ifndef GEMM_TIMING_CUTS
+`define GEMM_TIMING_CUTS 0
+`endif
+// Registered dependency/admission views require monotonic SET within an epoch.
+`ifndef GEMM_TIMING_MONOTONIC_SET
+`define GEMM_TIMING_MONOTONIC_SET `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_TIMING_REG_CONSUME
+`define GEMM_TIMING_REG_CONSUME `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_TIMING_REG_LOCAL_DEPS
+`define GEMM_TIMING_REG_LOCAL_DEPS `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_TIMING_REG_ACC_FREE
+`define GEMM_TIMING_REG_ACC_FREE 0
+`endif
+`ifndef GEMM_TIMING_REG_DMA_DEPS
+`define GEMM_TIMING_REG_DMA_DEPS 0
+`endif
+`ifndef GEMM_TIMING_REG_CAPACITY
+`define GEMM_TIMING_REG_CAPACITY `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_TIMING_DMA_LAUNCH_EB2
+`define GEMM_TIMING_DMA_LAUNCH_EB2 `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_S_Z_SINK_ELASTIC
+`define GEMM_S_Z_SINK_ELASTIC `GEMM_TIMING_CUTS
+`endif
+`ifndef GEMM_HBM_WRITE_EB2
+`define GEMM_HBM_WRITE_EB2 `GEMM_TIMING_CUTS
+`endif
+
 // Maximum source-read beats issued before architectural release.  These
 // values are encoded in GEMM command metadata and may be overridden through
 // the normal CONFIGS flow.

@@ -1226,8 +1226,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     VX_elastic_buffer #(
         .DATAW   (GEMM_DMA_LAUNCH_DATAW),
-        .SIZE    (1),
-        .OUT_REG (1)
+        .SIZE    (`GEMM_TIMING_DMA_LAUNCH_EB2 ? 2 : 1),
+        .OUT_REG (1),
+        .LUTRAM  (0)
     ) u_gemm_dma_launch_buffer (
         .clk       (clk),
         .reset     (reset),
@@ -1239,6 +1240,51 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .ready_out (gemm_dma_ctrl_if.cmd_ready),
         .data_out  (gemm_dma_launch_data)
     );
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
+    integer dbg_dma_launch_occupancy_q;
+    wire dbg_dma_launch_enqueue
+        = gemm_ctrl_if.dma_ctrl.cmd_valid && gemm_dma_launch_ready;
+    wire dbg_dma_launch_dequeue
+        = gemm_dma_launch_valid && gemm_dma_ctrl_if.cmd_ready;
+    wire dbg_dma_launch_full_stall
+        = gemm_ctrl_if.dma_ctrl.cmd_valid && !gemm_dma_launch_ready;
+    logic dbg_dma_launch_stalled_q;
+    logic [GEMM_DMA_LAUNCH_DATAW-1:0] dbg_dma_launch_stalled_data_q;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            dbg_dma_launch_occupancy_q <= 0;
+            dbg_dma_launch_stalled_q <= 1'b0;
+            dbg_dma_launch_stalled_data_q <= '0;
+        end else begin
+            dbg_dma_launch_occupancy_q <= dbg_dma_launch_occupancy_q
+                + int'(dbg_dma_launch_enqueue) - int'(dbg_dma_launch_dequeue);
+            assert ((dbg_dma_launch_occupancy_q >= 0)
+                 && (dbg_dma_launch_occupancy_q
+                     <= (`GEMM_TIMING_DMA_LAUNCH_EB2 ? 2 : 1)))
+                else $fatal(1, "%s: DMA launch occupancy out of bounds", INSTANCE_ID);
+            if (dbg_dma_launch_stalled_q) begin
+                assert (gemm_dma_launch_valid
+                     && (gemm_dma_launch_data == dbg_dma_launch_stalled_data_q))
+                    else $fatal(1, "%s: stalled DMA launch command/tag changed", INSTANCE_ID);
+            end
+            dbg_dma_launch_stalled_q
+                <= gemm_dma_launch_valid && !gemm_dma_ctrl_if.cmd_ready;
+            dbg_dma_launch_stalled_data_q <= gemm_dma_launch_data;
+            if (dbg_dma_launch_enqueue || dbg_dma_launch_dequeue
+             || dbg_dma_launch_full_stall) begin
+                `TRACE(1, ("%m : [%0t] | GEMM_TIMING_DMA_LAUNCH | {inst=%s, occupancy=%0d, enqueue=%0d, dequeue=%0d, full_stall=%0d, in_tag=%0d, out_tag=%0d, in_work_seq=%0d, out_work_seq=%0d}\n",
+                    $time, INSTANCE_ID, dbg_dma_launch_occupancy_q,
+                    dbg_dma_launch_enqueue, dbg_dma_launch_dequeue,
+                    dbg_dma_launch_full_stall, gemm_ctrl_if.dma_ctrl.cmd_tag,
+                    gemm_dma_ctrl_if.cmd_tag, gemm_ctrl_if.dma_ctrl.cmd.work_seq,
+                    gemm_dma_ctrl_if.cmd.work_seq))
+            end
+        end
+    end
+`endif
+`endif
 
     assign gemm_dma_ctrl_if.start     = gemm_dma_launch_valid;
     assign gemm_dma_ctrl_if.cmd_valid = gemm_dma_launch_valid;

@@ -24,6 +24,9 @@ module VX_gemm_stream_dma_queue #(
     // Preserve backends whose response storage has one registered read stage.
     // Zero keeps the original direct slot-to-sink contract.
     parameter bit SINK_PIPELINE = 1'b0,
+    // Isolate destination ready and writer fences with a two-entry sink
+    // buffer. Response-slot handoff is not physical install completion.
+    parameter bit SINK_ELASTIC = 1'b0,
     // Store wide response payloads in a registered-read 1R1W RAM.  Metadata
     // remains in registers and the existing sink stage owns the RAM output.
     parameter bit RESPONSE_DATA_RAM = 1'b1,
@@ -101,6 +104,7 @@ module VX_gemm_stream_dma_queue #(
     logic [CMD_PTRW-1:0] tail_ptr_r;
     logic [CMD_COUNTW-1:0] cmd_count_r;
     logic [SEQW-1:0] next_sequence_r;
+    logic [COUNTW-1:0] handoff_count_r;
 
     slot_state_e slot_state_r[RESPONSE_SLOTS];
     logic [CMD_PTRW-1:0] slot_owner_cmd_r[RESPONSE_SLOTS];
@@ -121,6 +125,8 @@ module VX_gemm_stream_dma_queue #(
     wire fetch_head_valid = cmd_valid_r[fetch_ptr_r]
                          && !cmd_fetch_done_r[fetch_ptr_r];
     wire install_head_valid = cmd_valid_r[install_ptr_r];
+    wire [COUNTW-1:0] handoff_beat = SINK_ELASTIC
+        ? handoff_count_r : cmd_write_r[install_ptr_r];
 
     always_comb begin
         drain_found = 1'b0;
@@ -135,7 +141,7 @@ module VX_gemm_stream_dma_queue #(
              && (slot_owner_sequence_r[slot]
                  == cmd_sequence_r[install_ptr_r])
              && (slot_owner_beat_r[slot]
-                 == cmd_write_r[install_ptr_r])) begin
+                 == handoff_beat)) begin
                 drain_found = 1'b1;
                 drain_slot = SLOT_PTRW'(slot);
             end
@@ -148,23 +154,58 @@ module VX_gemm_stream_dma_queue #(
         ? drain_stage_slot_r : drain_slot;
     wire [DATAW-1:0] sink_slot_data;
 
-    wire sink_write_last = install_head_valid && sink_owner_valid
+    wire handoff_last = install_head_valid && sink_owner_valid
         && ((slot_owner_beat_r[sink_slot] + COUNTW'(1))
             == cmd_total_r[install_ptr_r]);
-
-    assign sink_if.write_valid = install_head_valid
-                              && sink_owner_valid
-                              && writer_release_i;
-    assign sink_if.write_tag = {
+    wire [SINK_TAGW-1:0] handoff_tag = {
         cmd_sequence_r[install_ptr_r], slot_owner_beat_r[sink_slot]
     };
-    assign sink_if.write_payload = {
+    wire [SINK_PAYLOADW-1:0] handoff_payload = {
         cmd_payload_r[install_ptr_r][DEST_METAW-1:0],
         slot_owner_beat_r[sink_slot], sink_slot_data
     };
-    assign sink_if.write_owned = install_head_valid && sink_owner_valid;
+    wire handoff_valid = install_head_valid && sink_owner_valid;
+    wire handoff_ready;
+    wire sink_handoff_fire = handoff_valid && handoff_ready;
+    wire sink_write_last = sink_if.write_last;
+
+    if (SINK_ELASTIC) begin : g_sink_elastic
+        wire buffered_valid;
+        // Only the retained install head may enter this buffer. Its descriptor
+        // and writer fence remain owned until the final physical dequeue.
+        // Consequently release may be checked at the output even if data was
+        // prefetched while the fence was closed. Neither release nor sink
+        // ready feeds back combinationally into response RAM read/refill.
+        VX_elastic_buffer #(
+            .DATAW   (SINK_TAGW + SINK_PAYLOADW + 1),
+            .SIZE    (2),
+            .OUT_REG (1),
+            .LUTRAM  (0)
+        ) sink_buffer (
+            .clk       (clk),
+            .reset     (reset),
+            .valid_in  (handoff_valid),
+            .ready_in  (handoff_ready),
+            .data_in   ({handoff_tag, handoff_payload, handoff_last}),
+            .valid_out (buffered_valid),
+            .ready_out (sink_if.write_ready && writer_release_i),
+            .data_out  ({sink_if.write_tag, sink_if.write_payload,
+                         sink_if.write_last})
+        );
+        assign sink_if.write_valid = buffered_valid && writer_release_i;
+        assign sink_if.write_owned = buffered_valid && install_head_valid;
+    end else begin : g_sink_direct
+        assign handoff_ready = sink_if.write_ready && writer_release_i;
+        assign sink_if.write_valid = handoff_valid && writer_release_i;
+        assign sink_if.write_tag = handoff_tag;
+        assign sink_if.write_payload = handoff_payload;
+        assign sink_if.write_owned = handoff_valid;
+        assign sink_if.write_last = handoff_last;
+    end
+
     assign sink_if.writer_released = writer_release_i;
-    assign sink_if.write_last = sink_write_last;
+    // Progress and completion always describe physical destination writes,
+    // including when all response slots have already handed off their data.
     assign sink_if.progress_valid = install_head_valid;
     assign sink_if.progress_total_beats = cmd_total_r[install_ptr_r];
     assign sink_if.progress_write_beats = cmd_write_r[install_ptr_r];
@@ -176,20 +217,23 @@ module VX_gemm_stream_dma_queue #(
     wire install_pop = sink_if.install_complete;
 
     // Registered sink stage, selected explicitly or required by RAM storage.
-    // On a sink turnover, select the next ordered slot using the post-write
-    // command/beat without waiting for the registered counters to update.
-    // This preserves one beat/cycle drain.
-    wire stage_ready = !drain_stage_valid_r || sink_write_fire;
-    wire [CMD_PTRW-1:0] stage_cmd = install_pop
+    // On a handoff, select the next ordered beat without waiting for its
+    // registered counter to update. This preserves one beat/cycle within a
+    // command; elastic mode deliberately registers command-head turnover.
+    wire stage_ready = !drain_stage_valid_r || sink_handoff_fire;
+    // In elastic mode, do not use physical install_pop for next-head
+    // lookahead: that would reconnect downstream ready to RAM read enable.
+    // A new command starts staging after registered head retirement.
+    wire stage_next_cmd = !SINK_ELASTIC && install_pop;
+    wire [CMD_PTRW-1:0] stage_cmd = stage_next_cmd
         ? cmd_ptr_next(install_ptr_r) : install_ptr_r;
-    wire [COUNTW-1:0] stage_beat = sink_write_fire
-        ? (install_pop ? '0
-                       : (cmd_write_r[install_ptr_r] + COUNTW'(1)))
-        : cmd_write_r[install_ptr_r];
+    wire [COUNTW-1:0] stage_beat = sink_handoff_fire
+        ? (stage_next_cmd ? '0 : (handoff_beat + COUNTW'(1)))
+        : handoff_beat;
     always_comb begin
         stage_found = 1'b0;
         stage_slot = RING_SLOT_ORDER
-            ? (sink_write_fire ? (install_slot_r + SLOT_PTRW'(1))
+            ? (sink_handoff_fire ? (install_slot_r + SLOT_PTRW'(1))
                                : install_slot_r)
             : '0;
         for (int slot = 0; slot < RESPONSE_SLOTS; ++slot) begin
@@ -208,21 +252,27 @@ module VX_gemm_stream_dma_queue #(
         end
     end
 
-    // When enabled, a just-consumed ordered slot may be allocated in the same
-    // cycle.  This is a one-way sink-ready -> source-valid path; neither
+    // When enabled, a just-handed-off ordered slot may be allocated in the
+    // same cycle. This is a one-way handoff-ready -> source-valid path; neither
     // source ready nor source response ready feeds the sink channel, so no
     // ready loop exists.  Disabled adapters observe the registered FREE state.
     logic request_slot_available;
     logic [SLOT_PTRW-1:0] request_slot;
+    logic request_slot_hold_valid_r;
+    logic [SLOT_PTRW-1:0] request_slot_hold_r;
     always_comb begin
-        request_slot_available = 1'b0;
-        request_slot = RING_SLOT_ORDER ? alloc_slot_r : '0;
+        // A non-ring lowest-free choice must be retained once offered under
+        // backpressure: an earlier slot may drain while this request waits.
+        // Ring allocation is already stable until an accepted request.
+        request_slot_available = !RING_SLOT_ORDER && request_slot_hold_valid_r;
+        request_slot = RING_SLOT_ORDER ? alloc_slot_r
+                     : (request_slot_hold_valid_r ? request_slot_hold_r : '0);
         for (int slot = 0; slot < RESPONSE_SLOTS; ++slot) begin
             if (!request_slot_available
              && (!RING_SLOT_ORDER || (SLOT_PTRW'(slot) == alloc_slot_r))
              && ((slot_state_r[slot] == SLOT_FREE)
               || (SAME_CYCLE_SLOT_RECYCLE
-               && sink_write_fire
+               && sink_handoff_fire
                && (sink_slot == SLOT_PTRW'(slot))))) begin
                 request_slot_available = 1'b1;
                 request_slot = SLOT_PTRW'(slot);
@@ -237,6 +287,20 @@ module VX_gemm_stream_dma_queue #(
         cmd_request_r[fetch_ptr_r]
     };
     wire source_request_fire = fetch_if.req_valid && fetch_if.req_ready;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            request_slot_hold_valid_r <= 1'b0;
+            request_slot_hold_r <= '0;
+        end else if (!RING_SLOT_ORDER) begin
+            if (source_request_fire) begin
+                request_slot_hold_valid_r <= 1'b0;
+            end else if (fetch_if.req_valid && !request_slot_hold_valid_r) begin
+                request_slot_hold_valid_r <= 1'b1;
+                request_slot_hold_r <= request_slot;
+            end
+        end
+    end
 
     wire response_tag_in_range = {1'b0, fetch_if.rsp_tag}
                               < RESPONSE_RANGEW'(RESPONSE_SLOTS);
@@ -325,8 +389,9 @@ module VX_gemm_stream_dma_queue #(
     assign cmd_occupancy_o = cmd_count_r;
     assign slot_occupancy_o = slot_count_r;
 
-    // Count the registered sink beat, when enabled, and the consecutive READY
-    // ring prefix behind it.  WAIT_RSP occupancy is intentionally excluded.
+    // Count the response RAM stage and consecutive READY ring prefix behind
+    // it. WAIT_RSP and already handed-off elastic beats are excluded; this is
+    // response-slot availability, not physical install progress.
     always_comb begin
         install_ready_ahead = USE_SINK_STAGE
             ? SLOT_COUNTW'(drain_stage_valid_r) : '0;
@@ -379,6 +444,7 @@ module VX_gemm_stream_dma_queue #(
             tail_ptr_r <= '0;
             cmd_count_r <= '0;
             next_sequence_r <= '0;
+            handoff_count_r <= '0;
             slot_count_r <= '0;
             alloc_slot_r <= '0;
             install_slot_r <= '0;
@@ -405,7 +471,7 @@ module VX_gemm_stream_dma_queue #(
                 2'b01: cmd_count_r <= cmd_count_r - CMD_COUNTW'(1);
                 default:;
             endcase
-            unique case ({source_request_fire, sink_write_fire})
+            unique case ({source_request_fire, sink_handoff_fire})
                 2'b10: slot_count_r <= slot_count_r + SLOT_COUNTW'(1);
                 2'b01: slot_count_r <= slot_count_r - SLOT_COUNTW'(1);
                 default:;
@@ -418,9 +484,19 @@ module VX_gemm_stream_dma_queue #(
                      + COUNTW'(1);
             end
 
-            if (sink_write_fire) begin
+            if (sink_handoff_fire) begin
                 slot_state_r[sink_slot] <= SLOT_FREE;
                 install_slot_r <= install_slot_r + SLOT_PTRW'(1);
+            end
+
+            if (SINK_ELASTIC) begin
+                if (install_pop)
+                    handoff_count_r <= '0;
+                else if (sink_handoff_fire)
+                    handoff_count_r <= handoff_count_r + COUNTW'(1);
+            end
+
+            if (sink_write_fire) begin
                 if (sink_write_last) begin
                     cmd_valid_r[install_ptr_r] <= 1'b0;
                     cmd_fetch_done_r[install_ptr_r] <= 1'b0;
@@ -435,7 +511,7 @@ module VX_gemm_stream_dma_queue #(
             end
 
             if (USE_SINK_STAGE) begin
-                if (sink_write_fire && !stage_found)
+                if (sink_handoff_fire && !stage_found)
                     drain_stage_valid_r <= 1'b0;
                 if (stage_found) begin
                     drain_stage_valid_r <= 1'b1;
@@ -487,6 +563,7 @@ module VX_gemm_stream_dma_queue #(
     logic [SINK_TAGW-1:0] sink_stall_tag_r;
     logic [SINK_PAYLOADW-1:0] sink_stall_payload_r;
     logic sink_stall_last_r;
+    integer elastic_pending_r;
     always_comb begin
         live_cmd_count = '0;
         live_slot_count = '0;
@@ -504,7 +581,48 @@ module VX_gemm_stream_dma_queue #(
             sink_stall_tag_r <= '0;
             sink_stall_payload_r <= '0;
             sink_stall_last_r <= 1'b0;
+            elastic_pending_r <= 0;
         end else begin
+            if (SINK_ELASTIC) begin
+                unique case ({sink_handoff_fire, sink_write_fire})
+                    2'b10: elastic_pending_r <= elastic_pending_r + 1;
+                    2'b01: elastic_pending_r <= elastic_pending_r - 1;
+                    default:;
+                endcase
+                assert ((elastic_pending_r >= 0) && (elastic_pending_r <= 2))
+                    else $fatal(1, "%s: elastic sink occupancy out of range",
+                                INSTANCE_ID);
+                if (install_head_valid) begin
+                    assert ((handoff_count_r >= cmd_write_r[install_ptr_r])
+                         && (handoff_count_r <= cmd_response_r[install_ptr_r])
+                         && ((handoff_count_r - cmd_write_r[install_ptr_r])
+                             == COUNTW'(elastic_pending_r)))
+                        else $fatal(1, "%s: elastic handoff/physical-write conservation failed",
+                                    INSTANCE_ID);
+                end else begin
+                    assert ((elastic_pending_r == 0) && (handoff_count_r == 0))
+                        else $fatal(1, "%s: elastic sink outlived its descriptor",
+                                    INSTANCE_ID);
+                end
+                if (sink_if.write_owned) begin
+                    assert (install_head_valid
+                         && (sink_if.write_tag[SINK_TAGW-1 -: SEQW]
+                             == cmd_sequence_r[install_ptr_r])
+                         && (sink_if.write_tag[COUNTW-1:0]
+                             == cmd_write_r[install_ptr_r])
+                         && (sink_if.write_last
+                             == ((cmd_write_r[install_ptr_r] + COUNTW'(1))
+                                 == cmd_total_r[install_ptr_r])))
+                        else $fatal(1, "%s: buffered sink lost retained head/beat identity",
+                                    INSTANCE_ID);
+                end
+                if (install_pop) begin
+                    assert ((elastic_pending_r == 1) && !sink_handoff_fire
+                         && (handoff_count_r == cmd_total_r[install_ptr_r]))
+                        else $fatal(1, "%s: elastic descriptor retired before physical drain",
+                                    INSTANCE_ID);
+                end
+            end
             assert (cmd_count_r <= CMD_COUNTW'(CMD_FIFO_DEPTH))
                 else $fatal(1, "%s: stream DMA descriptor overflow",
                             INSTANCE_ID);
@@ -530,6 +648,16 @@ module VX_gemm_stream_dma_queue #(
                     else $fatal(1, "%s: source request exceeded descriptor",
                                 INSTANCE_ID);
             end
+            if (!RING_SLOT_ORDER && request_slot_hold_valid_r) begin
+                // No other allocator may consume this selected FREE slot.
+                // Fetch descriptor/beat are retained until this request fires,
+                // so only the narrow slot identity needs a holding register.
+                assert (fetch_if.req_valid
+                     && (request_slot == request_slot_hold_r)
+                     && (slot_state_r[request_slot_hold_r] == SLOT_FREE))
+                    else $fatal(1, "%s: held source request lost its free slot",
+                                INSTANCE_ID);
+            end
             if (source_response_fire) begin
                 assert (fetch_if.rsp_owned)
                     else $fatal(1, "%s: accepted stale stream response",
@@ -553,13 +681,23 @@ module VX_gemm_stream_dma_queue #(
                                 INSTANCE_ID);
             end
             if (sink_write_fire) begin
-                assert (install_head_valid && sink_owner_valid
+                assert (install_head_valid && sink_if.write_owned
                      && writer_release_i)
                     else $fatal(1, "%s: destination write owner/fence violation",
                                 INSTANCE_ID);
                 assert (cmd_write_r[install_ptr_r]
                      < cmd_total_r[install_ptr_r])
                     else $fatal(1, "%s: destination write exceeded descriptor",
+                                INSTANCE_ID);
+            end
+            if (sink_handoff_fire) begin
+                assert (install_head_valid && sink_owner_valid
+                     && (handoff_beat < cmd_total_r[install_ptr_r])
+                     && (slot_owner_cmd_r[sink_slot] == install_ptr_r)
+                     && (slot_owner_sequence_r[sink_slot]
+                         == cmd_sequence_r[install_ptr_r])
+                     && (slot_owner_beat_r[sink_slot] == handoff_beat))
+                    else $fatal(1, "%s: response-slot handoff owner/beat violation",
                                 INSTANCE_ID);
             end
             for (int cmd = 0; cmd < CMD_FIFO_DEPTH; ++cmd) begin
@@ -581,6 +719,31 @@ module VX_gemm_stream_dma_queue #(
             end
         end
     end
+
+`ifdef DBG_TRACE_GEMM
+    always_ff @(posedge clk) begin
+        if (!reset && SINK_ELASTIC) begin
+            if (sink_handoff_fire)
+                `TRACE(1, ("%m : [%0t] | GEMM_SINK_EB_ENQUEUE | {inst=%s, work_seq=%0d, seq=%0d, beat=%0d, last=%0d, occupancy=%0d}\n",
+                           $time, INSTANCE_ID, cmd_id_r[install_ptr_r],
+                           cmd_sequence_r[install_ptr_r], handoff_beat,
+                           handoff_last, elastic_pending_r));
+            if (sink_write_fire)
+                `TRACE(1, ("%m : [%0t] | GEMM_SINK_EB_DEQUEUE | {inst=%s, work_seq=%0d, seq=%0d, beat=%0d, last=%0d, occupancy=%0d}\n",
+                           $time, INSTANCE_ID, cmd_id_r[install_ptr_r],
+                           sink_if.write_tag[SINK_TAGW-1 -: SEQW],
+                           sink_if.write_tag[COUNTW-1:0], sink_write_last,
+                           elastic_pending_r));
+            if (handoff_valid || (elastic_pending_r != 0))
+                `TRACE(1, ("%m : [%0t] | GEMM_SINK_EB_STATE | {inst=%s, work_seq=%0d, seq=%0d, occupancy=%0d, in_valid=%0d, in_ready=%0d, out_owned=%0d, out_valid=%0d, out_ready=%0d, fence=%0d}\n",
+                           $time, INSTANCE_ID, cmd_id_r[install_ptr_r],
+                           cmd_sequence_r[install_ptr_r], elastic_pending_r,
+                           handoff_valid, handoff_ready, sink_if.write_owned,
+                           sink_if.write_valid, sink_if.write_ready,
+                           writer_release_i));
+        end
+    end
+`endif
 `endif
 
 endmodule

@@ -41,6 +41,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
   parameter int RD_OUTSTANDING = 2,
+  // Buffer G2L destination writes before TMEM pair/bank arbitration. Physical
+  // acceptance remains tracked by lmem_req_buf_pending until descriptor done.
+  parameter bit LMEM_WRITE_ELASTIC = `GEMM_HBM_WRITE_EB2,
   parameter bit ENABLE_1D_WRITE_COUNTER = 1'b0,
   // -1: use descriptor direction, 0/1: compile-time fixed direction.
   parameter int FIXED_DIR = -1
@@ -109,6 +112,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                                         && (MAX_DIMS == 1)
                                         && SAME_WIDTH_FAST;
   localparam int WR_BEAT_COUNT_W = 33 - DCACHE_LG2;
+  localparam bit USE_LMEM_WRITE_ELASTIC = LMEM_WRITE_ELASTIC && (FIXED_DIR != 1);
 
   initial begin
     if (!(((DCACHE_BYTES % LMEM_BYTES) == 0) || ((LMEM_BYTES % DCACHE_BYTES) == 0)))
@@ -1096,8 +1100,22 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire [`UP(UUID_WIDTH)-1:0] lmem_rd_tag_uuid;
   wire [LMEM_TAG_VALUE_W-1:0] lmem_rd_tag_value;
 
-  // Only read control travels through elastic buffers. Wide response and
-  // write payload data remains in the response RAM / conversion window.
+  wire lmem_wr_valid;
+  wire lmem_wr_ready;
+  wire [LMEM_ADDR_WIDTH-1:0] lmem_wr_addr;
+  wire [LMEM_BYTES*8-1:0] lmem_wr_data;
+  wire [LMEM_BYTES-1:0] lmem_wr_byteen;
+  wire [MEM_FLAGS_WIDTH-1:0] lmem_wr_flags;
+  wire [`UP(UUID_WIDTH)-1:0] lmem_wr_tag_uuid;
+  wire [LMEM_TAG_VALUE_W-1:0] lmem_wr_tag_value;
+  // Resolve the existing payload selection before capture. In no-padding
+  // equal-width mode the source is the RAM output, not lmem_req_data_w.
+  wire [LMEM_BYTES*8-1:0] lmem_wr_payload = ENABLE_PADDING
+      ? ((!active_dir && wr_payload_needed) ? lmem_req_data_w : '0)
+      : ram_wr_slot_data;
+
+  // Read control is independently buffered. Destination-write buffering below
+  // is optional and carries the wide payload as well as all request metadata.
   VX_elastic_buffer #(
     .DATAW   (DCACHE_RD_CTRL_DATAW),
     .SIZE    (2),
@@ -1132,10 +1150,39 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     .ready_out (lmem_bus_if.req_ready)
   );
 
+  if (USE_LMEM_WRITE_ELASTIC) begin : g_lmem_write_elastic
+    VX_elastic_buffer #(
+      .DATAW   (LMEM_RD_CTRL_DATAW + LMEM_BYTES * 8),
+      .SIZE    (2),
+      .OUT_REG (1),
+      .LUTRAM  (0)
+    ) lmem_write_buffer (
+      .clk       (clk),
+      .reset     (reset),
+      .valid_in  (lmem_req_valid_w && lmem_req_rw_w),
+      .ready_in  (lmem_wr_ready),
+      .data_in   ({lmem_req_addr_w, lmem_wr_payload, lmem_req_byteen_w,
+                   lmem_req_flags_w, lmem_req_tag_uuid_w, lmem_req_tag_value_w}),
+      .valid_out (lmem_wr_valid),
+      .ready_out (lmem_bus_if.req_ready),
+      .data_out  ({lmem_wr_addr, lmem_wr_data, lmem_wr_byteen,
+                   lmem_wr_flags, lmem_wr_tag_uuid, lmem_wr_tag_value})
+    );
+  end else begin : g_lmem_write_direct
+    assign lmem_wr_ready = lmem_bus_if.req_ready;
+    assign lmem_wr_valid = lmem_req_valid_w && lmem_req_rw_w;
+    assign lmem_wr_addr = lmem_req_addr_w;
+    assign lmem_wr_data = lmem_wr_payload;
+    assign lmem_wr_byteen = lmem_req_byteen_w;
+    assign lmem_wr_flags = lmem_req_flags_w;
+    assign lmem_wr_tag_uuid = lmem_req_tag_uuid_w;
+    assign lmem_wr_tag_value = lmem_req_tag_value_w;
+  end
+
   assign dcache_req_ready_w = dcache_req_rw_w
                             ? dcache_bus_if.req_ready : dcache_rd_ready;
   assign lmem_req_ready_w = lmem_req_rw_w
-                          ? lmem_bus_if.req_ready : lmem_rd_ready;
+                          ? lmem_wr_ready : lmem_rd_ready;
 
   assign dcache_bus_if.req_valid = active_dir
                                  ? (dcache_req_valid_w && dcache_req_rw_w)
@@ -1158,22 +1205,20 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
   assign lmem_bus_if.req_valid = active_dir
                                ? lmem_rd_valid
-                               : (lmem_req_valid_w && lmem_req_rw_w);
+                               : lmem_wr_valid;
   assign lmem_bus_if.req_data.rw = !active_dir;
   assign lmem_bus_if.req_data.addr = active_dir
-                                  ? lmem_rd_addr : lmem_req_addr_w;
-  assign lmem_bus_if.req_data.data = ENABLE_PADDING
-                                   ? ((!active_dir && wr_payload_needed)
-                                      ? lmem_req_data_w : '0)
-                                   : ram_wr_slot_data;
+                                  ? lmem_rd_addr : lmem_wr_addr;
+  assign lmem_bus_if.req_data.data = active_dir
+                                  ? lmem_wr_payload : lmem_wr_data;
   assign lmem_bus_if.req_data.byteen = active_dir
-                                    ? lmem_rd_byteen : lmem_req_byteen_w;
+                                    ? lmem_rd_byteen : lmem_wr_byteen;
   assign lmem_bus_if.req_data.flags = active_dir
-                                   ? lmem_rd_flags : lmem_req_flags_w;
+                                   ? lmem_rd_flags : lmem_wr_flags;
   assign lmem_bus_if.req_data.tag.uuid = active_dir
-                                      ? lmem_rd_tag_uuid : lmem_req_tag_uuid_w;
+                                      ? lmem_rd_tag_uuid : lmem_wr_tag_uuid;
   assign lmem_bus_if.req_data.tag.value = active_dir
-                                       ? lmem_rd_tag_value : lmem_req_tag_value_w;
+                                       ? lmem_rd_tag_value : lmem_wr_tag_value;
 
   assign wr_slot_valid_r = ram_wr_slot_valid_r;
   assign wr_slot_data_r = ram_wr_slot_data;
@@ -1209,6 +1254,95 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire dst_req_fire = active_dir
                     ? ((state == S_L2G_DECIDE) && dcache_req_issue_fire && (dcache_req_rw_w == 1'b1))
                     : ((state == S_G2L_DECIDE) && lmem_req_issue_fire && (lmem_req_rw_w == 1'b1));
+
+`ifndef SYNTHESIS
+  // Independent simulation conservation checker for the write-only EB. The
+  // synthesized pending counter is shared with direction-exclusive reads.
+  integer lmem_wr_pending_check_r;
+  logic lmem_wr_stalled_r;
+  logic [LMEM_RD_CTRL_DATAW+LMEM_BYTES*8-1:0] lmem_wr_stalled_packet_r;
+  logic [31:0] lmem_wr_stalled_entry_r;
+  wire [LMEM_RD_CTRL_DATAW+LMEM_BYTES*8-1:0] lmem_wr_packet = {
+      lmem_wr_addr, lmem_wr_data, lmem_wr_byteen, lmem_wr_flags,
+      lmem_wr_tag_uuid, lmem_wr_tag_value};
+  wire lmem_wr_enqueue = lmem_req_issue_fire && lmem_req_rw_w;
+  wire lmem_wr_dequeue = lmem_req_fire && !active_dir;
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      lmem_wr_pending_check_r <= 0;
+      lmem_wr_stalled_r <= 1'b0;
+      lmem_wr_stalled_packet_r <= '0;
+      lmem_wr_stalled_entry_r <= '0;
+    end else if (USE_LMEM_WRITE_ELASTIC) begin
+      unique case ({lmem_wr_enqueue, lmem_wr_dequeue})
+        2'b10: lmem_wr_pending_check_r <= lmem_wr_pending_check_r + 1;
+        2'b01: lmem_wr_pending_check_r <= lmem_wr_pending_check_r - 1;
+        default:;
+      endcase
+      assert ((lmem_wr_pending_check_r >= 0)
+           && (lmem_wr_pending_check_r <= 2)
+           && (lmem_req_buf_pending_r <= 2)
+           && (lmem_req_buf_pending_next <= 2))
+        else $fatal(1, "%s: local request elastic occupancy escaped 0..2",
+                    INSTANCE_ID);
+      assert (active_dir ? (lmem_wr_pending_check_r == 0)
+                         : (lmem_req_buf_pending_r
+                            == 2'(lmem_wr_pending_check_r)))
+        else $fatal(1, "%s: G2L write enqueue/physical-dequeue conservation failed",
+                    INSTANCE_ID);
+      assert (lmem_wr_valid == (lmem_wr_pending_check_r != 0))
+        else $fatal(1, "%s: G2L buffered valid disagrees with pending writes",
+                    INSTANCE_ID);
+      if (lmem_wr_valid) begin
+        assert (!active_dir && !lmem_rd_valid
+             && (state == S_G2L_DECIDE)
+             && lookahead_if.data_release
+             && (lmem_wr_tag_uuid == dma_uuid))
+          else $fatal(1, "%s: G2L buffered write lost descriptor/release ownership",
+                      INSTANCE_ID);
+      end
+      if (cfg_fire || done_if.valid || (state == S_IDLE)) begin
+        assert ((lmem_req_buf_pending_r == 0)
+             && (dcache_req_buf_pending_r == 0)
+             && (lmem_wr_pending_check_r == 0))
+          else $fatal(1, "%s: DMA done/new descriptor preceded physical write drain",
+                      INSTANCE_ID);
+      end
+      if (lmem_wr_stalled_r) begin
+        assert (lmem_wr_valid
+             && (lmem_wr_packet == lmem_wr_stalled_packet_r)
+             && (entry_id_latched == lmem_wr_stalled_entry_r))
+          else $fatal(1, "%s: paired-bank write changed while physically stalled",
+                      INSTANCE_ID);
+      end
+      lmem_wr_stalled_r <= lmem_wr_valid && !lmem_bus_if.req_ready;
+      if (lmem_wr_valid && !lmem_bus_if.req_ready) begin
+        lmem_wr_stalled_packet_r <= lmem_wr_packet;
+        lmem_wr_stalled_entry_r <= entry_id_latched;
+      end
+    end
+  end
+
+`ifdef DBG_TRACE_GEMM
+  always_ff @(posedge clk) begin
+    if (!reset && USE_LMEM_WRITE_ELASTIC) begin
+      if (lmem_wr_enqueue)
+        `TRACE(1, ("%m : [%0t] | DMA_WRITE_EB_ENQUEUE | {inst=%s, entry_id=%0d, addr=0x%0h, byteen=0x%0h, occupancy=%0d}\n",
+                   $time, INSTANCE_ID, entry_id_latched, lmem_req_addr_w,
+                   lmem_req_byteen_w, lmem_wr_pending_check_r));
+      if (lmem_wr_dequeue)
+        `TRACE(1, ("%m : [%0t] | DMA_WRITE_EB_DEQUEUE | {inst=%s, entry_id=%0d, addr=0x%0h, byteen=0x%0h, occupancy=%0d}\n",
+                   $time, INSTANCE_ID, entry_id_latched, lmem_wr_addr,
+                   lmem_wr_byteen, lmem_wr_pending_check_r));
+      if ((lmem_req_valid_w && lmem_req_rw_w) || lmem_wr_valid)
+        `TRACE(1, ("%m : [%0t] | DMA_WRITE_EB_STATE | {inst=%s, entry_id=%0d, occupancy=%0d, in_valid=%0d, in_ready=%0d, out_valid=%0d, out_ready=%0d}\n",
+                   $time, INSTANCE_ID, entry_id_latched, lmem_wr_pending_check_r,
+                   lmem_req_valid_w && lmem_req_rw_w, lmem_wr_ready,
+                   lmem_wr_valid, lmem_bus_if.req_ready));
+    end
+  end
+`endif
+`endif
 
   wire src_rsp_fire = active_dir ? lmem_rsp_fire : dcache_rsp_fire;
 
@@ -1486,7 +1620,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
   // Slot-read stage. The selected response RAM slot remains SLOT_DRAINING and
   // its registered output remains stable until the destination datapath
-  // consumes it. No wide payload is copied into an elastic buffer.
+  // consumes it (or captures it in the optional G2L write elastic buffer).
   assign wr_slot_read_valid = ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE))
                            && (wr_state == WR_RUN)
                            && (slot_state_r[wr_expect_slot_r] == SLOT_READY);
@@ -1513,6 +1647,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   assign dcache_req_buf_pending_next = dcache_req_buf_pending_r
                                      + 2'(dcache_req_issue_fire)
                                      - 2'(dcache_req_fire);
+  // Count transport ownership, not source-response slots. Reads and writes
+  // cannot coexist on this port: direction changes require descriptor done,
+  // and both DECIDE completion gates require these pending counts to drain.
+  // In elastic-write mode dst_req_fire releases payload storage at enqueue,
+  // while this count prevents done/next descriptor before physical dequeue.
   assign lmem_req_buf_pending_next = lmem_req_buf_pending_r
                                    + 2'(lmem_req_issue_fire)
                                    - 2'(lmem_req_fire);
