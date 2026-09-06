@@ -51,7 +51,11 @@ def trace_metrics(path, verifier):
         for number, line in enumerate(stream, 1):
             if verifier.has_strict_failure(line) or re.search(r"Assertion.*failed|assertion failure|^Error-", line, re.I):
                 failures.append({"line": number, "text": line.rstrip()[:800]})
-            slot_event = re.search(r"(\S+) SLOT_(ALLOC|RESPONSE|RELEASE|SUMMARY)\s", line)
+            # The regex requires this literal. Avoid its unanchored \S+
+            # search on long non-slot memory traces; keep every line and all
+            # failure/timestamp checks unchanged, including line numbers.
+            slot_event = (re.search(r"(\S+) SLOT_(ALLOC|RESPONSE|RELEASE|SUMMARY)\s", line)
+                          if " SLOT_" in line else None)
             if slot_event:
                 instance, event = slot_event.groups()
                 slot_record = slot_metrics.setdefault(instance, {

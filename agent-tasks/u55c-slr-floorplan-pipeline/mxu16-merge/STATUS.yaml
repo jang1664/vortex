@@ -1,0 +1,102 @@
+task: mxu16-slr-merge
+plan: ../mxu16-merge-plan.md
+state: complete
+branch: integrate/mxu16-slr
+baseline_head: 692085b7c4fc93a505d31e4ecd39f9168fe66334
+incoming_head: 27a5cfa0a2ba2f2db2179200ed068b1cd2342a92
+merge_base: 5d8fc73fbaae62cb5cebbd3320b5e8dc5ef0836e
+merge_commit: 343bf9b8edcfe5033bb702d2139dc46f8e71b43c
+confirmed_spec: ../mxu16-merge-plan.md
+execution_engine: native_subagents
+units:
+  U1: complete
+  U2: complete
+  U3: complete
+  U4: complete
+  U5: complete
+constraints:
+  - No synthesis, OOC, P&R, hardware execution, or publication.
+  - Keep primary MXU32 W4 DMA8 profile and timing-cut defaults unchanged.
+  - Preserve the pre-existing untracked plan; progress is recorded here.
+  - Authoritative verification uses configured builds and xrt-vcs-sim.
+pitfalls:
+  - CodeGraph does not index SystemVerilog here; use targeted rg navigation.
+  - python is unavailable on PATH; use the available /usr/bin/python3.
+  - Single-bank full GEMM TMEM subsystem fixtures expose pre-existing zero-width selector casts; use the planned DMA8 production geometry for direct64 ACK tests.
+history:
+  - timestamp: '2026-09-06 22:25'
+    action: Re-read the accepted plan, project rules, execution and RTL verification skills.
+    result: Heads match the plan and remote; only the offered plan was untracked.
+    learned: The merge needs semantic queue resolution despite only two textual conflicts.
+  - timestamp: '2026-09-06 22:30'
+    action: Started a no-commit merge after freezing both source snapshots; resolved ignore rules by union.
+    result: Queue ownership merge implemented; deterministic combined queue verification is starting.
+    learned: Existing queue tests lack early-release/bypass and 512-bit elastic coverage; add these explicitly.
+  - timestamp: '2026-09-06 22:30'
+    action: Captured first fresh configured xrt-vcs-sim smoke probes on both original revisions.
+    result: Current SLR/MXU32 5800 cycles PASS; incoming non-SLR/MXU16/C2 5877 cycles PASS.
+    learned: Both frozen builds compile and run with independent source paths and shared read-only vendor libraries.
+  - timestamp: '2026-09-06 22:30'
+    action: Ran the existing test_slr_floorplan.tcl fixture before hierarchy edits.
+    result: PASS for ownership, profile inventory, direct FF pairs, and Laguna checks.
+    learned: Preserve this fail-closed contract when common transport changes hierarchy names.
+  - timestamp: '2026-09-06 22:34'
+    action: Verified merged queue before starting common command transport implementation.
+    result: Inherited 30 and extended 46 positive cases PASS; four invalid parameter combinations rejected with intended diagnostics.
+    learned: Stage identity remains valid after the original response RAM slot is overwritten; completion follows physical sink acceptance.
+  - timestamp: '2026-09-06 22:36'
+    action: Ran U2 overlap, write EB, controller, and TMEM fixtures.
+    result: Weight32/64, eight S/Z cases, four write EB/padding cases, C2 off/on controller, backend controller, selected-bank routes and paired32 ACK checks PASS.
+    learned: A trial single-bank direct64 fixture is outside the full GEMM subsystem geometry; preserve its compile error and rerun the supported eight-bank geometry.
+  - timestamp: '2026-09-06 22:40'
+    action: Completed U2 supported integration matrix and U3 common transport unit tests.
+    result: U2 has 24 positive PASS reports plus four expected negative rejections; U3 local1/local2/SLR2 passes with traces disabled and enabled.
+    learned: U3 test source list needed VX_shift_register; forward latency is local1/SLR3 and return latency local0/SLR2 as planned.
+  - timestamp: '2026-09-06 22:45'
+    action: Replaced memory transport protocol forks with shared request/response composition and optional completion FF leaves.
+    result: U4 implementation is ready; memory and reservation focused tests are running.
+    learned: Existing reservation TB must use accepted-minus-issued accounting instead of a removed private occupancy register.
+  - timestamp: '2026-09-06 22:50'
+    action: Changed hierarchy fixtures first, observed missing-DMA-group failure, then updated ownership/report hooks to shared transport hierarchy.
+    result: All six Tcl suites PASS, including 63 anchor, 59 post-opt lifecycle, 24 post-place hook, 22 typed-object, and 13 snapshot checks.
+    learned: A lifted generic u_link without command/request/response identity must fail closed; no physical synthesis evidence is claimed.
+  - timestamp: '2026-09-06 23:08'
+    action: Completed U4 focused verification and the primary MXU32 W4 SLR xrt-vcs-sim matrix.
+    result: U4 has 15 positive runner reports; primary system tests pass all 12 repetitions with total-cycle deltas from 0 to +1.293 percent.
+    learned: Internal compute and DMA spans can increase more than total execution cycles; report both without hiding the attribution limitations.
+  - timestamp: '2026-09-06 23:08'
+    action: Validated an exact literal guard around the measurement helper SLOT regular expression.
+    result: Identical parsed records on two full traces and six crafted failures, with 8.6 to 13 times faster harvesting.
+    learned: Preserve all completed samples and label interrupted parser-only attempts separately when resuming long matrices.
+  - timestamp: '2026-09-06 23:08'
+    action: Investigated stale optional full-node completion and output-tail scoreboards without changing RTL.
+    result: Endpoint tracking now models the configured return transport latency; output-tail tracking needs accepted-handshake and physical-writeback identities.
+    learned: Do not remove optional checks or confuse repeated valid offers with accepted compute packets.
+  - timestamp: '2026-09-06 23:23'
+    action: Completed the final full-node fixture correction and reran all four geometry/placement combinations through verify_rtl.py.
+    result: Four PASS reports, each with 9504 numerical comparisons, endpoint conservation, output backpressure, ordered final tails and both physical ACC groups.
+    learned: The old post-drain probe incorrectly required combinational ownership from an unaccepted offer; actual admission and registered-fence coverage already exists in the passing compute-unit suite.
+  - timestamp: '2026-09-06 23:23'
+    action: Compared supplemental MXU32 local cuts-off/C2 and MXU16 SLR cuts-off measurements against frozen corresponding configurations.
+    result: All 36 runs PASS; maximum matched median regression is 1.919 percent in MXU16 SLR cuts-off.
+    learned: That case's internal compute span grows more than its total runtime; retain the internal metrics and the narrow remaining total-cycle margin.
+  - timestamp: '2026-09-06 23:23'
+    action: Continued the remaining measurement jobs and final fixture work locally after verification agents became unavailable.
+    result: Existing simulation processes and accepted measurements were preserved; candidate RTL digest remains unchanged.
+    learned: Execution ownership changes must not restart or overwrite already completed evidence.
+  - timestamp: '2026-09-07 00:18'
+    action: Finished all frozen baseline measurements and the seven secondary candidate profiles.
+    result: 108 accepted baseline runs and every completed candidate run pass; the final incoming candidate repetition is still running.
+    learned: Keep new combined-mode activation deltas separate from matched pre-merge integration gates.
+  - timestamp: '2026-09-07 00:18'
+    action: Following the user's renewed instruction to finish, prepared the previously presented two-local-commit grouping.
+    result: Atomic merge implementation is staged; commit execution remains gated on the final simulation result. No push is authorized.
+    learned: Keep hierarchy, source lists, RTL and corresponding test contracts in the same tested merge commit.
+  - timestamp: '2026-09-07 00:22'
+    action: Completed the last candidate repetition and validated all final JSON records, median gates and source identities.
+    result: 165 candidate runs and 108 frozen baseline measurements PASS; all 36 matched pre-merge case medians are within 2 percent, maximum 1.919 percent.
+    learned: New combined SLR+C2 activation costs and internal compute-span growth must remain distinct from matching-configuration integration gates.
+  - timestamp: '2026-09-07 00:23'
+    action: Created the atomic semantic merge and finalized the accompanying measurement/evidence commit content.
+    result: Merge 343bf9b8 retains both pinned parents; focused and full-node verification, six physical-hook fixtures, and the full xrt-vcs-sim matrix pass. No synthesis, hardware run or push occurred.
+    learned: Fixture tests do not prove actual physical hierarchy or timing closure; reconfigure and revalidate those only under separate authorization.
