@@ -1,0 +1,14 @@
+task: mxu32-channel8-vs4/fsdb-analysis
+state: DONE
+scope: Explain modest M1/M4 cycle penalty using fsdb_cli waveform evidence, no RTL changes.
+current_phase: Four FSDB captures PASS; exact cycle accounting and memory-model limitations documented.
+log:
+  - timestamp: '2026-09-06 20:12'
+    message: 'Completed fsdb_cli extraction of197/125 signals per8/4-channel case and per-cycle validation against node totals. Captured M1=757/816,M4=783/824. All use512 Weight beats; five-cycle bank-grant-to-sink correspondence proves extra cycles are startup19/23,bank contention27/3,command gap13/15. HBM read-active cycles roughly double but do not dominate. Found asynchronous host DramSim ticks are not RTL-clock synchronized; AR-to-firstR mostly3cycles with0% DRAM injected stalls. Report and reproducible metrics saved; no implementation changes.'
+  - timestamp: '2026-09-06 19:52'
+    message: 'User requested fsdb_cli analysis of bandwidth-bound hypothesis. Existing FSDBs are lastM256 runs, so rerun M1/M4 with unchanged binary/config after archiving them. Read project-context/run-bb-common/debug-xrt-vcs and fsdb_cli documentation. Measure clock-edge handshakes, invocation/compute intervals, DMA overlap, actualHBM/TMEM utilization; no implementation or PnR.'
+pitfalls:
+  - 'Existing per-build FSDB is overwritten by each wrapper run; copy before replay and after every case.'
+  - 'Do not equate memory-sensitive with peak-bandwidth-saturated. Separate startup/descriptor latency, stream pacing, and backpressure.'
+  - 'Count handshakes at clock edges, not value-change events or valid rising edges. Verify waveform gate/count against GEMM total_cycles.'
+  - 'Analyze exactly the GEMM invocation interval, excluding CPU/host setup and downloads, and preserve original release/PERF configuration.'
