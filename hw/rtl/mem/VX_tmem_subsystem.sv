@@ -124,6 +124,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
     localparam DMA_BANKS_PER_CHANNEL = NUM_BANKS / NUM_DMA_CHANNELS;
     localparam DMA_WIDTH_RATIO = HBM_DMA_DATA_SIZE / DATA_SIZE;
+    localparam DMA_ORGANIZATION_SUPPORTED =
+        ((DMA_WIDTH_RATIO == 1)
+         && ((DMA_BANKS_PER_CHANNEL == 1) || (DMA_BANKS_PER_CHANNEL == 2)))
+        || ((DMA_WIDTH_RATIO == 2) && (DMA_BANKS_PER_CHANNEL == 2));
     localparam WEIGHT_BANKS_PER_BEAT = WEIGHT_DATA_SIZE / DATA_SIZE;
     // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
     // its own selector bits. The TMEM bank sees:
@@ -161,10 +165,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
          || ((HBM_DMA_DATA_SIZE % DATA_SIZE) != 0))
             $fatal(1, "%s: invalid HBM/physical data sizes (%0d/%0d)",
                    INSTANCE_ID, HBM_DMA_DATA_SIZE, DATA_SIZE);
-        if (((DMA_WIDTH_RATIO != 1) && (DMA_WIDTH_RATIO != 2))
-         || (DMA_WIDTH_RATIO != DMA_BANKS_PER_CHANNEL))
+        if (!DMA_ORGANIZATION_SUPPORTED)
             $fatal(1,
-                   "%s: HBM/physical width ratio(%0d) must equal banks/channel(%0d) and be 1 or 2",
+                   "%s: unsupported HBM/physical width ratio(%0d), banks/channel(%0d); expected 1/1, 1/2, or 2/2",
                    INSTANCE_ID, DMA_WIDTH_RATIO, DMA_BANKS_PER_CHANNEL);
         if ((INPUT_DATA_SIZE != DATA_SIZE)
          || (SCALE_ZERO_DATA_SIZE != DATA_SIZE)
@@ -215,9 +218,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) dma_to_tmem [NUM_DMA_CHANNELS] ();
 
-    // Restricted DMA-to-TMEM fabric.  The flat array is indexed by physical
-    // TMEM bank. Ratio one owns bank c directly; ratio two statically owns
-    // consecutive banks 2*c and 2*c+1.
+    // Restricted DMA-to-TMEM fabric, indexed by physical bank. Equal-width
+    // channels own bank c, or select between c and c+NUM_DMA_CHANNELS.
+    // Ratio-two channels scatter each beat across banks 2*c and 2*c+1.
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
         .TAG_WIDTH  (SWITCH_TAG_WIDTH)
@@ -248,12 +251,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     `endif
     );
 
-    // The DMA engine remains HBM_DMA_DATA_SIZE wide.  A ratio-one profile
-    // keeps the legacy direct channel-to-bank wiring.  A ratio-two profile
-    // scatters/joins one aggregate DMA word across consecutive banks 2*c and
-    // 2*c+1 without adding a lane-select address bit.
+    // The DMA engine remains HBM_DMA_DATA_SIZE wide. Direct and paired
+    // organizations retain their original paths. With two equal-width banks
+    // per channel, the channel-local word LSB selects one owned bank and is
+    // removed from its row address (it is not a width-conversion lane).
     for (genvar c = 0; c < NUM_DMA_CHANNELS; ++c) begin : g_dma_tmem_route
-        if (DMA_WIDTH_RATIO == 1) begin : g_direct
+        if ((DMA_WIDTH_RATIO == 1) && (DMA_BANKS_PER_CHANNEL == 1)) begin : g_direct
             localparam int BANK = c;
 
             assign dma_switch_to_tmem[BANK].req_valid = dma_to_tmem[c].req_valid;
@@ -271,6 +274,65 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             assign dma_to_tmem[c].rsp_data.tag =
                 dma_switch_to_tmem[BANK].rsp_data.tag[TAG_WIDTH-1:0];
             assign dma_switch_to_tmem[BANK].rsp_ready = dma_to_tmem[c].rsp_ready;
+        end else if (DMA_WIDTH_RATIO == 1) begin : g_bank_select
+            localparam int NUM_OWNED_BANKS = 2;
+            wire bank_sel = dma_to_tmem[c].req_data.addr[0];
+            wire [NUM_OWNED_BANKS-1:0] bank_req_ready;
+            wire [NUM_OWNED_BANKS-1:0] bank_rsp_valid;
+            wire [NUM_OWNED_BANKS-1:0][HBM_DMA_DATA_WIDTH-1:0] bank_rsp_data;
+            wire [NUM_OWNED_BANKS-1:0][TAG_WIDTH-1:0] bank_rsp_tag;
+
+            // The DMA's existing tagged read slots accept out-of-order
+            // returns. Only arbitrate the two banks; no reorder payload RAM
+            // or request-order queue is needed here. Lock a stalled grant so
+            // a newly arriving response cannot change the exposed data/tag.
+            logic rsp_prefer_r;
+            logic rsp_locked_r;
+            logic rsp_locked_sel_r;
+            wire rsp_sel = rsp_locked_r ? rsp_locked_sel_r
+                         : (bank_rsp_valid[rsp_prefer_r]
+                            ? rsp_prefer_r : !rsp_prefer_r);
+            wire rsp_valid = bank_rsp_valid[rsp_sel];
+
+            always_ff @(posedge clk) begin
+                if (reset) begin
+                    rsp_prefer_r <= 1'b0;
+                    rsp_locked_r <= 1'b0;
+                    rsp_locked_sel_r <= 1'b0;
+                end else if (rsp_valid) begin
+                    if (dma_to_tmem[c].rsp_ready) begin
+                        rsp_prefer_r <= !rsp_sel;
+                        rsp_locked_r <= 1'b0;
+                    end else begin
+                        rsp_locked_r <= 1'b1;
+                        rsp_locked_sel_r <= rsp_sel;
+                    end
+                end
+            end
+
+            assign dma_to_tmem[c].req_ready = bank_req_ready[bank_sel];
+            assign dma_to_tmem[c].rsp_valid = rsp_valid;
+            assign dma_to_tmem[c].rsp_data.data = bank_rsp_data[rsp_sel];
+            assign dma_to_tmem[c].rsp_data.tag = bank_rsp_tag[rsp_sel];
+
+            for (genvar k = 0; k < NUM_OWNED_BANKS; ++k) begin : g_owned_bank
+                localparam int BANK = c + k * NUM_DMA_CHANNELS;
+                assign dma_switch_to_tmem[BANK].req_valid =
+                    dma_to_tmem[c].req_valid && (bank_sel == 1'(k));
+                assign dma_switch_to_tmem[BANK].req_data.rw = dma_to_tmem[c].req_data.rw;
+                assign dma_switch_to_tmem[BANK].req_data.addr = dma_to_tmem[c].req_data.addr >> 1;
+                assign dma_switch_to_tmem[BANK].req_data.data = dma_to_tmem[c].req_data.data;
+                assign dma_switch_to_tmem[BANK].req_data.byteen = dma_to_tmem[c].req_data.byteen;
+                assign dma_switch_to_tmem[BANK].req_data.flags = dma_to_tmem[c].req_data.flags;
+                assign dma_switch_to_tmem[BANK].req_data.tag =
+                    SWITCH_TAG_WIDTH'(dma_to_tmem[c].req_data.tag);
+                assign bank_req_ready[k] = dma_switch_to_tmem[BANK].req_ready;
+                assign bank_rsp_valid[k] = dma_switch_to_tmem[BANK].rsp_valid;
+                assign bank_rsp_data[k] = dma_switch_to_tmem[BANK].rsp_data.data;
+                assign bank_rsp_tag[k] = dma_switch_to_tmem[BANK].rsp_data.tag[TAG_WIDTH-1:0];
+                assign dma_switch_to_tmem[BANK].rsp_ready =
+                    dma_to_tmem[c].rsp_ready && (rsp_sel == 1'(k));
+            end
         end else begin : g_pair
             VX_mem_bus_if #(
                 .DATA_SIZE  (DATA_SIZE),
@@ -638,9 +700,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         assign bank_req_priority[4] = zero_point_bank_req_priority[b];
         assign bank_req_priority[5] = GEMM_SCHED_PRIORITY_BACKGROUND;
 
-        // Port 0: restricted DMA path. Physical ownership is direct for
-        // ratio one and floor(b/2) for the consecutive-pair organization;
-        // no dynamic crossbar path is elaborated.
+        // Port 0: restricted DMA path. A bank belongs to one fixed DMA
+        // channel in all organizations; no full crossbar is elaborated.
         assign bank_port_if[0].req_valid       = dma_switch_to_tmem[b].req_valid;
         assign bank_port_if[0].req_data.rw     = dma_switch_to_tmem[b].req_data.rw;
         assign bank_port_if[0].req_data.addr   = dma_switch_to_tmem[b].req_data.addr;
@@ -658,7 +719,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         assign dma_switch_to_tmem[b].req_ready = bank_port_if[0].req_ready;
 
         wire dma_write_ack = bank_port_if[0].rsp_data.tag[DMA_WRITE_ACK_TAG_BIT];
-        // Drop write acknowledgements before the fixed-pair response FIFOs.
+        // Drop write acknowledgements before direct/select response routing
+        // or the fixed-pair response FIFOs.
         // Store completion still follows physical bank request acceptance;
         // no response-drain counter, extra queue, or descriptor delay is needed.
         assign dma_switch_to_tmem[b].rsp_valid = bank_port_if[0].rsp_valid
@@ -1110,9 +1172,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     end
 `endif
 
-    `VX_STATIC_ASSERT((HBM_DMA_DATA_SIZE / DATA_SIZE)
-                   == (NUM_BANKS / NUM_DMA_CHANNELS),
-      ("HBM/physical width ratio must match TMEM banks per DMA channel"));
+    `VX_STATIC_ASSERT(DMA_ORGANIZATION_SUPPORTED,
+      ("supported DMA width-ratio/banks-per-channel organizations are 1/1, 1/2, and 2/2"));
     `VX_STATIC_ASSERT(HBM_DMA_DATA_SIZE == 64,
       ("supported GEMM HBM-DMA aggregate width is 64 bytes"));
     `VX_STATIC_ASSERT(AXI_DATA_WIDTH == (HBM_DMA_DATA_SIZE * 8),

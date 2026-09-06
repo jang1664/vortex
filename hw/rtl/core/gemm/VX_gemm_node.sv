@@ -1661,9 +1661,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       ("GEMM improve currently supports square 16x16 or 32x32 MXUs"));
     `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0,
       ("HBM-DMA width must be an integer multiple of the physical TMEM width"));
-    `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE)
-                   == (NUM_TMEM_BANKS / NUM_DMA_CHANNELS),
-      ("HBM/physical width ratio must match TMEM banks per DMA channel"));
+    `VX_STATIC_ASSERT(((NUM_TMEM_BANKS % NUM_DMA_CHANNELS) == 0)
+                   && (((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1)
+                       ? (((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 1)
+                          || ((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 2))
+                       : (((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 2)
+                          && ((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 2))),
+      ("TMEM DMA route must be equal-width direct/select or paired half-width"));
     `VX_STATIC_ASSERT((`GEMM_SCALE_ZERO_DATA_SIZE
                      == TMEM_PHYSICAL_DATA_SIZE)
                    && (`GEMM_OUTPUT_DATA_SIZE
@@ -1671,8 +1675,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       ("Input, scale/zero, and output logical beats must match TMEM banks"));
     `VX_STATIC_ASSERT((NUM_TMEM_BANKS * `TMEM_BANK_SIZE) == (512 * 1024),
       ("supported TMEM organizations must preserve 512 KiB total capacity"));
-    `VX_STATIC_ASSERT((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024,
-      ("supported TMEM organizations must preserve 1024 words per bank"));
+    `VX_STATIC_ASSERT(((`TMEM_BANK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0)
+                   && (((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024)
+                       || ((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 2048)),
+      ("supported TMEM banks contain 1024 or 2048 complete physical words"));
 
     // `UNUSED_VAR (weight_wtrans)
     // `UNUSED_PARAM (MT)

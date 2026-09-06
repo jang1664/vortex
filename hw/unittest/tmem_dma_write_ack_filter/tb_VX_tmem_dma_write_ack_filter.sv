@@ -6,7 +6,8 @@
 // by a directed driver; full descriptor lifecycle is covered by blackbox tests.
 module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
     parameter int DATA_SIZE = 32,
-    parameter int NUM_BANKS = 2
+    parameter int NUM_BANKS = 2,
+    parameter int BANK_SIZE = 4096
 ) ();
     localparam int CHANNELS = NUM_BANKS / (64 / DATA_SIZE);
     localparam int RATIO = 64 / DATA_SIZE;
@@ -26,7 +27,7 @@ module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
 
     VX_tmem_subsystem #(
         .INSTANCE_ID("ack_filter_tb"), .NUM_BANKS(NUM_BANKS),
-        .NUM_DMA_CHANNELS(CHANNELS), .BANK_SIZE(4096),
+        .NUM_DMA_CHANNELS(CHANNELS), .BANK_SIZE(BANK_SIZE),
         .DATA_SIZE(DATA_SIZE), .WEIGHT_DATA_SIZE(DATA_SIZE),
         .TAG_WIDTH(TAG_WIDTH), .AXI_DATA_WIDTH(512)
     ) dut (
@@ -215,7 +216,8 @@ module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
         repeat (3) @(negedge clk);
     endtask
 
-    task automatic transition_test(input logic [TAG_WIDTH-1:0] tag, input int seed);
+    task automatic transition_test(input logic [TAG_WIDTH-1:0] tag, input int seed,
+                                   input int address = -1);
         logic [511:0] payload;
         int old_reads;
         int old_acks;
@@ -226,14 +228,14 @@ module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
         @(negedge clk);
         drive_rsp_ready = 0;
         hold_ack = '1;
-        request(1, seed % 8, 0, payload);
+        request(1, address < 0 ? seed % 8 : address, 0, payload);
         // Physical write is complete; start the next read before releasing
         // the old write ACK. Tag zero deliberately aliases old store tags.
         expected_data = payload;
         expected_tag = tag;
         read_expected = 1;
         fork
-            request(0, seed % 8, tag, '0);
+            request(0, address < 0 ? seed % 8 : address, tag, '0);
             begin
                 repeat (5) @(negedge clk);
                 hold_ack[0] = 0;
@@ -253,6 +255,35 @@ module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
         repeat (12) @(negedge clk);
         if (read_count != old_reads + 1)
             $fatal(1, "read response duplicated");
+    endtask
+
+    task automatic depth_retention_test;
+        logic [511:0] low_payload, high_payload;
+        int previous_reads;
+        for (int i = 0; i < 64; ++i) begin
+            low_payload[i*8 +: 8] = 8'(i * 7 + 13);
+            high_payload[i*8 +: 8] = 8'(i * 11 + 91);
+        end
+        // Both writes precede either read. Truncating row bit 10 would alias
+        // rows 1023/2047 and corrupt the first read instead of passing a
+        // write/read test that accidentally uses the same truncated address.
+        drive_rsp_ready = 1;
+        request(1, 1023, 0, low_payload);
+        request(1, 2047, 0, high_payload);
+        previous_reads = read_count;
+        expected_data = low_payload;
+        expected_tag = TAG_WIDTH'(2);
+        read_expected = 1;
+        request(0, 1023, expected_tag, '0);
+        wait (read_count == previous_reads + 1);
+        @(negedge clk);
+        expected_data = high_payload;
+        expected_tag = TAG_WIDTH'(3);
+        read_expected = 1;
+        request(0, 2047, expected_tag, '0);
+        wait (read_count == previous_reads + 2);
+        repeat (12) @(negedge clk);
+        $display("COVERAGE: distinct row1023/row2047 payloads retained across both writes");
     endtask
 
     initial begin
@@ -280,11 +311,14 @@ module tb_VX_tmem_dma_write_ack_filter import VX_gpu_pkg::*; #(
         hold_ack = '1;
         request(1, 7, 0, '1);
         reset_design();
-        transition_test(0, 29);
+        // Exercise the final physical row, including 2048-deep MXU16 banks.
+        transition_test(0, 29, BANK_SIZE / DATA_SIZE - 1);
         for (int b = 0; b < RATIO; ++b) begin
             if (bank_writes[b] != 1 || bank_reads[b] != 1 || bank_acks[b] != 2)
                 $fatal(1, "post-reset bank%0d count mismatch", b);
         end
+        if (BANK_SIZE / DATA_SIZE == 2048)
+            depth_retention_test();
         @(negedge clk);
         local_write_valid = 1;
         do @(posedge clk); while (!dut.g_bank[0].bank_port_if[5].req_ready);
