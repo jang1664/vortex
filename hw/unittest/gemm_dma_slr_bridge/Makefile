@@ -14,8 +14,14 @@ TB := $(SRC_DIR)/tb_gemm_dma_slr_bridge.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
+        $(RTL_DIR)/libs/VX_elastic_buffer.sv \
+        $(RTL_DIR)/libs/VX_stream_buffer.sv \
+        $(RTL_DIR)/libs/VX_pipe_buffer.sv \
+        $(RTL_DIR)/libs/VX_pipe_register.sv \
+        $(RTL_DIR)/libs/VX_shift_register.sv \
         $(RTL_DIR)/libs/VX_slr_stream.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_dma_slr_bridge.sv
+        $(RTL_DIR)/libs/VX_stream_transport.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_transport.sv
 VC_INCDIRS := +incdir+$(RTL_DIR)
 DEFINES := +define+SIMULATION $(patsubst -D%,+define+%,$(CONFIGS))
 COMPILE_LOG := logs/compile.log

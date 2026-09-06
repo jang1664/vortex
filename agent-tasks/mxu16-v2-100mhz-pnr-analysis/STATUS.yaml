@@ -1,0 +1,19 @@
+task: mxu16-v2-100mhz-pnr-analysis
+state: DONE
+scope: Read-only diagnosis of the v2 100 MHz implementation; no RTL changes.
+log:
+  - timestamp: '2026-09-05 19:20'
+    message: 'Located v2 reports. WNS -1.572 ns, TNS -4525.323 ns, 8580 failing setup endpoints, achieved clock 86.4 MHz. Worst path now ends in zero-point local DMA payload BRAM.'
+  - timestamp: '2026-09-05 19:28'
+    message: 'Confirmed identical saved configs and only the intended HBM launch-buffer delta in packaged RTL. Traced S/Z consume forwarding and independent local launch paths. Placed WNS -0.794 ns worsens after route; final QoR congestion is OK.'
+  - timestamp: '2026-09-05 19:32'
+    message: 'Captured 3113 failing endpoint paths from final DCP. Representative report generation over-expanded leaf registers into scopes; interrupted this read-only diagnostic Vivado job, leaving a partial TSV. Corrected script for future reruns, not rerun. Top 500 are complete: 452 local-DMA endpoints, 22 HBM endpoints, 24 GEMM controller, 2 other GEMM.'
+  - timestamp: '2026-09-05 19:33'
+    message: 'Diagnosed third independent HBM-to-pair-to-bank-ready-to-HBM slot path at -1.321 ns. Wrote evidence, sample limits, and recommended cuts in analysis.md. No RTL edits or verification claims.'
+pitfalls:
+  - 'Classify netlist names using literal substring matching; square brackets in hierarchy names are not glob literals.'
+  - 'Utilization scopes must contain disjoint root instances, never both parents and descendants.'
+  - 'Optimized hierarchy names do not alone identify original RTL ownership; trace the complete path and packaged RTL.'
+  - 'An HBM-to-HBM classified path can pass through the pair adapter and TMEM bank arbitration; endpoint counts are not path-membership counts.'
+  - 'Only emit representative full reports for actual module roots; a direct leaf register must not become a separate report scope.'
+  - 'The python alias is absent in the current shell; verify python3 before using the aggregation helper.'

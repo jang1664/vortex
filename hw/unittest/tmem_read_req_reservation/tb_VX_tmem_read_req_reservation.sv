@@ -2,9 +2,11 @@
 
 `include "VX_define.vh"
 
-module tb_VX_tmem_read_req_reservation import VX_gpu_pkg::*; ();
-    localparam int DATA_SIZE = 64;
-    localparam int TAG_WIDTH = 8;
+module tb_VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
+    parameter int DATA_SIZE = 64,
+    parameter bit SLR_ENABLE = 1'b0
+) ();
+    localparam int TAG_WIDTH = `UP(UUID_WIDTH) + 8;
     localparam int MEM_ADDR_WIDTH = 34;
     localparam int ADDR_WIDTH = MEM_ADDR_WIDTH - $clog2(DATA_SIZE);
     localparam int TAG_VALUE_WIDTH = TAG_WIDTH - `UP(UUID_WIDTH);
@@ -49,7 +51,8 @@ module tb_VX_tmem_read_req_reservation import VX_gpu_pkg::*; ();
         .INSTANCE_ID    ("reservation_tb"),
         .DATA_SIZE      (DATA_SIZE),
         .TAG_WIDTH      (TAG_WIDTH),
-        .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH)
+        .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH),
+        .SLR_ENABLE     (SLR_ENABLE)
     ) dut (
         .clk            (clk),
         .reset          (reset),
@@ -80,9 +83,9 @@ module tb_VX_tmem_read_req_reservation import VX_gpu_pkg::*; ();
 
     task automatic expect_occupancy(input int expected);
         #1;
-        if (dut.occupancy_r !== 2'(expected))
+        if ((accepted_count - issued_count) != expected)
             $fatal(1, "occupancy=%0d expected=%0d",
-                   dut.occupancy_r, expected);
+                   accepted_count - issued_count, expected);
     endtask
 
     task automatic expect_simultaneous_transfer;
@@ -163,6 +166,70 @@ module tb_VX_tmem_read_req_reservation import VX_gpu_pkg::*; ();
         repeat (3) @(posedge clk);
         @(negedge clk);
         reset = 1'b0;
+
+        if (SLR_ENABLE) begin : slr_stimulus
+            // Discard an accepted, unissued request across reset. A stale
+            // request would mismatch the post-reset scoreboard's first tag.
+            drive_request(15);
+            @(posedge clk);
+            expect_occupancy(1);
+            @(negedge clk);
+            reset = 1'b1;
+            upstream_if.req_valid = 1'b0;
+            repeat (4) @(posedge clk);
+            @(negedge clk);
+            reset = 1'b0;
+
+            // Six total request credits: common EB2 plus four crossing
+            // credits. Keep the destination closed long enough to fill all
+            // storage, then apply independently changing backpressure.
+            for (int tick = 0; tick < 80; tick++) begin
+                if (accepted_count < 12)
+                    drive_request(accepted_count);
+                else
+                    upstream_if.req_valid = 1'b0;
+                downstream_if.req_ready = (tick >= 16) && ((tick % 4) != 1);
+                @(posedge clk);
+                #1;
+                if (tick == 12) begin
+                    expect_occupancy(6);
+                    if (upstream_if.req_ready)
+                        $fatal(1, "full SLR reservation exposed credit");
+                end
+                @(negedge clk);
+            end
+            if (accepted_count != 12 || issued_count != 12)
+                $fatal(1, "SLR reservation did not drain accepted=%0d issued=%0d",
+                       accepted_count, issued_count);
+            expect_occupancy(0);
+            if (downstream_if.req_valid)
+                $fatal(1, "SLR reservation duplicated final request");
+
+            // Reverse response transport must preserve the complete UUID/tag
+            // and data while the source is stalled. No request slot lookup is
+            // allowed in this transport, so use an unrelated full tag.
+            downstream_if.rsp_valid = 1'b1;
+            downstream_if.rsp_data.data = {DATA_SIZE{8'hc7}};
+            downstream_if.rsp_data.tag = '1;
+            upstream_if.rsp_ready = 1'b0;
+            do @(posedge clk); while (!downstream_if.rsp_ready);
+            @(negedge clk);
+            downstream_if.rsp_valid = 1'b0;
+            repeat (5) begin
+                @(negedge clk);
+                if (!upstream_if.rsp_valid
+                 || upstream_if.rsp_data.data !== {DATA_SIZE{8'hc7}}
+                 || upstream_if.rsp_data.tag !== '1)
+                    $fatal(1, "SLR response payload/tag changed under stall");
+            end
+            upstream_if.rsp_ready = 1'b1;
+            @(posedge clk);
+            @(negedge clk);
+            if (upstream_if.rsp_valid)
+                $fatal(1, "SLR response duplicated after consumption");
+            $display("TEST PASSED: SLR tmem reservation bytes=%0d credits=6 reset/stall/drain", DATA_SIZE);
+            $finish;
+        end
 
         // Empty reservations have credit but do not bypass a live request to
         // the downstream interface.  The request appears one cycle later.

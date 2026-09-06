@@ -11,6 +11,9 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
+TB_SLR_ENABLE ?= 0
+TB_DATA_SIZE ?= 64
+NDEBUG ?= 0
 TIME_SCALE := 1ns/1ps
 TOP_MODULE := tb_VX_tmem_read_req_reservation
 
@@ -24,6 +27,12 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
         $(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/libs/VX_slr_stream.sv \
+        $(RTL_DIR)/libs/VX_stream_transport.sv \
+        $(RTL_DIR)/libs/VX_elastic_buffer.sv \
+        $(RTL_DIR)/libs/VX_stream_buffer.sv \
+        $(RTL_DIR)/libs/VX_pipe_buffer.sv \
+        $(RTL_DIR)/libs/VX_pipe_register.sv \
+        $(RTL_DIR)/libs/VX_shift_register.sv \
         $(RTL_DIR)/mem/VX_slr_mem_bus.sv \
         $(RTL_DIR)/mem/VX_tmem_dma_pair_adapter.sv \
         $(RTL_DIR)/mem/VX_tmem_subsystem.sv
@@ -35,8 +44,11 @@ INCDIRS_ := $(ROOT_DIR)/hw \
             $(RTL_DIR)/mem \
             $(AXI_DIR)/src \
             $(AXI_DIR)/include
-DEFINES_ := SIMULATION NDEBUG XLEN_64 MEM_ADDR_WIDTH=34 \
+DEFINES_ := SIMULATION XLEN_64 MEM_ADDR_WIDTH=34 \
             PLATFORM_MEMORY_ADDR_WIDTH=34
+ifeq ($(NDEBUG),1)
+DEFINES_ += NDEBUG
+endif
 CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
 DEFINES_ += $(CONFIG_DEFINES)
 
@@ -46,7 +58,8 @@ VC_INCDIRS := $(foreach dir,$(INCDIRS_),+incdir+$(dir))
 empty :=
 space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
-PARAMS :=
+PARAMS := -pvalue+$(TOP_MODULE).SLR_ENABLE=$(TB_SLR_ENABLE) \
+          -pvalue+$(TOP_MODULE).DATA_SIZE=$(TB_DATA_SIZE)
 
 setup:
 	mkdir -p logs reports

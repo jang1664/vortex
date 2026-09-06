@@ -12,6 +12,8 @@ export CXX := /usr/bin/g++
 SIM_EXEC ?= vcs
 TEST_ZP ?= 0
 TB_RESPONSE_DATA_RAM ?= 1
+TB_SINK_ELASTIC ?= 0
+TB_BUS_BYTES ?= 32
 TIME_SCALE := 1ns/1ps
 TOP_MODULE := tb_VX_lmem_dma_qparam_overlap
 
@@ -21,6 +23,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 	$(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 	$(RTL_DIR)/libs/VX_dp_ram.sv \
+	$(RTL_DIR)/libs/VX_elastic_buffer.sv \
+	$(RTL_DIR)/libs/VX_stream_buffer.sv \
+	$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv \
@@ -42,10 +47,13 @@ space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
 ifeq ($(SIM_EXEC),vcs)
 PARAMS := -pvalue+$(TOP_MODULE).TEST_ZP=$(TEST_ZP) \
-	-pvalue+$(TOP_MODULE).TB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
+	-pvalue+$(TOP_MODULE).TB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM) \
+	-pvalue+$(TOP_MODULE).TB_SINK_ELASTIC=$(TB_SINK_ELASTIC) \
+	-pvalue+$(TOP_MODULE).BUS_BYTES=$(TB_BUS_BYTES)
 else
 PARAMS := -GTEST_ZP=$(TEST_ZP) \
-	-GTB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM)
+	-GTB_RESPONSE_DATA_RAM=$(TB_RESPONSE_DATA_RAM) \
+	-GTB_SINK_ELASTIC=$(TB_SINK_ELASTIC) -GBUS_BYTES=$(TB_BUS_BYTES)
 endif
 
 setup:

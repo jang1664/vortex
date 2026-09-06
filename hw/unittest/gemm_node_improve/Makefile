@@ -35,7 +35,8 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/libs/VX_stream_buffer.sv \
         $(RTL_DIR)/libs/VX_slr_stream.sv \
         $(RTL_DIR)/mem/VX_slr_mem_bus.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_dma_slr_bridge.sv \
+        $(RTL_DIR)/libs/VX_stream_transport.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_transport.sv \
         $(RTL_DIR)/libs/VX_pipe_buffer.sv \
         $(RTL_DIR)/libs/VX_pipe_register.sv \
         $(RTL_DIR)/libs/VX_shift_register.sv \

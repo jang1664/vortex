@@ -2,9 +2,12 @@
 
 // The ordered transport owns an offer at source enqueue, not at backend
 // acceptance. PREPARE and its eventual tagged release share this same queue;
-// the SLR0 scheduler remains the only priority/chaining arbitration point.
-module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
+// the backend scheduler remains the only priority/chaining arbitration point.
+// Both placement modes share launch, decode, ownership, and completion logic.
+module VX_gemm_dma_transport import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
+    parameter bit SLR_ENABLE = 1'b0,
+    parameter int LAUNCH_DEPTH = SLR_ENABLE ? 2 : 1,
     parameter int DEPTH = 4
 ) (
     input wire clk,
@@ -33,10 +36,19 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
     wire [GEMM_DMA_TAG_WIDTH-1:0] completion_tag;
     wire completion_store;
     wire sync_idle;
+    wire backend_quiescent;
+    wire observed_quiescent;
 
-    VX_slr_stream #(
+    `VX_STATIC_ASSERT(LAUNCH_DEPTH == 1 || LAUNCH_DEPTH == 2,
+                   ("DMA command launch depth must be 1 or 2"))
+    `VX_STATIC_ASSERT(!SLR_ENABLE || LAUNCH_DEPTH == 2,
+                   ("SLR DMA command launch requires two entries"))
+
+    VX_stream_transport #(
         .INSTANCE_ID ({INSTANCE_ID, "_commands"}),
         .DATAW (OP_WIDTH),
+        .LAUNCH_DEPTH (LAUNCH_DEPTH),
+        .SLR_ENABLE (SLR_ENABLE),
         .DEPTH (DEPTH)
     ) u_commands (
         .clk (clk),
@@ -63,12 +75,14 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
                                     : backend_if.cmd_ready;
 
     // The backend emits at most one logical completion per clock. Its tag
-    // remains reserved in SLR1 until this event is consumed. A full tag-set
+    // remains reserved at the source until this event is consumed. A full tag-set
     // of reverse capacity plus the always-consuming receiver makes these
     // unbackpressurable backend pulses lossless (asserted below).
-    VX_slr_stream #(
+    VX_stream_transport #(
         .INSTANCE_ID ({INSTANCE_ID, "_completions"}),
         .DATAW (GEMM_DMA_TAG_WIDTH + 1),
+        .LAUNCH_DEPTH (0),
+        .SLR_ENABLE (SLR_ENABLE),
         .DEPTH (DONE_DEPTH)
     ) u_completions (
         .clk (clk),
@@ -87,9 +101,11 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
 
     // Currently the backend drives this legacy notify interface inactive.
     // Preserve its handshake contract rather than leaving a ready bypass.
-    VX_slr_stream #(
+    VX_stream_transport #(
         .INSTANCE_ID ({INSTANCE_ID, "_sync"}),
         .DATAW (64),
+        .LAUNCH_DEPTH (0),
+        .SLR_ENABLE (SLR_ENABLE),
         .DEPTH (DEPTH)
     ) u_sync (
         .clk (clk),
@@ -103,23 +119,45 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
         .idle_out (sync_idle)
     );
 
-    // Source/destination groups are deliberately separately placeable.
+    // A pulse offered on a direct return path is active work, even though
+    // that path owns no storage. This is conservative combinational status
+    // locally, not an extra completion register.
+    assign backend_quiescent = backend_if.idle && completion_idle && sync_idle
+                            && !backend_if.done && !backend_sync_if.valid;
+
+    // Source/destination status groups are separately placeable.
     // Status has no ready handshake: every clock captures a complete level.
     // The local ownership mask below prevents a stale remote idle level from
     // advertising drain while a newly accepted command is still in transit.
-    if (1) begin : g_slr0
-        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
-        logic idle_tx_q;
-        always_ff @(posedge clk) begin
-            if (reset)
-                idle_tx_q <= 1'b0;
-            else
-                idle_tx_q <= backend_if.idle && completion_idle && sync_idle;
+    if (SLR_ENABLE) begin : g_slr_status
+        if (1) begin : g_slr0
+            (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+            logic idle_tx_q;
+            always_ff @(posedge clk) begin
+                if (reset)
+                    idle_tx_q <= 1'b0;
+                else
+                    idle_tx_q <= backend_quiescent;
+            end
         end
+        if (1) begin : g_slr1
+            (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+            logic idle_rx_q;
+            always_ff @(posedge clk) begin
+                if (reset)
+                    idle_rx_q <= 1'b0;
+                else
+                    idle_rx_q <= g_slr0.idle_tx_q;
+            end
+            assign observed_quiescent = idle_rx_q;
+        end
+    end else begin : g_local_status
+        assign observed_quiescent = backend_quiescent;
     end
-    if (1) begin : g_slr1
-        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
-        logic idle_rx_q;
+
+    // One ownership model in both modes. Enqueue transfers source ownership;
+    // neither launch dequeue nor backend acceptance releases a command tag.
+    if (1) begin : g_source
         logic [TAG_COUNT-1:0] owned_tags_q;
         logic prepared_owner_q;
         wire command_enqueue = source_if.cmd_valid && source_if.cmd_ready;
@@ -127,11 +165,9 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
                             && source_if.prepare_ready;
         always_ff @(posedge clk) begin
             if (reset) begin
-                idle_rx_q <= 1'b0;
                 owned_tags_q <= '0;
                 prepared_owner_q <= 1'b0;
             end else begin
-                idle_rx_q <= g_slr0.idle_tx_q;
                 if (completion_valid)
                     owned_tags_q[completion_tag] <= 1'b0;
                 if (command_enqueue) begin
@@ -142,7 +178,7 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
                     prepared_owner_q <= 1'b1;
             end
         end
-        assign source_if.idle = idle_rx_q && forward_idle
+        assign source_if.idle = !reset && observed_quiescent && forward_idle
                              && !(|owned_tags_q) && !prepared_owner_q
                              && !source_if.cmd_valid
                              && !source_if.prepare_valid;
@@ -183,11 +219,24 @@ module VX_gemm_dma_slr_bridge import VX_gpu_pkg::*; #(
 `ifdef DBG_TRACE_GEMM
     always_ff @(posedge clk) begin
         if (!reset && backend_if.done)
-            $display("%t: %s DMA SLR backend completion tag=%0d", $time,
+            $display("%t: %s DMA transport backend completion tag=%0d", $time,
                      INSTANCE_ID, backend_if.done_tag);
         if (!reset && source_if.done)
-            $display("%t: %s DMA SLR observed completion tag=%0d", $time,
+            $display("%t: %s DMA transport observed completion tag=%0d", $time,
                      INSTANCE_ID, source_if.done_tag);
+        if (!reset && ((source_if.cmd_valid && source_if.cmd_ready)
+                    || (source_if.prepare_valid && source_if.prepare_ready)
+                    || (op_valid && op_accept)))
+            `TRACE(1, ("%m : [%0t] | GEMM_DMA_TRANSPORT | {inst=%s, slr=%0d, source_prepare=%0d, source_command=%0d, backend_prepare=%0d, backend_command=%0d, in_tag=%0d, out_tag=%0d, in_work_seq=%0d, out_work_seq=%0d}\n",
+                $time, INSTANCE_ID, SLR_ENABLE,
+                source_if.prepare_valid && source_if.prepare_ready,
+                source_if.cmd_valid && source_if.cmd_ready,
+                op_valid && op_accept && op_is_prepare,
+                op_valid && op_accept && !op_is_prepare,
+                source_if.cmd_tag, op_tag,
+                source_if.prepare_valid ? source_if.prepare_cmd.work_seq
+                                        : source_if.cmd.work_seq,
+                op_cmd.work_seq))
     end
 `endif
 `endif

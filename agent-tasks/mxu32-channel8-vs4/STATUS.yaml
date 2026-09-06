@@ -1,0 +1,16 @@
+task: mxu32-channel8-vs4
+state: DONE
+scope: Compare MXU32 HBM8/DMA8/TMEM8 against HBM4/DMA4/TMEM4 at fixed512KiB.
+current_phase: Complete; two unit profiles and18 blackbox launches PASS, configs/results ready.
+log:
+  - timestamp: '2026-09-06 17:21'
+    message: 'All18 strictPASS with noerrors and unchangedsource/config/simulator/kernel. Median8/4 cycles:M1=756/816 (+7.94%),M4=784/824 (+5.10%),M256=17783/18077 (+1.65%). Both unit profiles PASS including2048-depth retention. Newconfigs preserve512KiB. Report includes rawrepeats/ranges and evidence; no additionalRTL/runtime/kernel changes, PnR,hardware orcommit.'
+  - timestamp: '2026-09-06 17:12'
+    message: 'Both fresh configured unit tests PASS via verify_rtl.py, strictError/Fatal0. Direct4 profile includes row1023/2047 retention. Confirmed common369-file source snapshot, equal512KiB, onlyHBM/DMA/TMEMcounts andbankcapacity differ. Started18 xrt-vcs-sim --perf3 measurements, no additionalRTL edits.'
+  - timestamp: '2026-09-06 17:09'
+    message: 'User requested MXU32 8-channel versus4-channel comparison. Retain prior total512KiB requirement:8banks x64KiB versus4banks x128KiB, both64B words. Current RTL supports both direct paths and1024/2048-word banks; no RTL edits required. Preserve existing configs/results and add two named profiles. Measure M1,4,256 K=N256 q32/d0/t0 with --perf3, three launches each.'
+pitfalls:
+  - 'This is not the previous HBM4/DMA4/TMEM8 selected-bank configuration; both new profiles use direct1:1 DMA/bank routing.'
+  - 'Hold total512KiB capacity constant by doubling bank depth in4-channel profile.'
+  - 'Reject nonfatal mixed-case Error: messages even when application prints PASSED.'
+  - 'Preserve current dirty RTL worktree; record hashes and do not reuse old simulator binaries.'

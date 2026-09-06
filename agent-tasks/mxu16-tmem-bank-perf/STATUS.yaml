@@ -1,0 +1,18 @@
+task: mxu16-tmem-bank-perf
+state: DONE
+scope: Compare GEMM-node total_cycles with xrt-vcs-sim --perf 3 for M1, M4, M256.
+current_phase: Complete; all 18 runs PASS and results recorded in report.md and comparison.json.
+log:
+  - timestamp: '2026-09-06 16:16'
+    message: 'Correction during subsequent MXU32/HBM4 feasibility check: prior8-bank simv logs contain mixed-case Error: for fixed512KiB capacity assertion, missed by collector regex. Application PASS and raw cycles remain factual, but no-simulator-errors claim is withdrawn in report.md. Further validated comparison requires resolving capacity constraints and improved error detection.'
+  - timestamp: '2026-09-06 16:05'
+    message: 'All18 launches PASS, no simulator errors, unchanged simulator identities and326 RTL hashes, identical kernel hash. Median16/8: M1=1795/1871 (+4.23%), M4=1869/1955 (+4.60%), M256=71495/72843 (+1.89%). Report includes raw repeats/ranges, configuration coupling, reproduction and limitations. No RTL/config edits, hardware runs or PNR.'
+  - timestamp: '2026-09-06 15:59'
+    message: 'M1 and M4 completed three launches per profile, all PASS. M256 first launch PASS: 16 banks 71495 cycles, 8 banks 72843 cycles. Remaining two M256 repetitions running. Collector resumed successfully using wrapper stdout; both profiles share identical 326-file RTL snapshots and kernel hash.'
+  - timestamp: '2026-09-06 15:45'
+    message: 'User requested 16 vs8 TMEM bank comparison. Current clean HEAD5c748f68 includes C2 write-ACK repair. Assumed K=N256,q32,d0,t0; user can override asynchronously. Fixed32B banks require two banks per64B DMAchannel, so8banks necessarily uses4DMAchannels. Bank size remains32KB and externalHBM ports remain8. Primary metric is class3 GEMM total_cycles, not host cycles or compute_cycles. No RTL changes or hardware run planned.'
+pitfalls:
+  - 'Bank-count change also changes HBM DMA injection parallelism and total TMEM capacity; not an isolated bank-arbitration experiment.'
+  - 'Compare the PERF jobs/total_cycles/busy_cycles line, not the generic processor cycles line.'
+  - 'The non-debug wrapper writes host PERF/PASSED lines to stdout, archived as wrapper.log; do not assume build/run.log exists.'
+  - 'Initial M1 runs passed; the runner initially rejected them because it searched a nonexistent host.log. Resume reparses preserved wrapper logs and retains result_initial.json as audit evidence.'

@@ -1,12 +1,15 @@
 `include "VX_define.vh"
 
-// Split ownership: u_request/u_tx and u_response/u_rx are at the requester;
-// their opposite halves are at the memory switch. Sidebands travel atomically.
+// Shared memory packet transport with optional SLR crossing leaves. Request
+// launch storage belongs to the requester; response mapping adds no local EB.
+// The crossing TX/RX halves have opposite ownership on request and response.
 module VX_slr_mem_bus #(
     parameter `STRING INSTANCE_ID = "",
     parameter int SIDEW = 1,
     parameter int DEPTH = 4,
-    parameter bit PRESERVE_RESPONSE_TX_PAYLOAD = 1'b0
+    parameter bit PRESERVE_RESPONSE_TX_PAYLOAD = 1'b0,
+    parameter bit SLR_ENABLE = 1'b1,
+    parameter int REQUEST_LAUNCH_DEPTH = 0
 ) (
     input wire clk,
     input wire reset,
@@ -18,9 +21,11 @@ module VX_slr_mem_bus #(
 );
     localparam int REQW = $bits(upstream_if.req_data);
     localparam int RSPW = $bits(upstream_if.rsp_data);
-    VX_slr_stream #(
+    VX_stream_transport #(
         .INSTANCE_ID ({INSTANCE_ID, ":request"}),
-        .DATAW (REQW + SIDEW), .DEPTH (DEPTH)
+        .DATAW (REQW + SIDEW), .DEPTH (DEPTH),
+        .SLR_ENABLE (SLR_ENABLE),
+        .LAUNCH_DEPTH (REQUEST_LAUNCH_DEPTH)
     ) u_request (
         .clk (clk), .reset (reset),
         .valid_in (upstream_if.req_valid),
@@ -31,9 +36,11 @@ module VX_slr_mem_bus #(
         .data_out ({side_out, downstream_if.req_data}),
         .idle_out (request_idle)
     );
-    VX_slr_stream #(
+    VX_stream_transport #(
         .INSTANCE_ID ({INSTANCE_ID, ":response"}),
         .DATAW (RSPW), .DEPTH (DEPTH),
+        .SLR_ENABLE (SLR_ENABLE),
+        .LAUNCH_DEPTH (0),
         .PRESERVE_TX_PAYLOAD (PRESERVE_RESPONSE_TX_PAYLOAD),
         // Packed responses are {data, tag}; folded tag bits must not create
         // preserved TX-only orphans with no corresponding receiving FF.

@@ -2,7 +2,9 @@
 `include "VX_define.vh"
 
 module slr_mem_bus_case #(
-    parameter int DATA_SIZE = 32
+    parameter int DATA_SIZE = 32,
+    parameter bit SLR_ENABLE = 1'b1,
+    parameter int REQUEST_LAUNCH_DEPTH = 2
 ) (
     input wire clk,
     input wire reset,
@@ -18,7 +20,8 @@ module slr_mem_bus_case #(
     wire [SIDEW-1:0] side_out;
     wire request_idle;
     VX_slr_mem_bus #(
-        .INSTANCE_ID("memory_crossing"), .SIDEW(SIDEW)
+        .INSTANCE_ID("memory_crossing"), .SIDEW(SIDEW),
+        .SLR_ENABLE(SLR_ENABLE), .REQUEST_LAUNCH_DEPTH(REQUEST_LAUNCH_DEPTH)
     ) dut (
         .clk(clk), .reset(reset),
         .upstream_if(upstream_if), .downstream_if(downstream_if),
@@ -29,6 +32,9 @@ module slr_mem_bus_case #(
     logic [REQW+SIDEW-1:0] expected_request[$];
     logic [RSPW-1:0] waiting_responses[$];
     logic [RSPW-1:0] expected_response[$];
+    int request_cycles[$];
+    int epoch = 0;
+    always @(negedge reset) epoch++;
     int cycle = 0;
     int enqueued = 0;
     int accepted = 0;
@@ -48,10 +54,12 @@ module slr_mem_bus_case #(
         logic [REQW+SIDEW-1:0] expected_req;
         logic [RSPW-1:0] expected_rsp;
         logic [DATA_SIZE*8-1:0] response_data;
+        int enqueue_cycle;
         if (!reset) begin
             cycle++;
             if (upstream_if.req_valid && upstream_if.req_ready) begin
                 expected_request.push_back({side_in, upstream_if.req_data});
+                request_cycles.push_back(cycle);
                 enqueued++;
                 if (upstream_if.req_data.rw)
                     writes_enqueued++;
@@ -61,6 +69,12 @@ module slr_mem_bus_case #(
             if (downstream_if.req_valid && downstream_if.req_ready) begin
                 assert (expected_request.size() > 0) else $fatal(1, "unexpected request");
                 expected_req = expected_request.pop_front();
+                enqueue_cycle = request_cycles.pop_front();
+                if (enqueue_cycle > 100)
+                    assert (cycle - enqueue_cycle == (SLR_ENABLE ? 2 : 0)
+                                                   + (REQUEST_LAUNCH_DEPTH != 0 ? 1 : 0))
+                        else $fatal(1, "request steady-state latency changed: SLR=%0d launch=%0d delay=%0d",
+                                    SLR_ENABLE, REQUEST_LAUNCH_DEPTH, cycle - enqueue_cycle);
                 assert ({side_out, downstream_if.req_data} === expected_req)
                     else $fatal(1, "%0dB request/provenance changed", DATA_SIZE);
                 accepted++;
@@ -112,6 +126,24 @@ module slr_mem_bus_case #(
             end
             if (cycle > 2000)
                 $fatal(1, "%0dB memory crossing timeout", DATA_SIZE);
+        end else begin
+            expected_request.delete();
+            request_cycles.delete();
+            waiting_responses.delete();
+            expected_response.delete();
+            cycle = 0;
+            enqueued = 0;
+            accepted = 0;
+            returned = 0;
+            expected_reads = 0;
+            writes_enqueued = 0;
+            writes_committed = 0;
+            high_rate_beats = 0;
+            previous_accept = -1;
+            stalled_request = 0;
+            stalled_response = 0;
+            backend_response_fire = 0;
+            finished = 0;
         end
     end
 
@@ -130,12 +162,12 @@ module slr_mem_bus_case #(
             upstream_if.req_valid = enqueued < TRANSACTIONS;
             upstream_if.req_data = '0;
             upstream_if.req_data.rw = enqueued < 16 || enqueued[0];
-            upstream_if.req_data.addr = enqueued;
+            upstream_if.req_data.addr = enqueued + epoch * 256;
             upstream_if.req_data.tag.uuid = '1;
-            upstream_if.req_data.tag.value = 8'(enqueued);
+            upstream_if.req_data.tag.value = 8'(enqueued + epoch * 37);
             upstream_if.req_data.flags = enqueued;
             for (int b = 0; b < DATA_SIZE; ++b) begin
-                upstream_if.req_data.data[b*8 +: 8] = 8'(enqueued + b);
+                upstream_if.req_data.data[b*8 +: 8] = 8'(enqueued + b + epoch * 17);
                 upstream_if.req_data.byteen[b] = (b + enqueued) % 3 != 0;
             end
             side_in = {GEMM_SCHED_PRIORITY_WIDTH'(enqueued), enqueued[0], 32'(enqueued)};
@@ -159,15 +191,24 @@ endmodule
 module tb_slr_mem_bus;
     logic clk = 0;
     logic reset = 1;
-    wire finished32, finished64;
+    wire [7:0] finished;
     always #5 clk = ~clk;
-    slr_mem_bus_case #(.DATA_SIZE(32)) u_32 (.clk(clk), .reset(reset), .finished(finished32));
-    slr_mem_bus_case #(.DATA_SIZE(64)) u_64 (.clk(clk), .reset(reset), .finished(finished64));
+    for (genvar mode = 0; mode < 8; ++mode) begin : g_modes
+        slr_mem_bus_case #(
+            .DATA_SIZE(mode[0] ? 64 : 32),
+            .SLR_ENABLE(mode >= 4),
+            .REQUEST_LAUNCH_DEPTH(mode[1] ? 2 : 0)
+        ) u_case (.clk(clk), .reset(reset), .finished(finished[mode]));
+    end
     initial begin
         repeat (5) @(negedge clk);
         #1 reset = 0;
-        wait (finished32 && finished64);
-        $display("PASSED: 32B/64B SLR memory transport, tags, sidebands, reorder and write drain");
+        repeat (55) @(negedge clk);
+        #1 reset = 1;
+        repeat (4) @(negedge clk);
+        #1 reset = 0;
+        wait (&finished);
+        $display("PASSED: 32B/64B local/SLR transport, launch0/2, latency, reset, tags, sidebands, reorder and write drain");
         $finish;
     end
 endmodule

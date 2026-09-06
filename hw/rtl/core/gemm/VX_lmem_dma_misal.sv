@@ -1185,6 +1185,7 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
   parameter bit RESPONSE_DATA_RAM = 1'b1,
+  parameter bit SINK_ELASTIC = `GEMM_S_Z_SINK_ELASTIC,
   parameter int WRITER_RID0 = GEMM_RID_SC_CONSUME0,
   parameter int WRITER_RID1 = GEMM_RID_SC_CONSUME1,
   parameter int LMEM_ADDR_WIDTH_P = 1,
@@ -1469,6 +1470,7 @@ module VX_lmem_dma_qparam_queue import VX_gpu_pkg::*; #(
     .FETCH_TAGW      (LMEM_TAG_VALUE_W),
     .RING_SLOT_ORDER (1'b1),
     .SINK_PIPELINE   (1'b1),
+    .SINK_ELASTIC    (SINK_ELASTIC),
     .RESPONSE_DATA_RAM (RESPONSE_DATA_RAM)
   ) u_stream_queue (
     .clk(clk),
@@ -1765,6 +1767,7 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   parameter int CMD_FIFO_DEPTH = 4,
   parameter int RESPONSE_SLOTS = 8,
   parameter bit RESPONSE_DATA_RAM = 1'b1,
+  parameter bit SINK_ELASTIC = `GEMM_S_Z_SINK_ELASTIC,
   parameter int WRITER_RID0 = GEMM_RID_SC_CONSUME0,
   parameter int WRITER_RID1 = GEMM_RID_SC_CONSUME1,
   parameter int LMEM_ADDR_WIDTH_P = 1,
@@ -1807,6 +1810,7 @@ module VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     .CMD_FIFO_DEPTH       (CMD_FIFO_DEPTH),
     .RESPONSE_SLOTS       (RESPONSE_SLOTS),
     .RESPONSE_DATA_RAM    (RESPONSE_DATA_RAM),
+    .SINK_ELASTIC         (SINK_ELASTIC),
     .WRITER_RID0          (WRITER_RID0),
     .WRITER_RID1          (WRITER_RID1),
     .LMEM_ADDR_WIDTH_P    (LMEM_ADDR_WIDTH_P),

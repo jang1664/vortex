@@ -121,14 +121,27 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     localparam HBM_DMA_DATA_WIDTH = HBM_DMA_DATA_SIZE * 8;
     localparam NUM_TMEM_PORTS   = 6;
     localparam NUM_LDMA         = 5;
+    // GEMM_SLR_PIPELINE is presence-based; convert it once at this boundary.
+`ifdef GEMM_SLR_PIPELINE
+    localparam bit SLR_ENABLE = 1'b1;
+`else
+    localparam bit SLR_ENABLE = 1'b0;
+`endif
     localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
     localparam DMA_BANKS_PER_CHANNEL = NUM_BANKS / NUM_DMA_CHANNELS;
     localparam DMA_WIDTH_RATIO = HBM_DMA_DATA_SIZE / DATA_SIZE;
+    localparam DMA_ORGANIZATION_SUPPORTED =
+        ((DMA_WIDTH_RATIO == 1)
+         && ((DMA_BANKS_PER_CHANNEL == 1) || (DMA_BANKS_PER_CHANNEL == 2)))
+        || ((DMA_WIDTH_RATIO == 2) && (DMA_BANKS_PER_CHANNEL == 2));
     localparam WEIGHT_BANKS_PER_BEAT = WEIGHT_DATA_SIZE / DATA_SIZE;
     // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
     // its own selector bits. The TMEM bank sees:
     //   TAG_WIDTH (original) + BANK_SEL_BITS (from switch)
-    localparam SWITCH_TAG_WIDTH = TAG_WIDTH + BANK_SEL_BITS;
+    // DMA routing does not use the bank-selector padding. Reserve at least
+    // one bit there to distinguish TMEM write acknowledgements from reads.
+    localparam SWITCH_TAG_WIDTH = TAG_WIDTH + `UP(BANK_SEL_BITS);
+    localparam DMA_WRITE_ACK_TAG_BIT = SWITCH_TAG_WIDTH - 1;
 
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_PARAM (AXI_USER_WIDTH)
@@ -158,10 +171,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
          || ((HBM_DMA_DATA_SIZE % DATA_SIZE) != 0))
             $fatal(1, "%s: invalid HBM/physical data sizes (%0d/%0d)",
                    INSTANCE_ID, HBM_DMA_DATA_SIZE, DATA_SIZE);
-        if (((DMA_WIDTH_RATIO != 1) && (DMA_WIDTH_RATIO != 2))
-         || (DMA_WIDTH_RATIO != DMA_BANKS_PER_CHANNEL))
+        if (!DMA_ORGANIZATION_SUPPORTED)
             $fatal(1,
-                   "%s: HBM/physical width ratio(%0d) must equal banks/channel(%0d) and be 1 or 2",
+                   "%s: unsupported HBM/physical width ratio(%0d), banks/channel(%0d); expected 1/1, 1/2, or 2/2",
                    INSTANCE_ID, DMA_WIDTH_RATIO, DMA_BANKS_PER_CHANNEL);
         if ((INPUT_DATA_SIZE != DATA_SIZE)
          || (SCALE_ZERO_DATA_SIZE != DATA_SIZE)
@@ -212,9 +224,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) dma_to_tmem [NUM_DMA_CHANNELS] ();
 
-    // Restricted DMA-to-TMEM fabric.  The flat array is indexed by physical
-    // TMEM bank. Ratio one owns bank c directly; ratio two statically owns
-    // consecutive banks 2*c and 2*c+1.
+    // Restricted DMA-to-TMEM fabric, indexed by physical bank. Equal-width
+    // channels own bank c, or select between c and c+NUM_DMA_CHANNELS.
+    // Ratio-two channels scatter each beat across banks 2*c and 2*c+1.
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
         .TAG_WIDTH  (SWITCH_TAG_WIDTH)
@@ -245,12 +257,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     `endif
     );
 
-    // The DMA engine remains HBM_DMA_DATA_SIZE wide.  A ratio-one profile
-    // keeps the legacy direct channel-to-bank wiring.  A ratio-two profile
-    // scatters/joins one aggregate DMA word across consecutive banks 2*c and
-    // 2*c+1 without adding a lane-select address bit.
+    // The DMA engine remains HBM_DMA_DATA_SIZE wide. Direct and paired
+    // organizations retain their original paths. With two equal-width banks
+    // per channel, the channel-local word LSB selects one owned bank and is
+    // removed from its row address (it is not a width-conversion lane).
     for (genvar c = 0; c < NUM_DMA_CHANNELS; ++c) begin : g_dma_tmem_route
-        if (DMA_WIDTH_RATIO == 1) begin : g_direct
+        if ((DMA_WIDTH_RATIO == 1) && (DMA_BANKS_PER_CHANNEL == 1)) begin : g_direct
             localparam int BANK = c;
 
             assign dma_switch_to_tmem[BANK].req_valid = dma_to_tmem[c].req_valid;
@@ -268,6 +280,65 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             assign dma_to_tmem[c].rsp_data.tag =
                 dma_switch_to_tmem[BANK].rsp_data.tag[TAG_WIDTH-1:0];
             assign dma_switch_to_tmem[BANK].rsp_ready = dma_to_tmem[c].rsp_ready;
+        end else if (DMA_WIDTH_RATIO == 1) begin : g_bank_select
+            localparam int NUM_OWNED_BANKS = 2;
+            wire bank_sel = dma_to_tmem[c].req_data.addr[0];
+            wire [NUM_OWNED_BANKS-1:0] bank_req_ready;
+            wire [NUM_OWNED_BANKS-1:0] bank_rsp_valid;
+            wire [NUM_OWNED_BANKS-1:0][HBM_DMA_DATA_WIDTH-1:0] bank_rsp_data;
+            wire [NUM_OWNED_BANKS-1:0][TAG_WIDTH-1:0] bank_rsp_tag;
+
+            // The DMA's existing tagged read slots accept out-of-order
+            // returns. Only arbitrate the two banks; no reorder payload RAM
+            // or request-order queue is needed here. Lock a stalled grant so
+            // a newly arriving response cannot change the exposed data/tag.
+            logic rsp_prefer_r;
+            logic rsp_locked_r;
+            logic rsp_locked_sel_r;
+            wire rsp_sel = rsp_locked_r ? rsp_locked_sel_r
+                         : (bank_rsp_valid[rsp_prefer_r]
+                            ? rsp_prefer_r : !rsp_prefer_r);
+            wire rsp_valid = bank_rsp_valid[rsp_sel];
+
+            always_ff @(posedge clk) begin
+                if (reset) begin
+                    rsp_prefer_r <= 1'b0;
+                    rsp_locked_r <= 1'b0;
+                    rsp_locked_sel_r <= 1'b0;
+                end else if (rsp_valid) begin
+                    if (dma_to_tmem[c].rsp_ready) begin
+                        rsp_prefer_r <= !rsp_sel;
+                        rsp_locked_r <= 1'b0;
+                    end else begin
+                        rsp_locked_r <= 1'b1;
+                        rsp_locked_sel_r <= rsp_sel;
+                    end
+                end
+            end
+
+            assign dma_to_tmem[c].req_ready = bank_req_ready[bank_sel];
+            assign dma_to_tmem[c].rsp_valid = rsp_valid;
+            assign dma_to_tmem[c].rsp_data.data = bank_rsp_data[rsp_sel];
+            assign dma_to_tmem[c].rsp_data.tag = bank_rsp_tag[rsp_sel];
+
+            for (genvar k = 0; k < NUM_OWNED_BANKS; ++k) begin : g_owned_bank
+                localparam int BANK = c + k * NUM_DMA_CHANNELS;
+                assign dma_switch_to_tmem[BANK].req_valid =
+                    dma_to_tmem[c].req_valid && (bank_sel == 1'(k));
+                assign dma_switch_to_tmem[BANK].req_data.rw = dma_to_tmem[c].req_data.rw;
+                assign dma_switch_to_tmem[BANK].req_data.addr = dma_to_tmem[c].req_data.addr >> 1;
+                assign dma_switch_to_tmem[BANK].req_data.data = dma_to_tmem[c].req_data.data;
+                assign dma_switch_to_tmem[BANK].req_data.byteen = dma_to_tmem[c].req_data.byteen;
+                assign dma_switch_to_tmem[BANK].req_data.flags = dma_to_tmem[c].req_data.flags;
+                assign dma_switch_to_tmem[BANK].req_data.tag =
+                    SWITCH_TAG_WIDTH'(dma_to_tmem[c].req_data.tag);
+                assign bank_req_ready[k] = dma_switch_to_tmem[BANK].req_ready;
+                assign bank_rsp_valid[k] = dma_switch_to_tmem[BANK].rsp_valid;
+                assign bank_rsp_data[k] = dma_switch_to_tmem[BANK].rsp_data.data;
+                assign bank_rsp_tag[k] = dma_switch_to_tmem[BANK].rsp_data.tag[TAG_WIDTH-1:0];
+                assign dma_switch_to_tmem[BANK].rsp_ready =
+                    dma_to_tmem[c].rsp_ready && (rsp_sel == 1'(k));
+            end
         end else begin : g_pair
             VX_mem_bus_if #(
                 .DATA_SIZE  (DATA_SIZE),
@@ -373,9 +444,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) ldma_weight_to_tmem ();
 
     // Read request reservations cut selected-TMEM-memory-array ready from
-    // local-DMA response-slot allocation.  Responses remain a direct return
-    // path through each reservation because their slots were allocated when
-    // the corresponding request entered the reservation.
+    // local-DMA response-slot allocation. Both modes share the local EB2;
+    // SLR mode extends it with a credit-safe crossing. Response slots are
+    // allocated at enqueue, and responses need no additional local EB.
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
         .TAG_WIDTH  (TAG_WIDTH)
@@ -400,9 +471,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .DATA_SIZE (DATA_SIZE), .TAG_WIDTH (TAG_WIDTH)
     ) output_reserved_to_switch ();
     wire output_request_idle;
-`ifdef GEMM_SLR_PIPELINE
     VX_slr_mem_bus #(
-        .INSTANCE_ID ({INSTANCE_ID, ":output_slr"})
+        .INSTANCE_ID ({INSTANCE_ID, ":output_slr"}),
+        .SLR_ENABLE (SLR_ENABLE),
+        .REQUEST_LAUNCH_DEPTH (0)
     ) u_output_slr (
         .clk (clk), .reset (reset),
         .upstream_if (ldma_to_switch[4]),
@@ -410,10 +482,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .side_in (1'b0), .side_out (),
         .request_idle (output_request_idle)
     );
-`else
-    `ASSIGN_VX_MEM_BUS_IF (output_reserved_to_switch, ldma_to_switch[4]);
-    assign output_request_idle = 1'b1;
-`endif
 
     // Weight transfers use their native GEMM beat width on both sides. The
     // wide TMEM switch fans each source read out to the required bank group.
@@ -459,6 +527,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     VX_tmem_read_req_reservation #(
         .INSTANCE_ID ({INSTANCE_ID, ":input_req_reservation"}),
+        .SLR_ENABLE  (SLR_ENABLE),
         .DATA_SIZE   (DATA_SIZE),
         .TAG_WIDTH   (TAG_WIDTH)
     ) u_input_req_reservation (
@@ -476,6 +545,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     VX_tmem_read_req_reservation #(
         .INSTANCE_ID ({INSTANCE_ID, ":weight_req_reservation"}),
+        .SLR_ENABLE  (SLR_ENABLE),
         .DATA_SIZE   (WEIGHT_DATA_SIZE),
         .TAG_WIDTH   (TAG_WIDTH),
         // Keep the SLR0 TX stage out of the wide-switch response BRAM.
@@ -496,6 +566,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     VX_tmem_read_req_reservation #(
         .INSTANCE_ID ({INSTANCE_ID, ":scale_req_reservation"}),
+        .SLR_ENABLE  (SLR_ENABLE),
         .DATA_SIZE   (DATA_SIZE),
         .TAG_WIDTH   (TAG_WIDTH)
     ) u_scale_req_reservation (
@@ -513,6 +584,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
     VX_tmem_read_req_reservation #(
         .INSTANCE_ID ({INSTANCE_ID, ":zero_point_req_reservation"}),
+        .SLR_ENABLE  (SLR_ENABLE),
         .DATA_SIZE   (DATA_SIZE),
         .TAG_WIDTH   (TAG_WIDTH)
     ) u_zero_point_req_reservation (
@@ -657,22 +729,50 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         assign bank_req_priority[4] = zero_point_bank_req_priority[b];
         assign bank_req_priority[5] = GEMM_SCHED_PRIORITY_BACKGROUND;
 
-        // Port 0: restricted DMA path. Physical ownership is direct for
-        // ratio one and floor(b/2) for the consecutive-pair organization;
-        // no dynamic crossbar path is elaborated.
+        // Port 0: restricted DMA path. A bank belongs to one fixed DMA
+        // channel in all organizations; no full crossbar is elaborated.
         assign bank_port_if[0].req_valid       = dma_switch_to_tmem[b].req_valid;
         assign bank_port_if[0].req_data.rw     = dma_switch_to_tmem[b].req_data.rw;
         assign bank_port_if[0].req_data.addr   = dma_switch_to_tmem[b].req_data.addr;
         assign bank_port_if[0].req_data.data   = dma_switch_to_tmem[b].req_data.data;
         assign bank_port_if[0].req_data.byteen = dma_switch_to_tmem[b].req_data.byteen;
         assign bank_port_if[0].req_data.flags  = dma_switch_to_tmem[b].req_data.flags;
-        assign bank_port_if[0].req_data.tag    = dma_switch_to_tmem[b].req_data.tag;
+        // The bank acknowledges both reads and writes, but the HBM DMA
+        // response channel owns read slots only. Carry request direction in
+        // an otherwise unused routing-tag bit so a late write acknowledgement
+        // cannot become a read response after a G2L-to-L2G direction change.
+        assign bank_port_if[0].req_data.tag = {
+            dma_switch_to_tmem[b].req_data.rw,
+            dma_switch_to_tmem[b].req_data.tag[DMA_WRITE_ACK_TAG_BIT-1:0]
+        };
         assign dma_switch_to_tmem[b].req_ready = bank_port_if[0].req_ready;
 
-        assign dma_switch_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
+        wire dma_write_ack = bank_port_if[0].rsp_data.tag[DMA_WRITE_ACK_TAG_BIT];
+        // Drop write acknowledgements before direct/select response routing
+        // or the fixed-pair response FIFOs.
+        // Store completion still follows physical bank request acceptance;
+        // no response-drain counter, extra queue, or descriptor delay is needed.
+        assign dma_switch_to_tmem[b].rsp_valid = bank_port_if[0].rsp_valid
+                                             && !dma_write_ack;
         assign dma_switch_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
         assign dma_switch_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag;
-        assign bank_port_if[0].rsp_ready            = dma_switch_to_tmem[b].rsp_ready;
+        assign bank_port_if[0].rsp_ready = dma_write_ack
+                                       || dma_switch_to_tmem[b].rsp_ready;
+
+`ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset) begin
+                if (bank_port_if[0].req_valid && bank_port_if[0].req_ready)
+                    assert (!dma_switch_to_tmem[b].req_data.tag[DMA_WRITE_ACK_TAG_BIT])
+                        else $fatal(1, "%s: DMA request used reserved write-ack tag bit", INSTANCE_ID);
+                if (dma_switch_to_tmem[b].rsp_valid)
+                    assert (!dma_write_ack
+                         && (dma_switch_to_tmem[b].rsp_data.tag
+                          == bank_port_if[0].rsp_data.tag))
+                        else $fatal(1, "%s: DMA read response tag changed at write-ack filter", INSTANCE_ID);
+            end
+        end
+`endif
 
         // Port 1: input switch
         assign bank_port_if[1].req_valid       = in_switch_to_tmem[b].req_valid;
@@ -974,28 +1074,51 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     assign output_executor_ctrl.reg_idx = ldma_ctrl_if[4].reg_idx;
     assign output_executor_ctrl.reg_value = ldma_ctrl_if[4].reg_value;
     assign output_executor_ctrl.scheduler_work_seq = ldma_ctrl_if[4].scheduler_work_seq;
-`ifdef GEMM_SLR_PIPELINE
-    logic output_write_pending_q, output_done_pending_q;
-    assign ldma_ctrl_if[4].write_done = output_write_pending_q && output_request_idle;
-    assign ldma_ctrl_if[4].done = output_done_pending_q && output_request_idle;
+    wire output_write_complete, output_done_complete;
+    wire output_completion_pending;
+    assign ldma_ctrl_if[4].write_done = output_write_complete && output_request_idle;
+    assign ldma_ctrl_if[4].done = output_done_complete && output_request_idle;
     assign ldma_ctrl_if[4].idle = output_executor_ctrl.idle && output_request_idle
-                              && !output_write_pending_q && !output_done_pending_q;
+                              && !output_completion_pending;
     assign ldma_ctrl_if[4].prepare_ready = output_executor_ctrl.prepare_ready
-                                       && ldma_ctrl_if[4].idle;
-    always_ff @(posedge clk) begin
-        if (reset) begin
-            output_write_pending_q <= 1'b0;
-            output_done_pending_q <= 1'b0;
-        end else begin
-            if (output_executor_ctrl.write_done)
-                output_write_pending_q <= 1'b1;
-            else if (ldma_ctrl_if[4].write_done)
+                                       && (!SLR_ENABLE || ldma_ctrl_if[4].idle);
+    if (SLR_ENABLE) begin : g_output_slr_completion
+        logic output_write_pending_q, output_done_pending_q;
+        assign output_write_complete = output_write_pending_q;
+        assign output_done_complete = output_done_pending_q;
+        assign output_completion_pending = output_write_pending_q
+                                        || output_done_pending_q;
+        always_ff @(posedge clk) begin
+            if (reset) begin
                 output_write_pending_q <= 1'b0;
-            if (output_executor_ctrl.done)
-                output_done_pending_q <= 1'b1;
-            else if (ldma_ctrl_if[4].done)
                 output_done_pending_q <= 1'b0;
+            end else begin
+                if (output_executor_ctrl.write_done)
+                    output_write_pending_q <= 1'b1;
+                else if (ldma_ctrl_if[4].write_done)
+                    output_write_pending_q <= 1'b0;
+                if (output_executor_ctrl.done)
+                    output_done_pending_q <= 1'b1;
+                else if (ldma_ctrl_if[4].done)
+                    output_done_pending_q <= 1'b0;
+            end
         end
+`ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset) begin
+                assert (!output_executor_ctrl.write_done || !output_write_pending_q)
+                    else $fatal(1, "%s: duplicate output write completion while draining", INSTANCE_ID);
+                assert (!output_executor_ctrl.done || !output_done_pending_q)
+                    else $fatal(1, "%s: duplicate output executor completion while draining", INSTANCE_ID);
+            end
+        end
+`endif
+    end else begin : g_output_local_completion
+        // No posted writes locally: executor acceptance is TMEM acceptance.
+        // Keep both completion pulses and PREPARE readiness cycle-identical.
+        assign output_write_complete = output_executor_ctrl.write_done;
+        assign output_done_complete = output_executor_ctrl.done;
+        assign output_completion_pending = 1'b0;
     end
 `ifndef SYNTHESIS
     logic [63:0] output_enqueued_count_q, output_committed_count_q;
@@ -1010,27 +1133,18 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             // this is the physical array write acceptance, not bridge enqueue.
             if (output_reserved_to_switch.req_valid && output_reserved_to_switch.req_ready)
                 output_committed_count_q <= output_committed_count_q + 1'b1;
-            if (ldma_ctrl_if[4].start)
+            if (SLR_ENABLE && ldma_ctrl_if[4].start)
                 assert (ldma_ctrl_if[4].idle)
                     else $fatal(1, "%s: output descriptor started before bridge drain", INSTANCE_ID);
             if (ldma_ctrl_if[4].write_done) begin
-                assert (!(ldma_to_switch[4].req_valid && ldma_to_switch[4].req_ready))
+                assert (!SLR_ENABLE
+                     || !(ldma_to_switch[4].req_valid && ldma_to_switch[4].req_ready))
                     else $fatal(1, "%s: output completion overlaps a new bridge write", INSTANCE_ID);
                 assert (output_enqueued_count_q == output_committed_count_q)
                     else $fatal(1, "%s: output completion precedes physical TMEM write", INSTANCE_ID);
             end
-            assert (!output_executor_ctrl.write_done || !output_write_pending_q)
-                else $fatal(1, "%s: duplicate output write completion while draining", INSTANCE_ID);
-            assert (!output_executor_ctrl.done || !output_done_pending_q)
-                else $fatal(1, "%s: duplicate output executor completion while draining", INSTANCE_ID);
         end
     end
-`endif
-`else
-    assign ldma_ctrl_if[4].idle = output_executor_ctrl.idle;
-    assign ldma_ctrl_if[4].prepare_ready = output_executor_ctrl.prepare_ready;
-    assign ldma_ctrl_if[4].done = output_executor_ctrl.done;
-    assign ldma_ctrl_if[4].write_done = output_executor_ctrl.write_done;
 `endif
 
     // Output local DMA (GEMM -> LMEM)
@@ -1176,9 +1290,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     end
 `endif
 
-    `VX_STATIC_ASSERT((HBM_DMA_DATA_SIZE / DATA_SIZE)
-                   == (NUM_BANKS / NUM_DMA_CHANNELS),
-      ("HBM/physical width ratio must match TMEM banks per DMA channel"));
+    `VX_STATIC_ASSERT(DMA_ORGANIZATION_SUPPORTED,
+      ("supported DMA width-ratio/banks-per-channel organizations are 1/1, 1/2, and 2/2"));
     `VX_STATIC_ASSERT(HBM_DMA_DATA_SIZE == 64,
       ("supported GEMM HBM-DMA aggregate width is 64 bytes"));
     `VX_STATIC_ASSERT(AXI_DATA_WIDTH == (HBM_DMA_DATA_SIZE * 8),
@@ -1197,16 +1310,16 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
 
 endmodule
 
-// Two-entry, registered, non-fall-through reservation for read requests.
-// The local DMA allocates its response slot on upstream enqueue.  The
-// downstream handshake only releases this reservation and therefore must not
-// feed upstream ready in the same cycle.
+// Common EB2 read-request reservation, optionally extended across an SLR.
+// The local DMA allocates its response slot on upstream enqueue, not on
+// downstream switch acceptance. Metadata travels atomically with the request.
 module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter DATA_SIZE      = 64,
     parameter TAG_WIDTH      = 8,
     parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
-    parameter bit PRESERVE_RESPONSE_TX_PAYLOAD = 1'b0
+    parameter bit PRESERVE_RESPONSE_TX_PAYLOAD = 1'b0,
+    parameter bit SLR_ENABLE = 1'b0
 ) (
     input wire clk,
     input wire reset,
@@ -1221,91 +1334,51 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
     VX_mem_bus_if.slave upstream_if,
     VX_mem_bus_if.master downstream_if
 );
-`ifdef GEMM_SLR_PIPELINE
-    // Replace (rather than stack after) the old two-entry reservation. Credit
-    // ownership remains at the local DMA; arbitration sidebands follow data.
+    localparam int LAUNCH_DEPTH = 2;
+    localparam int CROSSING_DEPTH = 4;
+    localparam int MAX_PENDING = LAUNCH_DEPTH
+                              + (SLR_ENABLE ? CROSSING_DEPTH : 0);
+    localparam int ADDR_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
+    localparam int TAG_VALUE_WIDTH = TAG_WIDTH - `UP(UUID_WIDTH);
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (DATA_SIZE),
+        .TAG_WIDTH (TAG_WIDTH),
+        .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH)
+    ) read_request_if ();
+
+    // Reconstruct constant read fields in both modes so payload storage can
+    // fold away. Keep only address, slot tag, and arbitration provenance live.
+    assign read_request_if.req_valid = upstream_if.req_valid;
+    assign upstream_if.req_ready = read_request_if.req_ready;
+    assign read_request_if.req_data.rw = 1'b0;
+    assign read_request_if.req_data.addr = upstream_if.req_data.addr;
+    assign read_request_if.req_data.data = '0;
+    assign read_request_if.req_data.byteen = '1;
+    assign read_request_if.req_data.flags = '0;
+    assign read_request_if.req_data.tag.uuid = '0;
+    assign read_request_if.req_data.tag.value = upstream_if.req_data.tag.value;
+    assign upstream_if.rsp_valid = read_request_if.rsp_valid;
+    assign upstream_if.rsp_data = read_request_if.rsp_data;
+    assign read_request_if.rsp_ready = upstream_if.rsp_ready;
+
     VX_slr_mem_bus #(
         .INSTANCE_ID (INSTANCE_ID),
         .SIDEW (GEMM_SCHED_PRIORITY_WIDTH + 1 + 32),
+        .DEPTH (CROSSING_DEPTH),
+        .SLR_ENABLE (SLR_ENABLE),
+        .REQUEST_LAUNCH_DEPTH (LAUNCH_DEPTH),
         .PRESERVE_RESPONSE_TX_PAYLOAD (PRESERVE_RESPONSE_TX_PAYLOAD)
     ) u_slr (
         .clk (clk), .reset (reset),
-        .upstream_if (upstream_if), .downstream_if (downstream_if),
+        .upstream_if (read_request_if), .downstream_if (downstream_if),
         .side_in ({req_priority_i, req_urgent_i, req_work_seq_i}),
         .side_out ({req_priority_o, req_urgent_o, req_work_seq_o}),
         .request_idle ()
     );
-`else
-    localparam int DEPTH = 2;
-    localparam int ADDR_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
-    localparam int TAG_VALUE_WIDTH = TAG_WIDTH - `UP(UUID_WIDTH);
-
-    logic [ADDR_WIDTH-1:0] addr_r[DEPTH];
-    logic [TAG_VALUE_WIDTH-1:0] tag_value_r[DEPTH];
-    logic [GEMM_SCHED_PRIORITY_WIDTH-1:0] priority_r[DEPTH];
-    logic urgent_r[DEPTH];
-    // Work sequence is reservation provenance for debug/assertion correlation
-    // even though the current TMEM switch arbitration consumes only priority.
-    (* keep = "true" *)
-    logic [31:0] work_seq_r[DEPTH];
-    logic read_ptr_r;
-    logic write_ptr_r;
-    logic [1:0] occupancy_r;
-
+`ifndef SYNTHESIS
     wire enqueue = upstream_if.req_valid && upstream_if.req_ready;
     wire dequeue = downstream_if.req_valid && downstream_if.req_ready;
-    wire head_valid = occupancy_r != 0;
-
-    // Registered-credit rule: a full reservation cannot accept a replacement
-    // on the same edge that begins draining.
-    assign upstream_if.req_ready = occupancy_r < 2'd2;
-
-    assign downstream_if.req_valid = head_valid;
-    assign downstream_if.req_data.rw = 1'b0;
-    assign downstream_if.req_data.addr = head_valid ? addr_r[read_ptr_r] : '0;
-    assign downstream_if.req_data.data = '0;
-    assign downstream_if.req_data.byteen = '1;
-    assign downstream_if.req_data.flags = '0;
-    assign downstream_if.req_data.tag.uuid = '0;
-    assign downstream_if.req_data.tag.value
-        = head_valid ? tag_value_r[read_ptr_r] : '0;
-    assign req_priority_o = head_valid
-        ? priority_r[read_ptr_r] : GEMM_SCHED_PRIORITY_BACKGROUND;
-    assign req_urgent_o = head_valid && urgent_r[read_ptr_r];
-    assign req_work_seq_o = head_valid ? work_seq_r[read_ptr_r] : '0;
-
-    // Response tags return unchanged to the local DMA slot allocated on
-    // enqueue.  No request state is allocated on downstream dequeue.
-    assign upstream_if.rsp_valid = downstream_if.rsp_valid;
-    assign upstream_if.rsp_data = downstream_if.rsp_data;
-    assign downstream_if.rsp_ready = upstream_if.rsp_ready;
-
-    always_ff @(posedge clk) begin
-        if (reset) begin
-            read_ptr_r <= 1'b0;
-            write_ptr_r <= 1'b0;
-            occupancy_r <= '0;
-        end else begin
-            if (enqueue) begin
-                addr_r[write_ptr_r] <= upstream_if.req_data.addr;
-                tag_value_r[write_ptr_r] <= upstream_if.req_data.tag.value;
-                priority_r[write_ptr_r] <= req_priority_i;
-                urgent_r[write_ptr_r] <= req_urgent_i;
-                work_seq_r[write_ptr_r] <= req_work_seq_i;
-                write_ptr_r <= ~write_ptr_r;
-            end
-            if (dequeue)
-                read_ptr_r <= ~read_ptr_r;
-
-            unique case ({enqueue, dequeue})
-                2'b10: occupancy_r <= occupancy_r + 2'd1;
-                2'b01: occupancy_r <= occupancy_r - 2'd1;
-                default:;
-            endcase
-        end
-    end
-
-`ifndef SYNTHESIS
     logic stalled_head_r;
     logic [ADDR_WIDTH-1:0] stalled_addr_r;
     logic [TAG_VALUE_WIDTH-1:0] stalled_tag_value_r;
@@ -1321,11 +1394,8 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
             enqueue_count_r <= '0;
             dequeue_count_r <= '0;
         end else begin
-            assert (occupancy_r <= 2'd2)
-                else $fatal(1, "%s: read reservation occupancy overflow",
-                            INSTANCE_ID);
-            assert ((enqueue_count_r - dequeue_count_r) == occupancy_r)
-                else $fatal(1, "%s: read reservation accounting mismatch",
+            assert ((enqueue_count_r - dequeue_count_r) <= MAX_PENDING)
+                else $fatal(1, "%s: read transport request accounting overflow",
                             INSTANCE_ID);
             if (enqueue) begin
                 assert (!upstream_if.req_data.rw
@@ -1364,6 +1434,4 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
         end
     end
 `endif
-
-`endif // GEMM_SLR_PIPELINE
 endmodule

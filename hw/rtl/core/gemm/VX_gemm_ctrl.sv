@@ -20,14 +20,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     output wire                   progress_update_valid_o,
     output wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id_o,
     output wire [31:0]            progress_update_value_o,
-    // Same-cycle architectural Weight-consume levels.  Each Weight executor
+    // Registered architectural Weight-consume levels. Each Weight executor
     // FIFO entry compares its own writer_wait RID/target against these levels;
     // they are not untagged head-release pulses.
     output wire [31:0]            weight_consume_value0_o,
     output wire [31:0]            weight_consume_value1_o,
-    // Qparam consumers directly read their register on the consumer edge, so
-    // their same-cycle effective levels permit the next exact generation to
-    // overwrite on that edge after the old value has been captured.
+    // Qparam consumers capture on the consumer edge. The timing cut exposes
+    // that release to writers on the next cycle; the baseline effective view
+    // permits same-edge overwrite after the old value has been captured.
     output wire [31:0]            scale_consume_value0_o,
     output wire [31:0]            scale_consume_value1_o,
     output wire [31:0]            zero_point_consume_value0_o,
@@ -137,6 +137,31 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     logic [31:0] sync_regs_q[NUM_SYNC_REGS];
     logic [31:0] effective_sync[NUM_SYNC_REGS];
+    wire [31:0] issue_visible_sync[NUM_SYNC_REGS];
+
+    `VX_STATIC_ASSERT (`GEMM_TIMING_MONOTONIC_SET
+                || !(`GEMM_TIMING_REG_LOCAL_DEPS
+                  || `GEMM_TIMING_REG_ACC_FREE
+                  || `GEMM_TIMING_REG_DMA_DEPS),
+        ("registered GEMM dependency views require monotonic SET semantics"))
+
+    for (genvar rid = 0; rid < NUM_SYNC_REGS; ++rid) begin : g_issue_sync_view
+      assign issue_visible_sync[rid] = `GEMM_TIMING_REG_LOCAL_DEPS
+                                    ? sync_regs_q[rid] : effective_sync[rid];
+    end
+
+    // Timing-safe dependency visibility is conservative only if SET cannot
+    // revoke an already committed generation. With this contract enabled,
+    // stale/OOO SET notifications leave the newer generation intact. Reset
+    // and a quiescent cfg handshake remain the only epoch-clearing events.
+    function automatic logic [31:0] sync_set_value(
+        input logic [31:0] committed_value,
+        input logic [31:0] notified_value
+    );
+      return (`GEMM_TIMING_MONOTONIC_SET
+           && (notified_value < committed_value))
+           ? committed_value : notified_value;
+    endfunction
 
     logic cmd_stage_valid_q;
     logic [2:0] cmd_stage_child_q;
@@ -506,31 +531,41 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 `endif
 
     wire [31:0] sync_t0_next = child5_t0
-        ? child_inflight_head[5].value : sync_regs_q[RID_T0];
+        ? sync_set_value(sync_regs_q[RID_T0], child_inflight_head[5].value)
+        : sync_regs_q[RID_T0];
     wire [31:0] sync_w0_next = child1_w0
-        ? child_inflight_head[1].value : sync_regs_q[RID_W0];
+        ? sync_set_value(sync_regs_q[RID_W0], child_inflight_head[1].value)
+        : sync_regs_q[RID_W0];
     wire [31:0] sync_g0_next = sync_regs_q[RID_G0]
         + (child0_g0 ? child_inflight_head[0].value : 32'd0);
     wire [31:0] sync_o_next = sync_regs_q[RID_O]
         + (child5_o ? child_inflight_head[5].value : 32'd0);
     wire [31:0] sync_t1_next = child5_t1
-        ? child_inflight_head[5].value : sync_regs_q[RID_T1];
+        ? sync_set_value(sync_regs_q[RID_T1], child_inflight_head[5].value)
+        : sync_regs_q[RID_T1];
     wire [31:0] sync_w1_next = child1_w1
-        ? child_inflight_head[1].value : sync_regs_q[RID_W1];
+        ? sync_set_value(sync_regs_q[RID_W1], child_inflight_head[1].value)
+        : sync_regs_q[RID_W1];
     wire [31:0] sync_g1_next = sync_regs_q[RID_G1]
         + (child0_g1 ? child_inflight_head[0].value : 32'd0);
     wire [31:0] sync_acc_free0_next = child4_acc_free0
-        ? child_inflight_head[4].value : sync_regs_q[RID_ACC_FREE0];
+        ? sync_set_value(sync_regs_q[RID_ACC_FREE0], child_inflight_head[4].value)
+        : sync_regs_q[RID_ACC_FREE0];
     wire [31:0] sync_acc_free1_next = child4_acc_free1
-        ? child_inflight_head[4].value : sync_regs_q[RID_ACC_FREE1];
+        ? sync_set_value(sync_regs_q[RID_ACC_FREE1], child_inflight_head[4].value)
+        : sync_regs_q[RID_ACC_FREE1];
     wire [31:0] sync_sc0_next = child2_sc0
-        ? child_inflight_head[2].value : sync_regs_q[RID_SC0];
+        ? sync_set_value(sync_regs_q[RID_SC0], child_inflight_head[2].value)
+        : sync_regs_q[RID_SC0];
     wire [31:0] sync_zp0_next = child3_zp0
-        ? child_inflight_head[3].value : sync_regs_q[RID_ZP0];
+        ? sync_set_value(sync_regs_q[RID_ZP0], child_inflight_head[3].value)
+        : sync_regs_q[RID_ZP0];
     wire [31:0] sync_sc1_next = child2_sc1
-        ? child_inflight_head[2].value : sync_regs_q[RID_SC1];
+        ? sync_set_value(sync_regs_q[RID_SC1], child_inflight_head[2].value)
+        : sync_regs_q[RID_SC1];
     wire [31:0] sync_zp1_next = child3_zp1
-        ? child_inflight_head[3].value : sync_regs_q[RID_ZP1];
+        ? sync_set_value(sync_regs_q[RID_ZP1], child_inflight_head[3].value)
+        : sync_regs_q[RID_ZP1];
     wire [31:0] sync_sz0_next = (sync_sc0_next < sync_zp0_next)
         ? sync_sc0_next : sync_zp0_next;
     wire [31:0] sync_sz1_next = (sync_sc1_next < sync_zp1_next)
@@ -587,7 +622,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
          && child_inflight_head[child].valid) begin
           if (child_inflight_head[child].set_mode) begin
             effective_sync_legacy[child_inflight_head[child].reg_id]
-                = child_inflight_head[child].value;
+                = sync_set_value(effective_sync_legacy[
+                                     child_inflight_head[child].reg_id],
+                                 child_inflight_head[child].value);
           end else begin
             effective_sync_legacy[child_inflight_head[child].reg_id]
                 = effective_sync_legacy[
@@ -636,6 +673,12 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                 "%s: parallel sync reducer diverged at RID %0d: new=%0d legacy=%0d",
                 INSTANCE_ID, rid, effective_sync[rid],
                 effective_sync_legacy[rid]);
+          if (`GEMM_TIMING_MONOTONIC_SET) begin
+            assert (effective_sync[rid] >= sync_regs_q[rid])
+              else $fatal(1,
+                  "%s: sync generation decreased/wrapped within epoch rid=%0d old=%0d next=%0d",
+                  INSTANCE_ID, rid, sync_regs_q[rid], effective_sync[rid]);
+          end
         end
       end
     end
@@ -656,10 +699,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // compute-result -> sync reduction -> DMA scheduling path in one cycle.
     assign weight_consume_value0_o = sync_regs_q[RID_W_CONSUME0];
     assign weight_consume_value1_o = sync_regs_q[RID_W_CONSUME1];
-    assign scale_consume_value0_o = sync_sc_consume0_next;
-    assign scale_consume_value1_o = sync_sc_consume1_next;
-    assign zero_point_consume_value0_o = sync_zp_consume0_next;
-    assign zero_point_consume_value1_o = sync_zp_consume1_next;
+    assign scale_consume_value0_o = `GEMM_TIMING_REG_CONSUME
+        ? sync_regs_q[RID_SC_CONSUME0] : sync_sc_consume0_next;
+    assign scale_consume_value1_o = `GEMM_TIMING_REG_CONSUME
+        ? sync_regs_q[RID_SC_CONSUME1] : sync_sc_consume1_next;
+    assign zero_point_consume_value0_o = `GEMM_TIMING_REG_CONSUME
+        ? sync_regs_q[RID_ZP_CONSUME0] : sync_zp_consume0_next;
+    assign zero_point_consume_value1_o = `GEMM_TIMING_REG_CONSUME
+        ? sync_regs_q[RID_ZP_CONSUME1] : sync_zp_consume1_next;
 
     // Registered operand completion makes a final register write consumable
     // only on the following cycle for all W/S/Z resources.
@@ -669,8 +716,45 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.input_sc_load_value[1] = sync_regs_q[RID_SC1];
     assign gemm_ctrl_if.input_zp_load_value[0] = sync_regs_q[RID_ZP0];
     assign gemm_ctrl_if.input_zp_load_value[1] = sync_regs_q[RID_ZP1];
-    assign gemm_ctrl_if.input_acc_free_value[0] = sync_acc_free0_next;
-    assign gemm_ctrl_if.input_acc_free_value[1] = sync_acc_free1_next;
+    assign gemm_ctrl_if.input_acc_free_value[0] = `GEMM_TIMING_REG_ACC_FREE
+        ? sync_regs_q[RID_ACC_FREE0] : sync_acc_free0_next;
+    assign gemm_ctrl_if.input_acc_free_value[1] = `GEMM_TIMING_REG_ACC_FREE
+        ? sync_regs_q[RID_ACC_FREE1] : sync_acc_free1_next;
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        if (cfg_fire) begin
+          `TRACE(1, ("%m : [%0t] | GEMM_TIMING_CONFIG | {inst=%s, monotonic_set=%0d, reg_consume=%0d, reg_local_deps=%0d, reg_acc_free=%0d, reg_dma_deps=%0d, reg_capacity=%0d, dma_launch_eb2=%0d}\n",
+              $time, INSTANCE_ID, `GEMM_TIMING_MONOTONIC_SET,
+              `GEMM_TIMING_REG_CONSUME, `GEMM_TIMING_REG_LOCAL_DEPS,
+              `GEMM_TIMING_REG_ACC_FREE, `GEMM_TIMING_REG_DMA_DEPS,
+              `GEMM_TIMING_REG_CAPACITY, `GEMM_TIMING_DMA_LAUNCH_EB2))
+        end else if (invocation_active_q) begin
+          for (int rid = 0; rid < NUM_SYNC_REGS; ++rid) begin
+            if (sync_regs_q[rid] != effective_sync[rid]) begin
+              `TRACE(1, ("%m : [%0t] | GEMM_TIMING_SYNC | {inst=%s, rid=%0d, registered=%0d, next=%0d}\n",
+                  $time, INSTANCE_ID, rid, sync_regs_q[rid], effective_sync[rid]))
+            end
+          end
+          for (int child = 0; child < N_CHILDREN; ++child) begin
+            if (child_completion_pop_v[child]
+             && child_inflight_head[child].valid
+             && child_inflight_head[child].set_mode
+             && (child_inflight_head[child].value
+                 < sync_regs_q[child_inflight_head[child].reg_id])) begin
+              `TRACE(1, ("%m : [%0t] | GEMM_TIMING_STALE_SET | {inst=%s, child=%0d, rid=%0d, registered=%0d, notified=%0d, ignored=%0d}\n",
+                  $time, INSTANCE_ID, child, child_inflight_head[child].reg_id,
+                  sync_regs_q[child_inflight_head[child].reg_id],
+                  child_inflight_head[child].value, `GEMM_TIMING_MONOTONIC_SET))
+            end
+          end
+        end
+      end
+    end
+`endif
+`endif
 
     generate
       for (genvar i = 0; i < N_CHILDREN; ++i) begin : g_child_scheduler
@@ -691,13 +775,17 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
             dma_wait_supported = 1'b1;
             case (child_q_cmd[i].waits[0].reg_id)
               GEMM_SYNC_REG_ID_WIDTH'(RID_G0):
-                dma_wait_value = sync_g0_next;
+                dma_wait_value = `GEMM_TIMING_REG_DMA_DEPS
+                    ? sync_regs_q[RID_G0] : sync_g0_next;
               GEMM_SYNC_REG_ID_WIDTH'(RID_G1):
-                dma_wait_value = sync_g1_next;
+                dma_wait_value = `GEMM_TIMING_REG_DMA_DEPS
+                    ? sync_regs_q[RID_G1] : sync_g1_next;
               GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE0):
-                dma_wait_value = sync_acc_free0_next;
+                dma_wait_value = `GEMM_TIMING_REG_DMA_DEPS
+                    ? sync_regs_q[RID_ACC_FREE0] : sync_acc_free0_next;
               GEMM_SYNC_REG_ID_WIDTH'(RID_ACC_FREE1):
-                dma_wait_value = sync_acc_free1_next;
+                dma_wait_value = `GEMM_TIMING_REG_DMA_DEPS
+                    ? sync_regs_q[RID_ACC_FREE1] : sync_acc_free1_next;
               default: begin
                 dma_wait_supported = 1'b0;
                 dma_wait_value = 32'd0;
@@ -719,7 +807,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               if (child_q_cmd[i].waits[dep].valid) begin
                 deps_ready &= (child_q_cmd[i].waits[dep].reg_id
                                < NUM_SYNC_REGS)
-                           && (effective_sync[
+                           && (issue_visible_sync[
                                  child_q_cmd[i].waits[dep].reg_id]
                                >= child_q_cmd[i].waits[dep].target);
               end
@@ -733,7 +821,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                 prepare_deps_ready
                     &= (child_q_cmd[i].prepare.waits[dep].reg_id
                         < NUM_SYNC_REGS)
-                    && (effective_sync[
+                    && (issue_visible_sync[
                           child_q_cmd[i].prepare.waits[dep].reg_id]
                         >= child_q_cmd[i].prepare.waits[dep].target);
               end
@@ -809,7 +897,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               = gemm_cqueue_out[i].flag.done
              && !child_inflight_empty_v[i];
           assign child_inflight_can_accept_v[i]
-              = !child_inflight_full_v[i] || child_completion_pop_v[i];
+              = !child_inflight_full_v[i]
+             || (!`GEMM_TIMING_REG_CAPACITY && child_completion_pop_v[i]);
           // Input, Weight, Scale, and Zero-point have ordered multi-command
           // executors.  Their metadata FIFOs still retire notify records
           // strictly in issue order.  Other local executors retain their
@@ -818,7 +907,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               = ((i == 0) || (i == WEIGHT_CHILD_INDEX)
               || (i == SCALE_CHILD_INDEX) || (i == ZP_CHILD_INDEX))
               ? 1'b1
-              : (child_inflight_empty_v[i] || child_completion_pop_v[i]);
+              : (child_inflight_empty_v[i]
+              || (!`GEMM_TIMING_REG_CAPACITY && child_completion_pop_v[i]));
           assign gemm_cqueue_out[i].ctrl.start
               = child_dependency_eligible_v[i]
              && child_inflight_can_accept_v[i]
@@ -849,6 +939,124 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         end
 
 `ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
+        // Shadow comparisons never feed functional issue. Count both possible
+        // visibility gaps and gaps exposed after the other issue predicates,
+        // so overlapping cuts are not automatically charged twice.
+        logic dbg_next_deps_ready;
+        logic dbg_reg_deps_ready;
+        logic dbg_next_prepare_ready;
+        logic dbg_reg_prepare_ready;
+        wire dbg_registered_deps = (i == DMA_CHILD_INDEX)
+            ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS;
+        wire dbg_dep_gap = !child_q_empty_v[i]
+            && dbg_next_deps_ready && !dbg_reg_deps_ready;
+        wire dbg_dep_exposed = dbg_registered_deps && dbg_dep_gap
+            && child_inflight_can_accept_v[i]
+            && child_single_active_ready_v[i]
+            && ((i == DMA_CHILD_INDEX)
+              ? (!dma_prepare_valid_q && !dma_issue_tag_reserved_q
+                && dma_free_tag_valid && gemm_ctrl_if.dma_flag.cmd_ready)
+              : gemm_cqueue_out[i].flag.idle);
+        wire dbg_legacy_capacity = !child_inflight_full_v[i]
+            || child_completion_pop_v[i];
+        wire dbg_legacy_single_active
+            = ((i == 0) || (i == WEIGHT_CHILD_INDEX)
+            || (i == SCALE_CHILD_INDEX) || (i == ZP_CHILD_INDEX))
+            || child_inflight_empty_v[i] || child_completion_pop_v[i];
+        wire dbg_capacity_exposed = (i != DMA_CHILD_INDEX)
+            && `GEMM_TIMING_REG_CAPACITY
+            && child_dependency_eligible_v[i]
+            && gemm_cqueue_out[i].flag.idle
+            && dbg_legacy_capacity && dbg_legacy_single_active
+            && !(child_inflight_can_accept_v[i]
+              && child_single_active_ready_v[i]);
+        wire dbg_prepare_exposed = (i != DMA_CHILD_INDEX)
+            && `GEMM_TIMING_REG_LOCAL_DEPS
+            && !child_q_empty_v[i] && child_q_cmd[i].prepare.valid
+            && (child_q_cmd[i].prepare.mode == GEMM_PREPARE_SOURCE_READ)
+            && !child_prepare_sent_q[i] && !deps_ready
+            && child_prepare_ready_v[i]
+            && dbg_next_prepare_ready && !dbg_reg_prepare_ready;
+        logic [31:0] dbg_dep_gap_cycles_q;
+        logic [31:0] dbg_dep_exposed_cycles_q;
+        logic [31:0] dbg_capacity_exposed_cycles_q;
+        logic [31:0] dbg_prepare_exposed_cycles_q;
+
+        always_comb begin
+          dbg_next_deps_ready = 1'b1;
+          dbg_reg_deps_ready = 1'b1;
+          dbg_next_prepare_ready = 1'b1;
+          dbg_reg_prepare_ready = 1'b1;
+          for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; ++dep) begin
+            if (child_q_cmd[i].waits[dep].valid) begin
+              if (child_q_cmd[i].waits[dep].reg_id < NUM_SYNC_REGS) begin
+                dbg_next_deps_ready &= effective_sync[
+                    child_q_cmd[i].waits[dep].reg_id]
+                    >= child_q_cmd[i].waits[dep].target;
+                dbg_reg_deps_ready &= sync_regs_q[
+                    child_q_cmd[i].waits[dep].reg_id]
+                    >= child_q_cmd[i].waits[dep].target;
+              end else begin
+                dbg_next_deps_ready = 1'b0;
+                dbg_reg_deps_ready = 1'b0;
+              end
+            end
+          end
+          for (int dep = 0; dep < GEMM_MAX_PREPARE_WAIT_DEPS; ++dep) begin
+            if (child_q_cmd[i].prepare.waits[dep].valid) begin
+              if (child_q_cmd[i].prepare.waits[dep].reg_id < NUM_SYNC_REGS) begin
+                dbg_next_prepare_ready &= effective_sync[
+                    child_q_cmd[i].prepare.waits[dep].reg_id]
+                    >= child_q_cmd[i].prepare.waits[dep].target;
+                dbg_reg_prepare_ready &= sync_regs_q[
+                    child_q_cmd[i].prepare.waits[dep].reg_id]
+                    >= child_q_cmd[i].prepare.waits[dep].target;
+              end else begin
+                dbg_next_prepare_ready = 1'b0;
+                dbg_reg_prepare_ready = 1'b0;
+              end
+            end
+          end
+        end
+
+        always_ff @(posedge clk) begin
+          if (reset || cfg_fire) begin
+            dbg_dep_gap_cycles_q <= '0;
+            dbg_dep_exposed_cycles_q <= '0;
+            dbg_capacity_exposed_cycles_q <= '0;
+            dbg_prepare_exposed_cycles_q <= '0;
+          end else if (invocation_active_q) begin
+            if (dbg_dep_gap)
+              dbg_dep_gap_cycles_q <= dbg_dep_gap_cycles_q + 1;
+            if (dbg_dep_exposed)
+              dbg_dep_exposed_cycles_q <= dbg_dep_exposed_cycles_q + 1;
+            if (dbg_capacity_exposed)
+              dbg_capacity_exposed_cycles_q <= dbg_capacity_exposed_cycles_q + 1;
+            if (dbg_prepare_exposed)
+              dbg_prepare_exposed_cycles_q <= dbg_prepare_exposed_cycles_q + 1;
+            if (dbg_dep_gap || dbg_capacity_exposed || dbg_prepare_exposed
+             || child_issue_fire_v[i] || child_completion_pop_v[i]) begin
+              `TRACE(1, ("%m : [%0t] | GEMM_TIMING_CHILD | {inst=%s, child=%0d, work_seq=%0d, head_valid=%0d, reg_deps=%0d, next_deps=%0d, selected_deps=%0d, dep_gap=%0d, dep_exposed=%0d, capacity_exposed=%0d, prepare_exposed=%0d, dispatch=%0d, done=%0d, done_work_seq=%0d}\n",
+                  $time, INSTANCE_ID, i,
+                  child_q_empty_v[i] ? 32'd0 : child_q_cmd[i].work_seq,
+                  !child_q_empty_v[i], dbg_reg_deps_ready,
+                  dbg_next_deps_ready, deps_ready, dbg_dep_gap,
+                  dbg_dep_exposed, dbg_capacity_exposed, dbg_prepare_exposed,
+                  child_issue_fire_v[i], child_completion_pop_v[i],
+                  child_completion_pop_v[i] ? child_inflight_head[i].work_seq : 32'd0))
+            end
+            if (invocation_complete) begin
+              `TRACE(1, ("%m : [%0t] | GEMM_TIMING_CHILD_SUMMARY | {inst=%s, child=%0d, dep_gap_cycles=%0d, dep_exposed_cycles=%0d, capacity_exposed_cycles=%0d, prepare_exposed_cycles=%0d}\n",
+                  $time, INSTANCE_ID, i,
+                  dbg_dep_gap_cycles_q + 32'(dbg_dep_gap),
+                  dbg_dep_exposed_cycles_q + 32'(dbg_dep_exposed),
+                  dbg_capacity_exposed_cycles_q + 32'(dbg_capacity_exposed),
+                  dbg_prepare_exposed_cycles_q + 32'(dbg_prepare_exposed)))
+            end
+          end
+        end
+`endif
         logic [31:0] dbg_child_empty_cycles_q;
         logic [31:0] dbg_child_fallthrough_opportunity_q;
         logic [31:0] dbg_child_full_block_cycles_q;
@@ -2100,18 +2308,30 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
              && (weight_consume_value1_o
                   == sync_regs_q[RID_W_CONSUME1])
              && (scale_consume_value0_o
-                  == effective_sync[RID_SC_CONSUME0])
+                  == (`GEMM_TIMING_REG_CONSUME
+                    ? sync_regs_q[RID_SC_CONSUME0]
+                    : effective_sync[RID_SC_CONSUME0]))
              && (scale_consume_value1_o
-                  == effective_sync[RID_SC_CONSUME1])
+                  == (`GEMM_TIMING_REG_CONSUME
+                    ? sync_regs_q[RID_SC_CONSUME1]
+                    : effective_sync[RID_SC_CONSUME1]))
              && (zero_point_consume_value0_o
-                  == effective_sync[RID_ZP_CONSUME0])
+                  == (`GEMM_TIMING_REG_CONSUME
+                    ? sync_regs_q[RID_ZP_CONSUME0]
+                    : effective_sync[RID_ZP_CONSUME0]))
              && (zero_point_consume_value1_o
-                  == effective_sync[RID_ZP_CONSUME1])
+                  == (`GEMM_TIMING_REG_CONSUME
+                    ? sync_regs_q[RID_ZP_CONSUME1]
+                    : effective_sync[RID_ZP_CONSUME1]))
              && (gemm_ctrl_if.input_acc_free_value[0]
-                  == effective_sync[RID_ACC_FREE0])
+                  == (`GEMM_TIMING_REG_ACC_FREE
+                    ? sync_regs_q[RID_ACC_FREE0]
+                    : effective_sync[RID_ACC_FREE0]))
              && (gemm_ctrl_if.input_acc_free_value[1]
-                  == effective_sync[RID_ACC_FREE1]))
-          else $fatal(1, "%s: direct resource fold diverged from sync state",
+                  == (`GEMM_TIMING_REG_ACC_FREE
+                    ? sync_regs_q[RID_ACC_FREE1]
+                    : effective_sync[RID_ACC_FREE1])))
+          else $fatal(1, "%s: direct resource visibility diverged from selected sync view",
                       INSTANCE_ID);
         assert (!(cfg_fire && !scheduler_quiescent))
           else $fatal(1, "%s: config accepted before scheduler quiescence",

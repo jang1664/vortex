@@ -52,6 +52,16 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Number of child nodes synchronized by gemm_ctrl.
     localparam N_NODE   = 6;
 
+    // Legacy macro selection is presence-based; translate it once for the
+    // common DMA transport rather than duplicating the command protocol.
+`ifdef GEMM_SLR_PIPELINE
+    localparam bit SLR_ENABLE = 1'b1;
+`else
+    localparam bit SLR_ENABLE = 1'b0;
+`endif
+    localparam int DMA_LAUNCH_DEPTH = SLR_ENABLE ? 2
+                                  : (`GEMM_TIMING_DMA_LAUNCH_EB2 ? 2 : 1);
+
     // Use GEMM-specific base tag width so adapter split tags stay valid even
     // when LMEM_TAG_WIDTH is reduced in NDEBUG builds.
     localparam int I_GEMM_TAG_WIDTH  = GEMM_BASE_TAG_WIDTH;
@@ -1220,7 +1230,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // commands into VX_config_reg_if writes for the DMA engine.
     VX_gemm_sync_if backend_dma_sync_if ();
     wire backend_store_done;
-`ifdef GEMM_SLR_PIPELINE
     VX_gemm_dma_ctrl_if source_dma_ctrl_if ();
     assign source_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
     assign source_dma_ctrl_if.cmd_valid = gemm_ctrl_if.dma_ctrl.cmd_valid;
@@ -1235,12 +1244,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.dma_flag.cmd_ready = source_dma_ctrl_if.cmd_ready;
     assign gemm_ctrl_if.dma_flag.prepare_ready = source_dma_ctrl_if.prepare_ready;
 
-    // Replaces, rather than follows, the old one-entry launch buffer. Both
-    // halves of commands, completion, and legacy sync transport are placed
-    // independently; no backend ready or status bypass remains.
-    VX_gemm_dma_slr_bridge #(
-        .INSTANCE_ID ({INSTANCE_ID, "_dma_slr"})
-    ) u_gemm_dma_slr_bridge (
+    // PREPARE and release share the same launch buffer in both modes. SLR
+    // placement adds only crossing/credit leaves after that common launch;
+    // local completions remain direct and backend scheduling is unchanged.
+    VX_gemm_dma_transport #(
+        .INSTANCE_ID ({INSTANCE_ID, "_dma_transport"}),
+        .SLR_ENABLE (SLR_ENABLE),
+        .LAUNCH_DEPTH (DMA_LAUNCH_DEPTH)
+    ) u_gemm_dma_transport (
         .clk (clk),
         .reset (reset),
         .source_if (source_dma_ctrl_if),
@@ -1250,49 +1261,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .backend_sync_if (backend_dma_sync_if),
         .source_sync_if (gemm_sync_if[5])
     );
-`else
-    localparam int GEMM_DMA_LAUNCH_DATAW = $bits(gemm_unified_cmd_t)
-                                            + GEMM_DMA_TAG_WIDTH;
-    wire gemm_dma_launch_ready;
-    wire gemm_dma_launch_valid;
-    wire [GEMM_DMA_LAUNCH_DATAW-1:0] gemm_dma_launch_data;
-
-    VX_elastic_buffer #(
-        .DATAW   (GEMM_DMA_LAUNCH_DATAW),
-        .SIZE    (1),
-        .OUT_REG (1)
-    ) u_gemm_dma_launch_buffer (
-        .clk       (clk),
-        .reset     (reset),
-        .valid_in  (gemm_ctrl_if.dma_ctrl.cmd_valid),
-        .ready_in  (gemm_dma_launch_ready),
-        .data_in   ({gemm_ctrl_if.dma_ctrl.cmd_tag,
-                     gemm_ctrl_if.dma_ctrl.cmd}),
-        .valid_out (gemm_dma_launch_valid),
-        .ready_out (gemm_dma_ctrl_if.cmd_ready),
-        .data_out  (gemm_dma_launch_data)
-    );
-
-    assign gemm_dma_ctrl_if.start     = gemm_dma_launch_valid;
-    assign gemm_dma_ctrl_if.cmd_valid = gemm_dma_launch_valid;
-    assign {gemm_dma_ctrl_if.cmd_tag, gemm_dma_ctrl_if.cmd}
-        = gemm_dma_launch_data;
-    assign gemm_dma_ctrl_if.prepare_valid
-        = gemm_ctrl_if.dma_ctrl.prepare_valid;
-    assign gemm_dma_ctrl_if.prepare_cmd = gemm_ctrl_if.dma_ctrl.prepare_cmd;
-
-    assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
-    assign gemm_ctrl_if.dma_flag.cmd_ready = gemm_dma_launch_ready;
-    assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
-    assign gemm_ctrl_if.dma_flag.prepare_ready
-        = gemm_dma_ctrl_if.prepare_ready;
-    assign output_store_done = backend_store_done;
-    assign gemm_sync_if[5].valid = backend_dma_sync_if.valid;
-    assign gemm_sync_if[5].reg_idx = backend_dma_sync_if.reg_idx;
-    assign gemm_sync_if[5].value = backend_dma_sync_if.value;
-    assign backend_dma_sync_if.ready = gemm_sync_if[5].ready;
-`endif
 
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM
@@ -1677,9 +1645,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       ("GEMM improve currently supports square 16x16 or 32x32 MXUs"));
     `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0,
       ("HBM-DMA width must be an integer multiple of the physical TMEM width"));
-    `VX_STATIC_ASSERT((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE)
-                   == (NUM_TMEM_BANKS / NUM_DMA_CHANNELS),
-      ("HBM/physical width ratio must match TMEM banks per DMA channel"));
+    `VX_STATIC_ASSERT(((NUM_TMEM_BANKS % NUM_DMA_CHANNELS) == 0)
+                   && (((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1)
+                       ? (((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 1)
+                          || ((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 2))
+                       : (((`MEM_BLOCK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 2)
+                          && ((NUM_TMEM_BANKS / NUM_DMA_CHANNELS) == 2))),
+      ("TMEM DMA route must be equal-width direct/select or paired half-width"));
     `VX_STATIC_ASSERT((`GEMM_SCALE_ZERO_DATA_SIZE
                      == TMEM_PHYSICAL_DATA_SIZE)
                    && (`GEMM_OUTPUT_DATA_SIZE
@@ -1687,8 +1659,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       ("Input, scale/zero, and output logical beats must match TMEM banks"));
     `VX_STATIC_ASSERT((NUM_TMEM_BANKS * `TMEM_BANK_SIZE) == (512 * 1024),
       ("supported TMEM organizations must preserve 512 KiB total capacity"));
-    `VX_STATIC_ASSERT((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024,
-      ("supported TMEM organizations must preserve 1024 words per bank"));
+    `VX_STATIC_ASSERT(((`TMEM_BANK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0)
+                   && (((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024)
+                       || ((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 2048)),
+      ("supported TMEM banks contain 1024 or 2048 complete physical words"));
 
     // `UNUSED_VAR (weight_wtrans)
     // `UNUSED_PARAM (MT)

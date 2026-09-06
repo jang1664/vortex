@@ -3052,11 +3052,33 @@ module tb_VX_gemm_node_improve
   longint unsigned legacy_nonretire_count;
   logic [5:1] completion_done_prev;
   logic [3:2] qparam_endpoint_prev;
+  logic [1:0] dma_endpoint_pipe;
+  logic [GEMM_DMA_TAG_WIDTH-1:0] dma_endpoint_tag_pipe [2];
+  logic [(1 << GEMM_DMA_TAG_WIDTH)-1:0] dma_endpoint_owned_tags;
+  logic output_endpoint_prev;
+  longint unsigned output_physical_endpoint_count;
+
+  // Independent expected return timing, driven only by the physical backend.
+  // The SLR completion link has two forward FFs and an always-ready sink.
+  always @(posedge clk) begin
+    if (reset) begin
+      dma_endpoint_pipe <= '0;
+      dma_endpoint_tag_pipe[0] <= '0;
+      dma_endpoint_tag_pipe[1] <= '0;
+      output_endpoint_prev <= 1'b0;
+    end else begin
+      dma_endpoint_pipe <= {dma_endpoint_pipe[0], u_dut.gemm_dma_ctrl_if.done};
+      dma_endpoint_tag_pipe[0] <= u_dut.gemm_dma_ctrl_if.done_tag;
+      dma_endpoint_tag_pipe[1] <= dma_endpoint_tag_pipe[0];
+      output_endpoint_prev <= u_dut.output_dma_ctrl_if.write_done;
+    end
+  end
 
   always @(posedge clk) begin : exact_completion_endpoint_scoreboard
     logic [5:1] start_now;
     logic [5:1] done_now;
     logic [5:1] endpoint_now;
+    logic [GEMM_DMA_TAG_WIDTH-1:0] dma_expected_tag;
     if (reset) begin
       for (int child = 1; child <= 5; child++) begin
         completion_start_count[child] = 0;
@@ -3065,6 +3087,8 @@ module tb_VX_gemm_node_improve
       legacy_nonretire_count = 0;
       completion_done_prev = '0;
       qparam_endpoint_prev = '0;
+      dma_endpoint_owned_tags = '0;
+      output_physical_endpoint_count = 0;
     end else if (require_completion_endpoints) begin
       start_now[1] = u_dut.gemm_ctrl_if.weight_read_ctrl.start;
       start_now[2] = u_dut.gemm_ctrl_if.scale_read_ctrl.start;
@@ -3079,11 +3103,20 @@ module tb_VX_gemm_node_improve
       endpoint_now[3] = u_dut.zero_point_last_register_write;
       endpoint_now[4] = u_dut.output_dma_ctrl_if.write_done;
       endpoint_now[5] = u_dut.gemm_dma_ctrl_if.done;
+      dma_expected_tag = u_dut.gemm_dma_ctrl_if.done_tag;
+`ifdef GEMM_SLR_PIPELINE
+      endpoint_now[5] = dma_endpoint_pipe[1];
+      dma_expected_tag = dma_endpoint_tag_pipe[1];
+`endif
       done_now[1] = endpoint_now[1];
       done_now[2] = u_dut.gemm_ctrl_if.scale_read_flag.done;
       done_now[3] = u_dut.gemm_ctrl_if.zero_point_read_flag.done;
-      done_now[4] = endpoint_now[4];
+      // The node registers output retirement one cycle after physical drain.
+      // Keep raw completions independently counted; do not substitute idle.
+      done_now[4] = output_endpoint_prev;
       done_now[5] = endpoint_now[5];
+      if (endpoint_now[4])
+        output_physical_endpoint_count++;
 
       if (u_dut.gemm_ctrl_if.weight_read_flag.done !== done_now[1]
           || u_dut.gemm_ctrl_if.output_write_flag.done !== done_now[4]
@@ -3093,23 +3126,38 @@ module tb_VX_gemm_node_improve
           || done_now[3] !== qparam_endpoint_prev[3])
         $fatal(1, "COMPLETION_ENDPOINTS qparam done is not the registered final-write endpoint");
 
+      if (start_now[5]) begin
+        if (dma_endpoint_owned_tags[u_dut.gemm_ctrl_if.dma_ctrl.cmd_tag])
+          $fatal(1, "COMPLETION_ENDPOINTS global DMA reused an owned tag");
+        dma_endpoint_owned_tags[u_dut.gemm_ctrl_if.dma_ctrl.cmd_tag] = 1'b1;
+      end
+      if (done_now[5]) begin
+        if (u_dut.gemm_ctrl_if.dma_flag.done_tag !== dma_expected_tag
+            || !dma_endpoint_owned_tags[dma_expected_tag])
+          $fatal(1, "COMPLETION_ENDPOINTS global DMA return tag/ownership mismatch");
+        dma_endpoint_owned_tags[dma_expected_tag] = 1'b0;
+      end
+
       for (int child = 1; child <= 5; child++) begin
         if (start_now[child])
           completion_start_count[child]++;
         if (done_now[child]) begin
           // Independent qparam overlap executors may retire distinct ordered
-          // one-beat commands on consecutive cycles.  Other child protocols
-          // retain the legacy single-cycle-pulse separation check.
-          if ((child != 2) && (child != 3)
+          // one-beat commands on consecutive cycles. Global DMA also permits
+          // consecutive completions; its independent tag ownership check
+          // distinguishes real commands from a repeated level.
+          if ((child != 2) && (child != 3) && (child != 5)
               && completion_done_prev[child])
             $fatal(1, "COMPLETION_ENDPOINTS child %0d emitted a multi-cycle done", child);
           if (!u_dut.u_VX_gemm_ctrl.child_completion_pop_v[child])
             $fatal(1, "COMPLETION_ENDPOINTS child %0d endpoint did not retire scheduler", child);
           completion_done_count[child]++;
+          if (completion_done_count[child] > completion_start_count[child])
+            $fatal(1, "COMPLETION_ENDPOINTS child %0d completed without acceptance", child);
         end
       end
 
-      if (done_now[5] && !u_dut.u_tmem_dma_ctrl.done_all_valid)
+      if (u_dut.gemm_dma_ctrl_if.done && !u_dut.u_tmem_dma_ctrl.done_all_valid)
         $fatal(1, "COMPLETION_ENDPOINTS global DMA did not include current-cycle all-channel completion");
 
       if (u_dut.weight_dma_ctrl_if.done && !done_now[1]) begin
@@ -3139,6 +3187,11 @@ module tb_VX_gemm_node_improve
 
   task automatic check_completion_endpoint_coverage;
     begin
+      if (dma_endpoint_owned_tags != '0 || dma_endpoint_pipe != '0)
+        $fatal(1, "COMPLETION_ENDPOINTS global DMA returns remain pending");
+      if (output_endpoint_prev
+          || output_physical_endpoint_count != completion_done_count[4])
+        $fatal(1, "COMPLETION_ENDPOINTS output physical/retirement count mismatch");
       for (int child = 1; child <= 5; child++) begin
         if (completion_start_count[child] == 0
             || completion_done_count[child] != completion_start_count[child])
@@ -3292,8 +3345,12 @@ module tb_VX_gemm_node_improve
   longint unsigned tb_cycle = 0;
   logic output_group_seen;
   logic output_last_group;
-  logic compute_tail_active;
-  logic compute_tail_group;
+  typedef struct packed {
+    logic group;
+    logic [31:0] txn_tag;
+  } compute_tail_expect_t;
+  compute_tail_expect_t compute_tail_expected[$];
+  longint unsigned compute_tail_accept_count;
   logic output_stall_forced;
   logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] directed_compute_addr;
 
@@ -3318,6 +3375,7 @@ module tb_VX_gemm_node_improve
   always @(posedge clk) begin : output_double_buffer_scoreboard
     logic output_group;
     logic incoming_group;
+    compute_tail_expect_t incoming_tail;
     if (reset) begin
       output_expected_tags.delete();
       output_req_count = 0;
@@ -3331,8 +3389,8 @@ module tb_VX_gemm_node_improve
       output_group_episode_count[1] = 0;
       output_group_seen = 1'b0;
       output_last_group = 1'b0;
-      compute_tail_active = 1'b0;
-      compute_tail_group = 1'b0;
+      compute_tail_expected.delete();
+      compute_tail_accept_count = 0;
     end else if (require_output_double_buffer) begin
       if (u_dut.u_VX_gemm_unit_v2.output_read_fire) begin
         output_group = u_dut.u_VX_gemm_unit_v2.output_read_bank[1];
@@ -3370,28 +3428,38 @@ module tb_VX_gemm_node_improve
           && !u_dut.o_gemm_bus_if.rsp_ready)
         output_stall_observed_cycles++;
 
-      if (u_dut.i_gemm_bus_if.req_valid
-          && u_dut.gemm_unit_v2_if.packet_ctrl.last) begin
-        if (compute_tail_active)
-          $fatal(1, "OUTPUT_DBUF overlapping final-writeback tail models");
-        compute_tail_active = 1'b1;
-        compute_tail_group
-          = u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr[
-              `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
-      end
-      if (compute_tail_active
-          && !u_dut.u_VX_gemm_unit_v2.compute_group_busy[compute_tail_group])
-        $fatal(1, "OUTPUT_DBUF compute group released before final writeback");
+      // Physical writes can lag the old fixed ctrl_pipe index under ACC
+      // backpressure. Compare with accepted tails in order, using the actual
+      // result packet and transaction tag presented to the ACC backend.
+      // Pop before push so same-cycle old-tail retirement/new admission is
+      // legal without allowing a new tail to fabricate a zero-latency write.
       if (u_dut.gemm_unit_v2_if.last_write) begin
-        incoming_group = u_dut.u_VX_gemm_unit_v2.u_compute_core.ctrl_pipe[
-            u_dut.u_VX_gemm_unit_v2.u_compute_core.WRITE_CTRL_IDX].acc_wr_addr[
+        incoming_group = u_dut.u_VX_gemm_unit_v2.u_compute_core
+            .acc_result_data_out.ctrl.acc_wr_addr[
               `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
-        if (!compute_tail_active || (incoming_group != compute_tail_group))
+        if (compute_tail_expected.size() == 0)
+          $fatal(1, "OUTPUT_DBUF final writeback has no accepted tail");
+        if (incoming_group !== compute_tail_expected[0].group
+            || u_dut.u_VX_gemm_unit_v2.acc_if.wr_req_tag
+               !== compute_tail_expected[0].txn_tag)
           $fatal(1, "OUTPUT_DBUF final-writeback group/lifetime mismatch");
-        if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[incoming_group])
+        if (u_dut.u_VX_gemm_unit_v2.compute_group_busy[incoming_group] !== 1'b1)
           $fatal(1, "OUTPUT_DBUF group not busy on final writeback");
         final_writeback_busy_count++;
-        compute_tail_active = 1'b0;
+        compute_tail_expected.pop_front();
+      end
+      if (u_dut.i_gemm_bus_if.req_valid && u_dut.i_gemm_bus_if.req_ready
+          && u_dut.gemm_unit_v2_if.packet_ctrl.last) begin
+        incoming_tail.group = u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_addr[
+            `GEMM_ACC_MEM_BANK_ADDR_WIDTH+1];
+        incoming_tail.txn_tag = u_dut.u_VX_gemm_unit_v2.acc_if.txn_accept_tag;
+        compute_tail_expected.push_back(incoming_tail);
+        compute_tail_accept_count++;
+      end
+      foreach (compute_tail_expected[i]) begin
+        if (u_dut.u_VX_gemm_unit_v2.compute_group_busy[
+              compute_tail_expected[i].group] !== 1'b1)
+          $fatal(1, "OUTPUT_DBUF compute group released before final writeback");
       end
     end
   end
@@ -3430,10 +3498,17 @@ module tb_VX_gemm_node_improve
         $fatal(1, "OUTPUT_DBUF output ordering drain mismatch: req=%0d rsp=%0d pending=%0d",
                output_req_count, output_rsp_count, output_expected_tags.size());
       if (output_stall_observed_cycles == 0 || final_writeback_busy_count == 0
-          || compute_tail_active)
+          || compute_tail_expected.size() != 0
+          || compute_tail_accept_count != final_writeback_busy_count)
         $fatal(1, "OUTPUT_DBUF missing backpressure/final-writeback coverage");
 
-      // Incoming compute must participate in the same-cycle group decision.
+      // An unaccepted input offer must not create combinational ACC ownership.
+      // Admission-edge output handoff is legal; pending ownership begins at
+      // the acceptance edge. The gemm_unit_v2 directed suite exercises actual
+      // acceptance, the subsequent same-group fence, and physical retirement.
+      // Here probe only offers (no clock edge / injected controller context).
+      // The live scoreboard above checks registered ownership through every
+      // real final writeback and rejects same-group output-read handshakes.
       if (!u_dut.gemm_unit_v2_if.pipeline_empty
           || u_dut.u_VX_gemm_unit_v2.output_read_valid)
         $fatal(1, "OUTPUT_DBUF directed arbitration probe requires an idle unit");
@@ -3447,20 +3522,19 @@ module tb_VX_gemm_node_improve
       force u_dut.o_gemm_bus_if.req_data.rw = 1'b0;
       force u_dut.o_gemm_bus_if.req_data.addr = '0;
       #1;
-      if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[0]
-          || !u_dut.u_VX_gemm_unit_v2.output_group_conflict
-          || u_dut.o_gemm_bus_if.req_ready
-          || u_dut.u_VX_gemm_unit_v2.output_read_fire)
-        $fatal(1, "OUTPUT_DBUF same-cycle incoming same-group compute was not blocked");
-
-      directed_compute_addr[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1] = 1'b1;
-      #1;
-      if (!u_dut.u_VX_gemm_unit_v2.compute_group_busy[1]
-          || u_dut.u_VX_gemm_unit_v2.compute_group_busy[0]
+      if ((|u_dut.u_VX_gemm_unit_v2.compute_group_busy)
           || u_dut.u_VX_gemm_unit_v2.output_group_conflict
           || !u_dut.o_gemm_bus_if.req_ready
           || !u_dut.u_VX_gemm_unit_v2.output_read_fire)
-        $fatal(1, "OUTPUT_DBUF same-cycle incoming different-group compute did not overlap");
+        $fatal(1, "OUTPUT_DBUF unaccepted same-group offer blocked admission-edge handoff");
+
+      directed_compute_addr[`GEMM_ACC_MEM_BANK_ADDR_WIDTH+1] = 1'b1;
+      #1;
+      if ((|u_dut.u_VX_gemm_unit_v2.compute_group_busy)
+          || u_dut.u_VX_gemm_unit_v2.output_group_conflict
+          || !u_dut.o_gemm_bus_if.req_ready
+          || !u_dut.u_VX_gemm_unit_v2.output_read_fire)
+        $fatal(1, "OUTPUT_DBUF unaccepted different-group offer blocked admission-edge handoff");
       release u_dut.i_gemm_bus_if.req_valid;
       release u_dut.gemm_unit_v2_if.packet_ctrl.acc_wr_en;
       release u_dut.gemm_unit_v2_if.packet_ctrl.acc_rd_en;
@@ -3469,7 +3543,7 @@ module tb_VX_gemm_node_improve
       release u_dut.o_gemm_bus_if.req_data.rw;
       release u_dut.o_gemm_bus_if.req_data.addr;
       #1;
-      $display("OUTPUT_DOUBLE_BUFFER_PASSED natural_overlap_fire=%0d natural_overlap_active=%0d same_group=0 group_episodes={%0d,%0d} req_rsp=%0d/%0d stall=%0d final_writeback=%0d directed_incoming=1 numerical_parity=1 single_dma_limitation=1",
+      $display("OUTPUT_DOUBLE_BUFFER_PASSED natural_overlap_fire=%0d natural_overlap_active=%0d same_group=0 group_episodes={%0d,%0d} req_rsp=%0d/%0d stall=%0d final_writeback=%0d directed_admission_offer=1 numerical_parity=1 single_dma_limitation=1",
                different_group_fire_count, different_group_active_cycles,
                output_group_episode_count[0], output_group_episode_count[1],
                output_req_count, output_rsp_count,

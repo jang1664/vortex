@@ -15,7 +15,7 @@ set ::env(VORTEX_GEMM_MXU_COL) [lindex $argv 3]
 set ::vortex_slr_definitions_only 1
 source [lindex $argv 1]
 source [file join [file dirname [lindex $argv 1]] slr_floorplan_report.tcl]
-set idle [get_cells -hierarchical -quiet -filter {NAME =~ *u_gemm_dma_slr_bridge*g_slr*idle*} *]
+set idle [get_cells -hierarchical -quiet -filter {NAME =~ *u_gemm_dma_transport*g_slr*idle*} *]
 puts "CHECK: surviving DMA idle cells=[llength $idle] names=$idle"
 ::vortex::slr::inventory
 foreach owner {0 1 2} {

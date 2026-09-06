@@ -42,7 +42,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   // Params
   // -----------------------------
   localparam int NDIM            = 3;
-  localparam int DATA_SIZE_BYTES = 16;      // bus beat bytes
+  parameter int DATA_SIZE_BYTES = 16;      // bus beat bytes, legacy default
   localparam int MEM_BYTES       = 64*1024;
 
   localparam int TAG_WIDTH  = GEMM_MEM_TAG_WIDTH;
@@ -676,7 +676,16 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
     gemm_src_base = 16'h3000 + src_off;
     gemm_dst_base = 16'h5000 + dst_off;
+    // Wider buses increase the long fixed-beat case beyond the legacy 8 KiB
+    // spacing. Keep the golden source disjoint from destination clearing and
+    // round-trip writes, retaining the requested byte misalignment.
+    if (gemm_dst_base < gemm_src_base + total_bytes)
+      gemm_dst_base = ((gemm_src_base + total_bytes + 4095) & ~4095) + dst_off;
     lmem_base     = 16'h1000 + lmem_off;
+    if (gemm_dst_base + total_bytes > MEM_BYTES
+     || gemm_src_base + total_bytes > gemm_dst_base
+     || lmem_base + total_bytes > MEM_BYTES)
+      $fatal(1, "ROUNDTRIP test buffers overlap or exceed model capacity");
 
     reg1_idx = 32'd21; reg1_val = 32'hDEAD_BEEF; // DIR1 sync
     reg0_idx = 32'd13; reg0_val = 32'hCAFE_BABE; // DIR0 sync

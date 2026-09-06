@@ -87,13 +87,13 @@ proc fixture {arrays} {
     foreach resource {input weight scale zero_point} {
         foreach direction {request response} {
             foreach half {tx rx} {
-                lappend names [format {u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/u_%s/state_reg} $resource $direction $half]
+                lappend names [format {u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/g_slr/u_link/u_%s/state_reg} $resource $direction $half]
             }
         }
     }
     foreach half {tx rx} {
-        lappend names "u_tmem_subsystem/u_output_slr/u_request/u_$half/state_reg"
-        foreach stream {commands completions} {lappend names "u_gemm_dma_slr_bridge/u_$stream/u_$half/state_reg"}
+        lappend names "u_tmem_subsystem/u_output_slr/u_request/g_slr/u_link/u_$half/state_reg"
+        foreach stream {commands completions} {lappend names "u_gemm_dma_transport/u_$stream/g_slr/u_link/u_$half/state_reg"}
     }
     foreach group {input_tx input_rx weight_tx weight_rx output_tx output_rx local_ownership} {
         lappend names "u_VX_gemm_unit_v2/u_compute_core/g_slr_mxu_$group.payload_q_reg"
@@ -101,7 +101,7 @@ proc fixture {arrays} {
     foreach half {tx rx} {
         lappend names "u_VX_gemm_unit_v2/u_compute_core/g_slr_mxu_input_$half.data_q_reg"
     }
-    foreach {slr half} {0 tx 1 rx} {lappend names "u_gemm_dma_slr_bridge/g_slr$slr.idle_${half}_q_reg"}
+    foreach {slr half} {0 tx 1 rx} {lappend names "u_gemm_dma_transport/g_slr_status/g_slr$slr.idle_${half}_q_reg"}
     set ::mock_cells {}
     foreach name $names {lappend ::mock_cells "top/node/$name"}
     set ::env(VORTEX_GEMM_TMEM_BANKS) $arrays
@@ -133,16 +133,22 @@ set ::mock_marked $complete_fixture
 ::vortex::slr::require_marked_groups
 set ::mock_cells [lsearch -all -inline -not -glob $complete_fixture *g_slr_mxu_input_rx.data_q_reg]
 fails {::vortex::slr::inventory} {*MXU input data rx*}
-equal [::vortex::slr::owner_for u_tmem_subsystem/u_output_slr/u_request/u_tx/payload_tx_q_reg] 1 request_tx
-equal [::vortex::slr::owner_for u_tmem_subsystem/u_output_slr/u_request/u_rx/payload_rx_q_reg] 0 request_rx
-equal [::vortex::slr::owner_for u_tmem_subsystem/u_input_req_reservation/u_slr/u_response/u_tx/payload_tx_q_reg] 0 response_tx
+equal [::vortex::slr::owner_for u_tmem_subsystem/u_output_slr/u_request/g_slr/u_link/u_tx/payload_tx_q_reg] 1 request_tx
+equal [::vortex::slr::owner_for u_tmem_subsystem/u_output_slr/u_request/g_slr/u_link/u_rx/payload_rx_q_reg] 0 request_rx
+equal [::vortex::slr::owner_for u_tmem_subsystem/u_input_req_reservation/u_slr/u_response/g_slr/u_link/u_tx/payload_tx_q_reg] 0 response_tx
+equal [::vortex::slr::owner_for u_gemm_dma_transport/u_commands/u_launch/data_reg] 1 command_launch
+equal [::vortex::slr::owner_for u_gemm_dma_transport/g_source/owned_tags_q_reg] 1 command_owner
+equal [::vortex::slr::owner_for u_gemm_dma_transport/u_commands/g_slr/u_link/u_rx/pending_q_reg] 0 command_receiver
+equal [::vortex::slr::owner_for u_tmem_subsystem/u_weight_req_reservation/u_slr/u_request/u_launch/data_reg] 1 request_launch
+equal [::vortex::slr::owner_for u_tmem_subsystem/g_output_slr_completion/done_q_reg] 1 output_completion
 equal [::vortex::slr::owner_for u_VX_gemm_unit_v2/u_compute_core/g_slr_mxu_input_rx.payload_q_reg] 2 mxu_rx
-equal [::vortex::slr::owner_for u_commands/u_rx/read_q0] 0 lifted_command_read_pointer
-equal [::vortex::slr::owner_for u_commands/u_rx/write_q0_rep__1] 0 lifted_command_write_pointer_replica
-equal [::vortex::slr::owner_for u_commands/u_rx/unrelated_control] 1 unrelated_lifted_name_not_assumed_slr0
+equal [::vortex::slr::owner_for u_commands/g_slr/u_link/u_rx/read_q0] 0 lifted_command_read_pointer
+equal [::vortex::slr::owner_for u_commands/g_slr/u_link/u_rx/write_q0_rep__1] 0 lifted_command_write_pointer_replica
+fails {::vortex::slr::owner_for u_link/u_rx/read_q0} {*lost*ownership identity*}
+fails {::vortex::slr::owner_for u_gemm_dma_transport/unknown/state_reg} {*unclassified DMA-control*}
 equal [::vortex::slr::register_role {top/node/u_VX_gemm_unit_v2/u_compute_core/g_slr_mxu_input_tx.data_q_reg[0]}] tx mxu_preserved_data_role
-equal [::vortex::slr::register_role {top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/u_tx/g_payload[7].payload_tx_q_reg}] tx per_bit_tx_role
-equal [::vortex::slr::link_group {top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/u_tx/g_payload[7].payload_tx_q_reg}] top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/payload per_bit_tx_group
+equal [::vortex::slr::register_role {top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/g_slr/u_link/u_tx/g_payload[7].payload_tx_q_reg}] tx per_bit_tx_role
+equal [::vortex::slr::link_group {top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/g_slr/u_link/u_tx/g_payload[7].payload_tx_q_reg}] top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_response/payload per_bit_tx_group
 fails {::vortex::slr::owner_for u_tmem_subsystem/new_unknown/state_reg} {*unclassified TMEM*}
 fixture 8
 set ::mock_cells [lrange $::mock_cells 1 end]

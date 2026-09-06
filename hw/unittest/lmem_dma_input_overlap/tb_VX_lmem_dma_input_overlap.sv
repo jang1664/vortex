@@ -3,11 +3,11 @@
 `include "VX_define.vh"
 
 module tb_VX_lmem_dma_input_overlap import VX_gpu_pkg::*; #(
-  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1,
+  parameter int BUS_BYTES = 64
 ) ();
 
   localparam int NDIM = 3;
-  localparam int BUS_BYTES = 64;
   localparam int TAG_WIDTH = 8;
   localparam int BUS_ADDR_WIDTH = `MEM_ADDR_WIDTH - $clog2(BUS_BYTES);
   localparam int MAIN_COMMANDS = 4;

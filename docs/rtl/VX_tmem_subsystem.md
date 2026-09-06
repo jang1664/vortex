@@ -53,14 +53,27 @@ HBM ↔ DMA Engine ↔ TMEM Banks ↔ Switches ↔ Local DMAs ↔ GEMM Unit
 AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
 
 - `cfg_reg_if`로 각 채널의 전송 설정(시작 주소, 길이, 방향)을 받음
-- 32x32 profile에서는 `dma_to_tmem[ch]`가 physical bank `ch`에 직접 연결된다.
+- With 32x32 and one bank per DMA channel, `dma_to_tmem[ch]` connects
+  directly to physical bank `ch`.
+- With 32x32, four DMA channels, and eight banks, each 64B request selects
+  exactly one owned bank: `bank = ch + NUM_DMA_CHANNELS * addr[0]` and
+  `bank_row = addr >> 1`, where `addr` is the channel-local 64B word address.
+  Channel `ch` therefore owns banks `ch` and `ch+4`, not consecutive banks.
+  A two-input round-robin response mux returns original tags unchanged.
+  Three control flip-flops per channel retain round-robin priority and lock
+  a stalled response grant; there is no payload FIFO or reorder buffer.
+  The DMA engine's existing tagged response RAM accepts out-of-order bank
+  responses and preserves destination order. Write ACKs are filtered before
+  this mux, as on the original direct path.
 - 16x16 profile에서는 `VX_tmem_dma_pair_adapter`가 하나의 64B request를
   32B low/high lane으로 나누어 consecutive bank `2*ch`, `2*ch+1`에 보낸다.
   두 lane은 동일한 aggregate bank-local word address를 사용하며 lane bit를
   주소에 추가하지 않는다.
 - pair request는 두 physical bank가 모두 accept해야 완료된다. 한쪽이 먼저
-  accept하면 per-lane sent bit가 중복 발행을 막는다. Read/write response는
-  lane별 depth-2 ordered FIFO의 head tag가 같을 때만 64B로 join된다.
+  accept하면 per-lane sent bit가 중복 발행을 막는다.
+  Read responses join into 64B only when both lane depth-2 ordered FIFO
+  heads have matching tags. TMEM write acknowledgements are consumed at
+  bank port 0 before entering these FIFOs.
 - 이 pair adapter는 associative reorder나 mask context를 두지 않는다.
 - 각 채널이 독립적으로 동작하며, 완료 시 `dma_done_if[ch]`로 통지
 - The production HBM-to-TMEM engine sets `ENABLE_PADDING=0`; its aggregate
@@ -73,6 +86,17 @@ AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
 |---|---|---|---:|---:|
 | 32x32 | 8 banks x 64B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
 | 16x16 | 16 banks x 32B x 1024 | 8 channels x 64B | 1024 | 512 KiB |
+| 32x32 | 8 banks x 64B x 1024 | 4 channels x 64B, selected bank | 1024 | 512 KiB |
+| 16x16 | 8 banks x 32B x 2048 | 4 channels x 64B, paired banks | 2048 | 512 KiB |
+
+The DMA controller removes only the channel-select bits from the flat TMEM
+byte address. For the equal-width two-bank case, one remaining bank-select
+bit must therefore be removed by the subsystem. For half-width pairs, that
+bit instead belongs to the physical lane within one 64B aggregate word and
+the adapter does not shift the channel-local row. Local DMA addressing
+continues to select `NUM_BANKS` using physical-word interleaving. The bank
+SRAM address width derives from `BANK_SIZE / DATA_SIZE`; increasing depth to
+2048 preserves all 512 KiB with eight 32B banks.
 
 ### 2. Switches (`u_switch_*`, x5)
 
@@ -165,16 +189,21 @@ matches and applies each priority policy locally to its corresponding source.
 
 | 포트 | 접속 | 태그 폭 |
 |------|------|---------|
-| port[0] | DMA direct(32x32) 또는 pair lane(16x16) | `SWITCH_TAG_WIDTH` |
+| port[0] | DMA direct/selected bank (32x32), or pair lane (16x16) | `SWITCH_TAG_WIDTH` |
 | port[1] | input switch | `SWITCH_TAG_WIDTH` |
 | port[2] | weight switch | `SWITCH_TAG_WIDTH` |
 | port[3] | scale switch | `SWITCH_TAG_WIDTH` |
 | port[4] | zero-point switch | `SWITCH_TAG_WIDTH` |
 | port[5] | output switch | `SWITCH_TAG_WIDTH` |
 
-- DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춘다.
-  16x16 pair의 두 lane은 동일하게 padded된 tag를 사용하며 join 시 equality를
-  assertion으로 확인한다.
+- DMA port 0 uses the highest otherwise-unused routing-tag padding bit to
+  carry request write/read direction through the bank's response pipeline.
+  Write acknowledgements are accepted locally and never forwarded to the
+  HBM DMA read-response channel or the fixed-pair response FIFOs. Read tags
+  are unchanged. This protects immediate G2L-to-L2G descriptor transitions
+  without waiting for write acknowledgements or changing physical-write
+  completion. Direct, selected-bank, and paired-width DMA routes use this filter;
+  local-DMA ports retain their original write-response behavior.
 - 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
 
 Input/Weight optimization을 enable하면 각 bank는 urgent/normal class별 독립
@@ -317,6 +346,11 @@ GEMM Unit
 
 ## 태그 처리
 
-- **DMA 포트**: 원본 `TAG_WIDTH` 비트 태그에 상위에 `BANK_SEL_BITS`만큼 0을 패딩하여 `SWITCH_TAG_WIDTH`에 맞춤
+- **DMA port**: Preserve the original `TAG_WIDTH` tag and pad routing bits.
+  Bank port 0 replaces the highest padding bit with request direction and
+  consumes responses bearing the write marker locally.
 - **스위치 포트**: 스위치가 자동으로 뱅크 선택 비트를 태그에 추가
-- **태그 폭 계산**: `SWITCH_TAG_WIDTH = TAG_WIDTH + BANK_SEL_BITS` (`BANK_SEL_BITS = log2(NUM_BANKS)`)
+- **Tag width**: `SWITCH_TAG_WIDTH = TAG_WIDTH + max(1, BANK_SEL_BITS)`
+  (`BANK_SEL_BITS = log2(NUM_BANKS)`). The minimum padding bit preserves a
+  write-ack marker even in a single-bank parameterization; production 8-bank
+  and 16-bank tag widths are unchanged.

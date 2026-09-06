@@ -4,11 +4,12 @@
 
 module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   parameter bit TEST_ZP = 1'b0,
-  parameter bit TB_RESPONSE_DATA_RAM = 1'b1
+  parameter bit TB_RESPONSE_DATA_RAM = 1'b1,
+  parameter bit TB_SINK_ELASTIC = 1'b0,
+  parameter int BUS_BYTES = 32
 ) ();
 
   localparam int NDIM = 3;
-  localparam int BUS_BYTES = 64;
   localparam int TAG_WIDTH = 8;
   localparam int BUS_ADDR_WIDTH = `MEM_ADDR_WIDTH - $clog2(BUS_BYTES);
   localparam int RID0 = TEST_ZP ? GEMM_RID_ZP_CONSUME0
@@ -43,6 +44,7 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     .CMD_FIFO_DEPTH(4),
     .RESPONSE_SLOTS(8),
     .RESPONSE_DATA_RAM(TB_RESPONSE_DATA_RAM),
+    .SINK_ELASTIC(TB_SINK_ELASTIC),
     .WRITER_RID0(RID0),
     .WRITER_RID1(RID1),
     .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
@@ -202,7 +204,7 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
           $fatal(1, "Qparam source reused a live response slot");
         if (lmem_bus_if.req_data.addr
             != BUS_ADDR_WIDTH'((64'h1000
-                              + 64'(source_count * BUS_BYTES)) >> 6))
+                              + 64'(source_count * BUS_BYTES)) >> $clog2(BUS_BYTES)))
           $fatal(1, "Qparam source command order mismatch");
         // These arrays drive the combinational response source.  NBA updates
         // keep a request/response accepted at this edge stable for every DUT
@@ -230,6 +232,7 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
   end
 
   initial begin
+    $display("QPARAM_TEST_CONFIG sink_elastic=%0d response_ram=%0d bus_bytes=%0d zp=%0d", TB_SINK_ELASTIC, TB_RESPONSE_DATA_RAM, BUS_BYTES, TEST_ZP);
     clear_ctrl();
     consume_value0 = 0;
     consume_value1 = 0;
@@ -275,6 +278,8 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     repeat (3) @(posedge clk);
     if (destination_count != 0 || done_count != 0)
       $fatal(1, "Qparam write/completion preceded writer fence");
+    if (TB_SINK_ELASTIC && dut.u_overlap.u_stream_queue.handoff_count_r != 1)
+      $fatal(1, "Qparam fence did not retain an actually buffered head beat");
 
     @(negedge clk);
     consume_value1 = 1;
@@ -318,11 +323,26 @@ module tb_VX_lmem_dma_qparam_overlap import VX_gpu_pkg::*; #(
     wait (destination_count == 5);
     if (done_count != 4)
       $fatal(1, "Qparam multi-beat command completed on non-final beat");
+    @(negedge clk);
+    destination_ready = 1'b0;
+    repeat (8) @(negedge clk);
+    // ctrl_if.idle is admission capacity for this overlap engine, not empty.
+    if (destination_count != 5 || done_count != 4
+     || dut.u_overlap.u_stream_queue.cmd_count_r == 0)
+      $fatal(1, "Qparam last-beat stall retired command early");
+    destination_ready = 1'b1;
     wait (destination_count == 6);
     wait (done_count == 5);
 
     enqueue_command(6, 1'b1, 3);
     wait (source_count == 7);
+    if (TB_SINK_ELASTIC) begin
+      wait (pending_count == 0);
+      repeat (5) @(negedge clk);
+      if (dut.u_overlap.u_stream_queue.handoff_count_r != 1
+       || destination_count != 6 || done_count != 5)
+        $fatal(1, "Qparam reset setup did not contain fenced buffered data");
+    end
     @(negedge clk);
     reset = 1'b1;
     repeat (2) @(posedge clk);

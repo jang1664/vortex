@@ -20,15 +20,21 @@ proc ::vortex::slr::owner_for {path} {
     if {[string match {u_tmem_dma_ctrl/*} $path]} {return 0}
     # Synthesis can lift these two pointer-increment LUTs out of the DMA
     # bridge. They remain local to its SLR0 command receiver pointer FFs.
-    if {[regexp {^u_commands/u_rx/(read_q0|write_q0)(?:_rep.*)?$} $path]} {return 0}
-    if {[string match {u_gemm_dma_slr_bridge/*} $path]} {
-        if {[regexp {/u_commands/(u_tx|u_rx)/} $path -> half]} {
+    if {[regexp {^u_commands/g_slr/u_link/u_rx/(read_q0|write_q0)(?:_rep.*)?$} $path]} {return 0}
+    if {[string match {u_link/*} $path]} {
+        error "SLR link lost command/request/response ownership identity: $path"
+    }
+    if {[string match {u_gemm_dma_transport/*} $path]} {
+        if {[regexp {/u_commands/g_slr/u_link/(u_tx|u_rx)/} $path -> half]} {
             return [expr {$half eq "u_tx" ? 1 : 0}]
         }
-        if {[regexp {/(u_completions|u_sync)/(u_tx|u_rx)/} $path -> stream half]} {
+        if {[regexp {/(u_completions|u_sync)/g_slr/u_link/(u_tx|u_rx)/} $path -> stream half]} {
             return [expr {$half eq "u_tx" ? 0 : 1}]
         }
         if {[regexp {/g_slr([01])[/.]} $path -> slr]} {return $slr}
+        if {[regexp {/g_source/|/u_commands/u_launch/} $path]} {return 1}
+        if {[regexp {/(backend_quiescent|completion_idle|sync_idle)} $path]} {return 0}
+        if {[regexp {/(observed_quiescent|forward_idle|op_ready)} $path]} {return 1}
         if {[regexp {/(op_|backend_if)} $path]} {return 0}
         if {[regexp {/(source_if|source_store_done|completion_valid)} $path]} {return 1}
         error "unclassified DMA-control transport leaf: $path"
@@ -39,9 +45,10 @@ proc ::vortex::slr::owner_for {path} {
         return 1
     }
     if {[string match {u_tmem_subsystem/*} $path]} {
-        if {[regexp {/(u_request|u_response)/(u_tx|u_rx)/} $path -> stream half]} {
+        if {[regexp {/(u_request|u_response)/g_slr/u_link/(u_tx|u_rx)/} $path -> stream half]} {
             return [expr {($stream eq "u_request") == ($half eq "u_tx") ? 1 : 0}]
         }
+        if {[regexp {/u_request/u_launch/|/g_output_slr_completion/} $path]} {return 1}
         if {[regexp {^u_tmem_subsystem/(u_dma_engine/|g_bank\[|g_dma_tmem_route\[|u_switch_)} $path]} {return 0}
         if {[regexp {^u_tmem_subsystem/u_ldma_} $path]} {return 1}
         # Source-side drain/control/priority and performance aggregation.
@@ -152,14 +159,14 @@ proc ::vortex::slr::inventory {} {
         foreach resource {input weight scale zero_point} {
             foreach direction {request response} {
                 foreach half {tx rx} {
-                    need [matching $local [format {^u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/u_%s/} $resource $direction $half]] "$resource $direction $half"
+                    need [matching $local [format {^u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/g_slr/u_link/u_%s/} $resource $direction $half]] "$resource $direction $half"
                 }
             }
         }
         foreach half {tx rx} {
-            need [matching $local [format {^u_tmem_subsystem/u_output_slr/u_request/u_%s/} $half]] "output request $half"
+            need [matching $local [format {^u_tmem_subsystem/u_output_slr/u_request/g_slr/u_link/u_%s/} $half]] "output request $half"
             foreach stream {commands completions} {
-                need [matching $local [format {^u_gemm_dma_slr_bridge/u_%s/u_%s/} $stream $half]] "DMA $stream $half"
+                need [matching $local [format {^u_gemm_dma_transport/u_%s/g_slr/u_link/u_%s/} $stream $half]] "DMA $stream $half"
             }
         }
         foreach group {input_tx input_rx weight_tx weight_rx output_tx output_rx local_ownership} {
@@ -170,7 +177,7 @@ proc ::vortex::slr::inventory {} {
         }
         # The controller currently does not consume dma_flag.idle. Synthesis
         # can remove its entire status cone; require both FFs if either stays.
-        set idle [matching $local {^u_gemm_dma_slr_bridge/g_slr[01][/.]}]
+        set idle [matching $local {^u_gemm_dma_transport/g_slr_status/g_slr[01][/.]}]
         if {[llength $idle]} {
             foreach {slr half} {0 tx 1 rx} {
                 need [matching $idle [format {g_slr%s[/.]idle_%s_q_reg} $slr $half]] "DMA idle SLR$slr"
@@ -280,8 +287,8 @@ proc ::vortex::slr::check_membership {cells expected allow_missing} {
 # Architectural containers that can contain multiple physical owners must not
 # become hierarchy anchors even if optimization removes one side temporarily.
 proc ::vortex::slr::anchor_barrier {relative} {
-    if {$relative in {{} u_tmem_subsystem u_VX_gemm_unit_v2 u_VX_gemm_unit_v2/u_compute_core u_gemm_dma_slr_bridge}} {return 1}
-    return [regexp {/(u_request|u_response|u_commands|u_completions|u_sync)$} $relative]
+    if {$relative in {{} u_tmem_subsystem u_VX_gemm_unit_v2 u_VX_gemm_unit_v2/u_compute_core u_gemm_dma_transport}} {return 1}
+    return [regexp {/(u_request|u_response|u_commands|u_completions|u_sync)(/g_slr(/u_link)?)?$|/g_slr_status$} $relative]
 }
 # Pure tree analysis: one leaf pass, one bottom-up aggregation and one
 # top-down selection. The inputs use actual Vivado PARENT relationships.

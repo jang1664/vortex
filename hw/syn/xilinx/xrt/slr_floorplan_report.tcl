@@ -10,7 +10,7 @@ proc ::vortex::slr::link_group {name} {
     if {[regexp {^(.*)/g_slr_mxu_(input|weight|output)_(?:tx|rx)[/.]} $name -> parent kind]} {
         return "$parent/mxu_$kind"
     }
-    if {[regexp {^(.*)/(u_request|u_response|u_commands|u_completions|u_sync)/(?:u_tx|u_rx)/([^/]+)} $name -> parent stream reg]} {
+    if {[regexp {^(.*)/(u_request|u_response|u_commands|u_completions|u_sync)/g_slr/u_link/(?:u_tx|u_rx)/([^/]+)} $name -> parent stream reg]} {
         set kind [expr {[string match "credit_*" $reg] ? "credit" : "payload"}]
         return "$parent/$stream/$kind"
     }
@@ -45,32 +45,32 @@ proc ::vortex::slr::require_marked_groups {} {
         foreach resource {input weight scale zero_point} {
             foreach direction {request response} {
                 foreach half {tx rx} {
-                    need [matching $local [format {^u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/u_%s/} $resource $direction $half]] "marked $resource $direction $half"
+                    need [matching $local [format {^u_tmem_subsystem/u_%s_req_reservation/u_slr/u_%s/g_slr/u_link/u_%s/} $resource $direction $half]] "marked $resource $direction $half"
                 }
             }
         }
         foreach half {tx rx} {
-            need [matching $local [format {^u_tmem_subsystem/u_output_slr/u_request/u_%s/} $half]] "marked output request $half"
+            need [matching $local [format {^u_tmem_subsystem/u_output_slr/u_request/g_slr/u_link/u_%s/} $half]] "marked output request $half"
             foreach stream {commands completions} {
-                need [matching $local [format {^u_gemm_dma_slr_bridge/u_%s/u_%s/} $stream $half]] "marked DMA $stream $half"
+                need [matching $local [format {^u_gemm_dma_transport/u_%s/g_slr/u_link/u_%s/} $stream $half]] "marked DMA $stream $half"
             }
         }
         set idle_present 0
         foreach cell [dict keys $owners] {
-            if {[string first "$root/u_gemm_dma_slr_bridge/" $cell] == 0
+            if {[string first "$root/u_gemm_dma_transport/" $cell] == 0
                 && [regexp {/g_slr[01][/.]} $cell]} {
                 set idle_present 1; break
             }
         }
         if {$idle_present} {
             foreach {slr half} {0 tx 1 rx} {
-                need [matching $local [format {^u_gemm_dma_slr_bridge/g_slr%s[/.]idle_%s_q_reg} $slr $half]] "marked DMA idle SLR$slr"
+                need [matching $local [format {^u_gemm_dma_transport/g_slr_status/g_slr%s[/.]idle_%s_q_reg} $slr $half]] "marked DMA idle SLR$slr"
             }
         }
         # The legacy sync valid and output response valid are tied inactive.
         # Their complete removal is expected; a partly surviving stream must
         # still retain its exact physical endpoint pair in both halves.
-        foreach stream {u_gemm_dma_slr_bridge/u_sync u_tmem_subsystem/u_output_slr/u_response} {
+        foreach stream {u_gemm_dma_transport/u_sync u_tmem_subsystem/u_output_slr/u_response} {
             set prefix "$root/$stream/"
             set present 0
             foreach cell [dict keys $owners] {
@@ -78,7 +78,7 @@ proc ::vortex::slr::require_marked_groups {} {
             }
             if {$present} {
                 foreach half {tx rx} {
-                    need [matching $local "^$stream/u_$half/"] "partly surviving $stream $half"
+                    need [matching $local "^$stream/g_slr/u_link/u_$half/"] "partly surviving $stream $half"
                 }
             }
         }
@@ -190,7 +190,7 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
         foreach root $roots {
             if {[string first "$root/" $cell] != 0} {continue}
             set rel [string range $cell [expr {[string length $root]+1}] end]
-            if {[regexp {^[^/]+$|^u_tmem_subsystem/[^/]+$|^u_VX_gemm_unit_v2/u_compute_core/u_mxu$|^u_gemm_dma_slr_bridge/u_(commands|completions|sync)$} $rel]} {
+            if {[regexp {^[^/]+$|^u_tmem_subsystem/[^/]+$|^u_VX_gemm_unit_v2/u_compute_core/u_mxu$|^u_gemm_dma_transport/u_(commands|completions|sync)$} $rel]} {
                 lappend boundaries $cell
             }
             break

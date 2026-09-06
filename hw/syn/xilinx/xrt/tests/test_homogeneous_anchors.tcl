@@ -38,7 +38,7 @@ foreach {family ip} {gen_accumulator 32add gen_in_scaler 16mul gen_out_scaler 32
     lappend fp_cells $name
 }
 leaf $core/u_mxu/pe/data_reg 2
-set stream top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_request
+set stream top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_request/g_slr/u_link
 leaf $stream/u_tx/valid_tx_q_reg 1
 leaf $stream/u_rx/valid_rx_q_reg 0
 leaf top/node/u_tmem_subsystem/direct_control_reg 0

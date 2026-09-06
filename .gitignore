@@ -80,6 +80,27 @@ simv.vdb/
 # Raw source-build, synthesis, routing, and simulation outputs for the U55C
 # SLR pipeline experiment. Keep its task status and Markdown result summaries.
 /agent-tasks/u55c-slr-floorplan-pipeline/results/
+
+# Agent-task execution evidence can contain multi-gigabyte VCS logs, waveform
+# databases, and machine-generated metric dumps. Keep task plans and written
+# summaries trackable, but never add reproducible raw execution artifacts.
+/agent-tasks/**/execution/
+/agent-tasks/**/results/
+/agent-tasks/**/logs/
+/agent-tasks/**/*.fsdb*
+/agent-tasks/**/*.vcd
+/agent-tasks/**/*.vpd
+/agent-tasks/**/*.wdb
+/agent-tasks/**/*.wlf
+/agent-tasks/**/*.fst
+/agent-tasks/**/*.stderr
+/agent-tasks/**/*.json
+/agent-tasks/**/*.csv
+/agent-tasks/**/*.tsv
+/agent-tasks/**/*.rpt
+/agent-tasks/**/*.jou
+/agent-tasks/**/*.dcp
+/agent-tasks/**/*.xpr
 ucli.key
 work.lib++/
 .vcs/
