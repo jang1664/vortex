@@ -2147,7 +2147,16 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
     .RING_SLOT_ORDER (1'b1),
     .SINK_PIPELINE   (1'b1),
     .RESPONSE_DATA_RAM (RESPONSE_DATA_RAM),
+`ifdef GEMM_SLR_PIPELINE
+    // The existing registered RAM output privately holds the ordered beat.
+    // Recycle its RAM slot at capture to offset the SLR response round trip;
+    // destination installation and command completion still wait for ready.
+    .EARLY_SLOT_RELEASE (RESPONSE_DATA_RAM),
+    .RESPONSE_STAGE_BYPASS (RESPONSE_DATA_RAM),
+    .SAME_CYCLE_SLOT_RECYCLE (RESPONSE_DATA_RAM)
+`else
     .SAME_CYCLE_SLOT_RECYCLE (1'b0)
+`endif
   ) u_stream_queue (
     .clk(clk),
     .reset(reset),
@@ -2229,7 +2238,10 @@ module VX_lmem_dma_weight_overlap import VX_gpu_pkg::*; #(
   wire [31:0] dbg_overlap_logical_beat_bytes = 32'(BUS_BYTES);
   wire dbg_overlap_ring_slot_order = 1'b1;
   wire dbg_overlap_sink_pipeline = 1'b1;
-  wire dbg_overlap_same_cycle_slot_recycle = 1'b0;
+  wire dbg_overlap_same_cycle_slot_recycle
+      = u_stream_queue.SAME_CYCLE_SLOT_RECYCLE;
+  wire dbg_overlap_early_slot_release = u_stream_queue.EARLY_SLOT_RELEASE;
+  wire dbg_overlap_response_stage_bypass = u_stream_queue.RESPONSE_STAGE_BYPASS;
 
   always_ff @(posedge clk) begin
     if (reset) begin

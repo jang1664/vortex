@@ -30,7 +30,15 @@ module VX_gemm_stream_dma_queue #(
     // Most migrated executors can issue into a slot on the same edge that the
     // ordered sink releases it.  Legacy Weight exposes the newly FREE slot on
     // the following cycle, so it opts out to preserve its bank-offer schedule.
-    parameter bit SAME_CYCLE_SLOT_RECYCLE = 1'b1
+    parameter bit SAME_CYCLE_SLOT_RECYCLE = 1'b1,
+    // The registered RAM read transfers payload ownership into the existing
+    // sink stage. Release its physical RAM slot at that edge, independently
+    // of eventual destination acceptance. Only the RAM/ring mode supports it.
+    parameter bit EARLY_SLOT_RELEASE = 1'b0,
+    // Ordered responses may populate the same logical sink stage directly.
+    // Out-of-order responses retain the RAM path. This adds one DATAW-bit
+    // private bypass register, not a new queue entry or response RAM slot.
+    parameter bit RESPONSE_STAGE_BYPASS = 1'b0
 ) (
     input wire clk,
     input wire reset,
@@ -112,9 +120,13 @@ module VX_gemm_stream_dma_queue #(
     logic [SLOT_PTRW-1:0] install_slot_r;
     logic drain_stage_valid_r;
     logic [SLOT_PTRW-1:0] drain_stage_slot_r;
+    logic [COUNTW-1:0] drain_stage_beat_r;
+    logic [SEQW-1:0] drain_stage_sequence_r;
     logic drain_found;
     logic [SLOT_PTRW-1:0] drain_slot;
     logic stage_found;
+    logic stage_ram_found;
+    logic stage_response_found;
     logic [SLOT_PTRW-1:0] stage_slot;
     logic [SLOT_COUNTW-1:0] install_ready_ahead;
 
@@ -147,20 +159,25 @@ module VX_gemm_stream_dma_queue #(
     wire [SLOT_PTRW-1:0] sink_slot = USE_SINK_STAGE
         ? drain_stage_slot_r : drain_slot;
     wire [DATAW-1:0] sink_slot_data;
+    wire [DATAW-1:0] stored_slot_data;
+    wire [COUNTW-1:0] sink_beat = EARLY_SLOT_RELEASE
+        ? drain_stage_beat_r : slot_owner_beat_r[sink_slot];
+    wire [SEQW-1:0] sink_sequence = EARLY_SLOT_RELEASE
+        ? drain_stage_sequence_r : cmd_sequence_r[install_ptr_r];
 
     wire sink_write_last = install_head_valid && sink_owner_valid
-        && ((slot_owner_beat_r[sink_slot] + COUNTW'(1))
+        && ((sink_beat + COUNTW'(1))
             == cmd_total_r[install_ptr_r]);
 
     assign sink_if.write_valid = install_head_valid
                               && sink_owner_valid
                               && writer_release_i;
     assign sink_if.write_tag = {
-        cmd_sequence_r[install_ptr_r], slot_owner_beat_r[sink_slot]
+        sink_sequence, sink_beat
     };
     assign sink_if.write_payload = {
         cmd_payload_r[install_ptr_r][DEST_METAW-1:0],
-        slot_owner_beat_r[sink_slot], sink_slot_data
+        sink_beat, sink_slot_data
     };
     assign sink_if.write_owned = install_head_valid && sink_owner_valid;
     assign sink_if.writer_released = writer_release_i;
@@ -186,11 +203,18 @@ module VX_gemm_stream_dma_queue #(
         ? (install_pop ? '0
                        : (cmd_write_r[install_ptr_r] + COUNTW'(1)))
         : cmd_write_r[install_ptr_r];
+    wire response_tag_in_range = {1'b0, fetch_if.rsp_tag}
+                              < RESPONSE_RANGEW'(RESPONSE_SLOTS);
+    wire [SLOT_PTRW-1:0] response_slot
+        = SLOT_PTRW'(fetch_if.rsp_tag);
+    wire source_response_fire = fetch_if.rsp_valid;
     always_comb begin
         stage_found = 1'b0;
+        stage_ram_found = 1'b0;
+        stage_response_found = 1'b0;
         stage_slot = RING_SLOT_ORDER
-            ? (sink_write_fire ? (install_slot_r + SLOT_PTRW'(1))
-                               : install_slot_r)
+            ? ((!EARLY_SLOT_RELEASE && sink_write_fire)
+                ? (install_slot_r + SLOT_PTRW'(1)) : install_slot_r)
             : '0;
         for (int slot = 0; slot < RESPONSE_SLOTS; ++slot) begin
             if (!stage_found && USE_SINK_STAGE && stage_ready
@@ -203,10 +227,30 @@ module VX_gemm_stream_dma_queue #(
                  == cmd_sequence_r[stage_cmd])
              && (slot_owner_beat_r[slot] == stage_beat)) begin
                 stage_found = 1'b1;
+                stage_ram_found = 1'b1;
                 stage_slot = SLOT_PTRW'(slot);
             end
         end
+        // Only the exact next ordered owner may bypass RAM latency. An
+        // occupied sink stage cannot accept a response unless it turns over
+        // on this edge. Responses for all other owners merely become READY.
+        if (RESPONSE_STAGE_BYPASS && !stage_found && stage_ready
+         && source_response_fire && fetch_if.rsp_owned
+         && (response_slot == install_slot_r)
+         && cmd_valid_r[stage_cmd]
+         && (slot_owner_cmd_r[response_slot] == stage_cmd)
+         && (slot_owner_sequence_r[response_slot]
+             == cmd_sequence_r[stage_cmd])
+         && (slot_owner_beat_r[response_slot] == stage_beat)) begin
+            stage_found = 1'b1;
+            stage_response_found = 1'b1;
+            stage_slot = response_slot;
+        end
     end
+
+    wire slot_release = EARLY_SLOT_RELEASE ? stage_found : sink_write_fire;
+    wire [SLOT_PTRW-1:0] released_slot = EARLY_SLOT_RELEASE
+        ? stage_slot : sink_slot;
 
     // When enabled, a just-consumed ordered slot may be allocated in the same
     // cycle.  This is a one-way sink-ready -> source-valid path; neither
@@ -222,8 +266,8 @@ module VX_gemm_stream_dma_queue #(
              && (!RING_SLOT_ORDER || (SLOT_PTRW'(slot) == alloc_slot_r))
              && ((slot_state_r[slot] == SLOT_FREE)
               || (SAME_CYCLE_SLOT_RECYCLE
-               && sink_write_fire
-               && (sink_slot == SLOT_PTRW'(slot))))) begin
+               && slot_release
+               && (released_slot == SLOT_PTRW'(slot))))) begin
                 request_slot_available = 1'b1;
                 request_slot = SLOT_PTRW'(slot);
             end
@@ -238,10 +282,6 @@ module VX_gemm_stream_dma_queue #(
     };
     wire source_request_fire = fetch_if.req_valid && fetch_if.req_ready;
 
-    wire response_tag_in_range = {1'b0, fetch_if.rsp_tag}
-                              < RESPONSE_RANGEW'(RESPONSE_SLOTS);
-    wire [SLOT_PTRW-1:0] response_slot
-        = SLOT_PTRW'(fetch_if.rsp_tag);
     assign fetch_if.rsp_owned = response_tag_in_range
         && (slot_state_r[response_slot] == SLOT_WAIT_RSP)
         && cmd_valid_r[slot_owner_cmd_r[response_slot]]
@@ -249,13 +289,13 @@ module VX_gemm_stream_dma_queue #(
             == slot_owner_sequence_r[response_slot]);
     // Every issued request owns a response slot until its single response
     // arrives.  The source therefore never needs ownership feedback to decide
-    // whether the response channel is ready.  Simulation checks the protocol
-    // contract below without retaining the tag/state cone in synthesis.
+    // whether the response channel is ready. Ownership still qualifies the
+    // optional ordered-response bypass and completion metadata; it is not on
+    // the response-ready path. Simulation checks the protocol contract below.
     assign fetch_if.rsp_ready = 1'b1;
     assign fetch_if.rsp_last = fetch_if.rsp_owned
         && ((cmd_response_r[slot_owner_cmd_r[response_slot]] + COUNTW'(1))
             == cmd_total_r[slot_owner_cmd_r[response_slot]]);
-    wire source_response_fire = fetch_if.rsp_valid;
     assign fetch_if.fetch_complete = source_response_fire
                                   && fetch_if.rsp_last;
 
@@ -272,18 +312,18 @@ module VX_gemm_stream_dma_queue #(
         ) response_payload_ram (
             .clk   (clk),
             .reset (reset),
-            .read  (stage_found),
+            .read  (stage_ram_found),
             .write (source_response_fire),
             .wren  (1'b1),
             .waddr (response_slot),
             .wdata (fetch_if.rsp_payload),
             .raddr (stage_slot),
-            .rdata (sink_slot_data)
+            .rdata (stored_slot_data)
         );
     end else begin : g_response_data_ff
         logic [DATAW-1:0] slot_data_r[RESPONSE_SLOTS];
 
-        assign sink_slot_data = slot_data_r[sink_slot];
+        assign stored_slot_data = slot_data_r[sink_slot];
 
         always_ff @(posedge clk) begin
             if (reset) begin
@@ -293,6 +333,22 @@ module VX_gemm_stream_dma_queue #(
                 slot_data_r[response_slot] <= fetch_if.rsp_payload;
             end
         end
+    end
+
+    if (RESPONSE_STAGE_BYPASS) begin : g_response_stage_bypass
+        logic [DATAW-1:0] data_r;
+        logic selected_r;
+        always_ff @(posedge clk) begin
+            if (stage_response_found)
+                data_r <= fetch_if.rsp_payload;
+            if (reset)
+                selected_r <= 1'b0;
+            else if (stage_found)
+                selected_r <= stage_response_found;
+        end
+        assign sink_slot_data = selected_r ? data_r : stored_slot_data;
+    end else begin : g_no_response_stage_bypass
+        assign sink_slot_data = stored_slot_data;
     end
 
     wire zero_size_cmd = fetch_if.cmd_total_beats == 0;
@@ -331,7 +387,16 @@ module VX_gemm_stream_dma_queue #(
         install_ready_ahead = USE_SINK_STAGE
             ? SLOT_COUNTW'(drain_stage_valid_r) : '0;
         for (int offset = 0; offset < RESPONSE_SLOTS; ++offset) begin
-            if ((offset >= ((USE_SINK_STAGE && drain_stage_valid_r) ? 1 : 0))
+            if (EARLY_SLOT_RELEASE) begin
+                // install_slot points beyond the privately owned sink beat.
+                // Saturate at the existing public response-slot capacity.
+                if ((slot_state_r[SLOT_PTRW'(install_slot_r
+                                          + SLOT_PTRW'(offset))] == SLOT_READY)
+                 && (install_ready_ahead == SLOT_COUNTW'(offset)
+                      + SLOT_COUNTW'(drain_stage_valid_r))
+                 && (install_ready_ahead < SLOT_COUNTW'(RESPONSE_SLOTS)))
+                    install_ready_ahead += SLOT_COUNTW'(1);
+            end else if ((offset >= ((USE_SINK_STAGE && drain_stage_valid_r) ? 1 : 0))
              && (slot_state_r[SLOT_PTRW'(install_slot_r
                                       + SLOT_PTRW'(offset))]
                  == SLOT_READY)
@@ -344,6 +409,13 @@ module VX_gemm_stream_dma_queue #(
     assign install_ready_ahead_o = install_ready_ahead;
 
     initial begin
+        if (RESPONSE_STAGE_BYPASS && !EARLY_SLOT_RELEASE)
+            $fatal(1, "%s: response-stage bypass requires early RAM-slot release",
+                   INSTANCE_ID);
+        if (EARLY_SLOT_RELEASE
+         && (!USE_SINK_STAGE || !RESPONSE_DATA_RAM || !RING_SLOT_ORDER))
+            $fatal(1, "%s: early slot release requires registered RAM and ring ordering",
+                   INSTANCE_ID);
         if ((CMD_FIFO_DEPTH != 1) && (CMD_FIFO_DEPTH != 2)
          && (CMD_FIFO_DEPTH != 4))
             $fatal(1, "%s: stream DMA command depth must be 1, 2, or 4",
@@ -384,6 +456,8 @@ module VX_gemm_stream_dma_queue #(
             install_slot_r <= '0;
             drain_stage_valid_r <= 1'b0;
             drain_stage_slot_r <= '0;
+            drain_stage_beat_r <= '0;
+            drain_stage_sequence_r <= '0;
             for (int cmd = 0; cmd < CMD_FIFO_DEPTH; ++cmd) begin
                 cmd_id_r[cmd] <= '0;
                 cmd_payload_r[cmd] <= '0;
@@ -405,7 +479,7 @@ module VX_gemm_stream_dma_queue #(
                 2'b01: cmd_count_r <= cmd_count_r - CMD_COUNTW'(1);
                 default:;
             endcase
-            unique case ({source_request_fire, sink_write_fire})
+            unique case ({source_request_fire, slot_release})
                 2'b10: slot_count_r <= slot_count_r + SLOT_COUNTW'(1);
                 2'b01: slot_count_r <= slot_count_r - SLOT_COUNTW'(1);
                 default:;
@@ -418,9 +492,11 @@ module VX_gemm_stream_dma_queue #(
                      + COUNTW'(1);
             end
 
-            if (sink_write_fire) begin
-                slot_state_r[sink_slot] <= SLOT_FREE;
+            if (slot_release) begin
+                slot_state_r[released_slot] <= SLOT_FREE;
                 install_slot_r <= install_slot_r + SLOT_PTRW'(1);
+            end
+            if (sink_write_fire) begin
                 if (sink_write_last) begin
                     cmd_valid_r[install_ptr_r] <= 1'b0;
                     cmd_fetch_done_r[install_ptr_r] <= 1'b0;
@@ -440,7 +516,12 @@ module VX_gemm_stream_dma_queue #(
                 if (stage_found) begin
                     drain_stage_valid_r <= 1'b1;
                     drain_stage_slot_r <= stage_slot;
-                    slot_state_r[stage_slot] <= SLOT_DRAINING;
+                    if (EARLY_SLOT_RELEASE) begin
+                        drain_stage_beat_r <= slot_owner_beat_r[stage_slot];
+                        drain_stage_sequence_r <= slot_owner_sequence_r[stage_slot];
+                    end else begin
+                        slot_state_r[stage_slot] <= SLOT_DRAINING;
+                    end
                 end
             end
 
@@ -525,6 +606,10 @@ module VX_gemm_stream_dma_queue #(
                 assert (fetch_head_valid && request_slot_available)
                     else $fatal(1, "%s: source request had no descriptor/slot",
                                 INSTANCE_ID);
+                assert ((slot_state_r[request_slot] == SLOT_FREE)
+                     || (SAME_CYCLE_SLOT_RECYCLE && slot_release
+                      && (request_slot == released_slot)))
+                    else $fatal(1, "%s: source request overwrote live RAM ownership", INSTANCE_ID);
                 assert (cmd_request_r[fetch_ptr_r]
                      < cmd_total_r[fetch_ptr_r])
                     else $fatal(1, "%s: source request exceeded descriptor",
@@ -539,10 +624,24 @@ module VX_gemm_stream_dma_queue #(
                     else $fatal(1, "%s: response exceeded descriptor",
                                 INSTANCE_ID);
             end
-            if (RESPONSE_DATA_RAM && source_response_fire && stage_found) begin
+            if (RESPONSE_DATA_RAM && source_response_fire && stage_ram_found) begin
                 assert (response_slot != stage_slot)
                     else $fatal(1, "%s: response RAM read/write collision slot=%0d",
                                 INSTANCE_ID, response_slot);
+            end
+            if (EARLY_SLOT_RELEASE && stage_found) begin
+                assert (((slot_state_r[stage_slot] == SLOT_READY && stage_ram_found)
+                      || (slot_state_r[stage_slot] == SLOT_WAIT_RSP && stage_response_found))
+                     && (!drain_stage_valid_r || sink_write_fire))
+                    else $fatal(1, "%s: early release without exclusive sink-stage capture", INSTANCE_ID);
+            end
+            if (stage_response_found) begin
+                assert (!stage_ram_found && source_response_fire && fetch_if.rsp_owned
+                     && response_slot == stage_slot
+                     && slot_owner_cmd_r[response_slot] == stage_cmd
+                     && slot_owner_sequence_r[response_slot] == cmd_sequence_r[stage_cmd]
+                     && slot_owner_beat_r[response_slot] == stage_beat)
+                    else $fatal(1, "%s: response bypass lost ordered ownership", INSTANCE_ID);
             end
             if (sink_stall_r) begin
                 assert (sink_if.write_valid
@@ -561,6 +660,9 @@ module VX_gemm_stream_dma_queue #(
                      < cmd_total_r[install_ptr_r])
                     else $fatal(1, "%s: destination write exceeded descriptor",
                                 INSTANCE_ID);
+                assert ((sink_beat == cmd_write_r[install_ptr_r])
+                     && (sink_sequence == cmd_sequence_r[install_ptr_r]))
+                    else $fatal(1, "%s: staged sink metadata lost command ownership", INSTANCE_ID);
             end
             for (int cmd = 0; cmd < CMD_FIFO_DEPTH; ++cmd) begin
                 if (cmd_valid_r[cmd]) begin
@@ -581,6 +683,56 @@ module VX_gemm_stream_dma_queue #(
             end
         end
     end
+`ifdef DBG_TRACE_GEMM
+    if (EARLY_SLOT_RELEASE) begin : g_early_slot_trace
+        longint unsigned cycle_r;
+        longint unsigned allocated_cycle_r [RESPONSE_SLOTS];
+        longint unsigned request_count_r, response_count_r, release_count_r;
+        longint unsigned full_stalls_r, max_occupancy_r;
+        always_ff @(posedge clk) begin
+            if (reset) begin
+                cycle_r <= 0;
+                request_count_r <= 0;
+                response_count_r <= 0;
+                release_count_r <= 0;
+                full_stalls_r <= 0;
+                max_occupancy_r <= 0;
+            end else begin
+                cycle_r <= cycle_r + 1;
+                if (slot_count_r > max_occupancy_r)
+                    max_occupancy_r <= slot_count_r;
+                if (fetch_head_valid && !request_slot_available)
+                    full_stalls_r <= full_stalls_r + 1;
+                if (source_request_fire) begin
+                    allocated_cycle_r[request_slot] <= cycle_r;
+                    request_count_r <= request_count_r + 1;
+                    $display("%t: %s SLOT_ALLOC cycle=%0d slot=%0d seq=%0d beat=%0d occupancy=%0d recycle=%0b",
+                             $time, INSTANCE_ID, cycle_r, request_slot,
+                             cmd_sequence_r[fetch_ptr_r], cmd_request_r[fetch_ptr_r],
+                             slot_count_r, slot_release && request_slot == released_slot);
+                end
+                if (source_response_fire) begin
+                    response_count_r <= response_count_r + 1;
+                    $display("%t: %s SLOT_RESPONSE cycle=%0d slot=%0d request_to_response=%0d",
+                             $time, INSTANCE_ID, cycle_r, response_slot,
+                             cycle_r - allocated_cycle_r[response_slot]);
+                end
+                if (slot_release) begin
+                    release_count_r <= release_count_r + 1;
+                    $display("%t: %s SLOT_RELEASE cycle=%0d slot=%0d allocation_to_release=%0d sink_fire=%0b response_bypass=%0b",
+                             $time, INSTANCE_ID, cycle_r, released_slot,
+                             cycle_r - allocated_cycle_r[released_slot], sink_write_fire,
+                             stage_response_found);
+                end
+            end
+        end
+        final begin
+            $display("%s SLOT_SUMMARY requests=%0d responses=%0d releases=%0d peak_occupancy=%0d full_stalls=%0d slots=%0d",
+                     INSTANCE_ID, request_count_r, response_count_r,
+                     release_count_r, max_occupancy_r, full_stalls_r, RESPONSE_SLOTS);
+        end
+    end
+`endif
 `endif
 
 endmodule

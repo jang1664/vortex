@@ -1218,6 +1218,39 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // External DMA control: VX_gemm_tmem_dma_ctrl translates GEMM DMA
     // commands into VX_config_reg_if writes for the DMA engine.
+    VX_gemm_sync_if backend_dma_sync_if ();
+    wire backend_store_done;
+`ifdef GEMM_SLR_PIPELINE
+    VX_gemm_dma_ctrl_if source_dma_ctrl_if ();
+    assign source_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
+    assign source_dma_ctrl_if.cmd_valid = gemm_ctrl_if.dma_ctrl.cmd_valid;
+    assign source_dma_ctrl_if.cmd = gemm_ctrl_if.dma_ctrl.cmd;
+    assign source_dma_ctrl_if.cmd_tag = gemm_ctrl_if.dma_ctrl.cmd_tag;
+    assign source_dma_ctrl_if.prepare_valid
+        = gemm_ctrl_if.dma_ctrl.prepare_valid;
+    assign source_dma_ctrl_if.prepare_cmd = gemm_ctrl_if.dma_ctrl.prepare_cmd;
+    assign gemm_ctrl_if.dma_flag.idle = source_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.dma_flag.done = source_dma_ctrl_if.done;
+    assign gemm_ctrl_if.dma_flag.done_tag = source_dma_ctrl_if.done_tag;
+    assign gemm_ctrl_if.dma_flag.cmd_ready = source_dma_ctrl_if.cmd_ready;
+    assign gemm_ctrl_if.dma_flag.prepare_ready = source_dma_ctrl_if.prepare_ready;
+
+    // Replaces, rather than follows, the old one-entry launch buffer. Both
+    // halves of commands, completion, and legacy sync transport are placed
+    // independently; no backend ready or status bypass remains.
+    VX_gemm_dma_slr_bridge #(
+        .INSTANCE_ID ({INSTANCE_ID, "_dma_slr"})
+    ) u_gemm_dma_slr_bridge (
+        .clk (clk),
+        .reset (reset),
+        .source_if (source_dma_ctrl_if),
+        .backend_if (gemm_dma_ctrl_if),
+        .backend_store_done (backend_store_done),
+        .source_store_done (output_store_done),
+        .backend_sync_if (backend_dma_sync_if),
+        .source_sync_if (gemm_sync_if[5])
+    );
+`else
     localparam int GEMM_DMA_LAUNCH_DATAW = $bits(gemm_unified_cmd_t)
                                             + GEMM_DMA_TAG_WIDTH;
     wire gemm_dma_launch_ready;
@@ -1254,6 +1287,35 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.dma_flag.done_tag = gemm_dma_ctrl_if.done_tag;
     assign gemm_ctrl_if.dma_flag.prepare_ready
         = gemm_dma_ctrl_if.prepare_ready;
+    assign output_store_done = backend_store_done;
+    assign gemm_sync_if[5].valid = backend_dma_sync_if.valid;
+    assign gemm_sync_if[5].reg_idx = backend_dma_sync_if.reg_idx;
+    assign gemm_sync_if[5].value = backend_dma_sync_if.value;
+    assign backend_dma_sync_if.ready = gemm_sync_if[5].ready;
+`endif
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
+    wire backend_compute_active;
+`ifdef GEMM_SLR_PIPELINE
+    // This signal is observability-only, not a scheduler dependency. Report
+    // the transported level rather than retaining a hidden direct crossing.
+    logic compute_active_tx_q, compute_active_rx_q;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            compute_active_tx_q <= 1'b0;
+            compute_active_rx_q <= 1'b0;
+        end else begin
+            compute_active_tx_q <= !gemm_unit_v2_if.pipeline_empty;
+            compute_active_rx_q <= compute_active_tx_q;
+        end
+    end
+    assign backend_compute_active = compute_active_rx_q;
+`else
+    assign backend_compute_active = !gemm_unit_v2_if.pipeline_empty;
+`endif
+`endif
+`endif
 
     // Internal DMA config/done interfaces (driven by tmem_dma_ctrl)
     VX_config_reg_if #(
@@ -1272,12 +1334,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .reset            (reset),
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM
-        .compute_active_i (!gemm_unit_v2_if.pipeline_empty),
+        .compute_active_i (backend_compute_active),
 `endif
 `endif
         .gemm_dma_ctrl_if (gemm_dma_ctrl_if),
-        .store_done       (output_store_done),
-        .gemm_sync_if     (gemm_sync_if[5]),
+        .store_done       (backend_store_done),
+        .gemm_sync_if     (backend_dma_sync_if),
         .cfg_reg_if       (dma_cfg_if),
         .lookahead_if     (dma_lookahead_if),
         .done_if          (dma_done_if)

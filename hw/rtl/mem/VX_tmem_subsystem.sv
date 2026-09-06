@@ -396,6 +396,25 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) zero_point_reserved_to_switch ();
 
+    VX_mem_bus_if #(
+        .DATA_SIZE (DATA_SIZE), .TAG_WIDTH (TAG_WIDTH)
+    ) output_reserved_to_switch ();
+    wire output_request_idle;
+`ifdef GEMM_SLR_PIPELINE
+    VX_slr_mem_bus #(
+        .INSTANCE_ID ({INSTANCE_ID, ":output_slr"})
+    ) u_output_slr (
+        .clk (clk), .reset (reset),
+        .upstream_if (ldma_to_switch[4]),
+        .downstream_if (output_reserved_to_switch),
+        .side_in (1'b0), .side_out (),
+        .request_idle (output_request_idle)
+    );
+`else
+    `ASSIGN_VX_MEM_BUS_IF (output_reserved_to_switch, ldma_to_switch[4]);
+    assign output_request_idle = 1'b1;
+`endif
+
     // Weight transfers use their native GEMM beat width on both sides. The
     // wide TMEM switch fans each source read out to the required bank group.
     VX_mem_bus_if #(
@@ -458,7 +477,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_tmem_read_req_reservation #(
         .INSTANCE_ID ({INSTANCE_ID, ":weight_req_reservation"}),
         .DATA_SIZE   (WEIGHT_DATA_SIZE),
-        .TAG_WIDTH   (TAG_WIDTH)
+        .TAG_WIDTH   (TAG_WIDTH),
+        // Keep the SLR0 TX stage out of the wide-switch response BRAM.
+        // This changes physical inference only, not transport latency.
+        .PRESERVE_RESPONSE_TX_PAYLOAD (1'b1)
     ) u_weight_req_reservation (
         .clk              (clk),
         .reset            (reset),
@@ -594,7 +616,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .req_priority_i(GEMM_SCHED_PRIORITY_BACKGROUND),
         .bank_req_urgent_o(),
         .bank_req_priority_o(),
-        .bus_in_if  (ldma_to_switch[4]),
+        .bus_in_if  (output_reserved_to_switch),
         .bus_out_if (out_switch_to_tmem)
     );
 
@@ -936,6 +958,81 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     `endif
     );
 
+    // The output executor completes when its last write enters the bridge.
+    // Architectural completion must wait for all those writes to be accepted
+    // by TMEM and for the ordered consumption acknowledgments to return.
+    VX_lmem_dma_ctrl_if output_executor_ctrl ();
+    assign output_executor_ctrl.start = ldma_ctrl_if[4].start;
+    assign output_executor_ctrl.prepare = ldma_ctrl_if[4].prepare;
+    assign output_executor_ctrl.prepare_max_beats = ldma_ctrl_if[4].prepare_max_beats;
+    assign output_executor_ctrl.src_base_addr = ldma_ctrl_if[4].src_base_addr;
+    assign output_executor_ctrl.dst_base_addr = ldma_ctrl_if[4].dst_base_addr;
+    assign output_executor_ctrl.src_strides = ldma_ctrl_if[4].src_strides;
+    assign output_executor_ctrl.dst_strides = ldma_ctrl_if[4].dst_strides;
+    assign output_executor_ctrl.bounds = ldma_ctrl_if[4].bounds;
+    assign output_executor_ctrl.seg_size = ldma_ctrl_if[4].seg_size;
+    assign output_executor_ctrl.reg_idx = ldma_ctrl_if[4].reg_idx;
+    assign output_executor_ctrl.reg_value = ldma_ctrl_if[4].reg_value;
+    assign output_executor_ctrl.scheduler_work_seq = ldma_ctrl_if[4].scheduler_work_seq;
+`ifdef GEMM_SLR_PIPELINE
+    logic output_write_pending_q, output_done_pending_q;
+    assign ldma_ctrl_if[4].write_done = output_write_pending_q && output_request_idle;
+    assign ldma_ctrl_if[4].done = output_done_pending_q && output_request_idle;
+    assign ldma_ctrl_if[4].idle = output_executor_ctrl.idle && output_request_idle
+                              && !output_write_pending_q && !output_done_pending_q;
+    assign ldma_ctrl_if[4].prepare_ready = output_executor_ctrl.prepare_ready
+                                       && ldma_ctrl_if[4].idle;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            output_write_pending_q <= 1'b0;
+            output_done_pending_q <= 1'b0;
+        end else begin
+            if (output_executor_ctrl.write_done)
+                output_write_pending_q <= 1'b1;
+            else if (ldma_ctrl_if[4].write_done)
+                output_write_pending_q <= 1'b0;
+            if (output_executor_ctrl.done)
+                output_done_pending_q <= 1'b1;
+            else if (ldma_ctrl_if[4].done)
+                output_done_pending_q <= 1'b0;
+        end
+    end
+`ifndef SYNTHESIS
+    logic [63:0] output_enqueued_count_q, output_committed_count_q;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            output_enqueued_count_q <= '0;
+            output_committed_count_q <= '0;
+        end else begin
+            if (ldma_to_switch[4].req_valid && ldma_to_switch[4].req_ready)
+                output_enqueued_count_q <= output_enqueued_count_q + 1'b1;
+            // The switch and array arbiter have no posted request buffer;
+            // this is the physical array write acceptance, not bridge enqueue.
+            if (output_reserved_to_switch.req_valid && output_reserved_to_switch.req_ready)
+                output_committed_count_q <= output_committed_count_q + 1'b1;
+            if (ldma_ctrl_if[4].start)
+                assert (ldma_ctrl_if[4].idle)
+                    else $fatal(1, "%s: output descriptor started before bridge drain", INSTANCE_ID);
+            if (ldma_ctrl_if[4].write_done) begin
+                assert (!(ldma_to_switch[4].req_valid && ldma_to_switch[4].req_ready))
+                    else $fatal(1, "%s: output completion overlaps a new bridge write", INSTANCE_ID);
+                assert (output_enqueued_count_q == output_committed_count_q)
+                    else $fatal(1, "%s: output completion precedes physical TMEM write", INSTANCE_ID);
+            end
+            assert (!output_executor_ctrl.write_done || !output_write_pending_q)
+                else $fatal(1, "%s: duplicate output write completion while draining", INSTANCE_ID);
+            assert (!output_executor_ctrl.done || !output_done_pending_q)
+                else $fatal(1, "%s: duplicate output executor completion while draining", INSTANCE_ID);
+        end
+    end
+`endif
+`else
+    assign ldma_ctrl_if[4].idle = output_executor_ctrl.idle;
+    assign ldma_ctrl_if[4].prepare_ready = output_executor_ctrl.prepare_ready;
+    assign ldma_ctrl_if[4].done = output_executor_ctrl.done;
+    assign ldma_ctrl_if[4].write_done = output_executor_ctrl.write_done;
+`endif
+
     // Output local DMA (GEMM -> LMEM)
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
@@ -952,7 +1049,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_ldma_output (
         .clk         (clk),
         .reset       (reset),
-        .ctrl_if     (ldma_ctrl_if[4]),
+        .ctrl_if     (output_executor_ctrl),
         .gemm_sync_if(ldma_sync_if[4]),
         .lmem_bus_if (ldma_to_switch[4]),
         .gemm_bus_if (ldma_gemm_output)
@@ -1108,7 +1205,8 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter DATA_SIZE      = 64,
     parameter TAG_WIDTH      = 8,
-    parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH
+    parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
+    parameter bit PRESERVE_RESPONSE_TX_PAYLOAD = 1'b0
 ) (
     input wire clk,
     input wire reset,
@@ -1123,6 +1221,21 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
     VX_mem_bus_if.slave upstream_if,
     VX_mem_bus_if.master downstream_if
 );
+`ifdef GEMM_SLR_PIPELINE
+    // Replace (rather than stack after) the old two-entry reservation. Credit
+    // ownership remains at the local DMA; arbitration sidebands follow data.
+    VX_slr_mem_bus #(
+        .INSTANCE_ID (INSTANCE_ID),
+        .SIDEW (GEMM_SCHED_PRIORITY_WIDTH + 1 + 32),
+        .PRESERVE_RESPONSE_TX_PAYLOAD (PRESERVE_RESPONSE_TX_PAYLOAD)
+    ) u_slr (
+        .clk (clk), .reset (reset),
+        .upstream_if (upstream_if), .downstream_if (downstream_if),
+        .side_in ({req_priority_i, req_urgent_i, req_work_seq_i}),
+        .side_out ({req_priority_o, req_urgent_o, req_work_seq_o}),
+        .request_idle ()
+    );
+`else
     localparam int DEPTH = 2;
     localparam int ADDR_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
     localparam int TAG_VALUE_WIDTH = TAG_WIDTH - `UP(UUID_WIDTH);
@@ -1252,4 +1365,5 @@ module VX_tmem_read_req_reservation import VX_gpu_pkg::*; #(
     end
 `endif
 
+`endif // GEMM_SLR_PIPELINE
 endmodule

@@ -48,9 +48,22 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     localparam ACT_REDUCE_OUT_DLY = get_pipe_stage_num(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam ACT_REDUCE_PIPE_STAGES = get_pipe_stage_bitmask(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam BLK_IDX_DLY = DEFAULT_OUT_DLY;
-    localparam MXU_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1)
+    localparam MXU_BASE_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1)
                            + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV)
                            + ((`MXU_COL / `MXU_COL_TILE) - 1);
+`ifdef GEMM_SLR_PIPELINE
+    // Each physical crossing has an unconditional source TX and destination
+    // RX register. The ACC schedule below remains local and unchanged relative
+    // to result-FIFO pop; only the tree/correction flight and credits grow.
+    localparam MXU_INPUT_TRANSPORT_DLY = 2;
+    localparam MXU_OUTPUT_TRANSPORT_DLY = 2;
+`else
+    localparam MXU_INPUT_TRANSPORT_DLY = 0;
+    localparam MXU_OUTPUT_TRANSPORT_DLY = 0;
+`endif
+    localparam MXU_OUT_DLY = MXU_BASE_OUT_DLY
+                          + MXU_INPUT_TRANSPORT_DLY
+                          + MXU_OUTPUT_TRANSPORT_DLY;
     localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY
                                 - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
     localparam INTTOFP_OUT_DLY = 2;
@@ -187,8 +200,14 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         ("same-address history forwarding requires fixed 1/1/0 ACC latency"))
     `VX_STATIC_ASSERT(MERGER_CTRL_IDX + K_LOOKBACK == WRITE_CTRL_IDX - 1,
         ("d=3 ACC RAW hold must precede the producer write by one cycle"))
-    `VX_STATIC_ASSERT(MXU_OUT_DLY == 5,
-        ("GEMM-tree and correction latency contract must be five cycles"))
+    `VX_STATIC_ASSERT(MXU_BASE_OUT_DLY == 5,
+        ("local GEMM-tree and correction latency contract must be five cycles"))
+`ifdef GEMM_SLR_PIPELINE
+    `VX_STATIC_ASSERT(`MXU_COL == `MXU_COL_TILE,
+        ("SLR weight-consume accounting requires a single MXU column tile"))
+    `VX_STATIC_ASSERT(MXU_OUT_DLY == MXU_BASE_OUT_DLY + 4,
+        ("SLR tree metadata must cover both two-register crossings"))
+`endif
     `VX_STATIC_ASSERT(MERGED_RESULT_FIFO_DEPTH
                    >= TREE_PIPELINE_CAPACITY + READY_FEEDBACK_LATENCY,
         ("merged-result FIFO is too shallow for registered ready feedback"))
@@ -345,6 +364,17 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
+    logic [`MXU_ROW-1:0][`SEL_BLOCK_WIDTH-1:0]                  mxu_input_capture;
+    logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0]                  mxu_blk_capture;
+    gemm_wreg_idx_t                                            mxu_weight_use_capture;
+    logic                                                      mxu_input_valid_capture;
+    logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]  mxu_weight_capture;
+    gemm_wreg_idx_t                                            mxu_weight_write_capture;
+    logic                                                      mxu_weight_dir_capture;
+    logic                                                      mxu_weight_valid_capture;
+    logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_capture;
+    logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_capture;
+    logic                                                      mxu_transport_busy;
     logic                                                       compute_fire;
     logic                                                       compute_ready;
     logic                                                       weight_ready;
@@ -615,7 +645,6 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // Architectural executor completion endpoints.  These pulses are taken
     // after the unit's own acceptance/pipeline logic, at the cycles in which
     // the selected weight or scale/zero register is actually written.
-    assign gemm_unit_if.weight_register_write = mxu_ready_weight;
     assign gemm_unit_if.scale_register_write = scale_reg_wr_en;
     assign gemm_unit_if.zero_point_register_write = zp_reg_wr_en;
     assign gemm_unit_if.quant_register_write
@@ -656,10 +685,6 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign gemm_unit_if.zp_consume_valid
         = qrow_zp_consume_last || qcol_zp_consume_last;
     assign gemm_unit_if.zp_consume_idx = zp_last_consume_idx;
-    assign gemm_unit_if.weight_consume_valid
-        = compute_fire && pre_meta_out.ctrl.last;
-    assign gemm_unit_if.weight_consume_idx
-        = pre_meta_out.ctrl.wreg_use_idx;
 
     // True-consumer feedback is registered before leaving the GEMM unit.  It
     // observes the exact transaction metadata and missing generation at the
@@ -991,7 +1016,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                      || tree_region_busy
                      || post_region_busy
                      || acc_pending_busy
-                     || resource_ownership_busy;
+                     || resource_ownership_busy
+                     || mxu_transport_busy;
         for (int i = 0; i <= WRITE_CTRL_IDX; ++i)
             pipeline_busy |= ctrl_pipe[i].valid;
     end
@@ -1482,17 +1508,170 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // GEMM Tree (MXU)
     // -------------------------------------------------------------------------
+`ifdef GEMM_SLR_PIPELINE
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_ROW-1:0][`SEL_BLOCK_WIDTH-1:0] data;
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] block_idx;
+        gemm_wreg_idx_t weight_sel;
+    } mxu_input_transport_t;
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] block_idx;
+        gemm_wreg_idx_t weight_sel;
+    } mxu_input_control_transport_t;
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0] data;
+        gemm_wreg_idx_t weight_sel;
+        logic direction;
+    } mxu_weight_transport_t;
+    typedef struct packed {
+        logic [`MXU_COL/`MXU_COL_TILE-1:0] valid;
+        logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0] data;
+    } mxu_output_transport_t;
+
+    // These names identify disjoint placement groups. In particular, the RX
+    // D inputs below are exactly the corresponding TX Q outputs: no enable,
+    // handshake mux, arithmetic, or validity decode is allowed between them.
+    if (1) begin : g_slr_mxu_input_tx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO" *)
+        mxu_input_control_transport_t control_q;
+        // Both transport data stages must remain standalone FFs, rather
+        // than being absorbed into the MXU DSP input pipeline registers.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
+        logic [$bits(prealigner_int_data)-1:0] data_q;
+        mxu_input_transport_t payload_q;
+        assign payload_q = {control_q.valid, data_q,
+                            control_q.block_idx, control_q.weight_sel};
+        always_ff @(posedge clk) begin
+            control_q <= {compute_fire && !reset, prealigner_blk_idx,
+                          pre_meta_out.ctrl.wreg_use_idx};
+            data_q <= prealigner_int_data;
+        end
+    end
+    if (1) begin : g_slr_mxu_input_rx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_input_control_transport_t control_q;
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
+        logic [$bits(prealigner_int_data)-1:0] data_q;
+        mxu_input_transport_t payload_q;
+        assign payload_q = {control_q.valid, data_q,
+                            control_q.block_idx, control_q.weight_sel};
+        always_ff @(posedge clk) begin
+            control_q <= g_slr_mxu_input_tx.control_q;
+            data_q <= g_slr_mxu_input_tx.data_q;
+            if (reset)
+                control_q.valid <= 1'b0;
+        end
+        assign {mxu_input_valid_capture, mxu_input_capture, mxu_blk_capture,
+                mxu_weight_use_capture} = payload_q;
+    end
+    if (1) begin : g_slr_mxu_weight_tx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO" *)
+        mxu_weight_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= {mxu_ready_weight && !reset, mxu_weight,
+                          wreg_wr_idx, wreg_load_dir};
+        end
+    end
+    if (1) begin : g_slr_mxu_weight_rx
+        // Keep the existing valid reset on the FF R pin, not an AND gate
+        // on D that would break the dedicated inter-SLR TX Q -> RX D link.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_weight_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= g_slr_mxu_weight_tx.payload_q;
+            if (reset)
+                payload_q.valid <= 1'b0;
+        end
+        assign {mxu_weight_valid_capture, mxu_weight_capture,
+                mxu_weight_write_capture, mxu_weight_dir_capture} = payload_q;
+    end
+    if (1) begin : g_slr_mxu_output_tx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_output_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= {mxu_output_valid, mxu_output};
+            if (reset)
+                payload_q.valid <= '0;
+        end
+    end
+    if (1) begin : g_slr_mxu_output_rx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_output_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= g_slr_mxu_output_tx.payload_q;
+            if (reset)
+                payload_q.valid <= '0;
+        end
+        assign {mxu_output_valid_capture, mxu_output_capture} = payload_q;
+    end
+
+    if (1) begin : g_slr_mxu_local_ownership
+        // The fixed, unstalled forward path gives an exact SLR1-local image
+        // of SLR2 installation and final consumer capture. Never return the
+        // RX-valid signal combinationally across the SLR boundary. Preserve
+        // only these small mirror banks against equivalent-FF merging with
+        // the remote RX valid FFs; datapath optimization stays enabled.
+        (* DONT_TOUCH = "TRUE", SHREG_EXTRACT = "NO" *)
+        logic [MXU_INPUT_TRANSPORT_DLY-1:0] install_valid_q;
+        (* DONT_TOUCH = "TRUE", SHREG_EXTRACT = "NO" *)
+        logic [MXU_INPUT_TRANSPORT_DLY-1:0] consume_valid_q;
+        (* DONT_TOUCH = "TRUE", SHREG_EXTRACT = "NO" *)
+        gemm_wreg_idx_t consume_idx_q [MXU_INPUT_TRANSPORT_DLY];
+        always_ff @(posedge clk) begin
+            install_valid_q[0] <= mxu_ready_weight && !reset;
+            consume_valid_q[0]
+                <= compute_fire && pre_meta_out.ctrl.last && !reset;
+            consume_idx_q[0] <= pre_meta_out.ctrl.wreg_use_idx;
+            for (int i = 1; i < MXU_INPUT_TRANSPORT_DLY; ++i) begin
+                install_valid_q[i] <= install_valid_q[i-1];
+                consume_valid_q[i] <= consume_valid_q[i-1];
+                consume_idx_q[i] <= consume_idx_q[i-1];
+            end
+            if (reset) begin
+                install_valid_q <= '0;
+                consume_valid_q <= '0;
+            end
+        end
+        assign gemm_unit_if.weight_register_write
+            = install_valid_q[MXU_INPUT_TRANSPORT_DLY-1];
+        assign gemm_unit_if.weight_consume_valid
+            = consume_valid_q[MXU_INPUT_TRANSPORT_DLY-1];
+        assign gemm_unit_if.weight_consume_idx
+            = consume_idx_q[MXU_INPUT_TRANSPORT_DLY-1];
+        assign mxu_transport_busy = |install_valid_q;
+    end
+`else
+    assign mxu_input_capture = prealigner_int_data;
+    assign mxu_blk_capture = prealigner_blk_idx;
+    assign mxu_weight_use_capture = pre_meta_out.ctrl.wreg_use_idx;
+    assign mxu_input_valid_capture = compute_fire;
+    assign mxu_weight_capture = mxu_weight;
+    assign mxu_weight_write_capture = wreg_wr_idx;
+    assign mxu_weight_dir_capture = wreg_load_dir;
+    assign mxu_weight_valid_capture = mxu_ready_weight;
+    assign mxu_output_capture = mxu_output;
+    assign mxu_output_valid_capture = mxu_output_valid;
+    assign gemm_unit_if.weight_register_write = mxu_ready_weight;
+    assign gemm_unit_if.weight_consume_valid
+        = compute_fire && pre_meta_out.ctrl.last;
+    assign gemm_unit_if.weight_consume_idx = pre_meta_out.ctrl.wreg_use_idx;
+    assign mxu_transport_busy = 1'b0;
+`endif
+
     VX_gemm_tree_v1 u_mxu (
         .clk_i            (clk),
         .resetn_i         (~reset),
-        .ifmap_i          (prealigner_int_data),
-        .weight_i         (mxu_weight),
-        .in_weight_sel_i  (wreg_wr_idx),
-        .out_weight_sel_i (pre_meta_out.ctrl.wreg_use_idx),
-        .ready_weight_i   (mxu_ready_weight),
-        .input_valid_i    (compute_fire),
-        .weight_load_dir_i(wreg_load_dir),
-        .blk_sidx_i       (prealigner_blk_idx),
+        .ifmap_i          (mxu_input_capture),
+        .weight_i         (mxu_weight_capture),
+        .in_weight_sel_i  (mxu_weight_write_capture),
+        .out_weight_sel_i (mxu_weight_use_capture),
+        .ready_weight_i   (mxu_weight_valid_capture),
+        .input_valid_i    (mxu_input_valid_capture),
+        .weight_load_dir_i(mxu_weight_dir_capture),
+        .blk_sidx_i       (mxu_blk_capture),
         .ps_o             (mxu_output),
         .output_valid_o   (mxu_output_valid)
     );
@@ -1508,9 +1687,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             ) u_mxu_output_dly_pipe (
                 .clk       (clk),
                 .reset     (reset),
-                .valid_in  (mxu_output_valid[i]),
+                .valid_in  (mxu_output_valid_capture[i]),
                 .ready_in  (),
-                .data_in   (mxu_output[`MXU_COL_TILE*i +: `MXU_COL_TILE]),
+                .data_in   (mxu_output_capture[`MXU_COL_TILE*i +: `MXU_COL_TILE]),
                 .data_out  (mxu_output_dly[`MXU_COL_TILE*i +: `MXU_COL_TILE]),
                 .ready_out (1'b1),
                 .valid_out (mxu_output_valid_dly[i])
@@ -2531,9 +2710,43 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                      == qcol_zp_consumer_ctrl.zreg_use_idx)
                     else $fatal(1, "GEMM v2 QCOL Zero-point last consume selected unrelated metadata");
             end
+`ifdef GEMM_SLR_PIPELINE
+            assert (gemm_unit_if.weight_register_write
+                 == mxu_weight_valid_capture)
+                else $fatal(1, "GEMM SLR weight installation mirror misaligned");
+            assert (mxu_input_valid_capture
+                 == tree_valid_pipe[MXU_INPUT_TRANSPORT_DLY-1])
+                else $fatal(1, "GEMM SLR input capture metadata misaligned");
+            assert (gemm_unit_if.weight_consume_valid
+                 == (mxu_input_valid_capture
+                  && tree_meta_pipe[MXU_INPUT_TRANSPORT_DLY-1].ctrl.last))
+                else $fatal(1, "GEMM SLR old weight released before final capture");
+            if (gemm_unit_if.weight_consume_valid) begin
+                assert (gemm_unit_if.weight_consume_idx
+                     == mxu_weight_use_capture)
+                    else $fatal(1, "GEMM SLR consumed unrelated weight storage");
+            end
+            if (mxu_weight_valid_capture) begin
+                // The final old-version consumer may sample on the write
+                // edge itself (nonblocking updates retain the old value),
+                // but no younger in-transit consumer may remain behind it.
+                for (int i = 0; i < MXU_INPUT_TRANSPORT_DLY-1; ++i) begin
+                    assert (!(tree_valid_pipe[i]
+                           && (tree_meta_pipe[i].ctrl.wreg_use_idx
+                               == mxu_weight_write_capture)))
+                        else $fatal(1, "GEMM SLR overwrote an in-transit weight consumer");
+                end
+                if (mxu_input_valid_capture
+                 && (mxu_weight_use_capture == mxu_weight_write_capture)) begin
+                    assert (gemm_unit_if.weight_consume_valid)
+                        else $fatal(1, "GEMM SLR weight overwrite before last capture");
+                end
+            end
+`else
             assert (gemm_unit_if.weight_consume_valid
                  == (compute_fire && pre_meta_out.ctrl.last))
                 else $fatal(1, "GEMM v2 weight consume pulse misaligned");
+`endif
             if (mxu_ready_weight) begin
                 assert (!wreg_busy[wreg_wr_idx]
                     || same_cycle_weight_release)
