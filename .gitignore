@@ -77,6 +77,9 @@ simv.vdb/
 /agent-tasks/dma-bound21-native-product/results/
 /agent-tasks/gemm-command-stage-timing/results/
 /agent-tasks/gemm-response-ram-default-w4/results/
+# Raw source-build, synthesis, routing, and simulation outputs for the U55C
+# SLR pipeline experiment. Keep its task status and Markdown result summaries.
+/agent-tasks/u55c-slr-floorplan-pipeline/results/
 ucli.key
 work.lib++/
 .vcs/
