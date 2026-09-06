@@ -7,6 +7,8 @@ module tb_stream_dma_queue_case #(
     parameter int DATAW = 32,
     parameter bit RING_MODE = 1'b0,
     parameter bit SINK_PIPE = 1'b0,
+    parameter bit SINK_ELASTIC = 1'b0,
+    parameter bit BASELINE_STALL_TEST = 1'b0,
     parameter bit RESPONSE_DATA_RAM = 1'b1,
     parameter bit SAME_CYCLE_SLOT_RECYCLE = 1'b1,
     parameter bit EXPECT_SLOT_RECYCLE = 1'b1
@@ -70,6 +72,7 @@ module tb_stream_dma_queue_case #(
         .FETCH_TAGW     (FETCH_TAGW),
         .RING_SLOT_ORDER(RING_MODE),
         .SINK_PIPELINE  (SINK_PIPE),
+        .SINK_ELASTIC   (SINK_ELASTIC),
         .RESPONSE_DATA_RAM(RESPONSE_DATA_RAM),
         .SAME_CYCLE_SLOT_RECYCLE(SAME_CYCLE_SLOT_RECYCLE)
     ) dut (
@@ -107,6 +110,10 @@ module tb_stream_dma_queue_case #(
     logic saw_pipeline_hold;
     logic saw_pipeline_ready_ahead;
     int ring_expected_slot;
+    int handoff_count = 0;
+    int consecutive_writes = 0;
+    int max_consecutive_writes = 0;
+    bit measure_continuous = 0;
 
     wire cmd_fire = fetch_if.cmd_valid && fetch_if.cmd_ready;
     wire req_fire = fetch_if.req_valid && fetch_if.req_ready;
@@ -145,7 +152,17 @@ module tb_stream_dma_queue_case #(
     always @(posedge clk) begin
         if (reset) begin
             ring_expected_slot = 0;
+            handoff_count = write_count;
         end else begin
+            if (dut.sink_handoff_fire)
+                handoff_count++;
+            if (SINK_ELASTIC && (handoff_count - write_count > 3))
+                $fatal(1, "Elastic sink exceeded two stored beats plus current retire");
+            if (measure_continuous) begin
+                consecutive_writes = write_fire ? consecutive_writes + 1 : 0;
+                if (consecutive_writes > max_consecutive_writes)
+                    max_consecutive_writes = consecutive_writes;
+            end
             if (cmd_fire)
                 cmd_accept_count++;
             if (req_fire) begin
@@ -160,6 +177,10 @@ module tb_stream_dma_queue_case #(
                 req_count++;
             end
             if (write_fire) begin
+                if (sink_if.write_payload[DATAW+COUNTW +: DEST_METAW]
+                    !== DEST_METAW'(req_payloads[write_count][COUNTW +: SOURCE_METAW] + 8'h10)
+                 || sink_if.write_tag[COUNTW-1:0] !== req_payloads[write_count][COUNTW-1:0])
+                    $fatal(1, "Buffered destination metadata or beat identity mismatch");
                 if (sink_if.write_payload[DATAW-1:0]
                     !== DATAW'(32'h80000000 + write_count))
                     $fatal(1, "depth%0d write%0d payload mismatch",
@@ -175,7 +196,7 @@ module tb_stream_dma_queue_case #(
                 install_complete_count++;
             if (cmd_fire && install_complete_valid)
                 saw_pop_enqueue = 1'b1;
-            if (req_fire && write_fire
+            if (req_fire && dut.sink_handoff_fire
              && (dut.request_slot == dut.drain_slot))
                 saw_slot_recycle = 1'b1;
             if ((SINK_PIPE || RESPONSE_DATA_RAM) && dut.drain_stage_valid_r
@@ -286,6 +307,19 @@ module tb_stream_dma_queue_case #(
         send_rsp(1);
         if (sink_if.write_valid)
             $fatal(1, "depth%0d writer fence released early", DEPTH);
+        if (SINK_ELASTIC) begin
+            repeat (5) @(negedge clk);
+            if (handoff_count != 2 || write_count != 0 || install_complete_count != 0)
+                $fatal(1, "Elastic sink did not prebuffer exactly two beats behind fence");
+            // A released response slot can be reused while its former payload
+            // remains owned by the elastic buffer and the writer is fenced.
+            fetch_if.req_ready = 1'b1;
+            wait (req_count >= 5);
+            @(negedge clk);
+            fetch_if.req_ready = 1'b0;
+            if (write_count != 0 || install_complete_count != 0)
+                $fatal(1, "Response slot reuse retired a physical write early");
+        end
 
         // Release the writer but hold the final-beat metadata/payload before
         // allowing the first ordered write.  That write recycles its slot to
@@ -296,6 +330,21 @@ module tb_stream_dma_queue_case #(
         if (!sink_if.write_valid)
             $fatal(1, "depth%0d writer did not present released beat", DEPTH);
         @(negedge clk);
+        if (BASELINE_STALL_TEST) begin
+            logic [FETCH_TAGW-1:0] held_request_tag;
+            held_request_tag = fetch_if.req_tag;
+            if (!fetch_if.req_valid || fetch_if.req_ready)
+                $fatal(1, "Legacy allocator test did not hold a free high slot");
+            sink_if.write_ready = 1'b1;
+            repeat (3) begin
+                @(negedge clk);
+                if (!fetch_if.req_valid || fetch_if.req_tag !== held_request_tag)
+                    $fatal(1, "Legacy nonring request changed after a lower slot drained");
+            end
+            if (write_count == 0)
+                $fatal(1, "Legacy allocator test did not physically release a lower slot");
+            $display("NONRING_LEGACY_HELD_SLOT_PASS depth=%0d ram=%0d held_slot=%0d physical_writes=%0d", DEPTH, RESPONSE_DATA_RAM, held_request_tag, write_count);
+        end
         fetch_if.req_ready = 1'b1;
         sink_if.write_ready = 1'b1;
         wait (req_count == 5);
@@ -329,7 +378,7 @@ module tb_stream_dma_queue_case #(
             $fatal(1, "depth%0d missing turnover/wrap coverage pop=%0d recycle=%0d wrap=%0d",
                    DEPTH, saw_pop_enqueue, saw_slot_recycle,
                    saw_sequence_wrap);
-        if ((SINK_PIPE || RESPONSE_DATA_RAM)
+        if (!SINK_ELASTIC && (SINK_PIPE || RESPONSE_DATA_RAM)
          && (!saw_pipeline_hold || !saw_pipeline_ready_ahead))
             $fatal(1, "depth%0d missing registered sink coverage hold=%0d ahead=%0d",
                    DEPTH, saw_pipeline_hold, saw_pipeline_ready_ahead);
@@ -341,6 +390,47 @@ module tb_stream_dma_queue_case #(
         if (!fetch_if.rsp_ready)
             $fatal(1, "depth%0d response channel was not unconditionally ready",
                    DEPTH);
+        if (SINK_ELASTIC) begin
+            int first_request;
+            int first_write;
+            first_request = req_count;
+            first_write = write_count;
+            @(negedge clk);
+            writer_release = 1'b0;
+            send_cmd(32'he0, 6, 8'he0, 8'hf0);
+            for (int beat = 0; beat < 6; ++beat)
+                send_rsp(first_request + beat);
+            repeat (5) @(negedge clk);
+            if (write_count != first_write || handoff_count - write_count != 2)
+                $fatal(1, "Long command failed fenced prefill");
+            measure_continuous = 1'b1;
+            writer_release = 1'b1;
+            wait (write_count == first_write + 6);
+            @(negedge clk);
+            measure_continuous = 1'b0;
+            if (max_consecutive_writes < 4)
+                $fatal(1, "Elastic continuous-ready II=1 missing run=%0d", max_consecutive_writes);
+            $display("ELASTIC_II1_PASS depth=%0d ram=%0d ring=%0d consecutive=%0d", DEPTH, RESPONSE_DATA_RAM, RING_MODE, max_consecutive_writes);
+            first_request = req_count;
+            first_write = write_count;
+            writer_release = 1'b0;
+            sink_if.write_ready = 1'b0;
+            send_cmd(32'he1, 6, 8'hd0, 8'he0);
+            for (int beat = 0; beat < 6; ++beat)
+                send_rsp(first_request + beat);
+            repeat (5) @(negedge clk);
+            writer_release = 1'b1;
+            // Alternating and multi-cycle stalls exercise both entries and
+            // recovery repeatedly, with a deterministic nonuniform pattern.
+            for (int cycle = 0; write_count < first_write + 6; ++cycle) begin
+                sink_if.write_ready = (cycle % 3 == 0) || (cycle % 7 == 2);
+                @(negedge clk);
+                if (cycle > 50)
+                    $fatal(1, "Elastic irregular-backpressure progress timeout");
+            end
+            sink_if.write_ready = 1'b1;
+            $display("ELASTIC_IRREGULAR_READY_PASS depth=%0d ram=%0d ring=%0d writes=6", DEPTH, RESPONSE_DATA_RAM, RING_MODE);
+        end
         @(negedge clk);
         reset = 1'b1;
         repeat (2) @(posedge clk);
@@ -349,9 +439,18 @@ module tb_stream_dma_queue_case #(
         reset = 1'b0;
 
         // Reset once more with a live descriptor and response slot.
-        send_cmd(32'hf0, 2, 8'hf0, 8'hf1);
+        begin
+        int reset_first_request;
+        reset_first_request = req_count;
+        send_cmd(32'hf0, 2, 8'hf0, 8'h00);
         fetch_if.req_ready = 1'b1;
-        wait (req_count > (9 + DEPTH));
+        wait (req_count > reset_first_request);
+        if (SINK_ELASTIC) begin
+            send_rsp(reset_first_request);
+            repeat (5) @(negedge clk);
+            if (handoff_count - write_count != 1)
+                $fatal(1, "Occupied reset did not actually contain buffered payload");
+        end
         @(negedge clk);
         fetch_if.req_ready = 1'b0;
         reset = 1'b1;
@@ -359,6 +458,7 @@ module tb_stream_dma_queue_case #(
         if ((cmd_occupancy != 0) || (slot_occupancy != 0)
          || fetch_if.req_valid || sink_if.write_valid)
             $fatal(1, "depth%0d occupied reset did not flush queue", DEPTH);
+        end
 
         if (RING_MODE && SINK_PIPE)
             $display("PASS: Input-mode queue wide-tag modulo ring and registered sink");
@@ -367,7 +467,23 @@ module tb_stream_dma_queue_case #(
 endmodule
 
 module tb_VX_gemm_stream_dma_queue;
-    logic [11:0] done;
+    logic [29:0] done;
+    for (genvar mode = 0; mode < 12; ++mode) begin : g_elastic
+        tb_stream_dma_queue_case #(
+            .DEPTH(1 << (mode % 3)), .DATAW(256), .SLOTS(8), .FETCH_TAGW(3),
+            .RING_MODE((mode / 3) % 2), .SINK_PIPE(1'b1),
+            .SINK_ELASTIC(1'b1), .RESPONSE_DATA_RAM(mode >= 6),
+            .EXPECT_SLOT_RECYCLE(1'b0)
+        ) elastic_case (.done(done[12 + mode]), .compare_active(), .compare_bus());
+    end
+    for (genvar mode = 0; mode < 6; ++mode) begin : g_legacy_nonring
+        tb_stream_dma_queue_case #(
+            .DEPTH(1 << (mode % 3)), .DATAW(256), .SLOTS(8), .FETCH_TAGW(3),
+            .RING_MODE(1'b0), .SINK_PIPE(1'b1), .SINK_ELASTIC(1'b0),
+            .BASELINE_STALL_TEST(1'b1), .RESPONSE_DATA_RAM(mode >= 3),
+            .EXPECT_SLOT_RECYCLE(1'b0)
+        ) legacy_case (.done(done[24 + mode]), .compare_active(), .compare_bus());
+    end
     wire input_ff_active;
     wire input_ram_active;
     wire [1407:0] input_ff_compare;

@@ -101,7 +101,12 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS :=
+TB_BUS_BYTES ?= 16
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).DATA_SIZE_BYTES=$(TB_BUS_BYTES)
+else
+PARAMS := -GDATA_SIZE_BYTES=$(TB_BUS_BYTES)
+endif
 
 run: sim
 

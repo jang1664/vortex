@@ -22,6 +22,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   parameter int    LMEM_BYTES_P   = 16;
   parameter int    MAX_DIMS_P     = 3;
   parameter bit    DIMS_ONLY_P    = 1'b0;
+  parameter bit    WRITE_EB_P     = 1'b0;
 
   // -----------------------------
   // Params
@@ -119,7 +120,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH (TAG_WIDTH),
     .LMEM_TAG_WIDTH   (TAG_WIDTH),
-    .MAX_DIMS         (MAX_DIMS_P)
+    .MAX_DIMS         (MAX_DIMS_P),
+    .LMEM_WRITE_ELASTIC (WRITE_EB_P)
   ) dut (
     .clk          (clk),
     .reset        (reset),
@@ -371,6 +373,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     input logic [31:0] w [0:DESC_WORDS-1],
     input logic [31:0] entry_id
   );
+    @(negedge clk);
     cfg_reg_if.entry_id = entry_id;
 
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
@@ -379,9 +382,9 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
       cfg_reg_if.regs[i] = w[i];
 
     cfg_reg_if.valid = 1'b1;
-    // wait accept (ready only high in S_IDLE)
+    // Wait for actual acceptance and withdraw before the next busy edge.
     do @(posedge clk); while (!cfg_reg_if.ready);
-    @(posedge clk);
+    @(negedge clk);
     cfg_reg_if.valid = 1'b0;
   endtask
 
@@ -528,13 +531,17 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
       #1;
       if (done_if.valid || !dut.dcache_req_valid_w)
         $fatal(1, "phase6 next internal request was not asserted after ACTIVATE");
+      // The descriptor was accepted on the preceding edge. Keeping valid
+      // asserted into the next busy edge offers it a second time and then
+      // violates the held-command contract when it is withdrawn.
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      dma_activate_s = 1'b0;
       @(posedge clk);
       #1;
       if (!dcache_bus_if.req_valid)
         $fatal(1, "phase6 buffered request did not reach the memory interface");
       @(negedge clk);
-      cfg_reg_if.valid = 1'b0;
-      dma_activate_s = 1'b0;
       wait_dma_done();
       if (dut.prep_owner_valid_r[0])
         $fatal(1, "phase6 chained cache owner was not retired");

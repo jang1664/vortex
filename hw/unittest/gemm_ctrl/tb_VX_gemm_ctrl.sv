@@ -1209,6 +1209,7 @@ module tb_VX_gemm_ctrl;
     logic [GEMM_DMA_TAG_WIDTH-1:0] held_tag;
     int completion_order [0:6];
     logic [31:0] expected_o;
+    logic [31:0] expected_tile [2];
     begin
       completion_order[0] = 2;
       completion_order[1] = 5;
@@ -1218,6 +1219,8 @@ module tb_VX_gemm_ctrl;
       completion_order[5] = 4;
       completion_order[6] = 3;
       expected_o = dut.sync_regs_q[RID_O];
+      expected_tile[0] = dut.sync_regs_q[RID_TILE0];
+      expected_tile[1] = dut.sync_regs_q[RID_TILE1];
 
       // Reserve an issue tag while the executor applies backpressure.  Both
       // the command and its sideband tag must remain stable until acceptance.
@@ -1290,6 +1293,7 @@ module tb_VX_gemm_ctrl;
       directed_done[5] = 1'b0;
       if (dut.sync_regs_q[RID_TILE1] !== 32'd107)
         $fatal(1, "DMA_TAGGED boundary completion mapped wrong RID");
+      expected_tile[1] = 32'd107;
       if (!gemm_ctrl_if.dma_ctrl.cmd_valid
        || gemm_ctrl_if.dma_ctrl.cmd_tag !== 3'd7)
         $fatal(1, "DMA_TAGGED released slot unavailable next cycle");
@@ -1308,14 +1312,19 @@ module tb_VX_gemm_ctrl;
           if (dut.sync_regs_q[RID_O] !== expected_o)
             $fatal(1, "DMA_TAGGED OOO PLUS tag=%0d mapped wrong notify",
                    tag);
-        end else if (dut.sync_regs_q[dma_scoreboard_rid(tag)]
-                     !== dma_scoreboard_value(tag)) begin
-          $fatal(1, "DMA_TAGGED OOO SET tag=%0d mapped wrong notify", tag);
+        end else begin
+          int bank;
+          bank = dma_scoreboard_rid(tag) == RID_TILE1;
+          if (!`GEMM_TIMING_MONOTONIC_SET
+           || dma_scoreboard_value(tag) > expected_tile[bank])
+            expected_tile[bank] = dma_scoreboard_value(tag);
+          if (dut.sync_regs_q[dma_scoreboard_rid(tag)] !== expected_tile[bank])
+            $fatal(1, "DMA_TAGGED OOO SET tag=%0d mapped wrong notify", tag);
         end
       end
       directed_dma_complete_tag(3'd7);
       if (dut.sync_regs_q[RID_TILE0] !== 32'd208
-       || dut.sync_regs_q[RID_TILE1] !== 32'd104
+       || dut.sync_regs_q[RID_TILE1] !== (`GEMM_TIMING_MONOTONIC_SET ? 32'd107 : 32'd104)
        || dut.sync_regs_q[RID_O] !== expected_o
        || dut.dma_inflight_valid_q !== '0
        || !dut.child_inflight_empty_v[5])
@@ -1469,16 +1478,9 @@ module tb_VX_gemm_ctrl;
       directed_done[producer_child] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[producer_child]
-       || !dut.child_deps_ready_v[child]
-       || !dut.child_issue_fire_v[child]
-       || !dut.child_q_pop_v[child]
-       || dut.child_inflight_empty_v[child]) begin
-        // inflight occupancy changes at the edge; before the edge it must
-        // still be empty, so check it separately below.
-        if (!dut.child_completion_pop_v[producer_child]
-         || !dut.child_deps_ready_v[child]
-         || !dut.child_issue_fire_v[child]
-         || !dut.child_q_pop_v[child])
+       || dut.child_deps_ready_v[child] !== !(child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)
+       || dut.child_issue_fire_v[child] !== !(child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)
+       || dut.child_q_pop_v[child] !== !(child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)) begin
           $fatal(1,
             "PREPARE_RELEASE op=%0d child=%0d did not issue on release",
             op, child);
@@ -1486,6 +1488,8 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       directed_done[producer_child] = 1'b0;
+      if (child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(child);
       if (dut.sync_regs_q[producer_rid] !== release_target
        || !dut.child_q_empty_v[child]
        || dut.child_inflight_empty_v[child]
@@ -1496,6 +1500,98 @@ module tb_VX_gemm_ctrl;
       directed_complete(child);
       $display("PREPARE_RELEASE_PASS op=%0d child=%0d rd=%0d target=%0d queue_retained=1 no_early_issue=1 exact_release=1",
                op, child, rd, release_target);
+    end
+  endtask
+
+  task automatic run_prepare_visibility_case;
+    gemm_unified_cmd_t c;
+    begin
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, RID_TILE0, 1'b1, 32'd10);
+      directed_inject(c, 5);
+      directed_accept_issue(5);
+      c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd2);
+      directed_inject(c, 1);
+      directed_accept_issue(1);
+      c = make_directed_cmd(OP_SC_LDMA_MXU, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_W1, target:32'd2};
+      c.prepare.valid = 1'b1;
+      c.prepare.mode = GEMM_PREPARE_SOURCE_READ;
+      c.prepare.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(1);
+      c.prepare.waits[0] = '{valid:1'b1, reg_id:RID_TILE0, target:32'd10};
+      directed_inject(c, 2);
+      if (dut.child_prepare_deps_ready_v[2] || dut.child_prepare_fire_v[2]
+       || dut.child_issue_fire_v[2])
+        $fatal(1, "PREPARE_VISIBILITY escaped unresolved prepare dependency");
+      @(negedge clk);
+      directed_done[5] = 1'b1;
+      #1;
+      if (dut.effective_sync[RID_TILE0] !== 32'd10
+       || dut.child_prepare_deps_ready_v[2] !== !`GEMM_TIMING_REG_LOCAL_DEPS
+       || dut.child_prepare_fire_v[2] !== !`GEMM_TIMING_REG_LOCAL_DEPS
+       || dut.child_issue_fire_v[2])
+        $fatal(1, "PREPARE_VISIBILITY selected release cycle mismatch");
+      @(posedge clk);
+      #1;
+      directed_done[5] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS) begin
+        if (!dut.child_prepare_fire_v[2] || dut.child_prepare_sent_q[2])
+          $fatal(1, "PREPARE_VISIBILITY registered release was not next cycle");
+        @(posedge clk);
+        #1;
+      end
+      repeat (3) begin
+        if (!dut.child_prepare_sent_q[2] || dut.child_prepare_fire_v[2]
+         || dut.child_issue_fire_v[2])
+          $fatal(1, "PREPARE_VISIBILITY repeated prepare or early dispatch");
+        @(posedge clk);
+        #1;
+      end
+      directed_complete(1);
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(2);
+      directed_complete(2);
+      $display("PREPARE_VISIBILITY_PASS registered=%0d prepare_once=1 issue_wait_retained=1", `GEMM_TIMING_REG_LOCAL_DEPS);
+      reset_dut();
+    end
+  endtask
+
+  task automatic run_stale_set_stalled_head_case;
+    gemm_unified_cmd_t c;
+    gemm_unified_cmd_t held_cmd;
+    begin
+      directed_set_sync(RID_TILE0, 32'd10);
+      c = make_directed_cmd(OP_DMA_LD, 1'b1, RID_TILE0, 1'b1, 32'd5);
+      directed_inject(c, 5);
+      directed_accept_issue(5);
+      directed_idle[4] = 1'b0;
+      c = make_directed_cmd(OP_O_ACC2LMEM, 1'b0, '0, 1'b0, '0);
+      c.waits[0] = '{valid:1'b1, reg_id:RID_TILE0, target:32'd10};
+      directed_inject(c, 4);
+      held_cmd = dut.child_q_cmd[4];
+      directed_complete(5);
+      repeat (3) begin
+        if (dut.sync_regs_q[RID_TILE0] !== (`GEMM_TIMING_MONOTONIC_SET ? 32'd10 : 32'd5)
+         || dut.child_deps_ready_v[4] !== (`GEMM_TIMING_MONOTONIC_SET != 0)
+         || dut.child_issue_fire_v[4] || dut.child_q_cmd[4] !== held_cmd)
+          $fatal(1, "STALE_SET stalled dependency or held metadata mismatch");
+        @(posedge clk);
+        #1;
+      end
+      // Baseline restores a decreased value; monotonic mode accepts equal SET.
+      directed_set_sync(RID_TILE0, 32'd10);
+      directed_set_sync(RID_TILE0, 32'd12);
+      directed_set_sync(RID_TILE0, 32'd12);
+      if (!dut.child_deps_ready_v[4] || dut.child_q_cmd[4] !== held_cmd)
+        $fatal(1, "STALE_SET increasing/equal SET corrupted stalled head");
+      @(negedge clk);
+      directed_idle[4] = 1'b1;
+      #1;
+      directed_accept_issue(4);
+      directed_complete(4);
+      reset_dut();
+      if (dut.sync_regs_q[RID_TILE0] !== 0)
+        $fatal(1, "STALE_SET reset did not start a zero generation epoch");
+      $display("STALE_SET_STALLED_HEAD_PASS monotonic=%0d equal=1 increase=1 reset_epoch=1", `GEMM_TIMING_MONOTONIC_SET);
     end
   endtask
 
@@ -1532,9 +1628,9 @@ module tb_VX_gemm_ctrl;
       directed_done[5] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[5]
-       || !dut.child_deps_ready_v[0]
-       || !dut.child_issue_fire_v[0]
-       || !dut.child_q_pop_v[0]
+       || (dut.child_deps_ready_v[0] !== !`GEMM_TIMING_REG_LOCAL_DEPS)
+       || (dut.child_issue_fire_v[0] !== !`GEMM_TIMING_REG_LOCAL_DEPS)
+       || (dut.child_q_pop_v[0] !== !`GEMM_TIMING_REG_LOCAL_DEPS)
        || gemm_ctrl_if.input_read_ctrl.cmd !== held_cmd
        || gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits
           !== c.input_admit_waits)
@@ -1551,6 +1647,8 @@ module tb_VX_gemm_ctrl;
       @(posedge clk);
       #1;
       directed_done[5] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(0);
       if (dut.child_inflight_empty_v[0])
         $fatal(1, "INPUT_SPLIT issued command did not enter Input inflight FIFO");
       directed_complete(0);
@@ -1589,6 +1687,9 @@ module tb_VX_gemm_ctrl;
       directed_scheduler_probe_valid = 1'b1;
       directed_scheduler_probe_work_seq = c.work_seq;
       directed_scheduler_probe_child = 3'd0;
+      directed_start = 1'b1;
+      @(posedge clk);
+      #1;
       directed_start = 1'b0;
       #1;
       if (dut.scheduler_probe_ready
@@ -1602,7 +1703,6 @@ module tb_VX_gemm_ctrl;
        || !dut.scheduler_probe_ready
        || !dut.gemm_fsm_if.flag.child_ready[0])
         $fatal(1, "INPUT_DEPTH4 ordered completion did not release fifth work");
-      directed_start = 1'b1;
       @(posedge clk);
       #1;
       directed_start = 1'b0;
@@ -1679,14 +1779,16 @@ module tb_VX_gemm_ctrl;
       directed_done[producer_child] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[producer_child]
-       || !dut.child_issue_fire_v[child]
-       || !dut.child_q_pop_v[child])
+       || dut.child_issue_fire_v[child] !== !(child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)
+       || dut.child_q_pop_v[child] !== !(child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1,
           "NONPREFETCH op=%0d child=%0d rd=%0d failed normal release",
           op, child, rd);
       @(posedge clk);
       #1;
       directed_done[producer_child] = 1'b0;
+      if (child == 5 ? `GEMM_TIMING_REG_DMA_DEPS : `GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(child);
       directed_complete(child);
       $display("NONPREFETCH_PASS op=%0d child=%0d rd=%0d prepare=0 normal_release=1",
                op, child, rd);
@@ -1747,11 +1849,13 @@ module tb_VX_gemm_ctrl;
       directed_scheduler_probe_child = 3'd1;
       directed_start = 1'b0;
       #1;
-      if (dut.scheduler_probe_ready
-       || dut.gemm_fsm_if.flag.child_ready[1]
-       || !dut.child_q_empty_v[1])
-        $fatal(1, "SCHED_DIRECTED fifth W-before-Input bypassed full scoreboard");
-      $display("SCHED_DIRECTED_SCOREBOARD_FULL_FIFTH_W_BEFORE_INPUT_PASS depth=4 held_before_child=1");
+      // The front command register may accept a command even while the
+      // readiness table is full. The scheduler probes its registered output,
+      // not this unaccepted FSM offer. Keep the stage empty for the matching
+      // Input below; exercise a physically stalled fifth command afterward.
+      if (!dut.cmd_stage_ready || !dut.child_q_empty_v[1]
+       || dut.scheduler_entry_count !== 3'd4)
+        $fatal(1, "SCHED_DIRECTED empty command-stage contract mismatch");
       directed_scheduler_probe_valid = 1'b0;
       directed_scheduler_probe_work_seq = '0;
       directed_scheduler_probe_child = '0;
@@ -1800,13 +1904,21 @@ module tb_VX_gemm_ctrl;
       directed_scheduler_probe_valid = 1'b1;
       directed_scheduler_probe_work_seq = c.work_seq;
       directed_scheduler_probe_child = 3'd1;
+      directed_start = 1'b1;
+      @(posedge clk);
+      #1;
+      directed_start = 1'b0;
+      if (dut.scheduler_probe_ready || dut.cmd_stage_drain
+       || !dut.child_q_empty_v[1])
+        $fatal(1, "SCHED_DIRECTED staged fifth Weight bypassed full scoreboard");
+      $display("SCHED_DIRECTED_SCOREBOARD_FULL_FIFTH_W_BEFORE_INPUT_PASS depth=4 held_before_child=1");
+      @(negedge clk);
       directed_done[0] = 1'b1;
       #1;
       if (!dut.child_completion_pop_v[0]
        || !dut.scheduler_probe_ready
        || !dut.gemm_fsm_if.flag.child_ready[1])
         $fatal(1, "SCHED_DIRECTED ordered head retire did not release fifth Weight probe");
-      directed_start = 1'b1;
       #1;
       if (!dut.scheduler_cmd_fire)
         $fatal(1, "SCHED_DIRECTED fifth Weight did not fire with ordered retire");
@@ -1950,17 +2062,19 @@ module tb_VX_gemm_ctrl;
         #1;
         if (!dut.child_completion_pop_v[0]
          || dut.effective_sync[g_rid] !== release_target
-         || !dut.child_deps_ready_v[5]
-         || !dut.child_issue_fire_v[5])
+         || (dut.child_deps_ready_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS)
+         || (dut.child_issue_fire_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS))
           $fatal(1, "PARALLEL_SYNC G%0d did not release DMA in-cycle", group);
         @(posedge clk);
         #1;
         directed_done[0] = 1'b0;
+      if (`GEMM_TIMING_REG_DMA_DEPS)
+        directed_accept_issue(5);
         directed_complete(5);
         if (dut.sync_regs_q[t_rid] !== 32'(700 + group))
           $fatal(1, "PARALLEL_SYNC DMA T%0d SET completion mismatch", group);
       end
-      $display("PARALLEL_SYNC_G_TO_DMA_RELEASE_PASS g0=1 g1=1 same_cycle=1");
+      $display("PARALLEL_SYNC_G_TO_DMA_RELEASE_PASS g0=1 g1=1 same_cycle=%0d", !`GEMM_TIMING_REG_DMA_DEPS);
     end
   endtask
 
@@ -1992,18 +2106,20 @@ module tb_VX_gemm_ctrl;
         #1;
         if (!dut.child_completion_pop_v[4]
          || dut.effective_sync[acc_rid] !== release_target
-         || !dut.child_deps_ready_v[5]
-         || !dut.child_issue_fire_v[5])
+         || (dut.child_deps_ready_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS)
+         || (dut.child_issue_fire_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS))
           $fatal(1, "PARALLEL_SYNC ACC_FREE%0d did not release DMA store in-cycle",
                  group);
         @(posedge clk);
         #1;
         directed_done[4] = 1'b0;
+      if (`GEMM_TIMING_REG_DMA_DEPS)
+        directed_accept_issue(5);
         directed_complete(5);
         if (dut.sync_regs_q[RID_O] !== expected_o)
           $fatal(1, "PARALLEL_SYNC DMA store O completion mismatch");
       end
-      $display("PARALLEL_SYNC_ACC_TO_DMA_STORE_RELEASE_PASS acc_free0=1 acc_free1=1 same_cycle=1");
+      $display("PARALLEL_SYNC_ACC_TO_DMA_STORE_RELEASE_PASS acc_free0=1 acc_free1=1 same_cycle=%0d", !`GEMM_TIMING_REG_DMA_DEPS);
     end
   endtask
 
@@ -2012,6 +2128,7 @@ module tb_VX_gemm_ctrl;
     gemm_unified_cmd_t held_cmd;
     logic [31:0] arm_issue_target;
     logic [31:0] weight_consume_target;
+    logic [31:0] weight_set_floor;
     logic [31:0] scale_consume_target;
     logic [31:0] zp_consume_target;
     logic [31:0] g_release_target;
@@ -2060,6 +2177,8 @@ module tb_VX_gemm_ctrl;
       run_g_to_dma_release_case();
       run_acc_to_dma_store_release_case();
       reset_dut();
+      run_prepare_visibility_case();
+      run_stale_set_stalled_head_case();
 
       // Seed four independent scoreboard registers with legal SET completions.
       // RID_SZ0/1 are derived from the physical SC/ZP completion pairs and
@@ -2130,13 +2249,15 @@ module tb_VX_gemm_ctrl;
       @(negedge clk);
       directed_done[0] = 1'b1;
       #1;
-      if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+      if ((dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS) || (dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1, "SCHED_DIRECTED same-cycle SET did not start dependent head");
       @(posedge clk);
       #1;
       directed_done[0] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       directed_complete(4);
-      $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SAME_CYCLE_SET_PASS blocked=1 resolved=1");
+      $display("SCHED_DIRECTED_ONE_BLOCKED_AND_SELECTED_LATENCY_SET_PASS blocked=1 resolved=1");
 
       // PLUS completion also participates in the same-cycle effective view.
       c = make_directed_cmd(OP_DMA_ST, 1'b1, RID_O, 1'b0, 32'd1);
@@ -2151,15 +2272,17 @@ module tb_VX_gemm_ctrl;
       @(negedge clk);
       directed_done[5] = 1'b1;
       #1;
-      if (!dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+      if ((dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS) || (dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1, "SCHED_DIRECTED same-cycle PLUS did not start dependent head");
       @(posedge clk);
       #1;
       directed_done[5] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       directed_complete(4);
       if (dut.sync_regs_q[RID_O] !== 32'd1)
         $fatal(1, "SCHED_DIRECTED PLUS scoreboard update mismatch");
-      $display("SCHED_DIRECTED_SAME_CYCLE_PLUS_PASS value=%0d", dut.sync_regs_q[RID_O]);
+      $display("SCHED_DIRECTED_SELECTED_LATENCY_PLUS_PASS value=%0d", dut.sync_regs_q[RID_O]);
 
       // Physical scale and zero-point completions independently update their
       // scoreboards.  Retain logical RID_SZ minimum/bypass coverage on a
@@ -2195,11 +2318,13 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[3]
           || dut.effective_sync[RID_SZ0] !== 32'd1
-          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+          || (dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS) || (dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1, "QPARAM_JOIN SC-first did not release on ZP completion");
       @(posedge clk);
       #1;
       directed_done[3] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       directed_complete(4);
       $display("QPARAM_JOIN_SC_FIRST_PASS rid_sz0=1");
 
@@ -2231,11 +2356,13 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[2]
           || dut.effective_sync[RID_SZ1] !== 32'd2
-          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+          || (dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS) || (dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1, "QPARAM_JOIN ZP-first did not release on scale completion");
       @(posedge clk);
       #1;
       directed_done[2] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       directed_complete(4);
       $display("QPARAM_JOIN_ZP_FIRST_PASS rid_sz1=2");
 
@@ -2259,14 +2386,16 @@ module tb_VX_gemm_ctrl;
           || dut.effective_sync[RID_SC0] !== 32'd3
           || dut.effective_sync[RID_ZP0] !== 32'd3
           || dut.effective_sync[RID_SZ0] !== 32'd3
-          || !dut.child_deps_ready_v[4] || !dut.child_issue_fire_v[4])
+          || (dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS) || (dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS))
         $fatal(1, "QPARAM_JOIN same-cycle bypass did not release dependent");
       @(posedge clk);
       #1;
       directed_done[2] = 1'b0;
       directed_done[3] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       directed_complete(4);
-      $display("QPARAM_JOIN_SAME_CYCLE_PASS rid_sz0=3");
+      $display("QPARAM_JOIN_SELECTED_LATENCY_PASS rid_sz0=3");
 
       // Ready-low retention: eligibility remains set, FIFO head and metadata
       // remain stable, and pop occurs only when start is finally asserted.
@@ -2346,6 +2475,7 @@ module tb_VX_gemm_ctrl;
        || dut.sync_regs_q[RID_ZP_CONSUME0] !== zp_consume_target)
         $fatal(1, "SCHED_DIRECTED ARM qparam consume event was not committed");
 
+      weight_set_floor = `GEMM_TIMING_MONOTONIC_SET ? dut.sync_regs_q[RID_W1] : 0;
       c = make_directed_cmd(OP_W_LDMA_MXU, 1'b1, RID_W1, 1'b1, 32'd11);
       directed_inject(c, 1);
       directed_accept_issue(1);
@@ -2390,7 +2520,7 @@ module tb_VX_gemm_ctrl;
       force gemm_sync_slv_if[1].value = 32'd1;
       #1;
       if (dut.effective_sync[RID_W_CONSUME0] !== weight_consume_target
-       || dut.weight_consume_value0_o !== weight_consume_target
+       || dut.weight_consume_value0_o !== dut.sync_regs_q[RID_W_CONSUME0]
        || !dut.child_deps_ready_v[1]
        || dut.child_issue_fire_v[1]
        || dut.child_q_pop_v[1])
@@ -2403,7 +2533,8 @@ module tb_VX_gemm_ctrl;
       release gemm_sync_slv_if[1].valid;
       release gemm_sync_slv_if[1].reg_idx;
       release gemm_sync_slv_if[1].value;
-      if (dut.sync_regs_q[RID_W_CONSUME0] !== weight_consume_target)
+      if (dut.sync_regs_q[RID_W_CONSUME0] !== weight_consume_target
+       || dut.weight_consume_value0_o !== weight_consume_target)
         $fatal(1, "SCHED_DIRECTED Weight consume event was not committed");
 
       // Retire command 0 while command 4 issues into the same physical FIFO
@@ -2412,28 +2543,30 @@ module tb_VX_gemm_ctrl;
       @(negedge clk);
       directed_done[1] = 1'b1;
       #1;
-      if (!dut.child_issue_fire_v[1]
+      if (dut.child_issue_fire_v[1] !== !`GEMM_TIMING_REG_CAPACITY
           || !dut.child_completion_pop_v[1]
-          || !dut.child_q_pop_v[1])
+          || dut.child_q_pop_v[1] !== !`GEMM_TIMING_REG_CAPACITY)
         $fatal(1, "SCHED_DIRECTED Weight completion did not permit same-cycle pop/push");
       @(posedge clk);
       #1;
       directed_done[1] = 1'b0;
+      if (`GEMM_TIMING_REG_CAPACITY)
+        directed_accept_issue(1);
       if (!dut.child_inflight_full_v[1]
-          || dut.sync_regs_q[RID_W1] !== 32'd11)
+          || dut.sync_regs_q[RID_W1] !== ((weight_set_floor > 11) ? weight_set_floor : 32'd11))
         $fatal(1, "SCHED_DIRECTED Weight rollover lost occupancy or reordered SET");
 
       directed_complete(1);
-      if (dut.sync_regs_q[RID_W1] !== 32'd18)
+      if (dut.sync_regs_q[RID_W1] !== ((weight_set_floor > 18) ? weight_set_floor : 32'd18))
         $fatal(1, "SCHED_DIRECTED second Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[RID_W1] !== 32'd23)
+      if (dut.sync_regs_q[RID_W1] !== ((weight_set_floor > 23) ? weight_set_floor : 32'd23))
         $fatal(1, "SCHED_DIRECTED third Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[RID_W1] !== 32'd26)
+      if (dut.sync_regs_q[RID_W1] !== ((weight_set_floor > 26) ? weight_set_floor : 32'd26))
         $fatal(1, "SCHED_DIRECTED fourth Weight notification retired out of order");
       directed_complete(1);
-      if (dut.sync_regs_q[RID_W1] !== 32'd28)
+      if (dut.sync_regs_q[RID_W1] !== ((weight_set_floor > 28) ? weight_set_floor : 32'd28))
         $fatal(1, "SCHED_DIRECTED fifth Weight notification retired out of order");
       if (!dut.child_inflight_empty_v[1])
         $fatal(1, "SCHED_DIRECTED inflight drain incomplete");
@@ -2458,7 +2591,7 @@ module tb_VX_gemm_ctrl;
       #1;
       if (done_if.valid)
         $fatal(1, "SCHED_DIRECTED balanced invocation done did not retire");
-      $display("SCHED_DIRECTED_WEIGHT_FOUR_INFLIGHT_PASS ready_issues=4 full_block=1 same_cycle_pop_push=1 ordered_notify=11,18,23,26,28");
+      $display("SCHED_DIRECTED_WEIGHT_FOUR_INFLIGHT_PASS ready_issues=4 full_block=1 same_cycle_pop_push=%0d notified_sequence=11,18,23,26,28 monotonic_set=%0d initial_floor=%0d", !`GEMM_TIMING_REG_CAPACITY, `GEMM_TIMING_MONOTONIC_SET, weight_set_floor);
 
       // ACC ownership is an Input admission fence, not a controller issue
       // dependency.  Both opposite- and same-group Input source commands may
@@ -2520,13 +2653,15 @@ module tb_VX_gemm_ctrl;
       #1;
       if (!dut.child_completion_pop_v[4]
           || dut.effective_sync[RID_ACC_FREE0] !== 32'd1
-          || !dut.child_deps_ready_v[5]
-          || !dut.child_issue_fire_v[5]
-          || !dut.child_q_pop_v[5])
+          || (dut.child_deps_ready_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS)
+          || (dut.child_issue_fire_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS)
+          || (dut.child_q_pop_v[5] !== !`GEMM_TIMING_REG_DMA_DEPS))
         $fatal(1, "SCHED_DIRECTED RID_ACC_FREE0 SET did not release DMA store in-cycle");
       @(posedge clk);
       #1;
       directed_done[4] = 1'b0;
+      if (`GEMM_TIMING_REG_DMA_DEPS)
+        directed_accept_issue(5);
       if (dut.sync_regs_q[RID_ACC_FREE0] !== 32'd1
           || !dut.child_inflight_empty_v[0]
           || dut.child_inflight_empty_v[5]
@@ -2551,15 +2686,17 @@ module tb_VX_gemm_ctrl;
       if (!dut.child_completion_pop_v[5]
           || dut.effective_sync[RID_O] !== 32'd1
           || dut.u_VX_gemm_fsm.completed_output_store_count_i !== 32'd1
-          || !dut.child_deps_ready_v[4]
-          || !dut.child_issue_fire_v[4]
-          || !dut.child_q_pop_v[4])
+          || dut.child_deps_ready_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS
+          || dut.child_issue_fire_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS
+          || dut.child_q_pop_v[4] !== !`GEMM_TIMING_REG_LOCAL_DEPS)
         $fatal(1, "SCHED_DIRECTED RID_O PLUS did not release next ACC2LMEM in-cycle");
       if (dut.scheduler_quiescent)
         $fatal(1, "SCHED_DIRECTED exact store count incorrectly implied scheduler quiescence");
       @(posedge clk);
       #1;
       directed_done[5] = 1'b0;
+      if (`GEMM_TIMING_REG_LOCAL_DEPS)
+        directed_accept_issue(4);
       if (dut.sync_regs_q[RID_O] !== 32'd1
           || dut.child_inflight_empty_v[4]
           || dut.sync_regs_q[RID_ACC_FREE1] !== 32'd0)
@@ -2752,6 +2889,24 @@ module tb_VX_gemm_ctrl;
   // --------------------------------------------------------------------------
   // Tests
   // --------------------------------------------------------------------------
+  // Validate the selected visibility contract continuously, independently of
+  // reducer assertions. Natural execution covers consume events on both banks.
+  always @(negedge clk) begin
+    #2;
+    if (!reset) begin
+      if (dut.scale_consume_value0_o !== (`GEMM_TIMING_REG_CONSUME ? dut.sync_regs_q[RID_SC_CONSUME0] : dut.effective_sync[RID_SC_CONSUME0])
+       || dut.scale_consume_value1_o !== (`GEMM_TIMING_REG_CONSUME ? dut.sync_regs_q[RID_SC_CONSUME1] : dut.effective_sync[RID_SC_CONSUME1])
+       || dut.zero_point_consume_value0_o !== (`GEMM_TIMING_REG_CONSUME ? dut.sync_regs_q[RID_ZP_CONSUME0] : dut.effective_sync[RID_ZP_CONSUME0])
+       || dut.zero_point_consume_value1_o !== (`GEMM_TIMING_REG_CONSUME ? dut.sync_regs_q[RID_ZP_CONSUME1] : dut.effective_sync[RID_ZP_CONSUME1]))
+        $fatal(1, "S/Z selected consume visibility mismatch");
+      for (int bank = 0; bank < 2; ++bank) begin
+        if (gemm_ctrl_if.input_acc_free_value[bank]
+         !== (`GEMM_TIMING_REG_ACC_FREE ? dut.sync_regs_q[bank ? RID_ACC_FREE1 : RID_ACC_FREE0] : dut.effective_sync[bank ? RID_ACC_FREE1 : RID_ACC_FREE0]))
+          $fatal(1, "Input selected ACC_FREE visibility mismatch bank=%0d", bank);
+      end
+    end
+  end
+
   initial begin
     $display("====================================");
     $display("  %s", TB_NAME);
