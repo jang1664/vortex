@@ -5,6 +5,7 @@ CONFIGS+=" -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16"
 CONFIGS+=" -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768"
 CONFIGS+=" -DLMEM_LOG_SIZE=20"
 CONFIGS+=" -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE"
+CONFIGS+=" -DGEMM_SLR_PIPELINE"
 CONFIGS+=" -DMXU_ROW=32 -DMXU_COL=32 -DMXU_COL_TILE=32 -DMXU_WLOAD_NUM=4"
 CONFIGS+=" -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536"
 CONFIGS+=" -DNUM_DMA_CHANNELS=8"
@@ -19,19 +20,22 @@ CONFIGS+=" -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_
 # CONFIGS+=" -DENABLE_HW_DEBUG_PC"
 # CONFIGS+=" -DENABLE_HW_DEBUG_GEMM"
 
-# Full implementation QoR settings for the U55C th16 build. Keep DMA channels
-# 2 and 3 in separate, soft SLR0 neighborhoods, raise general placement QoR
-# effort, and use the alternate UltraScale CLB routing algorithm. XCU55C does
+# Full-SLR implementation experiment: memory/HBM DMA in SLR0, local DMA and
+# control/ACC in SLR1, and MXU in SLR2. Explicit RTL transport must be enabled
+# together with this floorplan. Do not restore narrow DMA clock-region locks.
+# Use the alternate UltraScale CLB routing algorithm. XCU55C does
 # not support Advanced Flow place_design subdirectives, so use only the
 # compatible Explore directive. Leave implementation ultrathreads
 # off because it favors runtime over repeatable QoR.
-DMA_CHANNEL_FLOORPLAN=1
+DMA_CHANNEL_FLOORPLAN=0
+GEMM_SLR_FLOORPLAN=1
 PLACE_DESIGN_DIRECTIVE=Explore
 ROUTE_DESIGN_DIRECTIVE=AlternateCLBRouting
 IMPL_ULTRATHREADS=0
 
 export CONFIGS
 export DMA_CHANNEL_FLOORPLAN
+export GEMM_SLR_FLOORPLAN
 export PLACE_DESIGN_DIRECTIVE
 export ROUTE_DESIGN_DIRECTIVE
 export IMPL_ULTRATHREADS

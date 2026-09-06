@@ -15,10 +15,11 @@ PERF_VALUE=""
 DEBUG_VALUE=""
 FAST_MODE_VALUE="${FAST_MODE:-0}"
 NO_EARLY_FAIL=0
+GEMM_SLR_FLOORPLAN_ARG=""
 
 usage() {
   cat <<'EOF'
-Usage: run_hw.sh --config NAME_OR_PATH [--postfix VALUE] [--perf [VALUE]] [--debug [VALUE]] [--fast_mode] [--no-early-fail]
+Usage: run_hw.sh --config NAME_OR_PATH [--postfix VALUE] [--perf [VALUE]] [--debug [VALUE]] [--fast_mode] [--no-early-fail] [--slr-floorplan 0|1]
 
 Options:
   -c, --config NAME_OR_PATH  Config name or path. A bare name is resolved from
@@ -30,6 +31,8 @@ Options:
                              implementation ultrathreads, and fail-fast.
       --no-early-fail        Disable the post-place congestion fail-fast gate.
                              Routing continues at congestion level 7 or higher.
+      --slr-floorplan 0|1    Select the full-SLR GEMM floorplan (config default).
+                             Value 1 requires GEMM_SLR_PIPELINE in CONFIGS.
   -h, --help                 Show this help.
 
 Assignment-style arguments are also accepted:
@@ -45,8 +48,9 @@ Examples:
 
 The same gate can be controlled with the CONGESTION_FAIL_FAST environment
 variable (1: enabled, 0: disabled). Implementation QoR options may be supplied
-by the sourced config using DMA_CHANNEL_FLOORPLAN, PLACE_DESIGN_DIRECTIVE,
+by the sourced config using GEMM_SLR_FLOORPLAN, PLACE_DESIGN_DIRECTIVE,
 ROUTE_DESIGN_DIRECTIVE, and IMPL_ULTRATHREADS.
+DMA_CHANNEL_FLOORPLAN is retired and must remain 0.
 EOF
 }
 
@@ -107,6 +111,17 @@ while (($# > 0)); do
       ;;
     --no-early-fail)
       NO_EARLY_FAIL=1
+      shift
+      ;;
+    --slr-floorplan)
+      (($# >= 2)) || fail "$1 requires 0 or 1"
+      [[ "$2" =~ ^[01]$ ]] || fail "$1 requires 0 or 1"
+      GEMM_SLR_FLOORPLAN_ARG="$2"
+      shift 2
+      ;;
+    --slr-floorplan=*|GEMM_SLR_FLOORPLAN=*)
+      GEMM_SLR_FLOORPLAN_ARG="${1#*=}"
+      [[ -n "${GEMM_SLR_FLOORPLAN_ARG}" ]] || fail "SLR floorplan requires 0 or 1"
       shift
       ;;
     CONFIG=*|CONFIG_FILE=*)
@@ -191,11 +206,18 @@ fi
   fail "CONGESTION_FAIL_FAST must be 0 or 1"
 
 DMA_CHANNEL_FLOORPLAN_VALUE="${DMA_CHANNEL_FLOORPLAN:-0}"
+GEMM_SLR_FLOORPLAN_VALUE="${GEMM_SLR_FLOORPLAN_ARG:-${GEMM_SLR_FLOORPLAN:-0}}"
 PLACE_DESIGN_DIRECTIVE_VALUE="${PLACE_DESIGN_DIRECTIVE:-}"
 ROUTE_DESIGN_DIRECTIVE_VALUE="${ROUTE_DESIGN_DIRECTIVE:-}"
 IMPL_ULTRATHREADS_VALUE="${IMPL_ULTRATHREADS:-0}"
-[[ "${DMA_CHANNEL_FLOORPLAN_VALUE}" =~ ^[01]$ ]] || \
-  fail "DMA_CHANNEL_FLOORPLAN must be 0 or 1"
+[[ "${DMA_CHANNEL_FLOORPLAN_VALUE}" == 0 ]] || \
+  fail "DMA_CHANNEL_FLOORPLAN is retired; use the full-SLR GEMM floorplan"
+[[ "${GEMM_SLR_FLOORPLAN_VALUE}" =~ ^[01]$ ]] || \
+  fail "GEMM_SLR_FLOORPLAN must be 0 or 1"
+if [[ "${GEMM_SLR_FLOORPLAN_VALUE}" == 1 ]]; then
+  [[ " ${CONFIGS:-} " =~ [[:space:]]-DGEMM_SLR_PIPELINE(=1)?[[:space:]] ]] || \
+    fail "SLR floorplan requires GEMM_SLR_PIPELINE in the sourced CONFIGS"
+fi
 [[ "${IMPL_ULTRATHREADS_VALUE}" =~ ^[01]$ ]] || \
   fail "IMPL_ULTRATHREADS must be 0 or 1"
 
@@ -211,6 +233,7 @@ MAKE_ENV=(
   "FAST_MODE=${FAST_MODE_VALUE}"
   "CONGESTION_FAIL_FAST=${CONGESTION_FAIL_FAST_VALUE}"
   "DMA_CHANNEL_FLOORPLAN=${DMA_CHANNEL_FLOORPLAN_VALUE}"
+  "GEMM_SLR_FLOORPLAN=${GEMM_SLR_FLOORPLAN_VALUE}"
   "PLACE_DESIGN_DIRECTIVE=${PLACE_DESIGN_DIRECTIVE_VALUE}"
   "ROUTE_DESIGN_DIRECTIVE=${ROUTE_DESIGN_DIRECTIVE_VALUE}"
   "IMPL_ULTRATHREADS=${IMPL_ULTRATHREADS_VALUE}"
@@ -224,7 +247,7 @@ echo "PERF:   ${PERF_VALUE:-disabled}"
 echo "DEBUG:  ${DEBUG_VALUE:-disabled}"
 echo "Fast mode: $([[ "${FAST_MODE_VALUE}" == 1 ]] && echo enabled || echo disabled)"
 echo "Congestion early fail: $([[ "${CONGESTION_FAIL_FAST_VALUE}" == 1 ]] && echo enabled || echo disabled)"
-echo "DMA channel floorplan: $([[ "${DMA_CHANNEL_FLOORPLAN_VALUE}" == 1 ]] && echo enabled || echo disabled)"
+echo "GEMM SLR floorplan: $([[ "${GEMM_SLR_FLOORPLAN_VALUE}" == 1 ]] && echo enabled || echo disabled)"
 echo "Place directive: ${PLACE_DESIGN_DIRECTIVE_VALUE:-default}"
 echo "Route directive: ${ROUTE_DESIGN_DIRECTIVE_VALUE:-default}"
 echo "Implementation ultrathreads: $([[ "${IMPL_ULTRATHREADS_VALUE}" == 1 ]] && echo enabled || echo disabled)"

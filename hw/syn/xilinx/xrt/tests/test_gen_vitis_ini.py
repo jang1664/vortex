@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import os
 import subprocess
 import tempfile
 import types
@@ -10,6 +11,9 @@ from pathlib import Path
 
 XRT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = XRT_DIR.parents[3]
+BUILD_XRT_DIR = Path(os.environ.get(
+    "XRT_TEST_BUILD_DIR", REPO_ROOT / "build" / "hw/syn/xilinx/xrt"
+))
 
 
 def load_generator():
@@ -34,6 +38,7 @@ def make_args(**overrides):
         "debug": None,
         "profile": False,
         "disable_congestion_fail_fast": False,
+        "gemm_slr_floorplan": False,
         "ultrathreads": False,
         "place_directive": None,
         "route_directive": None,
@@ -75,6 +80,23 @@ class GenVitisIniTest(unittest.TestCase):
                 target="hw_emu", disable_congestion_fail_fast=disabled
             )
             self.assertFalse(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
+
+    def test_slr_checks_survive_congestion_opt_out(self):
+        lines = self.vivado_lines(
+            disable_congestion_fail_fast=True, gemm_slr_floorplan=True
+        )
+        self.assertTrue(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
+
+    def test_post_opt_refresh_only_for_hardware_slr_floorplan(self):
+        hook = "prop=run.impl_1.STEPS.OPT_DESIGN.TCL.POST=/tmp/xrt-hooks/post_opt_hook.tcl"
+        for target in ("hw", "hw_emu"):
+            for enabled in (False, True):
+                for congestion_disabled in (False, True):
+                    lines = self.vivado_lines(
+                        target=target, gemm_slr_floorplan=enabled,
+                        disable_congestion_fail_fast=congestion_disabled,
+                    )
+                    self.assertEqual(hook in lines, target == "hw" and enabled)
 
     def test_ultrathreads_adds_place_and_route_options_for_hw(self):
         lines = self.vivado_lines(ultrathreads=True)
@@ -131,7 +153,7 @@ class GenVitisIniTest(unittest.TestCase):
                 command = [
                     "make",
                     "-f",
-                    "Makefile",
+                    str(XRT_DIR / "Makefile"),
                     str(target),
                     f"VORTEX_HOME={REPO_ROOT}",
                     f"PREFIX={prefix}",
@@ -139,13 +161,22 @@ class GenVitisIniTest(unittest.TestCase):
                     "DEVICE_PART=xcu55c-fsvh2892-2L-e",
                     "DEV_ARCH=",
                     "CPU_TYPE=",
+                    "CONFIGS=",
+                    "GEMM_SLR_FLOORPLAN=0",
+                    "DMA_CHANNEL_FLOORPLAN=0",
+                    # The caller sources a real config; isolate this fixture's
+                    # default fingerprint from its exported QoR directives.
+                    "FAST_MODE=0",
+                    "PLACE_DESIGN_DIRECTIVE=",
+                    "ROUTE_DESIGN_DIRECTIVE=",
+                    "IMPL_ULTRATHREADS=0",
                 ]
                 if setting is not None:
                     command.append(f"CONGESTION_FAIL_FAST={setting}")
                 command.extend(f"{name}={value}" for name, value in overrides.items())
                 return subprocess.run(
                     command,
-                    cwd=XRT_DIR,
+                    cwd=BUILD_XRT_DIR,
                     text=True,
                     capture_output=True,
                 )
@@ -155,7 +186,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
@@ -192,7 +223,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0 "
-                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
@@ -209,14 +240,14 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
 
             qor = run_make(
                 0,
-                DMA_CHANNEL_FLOORPLAN=1,
+                DMA_CHANNEL_FLOORPLAN=0,
                 PLACE_DESIGN_DIRECTIVE="Explore",
                 ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting",
                 IMPL_ULTRATHREADS=0,
@@ -248,7 +279,7 @@ class GenVitisIniTest(unittest.TestCase):
             )
             self.assertEqual(
                 "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=1\n",
                 link_stamp.read_text(),
             )
@@ -264,7 +295,25 @@ class GenVitisIniTest(unittest.TestCase):
 
             invalid_floorplan = run_make(DMA_CHANNEL_FLOORPLAN=2)
             self.assertNotEqual(invalid_floorplan.returncode, 0)
-            self.assertIn("DMA_CHANNEL_FLOORPLAN must be 0 or 1", invalid_floorplan.stderr)
+            self.assertIn("DMA_CHANNEL_FLOORPLAN is retired", invalid_floorplan.stderr)
+
+            retired_floorplan = run_make(DMA_CHANNEL_FLOORPLAN=1)
+            self.assertNotEqual(retired_floorplan.returncode, 0)
+            self.assertIn("DMA_CHANNEL_FLOORPLAN is retired", retired_floorplan.stderr)
+
+            missing_pipeline = run_make(GEMM_SLR_FLOORPLAN=1)
+            self.assertNotEqual(missing_pipeline.returncode, 0)
+            self.assertIn("requires -DGEMM_SLR_PIPELINE", missing_pipeline.stderr)
+
+            slr = run_make(0, GEMM_SLR_FLOORPLAN=1, CONFIGS="-DGEMM_SLR_PIPELINE")
+            self.assertEqual(slr.returncode, 0, slr.stderr)
+            self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertIn("OPT_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertEqual(
+                (generated_ini.parent / "post_opt_hook.tcl").read_text(),
+                (XRT_DIR / "post_opt_hook.tcl").read_text(),
+            )
+            self.assertIn("GEMM_SLR_FLOORPLAN=1", link_stamp.read_text())
 
             invalid_route = run_make(ROUTE_DESIGN_DIRECTIVE="NotADirective")
             self.assertNotEqual(invalid_route.returncode, 0)

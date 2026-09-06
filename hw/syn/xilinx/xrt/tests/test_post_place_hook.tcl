@@ -1,6 +1,10 @@
 set script_dir [file dirname [file normalize [info script]]]
 set fixture_dir [file join $script_dir fixtures]
 set post_hook [file join [file dirname $script_dir] post_place_hook.tcl]
+# This is the independent congestion fixture, not a placed SLR netlist.
+set ::env(VORTEX_GEMM_SLR_FLOORPLAN) 0
+set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
+set ::env(VORTEX_CONGESTION_FAIL_FAST) 1
 
 set failures 0
 set checks 0
@@ -172,6 +176,13 @@ proc run_case {name fixture report_error checkpoint_error} {
         report_path [file join $temp_dir post_place_congestion.rpt] \
         checkpoint_path [file join $temp_dir post_place_fail_fast.dcp]]
 }
+
+set ::env(VORTEX_CONGESTION_FAIL_FAST) 0
+set disabled_case [run_case disabled "" "must not generate congestion report" ""]
+check_equal 0 [dict get $disabled_case status] "Disabled congestion hook continues"
+check_equal disabled [dict get [dict get $disabled_case result] decision] \
+    "Disabled gate does not bypass unrelated hooks"
+set ::env(VORTEX_CONGESTION_FAIL_FAST) 1
 
 set continue_case [run_case continue congestion_level6.rpt "" ""]
 check_equal 0 [dict get $continue_case status] "Level 6 hook continues"
