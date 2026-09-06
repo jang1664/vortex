@@ -90,6 +90,7 @@ simv.vdb/
 /agent-tasks/**/*.wdb
 /agent-tasks/**/*.wlf
 /agent-tasks/**/*.fst
+/agent-tasks/**/*.stderr
 /agent-tasks/**/*.json
 /agent-tasks/**/*.csv
 /agent-tasks/**/*.tsv
