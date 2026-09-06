@@ -128,7 +128,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
     // its own selector bits. The TMEM bank sees:
     //   TAG_WIDTH (original) + BANK_SEL_BITS (from switch)
-    localparam SWITCH_TAG_WIDTH = TAG_WIDTH + BANK_SEL_BITS;
+    // DMA routing does not use the bank-selector padding. Reserve at least
+    // one bit there to distinguish TMEM write acknowledgements from reads.
+    localparam SWITCH_TAG_WIDTH = TAG_WIDTH + `UP(BANK_SEL_BITS);
+    localparam DMA_WRITE_ACK_TAG_BIT = SWITCH_TAG_WIDTH - 1;
 
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_PARAM (AXI_USER_WIDTH)
@@ -644,13 +647,41 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         assign bank_port_if[0].req_data.data   = dma_switch_to_tmem[b].req_data.data;
         assign bank_port_if[0].req_data.byteen = dma_switch_to_tmem[b].req_data.byteen;
         assign bank_port_if[0].req_data.flags  = dma_switch_to_tmem[b].req_data.flags;
-        assign bank_port_if[0].req_data.tag    = dma_switch_to_tmem[b].req_data.tag;
+        // The bank acknowledges both reads and writes, but the HBM DMA
+        // response channel owns read slots only. Carry request direction in
+        // an otherwise unused routing-tag bit so a late write acknowledgement
+        // cannot become a read response after a G2L-to-L2G direction change.
+        assign bank_port_if[0].req_data.tag = {
+            dma_switch_to_tmem[b].req_data.rw,
+            dma_switch_to_tmem[b].req_data.tag[DMA_WRITE_ACK_TAG_BIT-1:0]
+        };
         assign dma_switch_to_tmem[b].req_ready = bank_port_if[0].req_ready;
 
-        assign dma_switch_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
+        wire dma_write_ack = bank_port_if[0].rsp_data.tag[DMA_WRITE_ACK_TAG_BIT];
+        // Drop write acknowledgements before the fixed-pair response FIFOs.
+        // Store completion still follows physical bank request acceptance;
+        // no response-drain counter, extra queue, or descriptor delay is needed.
+        assign dma_switch_to_tmem[b].rsp_valid = bank_port_if[0].rsp_valid
+                                             && !dma_write_ack;
         assign dma_switch_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
         assign dma_switch_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag;
-        assign bank_port_if[0].rsp_ready            = dma_switch_to_tmem[b].rsp_ready;
+        assign bank_port_if[0].rsp_ready = dma_write_ack
+                                       || dma_switch_to_tmem[b].rsp_ready;
+
+`ifndef SYNTHESIS
+        always_ff @(posedge clk) begin
+            if (!reset) begin
+                if (bank_port_if[0].req_valid && bank_port_if[0].req_ready)
+                    assert (!dma_switch_to_tmem[b].req_data.tag[DMA_WRITE_ACK_TAG_BIT])
+                        else $fatal(1, "%s: DMA request used reserved write-ack tag bit", INSTANCE_ID);
+                if (dma_switch_to_tmem[b].rsp_valid)
+                    assert (!dma_write_ack
+                         && (dma_switch_to_tmem[b].rsp_data.tag
+                          == bank_port_if[0].rsp_data.tag))
+                        else $fatal(1, "%s: DMA read response tag changed at write-ack filter", INSTANCE_ID);
+            end
+        end
+`endif
 
         // Port 1: input switch
         assign bank_port_if[1].req_valid       = in_switch_to_tmem[b].req_valid;
