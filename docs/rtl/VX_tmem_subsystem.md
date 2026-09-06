@@ -59,8 +59,10 @@ AXI/HBM beat는 MXU 크기와 무관하게 64B를 유지한다.
   두 lane은 동일한 aggregate bank-local word address를 사용하며 lane bit를
   주소에 추가하지 않는다.
 - pair request는 두 physical bank가 모두 accept해야 완료된다. 한쪽이 먼저
-  accept하면 per-lane sent bit가 중복 발행을 막는다. Read/write response는
-  lane별 depth-2 ordered FIFO의 head tag가 같을 때만 64B로 join된다.
+  accept하면 per-lane sent bit가 중복 발행을 막는다.
+  Read responses join into 64B only when both lane depth-2 ordered FIFO
+  heads have matching tags. TMEM write acknowledgements are consumed at
+  bank port 0 before entering these FIFOs.
 - 이 pair adapter는 associative reorder나 mask context를 두지 않는다.
 - 각 채널이 독립적으로 동작하며, 완료 시 `dma_done_if[ch]`로 통지
 - The production HBM-to-TMEM engine sets `ENABLE_PADDING=0`; its aggregate
@@ -172,9 +174,14 @@ matches and applies each priority policy locally to its corresponding source.
 | port[4] | zero-point switch | `SWITCH_TAG_WIDTH` |
 | port[5] | output switch | `SWITCH_TAG_WIDTH` |
 
-- DMA 포트(0)는 태그 상위비트를 0으로 패딩하여 `SWITCH_TAG_WIDTH`에 맞춘다.
-  16x16 pair의 두 lane은 동일하게 padded된 tag를 사용하며 join 시 equality를
-  assertion으로 확인한다.
+- DMA port 0 uses the highest otherwise-unused routing-tag padding bit to
+  carry request write/read direction through the bank's response pipeline.
+  Write acknowledgements are accepted locally and never forwarded to the
+  HBM DMA read-response channel or the fixed-pair response FIFOs. Read tags
+  are unchanged. This protects immediate G2L-to-L2G descriptor transitions
+  without waiting for write acknowledgements or changing physical-write
+  completion. Both direct-width and paired-width DMA routes use this filter;
+  local-DMA ports retain their original write-response behavior.
 - 스위치 포트(1-5)는 스위치가 이미 뱅크 선택 비트를 포함한 태그를 전달
 
 Input/Weight optimization을 enable하면 각 bank는 urgent/normal class별 독립
@@ -317,6 +324,11 @@ GEMM Unit
 
 ## 태그 처리
 
-- **DMA 포트**: 원본 `TAG_WIDTH` 비트 태그에 상위에 `BANK_SEL_BITS`만큼 0을 패딩하여 `SWITCH_TAG_WIDTH`에 맞춤
+- **DMA port**: Preserve the original `TAG_WIDTH` tag and pad routing bits.
+  Bank port 0 replaces the highest padding bit with request direction and
+  consumes responses bearing the write marker locally.
 - **스위치 포트**: 스위치가 자동으로 뱅크 선택 비트를 태그에 추가
-- **태그 폭 계산**: `SWITCH_TAG_WIDTH = TAG_WIDTH + BANK_SEL_BITS` (`BANK_SEL_BITS = log2(NUM_BANKS)`)
+- **Tag width**: `SWITCH_TAG_WIDTH = TAG_WIDTH + max(1, BANK_SEL_BITS)`
+  (`BANK_SEL_BITS = log2(NUM_BANKS)`). The minimum padding bit preserves a
+  write-ack marker even in a single-bank parameterization; production 8-bank
+  and 16-bank tag widths are unchanged.

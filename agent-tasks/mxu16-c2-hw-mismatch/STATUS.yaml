@@ -1,0 +1,35 @@
+task: mxu16-c2-hw-mismatch
+state: DONE
+current_phase: Reduced simulation failure repaired; 11 blackbox runs and 5 directed subsystem profiles pass. New FPGA image and hardware confirmation remain outside this task.
+scope: Reproduce and fix the reported C2 fpint_gemm_ffn_hw wrong results; no new P&R, FPGA programming, or commits unless requested.
+log:
+  - timestamp: '2026-09-06 14:03'
+    message: 'Completed requested reduced-simulation repair. M256K256N256 also PASS, giving11/11 fixed blackbox launches with identical pre/post kernel and no strict trace errors. Actual-subsystem directed tests pass5 profiles: paired32 with2/16banks, direct64 with2/8banks, and paired debugUUID44. Same final TB fails original paired/direct sources with late-write-ACK read payload mismatch. Singlebank original/fixed both hit identical8 preexisting switch zero-width compile errors; this optional compatibility probe is outside the requested MXU16/MXU32 profiles and not a PASS claim. All jobs terminated. git diff --check PASS. No commit, P&R, FPGA programming, or hardware execution performed.'
+  - timestamp: '2026-09-06 13:54'
+    feature: C2 delayed TMEM write acknowledgment
+    iteration: 2
+    status: pass
+    error_summary: none
+    root_cause: 'Direction-ambiguous write replies at HBM DMA bank port0; repaired by request-associated marker filtering.'
+    fix_applied: 'VX_tmem_subsystem port0 now consumes write acknowledgments locally. New configured fixed build preserves all C2 cuts and the identical kernel hash.'
+    lesson: 'Ten blackbox runs PASS: original M8K256N256 three times, M4K256N256, remaining three qdir/transposed modes, M8K4096N16, M256K128N16, M16K512N256. All have strict error checks and unchanged simulator/kernel identities. Larger M256K256N256 and actual-subsystem negative-control tests still pending.'
+  - timestamp: '2026-09-06 13:45'
+    feature: C2 delayed TMEM write acknowledgment
+    iteration: 1
+    status: sim_fail
+    error_summary: 'M8 K256 N256 q32 d0 t0 raises response wrote slot0 in state0 at VX_dma_unit_align.sv:1705 on DMA channel4; repeated unchanged simulator confirms wrapper exit2.'
+    root_cause: 'TMEM banks acknowledge writes. A late G2L write acknowledgment crosses descriptor direction turnover and is interpreted as an L2G read response. DMA request-pending accounting covers physical acceptance, not these optional write replies.'
+    fix_applied: 'Authorized RTL agent to mark DMA-port requests using existing padded tag MSB and discard write acknowledgments at bank port0 before direct/pair response routing. Preserve single-bank parameter legality with at least one padding bit.'
+    lesson: 'Physical write acceptance and write-response drain are distinct; read-only response consumers must not classify replies using current descriptor direction.'
+  - timestamp: '2026-09-06 13:45'
+    message: 'Reduction PASS cases on same simulator: M8K128N128, M8K256N128, M8K128N256, M4K256N256. Original hardware numeric pattern still awaits user log; reduced assertion is a concrete related protocol failure, not yet proof of identical output mismatches.'
+  - timestamp: '2026-09-06 13:36'
+    message: 'User reports 2048 mismatches at m=4 from hardware command -m256 -k4096 -n4096 with temp alias. Alias matches C2 xclbin and MXU16 C2 config. Current worktree is clean at c4acea43; prior timing changes are now committed. Distinguish mismatch row index from command M before selecting reduced shapes.'
+pitfalls:
+  - 'The existing C2 xclbin is still the pre-fix image. Simulation repair requires new synthesis/P&R and hardware confirmation before claiming the reported2048 hardware mismatches are eliminated.'
+  - 'NUM_BANKS=1 cannot compile before or after this patch because existing switch modules use zero-width bank-selector expressions; no unrelated switch edits were made.'
+  - 'Do not edit a running shell script: bash may resume reading at old offsets. First reproduction wrapper log was damaged by such an edit; preserved host/sim logs remain, clean confirm exit2 is authoritative.'
+  - 'Generic fixed-pair tests alone do not cover actual subsystem write-ACK routing. Test the DMA-to-bank boundary with real TMEM banks.'
+  - 'Mismatch[m=4,n=...] denotes output row index, not necessarily a run with M=4; confirm original log.'
+  - 'Use fresh configured build roots after RTL changes; do not clean away prior evidence or reuse stale simv.'
+  - 'Prior C2 ablations covered M4 K256 N256 only; full multi-row and qdir/transposed candidate matrix was not completed.'
