@@ -1,0 +1,462 @@
+task: u55c-slr-floorplan-pipeline
+state: stopped_after_100mhz_timing_failure
+final_summary: results-summary.md
+user_stop_condition:
+  updated_at: '2026-09-06 13:29 KST'
+  instruction: Finish observing the current slr_v7 attempt. If it fails, summarize the results and stop; the user will consider solutions.
+  scope_limit: No further RTL fixes, synthesis, or implementation retry after a failed slr_v7 result. Read-only result analysis and documentation only.
+monitoring_instruction:
+  updated_at: '2026-09-06 16:18 KST'
+  instruction: Monitor only completion of the current implementation. Do not inspect intermediate logs, timing, congestion, or routing results. Analyze final results only after completion.
+baseline_commit: 5d8fc73fbaae62cb5cebbd3320b5e8dc5ef0836e
+config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+spec: slr-pipeline-spec.md
+plan: plan.md
+iterations:
+  - feature: credit_stream
+    iteration: 1
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Four round-trip credits with local registered acknowledgment lookahead sustain one beat per cycle.
+    evidence: build_slr_verify/slr-stream-verification.json
+  - feature: initial_complete_slr_pipeline
+    iteration: 1
+    status: sim_fail
+    failure_kind: performance_acceptance_only
+    functional_status: pass
+    error_summary: Overlap W4 median cycles increased 6474 to 6699 (3.475 percent), exceeding 2 percent gate.
+    root_cause: Weight source-to-writer latency grew from 7 to 10 cycles; eight-slot reuse interval grew from 8 to 11 cycles across 64 commands.
+    fix_applied: Pending iteration 2; recycle response RAM slots after data is captured in the existing sink stage, without increasing RAM slot count.
+    lesson: One-beat-per-cycle transport does not ensure full rate with eight finite response slots.
+    evidence: build_slr_verify/gemm-results/summary.json
+  - feature: early_ram_slot_release
+    iteration: 2
+    status: sim_fail
+    failure_kind: performance_acceptance_only
+    functional_status: pass
+    error_summary: Overlap median 6623 vs 6474 baseline (2.3015 percent); still above 2 percent gate.
+    root_cause: Ordered response still traverses RAM write then registered read; typical slot reuse interval is nine cycles.
+    fix_applied: Pending iteration 3; optional single-beat ordered response bypass into the logical sink stage, retaining RAM fallback for out-of-order data.
+    lesson: Releasing RAM after registered read removes only part of the added round trip; held stage metadata must remain independently owned.
+    evidence: build_slr_early_verify/gemm-results/summary.json
+  - feature: ordered_response_stage_bypass
+    iteration: 3
+    status: pass
+    functional_status: pass
+    error_summary: none
+    root_cause: Ordered responses need not wait for an additional RAM read before entering the held sink stage.
+    fix_applied: Weight-only ordered response capture into a DATAW-bit FF plus selector; out-of-order RAM fallback and architectural sink completion retained.
+    lesson: Separate physical RAM-address ownership from held sink-stage ownership; preserve metadata and check mixed fast/RAM turnover.
+    evidence: build_slr_bypass_verify/gemm-results-bypass/summary.json
+    host_cycle_medians:
+      smoke: {baseline: 5799, final: 5800}
+      overlap: {baseline: 6474, final: 6552}
+      qrow: {baseline: 6176, final: 6174}
+      odd_tail: {baseline: 5873, final: 5875}
+    caveat: Overlap internal compute span median is 626 versus 566 baseline (10.60 percent longer), distinct from the accepted host-cycle metric.
+  - feature: standalone_weight_response_tx
+    iteration: 4
+    status: pass
+    functional_status: pass
+    error_summary: none in simulation; physical endpoint preservation still requires new synthesis
+    root_cause: Synthesis absorbed Weight TX FFs into BRAM output registers despite USER_SLL_REG.
+    fix_applied: Optional TX-payload DONT_TOUCH attribute, enabled only on Weight response; no handshake or cycle equation changed.
+    lesson: Preserve physical SLR endpoints explicitly when a producer RAM can absorb their register stage; do not unnecessarily preserve constant metadata.
+    evidence: build_slr_tx_verify/gemm-results-tx-preserve/summary.json
+    host_cycle_medians:
+      smoke: {baseline: 5799, current: 5874}
+      overlap: {baseline: 6474, current: 6550}
+      qrow: {baseline: 6176, current: 6174}
+      odd_tail: {baseline: 5873, current: 5872}
+    next: Data-only narrowing verified in iteration 5; verify MXU endpoint preservation next.
+  - feature: standalone_weight_response_data_tx
+    iteration: 5
+    status: pass
+    functional_status: pass
+    error_summary: none in simulation; physical endpoint preservation requires new synthesis
+    root_cause: Constant response metadata must remain optimizable while actual Weight data FFs remain standalone.
+    fix_applied: Per-bit TX preservation enabled only above the response-tag LSB slice, only for the Weight response.
+    lesson: Preserve the functional hard-IP boundary data, not unused constant fields.
+    evidence: build_slr_tx_data_verify/gemm-results-tx-data-preserve/summary.json
+    host_cycle_medians:
+      smoke: {baseline: 5799, current: 5875}
+      overlap: {baseline: 6474, current: 6547}
+      qrow: {baseline: 6176, current: 6176}
+      odd_tail: {baseline: 5873, current: 5873}
+    caveat: Internal overlap compute median 627 versus 566 baseline; every host-cycle sample remains within 2 percent.
+  - feature: standalone_mxu_input_data_pairs
+    iteration: 6
+    status: pass
+    functional_status: pass
+    error_summary: none in simulation; physical preservation requires new synthesis
+    root_cause: Synthesis absorbed both MXU input-data transport stages into DSP input registers.
+    fix_applied: Separate data/control banks; DONT_TOUCH only the existing input-data TX/RX FFs, no cycle change.
+    lesson: Check every logical partition boundary, not only the surviving marked metadata registers.
+    evidence: build_slr_final_verify/gemm-results-final/summary.json
+    host_cycle_medians:
+      smoke: {baseline: 5799, current: 5876}
+      overlap: {baseline: 6474, current: 6547}
+      qrow: {baseline: 6176, current: 6176}
+      odd_tail: {baseline: 5873, current: 5875}
+    caveat: Internal overlap compute is 630 versus 566 baseline (11.31 percent longer); all twelve host samples meet the 2 percent gate.
+    focused: Both primary MXU32 and MXU16 gemm_unit_v2 full RAW/write-stall suites pass.
+  - feature: dedicated_boundary_reset_extraction
+    iteration: 7
+    status: pass
+    functional_status: pass
+    error_summary: none in simulation; direct reset-pin mapping requires new synthesis
+    root_cause: Synthesis mapped the Weight RX valid synchronous reset to a D-input LUT, breaking the direct FF pair.
+    fix_applied: EXTRACT_RESET=yes only on existing explicitly resettable USER_SLL boundary declarations; no sequential equation or latency change.
+    lesson: Dedicated endpoint FF preservation and dedicated reset-pin extraction are separate physical requirements.
+    evidence: build_slr_reset_verify/gemm-results-reset/summary.json
+    host_cycle_medians:
+      smoke: {baseline: 5799, current: 5801}
+      overlap: {baseline: 6474, current: 6549}
+      qrow: {baseline: 6176, current: 6175}
+      odd_tail: {baseline: 5873, current: 5872}
+    caveat: Internal overlap compute median remains 630 versus 566 baseline; all twelve host samples meet the 2 percent gate.
+    focused: All three transport suites and both primary/MXU16 full RAW/write-stall suites pass.
+previous_physical_run:
+  session_id: 87695
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v1
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v1.log
+  flow: normal source-based make all; no DCP retry
+  timing_status: not_reached
+  result: post_init_failed
+  last_progress: '2026-09-05 18:29 KST: full boundary scan also finds MXU input-data TX/RX absorption into DSPs and two lifted command RX pointer LUTs; targeted preservation/ownership fixes pending final verification.'
+  kernel_synthesis_resources: {lut: 447090, ff: 309789, bram_tiles: 403.5, uram: 156, dsp: 2273}
+previous_physical_run_v2:
+  session_id: 41621
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v2
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v2.log
+  flow: normal source-based make all after fresh configure; no DCP retry
+  timing_status: not_reached
+  result: post_init_failed
+  last_progress: '2026-09-05 20:05 KST: normal post-init reproduces exactly the two known Weight valid pair errors; implementation exits before placement. Reset-extraction correction passes final simulation gates.'
+  kernel_synthesis_resources: {lut: 447647, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+previous_physical_run_v3:
+  session_id: 93051
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v3
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v3.log
+  flow: normal source-based make all after fresh configure; no DCP retry
+  timing_status: not_reached
+  result: placement_failed
+  last_progress: '2026-09-05 22:00 KST: Place 30-642 rejects an ACC reset LUT/FF shape split across ROOT and pblock_gemm_slr1. Post-opt direct pairs, full boundary nets and all 5408 constant RX enables pass. Generated-cell ownership refresh is being implemented before a new normal source run.'
+  kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+previous_physical_run_v4:
+  session_id: 34335
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v4
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v4.log
+  flow: normal source-based make all after fresh configure; no DCP retry
+  timing_status: not_reached
+  result: post_opt_hook_failed
+  last_progress: '2026-09-06 00:45 KST: resumed after slr_v4 post-opt hook failed at00:13:08 with bare __DUMMY_KEY__, following passing inventory. opt_design/post-opt QoR completed; placement not reached. Investigating relationship-property lookup on canonical name strings versus resolved Vivado cell collections, with full error stacks.'
+  kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+previous_physical_run_v5:
+  session_id: 80692
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v5
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v5.log
+  flow: normal source-based make all after fresh configure; no DCP retry
+  timing_status: not_reached
+  result: place_failed
+  last_progress: '2026-09-06 03:24 KST: actual post-opt hook passes, but place fails at03:23:27 on a different generated reset helper: TMEM input-switch round-robin reqs_mask_reg[0]_xlnx_opt LUT1 ROOT versus FDRE SLR0. Session80692 exits2. Generalizing homogeneous hierarchy ownership; RTL unchanged.'
+  kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+previous_physical_run_v6:
+  session_id: 12113
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v6
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v6.log
+  flow: normal source-based make all after fresh primary config/configure; no DCP retry
+  timing_status: placed_setup_fail_routed_pending
+  result: post_place_hook_failed
+  last_progress: '2026-09-06 07:37 KST: slr_v6 exits2 after successful placement. Post-place hook fails07:31:43 with empty get_slrs result for SLR0; canonical NAME strings were passed to -of_objects, whose installed help requires typed objects. Fix and actual placed-cell API preflight pending. Placed100MHz WNS=-0.438ns,TNS=-69.984ns; routing not reached.'
+  kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+physical_run:
+  session_id: 79546
+  build: build_slr_hw
+  prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v7
+  platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
+  clock_mhz: 100
+  log: build_slr_hw/full-implementation-slr-v7.log
+  flow: normal source-based make all after fresh primary config/configure; no DCP retry
+  timing_status: setup_failed_at_100mhz_hold_passed
+  result: xclbin_created_with_automatic_downclock
+  exit_code: 0
+  session_closed: true
+  ended_at: '2026-09-06 17:53 KST'
+  achieved_clock_mhz: 78.4
+  final_timing: {wns_ns: -2.749, tns_ns: -23791.311, setup_failing_endpoints: 30749, whs_ns: 0.006, ths_ns: 0.0, hold_failing_endpoints: 0}
+  routing: {routable_nets: 1143563, fully_routed_nets: 1143563, routing_errors: 0, failed_nets: 0, unrouted_nets: 0, partially_routed_nets: 0, final_overlaps: 0}
+  routed_bus_skew: {reported_paths: 195, violations: 0, worst_slack_ns: 1.655}
+  final_drc_errors: 0
+  final_bottleneck: SLR2 Weight selection RX FF fanout4034 to Weight storage FFs; worst path12.535ns with12.340ns routing and one LUT, not a data SLR crossing.
+  last_progress: '2026-09-06 17:58 KST: current normal source run finishes exit0 and creates xclbin, but100MHz target fails and Vitis scales to78.4MHz. Final reports show legal routing and hold pass; setup WNS-2.749ns. All hooks remained enabled. Final summary prepared; stop per user, with no further RTL/flow fix, synthesis, DCP implementation retry, or board programming.'
+  kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
+pitfalls:
+  - A successful v++/make exit and generated xclbin do not prove the requested kernel frequency; inspect automatic frequency scaling and xclbin.info achieved frequency. slr_v7 succeeds at78.4MHz while failing100MHz setup.
+  - A direct inter-SLR FF pair does not solve high-fanout distribution after the receiving FF. The final slr_v7 top five data paths are SLR2-local Weight selection fanout4034, despite a clock-leg SLR Crossing label.
+  - get_slrs -of_objects also requires typed get_cells objects; a raw-name query can silently return empty under -quiet. Comparing two empty results on an unplaced checkpoint does not validate placed-cell lookup. Exercise known placed cells and require nonempty expected SLR results.
+  - Vivado get_property returns a scalar for one object: an unset singleton PBLOCK is an empty string (llength0), whereas multi-object queries preserve empty list elements. Normalize singleton scalar values without relaxing resolved-object cardinality or adding per-leaf queries.
+  - Actual Vivado primitive PARENT chains can include primitive containers such as DSP48E2 owning DSP_ALU_INST. IS_PRIMITIVE==0 hierarchy enumeration alone is not a complete parent graph; traverse primitive containers without selecting them as hierarchy anchors.
+  - FP-only hierarchy anchors fix only one generated-cell family; TMEM arbiter reset helpers can independently form the same ROOT/user-pblock shape conflict during placement. Cover homogeneous ownership islands rather than enumerating individual failing registers.
+  - Canonical NAME strings are not Vivado cell-object collections for get_property; resolve with get_cells and verify exact name/value correspondence. Raw property errors can expand a huge input list, so bound diagnostic console output.
+  - Post-init leaf membership misses 512 opt-created ACC LUTs and later place-created reset helpers; refresh leaves and anchor only validated homogeneous IP hierarchies so shapes do not span ROOT and a hard user pblock.
+  - Existing SIZE=1 launch buffer does not register reverse ready or bypass status.
+  - Output bridge enqueue is not physical TMEM write commit.
+  - Existing ACC d3 RAW and write-stall contracts must remain unchanged locally.
+  - Historical opt_v6 results are not a merged functional or physical baseline.
+  - Optional legacy DBG_TRACE_GEMM_CMD_PERF ledger rejects overlapping children in the unchanged baseline; excluded symmetrically from comparison instrumentation.
+  - Preserve sink metadata independently before recycling a response RAM address; RAM output staging is separate ownership.
+log:
+  - timestamp: '2026-09-06 17:58'
+    action: Observed normal slr_v7 completion, then read final frequency, route, timing, bus-skew and utilization reports; intermediate results were not inspected after the user requested completion-only monitoring.
+    result: Build exit0 and xclbin creation succeed, but100MHz acceptance fails atWNS-2.749ns; automatic frequency78.4MHz. Zero routing errors/unrouted/failed nets and hold violations. Routed bus-skew195 reported paths all pass. Final top5 are SLR2-local Weight selection distribution; full findings in results-summary.md.
+    next: Stop as explicitly requested by user. No additional fixes, synthesis, implementation retry, final DCP audit or board run. Existing changes remain uncommitted.
+  - timestamp: '2026-09-06 11:41'
+    action: Entered normal route_design after all SLR hooks pass; completed bounded read-only response-TX mapping audit.
+    result: Phase1 Build RT Design is running. Diagnostic proves one remote sink/no local fanout,USER_SLL_REG1,unfixedLOC/BEL,similar control types,and Input/Scale/ZP MUXF7+TX co-packing versus Weight RAMB-driven Laguna TX. Preservation/packing/hold causal hypotheses remain unproven; no RTL or constraints changed. Audit closes unsaved exit0 at11:39:12.
+    next: Require legal routing with zero failed/overlapping nets and final setup/hold; preserve partial Laguna coverage and SLR0 occupancy caveats in acceptance.
+  - timestamp: '2026-09-06 11:37'
+    action: Completed normal pre-route phys_opt_design after corrected post-place hook passes.
+    result: Successful11:29 optimization improves estimatedWNS from-0.438 to-0.327ns,TNS-48.775ns; setup remains failing before routing. Cumulative error counter is the earlier platform Ip78-110 message, not a new abort. Saving normal checkpoint; no DCP implementation retry.
+    next: Run normal routing/final physical optimization, then check legal nets, final setup/hold and boundary ownership/mapping. Complete bounded read-only TX-mapping diagnosis without altering this run.
+  - timestamp: '2026-09-06 11:23'
+    action: Passed actual slr_v7 corrected typed post-place SLR query and all remaining physical hook checks.
+    result: All3 actual SLR owners and9 hard properties pass;10747 owned marked FFs pass direct pairs;each link group has nonzero Laguna TX/RX pairs;full boundary scan passes. Input/Scale/Zero-point response groups each have1/517 both-endpoint Laguna pairs, unlike Weight515/517 and MXU output1281/1281; preserve this coverage caveat. Placed timing report is identical to v6 except date; resource/SLR/SLL totals unchanged.
+    next: Continue normal routing and final setup/hold/congestion acceptance without disabling hooks or using a DCP implementation retry.
+  - timestamp: '2026-09-06 11:12'
+    action: Completed normal slr_v7 place_design successfully.
+    result: Placement passes in1:36:18 without the prior reset-helper shape conflict. Intermediate WNS=-0.445ns matches v6. Detailed placed reports are generating; no final physical acceptance claim.
+    next: Verify corrected typed post-place SLR lookup, all physical Laguna groups and full boundary nets before normal routing and final setup/hold.
+  - timestamp: '2026-09-06 09:42'
+    action: Verified slr_v7 placer passes the earlier reset-helper shape feasibility failure stage.
+    result: Phase1.2 completes with cumulative5:28 and Phase1.3 begins. Generalized hierarchy ownership remains effective in the normal source run; no Place30-642 recurrence.
+    next: Complete global/detail placement, strict typed post-place SLR/Laguna checks and final routing/setup/hold.
+  - timestamp: '2026-09-06 09:32'
+    action: Verified slr_v7 opt_design and actual post-opt hook without disabling it.
+    result: 189 homogeneous anchors adopted as27/161/1;96 FP reset parents covered;512 missing SLR1 leaves restored;all hard properties,10751 owned marked FF pairs and full boundary nets pass. No prior API or ownership failure recurs.
+    next: Complete actual placement, typed post-place SLR/Laguna verification and final routing/setup/hold.
+  - timestamp: '2026-09-06 09:06'
+    action: Verified normal slr_v7 link_design and post-init SLR gates.
+    result: All required hierarchy/groups,9 hard-pblock properties,10754 owned marked FF exact pairs and full boundary scan pass. Normal flow advances to methodology reports. No checkpoint implementation retry.
+    next: Verify generalized post-opt anchor ownership in the normal flow, actual post-place SLR/Laguna and final physical acceptance.
+  - timestamp: '2026-09-06 08:44'
+    action: Completed all156 block jobs and top synthesis; entered normal VPL implementation.
+    result: Full source synthesis passes; implementation starts08:44:05 with all SLR hooks enabled and corrected typed post-place query. No new RTL or resource change.
+    next: Check actual post-init/post-opt, placed SLR/Laguna mappings and final routing/timing; retain prior physical risks in acceptance review.
+  - timestamp: '2026-09-06 08:41'
+    action: Verified slr_v7 kernel synthesis and resource report.
+    result: Zero errors/critical warnings,2654 warnings; LUT447646,FF309020,BRAM403.5,URAM156,DSP2273 exactly match preceding iteration7 source runs. Flow-only correction adds no synthesized resource change.
+    next: Complete normal top/link flow, validate actual post-place ownership/Laguna and final legal routing/setup/hold. Kernel synthesis success alone is not physical acceptance.
+  - timestamp: '2026-09-06 07:48'
+    action: Completed actual placed-FF API preflight and launched normal slr_v7 source build after fresh primary W4 config/configure.
+    result: All32 physical FF raw-name queries are empty while typed-cell/site SLRs agree. Current resolver single/multi/reordered and three Q-to-D examples pass. All full GEMM groups resolve exactly as unplaced API-only checks. Initial IBUF canary failure retained as invalid sample-selection evidence. Diagnostic closes unsaved exit0 at07:47:49. New main session79546; no RTL changes or DCP implementation retry.
+    next: Verify generated hook adoption, synthesis, actual per-group post-place SLR/Laguna gates and final legal routing/setup/hold. Prior v6 placed WNS=-0.438ns and SLR0 occupancy95.26 percent remain open physical risks.
+  - timestamp: '2026-09-06 07:43'
+    action: Implemented strict typed-cell SLR lookup and failure-only diagnostic snapshot; completed flow regression suite.
+    result: 22 typed-object and13 snapshot checks pass alongside63 hierarchy,59 post-opt,28 congestion parser,24 congestion hook,10 INI,3 utilization and existing pair/ownership fixtures. Original hook failure remains fatal; snapshot never overwrites prior evidence. Actual known-placed-cell API probe is loading the optimized checkpoint read-only. No RTL change.
+    next: Verify nonempty expected SLR mapping in actual Vivado before the next normal source build. Placed SLR0 CLB occupancy95.26 percent exceeds80-percent review threshold; full-design SLL usage50.67/32.53 percent is below65 percent.
+  - timestamp: '2026-09-06 07:37'
+    action: Diagnosed post-place validation failure after successful normal placement and audited final placed timing.
+    result: Post-place SLR0 lookup returns empty at07:31:43; installed help requires typed objects rather than the passed NAME strings. Session12113 exits2 before routing and before the standard placed checkpoint save. All467 setup-failing endpoints are100MHz kernel clock; WNS=-0.438ns,TNS=-69.984ns. Top5 paths are SLR1-local Weight readiness to Scale consume/dependency/queue controls, not explicit crossing banks.
+    next: Fix typed SLR lookup with regression tests and actual placed-cell preflight, retain all hooks/gates, then continue normal source flow. No routing or physical acceptance claim.
+  - timestamp: '2026-09-06 07:25'
+    action: Completed normal slr_v6 place_design successfully after generalized hierarchy ownership.
+    result: Old reset-helper shape feasibility failure is eliminated. Interim post-placement WNS=-0.445ns and high-congestion warning remain; no final timing/routing claim. Detailed report generation begins.
+    next: Inspect clock-specific placed paths and actual SLR/Laguna mappings, then continue normal routing if post-place gates pass.
+  - timestamp: '2026-09-06 05:59'
+    action: Verified actual placer passes the previously failing feasibility phase.
+    result: Phase1.2 completes after5:28 and Phase1.3 Build Placer Netlist Model begins, without Place30-642. General hierarchy ownership prevents the observed reset-helper ROOT/user-pblock conflict in this run.
+    next: Continue full placement and inspect actual SLR/Laguna mapping, then legal routing and final timing; feasibility alone is not complete physical acceptance.
+  - timestamp: '2026-09-06 05:50'
+    action: Verified generalized hierarchy ownership in actual slr_v6 VPL post-opt execution.
+    result: 189 anchors applied as27/161/1; FP96 coverage and residual leaf/FF counts match preflight. All hard properties and marked/direct-pair gates pass,512 missing SLR1 leaves recovered. No prior API failure recurs.
+    next: Verify placer feasibility against all four TMEM/global-reset helper cases, then actual SLR/Laguna placement, legal routing and setup/hold.
+  - timestamp: '2026-09-06 05:01'
+    action: Completed slr_v6 kernel/top synthesis and entered normal implementation.
+    result: Kernel LUT447646,FF309020,BRAM403.5,URAM156,DSP2273 exactly match previous iteration7 source runs;0 synthesis errors/critical warnings. Generalized floorplan build snapshot matches the actual-preflight source hash.
+    next: Verify189 anchors in actual VPL post-opt, then successful placement feasibility and final physical acceptance.
+  - timestamp: '2026-09-06 04:05'
+    action: Completed corrected general hierarchy hook preflight and launched normal slr_v6 source build after fresh primary W4 config/configure.
+    result: Actual full hook passes twice in282.811/281.960 seconds; all12 independent leaf/anchor membership checks and properties/pairs/boundaries pass. Anchors27/161/1 cover all100 observed BUFG-to-D FFs; same-pattern uncovered0. Primitive-container and singleton-PBLOCK API exceptions have regression fixtures. Diagnostic closes unsaved.
+    next: Confirm actual normal-run post-opt anchor adoption and successful placer feasibility, then legal routing and100MHz setup/hold. No OOC or DCP implementation retry.
+  - timestamp: '2026-09-06 03:35'
+    action: Audited the new hierarchy-ownership algorithm against actual slr_v5 optimized design before a source rebuild.
+    result: Failed arbiter original is FDRE INIT0 with D directly driven by reset BUFGCE, R tied0 and local CE; no helper exists pre-place. Independent hierarchy audit then exposes primitive-container PARENT (I_KT_STRIDE_FULL_q1/DSP_ALU_INST), which invalidates a nonprimitive-only tree assumption. No constraints were mutated.
+    next: Add primitive-container traversal to candidate and fixtures, rerun bounded actual audit/full-hook preflight, and inspect uncovered global-buffer-to-FF-D connections before the next source build.
+  - timestamp: '2026-09-06 03:24'
+    action: Diagnosed slr_v5 placement failure after the corrected post-opt hook passes in actual VPL.
+    result: Place30-642 now names u_tmem_subsystem/u_switch_input round-robin reqs_mask_reg[0] in SLR0 and its new _xlnx_opt LUT1 in ROOT. This is the same ownership-lifecycle defect outside the previously anchored FP families, not a hook API failure or routing congestion result.
+    next: Implement and test homogeneous hierarchy island anchors, audit uncovered mixed-parent FFs in actual optimized netlist, then preflight constraints before any new normal source run. No OOC/DCP implementation retry.
+  - timestamp: '2026-09-06 03:14'
+    action: Confirmed corrected post-opt hook in the normal slr_v5 VPL run.
+    result: Typed primitive property lookup succeeds in all3 groups;96 homogeneous FP parents anchored,512 missing SLR1 leaves recovered,all9 hard properties and10751 owned marked FF/direct-pair checks pass. No __DUMMY_KEY__ recurrence.
+    next: Check actual placement for the earlier reset-helper shape conflict, then post-place SLR/Laguna validation, legal routing and setup/hold.
+  - timestamp: '2026-09-06 02:21'
+    action: Verified slr_v5 kernel synthesis completion and resource report.
+    result: LUT447646,FF309020,BRAM403.5,URAM156,DSP2273 exactly match slr_v3/v4;0 errors,0 critical warnings,2654 warnings. Hook/floorplan/report build-snapshot hashes match current sources and OPT_DESIGN.TCL.POST remains connected.
+    next: Verify corrected hook in normal implementation, followed by placement/routing and final timing.
+  - timestamp: '2026-09-06 01:26'
+    action: Finished hook/API preflight, closed diagnostic without saving, and launched slr_v5 normal source build.
+    result: Both full-hook passes and independent strict checks total0 failures;496557 leaves and96 FP parents match. get_slrs has no proven separate defect and remains unchanged. Fixture53 and existing flow suites pass.
+    next: Verify corrected hook in actual VPL implementation, then place-created helper inheritance, legal routing and100MHz setup/hold. No OOC or DCP implementation retry.
+  - timestamp: '2026-09-06 01:17'
+    action: Completed actual current-source post-opt hook in the authorized ephemeral diagnostic design.
+    result: Full hook PASS;512 missing leaves recovered,96 homogeneous FP parents assigned,all hard properties/direct pairs/boundary checks pass. Independent strict after-checks find0 missing and exactly96 assigned parents.
+    next: Finish idempotence and typed-object post-place API checks before launching another normal source build. No checkpoint or implementation commands executed in preflight.
+  - timestamp: '2026-09-06 00:56'
+    action: Reproduced failing property-query form in actual Vivado and checked the corrected full-SLR0 membership helper.
+    result: Raw name-string query fails from1 cell with Common17-161; resolved-object query and candidate full125747-cell membership check pass. VPL bare __DUMMY_KEY__ remains wrapper symptom, not independently reproduced internals.
+    next: Complete other groups and full-hook ephemeral constraint preflight without implementation/save commands; retain post-opt hook as explicitly clarified by user.
+  - timestamp: '2026-09-06 00:50'
+    action: User clarified to keep the post-opt hook and continue debugging it; no disabling/removal performed.
+    result: Candidate explicitly resolves cell objects and checks lookup order/cardinality;53 lifecycle/API fixtures pass along with existing flow tests. One-open actual Vivado API comparison is running, without implementation commands.
+    next: Establish the exact API failure and validate the full corrected hook before another normal source run.
+  - timestamp: '2026-09-06 00:45'
+    action: Diagnosed new slr_v4 post-opt hook failure after user requested continuation.
+    result: opt_design and QoR assessment pass; inventory passes, then hook fails with __DUMMY_KEY__ before any anchor/refresh success report. Prior successful read-only PBLOCK audit used resolved cell objects; new checker used names. API hypothesis requires reproduction.
+    next: Reproduce named versus resolved collection relationship-property queries with full errorinfo; correct only the API handling, test in actual Vivado and fixtures before another source run.
+  - timestamp: '2026-09-05 23:25'
+    action: Completed slr_v4 kernel/top synthesis and entered normal implementation.
+    result: Kernel has0 errors,0 critical warnings; LUT447646,FF309020,BRAM403.5,URAM156,DSP2273 exactly match slr_v3. No RTL/resource delta from the flow-only correction.
+    next: Verify real ownership refresh and hierarchy anchor membership, then placement/routing/setup/hold.
+  - timestamp: '2026-09-05 22:24'
+    action: Launched slr_v4 normal source build after completing ownership lifecycle correction.
+    result: New lifecycle fixture47, existing SLR fixture, congestion24 and INI/Makefile10 all pass. FP16 input and FP32 ACC/output i_synth parents are homogeneous-owner checked; mixed parents are rejected.
+    next: Confirm actual post-opt membership refresh and successful place-created helper inheritance, then complete placement/routing and timing acceptance.
+  - timestamp: '2026-09-05 22:19'
+    action: Inspected exact reset helpers and actual pblock membership in the standard optimized checkpoint.
+    result: Failing reset helper is absent before placement; all 96 original reset FFs are SLR1. Separately, 512 ACC LUT2 leaves retain only the platform RP pblock. Post-opt-only refresh is insufficient.
+    next: Keep leaf refresh and add same-owner validated floating-point IP hierarchy anchors for helpers created later by placement; no mixed-owner parent assignments.
+  - timestamp: '2026-09-05 22:10'
+    action: Diagnosed slr_v3 placement feasibility failure and completed independent post-opt structural audit.
+    result: ACC reset helper LUT is in ROOT while its paired FF is in hard SLR1; no congestion result exists. All 5408 direct pairs and constant RX enables pass, as does the full boundary-net scan.
+    next: Refresh optimizer-generated cell membership before placement, add regression fixtures, and rerun the normal source flow with unchanged verified RTL.
+  - timestamp: '2026-09-05 21:29'
+    action: Passed actual platform post-init SLR floorplan and boundary gates in the normal source run.
+    result: All three pblocks have IS_SOFT=0, CONTAIN_ROUTING=0, EXCLUDE_PLACEMENT=0 after assignment; actual NESTED clipping ranges recorded. Direct pairs and complete boundary scan pass after normal memory patching.
+    next: Finish init reports and optimization, verify actual SLR/Laguna placement, then legal routing and 100 MHz setup/hold.
+  - timestamp: '2026-09-05 21:06'
+    action: Completed slr_v3 read-only synthesized ownership, marked-pair and full partition-boundary checks while normal implementation starts.
+    result: All structural preflight gates PASS, including the formerly failing Weight valid pair. Kernel LUT decreases by one versus slr_v2; FF/BRAM/URAM/DSP unchanged.
+    next: Validate actual post-add pblock properties and final FF mapping in the normal platform implementation, then legal routing and setup/hold.
+  - timestamp: '2026-09-05 20:08'
+    action: Started slr_v3 normal source build with dedicated reset extraction and immediate post-assignment pblock property verification.
+    result: All five focused suites and twelve primary host-cycle samples pass; slr_v2 retained with its exact known post-init pair failure. No DCP implementation retry.
+    next: Validate actual reset-pin mapping and pblock properties, then complete placement/routing and 100 MHz timing.
+  - timestamp: '2026-09-05 19:56'
+    action: Confirmed Weight RX valid LUT implements TX_valid AND NOT reset; froze reset-extraction attributes on existing resettable boundary declarations.
+    result: RX FDRE has R tied GND and CE tied VCC in slr_v2. New RTL forces dedicated reset extraction only, with no added FF, reset, or cycle; final focused/primary/MXU16 verification started.
+    next: Await final simulation gates, retain strict pair checks, and rebuild normally from source as slr_v3.
+  - timestamp: '2026-09-05 19:52'
+    action: Completed read-only slr_v2 ownership, marked-group, pair and boundary diagnostics.
+    result: All data absorption and lifted-pointer issues are resolved; complete boundary scan passes. Direct pair check reports only Weight RX valid D-input LUT and its unmatched TX valid, two errors for one connection.
+    next: Confirm the LUT is reset extraction, force already-resettable boundary FFs to use dedicated reset pins without cycle changes, reverify, and use a new normal source build.
+  - timestamp: '2026-09-05 19:45'
+    action: Completed slr_v2 block/top synthesis and entered normal implementation.
+    result: Kernel synthesis has zero errors/critical warnings; LUT447647, FF309020, BRAM403.5, URAM156, DSP2273. Versus failed slr_v1, LUT increases557 and FF decreases769; hard-memory/DSP counts unchanged.
+    next: Check new standalone endpoint and complete boundary evidence while normal platform linking runs; no placement/timing result yet.
+  - timestamp: '2026-09-05 18:52'
+    action: Completed independent read-only final transport/output-drain/Weight-stage audit while block synthesis runs.
+    result: No new reachable handshake or ownership defect found; common synchronous reset and exactly-once responses remain interface assumptions.
+    next: Continue physical gates. request_idle denotes downstream request consumption, not general read-response completion.
+  - timestamp: '2026-09-05 18:46'
+    action: Started slr_v2 normal full source build after final simulation and flow fixture gates passed.
+    result: All twelve primary host-cycle samples meet 2 percent; primary/MXU16 RAW/write-stall suites pass. Post-init now checks full boundary nets as well as marked pairs.
+    next: Verify actual synthesized standalone data FFs, all ownership boundaries, then placement and routed 100 MHz setup/hold.
+  - timestamp: '2026-09-05 18:40'
+    action: Froze targeted MXU input-data TX/RX standalone FF preservation and lifted command-RX pointer ownership fix.
+    result: Weight data-only candidate passed three focused suites and all twelve host-cycle samples; final MXU revision now running primary/MXU16 RAW and primary twelve-sample matrix in fresh builds.
+    next: Launch slr_v2 normal source-based hardware only after final simulation gates pass; preserve slr_v1 diagnostics.
+  - timestamp: '2026-09-05 15:31'
+    action: Read full plan and required RTL/blackbox skill instructions; confirmed scope from execution request.
+    result: Only pre-existing plan.md modification; no FSM exists for this task.
+    next: Freeze fresh baseline while designing and implementing independent MXU and transport boundaries.
+  - timestamp: '2026-09-05 15:40'
+    action: Implemented direct TX/RX credit stream and five TMEM boundaries; delegated MXU and command transport implementations and immutable baseline verification.
+    result: Credit stream passes VCS 32B/64B plus sidebands, 4000 ordered transfers, full-rate and stalled drain. Baseline source archived independently; fresh xrt-vcs image built and first case running.
+    next: Verify DMA bridge, MXU/ACC integration and W4 end-to-end cycles; finish full-SLR Tcl before physical gates.
+    details:
+      - Existing read reservations replaced by transport, not stacked with another FIFO.
+      - Output write_done/done/idle held until request consumption credits return from TMEM.
+      - MXU transport adds four cycles and requires four additional in-flight result entries; response slots remain eight.
+      - Primary config enables GEMM_SLR_PIPELINE and GEMM_SLR_FLOORPLAN; narrow DMA floorplan disabled.
+  - timestamp: '2026-09-05 15:49'
+    action: Completed initial baseline/candidate W4 matrices and focused MXU16 regressions.
+    result: Both matrices have 12 functional passes; candidate overlap fails the performance gate. No synthesis launched.
+    next: Validate early RAM-slot recycling using existing output staging; retain 8 RAM slots and architectural install/weight commit timing.
+    details:
+      - SLR stream, memory bus, command bridge and primary GEMM unit suites pass.
+      - MXU16 GEMM unit, backend chaining/wrap, pair adapter and 16-array switch suites pass.
+      - Eligible backend completion_to_activate remains zero cycles in focused tests.
+  - timestamp: '2026-09-05 16:06'
+    action: Verified early-release candidate and completed source-only floorplan flow checks.
+    result: New early-release and existing generic queue suites pass; primary 12/12 numerical passes; MXU16 odd-tail QCOL and QROW blackbox pass. Primary overlap remains 2.30 percent slower.
+    next: Test one-beat ordered response bypass before any physical implementation.
+    details:
+      - Physical response RAM stays at eight addresses; existing logical sink stage has independent ownership.
+      - Proposed bypass adds one DATAW-bit FF data bank (512 bits primary, 256 bits MXU16), not another queue entry or RAM slot.
+      - Three full-SLR pblocks and post-place checks are implemented; fixture/hook/INI tests pass, but real Vivado evidence is pending.
+      - build_slr_hw configured and make dry-run passed; actual build will use explicit XPFM path to avoid duplicate platform-name search.
+  - timestamp: '2026-09-05 16:18'
+    action: Started normal source-based full hardware implementation after final functional/performance gates passed.
+    result: Primary 12/12 numerical passes and every individual host-cycle sample within 2 percent; final MXU16 odd-tail QCOL/QROW pass. Six-case queue bypass tests cover 19 consecutive fast captures and both fast/RAM transitions.
+    next: Monitor synthesis, validate actual SLR ownership/FF pairs and Laguna mapping, then legal routing and 100 MHz setup/hold.
+    details:
+      - Source config and configure refreshed immediately before hardware make; explicit XPFM resolves the platform ambiguity.
+      - Explore placement and AlternateCLBRouting retained; ultrathreads disabled.
+      - Congestion fail-fast disabled but independent SLR physical checks remain enabled.
+  - timestamp: '2026-09-05 16:46'
+    action: Monitored source-based synthesis and completed read-only protocol/floorplan audits.
+    result: 122 of 156 block synthesis jobs complete; kernel optimization remains active. No new reachable DMA protocol defect identified.
+    next: Continue through actual post-init/post-place ownership checks and routed timing.
+    details:
+      - Same-edge completion and reuse of the identical tag are intentionally excluded by the current controller allocator; bridge assertion matches this contract.
+      - Held sink metadata remains independently owned after early physical RAM-address release; command entries retire only on actual final sink handshake.
+      - RAM pipeline inference warnings also exist in historical opt_v6; only actual current timing paths can establish their impact.
+  - timestamp: '2026-09-05 17:20'
+    action: Completed all 156 block synthesis jobs and top-level synthesis; normal implementation started at 17:17.
+    result: Kernel synth_design passes with zero errors/critical warnings; resources recorded in physical-results.md. Platform/netlist stitching is in progress.
+    next: Validate synthesized endpoint ownership and direct FF links, then actual placement/routing/timing.
+  - timestamp: '2026-09-05 17:37'
+    action: First real post-init ownership validation stopped the full implementation.
+    result: Required DMA idle SLR0 group is absent. No placement or routing ran. Source inspection shows DMA idle is unused by the production controller, which uses cmd_ready instead.
+    next: Confirm full idle-cone removal from synthesized evidence, allow only complete removal with paired-survival checks, run read-only netlist validation, then restart normal source flow.
+    details:
+      - Preserve failed slr_v1 build and logs; do not retry placement from a checkpoint.
+      - Read-only synthesized-checkpoint inspection is permitted for diagnosis and does not run implementation.
+      - Existing dont_partition empty-target and CPU coalescer async-BRAM fallback warnings are also present in opt_v6; unrelated to this missing-group failure.
+  - timestamp: '2026-09-05 18:14'
+    action: Completed read-only inspection using the runtime-corrected Vivado Tcl checker.
+    result: All required hierarchy/marked groups pass, but 512 Weight response RX data bits are driven by BRAM output pins after TX FF absorption. Three additional failures are literal GND response-tag bits.
+    next: Preserve only Weight response TX payload as standalone FFs, retain fatal RAMB-driven crossing checks, verify current-source simulation, and run a new normal source-based hardware build.
+    details:
+      - 9474 marked FFs and logical owner counts 125814/229683/143164 confirmed; these are not placed resource counts.
+      - Repeated large Tcl dictionary access is slow inside Vivado; local arrays resolve it without weakening classification or replica checks.
+      - Prior diagnostic logs were preserved; only validated read-only diagnostic processes were stopped. No checkpoint implementation retry occurred.
+  - timestamp: '2026-09-05 18:29'
+    action: Completed read-only full partition-boundary scan, beyond surviving marked FFs.
+    result: Exactly30720 prealigner-to-MXU DSP pin connections,512 known Weight BRAM connections,and4 lifted RX-pointer LUT connections violate logical ownership boundaries; no other family found.
+    next: Preserve both MXU input-data FF banks, assign lifted command-RX helpers with their SLR0 receiver, and repeat final current-source verification before a new full source run.
+    details:
+      - Connection fanout counts are not added FF counts.
+      - Surviving marked-group checks alone cannot detect data pipelines fully absorbed into hard IP; full boundary-net validation is essential.

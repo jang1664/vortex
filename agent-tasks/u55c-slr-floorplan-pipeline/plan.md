@@ -1,10 +1,128 @@
 # U55C GEMM SLR floorplan and crossing-pipeline plan
 
-Status: **revised after review; base placement accepted; RTL and constraints not yet implemented**
+User stop condition (2026-09-06 13:29 KST): finish observing the current
+`slr_v7` attempt. If it fails, summarize the results and stop; the user
+will consider solutions. Do not start another RTL fix, synthesis, or
+implementation retry. Read-only result analysis and documentation remain
+in scope. This overrides the follow-up optimization steps below.
+
+Monitoring update (2026-09-06 16:18 KST): check only whether the current
+implementation has finished. Do not inspect intermediate results. Resume
+result analysis only after the run terminates.
+
+Final status (2026-09-06 17:58 KST): **stopped after the 100 MHz timing
+target failed**. `slr_v7` finishes normally and creates an xclbin, with
+legal routing, zero DRC errors, and hold WHS +0.006 ns. Setup WNS remains
+-2.749 ns and Vitis automatically scales the kernel to 78.4 MHz.
+The final top five paths distribute Weight selection from an SLR2 Laguna
+RX FF to Weight storage FFs (fanout 4,034; 98.44% routing delay on the worst
+path), not the earlier placed SLR1 dependency path. All hooks remained
+enabled. No additional fix or retry will be started per the user's request.
+See [results-summary.md](results-summary.md) for the final result and RTL
+anchors. The implementation steps below are not authorization to resume.
+
+Historical progress through completion-only monitoring: **RTL implementation and simulation gates passed; full source
+synthesis passed 2026-09-05. First implementation stopped at post-init's
+unused DMA-idle group check. Read-only inspection also found Weight response
+TX FF absorption into BRAM and MXU input-data TX/RX absorption into DSPs.
+Targeted data-FF preservation and validation fixes are implemented; final-source
+simulation passed. New full source build `slr_v2` passed synthesis and entered
+implementation at 19:43 KST, then stopped before placement on a Weight RX valid
+reset LUT. Narrow reset-pin extraction passes final simulation; `slr_v3` normal
+source build started 20:08 KST with post-assignment pblock-property checks.
+It passed synthesis and all read-only FF-pair/boundary preflight checks by
+21:06 KST, then actual platform post-init pblock/property/pair/boundary gates
+by 21:29 KST. Post-opt direct pairs, boundary nets, and all 5,408 RX enables
+also pass. Placement stopped at 22:00 KST because a place-created ACC reset
+LUT remained in ROOT while its placement-shape partner FF belongs to SLR1.
+Post-opt inspection additionally finds 512 existing ACC LUTs without their
+intended SLR1 membership. Ownership refresh plus validated homogeneous IP
+hierarchy anchors are implemented and pass flow regression tests. New normal
+source build `slr_v4` started 22:24 KST after fresh config/configure, with
+unchanged iteration-7 RTL. It passes synthesis, post-init and opt_design, but
+stops in the new post-opt hook with a bare `__DUMMY_KEY__` Tcl/API error at
+2026-09-06 00:13. Explicit cell-object resolution fixes the reproduced query
+failure; actual complete-hook and idempotence preflight both pass with zero
+failures. Post-opt hook remains enabled. New normal source build `slr_v5`
+started 01:26 KST after fresh primary config/configure. It passes synthesis
+with unchanged resources and the actual corrected post-opt hook. Placement
+fails at03:23 KST on the same generated reset-helper ownership defect in a
+different hierarchy: TMEM input-switch round-robin state (SLR0 versus ROOT).
+General single-owner hierarchy anchoring now passes actual full-hook and
+idempotence preflight:189 islands cover all100 owned BUFG-to-D FFs, including
+the four TMEM arbiter cases. DSP primitive-parent traversal and singleton
+PBLOCK return handling have dedicated regression tests. New normal source
+run `slr_v6` starts04:05 KST with the hook enabled and unchanged iteration7
+RTL. Its actual generalized post-opt hook and place_design pass. Post-place
+validation stops07:31 KST on an empty SLR lookup from raw cell-name strings;
+typed-object correction passes32 actual placed-FF checks plus regression
+fixtures. New normal source run `slr_v7` starts07:48 KST with unchanged RTL
+and all hooks retained. It passes synthesis, post-opt, placement and the
+corrected actual post-place SLR/direct-pair/per-group Laguna checks. Normal
+route_design is running. Per-group Laguna presence is not all-bit coverage:
+Input/Scale/Zero-point response data TXs are in SLICE, RXs in Laguna.
+Placed100MHz WNS is -0.438ns (467 failing setup endpoints); the worst paths
+are SLR1-local Weight readiness through Scale consume/dependency/queue
+controls. Pre-route optimization reaches estimatedWNS -0.327ns; intermediate
+clock-routed WNS is -0.021ns, not final data routing. Legal routing and final
+setup/hold remain unverified. See
+physical-results.md.**
 
 Decision: local DMA engines and their response RAMs move to SLR1. All eight
 HBM DMA channels remain in SLR0 for the base experiment. Moving selected HBM
 DMA channels to SLR1 is a follow-up comparison, not a fixed odd/even assignment.
+
+## Merge reconciliation (2026-09-05)
+
+Reviewed merge `5d8fc73f` against its first parent `7a4c73a2`. The base SLR
+assignment remains valid for the requested **TH16 / MXU32 / W4** config, but
+the implementation and verification must use the merged RTL as their baseline.
+TH16 is the CPU thread count; it does not select the MXU dimensions.
+
+| Contract | Primary `...th16_tcol32...` profile | New `...th16_tcol16...` compatibility profile |
+|---|---|---|
+| MXU rows / columns / column tile | 32 / 32 / 32 | 16 / 16 / 16 |
+| Weight loads per cycle | 4 | 4 |
+| HBM DMA channels / aggregate beat | 8 / 64 B | 8 / 64 B |
+| Physical TMEM organization | 8 arrays, 64 B words, 64 KiB each | 16 arrays, 32 B words, 32 KiB each |
+| DMA channel `c` ownership | array `c`, direct | arrays `2*c` and `2*c+1`, pair adapter |
+| Local I/W/S/Z/O beat width | 64 B each | 32 B each |
+| Physical TMEM capacity / words per array | 512 KiB / 1024 | 512 KiB / 1024 |
+| Weight command beats at W4 | 8 | 4 |
+
+Required changes to the pre-merge plan:
+
+- **Reuse the existing command launch stage.**
+  `VX_gemm_node.u_gemm_dma_launch_buffer` now registers normal DMA commands
+  and tags. Extend or replace this boundary for SLR transport instead of
+  blindly adding another command FIFO. Its one-entry pipe still couples ready
+  combinationally, and prepare/done/status remain direct connections.
+- **Separate aggregate and physical widths.** `VX_tmem_subsystem` now has
+  `HBM_DMA_DATA_SIZE`, `DATA_SIZE`, `INPUT_DATA_SIZE`, `WEIGHT_DATA_SIZE`,
+  `SCALE_ZERO_DATA_SIZE`, and `OUTPUT_DATA_SIZE`. Derive crossing payloads and
+  addresses from the relevant interface, not from a global 64 B assumption.
+  The old `GEMM_DATA_SIZE` / `GEMM_WEIGHT_DATA_SIZE` module parameters and
+  `ldma_gemm[]` interface array have been replaced by per-resource parameters
+  and named buses.
+- **Place the paired adapter with physical TMEM when elaborated.**
+  `g_dma_tmem_route[c].g_pair.u_dma_pair_adapter` stays in SLR0 with the two
+  owned arrays in the base assignment. The MXU32 direct branch has no adapter;
+  its absence is expected, not an empty-match floorplan failure.
+- **Preserve new ACC hazard handling.** Writes may now stall on scheduled
+  same-physical-array reads. The core also holds a result-FIFO head for the
+  new d=3 exact-address RAW case. Keep this logic with the ACC in SLR1, and
+  preserve its post-launch relative timing while adding MXU crossing latency.
+- **Preserve external DMA addressing.** The FSM rounds external transfers to
+  64 B, and the DMA decoder adds the missing aggregate-word carry when a
+  transfer begins on a nonzero channel and wraps. Pipelines must transport
+  these descriptors unchanged.
+
+Full PnR and the 2% performance acceptance target remain on the primary
+`configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh` profile. Include
+focused elaboration/functional compatibility checks for the new MXU16 profile
+when modifying shared modules; its full PnR is not added to this task. Do not
+reuse old MXU32 resource estimates for MXU16 or compare their cycle counts as
+if only floorplanning had changed.
 
 ## Objective
 
@@ -18,6 +136,12 @@ flow. The normal configure, synthesis, placement, and routing flow must recreate
 the result from RTL and Tcl constraints.
 
 ## Evidence from opt_v6
+
+All numbers in this section are **historical pre-merge observations**. They
+motivate the partition but are not current-source timing or utilization
+results. In particular, the new command launch FF cuts the formerly direct
+controller-to-DMA command path. Re-measure path rankings and resource use on
+the merged baseline; do not assume the opt_v6 worst path still exists.
 
 The opt_v6 implementation is not a valid routed baseline. Vivado completed a
 conflicted route and reported 5,167 routing-node overlaps. A confirmed
@@ -80,7 +204,7 @@ this base experiment; PE lanes stay together in the complete MXU hierarchy.
 
 | SLR | Assigned GEMM blocks | Reason |
 |---|---|---|
-| **SLR0: memory/backend region** | All eight physical TMEM arrays and their arbiters (`u_tmem_subsystem/g_bank[*]`); all five `u_switch_*` TMEM switches; all eight `u_dma_engine` channels; `u_tmem_dma_ctrl`; SLR0 halves of crossing slices | Keeps HBM AXI, DMA-to-TMEM connections, TMEM switch fanout, DMA completion reduction, and prepared-command activation local. |
+| **SLR0: memory/backend region** | All physical TMEM arrays and their arbiters (`u_tmem_subsystem/g_bank[*]`: 8 for MXU32, 16 for MXU16); all five `u_switch_*` TMEM switches; all eight `u_dma_engine` channels; any elaborated `g_dma_tmem_route[*].g_pair.u_dma_pair_adapter`; `u_tmem_dma_ctrl`; SLR0 halves of crossing slices | Keeps HBM AXI, DMA-to-TMEM direct/paired connections, TMEM switch fanout, DMA completion reduction, and prepared-command activation local. |
 | **SLR1: local DMA/control/ACC region** | The five `u_tmem_subsystem/u_ldma_*` engines including response RAMs; local request reservation/credit state; `u_job_frontend`; `u_VX_gemm_ctrl`; node completion/context tracking; `u_VX_gemm_unit_v2` except `u_compute_core/u_mxu`; accumulator memories and post-processing; SLR1 halves of crossing slices | Keeps local-DMA scheduling, response consumption, weight reuse, compute completion, and ACC access together. MXU relocation provides space for these blocks. |
 | **SLR2: MXU region** | Complete `u_VX_gemm_unit_v2/u_compute_core/u_mxu` including weight registers; MXU input/weight RX registers and output TX registers | Uses SLR2 DSP headroom for a complete streaming datapath. Physical fit and throughput remain verification targets. |
 
@@ -101,7 +225,7 @@ The crossing boundary moves from local-DMA-to-compute to
 local-DMA-to-TMEM-switch. Requests travel from SLR1 to SLR0, read responses
 return from SLR0 to SLR1, and output writes travel from SLR1 to SLR0. The
 switches and physical TMEM arrays stay together so that each switch's fanout
-to eight arrays stays inside SLR0. The weight switch's response assembly RAM
+to the selected profile's physical arrays stays inside SLR0. The weight switch's response assembly RAM
 also remains in SLR0; it is distinct from the weight local-DMA response RAM.
 
 Do not put the entire `u_tmem_subsystem` parent in an SLR0 pblock: its child
@@ -157,6 +281,10 @@ current response channel is direct, and their indexed request output is not a
 dedicated TX-to-RX connection. Add the necessary output FFs and response slices;
 do not declare the existing reservations SLR-safe without structural checks.
 Carry address, tag, priority, urgency, and required provenance together.
+Use `DATA_SIZE` for the memory-side I/S/Z/O ports and `WEIGHT_DATA_SIZE` for
+the weight port. For the two W4 profiles these are respectively 64 B and 32 B;
+the HBM DMA side remains 64 B in both profiles. Preserve profile-specific tag
+widths and physical-array address selection through the slice.
 
 Use elastic/skid buffering with capacity derived from the forward and feedback
 pipeline latency. Two entries are the starting point for a simple slice, not
@@ -180,6 +308,20 @@ status so output completion cannot release a dependent HBM store before TMEM
 contains the output. Apply the same ownership check to read-slot release.
 
 ### SLR1 to SLR0: GEMM controller to DMA backend
+
+The merged RTL already contains `u_gemm_dma_launch_buffer`
+(`VX_elastic_buffer`, `SIZE=1`, `OUT_REG=1`) at
+[`VX_gemm_node.sv:1231`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1231).
+It captures normal `cmd`/`cmd_tag`/valid and returns its upstream ready to the
+GEMM controller. `VX_elastic_buffer.g_eb1` instantiates `VX_pipe_buffer`, whose
+ready equation is `ready[i] = ready[i+1] || !valid[i+1]`. Therefore the stage
+cuts the forward command path but is not a complete SLR crossing. Prepare,
+done/tag, idle, and prepare-ready still bypass it.
+
+Use this stage as the starting point for the TX side or replace it with the
+SLR transport wrapper. Assign its resulting source half to SLR1 and destination
+half to SLR0; do not place a shared parent in both pblocks. Measure added
+latency relative to this existing launch stage, not the pre-merge direct wire.
 
 Separate `u_VX_gemm_ctrl` from `u_tmem_dma_ctrl` with explicit transport:
 
@@ -245,6 +387,25 @@ pipeline in the target configuration. Require at least an explicit receiving
 FF stage, audit the TX stage, and update every metadata delay derived from the
 actual added MXU latency. Check data/valid/tag alignment in simulation.
 
+### Preserve merged ACC backpressure and RAW timing
+
+The ACC path stays entirely in SLR1. `VX_gemm_acc_internal` now drives
+`wr_req_ready = !compute_write_bank_conflict`; scheduled physical reads take
+priority over unrelated same-array writes. The core's result queue must hold
+the write payload until actual acceptance. Exact-address RAW conflicts are
+not resolved by that arbitration and are asserted against.
+
+`VX_gemm_compute_core.post_head_d3_raw_stall` prevents a specific d=3 RAW
+hazard from escaping the result FIFO. Preserve this guard, ordered writeback,
+forwarding, and completion-at-commit when inserting upstream pipeline stages.
+The current static contracts include `MXU_OUT_DLY == 5`,
+`MERGER_CTRL_IDX + K_LOOKBACK == WRITE_CTRL_IDX - 1`, and fixed `L_R/L_A/L_P`
+of `1/1/0`. Derive effective tree/correction/metadata latency explicitly for
+SLR stages, maintain the relative ACC launch schedule, and retain equivalent
+assertions. Do not merely delete the five-cycle assertion to make compilation
+pass. Re-evaluate tree in-flight capacity, result FIFO credits, and pipeline
+ownership bounds with the added latency and downstream ACC stalls.
+
 ### No direct SLR0 to SLR2 GEMM paths
 
 The first implementation must not intentionally create an SLR0--SLR2 logical
@@ -278,6 +439,13 @@ keeps each crossing independently placeable.
   `g_bank[*]` arrays/arbiters, all five `u_switch_*` hierarchies, and SLR0 halves
   of crossing adapters in SLR0. Do not assign the entire `u_tmem_subsystem`
   parent to SLR0, or constrain individual channels to clock regions.
+- Match the selected profile: eight `g_direct` routes / eight TMEM arrays for
+  MXU32, or eight `g_pair.u_dma_pair_adapter` instances / sixteen TMEM arrays
+  for MXU16. Include pair-adapter lane state and response FIFOs in SLR0.
+  Expected inactive generate branches must not trigger the empty-match check.
+- Include the reused/replaced `u_gemm_dma_launch_buffer` crossing halves in
+  the TX/RX ownership manifest. A registered forward payload does not justify
+  leaving its reverse ready path or prepare/status bypass unconstrained.
 - Enumerate residual TMEM subsystem glue explicitly by ownership. Request
   reservation logic must be split or wrapped so its SLR1 source and SLR0
   destination registers have separate placement collections.
@@ -295,6 +463,21 @@ keeps each crossing independently placeable.
   each boundary. Avoid blanket `DONT_TOUCH` constraints on surrounding logic.
 - Give boundary register arrays stable hierarchy and names so Tcl can verify
   their count and pblock membership after synthesis.
+- Refresh classified leaf ownership after implementation optimization and
+  before placement. Optimizer-created helper LUTs must share the assigned
+  pblock of their local RTL region; post-init membership alone is insufficient.
+  Reject conflicting owners and verify actual membership without relaxing
+  hard pblocks or assigning unrelated ROOT/platform cells.
+- Anchor retained, maximal single-owner hierarchy islands to their existing
+  SLR owner as well as checking individual leaves. Include TMEM arbiters and
+  other local logic, not only floating-point IP. Validate every nonconstant
+  descendant against the same owner; unowned/clock leaves block that parent.
+  Recurse into mixed parents instead of assigning them. Never attach the
+  mixed GEMM/compute/TMEM/transport containers or unrelated platform parents.
+  This provides an ownership contract for local helpers created inside
+  `place_design`, after any pre-placement leaf refresh. Explicitly report
+  owned FFs directly under mixed parents that have no homogeneous anchor;
+  do not infer helper protection for these residual leaves.
 - Make empty hierarchy matches, multiply assigned cells, missing boundary
   register banks, or a non-XCU55C part fatal Tcl errors.
 - After `place_design`, report the cell count and resource utilization of every
@@ -307,7 +490,7 @@ keeps each crossing independently placeable.
 
 ## Expected physical balance
 
-The first-order LUT estimate after moving blocks is:
+Using historical opt_v6 MXU32 numbers only, the first-order LUT estimate is:
 
 - SLR0 loses the GEMM controller and job-frontend logic currently mixed into
   the memory region, plus about 8.4K LUTs / 5.6K FFs of local DMA logic, while
@@ -321,6 +504,16 @@ CLB below 80% and boundary SLL utilization below 65% as review thresholds, not
 hard pass/fail limits. In particular, reserve extra routing room for HBM/HMSS
 in SLR0. Local congestion, available dynamic-region sites, and legal routed
 timing determine feasibility, not device-average LUT/DSP arithmetic.
+
+Recompute these estimates after the merge's launch buffer and ACC-control
+changes. The MXU16 paired adapter is inactive in the primary MXU32 build.
+When checking MXU16, account separately for its eight pair adapters: each
+declares two lanes of depth-two 256-bit response payload storage (1024 payload
+bits per adapter, 8192 total), plus tags/control. This is an RTL storage-bit
+budget, not a measured FF/BRAM implementation. The adapter has no
+`RESPONSE_DATA_RAM` parameter; its small lane FIFO storage policy is distinct
+from the RAM-backed local-DMA response slots and must not be silently changed
+as part of inserting SLR slices.
 
 ## Follow-up comparison: distributing HBM DMA channels
 
@@ -337,8 +530,10 @@ window, not a classification of the congested nets. First distinguish DMA
 internal nets, DMA-to-TMEM nets, and DMA-to-HMSS AXI nets. Record actual HMSS
 endpoint locations, each channel's footprint, and crossing-column demand.
 
-In the current eight-channel/eight-array configuration, DMA channel `c` is
-directly connected to physical TMEM array `c`. Compare these placements:
+In the primary MXU32 eight-channel/eight-array configuration, DMA channel `c`
+connects directly to physical TMEM array `c`. In MXU16 it connects through a
+pair adapter to consecutive physical arrays `2*c` and `2*c+1`, with the same
+array-local word address on both lanes. Compare these placements:
 
 - **Channel only moves:** corresponding TMEM stays in SLR0. Both its AXI side
   and its TMEM side can cross SLR0--SLR1. At 512 bits, four channels can expose
@@ -350,12 +545,24 @@ directly connected to physical TMEM array `c`. Compare these placements:
   path stays local, but SLR0 TMEM switches now reach arrays in both SLRs.
   Count those expanded request/response paths and arbitration feedback before
   choosing this option. Include the array's URAMs and arbiter in its group.
+  For MXU16, the corresponding group is the channel, its pair adapter, and
+  both consecutive arrays. Moving only one lane would split acceptance and
+  response-join control across SLRs and is not the paired-group experiment.
 
 For either option, move the complete per-channel unit including AXI adapter,
 response RAM, address remap, and counters. Cutting only `u_dma_unit` while its
 adapter remains behind creates another unplanned boundary. Pipeline all five
 AXI channels and applicable TMEM paths with correct outstanding/drain tracking.
 Retain the logical HBM mapping and channel parallelism across comparisons.
+
+For MXU16 channel-only relocation, state explicitly whether the pair adapter
+stays with SLR0 TMEM (a 64 B aggregate crossing) or moves with the channel
+(two 32 B lane crossings). The combined payload width remains 64 B; splitting
+it does not automatically reduce SLL use and adds per-lane control. Preserve
+the adapter's exact-once partial request acceptance: aggregate request ready
+means both physical arrays accepted, and a read response joins matching lane
+tags. Its depth-two lane response FIFOs and same-cycle ready feedback are not
+SLR slices. Do not treat their FF storage as a ready-made crossing boundary.
 
 Distributed channel completion is a separate design gate. Registering remote
 done into a central reduction and then registering activate back to the remote
@@ -374,8 +581,50 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 
 ## Implementation sequence
 
-1. Freeze a reproducible functional/cycle baseline and inventory boundary
-   payload widths, event ownership, and actual launch/capture FFs. Remove the
+### Measured buffering refinement (2026-09-05)
+
+The first complete SLR candidate passes all numerical tests but exceeds the
+primary overlap performance gate: median host cycles 6474 -> 6699 (+3.475%).
+Its weight source-to-destination latency is 10 rather than 7 cycles; an
+eight-beat command starts every 11 rather than 8 cycles. The next descriptor
+is already queued, so this is response-slot recycling pressure, not missing
+command preparation. Detailed evidence is in `simulation-results.md`.
+
+Refine the SLR weight queue without increasing its eight RAM addresses:
+release an address after its data is captured in the existing registered RAM
+output, retain the associated beat metadata independently in that sink stage,
+and allow source-local same-edge reuse. Keep descriptor install/architectural
+completion at the actual sink handshake. This changes the lifetime of a RAM
+address, not the number of RAM slots or physical weight-commit semantics.
+The held sink register must remain stable if the freed RAM address receives a
+new response. Verify stalls, out-of-order responses, pointer wrap, and the
+read/write collision invariant before repeating the W4 performance matrix.
+Early release alone improved overlap to 6623 cycles (+2.30%), still above the
+gate. The final refinement adds a private single-beat ordered-response bypass
+register (512 data FF bits plus selector for MXU32; 256 plus selector for
+MXU16). It shares the existing logical sink-stage ownership; it does not add
+another queue entry or RAM address. All responses still write RAM, and
+out-of-order responses use its registered-read path. An exact ordered response
+can instead enter the held sink stage on arrival, without a same-address RAM
+read/write collision. The matching beat/sequence remains held until the actual
+sink handshake.
+
+The final W4 matrix passes all 12 numerical runs and all individual host-cycle
+samples remain within 2% of their same-case baseline median. Overlap median is
+6474 -> 6552 (+1.205%). Internal compute span is still 566 -> 626 (+10.60%) and
+the serialized store tail grows from 84 to about 108 cycles; these are reported
+costs, not hidden by the host-cycle acceptance result. Final MXU16 odd-tail
+QCOL/QROW blackbox checks and the extended six-case queue tests also pass.
+See `simulation-results.md` and `compatibility-results.md` for exact images,
+metrics and limits. Full implementation started only after these gates passed.
+
+### Ordered steps
+
+1. Freeze a reproducible functional/cycle baseline on merge `5d8fc73f` (or
+   record the explicitly chosen later revision), including its launch buffer,
+   ACC fixes, and matching host/kernel layout code. Record config, image hash,
+   measured cases, and pipeline latency. Inventory boundary payload widths,
+   event ownership, and actual launch/capture FFs. Remove the
    opt_v6 channel pblocks and add post-synthesis checks that reject
    any clock-region DMA pblock.
 2. Add reusable registered memory-bus and control/status crossing modules with
@@ -383,17 +632,21 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 3. Assign the five local DMAs to SLR1 and insert the five local-DMA-to-switch
    boundaries. Verify responses, slot accounting, output commit/drain, and
    scheduler locality; leave TMEM switches and physical arrays in SLR0.
-4. Insert the SLR1--SLR0 controller/backend queues while preserving the local
-   SLR0 same-cycle DMA completion chain.
+4. Extend/replace the existing DMA launch buffer with the SLR1--SLR0 command
+   transport, including prepare and status paths. Preserve the local SLR0
+   same-cycle DMA completion chain without duplicating the launch stage.
 5. Add the MXU input, weight, and output TX/RX stages. Update fixed-latency
-   metadata, actual weight installation, and old-weight release accounting.
+   metadata, actual weight installation, and old-weight release accounting;
+   preserve the merged ACC backpressure/d=3 RAW handling and relative schedule.
 6. Add the three full-SLR pblocks and strict hierarchy/count validation.
 7. Source
    `configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh` so generated
    settings reflect the selected W4 base experiment. From the build directory,
    run `../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex`
    before tests or synthesis, refreshing generated Tcl and build files.
-8. Run functional/performance simulation before any full implementation.
+8. Run primary-profile functional/performance simulation and focused MXU16
+   compatibility checks before full implementation. Ensure the newly compiled
+   RTL and host/kernel binaries correspond to the merged source and profile.
 9. Run one normal source-based full implementation; do not retry from a DCP.
 10. Use its results to decide whether the channel-distribution follow-up is
     warranted. Preserve the base result and compare source-built variants only
@@ -410,6 +663,8 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 - Assert command ownership and credits so delayed ready/status cannot duplicate
   or drop a DMA command. Exercise prepare/release ordering and new
   high-priority arrival concurrent with fallback chaining.
+- Include a command waiting in `u_gemm_dma_launch_buffer` while the backend
+  completes or prepare is active; check tags, drain/idle, and release ordering.
 - Assert that the SLR0 DMA backend can activate a fully prepared next command
   on the same edge as the current logical completion.
 - Measure backend-complete to controller-observed-complete latency separately
@@ -419,20 +674,39 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 - Assert actual weight installation precedes consumption, old-weight release
   follows its last capture, and data/valid/metadata remain aligned through the
   MXU pipelines.
+- Re-run the merged `gemm_unit_v2` three-row d=3 RAW and five-row ACC read/write
+  arbitration cases with SLR pipeline latency enabled. Exercise sustained ACC
+  write backpressure, result-FIFO credit exhaustion, and completion only after
+  ordered write acceptance.
+- Re-run `gemm_tmem_dma_ctrl` nonzero start-channel wrap coverage (nine 64 B
+  words starting at channel 4) and the FSM's external transfer-size rounding
+  checks. Preserve aggregate 64 B alignment even for 32 B local transactions.
 - Run `xrt-vcs-sim` after sourcing
   `configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh`.
 - Use W4 (`MXU_WLOAD_NUM=4`) for the FPINT GEMM comparison.
 - Require correct numerical results and no assertion, X-propagation, timeout,
   or protocol failure.
 - Require each measured FPINT GEMM case to remain within 2.0% of its frozen
-  baseline cycles. Pipeline fill latency may increase, but steady-state
-  throughput must remain one transaction or beat per cycle.
+  **merged, same-profile** baseline cycles. Measure host PERF cycles and the
+  internal compute span / serialized DMA-store tail separately so host jitter
+  cannot hide a new dependency bubble. Pipeline transport must sustain one
+  transaction or beat per cycle when endpoints have capacity; preserve legal
+  ACC hazard stalls and measure their end-to-end performance effects.
 - Keep response payload storage RAM-backed and the initial eight response
   slots unchanged. Measure request-to-response and allocation-to-slot-release
   latency, peak slot occupancy, and slot-full stalls. One-beat/cycle slice
   throughput does not establish end-to-end throughput with a finite slot pool.
   If latency exhausts slots, revise the buffering/latency design with measured
   resource and performance evidence rather than silently increasing slots.
+- For shared RTL changes, check 32 B and 64 B crossing payloads and both
+  direct/paired elaborations. Source
+  `configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh` separately for
+  MXU16 compatibility; use its own fresh build/config record. Re-run focused
+  `tmem_dma_pair_adapter` and `tmem_switch_16bank` tests if affected, covering
+  asymmetric lane acceptance, byte enables, tag joins, and FIFO full/recovery.
+  Include QCOL/QROW and small odd-tail MXU16 integration cases when shared
+  pipeline latency changes. MXU16 has its own same-profile functional baseline;
+  its full PnR and performance sign-off remain outside the primary target.
 
 ### Synthesis and placement checks
 
@@ -443,6 +717,9 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 - Require `u_mxu` DSPs and logic to be entirely in SLR2, the named control/ACC
   and all five local DMAs/response RAMs in SLR1, and the named HBM DMA,
   TMEM switches/arrays, and TMEM DMA controller in SLR0 for the base experiment.
+- Verify the profile's actual array/adapter counts and widths. Historical
+  opt_v6 utilization and timing are reference evidence only, not acceptance
+  results for the merged image.
 - Verify direct TX-FF/Q to RX-FF/D connectivity and actual Laguna TX/RX mapping
   for each intended crossing group in both directions. Nonzero aggregate
   counts alone do not establish coverage; investigate unmapped groups and
@@ -474,34 +751,59 @@ variant merely because its SLR0 LUT count is lower, and do not retry from DCP.
 
 ## Relevant RTL and flow locations
 
+Line anchors below were refreshed against merge `5d8fc73f`; use the named
+symbols if subsequent edits move them.
+
 - Local-DMA-to-compute wiring, now local to SLR1:
-  [`VX_gemm_node.sv`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1467)
-- DMA channel to corresponding physical TMEM array:
-  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L225)
+  [`VX_gemm_node.sv`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1494)
+- Existing command launch buffer and direct prepare/status connections:
+  [`VX_gemm_node.sv`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1219)
+- Launch buffer implementation and combinational ready chain:
+  [`VX_elastic_buffer.sv`](../../hw/rtl/libs/VX_elastic_buffer.sv#L43),
+  [`VX_pipe_buffer.sv`](../../hw/rtl/libs/VX_pipe_buffer.sv#L58)
+- DMA channel direct/paired physical TMEM ownership:
+  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L248)
+- Pair adapter request acceptance and response join:
+  [`VX_tmem_dma_pair_adapter.sv`](../../hw/rtl/mem/VX_tmem_dma_pair_adapter.sv#L17)
 - Request reservations and TMEM switches, new memory-side crossing boundary:
-  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L400)
+  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L441)
 - Local-DMA engines and scheduler/compute dependencies:
-  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L724)
+  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L766)
 - Existing reservation implementation with direct response forwarding:
-  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L1042)
+  [`VX_tmem_subsystem.sv`](../../hw/rtl/mem/VX_tmem_subsystem.sv#L1103)
 - TMEM subsystem and compute/controller instances:
-  [`VX_gemm_node.sv`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1389)
+  [`VX_gemm_node.sv`](../../hw/rtl/core/gemm/VX_gemm_node.sv#L1412)
 - Current MXU boundary:
-  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1448)
+  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1485)
 - First MXU tile bypassing the column registers:
   [`VX_gemm_tree_v1.sv`](../../hw/rtl/core/gemm/VX_gemm_tree_v1.sv#L124)
 - Zero-depth output alignment in the W4/tcol32 build:
-  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1469)
+  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1504)
 - Same-cycle weight release and write acceptance:
-  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1024)
+  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L1058)
+- ACC timing contracts and new d=3 RAW guard:
+  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L187),
+  [`VX_gemm_compute_core.sv`](../../hw/rtl/core/gemm/VX_gemm_compute_core.sv#L800)
+- ACC write backpressure:
+  [`VX_gemm_acc_internal.sv`](../../hw/rtl/core/gemm/VX_gemm_acc_internal.sv#L92)
 - Current direct per-channel AXI wiring:
   [`VX_dma_engine.sv`](../../hw/rtl/mem/VX_dma_engine.sv#L485)
 - DMA completion/candidate chaining:
   [`VX_gemm_tmem_dma_ctrl.sv`](../../hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv#L291)
+- Wrapped-channel TMEM address carry and external DMA alignment:
+  [`VX_gemm_tmem_dma_ctrl.sv`](../../hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv#L710),
+  [`VX_gemm_fsm.sv`](../../hw/rtl/core/gemm/VX_gemm_fsm.sv#L431)
 - Existing floorplan implementation:
   [`floorplan.tcl`](../../hw/syn/xilinx/xrt/floorplan.tcl#L1)
 
 ## Reference guidance
+
+Merged functional evidence and launch-buffer performance observations are in
+[MXU16 verification results](../mxu-16x16-support/verification-results.md) and
+[DMA launch-buffer cycle analysis](../mxu16-dma-launch-buffer/analysis.md).
+These are prior task results, not new verification performed for this plan.
+The launch-buffer analysis reports a visible serialized-store tail cost even
+when host PERF ranges overlap, motivating the separate internal-cycle metrics.
 
 AMD recommends leaving additional fabric headroom for HBM interfaces in SLR0;
 this supports moving local-DMA/control logic toward its compute consumers.
