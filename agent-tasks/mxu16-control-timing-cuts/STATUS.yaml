@@ -1,0 +1,111 @@
+task: mxu16-control-timing-cuts
+state: IN_PROGRESS
+scope: Execute plan.md, including RTL cuts, independent performance experiments, functional matrix, and routed 100 MHz verification.
+baseline_commit: 5d8fc73f
+current_phase: Measured C2 selected in primary MXU16 config; B0 and C2 P&R launched in parallel.
+resume_priorities:
+  - 'Inspect current agent/process state before restarting anything. RTL is frozen for source-hash-checked ablations; do not edit RTL without coordinating invalidation/rebuild.'
+  - 'Ablations complete: ten variants, five M4 launches each PASS; focused C2 regressions complete. See execution/ablation-verification.md and focused-verification.md. Do not restart completed verification runners.'
+  - 'C2 P&R launched at23:17 in fresh build_mxu16_timing_pnr_c2, session56160. See execution/pnr-c2-manifest.json and pnr_c2.log. User explicitly authorized concurrent B0/C2 execution.'
+  - 'Baseline P&R session74186/v++PID437999 verified live at23:16; latest checked log was post-placement optimization. Preserve its separate build and do not restart.'
+  - 'Final candidate still requires full20-case matrix,5 M4 runs per qdir/transposed combination, MXU32 smoke, all detailed performance/ownership metrics, implemented FF/ready-path proof, routed100MHz setup/hold/route closure and area/congestion comparison.'
+  - 'Primary MXU16 config now selects measured C2 through GEMM_TIMING_CUTS=1; explicit per-cut overrides and other-config default-off behavior remain supported. No C1 P&R launch required before C2. Do not mark goal complete based on simulation PASS alone. No commit/push requested.'
+log:
+  - timestamp: '2026-09-05 23:17'
+    message: 'User requested C2 P&R concurrently with B0. Configured fresh build_mxu16_timing_pnr_c2 and launched primary MXU16 C2 config with timing_c2 postfix,100MHz,Vivado2025.1,jobs8,optimize3,floorplan0,default place/route,ultrathreads0,fast0,early-fail disabled,debug/perf disabled. B0 remains untouched. Available memory377GiB and disk425GB checked before launch. Source/config hashes and command recorded in execution/pnr-c2-manifest.json; no new simulation requested or launched.'
+  - timestamp: '2026-09-05 23:01'
+    message: 'User selected all measured C2 cuts. Added GEMM_TIMING_CUTS=1 to primary MXU16 config and master-controlled defaults in VX_config.vh. Preprocessing matched saved measured C2 for all five changed modules; explicit A0 overrides and unselected-profile defaults remained all-off. Shell syntax and diff checks passed. No simulation or synthesis was launched during that activation turn.'
+  - timestamp: '2026-09-05 21:35'
+    message: 'A0 (fresh current RTL, all cuts off) and AM (monotonic SET only) each5/5 M4 blackbox PASS; exact host PASSED, unchanged sourcefreeze, kernel hash equals B0, launch FIFO/tag/occupancy checks pass. Detailed internal parity analysis runs separately. A1 and subsequent independent cuts remain in live verification orchestration.'
+  - timestamp: '2026-09-05 21:35'
+    message: 'P3 final focused report execution/focused-verification.md: generic30cases and qparam16cases across32/64B PASS; strengthened controller prepare-becoming-ready, staleSET/stalledhead/equalSET/resetepoch PASS baseline and C1. C2 input/weight overlap32B RAM PASS; remaining shared focused regressions underway. Experimental C1/C2 synthesis configs created and shell-checked, not yet synthesized.'
+  - timestamp: '2026-09-05 21:30'
+    message: 'P0 complete: B0/audit.json proves exact20 unique shape/qdir/transpose cases and24 launches PASS, identical compiled binary. Diagnostic FSDB preserves18.3MB waveform; validated1024 input/compute events and1436 compute-active cycles. Input509bubbles=124no-command+259RAM-refill+99response-unavailable+27backpressure; compute412activebubbles=291no-data+121weight-ready. Memory defaults/model captured separately; detailed physical/local overlap parser extended next.'
+  - timestamp: '2026-09-05 21:30'
+    feature: P3 held request repair
+    iteration: 3
+    status: pass
+    error_summary: none
+    root_cause: 'Nonring free-slot priority could change stalled request identity.'
+    fix_applied: 'Hold only slot index and valid until request handshake/reset; ring allocator remains unchanged. Strengthened original failing suite now passes.'
+    lesson: 'Response staging handoff can expose pre-existing free-priority request instability even before writer fence release.'
+  - timestamp: '2026-09-05 21:30'
+    message: 'P3 coverage extension PASS:30 generic configurations including nonelastic8-slot hazard cases and elastic long-command II1/reset/fence tests;32B S/Z xRAM/FF xelastic0/1 eight qparam suites PASS.64B compatibility and strengthened controller prepare/stale-SET tests continue. Independent A1/A2/A3/allviews controller results also confirmed PASS after former session18240 had already terminated; no restart.'
+  - timestamp: '2026-09-05 21:30'
+    message: 'Independent xrt-vcs-sim ablations launched in verification session58622: A0, AM, A1, A2, A3, A5, A7, C1, five M4 runs each with original B0 memory environment and complete binary/source identity checks. A6 will follow after current queued series, then combined C2. All selectors remain default-off until measured final selection. B0 PNR still live155/156 synthesis jobs; manifest saved.'
+  - timestamp: '2026-09-05 21:21'
+    feature: P3 strengthened generic queue
+    iteration: 2
+    status: sim_fail
+    error_summary: 'VX_gemm_dma_fetch_if.sv:171 request changed while held, at225ns; enabled nonring/depth1/8-slot FF case.'
+    root_cause: 'Combinational free-slot priority selection can change a stalled request tag when an earlier response slot is released into the EB.'
+    fix_applied: 'Verification paused for RTL-owner repair of held slot selection; not accepted or bypassed.'
+    lesson: 'Prefetch under a closed writer fence exposes request-stability hazards not covered by the original four-slot tests.'
+  - timestamp: '2026-09-05 21:21'
+    message: 'C1 controller combined unit PASS after cut-aware next-cycle checks (execution/unit/c1_gemm_ctrl_20260905_211952). Enabled monotonic SET, registered S/Z consume/local dependency/prepare/capacity, launch EB2 selector; direct ACC_FREE and DMA dependency cuts off. Controller-only test does not instantiate launch EB; integration coverage still required.'
+  - timestamp: '2026-09-05 21:21'
+    message: 'P4 integrated final-source enabled/bypass x padding/no-padding cases PASS, plus existing aligned DMA with write EB enabled at 32-to16 and64-to64 byte widths and standalone pair test. Existing cfg stimulus failures reproduced with write EB off and repaired at handshake edges without RTL changes. Detailed reports execution/p4-*-result.json; final verifier audit pending.'
+  - timestamp: '2026-09-05 21:19'
+    feature: control-cut unit baseline
+    iteration: 2
+    status: sim_fail
+    error_summary: 'After command-stage stimulus repair, Weight consume expectation used same-cycle next value although baseline RTL already exports registered Weight consume.'
+    root_cause: 'Another pre-existing TB contract predates the registered Weight fence.'
+    fix_applied: 'Check old committed value during consume event and updated value after the edge; preserve Weight RTL.'
+    lesson: 'Direct-resource timing assertions must distinguish architectural next state from externally visible registered values.'
+  - timestamp: '2026-09-05 21:19'
+    feature: control-cut unit baseline
+    iteration: 3
+    status: pass
+    error_summary: none
+    root_cause: 'Baseline TB contract repairs completed.'
+    fix_applied: 'No RTL changes for baseline test repairs.'
+    lesson: 'Fresh baseline controller lifecycle and directed suites now pass before enabled-cut validation.'
+  - timestamp: '2026-09-05 21:19'
+    message: 'P3 generic queue initial regression PASS: original disabled plus enabled SINK_ELASTIC configurations across 32-byte data, FF/RAM, ring/nonring and depth1/2/4. Qparam S32/RAM/elastic also PASS. Stronger fence/pending/reset/II1 checks still in progress; not final acceptance.'
+  - timestamp: '2026-09-05 21:19'
+    message: 'P4 integrated DMA+fixed-pair EB2/PAD1 PASS: partial byte enables, delayed final lane0/lane1, exact-once physical byte scoreboard, next-command/done blocked 23 cycles, reset with two pending writes, and separate 64-beat EB2 II1 check. Initial new-TB tag/stride/ACTIVATE setup errors repaired without RTL changes. PAD0 and existing DMA baseline/variant regression pending.'
+  - timestamp: '2026-09-05 21:19'
+    message: 'B0 full matrix has completed all shapes through M32 and most M64 cases; original runner PID434201 remains live with binary hash enforcement. PNR B0 process437999/session74186 remains live, 117/156 block synthesis jobs complete. Captured memory environment shows Ramulator HBM2/FRFCFS and deterministic app data, not a fixed-latency memory model.'
+  - timestamp: '2026-09-05 21:10'
+    message: 'First-pass P1/P2 control cuts, P3 S/Z sink EB2, and P4 HBM write EB2 implemented behind independent default-off selectors. Main reviewed ownership/payload/physical-completion changes; diff check clean. P4 reuses the existing all-request pending transport counter instead of duplicating state. P2b remains conditional pending residual timing evidence.'
+  - timestamp: '2026-09-05 21:10'
+    feature: control-cut unit baseline
+    iteration: 1
+    status: sim_fail
+    error_summary: 'SCHED_DIRECTED fifth W-before-Input bypassed full scoreboard at tb_VX_gemm_ctrl.sv:1753, time271ns.'
+    root_cause: 'Stale test probes old FSM pending-work wires; current scheduler probes registered cmd_stage_cmd_q. All timing flags were off in fresh build_mxu16_timing_unit_b0.'
+    fix_applied: 'Verification agent is adapting stimulus to the actual command-stage contract while retaining full-scoreboard child-enqueue/ownership checks; no RTL workaround.'
+    lesson: 'A baseline directed test can predate an existing pipeline boundary even when blackbox baseline passes. Verify the asserted interface contract before changing RTL.'
+  - timestamp: '2026-09-05 20:59'
+    message: 'P0 fresh B0 simulator captured (SHA256 dbc4f3ab4548f07ebf7f95ec65cc5378e42b25bcf4685ee74e5c792bb1bfd5af); five M4 launches and all M4 qdir/transposed cases passed. Full matrix remains live, runner PID434201/session4966. B0 current-flow 100 MHz P&R is live in session74186, packaged XO captured before edits, now synthesis. Fixed floorplan0/default directives/ultrathreads0; congestion early-fail disabled for complete routed evidence.'
+  - timestamp: '2026-09-05 20:59'
+    message: 'Found existing tagged-scoreboard TB permits decreasing SET values, making naive registered dependency views unsafe. User explicitly authorized removing this behavior. Resumed P1b with a monotonic SET contract, separate selectable baseline compatibility, and directed stale-SET/reset tests; no combinational revocation veto planned. RTL agents released after both baseline source captures.'
+  - timestamp: '2026-09-05 20:50'
+    message: 'Implementation authorized by the user. Revalidated HEAD and clean tracked worktree; no interrupted task process found. Read plan and project/RTL/blackbox skills. Starting fresh baseline before RTL edits; unrelated running jobs are excluded.'
+  - timestamp: '2026-09-05 19:49'
+    message: 'Checked merged HEAD against ffdd0a74. No hw/rtl changes; merge adds implementation controls and a separate SLR floorplan plan. Existing v2 path evidence remains structurally relevant.'
+  - timestamp: '2026-09-05 19:53'
+    message: 'Verified SIZE=1 ready coupling and SIZE=2/OUT_REG=1/LUTRAM=0 registered ready. Identified dependency next-state forwarding, completion-capacity bypasses, S/Z consume/ready bypasses, local sink turnover, and unbuffered HBM destination writes.'
+  - timestamp: '2026-09-05 19:58'
+    message: 'Created plan.md with staged and independent cuts, ownership/completion invariants, fresh-baseline requirements, 20-case functionality matrix, M4 repeated cycle/bubble/overlap measurements, and fixed-clock versus achieved-clock performance comparison. Rechecked unchanged RTL/config and HEAD. No RTL implementation or tests performed.'
+artifacts:
+  - plan.md
+  - control-timing-cuts-spec.md
+  - control-cut-design.md
+  - p3-sink-implementation.md
+  - p4-write-implementation.md
+  - execution/B0/manifest.json
+  - execution/B0/results.json
+  - execution/B0/metrics.csv
+  - execution/pnr_b0.log
+pitfalls:
+  - 'All eight VX_dma_unit channels share INSTANCE_ID; DMA_WRITE_EB attribution must include the %m hierarchy scope, not inst string alone.'
+  - 'Scaling the legacy local-DMA misalignment TB from16B to32B doubles its transfer footprint; fixed source/destination addresses8KiB apart overlap a16KiB transfer. Repair TB allocation/bounds, not RTL, when validating32B.'
+  - 'Legacy dma_mem_unit cfg_send_desc holds valid through an extra busy clock and clears at posedge; old held-request assertion can fail independently of write EB. Verify baseline and repair TB edge discipline, not RTL handshake safety.'
+  - 'Registered dependency readiness requires monotonic state within an epoch; legal old decreasing SET behavior was explicitly removed by user authorization, not assumed away.'
+  - 'Existing TMEM chunk issue trace can print the prior live tag during turnover; parser must validate interval pairing and report tag mismatches instead of silently mispairing descriptors.'
+  - 'A two-entry buffer changes acceptance ownership; enqueue is not physical register/bank write completion.'
+  - 'Using registered dependency values alone does not cut same-cycle inflight capacity or idle/completion bypasses.'
+  - 'A registered ready bit without skid capacity can lose transfers; use the actual two-entry elastic-buffer implementation.'
+  - 'Existing performance reports predate parts of the current baseline; remeasure HEAD with a freshly built simulator.'
