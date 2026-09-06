@@ -1,0 +1,32 @@
+task: mxu16-100mhz-dma-pnr-analysis
+state: done
+updated: "2026-09-05 13:23"
+build: build/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+log:
+  - timestamp: "2026-09-05 12:50"
+    action: "Started evidence-based analysis of the completed MXU16 100 MHz implementation reports."
+    result: "Located routed timing, placed congestion, flat utilization, and hierarchical utilization reports."
+    learned: "The requested analysis can use the completed implementation artifacts rather than estimating from RTL structure alone."
+  - timestamp: "2026-09-05 13:08"
+    action: "Opened the final post-route physical-optimization checkpoint and generated high-fanout, scoped SLR utilization, and top-500 failing-path reports."
+    result: "The worst path is compute-to-HBM-DMA with 12.175 ns data delay, 78.5 percent routing delay, and 32 logic levels."
+    learned: "The pair adapter is a LUTRAM density cost but does not appear as a failing endpoint or high-fanout source; the unregistered cross-block command/control chain is the primary timing failure."
+  - timestamp: "2026-09-05 13:20"
+    action: "Classified one worst path for every setup-failing endpoint and regenerated scoped SLR reports with non-overlapping hierarchy roots."
+    result: "DMA/TMEM logic owns 17,122 of 20,540 failing endpoints; HBM DMA owns 9,189 and local DMA owns 3,952. All DMA/TMEM hierarchy is in SLR0 while the worst compute launch is across the SLR0/SLR1 boundary."
+    learned: "HBM DMA is the largest TMEM component, but local DMA also has a real timing problem through response-slot RAM enables despite its smaller area."
+  - timestamp: "2026-09-05 13:23"
+    action: "Documented utilization, congestion windows, failing-path populations, high-fanout risks, and a ranked closure strategy without changing RTL."
+    result: "Recommended first registering the compute/scheduler-to-DMA launch boundary, then localizing per-channel control and cutting local-DMA RAM-enable feedback."
+    learned: "The completed route has zero route errors, but Vitis auto-scaled the requested 100 MHz clock to 81.3 MHz because final WNS is -2.297 ns."
+pitfalls:
+  - "Do not attribute timing failure to DMA from hierarchy size alone; classify actual failing startpoints, endpoints, and route delay."
+  - "Do not mix the prior MXU32 congestion results with the current MXU16 build; use them only as a labeled comparison."
+  - "The first scoped-utilization script selected each hierarchy and all of its descendants, causing double-counted resource totals. The corrected classification run selected only module roots and overwrote those reports."
+  - "Use the official hierarchical utilization report for resource accounting; scoped reports are used to determine SLR placement."
+artifacts:
+  analysis: agent-tasks/mxu16-100mhz-dma-pnr-analysis/analysis.md
+  failing_paths: agent-tasks/mxu16-100mhz-dma-pnr-analysis/failing_path_classification.txt
+  top500_paths: agent-tasks/mxu16-100mhz-dma-pnr-analysis/top500_failing_paths.rpt
+  high_fanout: agent-tasks/mxu16-100mhz-dma-pnr-analysis/routed_high_fanout.rpt
+  analysis_script: agent-tasks/mxu16-100mhz-dma-pnr-analysis/classify_routed.tcl

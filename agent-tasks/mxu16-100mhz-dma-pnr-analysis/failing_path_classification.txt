@@ -1,0 +1,48 @@
+failing_paths 20540
+
+endpoint_classes
+gemm_ctrl count=244 worst_slack=-2.177
+gemm_other count=2921 worst_slack=-1.747
+hbm_dma_engine count=9189 worst_slack=-2.297
+local_dma count=3952 worst_slack=-2.176
+tmem_banks count=1225 worst_slack=-1.201
+tmem_dma_ctrl count=2493 worst_slack=-1.478
+tmem_subsystem_other count=89 worst_slack=-1.480
+tmem_switch count=174 worst_slack=-0.986
+vortex_other count=253 worst_slack=-1.392
+
+start_to_endpoint_classes
+gemm_compute->gemm_ctrl count=68 worst_slack=-1.642
+gemm_compute->gemm_other count=475 worst_slack=-1.007
+gemm_compute->hbm_dma_engine count=7841 worst_slack=-2.297
+gemm_compute->local_dma count=1868 worst_slack=-2.176
+gemm_compute->tmem_dma_ctrl count=2096 worst_slack=-1.478
+gemm_compute->tmem_subsystem_other count=63 worst_slack=-1.480
+gemm_compute->vortex_other count=12 worst_slack=-0.796
+gemm_ctrl->gemm_ctrl count=47 worst_slack=-0.687
+gemm_ctrl->local_dma count=17 worst_slack=-1.144
+gemm_ctrl->tmem_subsystem_other count=22 worst_slack=-0.959
+gemm_other->gemm_other count=6 worst_slack=-0.123
+hbm_dma_engine->gemm_ctrl count=116 worst_slack=-2.177
+hbm_dma_engine->gemm_other count=2303 worst_slack=-1.711
+hbm_dma_engine->hbm_dma_engine count=876 worst_slack=-2.213
+hbm_dma_engine->local_dma count=1794 worst_slack=-2.042
+hbm_dma_engine->tmem_banks count=1219 worst_slack=-1.201
+hbm_dma_engine->tmem_subsystem_other count=1 worst_slack=-0.502
+hbm_dma_engine->vortex_other count=25 worst_slack=-1.392
+local_dma->local_dma count=3 worst_slack=-0.362
+tmem_banks->gemm_other count=1 worst_slack=-1.747
+tmem_banks->hbm_dma_engine count=471 worst_slack=-1.710
+tmem_banks->local_dma count=198 worst_slack=-2.093
+tmem_banks->tmem_banks count=6 worst_slack=-0.423
+tmem_banks->tmem_subsystem_other count=3 worst_slack=-1.255
+tmem_banks->tmem_switch count=158 worst_slack=-0.986
+tmem_dma_ctrl->gemm_ctrl count=9 worst_slack=-0.656
+tmem_dma_ctrl->gemm_other count=136 worst_slack=-0.607
+tmem_dma_ctrl->hbm_dma_engine count=1 worst_slack=-0.083
+tmem_dma_ctrl->local_dma count=72 worst_slack=-2.162
+tmem_dma_ctrl->tmem_dma_ctrl count=397 worst_slack=-0.667
+tmem_dma_ctrl->vortex_other count=1 worst_slack=-0.279
+tmem_subsystem_other->tmem_switch count=16 worst_slack=-0.797
+tmem_switch->gemm_ctrl count=4 worst_slack=-0.346
+vortex_other->vortex_other count=215 worst_slack=-0.831
