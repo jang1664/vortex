@@ -1377,6 +1377,28 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         .ready_i    (pre_meta_valid_out && compute_ready)
     );
 
+`ifdef GEMM_SLR_PIPELINE
+    // The local QROW shift and the SLR TX sample the same block indices.
+    // Preserve both copies: merging either into the other would give the
+    // crossing TX a local SLR1 fanout, or remove its USER_SLL_REG identity.
+    // This is the existing always-ready, one-cycle pipe, not an extra stage.
+    if (1) begin : g_local_prealign_blk_idx
+        `VX_STATIC_ASSERT(BLK_IDX_DLY == 1, ("SLR local block-index delay must be one cycle"))
+        (* DONT_TOUCH = "TRUE", SHREG_EXTRACT = "NO" *)
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] data_q;
+        logic valid_q;
+        always_ff @(posedge clk) begin
+            // Match VX_pipe_buffer: data also advances on invalid/reset cycles.
+            data_q <= prealigner_blk_idx;
+            if (reset)
+                valid_q <= 1'b0;
+            else
+                valid_q <= compute_fire;
+        end
+        assign prealigner_blk_idx_q = data_q;
+        assign prealigner_pipe_out_valid = valid_q;
+    end
+`else
     VX_pipe_buffer #(
         .DATAW (`MXU_ROW * `BLOCK_IDX_WIDTH),
         .DEPTH (BLK_IDX_DLY)
@@ -1390,6 +1412,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         .ready_out (1'b1),
         .valid_out (prealigner_pipe_out_valid)
     );
+`endif
 
     assign prealigner_max_exp_q = merged_fifo_data_out.max_exp;
     assign prealigner_max_exp_q_valid = merged_fifo_pop;
@@ -1535,7 +1558,10 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // D inputs below are exactly the corresponding TX Q outputs: no enable,
     // handshake mux, arithmetic, or validity decode is allowed between them.
     if (1) begin : g_slr_mxu_input_tx
-        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO" *)
+        // Keep this dedicated TX separate from the preserved local block-index
+        // FFs above. Preserve the small control vector to retain its existing
+        // field layout and direct connection to the RX control register.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
         mxu_input_control_transport_t control_q;
         // Both transport data stages must remain standalone FFs, rather
         // than being absorbed into the MXU DSP input pipeline registers.

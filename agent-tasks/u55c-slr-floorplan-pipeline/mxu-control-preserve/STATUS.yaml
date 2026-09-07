@@ -1,0 +1,82 @@
+task: mxu-control-preserve
+state: completed_with_physical_failures
+updated_at: '2026-09-07 20:53'
+spec: spec.md
+checks:
+  rtl_review: pass
+  hook_tcl_suites: pass_7_suites
+  directed_vcs: pass_4_of_4
+  th32_t4_gemm: pass_7_of_7
+  th32_t8_gemm: pass_7_of_7
+  th32_t4_pnr: build_pass_timing_target_fail
+  th32_t8_pnr: route_congestion_fail
+  th32_t4_floorplan: pass_post_init_opt_place
+  th32_t8_floorplan: pass_post_init_opt_place
+  th32_t4_preserved_mxu: pass_160_local_and_160_exclusive_laguna_pairs
+  th32_t8_preserved_mxu: pass_160_local_and_160_exclusive_laguna_pairs
+physical_runs:
+  th32_t4:
+    session_id: 11321
+    runner_pid: 2047462
+    make_pid: 2052892
+    state_file: build_mxu_control_pnr_artifacts/th32_t4_slr_v2/state.json
+    log: build_mxu_control_pnr_artifacts/th32_t4_slr_v2/build.log
+    finished_at_kst: '2026-09-07 20:32:45'
+    returncode: 0
+    xclbin_exists: true
+    requested_clock_mhz: 100
+    achieved_clock_mhz: 92.2
+    final_wns_ns: -0.838
+    final_tns_ns: -1833.435
+    final_whs_ns: 0.003
+  th32_t8:
+    session_id: 23014
+    runner_pid: 2047478
+    make_pid: 2052489
+    state_file: build_mxu_control_pnr_artifacts/th32_t8_slr_v2/state.json
+    log: build_mxu_control_pnr_artifacts/th32_t8_slr_v2/build.log
+    finished_at_kst: '2026-09-07 20:46:10'
+    returncode: 2
+    xclbin_exists: false
+    failure: route_design_congestion
+    failed_to_route_signals: 7180
+    node_overlaps: 4772
+monitoring:
+  status: finished_both_runs_terminal
+  interval_seconds: 600
+  last_scheduled_check_kst: '2026-09-07 20:52:49'
+  note: Both terminal states confirmed. Monitoring stopped; no retries or implementation option changes were made.
+pitfalls:
+  - USER_SLL_REG is a placement intent, not a guarantee of register preservation.
+  - Preserve both local and TX state so the local FF cannot merge into the TX either.
+  - A shared local/crossing FF can have multi-SLR fanout, invalidating dedicated Laguna intent.
+  - Prior four-profile simulation manifest predates this RTL change; create fresh evidence.
+  - Do not overwrite slr_v1 failed builds or original checkpoint evidence.
+  - Successful xclbin creation does not prove requested clock closure; t4 achieved only 92.2 MHz against 100 MHz requested.
+  - Passing floorplan and Laguna checks does not ensure routability; t8 failed congestion after all placement checks passed.
+history:
+  - timestamp: '2026-09-07 10:42'
+    action: User authorized macro-conditional FF separation and two fresh source PnR builds.
+    result: Confirmed TH32/t4 and TH32/t8 scope, available VCS/Vivado/Vitis tools, and no-latency-change contract.
+  - timestamp: '2026-09-07 10:47'
+    action: Reviewed single-file RTL change and released final source to verification.
+    result: SLR-only preserved local160-bit data FF matches existing unconditional one-cycle pipe; valid reset retained. TX162-bit control is DONT_TOUCH and USER_SLL_REG; RX unchanged. NonSLR unchanged and delay static assertion added. Seven Tcl hook suites and diff whitespace checks pass. Fresh directed/GEMM verification beginning; physical launch remains gated.
+  - timestamp: '2026-09-07 10:53'
+    action: Accepted final current-source simulation gate, validated both fresh physical launch commands, and authorized source builds.
+    result: 14/14 GEMM and 4/4 directed VCS pass. Maximum sampled host-cycle change is +1.183%; local register equivalence is exact, while full-system internal spans vary -5 to +9 cycles. Both slr_v2 runners launched at10:53:15 with fresh configured build paths; synthesis/PnR and physical FF evidence remain pending.
+    simulation_manifest_sha256: 92e6225e4c2f3fa569b0ac9734067576d097e39dcc7350f57b477a01c510ebe2
+  - timestamp: '2026-09-07 10:54'
+    action: Confirmed both configure processes finished successfully and actual source make processes started.
+    result: TH32/t4 make2052892 and TH32/t8 make2052489 are running; no existing DCP was supplied for implementation and prior builds remain untouched.
+  - timestamp: '2026-09-07 10:59'
+    action: Verified packaged RTL/hook identities and observed both fresh full-synthesis launches.
+    result: New local FF scope is present in packaged RTL; floorplan/report snapshots match source hashes. TH32/t4 synthesis started10:57:34, TH32/t8 at10:57:59. Compatible directives and all lifecycle hooks are generated. No build errors reported; physical checks remain pending.
+  - timestamp: '2026-09-07 11:18'
+    action: Applied user-requested approximately ten-minute monitoring interval.
+    result: Stopped only the verified read-only monitor PID2107276, not either build process. Next actual state/log/DCP check is approximately11:29KST, then every600seconds. Build options and source remain unchanged.
+  - timestamp: '2026-09-07 15:49'
+    action: Completed fresh synthesis, lifecycle hook checks and read-only targeted placed-checkpoint verification for both configs.
+    result: Both post-init, post-opt and post-place strict checks pass. Both placed checkpoints retain 160 distinct unmarked local FFs in SLR1 and 160 exclusive marked TX-to-RX Laguna pairs from SLR1 to SLR2. Routing remains independent of this successful preservation result.
+  - timestamp: '2026-09-07 20:53'
+    action: Confirmed both durable terminal states at the scheduled 20:52:49 KST check and notified the user.
+    result: TH32/t4 exited zero at20:32:45 and produced an xclbin, but achieved92.2MHz versus100MHz requested with final WNS-0.838ns. TH32/t8 exited2 at20:46:10 without an xclbin because routing congestion left7180signals unrouted and4772node overlaps. Monitoring finished without retries; details and report paths are in physical-results.md.
