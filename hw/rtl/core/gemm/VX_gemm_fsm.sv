@@ -1,3 +1,106 @@
+/*
+  FPxINT GEMM tiling schedule (Python-like command-issue pseudocode)
+
+  Names/semantics:
+    MT/NT/KT are DMA tile sizes; MXU_KT = MXU_ROW, MXU_NT = MXU_COL.
+    TMEM is the staging memory called LMEM in the command/state names below.
+    enqueue_* waits for command acceptance, NOT execution completion. Its
+    returned token represents a versioned sync dependency, not a Python task
+    or an extra RTL queue. after/consumer_waits become command metadata.
+    Address packing, sync counter arithmetic, and transition-only cycles are
+    omitted. QDIR/WTRANS affect data layout/loading, not these loop orders.
+
+  # tile_next_coords(): K fastest, then N, then M. A tile is loaded for EVERY
+  # (mt, nt, kt), not only kt == 0; there is no cross-N input residency cache.
+  dma_tiles = [(mt, nt, kt)
+               for mt in range(mt_dim)
+               for nt in range(nt_dim)
+               for kt in range(kt_dim)]
+
+  def enqueue_tile(t, reuse_after=None):
+      # S_PRE0_LD_*, S_PRE1_LD_*, S_PRE_NEXT_LD_*:
+      # Issue HBM -> TMEM commands in I, W, SC, ZP order into buffer t % 2.
+      # I depends on reuse_after when refilling a previously used buffer.
+      # ZP carries the tile-ready notification for the ordered load sequence.
+      # I uses (mt, kt); W/SC/ZP use (nt, kt). Sizes use effective tile tails.
+      return enqueue_hbm_tile_loads(dma_tiles[t], tmem_buffer=t % 2,
+                                    order=(I, W, SC, ZP),
+                                    input_wait=reuse_after)
+
+  def enqueue_wsz(t, microtile, slot):
+      # S_MXU_PRE_CUR_* / S_MXU_PRE_NEXT_*: TMEM -> W/S/Z registers, in that
+      # order. Each command waits for tile_ready[t] and protects its own
+      # register-slot overwrite with the prior W, SC, or ZP consume counter.
+      return enqueue_local_wsz_loads(tmem_buffer=t % 2, microtile=microtile,
+                                     w_slot=slot, s_slot=slot, z_slot=slot,
+                                     after=tile_ready[t])
+
+  # Warm up both DMA tile buffers before issuing tile 0's local DMA commands.
+  tile_ready = {}
+  for t in range(min(2, len(dma_tiles))):
+      tile_ready[t] = enqueue_tile(t)
+
+  last_store = completed_token
+  acc_free = [completed_token, completed_token]
+  for t, (mt, nt, kt) in enumerate(dma_tiles):
+      mt_eff, nt_eff, kt_eff = effective_sizes(mt, nt, kt)
+      # Alternate physical ACC regions per OUTPUT tile, not per K tile.
+      # All K contributions to one (mt, nt) use the same ACC region.
+      acc_group = (mt * nt_dim + nt) % 2
+      if kt == 0:
+          acc_reuse_after = acc_free[acc_group]
+
+      # S_WAIT_CUR_TILE_READY initializes indices; it does not block here.
+      # K microtiles are fastest within each MXU_NT-wide N slice. One ARM
+      # streams all mt_eff M rows, so this FSM has no inner M-microtile loop.
+      # Supported job geometry supplies K extents divisible by MXU_KT.
+      microtiles = [(nb, kb)
+                    for nb in range(ceil_div(nt_eff, MXU_NT))
+                    for kb in range(kt_eff // MXU_KT)]
+      wsz_ready = {0: enqueue_wsz(t, microtiles[0], slot=0)}
+      for u, (nb, kb) in enumerate(microtiles):
+          # Preload u+1 into the opposite W/S/Z slots BEFORE arming u.
+          # Slots restart at 0 for each DMA tile; consume dependencies remain
+          # versioned across tile boundaries. W/S/Z have independent metadata.
+          if u + 1 < len(microtiles):
+              wsz_ready[u + 1] = enqueue_wsz(t, microtiles[u + 1], (u + 1) % 2)
+          global_k = kt * KT + kb * MXU_KT
+          last_arm = (kt == kt_dim - 1 and u == len(microtiles) - 1)
+          g_done = enqueue_input_arm(             # S_MXU_ARM_GEMM
+              tmem_buffer=t % 2, k_microtile=kb, rows=mt_eff,
+              acc_region=(acc_group, nb), w_slot=u % 2,
+              s_slot=u % 2, z_slot=u % 2,
+              accumulate=(global_k != 0),
+              after=tile_ready[t],
+              consumer_waits=(wsz_ready[u], acc_reuse_after),
+              notify_on_writeback=last_arm)
+          # S_MXU_WAIT_GEMM_DONE advances without polling completion.
+          # Dependencies protect consumers; the final ARM above reports ACC
+          # writeback completion before output copies are allowed to run.
+
+      if kt == kt_dim - 1:
+          # Drain only after all K tiles, one N microtile at a time:
+          # ACC -> output TMEM (S_O_ACC2LMEM), then TMEM -> HBM (S_O_LMEM2DRAM).
+          for nb in range(ceil_div(nt_eff, MXU_NT)):
+              copy_done = enqueue_acc_to_tmem(
+                  acc_region=(acc_group, nb), output_slice=nb, rows=mt_eff,
+                  after=(g_done, last_store))
+              acc_free[acc_group] = copy_done
+              last_store = enqueue_tmem_to_hbm(
+                  output_tile=(mt, nt), output_slice=nb, after=copy_done)
+          # ACC reuse waits for its copies, not the later HBM store completion.
+          # Output copies wait for the preceding store to protect output TMEM.
+
+      # S_ADVANCE_TILES promotes t+1; then S_PRE_NEXT_LD_* queues t+2 in the
+      # old t % 2 buffer BEFORE issuing t+1's local DMA/compute commands.
+      # The refill's first I command depends on t's last ARM completion token.
+      if t + 2 < len(dma_tiles):
+          tile_ready[t + 2] = enqueue_tile(t + 2, reuse_after=g_done)
+
+  # The actual terminal wait: S_O_WAIT_LMEM2DRAM_FINAL checks completed stores
+  # against the issued-store count; then S_FINAL_CLEAR returns to S_IDLE.
+  wait_for_all_issued_hbm_stores()
+*/
 `include "VX_define.vh"
 
 module VX_gemm_fsm import VX_gpu_pkg::*; #(
