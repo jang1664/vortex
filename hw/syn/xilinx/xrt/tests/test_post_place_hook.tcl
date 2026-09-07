@@ -3,7 +3,6 @@ set fixture_dir [file join $script_dir fixtures]
 set post_hook [file join [file dirname $script_dir] post_place_hook.tcl]
 # This is the independent congestion fixture, not a placed SLR netlist.
 set ::env(VORTEX_GEMM_SLR_FLOORPLAN) 0
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
 set ::env(VORTEX_CONGESTION_FAIL_FAST) 1
 
 set failures 0

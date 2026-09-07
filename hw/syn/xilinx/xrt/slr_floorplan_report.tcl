@@ -2,11 +2,15 @@
 # UG835 get_pins -leaf follows hierarchy; UG912 USER_SLL_REG does not by itself
 # prove Laguna placement. LOC/SITE and BEL are checked after placement.
 proc ::vortex::slr::register_role {name} {
+    set original $name
+    set name [logical_path $name]
     if {[regexp {/g_slr_mxu_(?:input|weight|output)_(tx|rx)[/.]} $name -> role]} {return $role}
     if {[regexp {[/.](?:payload|valid|credit|idle)_(tx|rx)_q_reg} $name -> role]} {return $role}
-    error "unrecognized USER_SLL_REG register: $name"
+    error "unrecognized USER_SLL_REG register: $original"
 }
 proc ::vortex::slr::link_group {name} {
+    set original $name
+    set name [logical_path $name]
     if {[regexp {^(.*)/g_slr_mxu_(input|weight|output)_(?:tx|rx)[/.]} $name -> parent kind]} {
         return "$parent/mxu_$kind"
     }
@@ -15,7 +19,7 @@ proc ::vortex::slr::link_group {name} {
         return "$parent/$stream/$kind"
     }
     if {[regexp {^(.*)/g_slr[01][/.]idle_(?:tx|rx)_q_reg} $name -> parent]} {return "$parent/idle"}
-    error "unrecognized SLR link group: $name"
+    error "unrecognized SLR link group: $original"
 }
 proc ::vortex::slr::property_true {property object} {
     return [expr {[string tolower [get_property $property $object]] in {1 true yes}}]
@@ -58,7 +62,7 @@ proc ::vortex::slr::require_marked_groups {} {
         set idle_present 0
         foreach cell [dict keys $owners] {
             if {[string first "$root/u_gemm_dma_transport/" $cell] == 0
-                && [regexp {/g_slr[01][/.]} $cell]} {
+                && [regexp {/g_slr[01][/.]} [logical_path $cell]]} {
                 set idle_present 1; break
             }
         }
@@ -189,7 +193,7 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
     foreach cell [get_cells -hierarchical -quiet -filter {IS_PRIMITIVE == 0}] {
         foreach root $roots {
             if {[string first "$root/" $cell] != 0} {continue}
-            set rel [string range $cell [expr {[string length $root]+1}] end]
+            set rel [logical_path [string range $cell [expr {[string length $root]+1}] end]]
             if {[regexp {^[^/]+$|^u_tmem_subsystem/[^/]+$|^u_VX_gemm_unit_v2/u_compute_core/u_mxu$|^u_gemm_dma_transport/u_(commands|completions|sync)$} $rel]} {
                 lappend boundaries $cell
             }

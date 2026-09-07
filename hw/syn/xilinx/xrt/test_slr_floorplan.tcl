@@ -67,7 +67,9 @@ proc fails {script expression} {
         error "expected failure '$expression', got '$message'"
     }
 }
-proc fixture {arrays} {
+proc fixture {arrays {spelling slash} {channels {}} {mxu {}}} {
+    if {$channels eq {}} {set channels [expr {$arrays == 4 ? 4 : 8}]}
+    if {$mxu eq {}} {set mxu [expr {$arrays == 16 ? 16 : 32}]}
     set names {}
     foreach hierarchy {u_job_frontend u_VX_gemm_ctrl u_tmem_dma_ctrl u_VX_gemm_unit_v2/u_compute_core/u_mxu} {
         lappend names "$hierarchy/state_reg"
@@ -78,10 +80,12 @@ proc fixture {arrays} {
     for {set idx 0} {$idx < $arrays} {incr idx} {
         lappend names [format {u_tmem_subsystem/g_bank[%d].u_bank/state_reg} $idx]
     }
-    for {set idx 0} {$idx < 8} {incr idx} {
+    for {set idx 0} {$idx < $channels} {incr idx} {
         lappend names [format {u_tmem_subsystem/u_dma_engine/g_channel[%d].u_dma_unit/state_reg} $idx]
-        if {$arrays == 16} {
+        if {$mxu == 16 && $arrays == 2 * $channels} {
             lappend names [format {u_tmem_subsystem/g_dma_tmem_route[%d].g_pair.u_dma_pair_adapter/state_reg} $idx]
+        } elseif {$mxu == 32 && $arrays == 2 * $channels} {
+            lappend names [format {u_tmem_subsystem/g_dma_tmem_route[%d].g_bank_select/rsp_locked_r_reg} $idx]
         }
     }
     foreach resource {input weight scale zero_point} {
@@ -103,18 +107,191 @@ proc fixture {arrays} {
     }
     foreach {slr half} {0 tx 1 rx} {lappend names "u_gemm_dma_transport/g_slr_status/g_slr$slr.idle_${half}_q_reg"}
     set ::mock_cells {}
-    foreach name $names {lappend ::mock_cells "top/node/$name"}
+    set index 0
+    foreach name $names {
+        if {$spelling eq "dot" || ($spelling eq "mixed" && $index % 2)} {
+            set name [string map {/g_slr/u_link/ /g_slr.u_link/} $name]
+        }
+        lappend ::mock_cells "top/node/$name"
+        incr index
+    }
     set ::env(VORTEX_GEMM_TMEM_BANKS) $arrays
-    set ::env(VORTEX_GEMM_MXU_COL) [expr {$arrays == 8 ? 32 : 16}]
+    set ::env(VORTEX_GEMM_MXU_COL) $mxu
+    set ::env(VORTEX_GEMM_MXU_ROW) $mxu
+    set ::env(VORTEX_GEMM_HBM_DATA_BYTES) 64
+    set ::env(VORTEX_GEMM_DMA_CHANNELS) $channels
+    set ::env(VORTEX_GEMM_HBM_PORTS) $channels
 }
 
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
 set ::env(VORTEX_GEMM_SLR_FLOORPLAN) 1
-foreach arrays {8 16} {
-    fixture $arrays
-    ::vortex::slr::inventory
-    equal [dict size $::vortex::slr::owners] [llength $::mock_cells] "leaf coverage ($arrays arrays)"
+foreach arrays {4 8 16} {
+    foreach spelling {slash dot mixed} {
+        fixture $arrays $spelling
+        ::vortex::slr::inventory
+        equal [dict size $::vortex::slr::owners] [llength $::mock_cells] "leaf coverage ($arrays arrays, $spelling)"
+        foreach cell $::mock_cells {
+            equal [dict exists $::vortex::slr::owners $cell] 1 original_cell_key_retained
+        }
+        set ::mock_marked $::mock_cells
+        ::vortex::slr::require_marked_groups
+    }
 }
+# The source organization, not membership in a profile list, determines the
+# topology. Cover both port counts for direct, bank-select and paired routes.
+foreach {arrays channels mxu expected} {
+    4 4 32 direct 8 8 32 direct
+    8 4 32 bank_select 16 8 32 bank_select
+    8 4 16 pair 16 8 16 pair
+} {
+    foreach spelling {slash dot mixed} {
+        fixture $arrays $spelling $channels $mxu
+        if {$spelling eq "slash"} {
+            set renamed {}
+            foreach cell $::mock_cells {
+                lappend renamed [string map {].g_pair. ]/g_pair/ ].g_bank_select/ ]/g_bank_select/} $cell]
+            }
+            set ::mock_cells $renamed
+        }
+        equal [dict get [::vortex::slr::geometry] ROUTE] $expected source_route
+        ::vortex::slr::inventory
+        equal [dict size $::vortex::slr::owners] [llength $::mock_cells] structural_coverage
+    }
+}
+foreach {arrays channels mxu} {8 4 32 16 8 32 8 4 16 16 8 16} {
+    fixture $arrays slash $channels $mxu
+    set branch [expr {$mxu == 16 ? "g_pair.u_dma_pair_adapter" : "g_bank_select"}]
+    set idx [lsearch -glob $::mock_cells "*.$branch/*"]
+    # Brackets in generated channel names are literal; remove by index.
+    if {$idx < 0} {error "fixture missing $branch"}
+    set ::mock_cells [lreplace $::mock_cells $idx $idx]
+    fails {::vortex::slr::inventory} {*route indices*}
+    fixture $arrays slash $channels $mxu
+    set idx [lsearch -glob $::mock_cells "*.$branch/*"]
+    lset ::mock_cells $idx [format {top/node/u_tmem_subsystem/g_dma_tmem_route[99].%s/state_reg} $branch]
+    fails {::vortex::slr::inventory} {*route indices*}
+    fixture $arrays slash $channels $mxu
+    set wrong [expr {$mxu == 16 ? "g_bank_select" : "g_pair.u_dma_pair_adapter"}]
+    lappend ::mock_cells [format {top/node/u_tmem_subsystem/g_dma_tmem_route[0].%s/state_reg} $wrong]
+    fails {::vortex::slr::inventory} {*route indices*}
+    fixture $arrays slash $channels $mxu
+    lappend ::mock_cells {top/node/u_tmem_subsystem/g_dma_tmem_route[0].g_direct/state_reg}
+    fails {::vortex::slr::inventory} {*unexpected direct*}
+}
+fixture 4
+lappend ::mock_cells {top/node/u_tmem_subsystem/g_dma_tmem_route[0].g_bank_select/state_reg}
+fails {::vortex::slr::inventory} {*bank_select route indices*}
+# Vortex_axi also supports multiple HBM ports per DMA channel.
+fixture 4
+set ::env(VORTEX_GEMM_HBM_PORTS) 8
+::vortex::slr::inventory
+# Only known generate-boundary spelling is normalized; actual cell names,
+# escaped indices, replica suffixes and arbitrary dots remain unchanged.
+set actual {u_gemm_dma_transport/u_commands/g_slr.u_link/u_rx/FSM_onehot_state_q[5]_i_7}
+set logical {u_gemm_dma_transport/u_commands/g_slr/u_link/u_rx/FSM_onehot_state_q[5]_i_7}
+equal [::vortex::slr::logical_path $actual] $logical actual_dcp_boundary
+equal [::vortex::slr::logical_path $logical] $logical canonical_idempotent
+equal [::vortex::slr::owner_for $actual] 0 actual_dcp_receiver_owner
+equal [::vortex::slr::matching [list $actual] {^u_gemm_dma_transport/u_commands/g_slr/u_link/u_rx/}] [list $actual] query_names_not_rewritten
+equal [::vortex::slr::logical_path {x/g_slrXu_link/u_rx/a.b_reg[3]_rep__2}] {x/g_slrXu_link/u_rx/a.b_reg[3]_rep__2} unrelated_dots_preserved
+foreach leaf {output_done_pending_q_reg output_write_pending_q_reg renamed_leaf_reg_rep__2} {
+    set original "u_tmem_subsystem/g_output_slr_completion.$leaf"
+    set expected "u_tmem_subsystem/g_output_slr_completion/$leaf"
+    equal [::vortex::slr::logical_path $original] $expected output_completion_generate_boundary
+    equal [::vortex::slr::logical_path $expected] $expected output_completion_idempotent
+    equal [::vortex::slr::owner_for $original] 1 output_completion_source_owner
+    equal [::vortex::slr::matching [list $original] {/g_output_slr_completion/}] [list $original] output_completion_original_name
+}
+fails {::vortex::slr::owner_for u_tmem_subsystem/g_output_slr_completion_extra.output_done_pending_q_reg} {*unclassified*}
+foreach bad {
+    u_gemm_dma_transport/u_commands/g_slrXu_link/u_rx/state_reg
+    u_gemm_dma_transport/u_commands/g_slr.u_link/u_rx_extra/state_reg
+    u_gemm_dma_transport/u_commands/g_slr.u_link/u_rx_extra/op_ready_reg
+    u_gemm_dma_transport/u_commands_fake/g_slr.u_link/u_rx/state_reg
+    u_gemm_dma_transport/u_link/u_rx/state_reg
+} {
+    fails {::vortex::slr::owner_for $bad} {*unclassified*}
+}
+# A report must contain every unknown original cell, and apply must stop
+# before pblock creation (create_pblock is not provided in this fixture yet).
+fixture 4 dot
+set unknown_a {top/node/u_gemm_dma_transport/new_wrapper/unknown_reg[3]}
+set unknown_b {top/node/u_tmem_subsystem/new_wrapper/unknown_reg_rep__2}
+lappend ::mock_cells $unknown_a $unknown_b
+fails {::vortex::slr::apply} {*classification failed (2 leaves)*}
+set report [open slr_unclassified_leaves.tsv r]
+set report_text [read $report]
+close $report
+equal [expr {[string first $unknown_a $report_text] >= 0}] 1 first_unknown_reported
+equal [expr {[string first $unknown_b $report_text] >= 0}] 1 second_unknown_reported
+equal [llength [split [string trim $report_text] "\n"]] 3 unknown_report_cardinality
+equal [dict size $::vortex::slr::owners] 0 no_partial_inventory_accepted
+foreach spelling {g_slr/u_link g_slr.u_link} {
+    foreach {stream tx_owner rx_owner} {u_commands 1 0 u_completions 0 1 u_sync 0 1} {
+        foreach {half expected} [list tx $tx_owner rx $rx_owner] {
+            set endpoint "u_gemm_dma_transport/$stream/$spelling/u_$half"
+            equal [::vortex::slr::owner_for "$endpoint/renamed_fifo/fsm_reg_rep__4"] $expected descendant_owned_by_endpoint
+            set marked "top/node/$endpoint/valid_${half}_q_reg"
+            equal [::vortex::slr::register_role $marked] $half transport_role
+            equal [::vortex::slr::link_group $marked] "top/node/u_gemm_dma_transport/$stream/payload" transport_group
+        }
+        equal [::vortex::slr::anchor_barrier "u_gemm_dma_transport/$stream/$spelling"] 1 mixed_stream_barrier
+        equal [::vortex::slr::anchor_barrier "u_gemm_dma_transport/$stream/$spelling/u_rx"] 0 receiver_anchor_allowed
+    }
+    foreach direction {request response} {
+        set prefix "u_tmem_subsystem/u_weight_req_reservation/u_slr/u_$direction/$spelling"
+        equal [::vortex::slr::owner_for "$prefix/u_tx/new_leaf_reg"] [expr {$direction eq "request" ? 1 : 0}] memory_source_owner
+        equal [::vortex::slr::owner_for "$prefix/u_rx/new_leaf_reg"] [expr {$direction eq "request" ? 0 : 1}] memory_destination_owner
+        set credit "top/node/$prefix/u_rx/credit_tx_q_reg_rep__2"
+        equal [::vortex::slr::register_role $credit] tx reverse_credit_role
+        equal [::vortex::slr::link_group $credit] "top/node/u_tmem_subsystem/u_weight_req_reservation/u_slr/u_$direction/credit" reverse_credit_group
+    }
+}
+# Fail closed on missing, duplicated or inconsistent source geometry.
+foreach key {TMEM_BANKS MXU_COL MXU_ROW DMA_CHANNELS HBM_PORTS HBM_DATA_BYTES} {
+    fixture 4
+    unset ::env(VORTEX_GEMM_$key)
+    fails {::vortex::slr::inventory} {*VORTEX_GEMM_*}
+    foreach invalid {{4 4} {} 0 -1 01 1+1 invalid-duplicate} {
+        fixture 4
+        set ::env(VORTEX_GEMM_$key) $invalid
+        fails {::vortex::slr::inventory} {*VORTEX_GEMM_*}
+    }
+}
+foreach {key value pattern} {
+    DMA_CHANNELS 8 {*HBM_PORTS=4 or 8 divisible*}
+    HBM_PORTS 16 {*HBM_PORTS=4 or 8*}
+    MXU_COL 16 {*matching input*}
+    TMEM_BANKS 6 {*power-of-two*}
+    TMEM_BANKS 2 {*divisible*}
+    TMEM_BANKS 16 {*unsupported SLR DMA*}
+    HBM_DATA_BYTES 32 {*64-byte HBM*}
+} {
+    fixture 4
+    set ::env(VORTEX_GEMM_$key) $value
+    fails {::vortex::slr::inventory} $pattern
+}
+foreach {arrays channels mxu} {4 4 16 8 4 8 8 4 24 8 4 64} {
+    fixture $arrays slash $channels $mxu
+    fails {::vortex::slr::geometry} {*SLR*}
+}
+# All geometries require exact indices, not merely matching cardinality.
+foreach arrays {4 8 16} {
+    fixture $arrays
+    set idx [lsearch -exact $::mock_cells {top/node/u_tmem_subsystem/g_bank[0].u_bank/state_reg}]
+    lset ::mock_cells $idx [format {top/node/u_tmem_subsystem/g_bank[%d].u_bank/state_reg} $arrays]
+    fails {::vortex::slr::inventory} {*indices*}
+    fixture $arrays
+    set idx [lsearch -exact $::mock_cells {top/node/u_tmem_subsystem/u_dma_engine/g_channel[0].u_dma_unit/state_reg}]
+    lset ::mock_cells $idx {top/node/u_tmem_subsystem/u_dma_engine/g_channel[99].u_dma_unit/state_reg}
+    fails {::vortex::slr::inventory} {*indices*}
+    fixture $arrays
+    lappend ::mock_cells {top/node/u_tmem_subsystem/g_dma_tmem_route[99].g_pair.u_dma_pair_adapter/state_reg}
+    fails {::vortex::slr::inventory} {*pair*}
+}
+fixture 16
+set idx [lsearch -exact $::mock_cells {top/node/u_tmem_subsystem/g_dma_tmem_route[0].g_pair.u_dma_pair_adapter/state_reg}]
+lset ::mock_cells $idx {top/node/u_tmem_subsystem/g_dma_tmem_route[8].g_pair.u_dma_pair_adapter/state_reg}
+fails {::vortex::slr::inventory} {*pair*}
 # Unconsumed status may disappear completely, but never accept half a pair
 # or a surviving pair that lost USER_SLL_REG on either endpoint.
 fixture 8
@@ -153,9 +330,6 @@ fails {::vortex::slr::owner_for u_tmem_subsystem/new_unknown/state_reg} {*unclas
 fixture 8
 set ::mock_cells [lrange $::mock_cells 1 end]
 fails {::vortex::slr::inventory} {*missing required group*}
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 1
-fails {::vortex::slr::enabled} {*retired*}
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
 set ::mock_part xcvu9p-flga2104-2L-e
 fails {::vortex::slr::apply} {*XCU55C only*}
 set ::mock_part xcu55c-fsvh2892-2L-e
@@ -199,6 +373,25 @@ dict set ::mock_refs $ram RAMB36E2
 set ::vortex::slr::owners [dict create $rx 2 $ram 1]
 dict set ::mock_pins mock_net [list "$ram/DOUTADOUT\[0\]" "$rx/D"]
 fails {::vortex::slr::validate_links 0 $report_file} {*not directly driven by a marked TX FF Q*}
+
+# Mixed generate spellings identify one link, while net/pin queries and
+# owner lookups must still use the two different original physical names.
+set tx {top/node/u_gemm_dma_transport/u_commands/g_slr.u_link/u_tx/g_payload[7].payload_tx_q_reg_rep__2}
+set rx {top/node/u_gemm_dma_transport/u_commands/g_slr/u_link/u_rx/g_payload[7].payload_rx_q_reg}
+set ::mock_marked [list $tx $rx]
+set ::vortex::slr::owners [dict create $tx 1 $rx 0]
+dict set ::mock_pins mock_net [list "$tx/Q" "$rx/D"]
+::vortex::slr::validate_links 0 $report_file
+set report [open $report_file r]
+set contents [read $report]
+close $report
+equal [expr {[string first $tx $contents] >= 0}] 1 original_dot_tx_in_report
+equal [expr {[string first $rx $contents] >= 0}] 1 original_slash_rx_in_report
+set unrelated_tx [string map {u_commands u_completions} $tx]
+set ::mock_marked [list $unrelated_tx $rx]
+set ::vortex::slr::owners [dict create $unrelated_tx 1 $rx 0]
+dict set ::mock_pins mock_net [list "$unrelated_tx/Q" "$rx/D"]
+fails {::vortex::slr::validate_links 0 $report_file} {*unexpected TX peer*}
 
 # Exercise the actual apply procedure with leaf/placement APIs isolated.
 # Its report source must load before both link and full-boundary checks, and
@@ -277,5 +470,5 @@ foreach command {inventory require_marked_groups validate_links validate_boundar
     rename ::vortex::slr::$command {}
     rename ::vortex::slr::fixture_saved_$command ::vortex::slr::$command
 }
-puts "PASS: SLR ownership, profile inventory, retired options, direct FF pairs and Laguna checks"
+puts "PASS: SLR ownership, structural direct/bank-select/pair inventory, direct FF pairs and Laguna checks"
 puts "Fixture report (temporary): $report_file"

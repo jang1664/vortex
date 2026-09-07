@@ -21,7 +21,6 @@ PLATFORM ?=
 # so switching modes does not invalidate the packaged RTL kernel (.xo).
 FAST_MODE ?= 0
 CONGESTION_FAIL_FAST ?= 1
-DMA_CHANNEL_FLOORPLAN ?= 0
 GEMM_SLR_FLOORPLAN ?= 0
 PLACE_DESIGN_DIRECTIVE ?=
 ROUTE_DESIGN_DIRECTIVE ?=
@@ -50,10 +49,6 @@ ifneq ($(CONGESTION_FAIL_FAST),0)
 ifneq ($(CONGESTION_FAIL_FAST),1)
 $(error CONGESTION_FAIL_FAST must be 0 or 1, got '$(CONGESTION_FAIL_FAST)')
 endif
-endif
-
-ifneq ($(DMA_CHANNEL_FLOORPLAN),0)
-$(error DMA_CHANNEL_FLOORPLAN is retired; use GEMM_SLR_FLOORPLAN=1 with GEMM_SLR_PIPELINE RTL)
 endif
 
 ifneq ($(GEMM_SLR_FLOORPLAN),0)
@@ -150,16 +145,29 @@ XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_
 XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
 CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE) SIMULATOR=$(SIMULATOR) VCS_INSTALL_DIR=$(VCS_INSTALL_DIR) VCS_SIMLIB_DIR=$(VCS_SIMLIB_DIR) VCS_GCC_INSTALL_DIR=$(VCS_GCC_INSTALL_DIR) VG_GNU_PACKAGE=$(VG_GNU_PACKAGE) GUI=$(GUI)
-LINK_CONFIG_FINGERPRINT = FAST_MODE=$(FAST_MODE) VPP_OPTIMIZE=$(VPP_OPTIMIZE) CONGESTION_FAIL_FAST=$(CONGESTION_FAIL_FAST) DMA_CHANNEL_FLOORPLAN=$(DMA_CHANNEL_FLOORPLAN) GEMM_SLR_FLOORPLAN=$(GEMM_SLR_FLOORPLAN) PLACE_DESIGN_DIRECTIVE=$(PLACE_DESIGN_DIRECTIVE) ROUTE_DESIGN_DIRECTIVE=$(ROUTE_DESIGN_DIRECTIVE) IMPL_ULTRATHREADS=$(IMPL_ULTRATHREADS)
+LINK_CONFIG_FINGERPRINT = FAST_MODE=$(FAST_MODE) VPP_OPTIMIZE=$(VPP_OPTIMIZE) CONGESTION_FAIL_FAST=$(CONGESTION_FAIL_FAST) GEMM_SLR_FLOORPLAN=$(GEMM_SLR_FLOORPLAN) PLACE_DESIGN_DIRECTIVE=$(PLACE_DESIGN_DIRECTIVE) ROUTE_DESIGN_DIRECTIVE=$(ROUTE_DESIGN_DIRECTIVE) IMPL_ULTRATHREADS=$(IMPL_ULTRATHREADS)
 
 # post_init_hook.tcl reads this setting while sourcing floorplan.tcl.
-export VORTEX_DMA_CHANNEL_FLOORPLAN := $(DMA_CHANNEL_FLOORPLAN)
 export VORTEX_GEMM_SLR_FLOORPLAN := $(GEMM_SLR_FLOORPLAN)
 export VORTEX_CONGESTION_FAIL_FAST := $(CONGESTION_FAIL_FAST)
 # The floorplan validates the source-selected geometry, not an inferred guess
 # from whatever hierarchy happened to survive synthesis.
-export VORTEX_GEMM_TMEM_BANKS := $(patsubst -DNUM_TMEM_BANKS=%,%,$(filter -DNUM_TMEM_BANKS=%,$(CONFIGS)))
-export VORTEX_GEMM_MXU_COL := $(patsubst -DMXU_COL=%,%,$(filter -DMXU_COL=%,$(CONFIGS)))
+# Keep malformed and repeated definitions visibly invalid for Tcl instead of
+# normalizing e.g. an empty definition followed by a valid one to one value.
+gemm_geometry_defines = $(filter -D$(1) -D$(1)=%,$(CONFIGS))
+gemm_geometry_value = $(if $(call gemm_geometry_defines,$(1)),$(if $(filter 1,$(words $(call gemm_geometry_defines,$(1)))),$(patsubst -D$(1)=%,%,$(call gemm_geometry_defines,$(1))),invalid-duplicate-$(1)),$(2))
+export VORTEX_GEMM_TMEM_BANKS := $(call gemm_geometry_value,NUM_TMEM_BANKS)
+export VORTEX_GEMM_DMA_CHANNELS := $(call gemm_geometry_value,NUM_DMA_CHANNELS)
+# Legacy SLR profiles omit NUM_HBM_PORTS and use VX_config.vh's default 8.
+# Default only when the define is absent: explicit empty/duplicate values
+# must reach the strict Tcl validator, not silently select another geometry.
+export VORTEX_GEMM_HBM_PORTS := $(call gemm_geometry_value,NUM_HBM_PORTS,8)
+export VORTEX_GEMM_MXU_COL := $(call gemm_geometry_value,MXU_COL)
+# Pass raw values for strict Tcl validation before doing width arithmetic.
+# VX_gemm_node uses GEMM_INPUT_DATA_SIZE = (IFP_WIDTH/8)*MXU_ROW;
+# IFP_WIDTH is fixed at 16 in VX_config.vh. HBM uses MEM_BLOCK_SIZE.
+export VORTEX_GEMM_MXU_ROW := $(call gemm_geometry_value,MXU_ROW,32)
+export VORTEX_GEMM_HBM_DATA_BYTES := $(call gemm_geometry_value,MEM_BLOCK_SIZE,64)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin

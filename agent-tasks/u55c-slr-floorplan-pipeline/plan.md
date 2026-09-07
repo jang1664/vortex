@@ -416,9 +416,6 @@ keeps each crossing independently placeable.
 
 ## Floorplan constraints
 
-- Delete the DMA channel 2/3 clock-region pblocks and disable
-  `DMA_CHANNEL_FLOORPLAN`. They cannot act as soft hints in this Vitis
-  hierarchical flow and caused hard confinement in opt_v6.
 - Define only full-SLR user pblocks: one for the SLR0 memory/backend region,
   one for the SLR1 control/ACC region, and one for the SLR2 MXU region.
 - Use `resize_pblock ... -add SLR0`, `SLR1`, or `SLR2`; do not subdivide an SLR
@@ -435,14 +432,17 @@ keeps each crossing independently placeable.
   leaf collections including response RAMs, local request reservation/credit
   state, and SLR1 halves of crossing adapters. Use disjoint leaf collections;
   do not place a parent and excluded child in conflicting pblocks.
-- Put `u_tmem_dma_ctrl`, all eight `u_dma_engine` channels, physical TMEM
+- Put `u_tmem_dma_ctrl`, all configured `u_dma_engine` channels, physical TMEM
   `g_bank[*]` arrays/arbiters, all five `u_switch_*` hierarchies, and SLR0 halves
   of crossing adapters in SLR0. Do not assign the entire `u_tmem_subsystem`
   parent to SLR0, or constrain individual channels to clock regions.
-- Match the selected profile: eight `g_direct` routes / eight TMEM arrays for
-  MXU32, or eight `g_pair.u_dma_pair_adapter` instances / sixteen TMEM arrays
-  for MXU16. Include pair-adapter lane state and response FIFOs in SLR0.
-  Expected inactive generate branches must not trigger the empty-match check.
+- Derive route topology from source widths and arrays per DMA channel, not
+  a configuration whitelist: equal-width one-array channels use `g_direct`,
+  equal-width two-array channels use `g_bank_select`, and 64B DMA / two 32B
+  TMEM arrays use `g_pair.u_dma_pair_adapter`. Include bank-select arbitration
+  state and pair-adapter lane state/response FIFOs in SLR0. Check exact active
+  route index sets. Inactive branches must be absent; wire-only direct routes
+  may disappear. Keep platform, width/count and SLR endpoint checks strict.
 - Include the reused/replaced `u_gemm_dma_launch_buffer` crossing halves in
   the TX/RX ownership manifest. A registered forward payload does not justify
   leaving its reverse ready path or prepare/status bypass unconstrained.

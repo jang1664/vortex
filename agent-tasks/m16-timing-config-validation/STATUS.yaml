@@ -1,0 +1,33 @@
+task: m16-timing-config-validation
+state: completed
+updated_at: '2026-09-07 21:35'
+scope:
+  configs:
+    - configs/improve_th16_tcol16_m16_t8_bigmem.sh
+    - configs/improve_th16_tcol16_m16_t16_bigmem.sh
+  mode: xrt-vcs-sim
+  app: fpint_gemm_ffn_hw
+  perf_class: 3
+  cases_per_config: 7
+  repeats: 1
+  synthesis: not_requested
+checks:
+  m16_t8: pass_7_of_7
+  m16_t16: pass_7_of_7
+  config_hashes: unchanged
+  frozen_rtl: identical_between_profiles
+  live_rtl: only_leading_fsm_block_comment_added_during_run
+  numeric_and_assertion_checks: pass_14_of_14
+report: results.md
+pitfalls:
+  - TMEM words are32B; HBM/DMA words remain64B with two physical arrays per channel.
+  - Source the exact config before configure and each simulation; preserve timing cuts and SLR.
+  - Use immutable RTL snapshots and separate builds to avoid source/config races.
+  - Non-debug wrapper results are on stdout, not necessarily build/run.log.
+history:
+  - timestamp: '2026-09-07 21:31'
+    action: Prepared exact-config validation through the existing frozen-source perf3 harness.
+    result: VCS and compiler prerequisites available. Launch seven functional cases per config, including both QDIR and WTRANS settings, overlap and partial tails. No RTL/config changes or synthesis.
+  - timestamp: '2026-09-07 21:35'
+    action: Confirmed both runners exited zero and independently validated all manifests and log artifacts.
+    result: Both profiles pass7/7 with matching exact config hashes and identical frozen RTL. A concurrent user-owned16-line leading block comment was added to VX_gemm_fsm.sv during execution; verified the rest of the file is byte-identical and preserved that edit. No functional source changes, numeric mismatches or strict simulation failures.

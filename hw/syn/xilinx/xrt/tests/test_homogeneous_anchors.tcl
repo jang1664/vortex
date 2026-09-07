@@ -204,6 +204,26 @@ cd $old_pwd
 rename ::vortex::slr::validate_fp_anchor_coverage {}
 rename ::vortex::slr::saved_validate_fp_anchor_coverage ::vortex::slr::validate_fp_anchor_coverage
 
+# The two spellings have different real PARENT trees. Even if one endpoint
+# disappears, the stream container must not be promoted to an SLR anchor.
+foreach spelling {g_slr/u_link g_slr.u_link} {
+    foreach surviving {tx rx {tx rx}} {
+        set hier {}; set leaves {}; set parents {}; set refs {}; set owners {}
+        set stream "top/node/u_gemm_dma_transport/u_commands/$spelling"
+        foreach half $surviving {
+            leaf "$stream/u_$half/renamed_fifo/state_reg_rep__3" [expr {$half eq "tx" ? 1 : 0}]
+        }
+        set result [select]
+        foreach half $surviving {
+            equal [dict get $result covered "$stream/u_$half/renamed_fifo/state_reg_rep__3"] \
+                "$stream/u_$half" "actual $spelling PARENT tree, surviving $surviving"
+        }
+        foreach owner {0 1 2} {
+            equal [expr {$stream in [dict get $result groups $owner]}] 0 mixed_container_never_anchored
+        }
+    }
+}
+
 # Optional large, repeatable CPU-only runtime check of the production algorithm.
 set count 10000
 if {$argc == 2 && [lindex $argv 0] eq "--benchmark"} {set count [lindex $argv 1]}

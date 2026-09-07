@@ -2,6 +2,8 @@
 
 import importlib.util
 import os
+import re
+import shlex
 import subprocess
 import tempfile
 import types
@@ -14,6 +16,12 @@ REPO_ROOT = XRT_DIR.parents[3]
 BUILD_XRT_DIR = Path(os.environ.get(
     "XRT_TEST_BUILD_DIR", REPO_ROOT / "build" / "hw/syn/xilinx/xrt"
 ))
+
+# (threads, MXU dimension, physical TMEM count, HBM/DMA count).
+# 32B TMEM words are paired behind one 64B HBM/DMA channel.
+TIMING_PROFILES = [(16, 16, 8, 4), (16, 16, 16, 8)] + [
+    (threads, 32, count, count) for threads in (16, 32) for count in (4, 8)
+]
 
 
 def load_generator():
@@ -140,6 +148,145 @@ class GenVitisIniTest(unittest.TestCase):
         self.assertFalse(any("PLACE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
         self.assertFalse(any("ROUTE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
 
+    def test_floorplan_width_formula_matches_rtl(self):
+        # The hook intentionally mirrors fixed FP16 definitions, not a
+        # second configurable format. Fail this test if that contract changes.
+        config = (REPO_ROOT / "hw/rtl/VX_config.vh").read_text()
+        for name in ("IFP_WIDTH", "SCALE_WIDTH"):
+            self.assertRegex(config, rf"(?m)^`define {name}\s+16\s")
+        self.assertRegex(config, r"(?m)^`define MXU_ROW\s+32\s")
+        self.assertRegex(config, r"(?m)^`define MEM_BLOCK_SIZE\s+64\s")
+        self.assertRegex(config, r"`define GEMM_INPUT_DATA_SIZE\s+\(\(`IFP_WIDTH/8\)\*`MXU_ROW\)")
+        node = (REPO_ROOT / "hw/rtl/core/gemm/VX_gemm_node.sv").read_text()
+        self.assertRegex(node, r"TMEM_PHYSICAL_DATA_SIZE\s*=\s*`GEMM_INPUT_DATA_SIZE;")
+        self.assertRegex(node, r"\.HBM_DMA_DATA_SIZE\s*\(\s*`MEM_BLOCK_SIZE\s*\)")
+
+    def test_makefile_exports_selected_slr_geometry(self):
+        def geometry(configs):
+            result = subprocess.run(
+                ["make", "--no-print-directory", "-f", str(XRT_DIR / "Makefile"),
+                 "-f", "-", "show_slr_geometry", f"VORTEX_HOME={REPO_ROOT}",
+                 "PLATFORM=fixture", "DEVICE_PART=xcu55c-fsvh2892-2L-e",
+                 "DEV_ARCH=", "CPU_TYPE=", "GEMM_SLR_FLOORPLAN=1", "FAST_MODE=0",
+                 f"CONFIGS={configs}"],
+                input="show_slr_geometry:\n\t@printf '%s|%s|%s|%s|%s|%s\\n' "
+                      '"$$VORTEX_GEMM_TMEM_BANKS" "$$VORTEX_GEMM_DMA_CHANNELS" '
+                      '"$$VORTEX_GEMM_HBM_PORTS" "$$VORTEX_GEMM_MXU_COL" '
+                      '"$$VORTEX_GEMM_MXU_ROW" "$$VORTEX_GEMM_HBM_DATA_BYTES"\n',
+                cwd=BUILD_XRT_DIR, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+
+        for threads, mxu, count, channels in TIMING_PROFILES:
+            config = REPO_ROOT / "configs" / f"improve_th{threads}_tcol{mxu}_m{mxu}_t{count}_bigmem.sh"
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; printf "%s\\n%s\\n" "$CONFIGS" "$GEMM_SLR_FLOORPLAN"',
+                 "config-fixture", str(config)], text=True, capture_output=True, check=True,
+            )
+            configs, floorplan = result.stdout.strip().splitlines()
+            defines = shlex.split(configs)
+            self.assertEqual(floorplan, "1")
+            expected = {
+                "NUM_THREADS": threads, "NUM_TMEM_BANKS": count,
+                "NUM_DMA_CHANNELS": channels, "NUM_HBM_PORTS": channels,
+                "TMEM_BANK_SIZE": 524288 // count, "MXU_WLOAD_NUM": 4,
+                "MXU_ROW": mxu, "MXU_COL": mxu, "MXU_COL_TILE": mxu,
+                "GEMM_TIMING_CUTS": 1,
+            }
+            for name, value in expected.items():
+                self.assertEqual([x for x in defines if re.match(rf"-D{name}(?:=|$)", x)],
+                                 [f"-D{name}={value}"])
+            self.assertIn("-DGEMM_SLR_PIPELINE", defines)
+            exported = geometry(configs)
+            self.assertEqual(exported, f"{count}|{channels}|{channels}|{mxu}|{mxu}|64")
+            # Execute the actual Tcl validator, not only the ini generator.
+            # Tcl on stdin can return zero after an error: catch and exit.
+            env = os.environ.copy()
+            for field, value in zip(
+                ("TMEM_BANKS", "DMA_CHANNELS", "HBM_PORTS", "MXU_COL", "MXU_ROW", "HBM_DATA_BYTES"),
+                exported.split("|"),
+            ):
+                env[f"VORTEX_GEMM_{field}"] = value
+            checked = subprocess.run(
+                ["tclsh"], input='set ::vortex_slr_definitions_only 1\n'
+                'source {floorplan.tcl}\n'
+                'if {[catch {::vortex::slr::geometry} g]} {puts stderr $g; exit 1}\n'
+                'puts "ROUTE=[dict get $g ROUTE] TMEM_BYTES=[dict get $g TMEM_DATA_BYTES]"\n',
+                cwd=XRT_DIR, env=env, text=True, capture_output=True,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertIn(f"ROUTE={'pair' if mxu == 16 else 'direct'} TMEM_BYTES={2 * mxu}",
+                          checked.stdout)
+            self.assertEqual(count * (2 * mxu), channels * 64)
+
+        legacy = "-DGEMM_SLR_PIPELINE -DNUM_TMEM_BANKS=16 -DNUM_DMA_CHANNELS=8 -DMXU_COL=16"
+        self.assertEqual(geometry(legacy), "16|8|8|16|32|64")
+        # Malformed explicit values must reach the strict Tcl validator,
+        # rather than silently selecting the absent-define default.
+        self.assertEqual(geometry(legacy + " -DNUM_HBM_PORTS="), "16|8||16|32|64")
+        self.assertEqual(geometry(legacy + " -DNUM_HBM_PORTS=4 -DNUM_HBM_PORTS=8"),
+                         "16|8|invalid-duplicate-NUM_HBM_PORTS|16|32|64")
+        self.assertEqual(geometry(legacy + " -DNUM_HBM_PORTS= -DNUM_HBM_PORTS=8"),
+                         "16|8|invalid-duplicate-NUM_HBM_PORTS|16|32|64")
+        self.assertEqual(geometry(legacy + " -DNUM_HBM_PORTS"), "16|8|-DNUM_HBM_PORTS|16|32|64")
+        for define, default, offset in (("MXU_ROW", "32", 4), ("MEM_BLOCK_SIZE", "64", 5)):
+            self.assertEqual(geometry(legacy).split("|")[offset], default)
+            self.assertEqual(geometry(legacy + f" -D{define}=").split("|")[offset], "")
+            self.assertEqual(geometry(legacy + f" -D{define}=16 -D{define}=32").split("|")[offset],
+                             f"invalid-duplicate-{define}")
+
+    def test_u55c_connectivity_matches_timing_profiles(self):
+        platform = "xilinx_u55c_gen3x16_xdma_3_202210_1"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for threads, mxu, count, channels in TIMING_PROFILES:
+                config = REPO_ROOT / "configs" / f"improve_th{threads}_tcol{mxu}_m{mxu}_t{count}_bigmem.sh"
+                sourced = subprocess.run(
+                    ["bash", "-c", 'source "$1"; printf "%s" "$CONFIGS"',
+                     "config-fixture", str(config)], text=True, capture_output=True, check=True,
+                )
+                prefix = Path(temp_dir) / f"th{threads}_m{mxu}_t{count}"
+                generated_ini = Path(f"{prefix}_{platform}_hw/xrt_backup/vitis.gen.ini")
+                command = [
+                    "make", "-f", str(XRT_DIR / "Makefile"), str(generated_ini),
+                    f"VORTEX_HOME={REPO_ROOT}", f"PREFIX={prefix}",
+                    f"PLATFORM={platform}", "DEVICE_PART=xcu55c-fsvh2892-2L-e",
+                    "DEV_ARCH=", "CPU_TYPE=", f"CONFIGS={sourced.stdout}",
+                    "GEMM_SLR_FLOORPLAN=1", "CONGESTION_FAIL_FAST=0", "FAST_MODE=0",
+                    "PLACE_DESIGN_DIRECTIVE=Explore", "ROUTE_DESIGN_DIRECTIVE=AlternateCLBRouting",
+                    "IMPL_ULTRATHREADS=0",
+                ]
+                result = subprocess.run(command, cwd=BUILD_XRT_DIR, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                lines = generated_ini.read_text().splitlines()
+                actual = [line for line in lines if line.startswith("sp=")]
+                span = 32 // channels
+                expected = [f"sp=vortex_afu_1.m_axi_mem_{port}:HBM[{port * span}:{(port + 1) * span - 1}]"
+                            for port in range(channels)]
+                self.assertEqual(actual, expected)
+                for hook in ("INIT_DESIGN.TCL.POST", "OPT_DESIGN.TCL.POST", "PLACE_DESIGN.TCL.POST"):
+                    self.assertTrue(any(hook in line for line in lines), hook)
+                self.assertFalse(any("-subdirective" in line for line in lines))
+                self.assertFalse(any("-ultrathreads" in line for line in lines))
+                self.assertEqual((generated_ini.parent / "platforms.mk").read_bytes(),
+                                 (XRT_DIR / "platforms.mk").read_bytes())
+            # The last profile is TH32/t8. Verify absent-only default and
+            # malformed/unsupported explicit values on the real U55C branch.
+            config_index = next(i for i, value in enumerate(command) if value.startswith("CONFIGS="))
+            legacy = sourced.stdout.replace(" -DNUM_HBM_PORTS=8", "")
+            command[config_index] = f"CONFIGS={legacy}"
+            result = subprocess.run(command, cwd=BUILD_XRT_DIR, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([line for line in generated_ini.read_text().splitlines() if line.startswith("sp=")],
+                             expected)
+            for invalid in (" -DNUM_HBM_PORTS=3", " -DNUM_HBM_PORTS=", " -DNUM_HBM_PORTS",
+                            " -DNUM_HBM_PORTS=4 -DNUM_HBM_PORTS=8",
+                            " -DNUM_HBM_PORTS= -DNUM_HBM_PORTS=8"):
+                command[config_index] = f"CONFIGS={legacy}{invalid}"
+                result = subprocess.run(command, cwd=BUILD_XRT_DIR, text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("U55C connectivity requires NUM_HBM_PORTS=4 or 8", result.stderr)
+
     def test_makefile_tracks_and_validates_gate_setting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir) / "gate"
@@ -163,7 +310,6 @@ class GenVitisIniTest(unittest.TestCase):
                     "CPU_TYPE=",
                     "CONFIGS=",
                     "GEMM_SLR_FLOORPLAN=0",
-                    "DMA_CHANNEL_FLOORPLAN=0",
                     # The caller sources a real config; isolate this fixture's
                     # default fingerprint from its exported QoR directives.
                     "FAST_MODE=0",
@@ -186,7 +332,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
@@ -223,7 +369,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0 "
-                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
@@ -240,14 +386,13 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
                 link_stamp.read_text(),
             )
 
             qor = run_make(
                 0,
-                DMA_CHANNEL_FLOORPLAN=0,
                 PLACE_DESIGN_DIRECTIVE="Explore",
                 ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting",
                 IMPL_ULTRATHREADS=0,
@@ -279,7 +424,7 @@ class GenVitisIniTest(unittest.TestCase):
             )
             self.assertEqual(
                 "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1 "
-                "DMA_CHANNEL_FLOORPLAN=0 GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
+                "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
                 "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=1\n",
                 link_stamp.read_text(),
             )
@@ -292,14 +437,6 @@ class GenVitisIniTest(unittest.TestCase):
             invalid_fast = run_make(FAST_MODE=2)
             self.assertNotEqual(invalid_fast.returncode, 0)
             self.assertIn("FAST_MODE must be 0 or 1", invalid_fast.stderr)
-
-            invalid_floorplan = run_make(DMA_CHANNEL_FLOORPLAN=2)
-            self.assertNotEqual(invalid_floorplan.returncode, 0)
-            self.assertIn("DMA_CHANNEL_FLOORPLAN is retired", invalid_floorplan.stderr)
-
-            retired_floorplan = run_make(DMA_CHANNEL_FLOORPLAN=1)
-            self.assertNotEqual(retired_floorplan.returncode, 0)
-            self.assertIn("DMA_CHANNEL_FLOORPLAN is retired", retired_floorplan.stderr)
 
             missing_pipeline = run_make(GEMM_SLR_FLOORPLAN=1)
             self.assertNotEqual(missing_pipeline.returncode, 0)

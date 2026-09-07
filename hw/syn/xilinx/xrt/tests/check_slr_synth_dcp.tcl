@@ -1,17 +1,21 @@
 # Read-only synthesized-netlist preflight. Never applies pblocks or invokes
 # optimization, synthesis, placement, routing, or checkpoint writes.
-if {$argc ni {5 6}} {
-    puts stderr "usage: check_slr_synth_dcp.tcl CHECKPOINT FLOORPLAN_TCL TMEM_ARRAYS MXU_COL REPORT ?pairs|boundaries?"
+if {$argc ni {7 8}} {
+    puts stderr "usage: check_slr_synth_dcp.tcl CHECKPOINT FLOORPLAN_TCL TMEM_ARRAYS MXU_COL REPORT DMA_CHANNELS HBM_PORTS ?pairs|boundaries?"
     exit 2
 }
 set check_mode pairs
-if {$argc == 6} {set check_mode [lindex $argv 5]}
+if {$argc == 8} {set check_mode [lindex $argv 7]}
 if {$check_mode ni {pairs boundaries}} {error "unknown read-only check mode $check_mode"}
 open_checkpoint [lindex $argv 0]
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
 set ::env(VORTEX_GEMM_SLR_FLOORPLAN) 1
 set ::env(VORTEX_GEMM_TMEM_BANKS) [lindex $argv 2]
 set ::env(VORTEX_GEMM_MXU_COL) [lindex $argv 3]
+set ::env(VORTEX_GEMM_DMA_CHANNELS) [lindex $argv 5]
+set ::env(VORTEX_GEMM_HBM_PORTS) [lindex $argv 6]
+# This driver targets square FP16 MXUs with a 64-byte HBM bus.
+set ::env(VORTEX_GEMM_MXU_ROW) [lindex $argv 3]
+set ::env(VORTEX_GEMM_HBM_DATA_BYTES) 64
 set ::vortex_slr_definitions_only 1
 source [lindex $argv 1]
 source [file join [file dirname [lindex $argv 1]] slr_floorplan_report.tcl]

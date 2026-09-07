@@ -5,7 +5,6 @@ source [file join [file dirname $script_dir] floorplan.tcl]
 source [file join [file dirname $script_dir] slr_floorplan_report.tcl]
 unset ::vortex_slr_definitions_only
 set ::env(VORTEX_GEMM_SLR_FLOORPLAN) 1
-set ::env(VORTEX_DMA_CHANNEL_FLOORPLAN) 0
 set ::checks 0
 proc equal {actual expected label} {
     incr ::checks

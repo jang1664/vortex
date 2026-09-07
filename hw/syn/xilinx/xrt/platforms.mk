@@ -27,9 +27,19 @@ ifneq ($(findstring xilinx_u55c,$(XSA)),)
   CONFIGS += -DMEM_ADDR_WIDTH=34
   CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34
   CONFIGS += -DPLATFORM_MERGED_MEMORY_INTERFACE
-  # Each top-level AXI port can emit addresses across the full U55C HBM
-  # aperture. Use one contiguous HBM range per port; repeated non-contiguous
-  # sp lines for the same port are not preserved in the generated HMSS map.
+  # VX_mem_remap packs bank_idx = port * (32 / NUM_HBM_PORTS) + local_bank.
+  # Match those contiguous ranges to the actual external AXI port count,
+  # independently of NUM_DMA_CHANNELS. Repeated non-contiguous sp lines for
+  # the same port are not preserved in the generated HMSS map.
+  # The shared extractor preserves malformed/duplicate values for rejection
+  # and defaults to 8 only when NUM_HBM_PORTS is absent, as in VX_config.vh.
+  U55C_HBM_PORTS := $(call gemm_geometry_value,NUM_HBM_PORTS,8)
+ifeq ($(U55C_HBM_PORTS),4)
+  SP_FLAGS += vortex_afu_1.m_axi_mem_0:HBM[0:7]
+  SP_FLAGS += vortex_afu_1.m_axi_mem_1:HBM[8:15]
+  SP_FLAGS += vortex_afu_1.m_axi_mem_2:HBM[16:23]
+  SP_FLAGS += vortex_afu_1.m_axi_mem_3:HBM[24:31]
+else ifeq ($(U55C_HBM_PORTS),8)
   SP_FLAGS += vortex_afu_1.m_axi_mem_0:HBM[0:3]
   SP_FLAGS += vortex_afu_1.m_axi_mem_1:HBM[4:7]
   SP_FLAGS += vortex_afu_1.m_axi_mem_2:HBM[8:11]
@@ -38,6 +48,9 @@ ifneq ($(findstring xilinx_u55c,$(XSA)),)
   SP_FLAGS += vortex_afu_1.m_axi_mem_5:HBM[20:23]
   SP_FLAGS += vortex_afu_1.m_axi_mem_6:HBM[24:27]
   SP_FLAGS += vortex_afu_1.m_axi_mem_7:HBM[28:31]
+else
+  $(error U55C connectivity requires NUM_HBM_PORTS=4 or 8, got '$(U55C_HBM_PORTS)')
+endif
 else ifneq ($(findstring xilinx_u50,$(XSA)),)
   # 8 GB of HBM2 with 32 channels (256 MB per channel)
   CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=33

@@ -1,0 +1,64 @@
+task: four-config-pnr
+state: physical_failed
+updated_at: '2026-09-07 10:33'
+spec: preflight-spec.md
+branch: feat/gemv
+scope:
+  simulation: [th16_t4, th16_t8, th32_t4, th32_t8]
+  physical: [th32_t4, th32_t8]
+checks:
+  hook_geometry: implemented
+  hook_fixtures: pass
+  th16_t4_sim: pass
+  th16_t8_sim: pass
+  th32_t4_sim: pass
+  th32_t8_sim: pass
+  t4_upper_address_units: pass
+  u55c_connectivity: pass
+  th32_t4_pnr: failed_post_init
+  th32_t8_pnr: failed_post_init
+physical_runs:
+  th32_t4:
+    session_id: 24071
+    runner_pid: 3885149
+    make_pid: 3907092
+    state_file: build_four_config_pnr_artifacts/th32_t4_slr_v1/state.json
+    log: build_four_config_pnr_artifacts/th32_t4_slr_v1/build.log
+  th32_t8:
+    session_id: 41945
+    runner_pid: 3886501
+    make_pid: 3906735
+    state_file: build_four_config_pnr_artifacts/th32_t8_slr_v1/state.json
+    log: build_four_config_pnr_artifacts/th32_t8_slr_v1/build.log
+pitfalls:
+  - Existing floorplan assumes eight DMA channels and derives MXU columns from TMEM count.
+  - t4 configs currently retain RTL SLR pipelines but disable physical floorplan.
+  - Physical ownership and Laguna placement cannot be proven by simulation or Tcl mocks.
+  - Preserve unrelated earlier uncommitted floorplan-option cleanup and user-created configs.
+  - platforminfo cannot resolve the short U55C name in this environment (duplicate platform discovery); use the validated absolute xpfm path for physical builds.
+  - Simulation TH16/t8 attempt1 started before configure finished and found no app directory; setup-only failure preserved by verification worker.
+  - First Python geometry test loaded an outdated duplicate-value expectation while the test was being finalized; Tcl correctly rejects duplicates via an invalid sentinel.
+  - platforms.mk had eight-port U55C connectivity hardcoded; fixed before launch to cover all32 HBM PCs with either four or eight ports.
+  - Short-lived shell-background launch did not leave a surviving runner; no build started. Launched through persistent exec sessions instead and verified running state/PIDs.
+history:
+  - timestamp: '2026-09-07 00:49'
+    action: Confirmed user scope and read implementation and blackbox skills.
+    result: Tools available; preparing hook extension and isolated verification.
+  - timestamp: '2026-09-07 00:55'
+    action: Implemented strict geometry exports and exact t4/t8/paired index validation; enabled t4 floorplan.
+    result: Six Tcl suites pass; Python iteration1 has one fixture expectation mismatch, corrected for rerun. TH16 simulations compile in isolated builds.
+  - timestamp: '2026-09-07 00:59'
+    action: Completed final strict hook tests and four canonical GEMM cases per config.
+    result: Six Tcl suites, 11 INI/Make/config Python tests and three utilization-parser tests pass. Canonical xrt-vcs-sim 16/16 pass; supplemental cases and t4 upper-address directed tests finishing.
+  - timestamp: '2026-09-07 01:04'
+    action: Completed simulation, upper-address units and real generated-INI connectivity regression.
+    result: xrt-vcs-sim28/28 and depth units2/2 pass. Final INI/Make/config suite12/12 passes including four configs and malformed/absent HBM definitions. No RTL change.
+  - timestamp: '2026-09-07 01:05'
+    action: Launched two normal source-based TH32 U55C builds after refreshed configure and source/config evidence capture.
+    result: Both make processes running; source preprocessing started. Actual synthesis, hook execution, P&R and timing results pending. TH16 not launched.
+  - timestamp: '2026-09-07 10:11'
+    action: Reconciled persisted terminal states and started separately authorized robust-hook checkpoint regression.
+    result: t4 ended02:44 and t8 ended02:53 with post-init unclassified g_slr.u_link transport leaf; neither produced xclbin or reached placement. Follow-up in ../robust-hook; no PnR retry.
+  - timestamp: '2026-09-07 10:33'
+    action: Completed separately authorized robust-hook source-checkpoint regression.
+    result: Repaired name/ownership matching passes both real DCP inventories, but strict direct-pair validation reveals 160 unmarked MXU block-index TX driver errors per configuration. No PnR retry or pblock application occurred. See ../robust-hook/results.md for the RTL-preservation blocker before another source physical build.

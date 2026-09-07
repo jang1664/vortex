@@ -9,11 +9,27 @@ pending; Tcl fixtures are not a substitute for a placed design.
   `-DGEMM_SLR_PIPELINE` in the sourced `CONFIGS`.
 - `run_hw.sh --slr-floorplan 0|1` overrides the sourced floorplan setting;
   `--postfix slr_v1` keeps the source-built experiment in a separate output.
-- `DMA_CHANNEL_FLOORPLAN` must be zero. The old channel-2/channel-3
-  clock-region pblocks are removed, not silently reused as hard constraints.
-- The Makefile exports expected TMEM array count and MXU columns from
-  `CONFIGS`. Supported signatures are MXU32/eight arrays/no pair adapters and
-  MXU16/sixteen arrays/eight pair adapters. Both require eight HBM DMA channels.
+- The Makefile exports TMEM array, DMA channel, HBM port and MXU row/column
+  counts plus `MEM_BLOCK_SIZE` from `CONFIGS`. There is no configuration
+  whitelist. `geometry` follows `VX_gemm_node` and `VX_tmem_subsystem`:
+  physical TMEM bytes = `2 * MXU_ROW` (fixed FP16 input); HBM bytes =
+  `MEM_BLOCK_SIZE` (currently required to be 64 by RTL). Scale/zero-point
+  and physical TMEM widths must match, requiring `MXU_ROW == MXU_COL`.
+  The supported `{HBM/TMEM width ratio, arrays per DMA channel}` structures
+  are `{1,1}` direct, `{1,2}` bank-select and `{2,2}` pair-adapter.
+  U55C exposes four or eight HBM ports; DMA channels must divide that count.
+  TMEM/DMA counts must be powers of two and TMEM arrays divisible by channels.
+  Exact array/channel and active route index sets are checked, not just
+  cardinality. Inactive pair/bank-select state is rejected. Direct routes
+  are wires and may disappear; surviving direct leaves must be in range
+  and belong to a direct configuration. MXU16/t8 therefore accepts four
+  pair adapters and MXU16/t16 accepts eight without adding profile entries.
+  Missing, malformed or repeated definitions are rejected; only absent
+  `NUM_HBM_PORTS`, `MXU_ROW`, `MEM_BLOCK_SIZE` default to 8, 32, 64, matching
+  `VX_config.vh`. Width formulas must be kept in sync if fixed FP formats
+  change. TH16 and TH32 retain the same SLR ownership policy.
+  Standalone DCP checkers describe square FP16 MXUs with a 64-byte HBM bus.
+  See [four-config preflight](four-config-pnr/preflight-spec.md).
 - SLR0 contains HBM DMA, TMEM arrays/switches and the TMEM DMA controller;
   SLR1 contains local DMA, node/job/control logic and ACC; SLR2 contains MXU.
   Crossing halves are assigned independently. Residual TMEM/control bridge
@@ -352,6 +368,39 @@ not a checkpoint-based implementation retry and changes no RTL or constraints.
 The complete fixture suite passes:63 hierarchy,59 post-opt,22 typed SLR,
 13 diagnostic snapshot,28 congestion parser,24 congestion hook,10 INI,
 3 utilization parser, plus the existing ownership/direct-pair/Laguna suite.
+
+## Structural geometry validation (2026-09-07)
+
+Replaced the fixed configuration whitelist with the width/count contracts
+described above. SLR ownership, full-SLR ranges, marked endpoint checks and
+post-opt/post-place checks are unchanged. No RTL or pipeline latency changed.
+
+Verification used a separate `build_floorplan_geometry.84rxny` directory,
+configured after sourcing `configs/improve_th16_tcol16_m16_t8_bigmem.sh` with
+`../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex`.
+
+- Eight plain-Tcl suites PASS: structural inventory, homogeneous anchors,
+  lifted-owner recovery, post-opt hook, post-place hook, typed post-place
+  objects, diagnostic snapshot and congestion checks.
+- Inventory fixtures cover direct, bank-select and pair routes with four/eight
+  DMA channels, dot/slash generate spellings, MXU16/t8, and multiple HBM ports
+  per DMA channel. Negative tests reject malformed/missing geometry, unsupported
+  width/count relations, missing or wrong route indices, inactive route state
+  and the existing ownership/FF-pair failures.
+- `test_gen_vitis_ini.py`: 13/13 PASS (148.507 s). All six timing configs pass
+  Makefile export -> actual `floorplan.tcl::geometry` checks, in addition to
+  HBM connectivity and hook registration checks. A new source-contract test
+  catches drift in the mirrored fixed FP16 width formulas and RTL defaults.
+- An earlier run during editing failed the existing dummy-XO cache-reuse
+  check. The complete rerun above, with source files held fixed, passed it.
+
+No Vivado synthesis, checkpoint validation, placement or routing was performed.
+These fixtures establish structural hook compatibility, not physical timing
+or congestion closure. The earlier MXU16 xrt-vcs-sim results remain separate
+functional evidence; simulation was not rerun for these Tcl/Makefile changes.
+Refresh the configured build before the next source hardware run so both new
+geometry environment variables reach the hooks. Historical copied hook bundles
+are not modified by this change.
 
 ### Command references
 

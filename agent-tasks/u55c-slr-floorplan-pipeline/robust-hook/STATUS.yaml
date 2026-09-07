@@ -1,0 +1,44 @@
+task: robust-hook
+state: blocked_rtl_boundary_preservation
+updated_at: '2026-09-07 10:33'
+spec: robust-hook-spec.md
+checks:
+  tcl_regression: pass
+  python_config_regression: pass_12_tests
+  original_dcp_failure_t4: pass
+  original_dcp_failure_t8: pass
+  lifted_owner_regression: pass_25_checks
+  updated_dcp_t4: inventory_and_marked_groups_pass_direct_pairs_fail_160
+  updated_dcp_t8: inventory_and_marked_groups_pass_direct_pairs_fail_160
+  partition_boundary_validation: not_reached
+  in_memory_pblock_application: not_reached
+pitfalls:
+  - Both prior PnR runs stopped in post-init before place; no xclbin was produced.
+  - Cell spelling differs between RTL-like fixture paths and synthesized generate boundaries.
+  - Match-only normalization must never replace actual Vivado object names.
+  - Kernel DCP checks do not prove platform-linked pblock feasibility or placement/timing.
+  - New cross-stream negative fixture initially expected the word group; checker correctly reported unexpected TX peer. Fixed fixture expectation without changing safety behavior.
+  - Synthesized root-level receiver LUTs can lose stream identity; do not assign them by pointer leaf names or a blanket SLR fallback. Inspect actual connectivity first.
+  - Both current kernel DCPs have 160 MXU input block-index RX bits driven by unmarked prealign FFs instead of dedicated marked TX FFs. Matching fixes must not conceal this physical boundary-preservation failure.
+history:
+  - timestamp: '2026-09-07 10:03'
+    action: Confirmed Tcl-only robustness scope and DCP regression without PnR retry.
+    result: Located both synthesized kernel DCPs; baseline hook snapshots preserved in failed builds.
+  - timestamp: '2026-09-07 10:08'
+    action: Added shared match-only boundary normalization, endpoint ownership and aggregated unknown-cell reports.
+    result: Six Tcl suites pass with dot/slash/mixed t4/t8/paired inventories and strict identity checks.
+  - timestamp: '2026-09-07 10:10'
+    action: Added mixed-spelling actual-pin mock test and reproduced old failure on both real DCPs.
+    result: Fast regression passes after correcting negative-fixture expected wording; both DCP baselines reproduce original g_slr.u_link failure. Updated-source DCP tests running.
+  - timestamp: '2026-09-07 10:16'
+    action: Completed 12 Python config/INI tests; checked updated hooks against both original kernel DCPs.
+    result: Python passes. Both DCPs report exactly four unknown leaves before any pblock mutation. Added exact output-completion generate-boundary mapping for two FDREs; investigating actual connectivity of two root-lifted receiver LUT1s before any ownership change.
+  - timestamp: '2026-09-07 10:25'
+    action: Diagnosed lifted LUTs on both DCPs and added narrowly connectivity-proven ownership recovery.
+    result: Both root helpers form direct Q-to-I0-to-O-to-D loops on the same retained command-receiver FFs in SLR0. Only this unmarked LUT1 topology may recover ownership; ambiguity, ports, marked FFs and lost endpoint identity still fail. Seven Tcl suites pass, including 25 new graph checks. Updated DCP iteration 2 is running.
+    lessons: Diagnostic wildcard initially found six rather than two LUTs; preserved failed probe and corrected diagnostic scope only. Initial graph mock mishandled list/scalar property semantics for bracketed names; fixed mock, not production checks.
+  - timestamp: '2026-09-07 10:33'
+    action: Completed updated DCP iteration 2 on both configurations and reran final-source Python config regression.
+    result: Seven Tcl suites and all 12 Python tests pass. Both DCPs pass full ownership and marked-group inventory, but strict direct-pair validation fails on exactly 160 MXU block-index RX bits driven by unmarked prealign state FFs. Boundary validation and pblock application were not reached. Source checkpoints and historical snapshots remain unchanged; no RTL change, synthesis or PnR was performed.
+    lessons: The remaining issue is the actual synthesized boundary FF structure, not generate-name spelling. Preserve the required TX FFs in a separately authorized RTL/synthesis change; do not whitelist unmarked drivers to declare success.
+next_action: User authorized RTL preservation and fresh TH32/t4+t8 source builds; tracked in ../mxu-control-preserve/STATUS.yaml. This task's original DCP checks remain failed historical evidence.
