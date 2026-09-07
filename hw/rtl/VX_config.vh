@@ -1454,9 +1454,10 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_DMA_STORE_MAX_CHUNK_BEATS 8
 `endif
 
-// The measured C2 profile enables the seven selected control/transport cuts.
-// Per-cut overrides remain available for independent experiments. Other
-// configurations retain their previous defaults unless they select this profile.
+// The timing-cut profile enables all five registered dependency/capacity views
+// and the three transport cuts below, with monotonic SET for dependency safety.
+// ACC_FREE and DMA_DEPS now follow the profile as well. Per-cut overrides remain
+// available; configurations that do not select the profile retain zero defaults.
 `ifndef GEMM_TIMING_CUTS
 `define GEMM_TIMING_CUTS 0
 `endif
@@ -1471,10 +1472,10 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_TIMING_REG_LOCAL_DEPS `GEMM_TIMING_CUTS
 `endif
 `ifndef GEMM_TIMING_REG_ACC_FREE
-`define GEMM_TIMING_REG_ACC_FREE 0
+`define GEMM_TIMING_REG_ACC_FREE `GEMM_TIMING_CUTS
 `endif
 `ifndef GEMM_TIMING_REG_DMA_DEPS
-`define GEMM_TIMING_REG_DMA_DEPS 0
+`define GEMM_TIMING_REG_DMA_DEPS `GEMM_TIMING_CUTS
 `endif
 `ifndef GEMM_TIMING_REG_CAPACITY
 `define GEMM_TIMING_REG_CAPACITY `GEMM_TIMING_CUTS

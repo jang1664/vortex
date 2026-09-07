@@ -1,0 +1,42 @@
+task: gemm-dependency-register-cuts
+state: completed_performance_comparison_synthesis_not_run
+updated_at: '2026-09-07 21:16'
+spec: spec.md
+checks:
+  rtl_audit: documented
+  umbrella_defaults: pass_default_off_on_and_explicit_override_matrix
+  baseline_perf3: pass_14_of_14
+  timing_cuts_off_perf3: pass_14_of_14
+  timing_cuts_on_perf3: pass_14_of_14
+  controller_directed: pass_2_of_2
+  paired_sources_and_app_kernel_identity: pass
+  repeated_gemm_cycles: exact_match_all_7_cases
+  off_matches_original: pass_all_7_cases
+  synthesis: not_run_per_user_staging
+results:
+  metric: VX_CSR_MPM_GEMM_TOTAL_CYC
+  config: configs/improve_th32_tcol32_m32_t4_bigmem.sh
+  max_cycle_increase_percent: 1.9916142557651992
+  min_cycle_increase_percent: 0.8896797153024911
+  comparison: comparison.json
+  report: measurement.md
+pitfalls:
+  - GEMM_TIMING_CUTS includes transport changes; the updated user request measures the complete umbrella profile, not isolated dependency costs.
+  - Perf3 GEMM counters must be distinguished from host and RISC-V core cycle counts.
+  - Baseline must preserve prior dirty RTL and SLR FF preservation changes.
+  - A registered dependency view is safe only with its documented monotonic notification contract.
+  - Without debug, wrapper output contains PERF and PASSED; build/run.log may be absent.
+  - App -d selects QDIR and -t selects weight transpose, not accumulation mode.
+history:
+  - timestamp: '2026-09-07 21:02'
+    action: Accepted user's register-cut and xrt-vcs-sim perf3 experiment request.
+    result: Scope is the current TH32/t4 SLR design, all related GEMM release-to-issue paths, isolated and combined cuts, no synthesis.
+  - timestamp: '2026-09-07 21:10'
+    action: Applied the user's revised umbrella-only implementation and OFF/ON measurement scope.
+    result: Only ACC_FREE and DMA_DEPS defaults will inherit GEMM_TIMING_CUTS. Three proposed new cuts remain unimplemented. Original baseline is compiled from an immutable RTL snapshot; initial smoke function passes, with a measurement parser failure being corrected without RTL changes. Synthesis remains deferred until after performance comparison.
+  - timestamp: '2026-09-07 21:12'
+    action: Reviewed the two functional macro-default substitutions and released final source to verification.
+    result: Default/CUT0 gives ACC_FREE=0,DMA_DEPS=0; CUT1 gives both1; explicit zero overrides remain effective. Fresh CUT0/CUT1 snapshot builds are running seven cases twice with perf3. Existing directed controller VCS tests are running through verify_rtl.py. No RTL module or production config changes.
+  - timestamp: '2026-09-07 21:16'
+    action: Completed and independently checked current-source OFF/ON performance manifests and directed test logs.
+    result: Current OFF14/14 and ON14/14 pass; original14/14 and directed2/2 also pass. All repeats are exact for GEMM_TOTAL_CYC. OFF equals original for all7cases; ON increases GEMM cycles by0.8897 to1.9916percent. Same RTL source snapshot and identical app/kernel artifacts across OFF/ON. Controller traces confirm ACC_FREE/DMA_DEPS1 and next-cycle dependency release in ON. Only VX_config.vh functional defaults changed; no synthesis, OOC, PnR or commits.
