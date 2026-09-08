@@ -5,7 +5,7 @@
 namespace u55c {
 
 MemoryModel::MemoryModel()
-    : ram_(0, 4096), scheduler_(U55C_HBM_AXI_FREQ_HZ, U55C_DRAM_TCK_PS) {
+    : ram_(0, 4096), scheduler_(U55C_HBM_AXI_FREQ_HZ, DramFrequencyHz{U55C_DRAM_FREQ_HZ}) {
     reset(0);
 }
 MemoryModel::~MemoryModel() = default;
@@ -13,13 +13,16 @@ MemoryModel::~MemoryModel() = default;
 void MemoryModel::reset(uint64_t epoch) {
     dram_.reset();
     ports_ = {};
-    dram_ = std::make_unique<vortex::DramSim>(vortex::DramSim::Profile::U55c);
+    service_counters_ = {};
+    dram_ = std::make_unique<vortex::DramSim>(vortex::DramSim::Profile::U55c, U55C_DRAM_FREQ_HZ);
+    if (U55C_PERFORMANCE_MODE) budgets_ = std::make_unique<Budgets>(epoch);
     if (dram_->tck_ps() != U55C_DRAM_TCK_PS || dram_->transaction_bytes() != 32)
         throw std::runtime_error("Manifest disagrees with Ramulator timing/width");
     scheduler_.reset(epoch);
     request_rr_ = return_rr_ = 0;
     last_logic_ = epoch;
     has_logic_ = false;
+    prefer_read_ = true;
 }
 
 void MemoryModel::aperture(uint64_t addr, uint64_t size) {
@@ -112,6 +115,10 @@ void MemoryModel::complete(void* arg) {
     beat.completion_time = beat.owner->now_ps();
 }
 void MemoryModel::hbm_edge(uint64_t time) {
+    if (budgets_) {
+        performance_edge(time);
+        return;
+    }
     // Abstract paired-PC shared links, independent request/return directions.
     // Each port and physical-channel link services at most 32 bytes per edge.
     // This deliberately makes no claim about proprietary HMSS ingress wiring.
@@ -136,6 +143,7 @@ void MemoryModel::hbm_edge(uint64_t time) {
         }
         if (return_link[channel]) continue;
         return_link[channel] = true;
+        if (beat->returned == 0) beat->first_return_time = time;
         if (++beat->returned == 2) {
             beat->return_time = time;
             q.pop_front();
@@ -149,6 +157,7 @@ void MemoryModel::hbm_edge(uint64_t time) {
         unsigned channel = beat->addr >> 30;
         if (beat->eligible_hbm > scheduler_.hbm_edges() || request_link[channel]) continue;
         if (!dram_->try_send_raw(beat->addr + 32 * beat->submitted, beat->write, complete, beat.get())) continue;
+        if (beat->submitted == 0) beat->admission_time = time;
         request_link[channel] = true;
         if (++beat->submitted == 2) {
             port.returns.push_back(beat);
@@ -157,6 +166,99 @@ void MemoryModel::hbm_edge(uint64_t time) {
     }
     request_rr_ = (request_rr_ + 1) % ports_.size();
     return_rr_ = (return_rr_ + 1) % ports_.size();
+}
+
+MemoryModel::Budgets::Budgets(uint64_t epoch) {
+    for (unsigned p = 0; p < U55C_NUM_PORTS; ++p) {
+        reads.emplace_back(U55C_PORT_READ_BYTES_PER_SECOND, U55C_BURST_BYTES, epoch);
+        writes.emplace_back(U55C_PORT_WRITE_BYTES_PER_SECOND, U55C_BURST_BYTES, epoch);
+    }
+    aggregate_read.reset(epoch); aggregate_write.reset(epoch); shared.reset(epoch);
+}
+
+void MemoryModel::Budgets::advance(uint64_t time) {
+    for (auto& b : reads) b.advance(time);
+    for (auto& b : writes) b.advance(time);
+    aggregate_read.advance(time); aggregate_write.advance(time); shared.advance(time);
+}
+
+void MemoryModel::performance_edge(uint64_t time) {
+    auto& b = *budgets_;
+    b.advance(time);
+    auto available = [&](ServiceBudget& port, ServiceBudget& aggregate) {
+        return port.available(32) && aggregate.available(32) && b.shared.available(32);
+    };
+    auto consume = [&](ServiceBudget& port, ServiceBudget& aggregate) {
+        port.consume(32); aggregate.consume(32); b.shared.consume(32);
+    };
+    auto returns = [&] {
+        const unsigned start = return_rr_;
+        for (unsigned i = 0; i < ports_.size(); ++i) {
+            unsigned p = (start + i) % ports_.size();
+            auto& wq = ports_[p].write_returns;
+            if (!wq.empty() && wq.front()->completed == 2 && wq.front()->completion_time < time) {
+                const auto write = wq.front();
+                ++write->burst->returned;
+                write->burst->return_time = time;
+                wq.pop_front();
+            }
+            auto& q = ports_[p].returns;
+            if (q.empty()) continue;
+            auto beat = q.front();
+            if (beat->completed != 2 || beat->completion_time >= time) continue;
+            // Write notifications have their own FIFO: read bandwidth stalls
+            // must not prevent B progress on the independent response channel.
+#if U55C_READ_RESIDUAL_PS > 0
+            if (time - beat->completion_time < U55C_READ_RESIDUAL_PS) continue;
+#endif
+            if (!available(b.reads[p], b.aggregate_read)) continue;
+            consume(b.reads[p], b.aggregate_read);
+            service_counters_[p].read += 32;
+            return_rr_ = (p + 1) % ports_.size();
+            prefer_read_ = false;
+            if (beat->returned == 0) beat->first_return_time = time;
+            if (++beat->returned == 2) {
+                beat->return_time = time;
+                q.pop_front();
+            }
+        }
+    };
+    auto requests = [&] {
+        const unsigned start = request_rr_;
+        for (unsigned i = 0; i < ports_.size(); ++i) {
+            unsigned p = (start + i) % ports_.size();
+            auto& port = ports_[p];
+            // Read addresses are commands, not read data on a write link.
+            // Drain eligible commands until controller backpressure; finite
+            // admission queues bound this loop. At most one write quantum is
+            // served per port per edge, matching the physical 256-bit ingress.
+            while (!port.requests.empty()) {
+                auto beat = port.requests.front();
+                if (beat->eligible_hbm > scheduler_.hbm_edges()) break;
+                if (beat->write && !available(b.writes[p], b.aggregate_write)) break;
+                if (!dram_->try_send_raw(beat->addr + 32 * beat->submitted,
+                                        beat->write, complete, beat.get())) break;
+                if (beat->submitted == 0) beat->admission_time = time;
+                if (beat->write) {
+                    consume(b.writes[p], b.aggregate_write);
+                    service_counters_[p].write += 32;
+                    request_rr_ = (p + 1) % ports_.size();
+                    prefer_read_ = true;
+                }
+                if (++beat->submitted == 2) {
+                    if (beat->write) port.write_returns.push_back(beat);
+                    else port.returns.push_back(beat);
+                    port.requests.pop_front();
+                }
+                if (beat->write) break;
+            }
+        }
+    };
+    // Advance priority on successful data service, not elapsed edges. Otherwise
+    // periodic credit replenishment can alias with a clock-based rotation and
+    // starve a subset of ports or one direction indefinitely.
+    if (prefer_read_) { returns(); requests(); }
+    else { requests(); returns(); }
 }
 
 void MemoryModel::advance(uint64_t time) {
@@ -182,6 +284,14 @@ bool MemoryModel::read_response(unsigned p, Response& response) const {
     if (q.empty() || q.front()->cdc != 2) return false;
     auto& beat = *q.front();
     response = {beat.id, beat.last, beat.data};
+    return true;
+}
+bool MemoryModel::read_timing(unsigned p, ReadTiming& timing) const {
+    const auto& q = ports_.at(p).reads;
+    if (q.empty() || q.front()->returned != 2) return false;
+    const auto& beat = *q.front();
+    timing = {beat.admission_time, beat.completion_time,
+              beat.first_return_time, beat.return_time};
     return true;
 }
 bool MemoryModel::write_response(unsigned p, Response& response) const {

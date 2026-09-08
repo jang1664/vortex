@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "case": "gemm16x16x4096",
+      "args": "-m 16 -n 16 -k 4096 -q 32 -r 1",
+      "performance_comparison_eligible": false,
+      "root_cause": "unassigned; hardware passes, reference VCS fails",
+      "followup": "Captured add cancellation reproduced vendor tmerge X; guarded-add document stage passes first full replay at11394 cycles. Original failed configuration retained below; matched repeated performance evaluation is pending.",
+      "document": {
+        "status": "output_mismatch",
+        "wrong_outputs": 68,
+        "total_outputs": 256,
+        "cycles_diagnostic_only": 11394,
+        "log": "build_hbm_reference_document/stream_document_gemm16x16x4096_1.log"
+      },
+      "hardware": {
+        "status": "passed_single_exploratory_run",
+        "cycles_diagnostic_only": 16810,
+        "slurm_job": 4912,
+        "log": "build_hbm_hardware_reference/hardware-smoke-4912/gemm16x16x4096.log"
+      },
+      "limitation": "One run each; VCS output mismatch prevents performance comparison."
+    },
+    {
+      "case": "gemm256x256x256",
+      "args": "-m 256 -n 256 -k 256 -q 32 -r 1",
+      "performance_comparison_eligible": false,
+      "root_cause": "unassigned",
+      "document": {
+        "status": "output_mismatch",
+        "wrong_outputs": 192,
+        "total_outputs": 65536,
+        "cycles_diagnostic_only": 78757,
+        "log": "build_hbm_reference_document/explore_document_gemm256x256x256.log"
+      },
+      "hardware": {
+        "status": "output_mismatch",
+        "wrong_outputs": 128,
+        "total_outputs": 65536,
+        "cycles_diagnostic_only": 80847,
+        "slurm_job": 4911,
+        "log": "build_hbm_hardware_reference/hardware-smoke-4911/gemm256.log"
+      },
+      "limitation": "One run each; full mismatch locations and causal equivalence not established."
+    }
+  ]
+}

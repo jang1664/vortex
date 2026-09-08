@@ -1,0 +1,61 @@
+# Temporary archived-RTL build. Run make -f <stage>/Makefile.reference from
+# configured build/sim/xrtsim_vcs. Never include normal RTL compile recipes.
+include $(STAGE)/archive-defines.mk
+SIMSRC := $(REPO)/sim/xrtsim_vcs
+COMMON := $(REPO)/sim/common
+DPI := $(REPO)/hw/dpi
+THIRD := $(REPO)/third_party
+HEADERS := $(STAGE)/archived-headers
+SIMLIB := $(REPO)/build/vcs_simlib/synopsys_sim.setup
+IP_LIBS := xbip_utils_v3_0_14 axi_utils_v2_0_10 xbip_pipe_v3_0_10 xbip_dsp48_wrapper_v3_0_7 mult_gen_v12_0_23 floating_point_v7_1_20
+REFERENCE_FMA_GUARD ?= 0
+REFERENCE_F32MUL_GUARD ?= 0
+REFERENCE_F32ADD_GUARD ?= 0
+TASKSRC := $(REPO)/agent-tasks/u55c-hbm-performance-calibration
+ifeq ($(REFERENCE_FMA_GUARD),1)
+XPROP_FLAG := -xprop=$(TASKSRC)/fma_module_xprop.cfg
+FMA_CHECK_SRCS := $(TASKSRC)/reference_fma_guard.sv $(TASKSRC)/reference_fma_guard_bind.sv
+else
+XPROP_FLAG := -xprop=tmerge
+endif
+ifeq ($(REFERENCE_F32MUL_GUARD),1)
+ifneq ($(REFERENCE_FMA_GUARD),1)
+$(error REFERENCE_F32MUL_GUARD requires REFERENCE_FMA_GUARD=1)
+endif
+XPROP_FLAG := -xprop=$(TASKSRC)/fma_f32mul_module_xprop.cfg
+FMA_CHECK_SRCS += $(TASKSRC)/reference_binary_fp_guard.sv $(TASKSRC)/reference_f32mul_guard_bind.sv
+endif
+ifeq ($(REFERENCE_F32ADD_GUARD),1)
+ifneq ($(REFERENCE_F32MUL_GUARD),1)
+$(error REFERENCE_F32ADD_GUARD requires REFERENCE_F32MUL_GUARD=1)
+endif
+XPROP_FLAG := -xprop=$(TASKSRC)/fma_f32mul_f32add_module_xprop.cfg
+FMA_CHECK_SRCS += $(TASKSRC)/reference_f32add_guard_bind.sv
+endif
+CPPFLAGS := -std=c++17 -fPIC -I$(HEADERS) -I$(STAGE) -I$(SIMSRC) -I$(COMMON) -I$(DPI) $(ARCHIVE_DEFINES) -DNOXRT
+CPPFLAGS += -I$(THIRD)/softfloat/source/include -I$(THIRD)/ramulator/src -I$(THIRD)/ramulator/ext/yaml-cpp/include -I$(THIRD)/ramulator/ext/spdlog/include
+DPI_SRCS := $(SIMSRC)/dpi_vcs_server.cpp $(SIMSRC)/hbm_model.cpp $(COMMON)/dram_sim.cpp $(COMMON)/mem.cpp $(COMMON)/util.cpp $(DPI)/util_dpi.cpp $(DPI)/float_dpi.cpp $(COMMON)/softfloat_ext.cpp $(COMMON)/rvfloats.cpp
+LINKFLAGS := -Wl,--whole-archive $(THIRD)/softfloat/build/Linux-x86_64-GCC/softfloat.a -Wl,--no-whole-archive -Wl,-rpath,$(THIRD)/ramulator -L$(THIRD)/ramulator -lramulator -pthread
+.DEFAULT_GOAL := simv
+.PHONY: config headers ip simv hostbridge
+
+# Host bridge shares the archived headers and exact model manifest with DPI.
+# This target compiles no DUT RTL and does not use the normal RTL recipes.
+hostbridge: config headers
+	/usr/bin/g++ $(CPPFLAGS) -I$(REPO)/sim/xrtsim -O2 -shared $(COMMON)/util.cpp $(COMMON)/softfloat_ext.cpp $(COMMON)/rvfloats.cpp $(REPO)/sim/xrtsim/xrt_c.cpp $(SIMSRC)/xrt_sim_vcs.cpp $(THIRD)/softfloat/build/Linux-x86_64-GCC/softfloat.a -pthread -o $(STAGE)/libxrtsim_vcs.so
+
+config:
+	$(MAKE) -f $(SIMSRC)/Makefile hbm-config DESTDIR=$(STAGE) CONFIGS="$(ARCHIVE_DEFINES)" LOGIC_FREQ_HZ=100000000 HBM_AXI_FREQ_HZ=450000000
+
+headers:
+	mkdir -p $(HEADERS)
+	python3 $(REPO)/hw/scripts/gen_config.py -i $(ARTIFACT)/src/VX_config.vh -o $(HEADERS)/VX_config.h
+	python3 $(REPO)/hw/scripts/gen_config.py -i $(ARTIFACT)/src/VX_types.vh -o $(HEADERS)/VX_types.h
+
+ip:
+	python3 $(REPO)/agent-tasks/u55c-hbm-performance-calibration/compile_archived_ip.py --artifact $(ARTIFACT) --stage $(STAGE) --simlib $(SIMLIB)
+
+# Keep the host handshake hash in sync even for diagnostic-only rebuilds.
+simv: config headers ip hostbridge
+	cd $(STAGE) && vlogan -full64 -sverilog +v2k -timescale=1ns/1ps -work work -f archive.f $(SIMSRC)/VX_hbm_axi_guard.sv $(SIMSRC)/tb_vcs_xrtsim.sv $(FMA_CHECK_SRCS) $(OBSERVER) $(SIMSRC)/xilinx_fpu_ip_config.sv -l vlogan.log
+	cd $(STAGE) && vcs -full64 -timescale=1ns/1ps $(XPROP_FLAG) $(if $(OBSERVER),-debug_access+all) -CFLAGS "$(CPPFLAGS) -DU55C_DPI_HEADER_HASH=$(shell sha256sum $(STAGE)/u55c_model_config.h | cut -d' ' -f1)" -LDFLAGS "$(LINKFLAGS)" $(DPI_SRCS) tb_vcs_xrtsim_xilinx_fpu_cfg -l vcs_elab.log -o simv

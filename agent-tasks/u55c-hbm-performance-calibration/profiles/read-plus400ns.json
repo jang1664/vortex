@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "u55c-diagnostic-read-plus400ns",
+  "status": "diagnostic-only",
+  "dram_frequency_hz": 900000000,
+  "hbm_axi_frequency_hz": 450000000,
+  "port_read_bytes_per_second": 14400000000,
+  "port_write_bytes_per_second": 14400000000,
+  "aggregate_read_bytes_per_second": 460800000000,
+  "aggregate_write_bytes_per_second": 460800000000,
+  "aggregate_shared_bytes_per_second": 460800000000,
+  "burst_bytes": 64,
+  "aggregate_burst_bytes": 1024,
+  "read_residual_ps": 521111,
+  "latency_reference": "Exploratory effective-delay fitting candidate: document residual plus400000ps. Chosen before execution from K16/K4096 hardware gaps and independent plus100ns sensitivity. Not isolated HBM latency.",
+  "provenance": "Both exploratory finite-difference estimates imply roughly390-397ns extra delay; round to400ns for one candidate check. Not held-out, not accepted calibration, no direct physical latency claim. All other numeric profile fields unchanged."
+}

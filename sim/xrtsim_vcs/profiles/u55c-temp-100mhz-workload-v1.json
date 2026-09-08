@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "u55c-temp-100mhz-workload-v1",
+  "status": "hardware-calibrated",
+  "dram_frequency_hz": 900000000,
+  "hbm_axi_frequency_hz": 450000000,
+  "port_read_bytes_per_second": 14400000000,
+  "port_write_bytes_per_second": 14400000000,
+  "aggregate_read_bytes_per_second": 460800000000,
+  "aggregate_write_bytes_per_second": 460800000000,
+  "aggregate_shared_bytes_per_second": 460800000000,
+  "burst_bytes": 64,
+  "aggregate_burst_bytes": 1024,
+  "read_residual_ps": 521111,
+  "latency_reference": "Effective whole-kernel workload timing fit: 521111ps residual (document baseline plus400ns). Not a direct physical HBM zero-load latency measurement; rate limits remain document-derived.",
+  "provenance": "User adopted 2026-09-09 with explicit vendor-primitive provenance and unsupported-workload limitations. Only temp xclbin UUID04277889-d0a3-bd1d-c32e-72ef96e153c3, 8 ports, kernel100MHz/AXI450MHz/DRAM900MHz. Frozen held-out GEMM16x16x1024,64x64x256,128x128x64: maximum absolute cycle error4.272% against preselected10% target; five hardware samples and two VCS replays per case. Numeric fields identical to frozen read-plus400ns.json. See agent-tasks/u55c-hbm-performance-calibration/RESULTS.md. No claim of independent CPU-DMA, four-port hardware or gate-equivalent primitive validation."
+}

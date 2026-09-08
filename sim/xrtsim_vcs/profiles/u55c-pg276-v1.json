@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "u55c-pg276-global-closed-page-v1",
+  "status": "documentation-based",
+  "dram_frequency_hz": 900000000,
+  "hbm_axi_frequency_hz": 450000000,
+  "port_read_bytes_per_second": 14400000000,
+  "port_write_bytes_per_second": 14400000000,
+  "aggregate_read_bytes_per_second": 460800000000,
+  "aggregate_write_bytes_per_second": 460800000000,
+  "aggregate_shared_bytes_per_second": 460800000000,
+  "burst_bytes": 64,
+  "aggregate_burst_bytes": 1024,
+  "read_residual_ps": 121111,
+  "latency_reference": "PG276 global-addressing closed-page minimum: 128 memory clocks at 900MHz, approximately 142222ps. Reference is an isolated aligned 64B read after reset, first 32B model return from first DRAM admission. RBC+BG-interleave/nBL2 zero-residual probe completion is 21111ps; round(142222.222-21111.111)=121111ps residual. Nearest-ps residual avoids an extra receiving edge caused by rounding a sub-ps fraction twice. CDC, second 32B serialization and TB publication are separate. Open-page latency is not independently fitted; PG276 reports minima, not guaranteed end-to-end values. Validation in progress.",
+  "provenance": "AMD PG276 Performance and Raw Throughput Evaluation, revision 2025-12-17: https://docs.amd.com/r/en-US/pg276-axi-hbm/Performance and https://docs.amd.com/r/en-US/pg276-axi-hbm/Raw-Throughput-Evaluation . temp xclbin a3f5e07e6974498bb9fef1c1b5c0bf5591aca8386f5651980b96d7d983b1d56c HWH: AXI450/HBM900, SWITCH_ENABLE_00/01 TRUE. Residual is model-to-document alignment, not a board measurement. Shared raw bandwidth is a simplified card-wide data budget, not an internal switch model."
+}

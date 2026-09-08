@@ -1,0 +1,230 @@
+{
+  "artifact_hashes": {
+    "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/tests/regression/fpint_gemm_ffn_hw/fpint_gemm_ffn_hw": "8f98e5af6f3680af703f2452847beaac7444341947020f27929aa26938273368",
+    "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/tests/regression/fpint_gemm_ffn_hw/kernel.vxbin": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177",
+    "runtime/libxrtsim_vcs.so": "3495039399a76b2f24f4ff9bf751d72d567d194991f16478495ef55ec80722c7",
+    "sim/xrtsim_vcs/simv": "e3c71866173fa08a80ebbf6270d7a107f25b817d0152ddb102785f5db74248f9",
+    "sim/xrtsim_vcs/u55c_model_manifest.json": "434541eed11caeb6a27dd1e0d0fd1bd97f54e36aad9e0f8074b66a27ef4bf526"
+  },
+  "limitations": [
+    "These are fitting cases, not held-out validation.",
+    "Effective read-delay fit, not isolated HBM measurement.",
+    "No user acceptance tolerance selected."
+  ],
+  "manifest": {
+    "aperture_bytes": 17179869184,
+    "defines": {
+      "AFU_DONE_WAIT_CACHE_DRAIN": "1",
+      "BANK_INTERLEAVE": "1",
+      "DCACHE_SIZE": "32768",
+      "DMA_RD_OUTSTANDING_SLOT": "8",
+      "ENABLE_GEMM_ACCEL": "1",
+      "EXT_D_DISABLE": "1",
+      "EXT_ZFH_ENABLE": "1",
+      "FEXP_PE_RATIO": "16",
+      "FPU_DSP": "1",
+      "GEMM_ACC_MEM_DEPTH": "1024",
+      "GEMM_IMPROVE": "1",
+      "GEMM_TIMING_CUTS": "1",
+      "ICACHE_SIZE": "32768",
+      "JOB_MMIO_DMA_DESC_ONE_LANE": "1",
+      "LMEM_DMA_CMD_FIFO_DEPTH": "2",
+      "LMEM_DMA_RD_OUTSTANDING_SLOTS": "8",
+      "LMEM_LOG_SIZE": "20",
+      "MEM_ADDR_WIDTH": "34",
+      "MXU_COL": "16",
+      "MXU_COL_TILE": "16",
+      "MXU_ROW": "16",
+      "MXU_WLOAD_NUM": "4",
+      "NDEBUG": "1",
+      "NUM_CLUSTERS": "1",
+      "NUM_CORES": "1",
+      "NUM_DMA_CHANNELS": "8",
+      "NUM_THREADS": "16",
+      "NUM_TMEM_BANKS": "16",
+      "PLATFORM_MEMORY_ADDR_WIDTH": "34",
+      "PLATFORM_MEMORY_DATA_SIZE": "64",
+      "PLATFORM_MEMORY_ID_WIDTH": "32",
+      "PLATFORM_MEMORY_NUM_BANKS": "32",
+      "PLATFORM_MEMORY_REMAP": "1",
+      "PLATFORM_MERGED_MEMORY_INTERFACE": "1",
+      "TMEM_BANK_SIZE": "32768",
+      "VIVADO": "1",
+      "VX_ENABLE_HW_EXPF": "1",
+      "VX_FPU_EXP_LUT": "1",
+      "W_LMEM_DMA_RESPONSE_SLOTS": "8",
+      "XLEN_64": "1"
+    },
+    "dram_address_policy": "8H RBC+BG interleave: Ch33:30 PC29 SID28 row27:14 BG1=13 BA12:11 col10:6 BG0=5 byte4:0",
+    "dram_freq_hz": 900000000,
+    "dram_profile": "HBM2-documentation-adapter-v1",
+    "dram_tck_ps": 1111,
+    "dram_timing_policy": "900MHz: ceil(HBM2_2Gbps timing minima in ns * 0.9), except nBL=2 for 32 bytes on a 64-bit DDR pseudochannel; 8Gb-channel tRFC=350ns, tREFI=3900ns; Ramulator integer tCK metadata only, exact frequency scheduling; not an AMD controller preset",
+    "hbm_axi_freq_hz": 450000000,
+    "kernel_data_bytes": 64,
+    "kernel_ports": 8,
+    "logic_freq_hz": 100000000,
+    "pc_bytes": 536870912,
+    "pc_count": 32,
+    "performance_profile": {
+      "aggregate_burst_bytes": 1024,
+      "aggregate_read_bytes_per_second": 460800000000,
+      "aggregate_shared_bytes_per_second": 460800000000,
+      "aggregate_write_bytes_per_second": 460800000000,
+      "burst_bytes": 64,
+      "dram_frequency_hz": 900000000,
+      "hbm_axi_frequency_hz": 450000000,
+      "latency_reference": "Exploratory effective-delay fitting candidate: document residual plus400000ps. Chosen before execution from K16/K4096 hardware gaps and independent plus100ns sensitivity. Not isolated HBM latency.",
+      "name": "u55c-diagnostic-read-plus400ns",
+      "port_read_bytes_per_second": 14400000000,
+      "port_write_bytes_per_second": 14400000000,
+      "provenance": "Both exploratory finite-difference estimates imply roughly390-397ns extra delay; round to400ns for one candidate check. Not held-out, not accepted calibration, no direct physical latency claim. All other numeric profile fields unchanged.",
+      "read_residual_ps": 521111,
+      "schema_version": 1,
+      "source_sha256": "69ac911af58cccdf3cacf1b12f0f418c8e055d97dedc7e1cb1ac2ec84eea276e",
+      "status": "diagnostic-only"
+    },
+    "platform": "xilinx_u55c",
+    "provenance": {
+      "backend_source_sha256": {
+        "common/dram_sim.cpp": "f19c18a20b3c5e4b1e799ecb142b61b38ff2c3a1684097723f57012c926dabf0",
+        "common/dram_sim.h": "a90cb30d2b8141d386fae5634f34c3c574801af7e8d4d7101ed745ead8af216b",
+        "common/u55c_address.h": "31a118c245d08fa877764201c92e107d1d5ab3e7760efce95aa0f364c1a8b592",
+        "xrtsim_vcs/VX_hbm_axi_guard.sv": "58f0731073b3473763d7aef4fcb17e336e956aba6fdfd1c43f3809add4d49517",
+        "xrtsim_vcs/dpi_vcs_server.cpp": "f688f61e1dbc55d43114e3b44d1341381662c2aa10033be5e7c0362ab6cbc696",
+        "xrtsim_vcs/gen_hbm_config.py": "d22ad0db612b25cfb34e114c2cb1d43a19af367b1938f5460cd899914bc6211b",
+        "xrtsim_vcs/hbm_clock.h": "a0f2a947ca38bcd5bd5b603f7425e7ddb720d7dbb1e232e0676f672f3e30fc23",
+        "xrtsim_vcs/hbm_model.cpp": "d4e717b0ab83742bed2901751ea21644a348108960982a36549d8e27509f8644",
+        "xrtsim_vcs/hbm_model.h": "ee38b7515c55b48186e3e591621cbde32d42ae632402d81c02e09a9029dfc059",
+        "xrtsim_vcs/hbm_performance_profile.py": "b473ef50b8d749b1c909787fa5d18e3ce0dd828d388eec352b6faf7b7172d89f",
+        "xrtsim_vcs/hbm_service_budget.h": "9b1cfdbf8683a732399f437129d04c037ba93b4f5537decfef50dd0bb2628044",
+        "xrtsim_vcs/tb_vcs_xrtsim.sv": "83d964a83c85246b2102d1a5e38a39de88779205cae71b8bc85e1d3f3f7bf66b",
+        "xrtsim_vcs/vcs_protocol.h": "1f2cc55caa43b526fc75c51c38e15630ac38980a9a40186fd90e87b218262e0d"
+      },
+      "connectivity": "Make-evaluated platforms.mk SP_FLAGS",
+      "physical_routing": "abstract; no verified linked HMSS ingress metadata",
+      "source_sha256": {
+        "geometry.mk": "9da8671708df4ded6f530f59a90445898ea42e39b94773bafb713928e68ada6c",
+        "platforms.mk": "a614794267be7a1c81db6032091f18e3a3bc9646276fbf48082ae804b5aa7a0e"
+      },
+      "timing": "diagnostic-only: Both exploratory finite-difference estimates imply roughly390-397ns extra delay; round to400ns for one candidate check. Not held-out, not accepted calibration, no direct physical latency claim. All other numeric profile fields unchanged."
+    },
+    "routes": [
+      {
+        "first_pc": 0,
+        "last_pc": 3,
+        "port": 0
+      },
+      {
+        "first_pc": 4,
+        "last_pc": 7,
+        "port": 1
+      },
+      {
+        "first_pc": 8,
+        "last_pc": 11,
+        "port": 2
+      },
+      {
+        "first_pc": 12,
+        "last_pc": 15,
+        "port": 3
+      },
+      {
+        "first_pc": 16,
+        "last_pc": 19,
+        "port": 4
+      },
+      {
+        "first_pc": 20,
+        "last_pc": 23,
+        "port": 5
+      },
+      {
+        "first_pc": 24,
+        "last_pc": 27,
+        "port": 6
+      },
+      {
+        "first_pc": 28,
+        "last_pc": 31,
+        "port": 7
+      }
+    ],
+    "schema_version": 1,
+    "sha256": "c7ff1f20e9953f6342998de810bac1ca9fcf6f85089cffad9869258f9b5508de",
+    "switch_profile": {
+      "arbitration": "per-direction port rotation and direction priority advance on successful data service",
+      "name": "bounded-byte-budgets-v1",
+      "ordering": "FIFO per port per response channel; stronger than same-ID AXI ordering",
+      "read_response_capacity_per_port": 256,
+      "request_cdc_receiving_edges": 2,
+      "response_cdc_receiving_edges": 2,
+      "shared_link": "aggregate shared data budget; no paired-PC switch gate",
+      "unassociated_w_capacity_per_port": 64,
+      "visibility": "AR snapshots RAM; W updates RAM when associated with AW; BO writes immediate on service",
+      "write_burst_capacity_per_port": 16
+    },
+    "time_precision_ps": 1
+  },
+  "results": [
+    {
+      "absolute_relative_error": 0.028150428854189575,
+      "before_sha256": "68a15ce3e62b1e6eb71a88163e2cf20177be7f83093b359b9f5d49011b32a29f",
+      "case": "gemm16x16x16",
+      "cycles": 9350,
+      "hardware_median_cycles": 9094,
+      "host_log": "build_hbm_reference_document/candidate_plus400ns_k16_1.log",
+      "host_sha256": "045cd21adcfba42be5e5d41a9e6bef274ace9843f853c17aa2cf78651f79d40d",
+      "instructions": 6265,
+      "repetition": 1,
+      "signed_relative_error": 0.028150428854189575,
+      "sim_log": "build_hbm_reference_document/candidate_plus400ns_k16_1_simv.log",
+      "sim_sha256": "3261813363d89c8104e842769b20d99caf988986b39f64b4c2c089fc51c8e4ae"
+    },
+    {
+      "absolute_relative_error": 0.028150428854189575,
+      "before_sha256": "68a15ce3e62b1e6eb71a88163e2cf20177be7f83093b359b9f5d49011b32a29f",
+      "case": "gemm16x16x16",
+      "cycles": 9350,
+      "hardware_median_cycles": 9094,
+      "host_log": "build_hbm_reference_document/candidate_plus400ns_k16_2.log",
+      "host_sha256": "17790149325263a3d9e0847af452c565642da825ae9be722d7f70cca40cb3e1a",
+      "instructions": 6265,
+      "repetition": 2,
+      "signed_relative_error": 0.028150428854189575,
+      "sim_log": "build_hbm_reference_document/candidate_plus400ns_k16_2_simv.log",
+      "sim_sha256": "f8caac457df8a5f6aed62d64fd4226db24eaf6144642f6b0bcd4bba7b8b85006"
+    },
+    {
+      "absolute_relative_error": 0.0687205206280972,
+      "before_sha256": "68a15ce3e62b1e6eb71a88163e2cf20177be7f83093b359b9f5d49011b32a29f",
+      "case": "gemm16x16x4096",
+      "cycles": 17900,
+      "hardware_median_cycles": 16749,
+      "host_log": "build_hbm_reference_document/candidate_plus400ns_k4096_1.log",
+      "host_sha256": "764676cd0eb3c283a4195649cbb299aa8a749928268180ccd2a10029b0768527",
+      "instructions": 6949,
+      "repetition": 1,
+      "signed_relative_error": 0.0687205206280972,
+      "sim_log": "build_hbm_reference_document/candidate_plus400ns_k4096_1_simv.log",
+      "sim_sha256": "fb8296190ddeebffa31bb68441414294b82ed105102fa26bb34b9e347fc4a7f8"
+    },
+    {
+      "absolute_relative_error": 0.0687205206280972,
+      "before_sha256": "68a15ce3e62b1e6eb71a88163e2cf20177be7f83093b359b9f5d49011b32a29f",
+      "case": "gemm16x16x4096",
+      "cycles": 17900,
+      "hardware_median_cycles": 16749,
+      "host_log": "build_hbm_reference_document/candidate_plus400ns_k4096_2.log",
+      "host_sha256": "ad2b09e2e04849962152c64710b86ca743219e54a65d2dbad2c47de264014569",
+      "instructions": 6949,
+      "repetition": 2,
+      "signed_relative_error": 0.0687205206280972,
+      "sim_log": "build_hbm_reference_document/candidate_plus400ns_k4096_2_simv.log",
+      "sim_sha256": "93594f847059168131c0ccc7f057cb3da595216eed1ec3a5238be2022d9df0b7"
+    }
+  ],
+  "stage": "build_hbm_reference/sim/xrtsim_vcs/archived-diagnostic-read-plus400ns",
+  "status": "exploratory_fit_not_acceptance"
+}

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SOURCE = Path(__file__).resolve().parent
@@ -16,6 +17,10 @@ class ConfigurationTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="u55c-config-")
         self.addCleanup(self.temporary.cleanup)
         self.output = Path(self.temporary.name)
+        self.environment = patch.dict(os.environ)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        os.environ.pop("U55C_PERFORMANCE_PROFILE", None)
 
     def build(self, config="", success=True, **settings):
         # Do not inherit the parent test profile's clock/platform: tests that
@@ -91,6 +96,31 @@ class ConfigurationTest(unittest.TestCase):
         (self.output / "u55c_model_config.svh").rename(self.output / "saved.svh")
         self.build(LOGIC_FREQ_HZ="250000000")
         self.assertTrue((self.output / "u55c_model_config.svh").is_file())
+
+    def test_performance_profile_invalidation_and_clock_match(self):
+        profile = json.loads((SOURCE / "profiles/u55c-pg276-v1.json").read_text())
+        path = self.output / "profile.json"
+        path.write_text(json.dumps(profile))
+        legacy = self.build()
+        os.environ["U55C_PERFORMANCE_PROFILE"] = str(path)
+        self.build(success=False)  # Default 300 MHz does not match this profile.
+        first = self.build(HBM_AXI_FREQ_HZ="450000000")
+        self.assertEqual(first["dram_freq_hz"], 900000000)
+        self.assertNotEqual(legacy["sha256"], first["sha256"])
+        header = self.output / "u55c_model_config.h"
+        before = header.stat().st_mtime_ns
+        self.build(HBM_AXI_FREQ_HZ="450000000")
+        self.assertEqual(before, header.stat().st_mtime_ns)
+        profile["read_residual_ps"] += 1000
+        path.write_text(json.dumps(profile))
+        changed = self.build(HBM_AXI_FREQ_HZ="450000000")
+        self.assertNotEqual(first["sha256"], changed["sha256"])
+        for suffix in ("h", "svh"):
+            self.assertIn(changed["sha256"],
+                          (self.output / f"u55c_model_config.{suffix}").read_text())
+        os.environ.pop("U55C_PERFORMANCE_PROFILE")
+        restored = self.build()
+        self.assertEqual(legacy["sha256"], restored["sha256"])
 
 
 if __name__ == "__main__":

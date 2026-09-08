@@ -1,0 +1,105 @@
+{
+  "logs": [
+    "build_hbm_reference/sim/xrtsim_vcs/regression_document_final.log",
+    "build_hbm_reference/sim/xrtsim_vcs/candidate_400ns_native.log"
+  ],
+  "cases": [
+    {
+      "case": "initial-closed-page",
+      "control": {
+        "case": "initial-closed-page",
+        "latency_ps": 160000,
+        "hbm_first_return_ps": 142222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12222,
+        "manifest": "3a9cdd8f1c179d572ba8f639c981d896f67da191c1ec6da36441920f9aa088da"
+      },
+      "candidate": {
+        "case": "initial-closed-page",
+        "latency_ps": 560000,
+        "hbm_first_return_ps": 542222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12222,
+        "manifest": "0a05f6e31b9df56a2555fa173cf5a604704769b3222106b27587b98b74d52dc7"
+      },
+      "validated_extra_delay_ps": 400000
+    },
+    {
+      "case": "same-open-page",
+      "control": {
+        "case": "same-open-page",
+        "latency_ps": 160000,
+        "hbm_first_return_ps": 135555,
+        "dram_completion_ps": 13333,
+        "request_cdc_ps": 4445,
+        "return_serialization_ps": 2223,
+        "response_cdc_ps": 17777,
+        "manifest": "3a9cdd8f1c179d572ba8f639c981d896f67da191c1ec6da36441920f9aa088da"
+      },
+      "candidate": {
+        "case": "same-open-page",
+        "latency_ps": 560000,
+        "hbm_first_return_ps": 535555,
+        "dram_completion_ps": 13333,
+        "request_cdc_ps": 4445,
+        "return_serialization_ps": 2223,
+        "response_cdc_ps": 17777,
+        "manifest": "0a05f6e31b9df56a2555fa173cf5a604704769b3222106b27587b98b74d52dc7"
+      },
+      "validated_extra_delay_ps": 400000
+    },
+    {
+      "case": "row-conflict",
+      "control": {
+        "case": "row-conflict",
+        "latency_ps": 170000,
+        "hbm_first_return_ps": 151111,
+        "dram_completion_ps": 28889,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 13333,
+        "manifest": "3a9cdd8f1c179d572ba8f639c981d896f67da191c1ec6da36441920f9aa088da"
+      },
+      "candidate": {
+        "case": "row-conflict",
+        "latency_ps": 570000,
+        "hbm_first_return_ps": 551111,
+        "dram_completion_ps": 28889,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 13333,
+        "manifest": "0a05f6e31b9df56a2555fa173cf5a604704769b3222106b27587b98b74d52dc7"
+      },
+      "validated_extra_delay_ps": 400000
+    },
+    {
+      "case": "reset-closed-page",
+      "control": {
+        "case": "reset-closed-page",
+        "latency_ps": 160000,
+        "hbm_first_return_ps": 142222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12222,
+        "manifest": "3a9cdd8f1c179d572ba8f639c981d896f67da191c1ec6da36441920f9aa088da"
+      },
+      "candidate": {
+        "case": "reset-closed-page",
+        "latency_ps": 560000,
+        "hbm_first_return_ps": 542222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3334,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12222,
+        "manifest": "0a05f6e31b9df56a2555fa173cf5a604704769b3222106b27587b98b74d52dc7"
+      },
+      "validated_extra_delay_ps": 400000
+    }
+  ],
+  "limitation": "Native model boundary comparison only; not hardware latency."
+}

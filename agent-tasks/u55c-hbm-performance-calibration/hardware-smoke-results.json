@@ -1,0 +1,301 @@
+{
+  "comparisons": [
+    {
+      "case": "gemm16x16x16",
+      "hardware_count": 5,
+      "hardware_max_cycles": 9110,
+      "hardware_median_cycles": 9094,
+      "hardware_min_cycles": 8998,
+      "hardware_range_over_median": 0.01231581262370794,
+      "hardware_stdev_cycles": 43.24534657046929,
+      "models": {
+        "baseline": {
+          "absolute_relative_error": 0.2542335605893996,
+          "median_cycles": 6782.0,
+          "signed_relative_error": -0.2542335605893996
+        },
+        "document": {
+          "absolute_relative_error": 0.19243457224543656,
+          "median_cycles": 7344.0,
+          "signed_relative_error": -0.19243457224543656
+        }
+      }
+    },
+    {
+      "case": "gemm16x16x64",
+      "hardware_count": 5,
+      "hardware_max_cycles": 9223,
+      "hardware_median_cycles": 9190,
+      "hardware_min_cycles": 9107,
+      "hardware_range_over_median": 0.012622415669205658,
+      "hardware_stdev_cycles": 50.17967716117751,
+      "models": {
+        "baseline": {
+          "absolute_relative_error": 0.25386289445048965,
+          "median_cycles": 6857.0,
+          "signed_relative_error": -0.25386289445048965
+        },
+        "document": {
+          "absolute_relative_error": 0.1927094668117519,
+          "median_cycles": 7419.0,
+          "signed_relative_error": -0.1927094668117519
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Post-run clock/UUID/temperature samples, not continuous telemetry.",
+    "No claim of absent transient throttling; no dedicated throttling metric collected.",
+    "No intended error tolerance established and no held-out cases evaluated.",
+    "Kernel counters include setup and MMIO polling; not isolated DRAM latency.",
+    "Actual ap_clk connection must be cross-checked with archived platform metadata."
+  ],
+  "policy": "One excluded warm-up per shape, then five fresh host processes in one exclusive FPGA GRES allocation; each program uses normal runtime reset and fresh BOs.",
+  "program_sha256": {
+    "fpint_gemm_ffn_hw": "8f98e5af6f3680af703f2452847beaac7444341947020f27929aa26938273368",
+    "kernel.vxbin": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  },
+  "samples": [
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_0_board.json",
+      "board_sha256": "f918d3dd33fa2671693712132abb31b38c6aeb26a534fd24bc6c2898da9e0e81",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 9048,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_0.log",
+      "log_sha256": "5154cbfc671ded6723e5f9a473b555a5dfeaf291eabbe257af2d00a845028b65",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 0,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": true
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_1_board.json",
+      "board_sha256": "febc158a5629c25434b4a924611b88a120a2402832f2604c5275e9d6e50ae5c4",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 8998,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_1.log",
+      "log_sha256": "dd737e1193f348b675b0eab7e9c6942df2d438a27ef1d40b69a39fb47aebccca",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 1,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_2_board.json",
+      "board_sha256": "30a73ecf600b29da3ff617df74a1367294323eca959718097ae842834c3396df",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 9107,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_2.log",
+      "log_sha256": "5075d61458e344a0ceee528b2db13062c631588acabc3f899c9aec6c6e74c8b9",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 2,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_3_board.json",
+      "board_sha256": "650044f1b19cff919f2e4eaa1810258b73c9d281be19abf1ad8f70a3564bdcf3",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 9110,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_3.log",
+      "log_sha256": "b3faddc4a57119e8914aaadf19fd8cba879f25cf76cd8048e8df037f24b8c2f5",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 3,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_4_board.json",
+      "board_sha256": "e9b9125426c40068218c6eccbab640d1bb306aa085a7dbe36c0706528b6ec98a",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 9045,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_4.log",
+      "log_sha256": "ce714dae66b2bbe5d5382432151848bdde1ab1240e770bb87e1ab696827e091a",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 4,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_5_board.json",
+      "board_sha256": "87602355cc874bc79e4b805eec5d25411ee16f004e9ed372854c918211486a61",
+      "case": "gemm16x16x16",
+      "instructions": 6259,
+      "kernel_cycles": 9094,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm16_5.log",
+      "log_sha256": "6b0a2c619527319e3b4e34cdf9e7c111edf4b9abad0f1ef5c9fa21c63476ed2e",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 5,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_0_board.json",
+      "board_sha256": "caf72d9a7acd38e75bcba1e31cccd44f45627a69c0fb8ade78cb12396c50f886",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9221,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_0.log",
+      "log_sha256": "79cc2c0c3429343d9406666d48b4f622f91eca74931ba541924279a7f4a76873",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 0,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": true
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_1_board.json",
+      "board_sha256": "b73558b8f6f65c1f76bf4f81dcfbbf9fb3d847cf8d7a356ffa835b1325b03c30",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9214,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_1.log",
+      "log_sha256": "9632b46ed9db2ca10bca6edd534d38365f5f584aa6e2194617d71712c9349053",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 1,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_2_board.json",
+      "board_sha256": "4b90cf32d5760f38c6807d065830bf8d530e915c31615f7a96de366f4c2d98f8",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9107,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_2.log",
+      "log_sha256": "81be469c581e914cf6c2efbe3eae00ccf8751b86a30b5ddeb9fc00a248561015",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 2,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_3_board.json",
+      "board_sha256": "dc8796279f07014bd9a7b5383d7ae69c16e93fad7eddc2c23d31aba21b83372b",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9111,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_3.log",
+      "log_sha256": "cf0bb4a914f273454163a7eb68f73e74319181288d971e11aecb8dba49a73867",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 3,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_4_board.json",
+      "board_sha256": "a86b881976cdf683aac540a1ce1c839e11874e39ab32a73bf0765f3bf0bb0a3d",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9223,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_4.log",
+      "log_sha256": "48f7c9e4acd488ffb650c8483f1fea8808ac2212f91d53516ad1823815a7fcce",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 4,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_5_board.json",
+      "board_sha256": "ad6bc04cd2165a79126538f5daa0c87d81f6be6644b6851a427282be5fca1498",
+      "case": "gemm16x16x64",
+      "instructions": 6265,
+      "kernel_cycles": 9190,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4907/gemm64_5.log",
+      "log_sha256": "a330fdd951f3d76c814eb85bdf55788386be7b040b93f23cce0fca1ff4d7abd1",
+      "memory_temperatures_C": [
+        47.0
+      ],
+      "output_check": "passed",
+      "repetition": 5,
+      "reported_clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "warmup": false
+    }
+  ],
+  "status": "exploratory_smoke_not_acceptance"
+}

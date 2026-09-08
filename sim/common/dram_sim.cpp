@@ -13,6 +13,7 @@
 
 #include "dram_sim.h"
 #include "util.h"
+#include "u55c_address.h"
 #include <fstream>
 #include <cmath>
 #include <stdexcept>
@@ -47,6 +48,7 @@ private:
 	static const uint32_t dram_channel_size_ = 16; // 128 bits
 	std::queue<mem_req_t> pending_reqs_;
 	bool u55c_;
+	bool u55c_document_;
 	uint32_t transaction_bytes_;
 
 	void handle_pending_requests() {
@@ -72,7 +74,11 @@ private:
 	}
 
 public:
-	Impl(uint32_t num_channels, uint32_t channel_size, float clock_ratio, bool u55c = false) : u55c_(u55c) {
+	Impl(uint32_t num_channels, uint32_t channel_size, float clock_ratio, bool u55c = false,
+	     uint64_t frequency_hz = 1000000000)
+	    : u55c_(u55c), u55c_document_(u55c && frequency_hz == 900000000) {
+		if (u55c && frequency_hz != 900000000 && frequency_hz != 1000000000)
+			throw std::invalid_argument("Unsupported U55C DRAM frequency");
 		YAML::Node dram_config;
 		dram_config["Frontend"]["impl"] = "GEM5";
 		dram_config["MemorySystem"]["impl"] = "GenericDRAM";
@@ -94,6 +100,27 @@ public:
 		}
 		dram_config["MemorySystem"]["AddrMapper"]["impl"] = "RoBaRaCoCh";
 		if (u55c_) {
+			if (frequency_hz == 900000000) {
+				// Explicit adapter, not an AMD memory-controller timing preset.
+				// Preserve the pinned HBM2_2Gbps preset's physical minima, rounded
+				// upward to 900 MHz cycles, except the data burst: a 32-byte
+				// transaction on a 64-bit DDR PC occupies two memory clocks.
+				// Ramulator reports floor(tCK)=1111 ps;
+				// the external scheduler uses exact 900 MHz rational edges.
+				auto timing = dram_config["MemorySystem"]["DRAM"]["timing"];
+				timing.remove("preset");
+				timing["rate"] = 1800;
+				const std::pair<const char*, unsigned> minima[] = {
+					{"nBL",2}, {"nCL",7}, {"nRCDRD",7}, {"nRCDWR",7},
+					{"nRP",7}, {"nRAS",17}, {"nRC",19}, {"nWR",8},
+					{"nRTPS",2}, {"nRTPL",3}, {"nCWL",2}, {"nCCDS",1},
+					{"nCCDL",2}, {"nRRDS",2}, {"nRRDL",3}, {"nWTRS",3},
+					{"nWTRL",4}, {"nRTW",3}, {"nFAW",15}, {"nRFC",350},
+					{"nRFCSB",160}, {"nREFI",3900}, {"nREFISB",2438}, {"nRREFD",8}
+				};
+				for (const auto& entry : minima)
+					timing[entry.first] = (uint64_t(entry.second) * 9 + 9) / 10;
+			}
 			// 16 physical channels, two 512 MiB PCs per channel. Contiguous
 			// byte mapping: Ch[33:30], PC[29], BG[28:27], BA[26:25],
 			// row[24:10], column[9:5], transaction offset[4:0].
@@ -103,6 +130,12 @@ public:
 			dram_config["MemorySystem"]["DRAM"]["org"]["bank"] = 4;
 			dram_config["MemorySystem"]["DRAM"]["org"]["row"] = 32768;
 			dram_config["MemorySystem"]["DRAM"]["org"]["column"] = 64;
+			if (u55c_document_) {
+				// 8-high device: SID supplies the third bank-group bit, with
+				// 14 row bits. Total capacity and high-bit PC aperture unchanged.
+				dram_config["MemorySystem"]["DRAM"]["org"]["bankgroup"] = 8;
+				dram_config["MemorySystem"]["DRAM"]["org"]["row"] = 16384;
+			}
 			dram_config["MemorySystem"]["AddrMapper"]["impl"] = "ChRaBaRoCo";
 		}
 
@@ -163,7 +196,8 @@ public:
 		std::function<void(Ramulator::Request&)> callback = nullptr;
 		if (cb && !is_write)
 			callback = [cb, arg](Ramulator::Request&) { cb(arg); };
-		bool accepted = ramulator_frontend_->receive_external_requests(type, addr, 0, callback);
+		const auto timing_addr = u55c_document_ ? u55c_rbc_interleaved_address(addr) : addr;
+		bool accepted = ramulator_frontend_->receive_external_requests(type, timing_addr, 0, callback);
 		if (accepted && is_write && cb)
 			cb(arg);
 		return accepted;
@@ -197,8 +231,8 @@ DramSim::DramSim(uint32_t num_channels, uint32_t channel_size, float clock_ratio
 	: impl_(new Impl(num_channels, channel_size, clock_ratio))
 {}
 
-DramSim::DramSim(Profile)
-    : impl_(new Impl(16, 32, 1.0f, true))
+DramSim::DramSim(Profile, uint64_t frequency_hz)
+    : impl_(new Impl(16, 32, 1.0f, true, frequency_hz))
 {}
 
 DramSim::~DramSim() {

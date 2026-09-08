@@ -51,11 +51,17 @@ private:
 };
 
 enum class Edge { Dram, HbmAxi };
+struct DramFrequencyHz { uint64_t value; };
 
 class Scheduler {
 public:
     Scheduler(uint64_t hbm_frequency_hz, uint64_t dram_tck_ps)
         : hbm_(hbm_frequency_hz), dram_(dram_frequency(dram_tck_ps)) {}
+
+    // Frequency form preserves non-integral periods such as 900 MHz exactly.
+    // The tagged overload prevents accidentally interpreting picoseconds as Hz.
+    Scheduler(uint64_t hbm_frequency_hz, DramFrequencyHz dram_frequency_hz)
+        : hbm_(hbm_frequency_hz), dram_(dram_frequency_hz.value) {}
 
     void reset(uint64_t epoch_ps) {
         now_ = epoch_ps;

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+from hbm_performance_profile import load_profile
 
 
 def defines(raw, allow_identical=False):
@@ -71,7 +72,14 @@ def resolve(env):
     if not re.fullmatch(r"[A-Za-z0-9_.-]*xilinx_u55c[A-Za-z0-9_.-]*", platform):
         raise ValueError("Unsupported platform identity")
     platform_dir = Path(env["U55C_PLATFORM_DIR"])
-    return {
+    source_dir = Path(__file__).resolve().parent
+    backend_files = [source_dir / name for name in (
+        'gen_hbm_config.py', 'hbm_performance_profile.py', 'hbm_model.cpp',
+        'hbm_model.h', 'hbm_clock.h', 'hbm_service_budget.h', 'dpi_vcs_server.cpp',
+        'tb_vcs_xrtsim.sv', 'VX_hbm_axi_guard.sv', 'vcs_protocol.h')]
+    backend_files += [source_dir.parent / 'common' / name for name in (
+        'dram_sim.cpp', 'dram_sim.h', 'u55c_address.h')]
+    manifest = {
         "schema_version": 1, "platform": platform,
         "defines": config, "kernel_ports": ports, "kernel_data_bytes": 64,
         "pc_count": 32, "pc_bytes": 1 << 29, "aperture_bytes": 1 << 34,
@@ -93,6 +101,9 @@ def resolve(env):
         },
         "routes": [routes[p] for p in range(ports)],
         "provenance": {
+            "backend_source_sha256": {
+                str(path.relative_to(source_dir.parent)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in backend_files},
             "connectivity": "Make-evaluated platforms.mk SP_FLAGS",
             "source_sha256": {name: hashlib.sha256((platform_dir / name).read_bytes()).hexdigest()
                               for name in ("platforms.mk", "geometry.mk")},
@@ -100,6 +111,36 @@ def resolve(env):
             "timing": "uncalibrated; HBM AXI frequency is a model input, not a measured U55C clock",
         },
     }
+    # This environment input works with existing Makefiles unchanged. The
+    # generator is invoked on every hbm-config call, so profile edits invalidate
+    # generated headers and the existing DPI header hash.
+    if env.get('U55C_PERFORMANCE_PROFILE'):
+        profile = load_profile(env['U55C_PERFORMANCE_PROFILE'])
+        if profile['hbm_axi_frequency_hz'] != hbm:
+            raise ValueError('HBM_AXI_FREQ_HZ must match the selected performance profile')
+        manifest['performance_profile'] = profile
+        manifest['dram_freq_hz'] = profile['dram_frequency_hz']
+        manifest['dram_tck_ps'] = 10**12 // profile['dram_frequency_hz']
+        manifest['dram_profile'] = 'HBM2-documentation-adapter-v1'
+        manifest['dram_address_policy'] = (
+            '8H RBC+BG interleave: Ch33:30 PC29 SID28 row27:14 BG1=13 BA12:11 col10:6 BG0=5 byte4:0'
+            if profile['dram_frequency_hz'] == 900000000 else 'legacy contiguous ChRaBaRoCo')
+        manifest['dram_timing_policy'] = (
+            '900MHz: ceil(HBM2_2Gbps timing minima in ns * 0.9), '
+            'except nBL=2 for 32 bytes on a 64-bit DDR pseudochannel; '
+            '8Gb-channel tRFC=350ns, tREFI=3900ns; '
+            'Ramulator integer tCK metadata only, exact frequency scheduling; '
+            'not an AMD controller preset' if profile['dram_frequency_hz'] == 900000000
+            else 'Unmodified pinned HBM2_2Gbps preset')
+        manifest['switch_profile']['name'] = 'bounded-byte-budgets-v1'
+        manifest['switch_profile']['arbitration'] = 'per-direction port rotation and direction priority advance on successful data service'
+        manifest['switch_profile']['shared_link'] = 'aggregate shared data budget; no paired-PC switch gate'
+        for key in ('request_bytes_per_hbm_edge_per_port', 'return_bytes_per_hbm_edge_per_port'):
+            manifest['switch_profile'].pop(key)
+        manifest['provenance']['timing'] = profile['status'] + ': ' + profile['provenance']
+    else:
+        manifest['dram_freq_hz'] = 10**12 // manifest['dram_tck_ps']
+    return manifest
 
 
 def generate(env, output):
@@ -111,7 +152,14 @@ def generate(env, output):
                  "LOGIC_FREQ_HZ": manifest["logic_freq_hz"],
                  "HBM_AXI_FREQ_HZ": manifest["hbm_axi_freq_hz"],
                  "DRAM_TCK_PS": manifest["dram_tck_ps"],
+                 "DRAM_FREQ_HZ": manifest["dram_freq_hz"],
                  "NUM_PORTS": manifest["kernel_ports"]}
+    profile = manifest.get('performance_profile')
+    constants['PERFORMANCE_MODE'] = int(profile is not None)
+    for key in ('port_read_bytes_per_second', 'port_write_bytes_per_second',
+                'aggregate_read_bytes_per_second', 'aggregate_write_bytes_per_second',
+                'aggregate_shared_bytes_per_second', 'burst_bytes', 'aggregate_burst_bytes', 'read_residual_ps'):
+        constants[key.upper()] = profile[key] if profile else 0
     cpp = "// Generated; do not edit.\n#pragma once\n"
     sv = "// Generated; do not edit.\n`ifndef U55C_MODEL_CONFIG_SVH\n`define U55C_MODEL_CONFIG_SVH\n"
     for name, value in constants.items():

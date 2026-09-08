@@ -1,0 +1,344 @@
+{
+  "compiled_vhdl": [
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_axi_utils_v2_0_10.log",
+      "log_sha256": "8a55aa942f13d2aad7b40f73f2c22a3d260db13e406a080e51e8bdb7478e3dd0",
+      "sha256": "23191d052b0603e9bce9eebde197ef5fc2f81966aaa562bd547f3f856a0402e3",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/axi_utils_v2_0_vh_rfs.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_floating_point_v7_1_20.log",
+      "log_sha256": "10b6135f56d42258a6e4af66669a4654ef31f8ee76c68ae8abfed3113edfcda2",
+      "sha256": "e878d6731266089a2a0e4950b08abc31b0182558021ac486d270e14aa3c25f0c",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/floating_point_v7_1_vh_rfs.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_mult_gen_v12_0_23.log",
+      "log_sha256": "ae73f9ca53075abe95d4f9a16d601b0a62cb4dadc7a765724e41d1230bac44ba",
+      "sha256": "4348d48da4fb5fdd1b43c6c02929a70dee5750cb0e29c3531b61326a25fab0be",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/mult_gen_v12_0_vh_rfs.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "212244d2e55b7c4faf7057d479677d3f377cc7509e5e44872dfde0d31e1740e7",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16_div/sim/xil_f16_div.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "c098251e19b4f1ecb5bbdb76c6a830ebf7aadf374ce4f5b9db974d8d9550f286",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16_fma/sim/xil_f16_fma.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "ebf8da41a08cd2775fc8f09da3af0181a7073efe61f402101b88bef653c51516",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16_sqrt/sim/xil_f16_sqrt.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "4b1543cb7e922fdee5bbec20e1c545c963f3d870678ba7e4b3fc552304fe2584",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16_to_f32/sim/xil_f16_to_f32.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "670f7da4eabe596d9fe374299edc07d2c1c256bf42c83fa9b9f1eab4742bc08c",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16add/sim/xil_f16add.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "677d399a97e09ee88da0b202b6899ee5891304c6b768e6042b91adf12f5fddb4",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16mul/sim/xil_f16mul.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "97a21dcab3ab60b42ac2eb58e5832ab076448a2bb9fe144d0aebfdfa876f3560",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16mul_latency1/sim/xil_f16mul_latency1.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "2366996763a3baf6d83594a21760be392ceb70c1d8f81f7d72ef018d4c08015c",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f16mul_low_latency/sim/xil_f16mul_low_latency.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "69443ea072adbc9d7fbcf9bf7117944629749a49732981ecdfb9d10e6cb2bf80",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32_to_f16/sim/xil_f32_to_f16.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "aa95b2293e82cdd6a46b971bfef95c55a4455d1e399d25a98611d64286f2885b",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32add/sim/xil_f32add.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "ca9120b60c62b4068bc44ce23ed7258d9879fd3708f03a1bbc186f5da93c26ec",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32add_latency1/sim/xil_f32add_latency1.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "22bf8ddbb1a662618d28de36310d7565eaf6ee241a8d72dd2db575efdb150155",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32add_lowL/sim/xil_f32add_lowL.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "235eaee6703d93e2c0893f07a3e6233e4f5818a83918df760b228f421812a83a",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32add_low_latency/sim/xil_f32add_low_latency.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "c08866a17a763d9fbf8ab182560a5767eab2f16f8213465d1d361714acb05998",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32mul/sim/xil_f32mul.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "833bad1c58cf68f97eea585192f227371b4801d56543707f48990ab7e6ff00b7",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32mul_latency1/sim/xil_f32mul_latency1.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "760f31526d7f40cd930459a80a07dc6a0e371e5731bc39ddc632bc156c036b21",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_f32mul_low_latency/sim/xil_f32mul_low_latency.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "4795a8b4966fbf05f11a931b3400bd78d675ac17c0f19586bc25215a2917cfeb",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fadd/sim/xil_fadd.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "e1b2f00ded583a0966e244cc3b9969d6a5665cb060aa824cefa08a89a30bae88",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fdiv/sim/xil_fdiv.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "7ab0a9f10a04897343bd6195bbea38f6279d13bb710173707ad47dfb9cadb27f",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/sim/xil_fma.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "cabd28306444587a307e5c5a2cb75a0eefeba6478ec922b4d63f9d0f80842032",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma_lowL/sim/xil_fma_lowL.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "a0ad9d031f2022333f90241f3ac1fca2e39e5861ef466b648b448199f8bcc450",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fmul/sim/xil_fmul.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_wrappers.log",
+      "log_sha256": "67a9f197d3037d6f81bae0195fb4af8c227b3fa00aa0476e0d327a992a2bde0e",
+      "sha256": "2efa82db487fbf85ea4b1e2e2943943e69d18dca44919fcc96b1a662f87b2223",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fsqrt/sim/xil_fsqrt.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_xbip_dsp48_wrapper_v3_0_7.log",
+      "log_sha256": "b10ca92833763528bff851e17235e9abf79db7a730db1ae19fc590d583c19c7c",
+      "sha256": "ea3ff02d598694186e15cb710a2a9af444d6e164c863782bfca541c136de9b27",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/xbip_dsp48_wrapper_v3_0_vh_rfs.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_xbip_pipe_v3_0_10.log",
+      "log_sha256": "4c1213c6c3445653f59e36e462675a43a33b105c54c346dd87f080a062510a3b",
+      "sha256": "09e1d17fda654ffb6dc3ec1c107a2b077aabda675e6d94e9d10d2dd517e2e218",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/xbip_pipe_v3_0_vh_rfs.vhd"
+    },
+    {
+      "log": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul/vhdlan_xbip_utils_v3_0_14.log",
+      "log_sha256": "0483855afeb34f1323bff3c1fe132c1149e3b03cacfb6df67f10f101bebcbcd0",
+      "sha256": "797f8c258d2bc2e7ca7bb324e6176eefc294656291db32cc0d83ba98d925880a",
+      "source": "/home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/ip/xil_fma/hdl/xbip_utils_v3_0_vh_rfs.vhd"
+    }
+  ],
+  "limitations": [
+    "Compares generic maps and archived VHDL inputs, not formal gate-level equivalence.",
+    "Does not prove every compiled wrapper was elaborated or used by a workload.",
+    "Installed primitive simulation libraries and Xprop instrumentation require separate evidence."
+  ],
+  "shared_library_matches": [
+    {
+      "identical_copies": 22,
+      "name": "axi_utils_v2_0_vh_rfs.vhd",
+      "sha256": "23191d052b0603e9bce9eebde197ef5fc2f81966aaa562bd547f3f856a0402e3"
+    },
+    {
+      "identical_copies": 22,
+      "name": "floating_point_v7_1_vh_rfs.vhd",
+      "sha256": "e878d6731266089a2a0e4950b08abc31b0182558021ac486d270e14aa3c25f0c"
+    },
+    {
+      "identical_copies": 22,
+      "name": "mult_gen_v12_0_vh_rfs.vhd",
+      "sha256": "4348d48da4fb5fdd1b43c6c02929a70dee5750cb0e29c3531b61326a25fab0be"
+    },
+    {
+      "identical_copies": 22,
+      "name": "xbip_dsp48_wrapper_v3_0_vh_rfs.vhd",
+      "sha256": "ea3ff02d598694186e15cb710a2a9af444d6e164c863782bfca541c136de9b27"
+    },
+    {
+      "identical_copies": 22,
+      "name": "xbip_pipe_v3_0_vh_rfs.vhd",
+      "sha256": "09e1d17fda654ffb6dc3ec1c107a2b077aabda675e6d94e9d10d2dd517e2e218"
+    },
+    {
+      "identical_copies": 22,
+      "name": "xbip_utils_v3_0_vh_rfs.vhd",
+      "sha256": "797f8c258d2bc2e7ca7bb324e6176eefc294656291db32cc0d83ba98d925880a"
+    }
+  ],
+  "stage": "/home/jaeyongjang/project.local/vortex_base/build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul",
+  "wrapper_matches": [
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16_div",
+      "sim_sha256": "212244d2e55b7c4faf7057d479677d3f377cc7509e5e44872dfde0d31e1740e7",
+      "synth_sha256": "135fe295cf4aa6f3dab79c498a5ada002ae75a15c9db7875f4ebf111950c3e54"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16_fma",
+      "sim_sha256": "c098251e19b4f1ecb5bbdb76c6a830ebf7aadf374ce4f5b9db974d8d9550f286",
+      "synth_sha256": "0135f8f5df8f69a069496c55339e021a554057ef5a225437894c4ec7883283fb"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16_sqrt",
+      "sim_sha256": "ebf8da41a08cd2775fc8f09da3af0181a7073efe61f402101b88bef653c51516",
+      "synth_sha256": "891a9e6fdfbabc4d0de479bb4d4f3ebfd1d641982c59ebb8e05c73c79a48bf71"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16_to_f32",
+      "sim_sha256": "4b1543cb7e922fdee5bbec20e1c545c963f3d870678ba7e4b3fc552304fe2584",
+      "synth_sha256": "dafd82e4d0a1a1e0ceb501712558ae3c26e39b27e561f77bcc950e5401055b00"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16add",
+      "sim_sha256": "670f7da4eabe596d9fe374299edc07d2c1c256bf42c83fa9b9f1eab4742bc08c",
+      "synth_sha256": "114dc8a54a7b2e88cee184b0865696c89aa5628c45d0191de19f5e08b7eb02fd"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16mul",
+      "sim_sha256": "677d399a97e09ee88da0b202b6899ee5891304c6b768e6042b91adf12f5fddb4",
+      "synth_sha256": "b87761bc79dece9874077ddb7660a6e3dab03bd0a2634f294861267e3c32f66d"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16mul_latency1",
+      "sim_sha256": "97a21dcab3ab60b42ac2eb58e5832ab076448a2bb9fe144d0aebfdfa876f3560",
+      "synth_sha256": "feb85b595759e03cf21f1d699fe435ce30e8b9648f2d8cc7d7fee50b4879b382"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f16mul_low_latency",
+      "sim_sha256": "2366996763a3baf6d83594a21760be392ceb70c1d8f81f7d72ef018d4c08015c",
+      "synth_sha256": "a9591e0f91a8c3d16a3bbbb885974670e32b734623721f7d7769a6942d38f32b"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32_to_f16",
+      "sim_sha256": "69443ea072adbc9d7fbcf9bf7117944629749a49732981ecdfb9d10e6cb2bf80",
+      "synth_sha256": "63b9f24cc2b6f08ce2772b7ae5ba2c92cf2c9c005416229d0718b524bfa5defc"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32add",
+      "sim_sha256": "aa95b2293e82cdd6a46b971bfef95c55a4455d1e399d25a98611d64286f2885b",
+      "synth_sha256": "5ae03401fc04a60a7b1d3b3c736268d8b6b996531d32ee112a8beea3cb9efc83"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32add_latency1",
+      "sim_sha256": "ca9120b60c62b4068bc44ce23ed7258d9879fd3708f03a1bbc186f5da93c26ec",
+      "synth_sha256": "c0062fffc6a52974d1c8271ca0375c05baa79a3fd121bf1fea960ba20dcb0d8f"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32add_lowL",
+      "sim_sha256": "22bf8ddbb1a662618d28de36310d7565eaf6ee241a8d72dd2db575efdb150155",
+      "synth_sha256": "99825bd3b1fe424c872c7de2ccf9601753a52c3002795b11a8b9420b45c6fd77"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32add_low_latency",
+      "sim_sha256": "235eaee6703d93e2c0893f07a3e6233e4f5818a83918df760b228f421812a83a",
+      "synth_sha256": "228d3775f5e9b4a4dc7b63a6c390fbba682620c05b5fc6bab1bc7811f7c4f286"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32mul",
+      "sim_sha256": "c08866a17a763d9fbf8ab182560a5767eab2f16f8213465d1d361714acb05998",
+      "synth_sha256": "9ba52bfc0f9cb58df05c5d1d9557c8e8c66da2e4c46cf6d40e49328070c626e9"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32mul_latency1",
+      "sim_sha256": "833bad1c58cf68f97eea585192f227371b4801d56543707f48990ab7e6ff00b7",
+      "synth_sha256": "39165168ab15eaad2a857b97c60c4ed8ce82c958fbb564fb6de8b8704adc66b0"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_f32mul_low_latency",
+      "sim_sha256": "760f31526d7f40cd930459a80a07dc6a0e371e5731bc39ddc632bc156c036b21",
+      "synth_sha256": "fc8473ece2cbf94f846622b1b168650afad9a21b50442489c4d6c20e6a38acaf"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fadd",
+      "sim_sha256": "4795a8b4966fbf05f11a931b3400bd78d675ac17c0f19586bc25215a2917cfeb",
+      "synth_sha256": "71c896a697f15c18d825d6fa5812cbd1360cc22500dd6c938c8c57605ad2001a"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fdiv",
+      "sim_sha256": "e1b2f00ded583a0966e244cc3b9969d6a5665cb060aa824cefa08a89a30bae88",
+      "synth_sha256": "25850e4f838af286b935a7958378a1bd5a9bac31d4ab94e4dd1fc30d68e6786a"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fma",
+      "sim_sha256": "7ab0a9f10a04897343bd6195bbea38f6279d13bb710173707ad47dfb9cadb27f",
+      "synth_sha256": "944c13027170a581c08652b11d390a335a90b432202fc83992610ac2460da4b7"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fma_lowL",
+      "sim_sha256": "cabd28306444587a307e5c5a2cb75a0eefeba6478ec922b4d63f9d0f80842032",
+      "synth_sha256": "479fb586a4af556d8ffc8b675bc9e6b6ec9d87411a07cddc05ce5d38eedb325b"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fmul",
+      "sim_sha256": "a0ad9d031f2022333f90241f3ac1fca2e39e5861ef466b648b448199f8bcc450",
+      "synth_sha256": "ac8643f2fd97109c09299fca4f63ebd710754b911858a52429098dba2541ac43"
+    },
+    {
+      "generic_map_equal": true,
+      "module": "xil_fsqrt",
+      "sim_sha256": "2efa82db487fbf85ea4b1e2e2943943e69d18dca44919fcc96b1a662f87b2223",
+      "synth_sha256": "a7e2a2495996190b6d65b1c83120647fd998778f0d3eae61d7fda66fe3afb5c2"
+    }
+  ]
+}

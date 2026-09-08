@@ -22,7 +22,7 @@ public:
 
   DramSim(uint32_t num_channels, uint32_t channel_size, float clock_ratio);
   enum class Profile { U55c };
-  explicit DramSim(Profile profile);
+  explicit DramSim(Profile profile, uint64_t frequency_hz = 1000000000);
   ~DramSim();
 
   void reset();

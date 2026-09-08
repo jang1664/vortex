@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "u55c-diagnostic-read-rate-quarter",
+  "status": "diagnostic-only",
+  "dram_frequency_hz": 900000000,
+  "hbm_axi_frequency_hz": 450000000,
+  "port_read_bytes_per_second": 3600000000,
+  "port_write_bytes_per_second": 14400000000,
+  "aggregate_read_bytes_per_second": 460800000000,
+  "aggregate_write_bytes_per_second": 460800000000,
+  "aggregate_shared_bytes_per_second": 460800000000,
+  "burst_bytes": 64,
+  "aggregate_burst_bytes": 1024,
+  "read_residual_ps": 121111,
+  "latency_reference": "Unchanged documentation read residual. Single-axis diagnostic: per-port read rate quartered from 14.4 to 3.6GB/s; not board calibration.",
+  "provenance": "Task-local sensitivity experiment based on u55c-pg276-v1.json. Only per-port READ service rate changes numerically; write, aggregate, burst and timing fields retained. Do not use as acceptance default."
+}

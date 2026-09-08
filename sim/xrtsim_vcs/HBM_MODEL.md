@@ -1,9 +1,20 @@
 # U55C memory model
 
-Deterministic transaction-level implementation and scoped acceptance are
-complete. See `agent-tasks/u55c-vcs-hbm-model/acceptance-audit.md` for the
-requirement/evidence map and the fidelity limits below before interpreting
-results as physical U55C performance.
+The original deterministic transaction-level implementation has a scoped
+acceptance audit in `agent-tasks/u55c-vcs-hbm-model/acceptance-audit.md`.
+The optional performance mode described below has a separate, user-accepted
+workload calibration audit in `agent-tasks/u55c-hbm-performance-calibration/acceptance-audit.md`;
+the earlier audit does not establish physical U55C performance accuracy.
+
+The calibration task now records an opt-in effective-delay candidate meeting
+a prospectively selected10% kernel-cycle error target on three held-out GEMM
+cases for one historical100MHz image (maximum4.272%). See
+`agent-tasks/u55c-hbm-performance-calibration/RESULTS.md` for the profile,
+reproduction paths and accepted provenance limitations. The adopted opt-in
+profile is `profiles/u55c-temp-100mhz-workload-v1.json`, numerically identical
+to the frozen candidate. Its hardware-calibrated label means workload timing
+only. The production document profile and default selection are unchanged.
+These results are not direct physical HBM latency measurements.
 
 ## Ownership and launch
 
@@ -60,8 +71,9 @@ particular, four HBM ports cannot support the current RTL's eight-DMA profile.
   require two subsequent logic receiving edges in the model. The TB publishes
   at negedge for stable sampling at the following posedge, adding adapter
   publication delay; output backpressure can delay actual acceptance further.
-- The DRAM profile is HBM2_2Gbps, with tCK checked against Ramulator at startup
-  (currently 1000 ps). `HBM_AXI_FREQ_HZ=300000000` is a model input, not a claim
+- The default DRAM profile is HBM2_2Gbps, with tCK checked against Ramulator at
+  startup (1000 ps). The optional performance profile can select the explicit
+  900 MHz timing adapter instead. `HBM_AXI_FREQ_HZ=300000000` is a model input, not a claim
   that the physical memory clock is 300 MHz. Legacy `MEM_CLOCK_RATIO` is not
   applied to this raw-cycle path.
 - AR snapshots functional RAM at acceptance. W updates strobed bytes when
@@ -72,7 +84,9 @@ particular, four HBM ports cannot support the current RTL's eight-DMA profile.
   Reads aggregate both completions; all write beats are timed. Response order
   is FIFO per port and R/B channel, stronger than AXI's same-ID requirement.
   Read data occupies two return-link slots per beat. Writes return no data:
-  a single B notification slot is charged per burst after all beat admissions.
+  in legacy mode a single B notification slot is charged per burst after all
+  beat admissions. Performance mode handles B separately without charging a
+  read/write data-byte budget for the notification.
 - Aligned full-width INCR bursts of up to 64 beats are supported and must not
   cross a 4 KiB boundary or the port's manifest reachability range. Other AXI
   transfer shapes are rejected rather than silently reinterpreted.
@@ -104,7 +118,7 @@ The physical byte layout is 32 contiguous 512 MiB PCs over 16 physical channels.
 Ramulator uses an explicit 128-bit channel width and two-entry prefetch, with
 ChRaBaRoCo mapping. Kernel AXI ports are not treated as physical DRAM channels.
 
-The switch is an **uncalibrated abstract paired-PC-link profile**. Each kernel
+By default the switch is an **uncalibrated abstract paired-PC-link profile**. Each kernel
 port and paired-PC physical-channel link can service one 32-byte fragment per
 HBM edge in each direction. Queues are finite: 256 reserved read responses,
 16 write bursts and 64 unassociated W beats per port, plus bounded TB egress
@@ -116,6 +130,68 @@ are documented in `agent-tasks/u55c-vcs-hbm-model/hardware-evidence.md`; they do
 not prove current-profile wiring or timing. The manifest explicitly labels the
 abstract fallback. Do not use application cycle counts as calibration data
 without a corresponding measured hardware workload and stated tolerance.
+
+## Optional documentation-based performance mode
+
+Keep the kernel default at 100 MHz. From a configured simulator build directory,
+after sourcing the selected config, enable the candidate profile with:
+
+```sh
+export LOGIC_FREQ_HZ=100000000
+export HBM_AXI_FREQ_HZ=450000000
+export U55C_PERFORMANCE_PROFILE="$(realpath ../../../sim/xrtsim_vcs/profiles/u55c-pg276-v1.json)"
+make -f ../../../sim/xrtsim_vcs/Makefile hbm-config
+```
+
+This only generates configuration; rebuild all consumers before running. The
+profile path must identify valid schema-version-1 JSON, and the selected HBM
+AXI frequency must match the profile. Its contents and timing-backend source
+hashes participate in manifest identity. A stale host/simulator manifest is
+rejected at connection. Unset `U55C_PERFORMANCE_PROFILE` and regenerate/rebuild
+to return to the original model. Do not mix outputs from different profiles.
+
+Profile status distinguishes `documentation-based`, `hardware-calibrated`, and
+`diagnostic-only`. The last is for explicitly labelled sensitivity experiments,
+not a documented board value or an accepted calibration. It is selected only
+through the same explicit profile path; it does not change the default profile.
+
+The candidate retains Ramulator with exact rational 900 MHz edge scheduling,
+explicit timing minima, 8H organization and a row/bank/column timing-address
+permutation with bank-group interleaving. Functional RAM addresses do not change.
+The legacy DRAM organization/address mapping is unchanged when this mode is off.
+
+Per-port read/write and aggregate read/write/shared byte budgets replace the
+paired-PC service gates. Integer-picosecond credit accumulation has bounded idle
+credit and resets to zero. Writes consume data credit on 32-byte DRAM admission;
+reads consume it on 32-byte return service, after completion and residual delay.
+Each port services at most one quantum per direction per HBM edge. Arbitration
+advances on successful service; separate R/B queues prevent a delayed read from
+blocking write notifications. Ramulator backpressure, refresh, finite model
+queues and AXI ordering still apply. No proprietary switch arbitration or
+internal contention topology is modeled.
+
+`MemoryModel::service_counters()` exposes simulation-only per-port byte counts
+at these charge points. Counters reset with the model and remain zero in legacy
+mode. They distinguish actual service from queued host/AXI write acceptance;
+they are not hardware counters and do not measure write media persistence.
+
+The current candidate has 14.4 GB/s per-direction port ceilings, a 460.8 GB/s
+shared card ceiling, 64-byte port and 1024-byte aggregate burst allowances,
+and a 121111 ps residual read delay. These are profile parameters, not guaranteed
+sustained kernel bandwidth. At 100 MHz, each 64-byte kernel port itself limits
+each direction to 6.4 GB/s; eight such ports cannot demonstrate the card ceiling.
+The residual aligns an isolated closed-page model reference with the documented
+minimum; it is not measured board latency. CDC, full-beat serialization and TB
+publication remain separate, and open-page latency is not independently fitted.
+See the JSON provenance and
+`agent-tasks/u55c-hbm-performance-calibration/model-progress.md` for measurements
+and outstanding acceptance gates. Do not label this profile hardware-calibrated.
+
+Historical xclbin comparisons must use the selected artifact root's
+`sources.txt` and `src/`, alongside its `bin/`, through a separate temporary
+Makefile. The normal Makefile consumes current RTL and is not that reference
+build. Keep historical performance comparison and current-RTL regression results
+separate.
 
 ## Directed tests and dependency lifetime fix
 

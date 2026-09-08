@@ -1,0 +1,105 @@
+{
+  "logs": [
+    "build_hbm_reference/sim/xrtsim_vcs/regression_4port125_final.log",
+    "build_hbm_reference/sim/xrtsim_vcs/candidate_400ns_4port125.log"
+  ],
+  "cases": [
+    {
+      "case": "initial-closed-page",
+      "control": {
+        "case": "initial-closed-page",
+        "latency_ps": 160000,
+        "hbm_first_return_ps": 142222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3112,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12444,
+        "manifest": "c7a3096dc7283bdb95935666a8012a24b14ae3248c10fc5bf4323ead99decf11"
+      },
+      "candidate": {
+        "case": "initial-closed-page",
+        "latency_ps": 560000,
+        "hbm_first_return_ps": 542222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3112,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12444,
+        "manifest": "05188c8a92d13314d641b37552f5d150db17f91da9227df13f1641991064010f"
+      },
+      "extra_delay_ps": 400000
+    },
+    {
+      "case": "same-open-page",
+      "control": {
+        "case": "same-open-page",
+        "latency_ps": 152000,
+        "hbm_first_return_ps": 135556,
+        "dram_completion_ps": 13334,
+        "request_cdc_ps": 4000,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 10222,
+        "manifest": "c7a3096dc7283bdb95935666a8012a24b14ae3248c10fc5bf4323ead99decf11"
+      },
+      "candidate": {
+        "case": "same-open-page",
+        "latency_ps": 552000,
+        "hbm_first_return_ps": 535556,
+        "dram_completion_ps": 13334,
+        "request_cdc_ps": 4000,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 10222,
+        "manifest": "05188c8a92d13314d641b37552f5d150db17f91da9227df13f1641991064010f"
+      },
+      "extra_delay_ps": 400000
+    },
+    {
+      "case": "row-conflict",
+      "control": {
+        "case": "row-conflict",
+        "latency_ps": 168000,
+        "hbm_first_return_ps": 151112,
+        "dram_completion_ps": 28889,
+        "request_cdc_ps": 4000,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 10666,
+        "manifest": "c7a3096dc7283bdb95935666a8012a24b14ae3248c10fc5bf4323ead99decf11"
+      },
+      "candidate": {
+        "case": "row-conflict",
+        "latency_ps": 568000,
+        "hbm_first_return_ps": 551112,
+        "dram_completion_ps": 28889,
+        "request_cdc_ps": 4000,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 10666,
+        "manifest": "05188c8a92d13314d641b37552f5d150db17f91da9227df13f1641991064010f"
+      },
+      "extra_delay_ps": 400000
+    },
+    {
+      "case": "reset-closed-page",
+      "control": {
+        "case": "reset-closed-page",
+        "latency_ps": 160000,
+        "hbm_first_return_ps": 142222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3112,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12444,
+        "manifest": "c7a3096dc7283bdb95935666a8012a24b14ae3248c10fc5bf4323ead99decf11"
+      },
+      "candidate": {
+        "case": "reset-closed-page",
+        "latency_ps": 560000,
+        "hbm_first_return_ps": 542222,
+        "dram_completion_ps": 21111,
+        "request_cdc_ps": 3112,
+        "return_serialization_ps": 2222,
+        "response_cdc_ps": 12444,
+        "manifest": "05188c8a92d13314d641b37552f5d150db17f91da9227df13f1641991064010f"
+      },
+      "extra_delay_ps": 400000
+    }
+  ],
+  "limitation": "Simulator clock/port variant only; no matching four-port hardware image measured."
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "u55c-pg276-zero-residual-probe-v1",
+  "status": "documentation-based",
+  "dram_frequency_hz": 900000000,
+  "hbm_axi_frequency_hz": 450000000,
+  "port_read_bytes_per_second": 14400000000,
+  "port_write_bytes_per_second": 14400000000,
+  "aggregate_read_bytes_per_second": 460800000000,
+  "aggregate_write_bytes_per_second": 460800000000,
+  "aggregate_shared_bytes_per_second": 460800000000,
+  "burst_bytes": 64,
+  "aggregate_burst_bytes": 1024,
+  "read_residual_ps": 0,
+  "latency_reference": "UNFINISHED probe: zero residual measures baseline delay; not the final PG276 latency profile. Boundary and residual derivation pending.",
+  "provenance": "AMD PG276 raw throughput bounds (256-bit AXI at 450 MHz, 32 PCs); candidate temp artifact HBM 900 MHz. No hardware latency/bandwidth calibration. Burst caps: one 64-byte kernel beat per port, one 32-byte beat per physical PC in aggregate."
+}

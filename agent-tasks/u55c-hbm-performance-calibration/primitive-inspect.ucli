@@ -1,0 +1,7 @@
+# Introspection only: do not advance simulation or start a host workload.
+set base {tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters(0).cluster.g_sockets(0).socket.g_cores(0).core.execute.fpu_unit.g_blocks(0).fpu_dsp.fpu_fma.g_fmas(0).fma_h.U0}
+show $base -scopes -type -fullname
+show $base -instances -type -fullname
+show ${base}.I_SYNTH -instances -type -fullname
+show $base -type -where
+quit

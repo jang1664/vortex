@@ -1,0 +1,402 @@
+{
+  "hardware_minus_document_cycles": {
+    "1": 1549.0,
+    "256": 1514.0
+  },
+  "limitations": [
+    "No GEMM job submitted; output verification deliberately skipped.",
+    "Two counts estimate marginal polling cost, not isolated HBM latency.",
+    "Do not subtract this offset from GEMM acceptance results.",
+    "Residual can include instruction/data-cache startup and control-path work."
+  ],
+  "samples": [
+    {
+      "control_status": "normal_completion",
+      "cycles": 3766,
+      "instructions": 5986,
+      "log": "build_hbm_reference_document/poll_baseline_1_1.log",
+      "mode": "baseline",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 1,
+      "sha256": "984aae1d4cc9c763c790ed207e6bf3bebb154e71c3b2e595c8deb2612217c8dd",
+      "sim_log": "build_hbm_reference_document/poll_baseline_1_1_simv.log",
+      "sim_sha256": "bce126ed3adb9bf6d86ab44ed52bce8774b46903bea2d7833ce3d3f15eae5a5a",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 3766,
+      "instructions": 5986,
+      "log": "build_hbm_reference_document/poll_baseline_1_2.log",
+      "mode": "baseline",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 2,
+      "sha256": "533cf5a60c32cbeaee0224a510ffec20ca46c97e7092c86abcf195273778eab0",
+      "sim_log": "build_hbm_reference_document/poll_baseline_1_2_simv.log",
+      "sim_sha256": "d2069c665f34d55ed81cd1a4222de00b95a7873f8e8a40b75fbf05395d1dc5e2",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 21871,
+      "instructions": 8536,
+      "log": "build_hbm_reference_document/poll_baseline_256_1.log",
+      "mode": "baseline",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 1,
+      "sha256": "8f3936f85b49a5a960a177a6adbacc2c1050c23bb38cfbfffe33d95bb362b6c0",
+      "sim_log": "build_hbm_reference_document/poll_baseline_256_1_simv.log",
+      "sim_sha256": "2f0c06a6c38a9605c86130ed0f66438931b342cc92c5835958ec382f756b5db4",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 21871,
+      "instructions": 8536,
+      "log": "build_hbm_reference_document/poll_baseline_256_2.log",
+      "mode": "baseline",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 2,
+      "sha256": "925f5f449eda15dfa6e940fb37bd184e1674b776b6f19acc3fc0b163fd622678",
+      "sim_log": "build_hbm_reference_document/poll_baseline_256_2_simv.log",
+      "sim_sha256": "f3d42b273074c5752e4b0e6e6919cb1a7c5ad856093345fda31310821024714a",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 4152,
+      "instructions": 5986,
+      "log": "build_hbm_reference_document/poll_document_1_1.log",
+      "mode": "document",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 1,
+      "sha256": "ded17d81126736b794babd69358c3090da1ed8605fa9ad9683741dadef1c2007",
+      "sim_log": "build_hbm_reference_document/poll_document_1_1_simv.log",
+      "sim_sha256": "041a3d981c5b084598864f605539842ee5f45c7902de038cfd166ed963f615d6",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 4152,
+      "instructions": 5986,
+      "log": "build_hbm_reference_document/poll_document_1_2.log",
+      "mode": "document",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 2,
+      "sha256": "40f30439dcb61a9325467befeedd4b5340732f7940e4f3c294580dc9810008ee",
+      "sim_log": "build_hbm_reference_document/poll_document_1_2_simv.log",
+      "sim_sha256": "298a7f30d0b6c02ef933b083cacfe4d7a993823d229c5b2110dd06396adf380c",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 22257,
+      "instructions": 8536,
+      "log": "build_hbm_reference_document/poll_document_256_1.log",
+      "mode": "document",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 1,
+      "sha256": "92dfbec2d9b8dced70f627452c3df48581c3735e51e1e5aea9d97606f3e56872",
+      "sim_log": "build_hbm_reference_document/poll_document_256_1_simv.log",
+      "sim_sha256": "1c64beb70b2486919013c1aac1667b114d1b2966907b70750dbb55ce685e457a",
+      "warmup": false
+    },
+    {
+      "control_status": "normal_completion",
+      "cycles": 22257,
+      "instructions": 8536,
+      "log": "build_hbm_reference_document/poll_document_256_2.log",
+      "mode": "document",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 2,
+      "sha256": "07c4008272b833ddf0837537c41804066abe6a8371f17abaac388ddfd2ab553e",
+      "sim_log": "build_hbm_reference_document/poll_document_256_2_simv.log",
+      "sim_sha256": "f24771e060d409896da7dc5d11c6b0497d598ffdadd13a83f0b33da5cb0d8e43",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_0_board.json",
+      "board_sha256": "b71f2047a891c3344190ef1e33de2d702730c18e2e8d67b95a0daedb058a9560",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5683,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_0.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 0,
+      "sha256": "d97111715d1163b0dc99380923ea8520cdbea2467c2e6977199cb3eea4ae339a",
+      "warmup": true
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_1_board.json",
+      "board_sha256": "27f73e7cea9cc26f3e66fede21c5ce72cf52e5d32618865feed66ca6c942b980",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5662,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_1.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 1,
+      "sha256": "016b45eaab20f067aa66a4ef6a88239292ea3f8f626d42fad4f3061596e0d5b8",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_2_board.json",
+      "board_sha256": "43843c7169cdf7e25a386ec9110a812559a40ae94868f24e95c372f79476a209",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5701,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_2.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 2,
+      "sha256": "27783c7607aa08ea14ecf42aa32cf172f45e228cebfcf882314e742398d8ec16",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_3_board.json",
+      "board_sha256": "17185609ead14042c3b2c5eeeb2276373b4e40a25398c43a3296edfed8fb1129",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5702,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_3.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 3,
+      "sha256": "bbac0c5a9ea322f35043080ba613615627a83ada5db3f182affef7e740a1ab10",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_4_board.json",
+      "board_sha256": "995e657f5542973d809011dab680356c499aab9856068fb44051a9abb69cdb17",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5692,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_4.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 4,
+      "sha256": "659a0863baf6f99063952d87447bc80bfbe7dd3c444287486a5be7d40c1d90e8",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_5_board.json",
+      "board_sha256": "8b41087ce858f3eb9436c0080c58da5a1723abce6ba530251887c165d3f65173",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 5701,
+      "instructions": 5986,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll1_5.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 1,
+      "repetition": 5,
+      "sha256": "27783c7607aa08ea14ecf42aa32cf172f45e228cebfcf882314e742398d8ec16",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_0_board.json",
+      "board_sha256": "d95cc1ff45bb2283fc209952a51303a790e6082d2ad6ddf6f96b8a5424e9124d",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23733,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_0.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 0,
+      "sha256": "10eb6edbc64cf39526dcab5673e8e0884efbd3739b323e3e45f855a46284a6d5",
+      "warmup": true
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_1_board.json",
+      "board_sha256": "73dc869f4463caa0c284a6bed45ad1b4740ebba03094ec823bc670c257404ec8",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23740,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_1.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 1,
+      "sha256": "49edbce8d47e23d5b624200ee21baf9f75f6d175bcae6f96cbe191ebdc8a47b2",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_2_board.json",
+      "board_sha256": "6807457206ecb56e1d58552e06f7b697367d88363135047d74888eacd642682c",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23878,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_2.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 2,
+      "sha256": "a642a0cf60bceeeb05fbab42b26ea42c187e66b1ab5d7e7bb0b852d3cff4c7e7",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_3_board.json",
+      "board_sha256": "6f871d1e4347902213788d1c85370c02502c00d750bb6d6aebf3ff50fc3c11ee",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23748,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_3.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 3,
+      "sha256": "d60ccae1cea7cb7bbb0467cd04b9354e45d1d71a0fb273e2a529434d72fce968",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_4_board.json",
+      "board_sha256": "b4013c3bb6291e91abcc8e494c226a300f4a942459af9a175a797a316b00b24a",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23771,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_4.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 4,
+      "sha256": "414aa70c3601179943318b1f349985e9b884e512d655ad99e67219d6113ae68c",
+      "warmup": false
+    },
+    {
+      "board_report": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_5_board.json",
+      "board_sha256": "0c6097c43cd948f5b1f6a7e2cad20d08d833299cac423ca67a53c79376a693e4",
+      "clocks_mhz": {
+        "DATA_CLK": 100,
+        "KERNEL_CLK": 500,
+        "hbm_aclk": 450
+      },
+      "control_status": "normal_completion",
+      "cycles": 23774,
+      "instructions": 8536,
+      "log": "build_hbm_hardware_reference/hardware-repeats-4909/gemmpoll256_5.log",
+      "mode": "hardware",
+      "output_verification": "intentionally_skipped",
+      "poll_count": 256,
+      "repetition": 5,
+      "sha256": "754e4c1fcf94592df67277d414385de71c1b0301f065b6392693eb4f2feca096",
+      "warmup": false
+    }
+  ],
+  "status": "control_diagnostic_only",
+  "summary": {
+    "baseline": {
+      "1": {
+        "max": 3766,
+        "median": 3766.0,
+        "min": 3766,
+        "samples": 2
+      },
+      "256": {
+        "max": 21871,
+        "median": 21871.0,
+        "min": 21871,
+        "samples": 2
+      },
+      "incremental_cycles_per_poll": 71.0
+    },
+    "document": {
+      "1": {
+        "max": 4152,
+        "median": 4152.0,
+        "min": 4152,
+        "samples": 2
+      },
+      "256": {
+        "max": 22257,
+        "median": 22257.0,
+        "min": 22257,
+        "samples": 2
+      },
+      "incremental_cycles_per_poll": 71.0
+    },
+    "hardware": {
+      "1": {
+        "max": 5702,
+        "median": 5701,
+        "min": 5662,
+        "samples": 5
+      },
+      "256": {
+        "max": 23878,
+        "median": 23771,
+        "min": 23740,
+        "samples": 5
+      },
+      "incremental_cycles_per_poll": 70.86274509803921
+    }
+  }
+}

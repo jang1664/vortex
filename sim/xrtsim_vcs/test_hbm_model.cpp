@@ -107,6 +107,7 @@ int main() {
     assert(rejected);
     auto edges = model.dram_edges();
     for (unsigned i = 0; i < 1000; ++i) tick();
-    assert(model.dram_edges() == edges + 4000); // Idle refresh still advances.
+    assert(model.dram_edges() == edges + 4000000ULL * U55C_DRAM_FREQ_HZ / 1000000000000ULL);
+    // Idle refresh still advances at the configured physical frequency.
     std::cout << "HBM memory model tests passed\n";
 }

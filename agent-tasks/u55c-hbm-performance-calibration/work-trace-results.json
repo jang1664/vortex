@@ -1,0 +1,64 @@
+{
+  "children": {
+    "dma": {
+      "issued": 129,
+      "max_outstanding": 7,
+      "outstanding_union_cycles": 3419,
+      "retired": 129
+    },
+    "input_read": {
+      "issued": 256,
+      "max_outstanding": 3,
+      "outstanding_union_cycles": 4119,
+      "retired": 256
+    },
+    "output": {
+      "issued": 1,
+      "max_outstanding": 1,
+      "outstanding_union_cycles": 36,
+      "retired": 1
+    },
+    "scale": {
+      "issued": 256,
+      "max_outstanding": 2,
+      "outstanding_union_cycles": 4085,
+      "retired": 256
+    },
+    "weight": {
+      "issued": 256,
+      "max_outstanding": 2,
+      "outstanding_union_cycles": 3990,
+      "retired": 256
+    },
+    "zero_point": {
+      "issued": 256,
+      "max_outstanding": 2,
+      "outstanding_union_cycles": 3990,
+      "retired": 256
+    }
+  },
+  "dma_and_input_overlap_cycles": 3286,
+  "done_ps": 139025000,
+  "duration_cycles": 4297,
+  "events": 1287,
+  "limitations": [
+    "Controller outstanding time, not HBM or CPU stall time.",
+    "No FIFO transaction pairing or per-command latency claim.",
+    "DMA prepare/prefetch activity may precede logical issue.",
+    "No corresponding hardware internal trace."
+  ],
+  "log": "build_hbm_reference_document/work_trace_longk_1_simv.log",
+  "mask_cycles": {
+    "000000": 9,
+    "000001": 34,
+    "000101": 35,
+    "001111": 764,
+    "010000": 36,
+    "100000": 133,
+    "100101": 60,
+    "101111": 3226
+  },
+  "output_store_events": 1,
+  "sha256": "4d18e5b9b8e44b1eb7c08a55deefa9b59038b5bba278e68851448a72119d1406",
+  "start_ps": 96055000
+}

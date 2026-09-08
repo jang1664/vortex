@@ -63,5 +63,16 @@ int main() {
     assert(clock.next_ps() == 6667);
     clock.step();
     assert(clock.next_ps() == 10000);
+    Scheduler u55c(450000000, u55c::DramFrequencyHz{900000000});
+    std::vector<std::pair<Edge, uint64_t>> u55c_edges;
+    u55c.advance(10000, [&](Edge edge, uint64_t at) {
+        u55c_edges.emplace_back(edge, at);
+    });
+    assert(u55c.dram_edges() == 9 && u55c.hbm_edges() == 4);
+    assert(u55c_edges[0] == std::make_pair(Edge::Dram, uint64_t(1112)));
+    assert(u55c_edges[1] == std::make_pair(Edge::Dram, uint64_t(2223)));
+    assert(u55c_edges[2] == std::make_pair(Edge::HbmAxi, uint64_t(2223)));
+    u55c.advance(1000000000, [](Edge, uint64_t) {});
+    assert(u55c.dram_edges() == 900000 && u55c.hbm_edges() == 450000);
     std::cout << "HBM scheduler tests passed\n";
 }

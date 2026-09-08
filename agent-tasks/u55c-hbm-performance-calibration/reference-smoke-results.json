@@ -1,0 +1,443 @@
+{
+  "hardware_relative_errors": null,
+  "hardware_results": null,
+  "limitations": [
+    "Not hardware-calibrated; no tolerance established.",
+    "Two small shapes do not establish sustained HBM bandwidth or zero-load latency.",
+    "Whole-kernel counters include program polling; not isolated GEMM engine cycles.",
+    "Device time is cycles divided by modeled kernel frequency, not host wall time.",
+    "Hashes identify current files; baseline before/after checks are recorded separately."
+  ],
+  "modes": {
+    "baseline": {
+      "manifest": {
+        "aperture_bytes": 17179869184,
+        "defines": {
+          "AFU_DONE_WAIT_CACHE_DRAIN": "1",
+          "BANK_INTERLEAVE": "1",
+          "DCACHE_SIZE": "32768",
+          "DMA_RD_OUTSTANDING_SLOT": "8",
+          "ENABLE_GEMM_ACCEL": "1",
+          "EXT_D_DISABLE": "1",
+          "EXT_ZFH_ENABLE": "1",
+          "FEXP_PE_RATIO": "16",
+          "FPU_DSP": "1",
+          "GEMM_ACC_MEM_DEPTH": "1024",
+          "GEMM_IMPROVE": "1",
+          "GEMM_TIMING_CUTS": "1",
+          "ICACHE_SIZE": "32768",
+          "JOB_MMIO_DMA_DESC_ONE_LANE": "1",
+          "LMEM_DMA_CMD_FIFO_DEPTH": "2",
+          "LMEM_DMA_RD_OUTSTANDING_SLOTS": "8",
+          "LMEM_LOG_SIZE": "20",
+          "MEM_ADDR_WIDTH": "34",
+          "MXU_COL": "16",
+          "MXU_COL_TILE": "16",
+          "MXU_ROW": "16",
+          "MXU_WLOAD_NUM": "4",
+          "NDEBUG": "1",
+          "NUM_CLUSTERS": "1",
+          "NUM_CORES": "1",
+          "NUM_DMA_CHANNELS": "8",
+          "NUM_THREADS": "16",
+          "NUM_TMEM_BANKS": "16",
+          "PLATFORM_MEMORY_ADDR_WIDTH": "34",
+          "PLATFORM_MEMORY_DATA_SIZE": "64",
+          "PLATFORM_MEMORY_ID_WIDTH": "32",
+          "PLATFORM_MEMORY_NUM_BANKS": "32",
+          "PLATFORM_MEMORY_REMAP": "1",
+          "PLATFORM_MERGED_MEMORY_INTERFACE": "1",
+          "TMEM_BANK_SIZE": "32768",
+          "VIVADO": "1",
+          "VX_ENABLE_HW_EXPF": "1",
+          "VX_FPU_EXP_LUT": "1",
+          "W_LMEM_DMA_RESPONSE_SLOTS": "8",
+          "XLEN_64": "1"
+        },
+        "dram_freq_hz": 1000000000,
+        "dram_profile": "HBM2_2Gbps",
+        "dram_tck_ps": 1000,
+        "hbm_axi_freq_hz": 450000000,
+        "kernel_data_bytes": 64,
+        "kernel_ports": 8,
+        "logic_freq_hz": 100000000,
+        "pc_bytes": 536870912,
+        "pc_count": 32,
+        "platform": "xilinx_u55c",
+        "provenance": {
+          "backend_source_sha256": {
+            "common/dram_sim.cpp": "f19c18a20b3c5e4b1e799ecb142b61b38ff2c3a1684097723f57012c926dabf0",
+            "common/dram_sim.h": "a90cb30d2b8141d386fae5634f34c3c574801af7e8d4d7101ed745ead8af216b",
+            "common/u55c_address.h": "31a118c245d08fa877764201c92e107d1d5ab3e7760efce95aa0f364c1a8b592",
+            "xrtsim_vcs/VX_hbm_axi_guard.sv": "58f0731073b3473763d7aef4fcb17e336e956aba6fdfd1c43f3809add4d49517",
+            "xrtsim_vcs/dpi_vcs_server.cpp": "f688f61e1dbc55d43114e3b44d1341381662c2aa10033be5e7c0362ab6cbc696",
+            "xrtsim_vcs/gen_hbm_config.py": "d22ad0db612b25cfb34e114c2cb1d43a19af367b1938f5460cd899914bc6211b",
+            "xrtsim_vcs/hbm_clock.h": "a0f2a947ca38bcd5bd5b603f7425e7ddb720d7dbb1e232e0676f672f3e30fc23",
+            "xrtsim_vcs/hbm_model.cpp": "d4e717b0ab83742bed2901751ea21644a348108960982a36549d8e27509f8644",
+            "xrtsim_vcs/hbm_model.h": "ee38b7515c55b48186e3e591621cbde32d42ae632402d81c02e09a9029dfc059",
+            "xrtsim_vcs/hbm_performance_profile.py": "468b94ca7b62a42c023d5c5d6eb9e0c1ff56abf773020bc46d37257fdb267a71",
+            "xrtsim_vcs/hbm_service_budget.h": "9b1cfdbf8683a732399f437129d04c037ba93b4f5537decfef50dd0bb2628044",
+            "xrtsim_vcs/tb_vcs_xrtsim.sv": "83d964a83c85246b2102d1a5e38a39de88779205cae71b8bc85e1d3f3f7bf66b",
+            "xrtsim_vcs/vcs_protocol.h": "1f2cc55caa43b526fc75c51c38e15630ac38980a9a40186fd90e87b218262e0d"
+          },
+          "connectivity": "Make-evaluated platforms.mk SP_FLAGS",
+          "physical_routing": "abstract; no verified linked HMSS ingress metadata",
+          "source_sha256": {
+            "geometry.mk": "9da8671708df4ded6f530f59a90445898ea42e39b94773bafb713928e68ada6c",
+            "platforms.mk": "a614794267be7a1c81db6032091f18e3a3bc9646276fbf48082ae804b5aa7a0e"
+          },
+          "timing": "uncalibrated; HBM AXI frequency is a model input, not a measured U55C clock"
+        },
+        "routes": [
+          {
+            "first_pc": 0,
+            "last_pc": 3,
+            "port": 0
+          },
+          {
+            "first_pc": 4,
+            "last_pc": 7,
+            "port": 1
+          },
+          {
+            "first_pc": 8,
+            "last_pc": 11,
+            "port": 2
+          },
+          {
+            "first_pc": 12,
+            "last_pc": 15,
+            "port": 3
+          },
+          {
+            "first_pc": 16,
+            "last_pc": 19,
+            "port": 4
+          },
+          {
+            "first_pc": 20,
+            "last_pc": 23,
+            "port": 5
+          },
+          {
+            "first_pc": 24,
+            "last_pc": 27,
+            "port": 6
+          },
+          {
+            "first_pc": 28,
+            "last_pc": 31,
+            "port": 7
+          }
+        ],
+        "schema_version": 1,
+        "sha256": "de50f96ddef137a187271a62667690347dfb8ff0c822ddd552ae99efa1ff443b",
+        "switch_profile": {
+          "name": "abstract-paired-pc-links-v1",
+          "ordering": "FIFO per port per response channel; stronger than same-ID AXI ordering",
+          "read_response_capacity_per_port": 256,
+          "request_bytes_per_hbm_edge_per_port": 32,
+          "request_cdc_receiving_edges": 2,
+          "response_cdc_receiving_edges": 2,
+          "return_bytes_per_hbm_edge_per_port": 32,
+          "shared_link": "one 32-byte link per physical channel, per direction",
+          "unassociated_w_capacity_per_port": 64,
+          "visibility": "AR snapshots RAM; W updates RAM when associated with AW; BO writes immediate on service",
+          "write_burst_capacity_per_port": 16
+        },
+        "time_precision_ps": 1
+      },
+      "sha256": {
+        "Makefile.reference": "50adec1ae6f4618b8e2a51018cf70233fd1dd89db1825adbd1a071beade53a68",
+        "libxrtsim_vcs.so": "181a6808e3cd5d78b18ad396653b301f010d2be130801ca795d970083b0373e8",
+        "simv": "f447a3657d18d86cfc1a170ee70f419c2a609eb5212e1c033b0c9d3458e54dac",
+        "u55c_model_manifest.json": "8dd1da525f938c806c3459fb3d88e58dc538b5f192c26b0562baa5633804530b"
+      },
+      "stage": "build_hbm_reference/sim/xrtsim_vcs/archived-baseline-guarded-mul"
+    },
+    "document": {
+      "manifest": {
+        "aperture_bytes": 17179869184,
+        "defines": {
+          "AFU_DONE_WAIT_CACHE_DRAIN": "1",
+          "BANK_INTERLEAVE": "1",
+          "DCACHE_SIZE": "32768",
+          "DMA_RD_OUTSTANDING_SLOT": "8",
+          "ENABLE_GEMM_ACCEL": "1",
+          "EXT_D_DISABLE": "1",
+          "EXT_ZFH_ENABLE": "1",
+          "FEXP_PE_RATIO": "16",
+          "FPU_DSP": "1",
+          "GEMM_ACC_MEM_DEPTH": "1024",
+          "GEMM_IMPROVE": "1",
+          "GEMM_TIMING_CUTS": "1",
+          "ICACHE_SIZE": "32768",
+          "JOB_MMIO_DMA_DESC_ONE_LANE": "1",
+          "LMEM_DMA_CMD_FIFO_DEPTH": "2",
+          "LMEM_DMA_RD_OUTSTANDING_SLOTS": "8",
+          "LMEM_LOG_SIZE": "20",
+          "MEM_ADDR_WIDTH": "34",
+          "MXU_COL": "16",
+          "MXU_COL_TILE": "16",
+          "MXU_ROW": "16",
+          "MXU_WLOAD_NUM": "4",
+          "NDEBUG": "1",
+          "NUM_CLUSTERS": "1",
+          "NUM_CORES": "1",
+          "NUM_DMA_CHANNELS": "8",
+          "NUM_THREADS": "16",
+          "NUM_TMEM_BANKS": "16",
+          "PLATFORM_MEMORY_ADDR_WIDTH": "34",
+          "PLATFORM_MEMORY_DATA_SIZE": "64",
+          "PLATFORM_MEMORY_ID_WIDTH": "32",
+          "PLATFORM_MEMORY_NUM_BANKS": "32",
+          "PLATFORM_MEMORY_REMAP": "1",
+          "PLATFORM_MERGED_MEMORY_INTERFACE": "1",
+          "TMEM_BANK_SIZE": "32768",
+          "VIVADO": "1",
+          "VX_ENABLE_HW_EXPF": "1",
+          "VX_FPU_EXP_LUT": "1",
+          "W_LMEM_DMA_RESPONSE_SLOTS": "8",
+          "XLEN_64": "1"
+        },
+        "dram_address_policy": "8H RBC+BG interleave: Ch33:30 PC29 SID28 row27:14 BG1=13 BA12:11 col10:6 BG0=5 byte4:0",
+        "dram_freq_hz": 900000000,
+        "dram_profile": "HBM2-documentation-adapter-v1",
+        "dram_tck_ps": 1111,
+        "dram_timing_policy": "900MHz: ceil(HBM2_2Gbps timing minima in ns * 0.9), except nBL=2 for 32 bytes on a 64-bit DDR pseudochannel; 8Gb-channel tRFC=350ns, tREFI=3900ns; Ramulator integer tCK metadata only, exact frequency scheduling; not an AMD controller preset",
+        "hbm_axi_freq_hz": 450000000,
+        "kernel_data_bytes": 64,
+        "kernel_ports": 8,
+        "logic_freq_hz": 100000000,
+        "pc_bytes": 536870912,
+        "pc_count": 32,
+        "performance_profile": {
+          "aggregate_burst_bytes": 1024,
+          "aggregate_read_bytes_per_second": 460800000000,
+          "aggregate_shared_bytes_per_second": 460800000000,
+          "aggregate_write_bytes_per_second": 460800000000,
+          "burst_bytes": 64,
+          "dram_frequency_hz": 900000000,
+          "hbm_axi_frequency_hz": 450000000,
+          "latency_reference": "PG276 global-addressing closed-page minimum: 128 memory clocks at 900MHz, approximately 142222ps. Reference is an isolated aligned 64B read after reset, first 32B model return from first DRAM admission. RBC+BG-interleave/nBL2 zero-residual probe completion is 21111ps; round(142222.222-21111.111)=121111ps residual. Nearest-ps residual avoids an extra receiving edge caused by rounding a sub-ps fraction twice. CDC, second 32B serialization and TB publication are separate. Open-page latency is not independently fitted; PG276 reports minima, not guaranteed end-to-end values. Validation in progress.",
+          "name": "u55c-pg276-global-closed-page-v1",
+          "port_read_bytes_per_second": 14400000000,
+          "port_write_bytes_per_second": 14400000000,
+          "provenance": "AMD PG276 Performance and Raw Throughput Evaluation, revision 2025-12-17: https://docs.amd.com/r/en-US/pg276-axi-hbm/Performance and https://docs.amd.com/r/en-US/pg276-axi-hbm/Raw-Throughput-Evaluation . temp xclbin a3f5e07e6974498bb9fef1c1b5c0bf5591aca8386f5651980b96d7d983b1d56c HWH: AXI450/HBM900, SWITCH_ENABLE_00/01 TRUE. Residual is model-to-document alignment, not a board measurement. Shared raw bandwidth is a simplified card-wide data budget, not an internal switch model.",
+          "read_residual_ps": 121111,
+          "schema_version": 1,
+          "source_sha256": "e364170959585ab8e6e51ccd841ac8e9c0f15912fc698cf2e38abcc8e1d9aeff",
+          "status": "documentation-based"
+        },
+        "platform": "xilinx_u55c",
+        "provenance": {
+          "backend_source_sha256": {
+            "common/dram_sim.cpp": "f19c18a20b3c5e4b1e799ecb142b61b38ff2c3a1684097723f57012c926dabf0",
+            "common/dram_sim.h": "a90cb30d2b8141d386fae5634f34c3c574801af7e8d4d7101ed745ead8af216b",
+            "common/u55c_address.h": "31a118c245d08fa877764201c92e107d1d5ab3e7760efce95aa0f364c1a8b592",
+            "xrtsim_vcs/VX_hbm_axi_guard.sv": "58f0731073b3473763d7aef4fcb17e336e956aba6fdfd1c43f3809add4d49517",
+            "xrtsim_vcs/dpi_vcs_server.cpp": "f688f61e1dbc55d43114e3b44d1341381662c2aa10033be5e7c0362ab6cbc696",
+            "xrtsim_vcs/gen_hbm_config.py": "d22ad0db612b25cfb34e114c2cb1d43a19af367b1938f5460cd899914bc6211b",
+            "xrtsim_vcs/hbm_clock.h": "a0f2a947ca38bcd5bd5b603f7425e7ddb720d7dbb1e232e0676f672f3e30fc23",
+            "xrtsim_vcs/hbm_model.cpp": "d4e717b0ab83742bed2901751ea21644a348108960982a36549d8e27509f8644",
+            "xrtsim_vcs/hbm_model.h": "ee38b7515c55b48186e3e591621cbde32d42ae632402d81c02e09a9029dfc059",
+            "xrtsim_vcs/hbm_performance_profile.py": "468b94ca7b62a42c023d5c5d6eb9e0c1ff56abf773020bc46d37257fdb267a71",
+            "xrtsim_vcs/hbm_service_budget.h": "9b1cfdbf8683a732399f437129d04c037ba93b4f5537decfef50dd0bb2628044",
+            "xrtsim_vcs/tb_vcs_xrtsim.sv": "83d964a83c85246b2102d1a5e38a39de88779205cae71b8bc85e1d3f3f7bf66b",
+            "xrtsim_vcs/vcs_protocol.h": "1f2cc55caa43b526fc75c51c38e15630ac38980a9a40186fd90e87b218262e0d"
+          },
+          "connectivity": "Make-evaluated platforms.mk SP_FLAGS",
+          "physical_routing": "abstract; no verified linked HMSS ingress metadata",
+          "source_sha256": {
+            "geometry.mk": "9da8671708df4ded6f530f59a90445898ea42e39b94773bafb713928e68ada6c",
+            "platforms.mk": "a614794267be7a1c81db6032091f18e3a3bc9646276fbf48082ae804b5aa7a0e"
+          },
+          "timing": "documentation-based: AMD PG276 Performance and Raw Throughput Evaluation, revision 2025-12-17: https://docs.amd.com/r/en-US/pg276-axi-hbm/Performance and https://docs.amd.com/r/en-US/pg276-axi-hbm/Raw-Throughput-Evaluation . temp xclbin a3f5e07e6974498bb9fef1c1b5c0bf5591aca8386f5651980b96d7d983b1d56c HWH: AXI450/HBM900, SWITCH_ENABLE_00/01 TRUE. Residual is model-to-document alignment, not a board measurement. Shared raw bandwidth is a simplified card-wide data budget, not an internal switch model."
+        },
+        "routes": [
+          {
+            "first_pc": 0,
+            "last_pc": 3,
+            "port": 0
+          },
+          {
+            "first_pc": 4,
+            "last_pc": 7,
+            "port": 1
+          },
+          {
+            "first_pc": 8,
+            "last_pc": 11,
+            "port": 2
+          },
+          {
+            "first_pc": 12,
+            "last_pc": 15,
+            "port": 3
+          },
+          {
+            "first_pc": 16,
+            "last_pc": 19,
+            "port": 4
+          },
+          {
+            "first_pc": 20,
+            "last_pc": 23,
+            "port": 5
+          },
+          {
+            "first_pc": 24,
+            "last_pc": 27,
+            "port": 6
+          },
+          {
+            "first_pc": 28,
+            "last_pc": 31,
+            "port": 7
+          }
+        ],
+        "schema_version": 1,
+        "sha256": "5d12575f8558ce32e342e46a41fcd54ad63d59851740e6a80698ed8c9bd8ec80",
+        "switch_profile": {
+          "arbitration": "per-direction port rotation and direction priority advance on successful data service",
+          "name": "bounded-byte-budgets-v1",
+          "ordering": "FIFO per port per response channel; stronger than same-ID AXI ordering",
+          "read_response_capacity_per_port": 256,
+          "request_cdc_receiving_edges": 2,
+          "response_cdc_receiving_edges": 2,
+          "shared_link": "aggregate shared data budget; no paired-PC switch gate",
+          "unassociated_w_capacity_per_port": 64,
+          "visibility": "AR snapshots RAM; W updates RAM when associated with AW; BO writes immediate on service",
+          "write_burst_capacity_per_port": 16
+        },
+        "time_precision_ps": 1
+      },
+      "sha256": {
+        "Makefile.reference": "a7ffab05da0e7f766a207ad3b451c2e4f0468e5c77b55339b374101a2a997437",
+        "libxrtsim_vcs.so": "71f8389c499be4ecca7c2148808ef43d29ebb0b991cc4a4183b6a49529b94c15",
+        "simv": "f059b5e84f413d2cd75ca424297b83cc7de84a5c1a863afb966d23d1f2516966",
+        "u55c_model_manifest.json": "0b343e4f8480682756655b43b6044d73c2734442d66379f3d63d13567fcd6acd"
+      },
+      "stage": "build_hbm_reference/sim/xrtsim_vcs/archived-document-guarded-mul"
+    }
+  },
+  "program_sha256": {
+    "fpint_gemm_ffn_hw": "8f98e5af6f3680af703f2452847beaac7444341947020f27929aa26938273368",
+    "kernel.vxbin": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  },
+  "results": [
+    {
+      "args": "-m 16 -n 16 -k 16 -q 32 -r 1",
+      "case": "gemm16x16x16",
+      "device_time_ns": 67820.0,
+      "host_log": "build_hbm_reference_document/baseline_guarded_gemm16_1.log",
+      "host_log_sha256": "a649765ee1d5a5287640a773abc41b8bca7aaf6d514cdaaead60aebde45f8601",
+      "instructions": 6247,
+      "kernel_cycles": 6782,
+      "mode": "baseline",
+      "output_check": "passed",
+      "repetition": 1,
+      "sim_log": "build_hbm_reference_document/baseline_guarded_gemm16_1_simv.log",
+      "sim_log_sha256": "1eac3aad5599dd727c42a2c94e479f0e8f1846f673e510f0047c87acc4099ea9"
+    },
+    {
+      "args": "-m 16 -n 16 -k 16 -q 32 -r 1",
+      "case": "gemm16x16x16",
+      "device_time_ns": 67820.0,
+      "host_log": "build_hbm_reference_document/baseline_guarded_gemm16_2.log",
+      "host_log_sha256": "dfa0b25b4e9cfd8c132e848c03755e454fd5845ed25a2c72a04b6a05dae513c7",
+      "instructions": 6247,
+      "kernel_cycles": 6782,
+      "mode": "baseline",
+      "output_check": "passed",
+      "repetition": 2,
+      "sim_log": "build_hbm_reference_document/baseline_guarded_gemm16_2_simv.log",
+      "sim_log_sha256": "0adbac7c1bc9e4ad0045f05c5a29ec3b3d94c4d9b324d62c3f111c2ff296b169"
+    },
+    {
+      "args": "-m 16 -n 16 -k 64 -q 32 -r 1",
+      "case": "gemm16x16x64",
+      "device_time_ns": 68570.0,
+      "host_log": "build_hbm_reference_document/baseline_guarded_gemm64_1.log",
+      "host_log_sha256": "cdb921a5f884bdabac9eabb340c394f87f46d19e6f68da57b92cde4bb001e7ce",
+      "instructions": 6253,
+      "kernel_cycles": 6857,
+      "mode": "baseline",
+      "output_check": "passed",
+      "repetition": 1,
+      "sim_log": "build_hbm_reference_document/baseline_guarded_gemm64_1_simv.log",
+      "sim_log_sha256": "43d30b1a8a64ec1cdf5dd79a3802534312f551434dd83b36f7d57ba6a42a4c8b"
+    },
+    {
+      "args": "-m 16 -n 16 -k 64 -q 32 -r 1",
+      "case": "gemm16x16x64",
+      "device_time_ns": 68570.0,
+      "host_log": "build_hbm_reference_document/baseline_guarded_gemm64_2.log",
+      "host_log_sha256": "f1c3f5e112e15fe1162f3e0fc40ddac3fbdcffa9066435265e410cdc9d306041",
+      "instructions": 6253,
+      "kernel_cycles": 6857,
+      "mode": "baseline",
+      "output_check": "passed",
+      "repetition": 2,
+      "sim_log": "build_hbm_reference_document/baseline_guarded_gemm64_2_simv.log",
+      "sim_log_sha256": "2a5882f9e908a16e2169bf1a6c4bb620f90c99e007eda525e98607651c76c611"
+    },
+    {
+      "args": "-m 16 -n 16 -k 16 -q 32 -r 1",
+      "case": "gemm16x16x16",
+      "device_time_ns": 73440.0,
+      "host_log": "build_hbm_reference_document/archived_guarded_mul_gemm16.log",
+      "host_log_sha256": "7d0c763d2c602fc4e469394199c726cbd8c366fa3e122fea06f7521bba5f055e",
+      "instructions": 6253,
+      "kernel_cycles": 7344,
+      "mode": "document",
+      "output_check": "passed",
+      "repetition": 1,
+      "sim_log": "build_hbm_reference_document/archived_guarded_mul_gemm16_simv.log",
+      "sim_log_sha256": "27753a2810db45fb70752fb7a246fc5e79129743f1b76d93323fd6fd4beafa18"
+    },
+    {
+      "args": "-m 16 -n 16 -k 16 -q 32 -r 1",
+      "case": "gemm16x16x16",
+      "device_time_ns": 73440.0,
+      "host_log": "build_hbm_reference_document/archived_guarded_mul_gemm16_repeat.log",
+      "host_log_sha256": "8bd1a2da13b19df585fd9127bf521ba622f2efda8cc2a862a2245ac714d3ec29",
+      "instructions": 6253,
+      "kernel_cycles": 7344,
+      "mode": "document",
+      "output_check": "passed",
+      "repetition": 2,
+      "sim_log": "build_hbm_reference_document/archived_guarded_mul_gemm16_repeat_simv.log",
+      "sim_log_sha256": "e09b1e3f1fd67b8b2fe5a1cc679d8fc23748696f3dcfe1ac65c5fec43552bfd3"
+    },
+    {
+      "args": "-m 16 -n 16 -k 64 -q 32 -r 1",
+      "case": "gemm16x16x64",
+      "device_time_ns": 74190.0,
+      "host_log": "build_hbm_reference_document/archived_guarded_mul_gemm64.log",
+      "host_log_sha256": "b021eb7020c61297e2efdc1cca3b3db1f450446b89018838bf0b98fe2fe13d90",
+      "instructions": 6259,
+      "kernel_cycles": 7419,
+      "mode": "document",
+      "output_check": "passed",
+      "repetition": 1,
+      "sim_log": "build_hbm_reference_document/archived_guarded_mul_gemm64_simv.log",
+      "sim_log_sha256": "4abd8497d0ea27fb540d9faaebd68546adebabcce8ef0cab096832e128ca6ca6"
+    },
+    {
+      "args": "-m 16 -n 16 -k 64 -q 32 -r 1",
+      "case": "gemm16x16x64",
+      "device_time_ns": 74190.0,
+      "host_log": "build_hbm_reference_document/archived_guarded_mul_gemm64_repeat.log",
+      "host_log_sha256": "f8d4fec12987320e6f9e5a2a728c9909bb281ffc2184ca62578f5097f84d2851",
+      "instructions": 6259,
+      "kernel_cycles": 7419,
+      "mode": "document",
+      "output_check": "passed",
+      "repetition": 2,
+      "sim_log": "build_hbm_reference_document/archived_guarded_mul_gemm64_repeat_simv.log",
+      "sim_log_sha256": "202d5aca49377a00df36fec54554eb2d7cf27e81f56a47b1cc05e2d14fc29e0d"
+    }
+  ],
+  "status": "simulation_smoke_only"
+}

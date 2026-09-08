@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "scope": "Current RTL functional smoke only; not historical hardware comparison",
+  "runs": [
+    {
+      "timestamp_local": "2026-09-08 14:51",
+      "timezone": "Asia/Seoul",
+      "build_directory": "build_hbm_reference",
+      "config": "configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh",
+      "command": "timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'",
+      "profile": "sim/xrtsim_vcs/profiles/u55c-pg276-v1.json",
+      "kernel_frequency_hz": 100000000,
+      "hbm_axi_frequency_hz": 450000000,
+      "dram_frequency_hz": 900000000,
+      "manifest_hash": "81f1ab033b0f7dcc53745cbc30a96b983e323026777dee699b3c097d1ed3df2c",
+      "simv_sha256": "11d420356bddda58f520471f05831d14b328f8a1207ba835986c806342960b74",
+      "kernel_vxbin_sha256": "b7e88a246154d187613167ede35ef31f37e8cd712c5fd976b66b7180230e6128",
+      "application": "vecadd",
+      "arguments": "-n 64",
+      "output_check": "PASSED!",
+      "exit_code": 0,
+      "reported_cycles": 14338,
+      "reported_instructions": 16692,
+      "simulator_normal_shutdown": true,
+      "fsdb_enabled": true,
+      "host_log": "build_hbm_reference/current_rtl_document_vecadd.log",
+      "simv_log": "build_hbm_reference/current_rtl_document_vecadd_simv.log",
+      "hardware_cycles": null,
+      "relative_error": null
+    },
+    {
+      "timestamp_local": "2026-09-08 15:04",
+      "timezone": "Asia/Seoul",
+      "build_directory": "build_hbm_reference",
+      "config": "configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh",
+      "command": "timeout 300 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 16 -n 16 -k 16 -q 32 -r 1'",
+      "profile": "sim/xrtsim_vcs/profiles/u55c-pg276-v1.json",
+      "kernel_frequency_hz": 100000000,
+      "hbm_axi_frequency_hz": 450000000,
+      "dram_frequency_hz": 900000000,
+      "manifest_hash": "81f1ab033b0f7dcc53745cbc30a96b983e323026777dee699b3c097d1ed3df2c",
+      "simv_sha256": "b4383f992e99513eb87be92732e6aa332582a37be27bba033e129edda1051953",
+      "kernel_vxbin_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177",
+      "application": "fpint_gemm_ffn_hw",
+      "arguments": "-m 16 -n 16 -k 16 -q 32 -r 1",
+      "input_policy": "Existing deterministic build_test_vectors patterns; WTRANS=0, QDIR=0, verification enabled",
+      "repetitions": 2,
+      "output_checks": ["PASSED", "PASSED"],
+      "exit_codes": [0, 0],
+      "reported_cycles": [6524, 6524],
+      "reported_instructions": [6253, 6253],
+      "simulator_normal_shutdown": [true, true],
+      "fsdb_enabled": true,
+      "host_logs": [
+        "build_hbm_reference/current_rtl_document_gemm16_q32.log",
+        "build_hbm_reference/current_rtl_document_gemm16_q32_repeat.log"
+      ],
+      "simv_logs": [
+        "build_hbm_reference/current_rtl_document_gemm16_q32_simv.log",
+        "build_hbm_reference/current_rtl_document_gemm16_q32_repeat_simv.log"
+      ],
+      "limitations": "Combined DMA/GEMM small functional case, not standalone DMA bandwidth or hardware comparison. Final shutdown timestamps differ; only reported kernel cycles/instructions were compared for determinism.",
+      "hardware_cycles": null,
+      "relative_error": null
+    }
+  ]
+}

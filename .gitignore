@@ -95,6 +95,9 @@ simv.vdb/
 /agent-tasks/**/*.fst
 /agent-tasks/**/*.stderr
 /agent-tasks/**/*.json
+# Reviewed U55C calibration profiles and compact verification evidence.
+!/agent-tasks/u55c-hbm-performance-calibration/*.json
+!/agent-tasks/u55c-hbm-performance-calibration/profiles/*.json
 /agent-tasks/**/*.csv
 /agent-tasks/**/*.tsv
 /agent-tasks/**/*.rpt

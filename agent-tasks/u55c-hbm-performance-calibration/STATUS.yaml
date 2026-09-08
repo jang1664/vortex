@@ -1,0 +1,323 @@
+task: u55c-hbm-performance-calibration
+status: complete
+updated: '2026-09-09 01:16'
+scope:
+  - Documentation-based HBM model with Ramulator retained.
+  - Historical xclbin versus archived RTL; temporary Makefile only.
+  - Separate current RTL regression; no new synthesis or commit/push.
+candidate:
+  alias: temp
+  artifact_root: build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+  metadata_kernel_mhz: 100
+  metadata_hbm_axi_mhz: 450
+  metadata_hbm_memory_mhz: 900
+  provenance_gate: accepted_with_documented_limitations
+completed:
+  - Read plan and project rules; current implementation worktree clean at start.
+  - Confirmed candidate xclbin, sources.txt and src exist.
+  - Confirmed candidate reports achieved 100 MHz, unlike older v2 artifact.
+  - Located run-only blackbox path for further no-rebuild audit.
+  - Audited 292 manifest sources; 275 resolve to src, 15 to packaged dependency copies, 2 to archived patched dependencies.
+  - All 196 overlapping src and packaged RTL files are byte-identical; other entries need elaboration/provenance audit.
+  - Configured isolated build_hbm_reference successfully; configure.log records execution.
+  - Implemented bounded integer-picosecond ServiceBudget primitive with fractional credit and atomic-admission interface.
+  - Added tagged exact DRAM frequency input to Scheduler; preserved legacy tCK constructor.
+  - UBSan and warnings-as-errors service-budget and clock unit tests passed in configured build_hbm_reference.
+  - Added opt-in performance profile schema, manifest/header integration, exact 900 MHz scheduler and Ramulator timing adapter.
+  - Integrated per-port read/write and aggregate/shared byte budgets, replacing abstract paired-PC gates only in performance mode.
+  - Added residual read delay and simulation-only timing diagnostics; legacy mode remains selectable by omitting the profile.
+  - Legacy native suite passed seven config tests and all seven existing C++ tests before timing-diagnostic additions.
+  - Document-v1 native model, replay, topology and latency probe passed; four schema tests passed.
+  - Identified HWH RBC plus BG interleave and implemented bijective 8H timing-address mapping; functional RAM addresses unchanged.
+  - Corrected documentation-mode 32-byte burst occupancy to two 900 MHz clocks per 64-bit DDR pseudochannel; legacy preset unchanged.
+  - Sustained 40us read sweeps attain 6.4GB/s per port and 51.2GB/s on eight ports at kernel 100MHz with and without residual latency.
+  - Added backend source hashes to configuration provenance for reliable incremental invalidation without Makefile changes.
+  - Final revised residual is 121111ps; supplemental native tests and seven existing config tests passed after this update.
+pending_user_choice: []
+decision_wait:
+  consecutive_blocked_goal_turns: 0
+  condition: Resolved; user explicitly adopted bounded workload model and requested completion.
+  audit: Performance and source/config evidence retained; full vendor primitive equivalence remains an accepted limitation, not proven by adoption.
+launch_decision:
+  - User selected existing repo RAM sources, not a newly written VX_async_ram_patch model. Both VX_dp_ram.sv and VX_sp_ram.sv are selected, with archived headers and all non-RAM DUT RTL retained.
+  - User approved a temporary copy of run_black.sh, not changes to the original.
+  - Temporary copy is build_hbm_reference/ci/run_black.reference.sh with xrt-vcs-sim-only run-only forwarding.
+remaining: []
+accepted_limitations:
+  - Effective workload-cycle fit for the selected100MHz eight-port image only; no isolated physical HBM latency claim.
+  - Full clean vendor primitive binding remains unproven; user accepted the recorded provenance boundary.
+  - Independent CPU-DMA disabled in archived core; integrated GEMM DMA tested. Larger256x256x256 correctness failure remains reported and outside validated range.
+  - Four-port tests are simulator-only; current-RTL smokes are separate functional evidence, not historical hardware accuracy.
+  - No proprietary switch model, continuous throttling proof or universal workload fidelity.
+pitfalls:
+  - fpint_gemm_ffn_hw accepts QBLK=32 only; QBLK=16 is rejected before device connection and is not a simulator failure.
+  - CodeGraph search for MemoryModel returned no results; targeted source search is needed.
+  - Archived sources.txt includes current-checkout third-party include paths; do not accept these without provenance checks.
+  - Do not use blackbox nohup temporary mode: its cleanup contains prohibited rm.
+  - Original run_black.sh does not forward run-only and normally rebuilds simv. Historical comparisons now use the user-approved temporary copy plus explicit stage selection; never use the original rebuild path for archived comparisons.
+  - Packaged source absence is distinct from a content mismatch; packaging omits unused modules and separates headers.
+  - Source configs via ../configs from build_hbm_reference and set -e; initial unit command used a wrong relative config path, then was corrected and rerun successfully.
+  - Existing config tests must run under configured build/sim/xrtsim_vcs, not build root; wrong-CWD failures were rerun successfully.
+  - Native model tests require make -C build/hw config after configure; missing VX_config.h was resolved. This is native-backend setup, not historical RTL compilation.
+  - Document-v1 short single-PC stream is slower than legacy; trace shows frequent row changes from queued requests. Published bandwidth ceilings are not yet demonstrated sustained rates.
+  - The preceding short-stream issue was traced to legacy contiguous row mapping and nBL=4 for 32B transactions; RBC/BG interleave plus nBL=2 restores the 100MHz interface bandwidth ceiling in read sweeps.
+  - Residual ceil-to-ps can miss a receiving HBM edge by 1ps; nearest-ps residual avoids double-rounding an already quantized completion timestamp.
+log:
+  - time: '2026-09-09 01:16'
+    action: User adopted bounded result and requested completion; published opt-in adopted profile and final acceptance disposition.
+    result: All numeric profile fields equal frozen candidate; six schema/equivalence tests and seven collector tests pass, frozen artifact hashes unchanged. RESULTS.md and HBM_MODEL.md document usage and limits. No default change, retuning, new synthesis, commit or push. Task complete under explicit user acceptance; primitive equivalence and unsupported coverage remain limitations, not verified claims.
+  - time: '2026-09-09 01:12'
+    action: Revalidated missing provenance/adoption disposition for the third consecutive decision-blocked goal turn.
+    result: No user choice received and no live task process to await. Marked goal blocked, not complete;10% held-out target remains satisfied. Candidate profile, raw evidence and remaining limitations preserved without further tuning or automatic waiver.
+  - time: '2026-09-09 01:09'
+    action: Rechecked candidate compiler paths and consolidated RESULTS.md with implementation entry points, reproduction boundaries, performance results and final adoption decision.
+    result:217 archive/2 approved RAM/10 harness/0 unexpected inputs. HBM_MODEL.md links qualified held-out evidence; no numeric/profile/default changes. Recommend bounded workload-model adoption with explicit provenance limits, not a physical-latency or gate-equivalence claim. Overall plan remains incomplete pending disposition; no new run or synthesis.
+  - time: '2026-09-09 01:08'
+    action: Ran12 frozen legacy/document held-out control replays, generalized evidence collector by model, and added seven read-only rejection tests.
+    result: All control outputs pass with repeated identical counts; legacy absolute errors15.758–28.206%, document12.213–23.054%, candidate1.031–4.272% against same hardware. Three result JSONs and held-out-evidence.md updated. Collector tests pass;34414 terminal and launch restored. Initial wrong relative freeze-check path corrected before launch. No retuning, threshold change or full-goal acceptance claim.
+  - time: '2026-09-09 01:01'
+    action: Executed frozen candidate H1–H3 twice in VCS and one excluded warm-up plus five hardware samples each on existing image under Slurm4916; collected identity, clock, health, output and normal-finish evidence.
+    result: All outputs pass, VCS replays identical. Candidate/HW median H1=11375/10909 (+4.272%), H2=14150/14005 (+1.035%), H3=15875/15713 (+1.031%); all below preselected10%. held-out-candidate-results.json records24 samples and raw hashes. Sessions33029/30008 terminal; clean launch restored, frozen artifact hashes match. No retuning or profile promotion. Legacy/document controls, collector tests and final provenance/acceptance audit remain.
+  - time: '2026-09-09 00:58'
+    action: User selected10% maximum per-case error; froze prospective H1–H3, existing+400ns candidate and controls before any new outcome.
+    result: held-out-freeze.sha256 records simulator/bridge/manifests, profiles, identical host/device binary, xclbin and source manifest. Protocol updated and task-only hardware repeat script gains heldout cases. No timing parameter changes or automatic threshold relaxation; proceed with matched checks under run-bb-common.
+  - time: '2026-09-09 00:46'
+    action: Revalidated the same missing acceptance tolerance for the third consecutive decision-blocked goal turn.
+    result: Protocol still UNSET; no user choice or live task process to wait on. Goal marked blocked pending maximum absolute per-case kernel-cycle error. No completion claim, parameter change, hardware launch or scope reduction; preserve all remaining gates for resumption.
+  - time: '2026-09-09 00:45'
+    action: Revalidated pending tolerance and active goal after completing independent smoke refresh, bounded provenance queries and prospective held-out protocol.
+    result: Tolerance remains UNSET and no user selection arrived. No new test launched or parameter changed. First decision-blocked goal turn; goal remains active, not complete or blocked yet. Request concrete maximum per-case error before freeze/evaluation; preserve all unresolved provenance and coverage limitations.
+  - time: '2026-09-09 00:43'
+    action: Prepared held-out-protocol.md with three prospective cases, checked host constraints and searched retained logs/results for prior exposure without launching them.
+    result: No matching execution records found in searched roots; deprecated script definition is explicitly distinguished from a run. Protocol requires user tolerance and full artifact freeze before execution, preserves correctness failures and all attempts, and forbids tuning then reusing the same held-out set. Candidate/control profile hashes recorded; no new measurement or parameter change. Acceptance remains incomplete.
+  - time: '2026-09-09 00:43'
+    action: Queried existing debug-enabled work-bus trace binary at time zero using UCLI, without rebuilding or launching a workload.
+    result: Live FMA-half U0 instance resolves to archived xil_f16_fma.vhd line216, improving diagnostic wrapper provenance. Vendor-internal child queries are empty, not proof of absent primitives or exhaustive binding. Clean-binary primitive gate stays open. All three sessions50391/69869/42725 terminal; reference-primitive-evidence.md and bounded UCLI script preserve checks. No further identical query is useful.
+  - time: '2026-09-09 00:41'
+    action: Inspected reference Xprop primitive source records and decoded compressed cgname dictionary; attempted time-zero UCLI hierarchy queries against clean archived binary.
+    result: Source records identify installed primitive processes but not instance paths. UCLI help succeeds; show is rejected with UCLI-117 because clean stage lacks debug access, despite shell exit0. No archived FSDB found, and current-RTL waveform cannot substitute. Sessions91641/96905 terminal. reference-primitive-evidence.md records limitation and next diagnostic-stage avenue; no clean rebuild or HDL changes.
+  - time: '2026-09-09 00:38'
+    action: Used run-bb-common to rebuild and run current-RTL vecadd64 and GEMM16 through unchanged normal wrapper in configured build_hbm_reference, separate from archived stages.
+    result: Both exit0/PASS with normal simulator finish;14338/16692 and6524/6253 cycles/instructions match earlier smokes. Saved raw logs and hashes in regression-refresh.md; sessions21098/87296 terminal. One fresh run each, no new hardware or held-out case, no profile tuning. Compiler warnings retained. Current smoke evidence is refreshed, not a claim that every functional regression or final acceptance gate is complete.
+  - time: '2026-09-09 00:34'
+    action: Compared the full plan with current evidence and wrote acceptance-audit.md; rechecked candidate log hashes and tracked change scope.
+    result: Four candidate log hashes match recorded evidence; no tracked original Makefile, wrapper or production DUT edits. Acceptance remains incomplete for tolerance/freeze/held-out evaluation, primitive binding and final-source current-RTL regression. DMA incompatibility is recorded without waiving coverage. This is an interim gate index, not fresh test execution or a completion certificate; independent work remains available.
+  - time: '2026-09-09 00:28'
+    action: Audited existing DMA workloads and followed candidate archived CPU DMA MMIO wiring rather than relying on matching module definitions.
+    result: Softmax DMA variants use0x1480/18-register interface, but archived VX_core connects that MMIO to VX_lsu_mem_zero_rsp and disables CPU DMA data ports. Allocation-success polling cannot succeed; no pointless timeout run launched. Separate integrated GEMM DMA remains tested. dma-workload-coverage.md records limits and existing-image decision required for independent DMA hardware coverage; no RTL/xclbin changes or new performance cases consumed.
+  - time: '2026-09-09 00:24'
+    action: Ran candidate four-port125MHz native and AXI adapter suites and compared four probes against matching document-control timing.
+    result: Tests pass;660 FSDB handshake records identical, saturated R/W32GB/s, each probe adds exactly400ns without changing DRAM/CDC/serialization. Native closed first return542222ps and kernel observation560000ps. candidate-4port125-latency-results.json records comparison. Session17314 terminal; no matching hardware image claimed. Refreshed stale remaining-work entries without removing tolerance, held-out, source-provenance, workload-coverage or current-RTL gates.
+  - time: '2026-09-09 00:21'
+    action: Ran complete candidate native model-contract suite and compared all four latency probes to documentation-control evidence.
+    result: Five schema tests plus budget/address/latency/read/write-mixed native tests pass with assertions enabled. Each probe adds exactly400000ps to HBM first-return and kernel observation, with DRAM/CDC/serialization unchanged; closed first return542222ps, kernel560000ps. Saturated eight-port read/write retains51.2GB/s while low-outstanding throughput is latency-limited. candidate-native-latency-results.json records exact comparison. Session79677 terminal, no hardware/unseen case or parameter change; acceptance pending.
+  - time: '2026-09-09 00:18'
+    action: Validated candidate compile paths and ran production transport plus AXI adapter regressions at plus400ns residual.
+    result: Compile audit217 archived/2 RAM/10 harness/0 unexpected. All14 transport cases pass; candidate adapter manifest521111ps confirmed and808 FSDB-off/on handshakes match. Initial direct adapter invocation lacked exported generator inputs and failed before simulation; task-local make invocation passes without existing Makefile changes. Sessions95706/75259 terminal. Candidate still diagnostic-only; no unseen workload evaluation or hardware runs.
+  - time: '2026-09-09 00:15'
+    action: Held plus400ns candidate fixed and replayed three other previously hardware-measured exploratory shapes twice; extended identity/output collector for existing-case set.
+    result: All six runs pass and repeat cycle/instruction counts.16x16x64=9350 (+1.74 percent),16x16x256=9725 (+3.08 percent),64x64x64=11000 (+1.76 percent) against stored hardware medians. All five explored cases now within6.88 percent, not an invented acceptance threshold or held-out claim. read-delay-existing-results.json and candidate table updated. Session64282 terminal, clean launch restored; no parameter changes or new hardware runs.
+  - time: '2026-09-09 00:14'
+    action: Replayed both existing plus400ns fitting cases and added candidate evidence collector with artifact/program identity, output/finish and replay checks.
+    result: Both cases repeat exactly9350/6265 and17900/6949 cycles/instructions, all output checks PASS. Four logs and hashes collected in read-delay-candidate-results.json with signed/absolute hardware errors. Session86627 terminal, clean launch restored. No unseen cases or parameter changes; acceptance tolerance pending, independent existing-case/regression checks still available.
+  - time: '2026-09-09 00:12'
+    action: Selected and documented exploratory plus400ns effective read-residual candidate from two independent finite-difference estimates, built isolated guarded reference and ran both fitting cases.
+    result: Both outputs pass. K16 candidate9350 versus HW9094 (+2.82 percent); K4096 candidate17900 versus HW16749 (+6.87 percent). Long-case nonlinearity invalidates exact linear extrapolation. Same selection cases, not held-out validation or physical latency measurement; repeat and other existing exploratory shapes remain. Production profile unchanged; build85783/run57297 terminal. User acceptance tolerance still needed before held-out evaluation.
+  - time: '2026-09-09 00:09'
+    action: Built diagnostic profile with only per-port read service rate reduced14.4 to3.6GB/s; compared standard K16/K4096 runs and reran config regression from configured build.
+    result: Both outputs pass. K16 unchanged7344 cycles; K4096 increases75 to11469, versus plus1348 for independent100ns read-delay perturbation. Model appears more delay-sensitive than rate-ceiling-sensitive at tested settings, not a hardware bottleneck proof. All8 config tests pass after correcting initial wrong-CWD invocation. Build86735/run75743 terminal, clean launch restored. read-rate-sensitivity.md records evidence; production profile unchanged.
+  - time: '2026-09-09 00:06'
+    action: Added explicitly diagnostic-only profile status and separate plus100ns read-residual profile, built isolated guarded archived simulator and ran short/long standard binaries plus fresh short control.
+    result: Five schema tests pass. K16 control7344 versus perturbation7792 (+448); K4096 control11394 versus perturbation12742 (+1348), all outputs pass with stable within-run hashes. Perturbed long case still4007 cycles below hardware median16749. Read sensitivity demonstrated, not a calibrated latency or causal proof of entire gap. Production document JSON unchanged. Build64206/runs67797/94283 terminal, clean launch restored. read-latency-sensitivity.md records limitations; diagnostic status is opt-in only.
+  - time: '2026-09-09 00:02'
+    action: Built combined controller/AXI non-driving observer stage, replayed standard long-K benchmark and added validated read-response parser with five synthetic tests.
+    result: PASS at unchanged11394 cycles/6577 instructions.1881 reads paired globally; controller window1665 requests (1024 two-beat,641 one-beat),2689 accepted R beats, first response180ns median/190ns max. Outstanding read union29.94us is not stall time. Short bursts motivate latency sensitivity investigation, not a hardware bandwidth or latency attribution. work-bus-results.json/work-bus-evidence.md preserve details. Build74184/run18340 terminal, clean links restored; no parameter tuning.
+  - time: '2026-09-08 23:59'
+    action: Added controller outstanding-time parser with exact busy-vector cross-checks and five synthetic rejection/overlap tests; analyzed saved1287-event long-K trace.
+    result: All tests/checks pass. Input/weight/scale/zp each256 balanced commands, output1 and DMA129; peak DMA outstanding7. Input outstanding4119 cycles, DMA3419, overlap3286 within4297 total. Not additive latency or proven critical path; DMA prepare can precede issue. work-trace-results.json and work-progress-evidence.md preserve counts, mask intervals and limitations. No new simulation, hardware or model changes this turn.
+  - time: '2026-09-08 23:57'
+    action: Traced archived OUTPUT_PROGRESS semantics and built a separate non-driving controller issue/retire observer, then ran standard long-K GEMM.
+    result: Output progress counts output-store completions, not input/K-tile activity. Observer run passes at unchanged11394 cycles/6577 instructions.1287 events below cap; one start and one output-store event near done, configuration-to-done4297 kernel cycles. Need balanced per-child event/overlap analysis before attributing wait to memory. work-progress-evidence.md records signals and limits. Build76622/run92833 terminal, clean launch restored; no hardware/RTL/model changes.
+  - time: '2026-09-08 23:52'
+    action: Added separate detailed diagnostic kernel copy with descriptor-program and wait-end cycle snapshots, built matching binaries and ran paired long-K VCS/hardware cases.
+    result: Both output checks pass. Descriptor interval1008 VCS/1046 HW; completion-wait interval4339/8039, a3700-cycle difference. Total11758/17106; most non-startup gap lies in wait, not descriptor setup. This is overlapped DMA/compute plus polling, not isolated memory time, and software snapshots are not proven AXI acceptance timestamps. gemm-detail-evidence.md records source delta, hashes and limits. Sessions54247/87496/31427 terminal; no RTL/xclbin or model tuning.
+  - time: '2026-09-08 23:49'
+    action: Added separate full-GEMM phase host reusing unchanged benchmark verification and existing diagnostic device program, built matching binaries, and ran paired VCS/hardware long-K cases.
+    result: Corrected diagnostic-only unaligned trailer readback to offset-zero full argument read. Both corrected runs pass. VCS entry2684/body8150/post778 total11612; HW job4914 entry4090/body12190/post824 total17104. Of5492 diagnostic gap,4040 lies inside original main body and1406 before it. This separates startup but not DMA from compute/polling; single samples only. gemm-phase-evidence.md records hashes/raw evidence. Sessions40500/99541 terminal, no RTL/runtime or HBM timing edits.
+  - time: '2026-09-08 23:44'
+    action: Built matched guarded-add legacy baseline, ran two replays, collected one warm-up plus five existing-xclbin hardware samples, and extended collectors for longk.
+    result: All outputs pass. Baseline10907 twice, document11394 twice, hardware job4913 median16749 range16694-16758 cycles. Signed errors minus34.88 and minus31.97 percent respectively. Collector validates candidate UUID/clocks/health and matching binaries; raw and machine-readable evidence retained. This larger gap contradicts a universal fixed-startup-only explanation, not yet an HBM-contention diagnosis. Sessions65727/86327/65681 terminal; no RTL/timing tuning or acceptance claim.
+  - time: '2026-09-08 23:40'
+    action: Validated16 binary guard cases and actual add-IP known/unknown-A/unknown-B tests, then built observer-free archived-document-guarded-add and ran long-K twice.
+    result: Both full replays pass all256 outputs at11394 cycles/6577 instructions with stable within-run hashes. Compile audit217 archived plus2 repo RAM plus10 harness and0 unexpected; actual guard process Xprop YES. Only task-local template/config adds guarded xil_f32add_latency1 exclusion; no archived RTL or HBM timing changes. Build62228 and runs71892/26247 terminal; launch restored old clean stage by trap. Need new matched legacy baseline, expanded regression and five hardware samples; no final performance acceptance claim.
+  - time: '2026-09-08 23:35'
+    action: Captured accumulator sequence640 operands in expanded non-driving trace, then reproduced their cancellation with the actual archived xil_f32add_latency1 standalone under two Xprop settings.
+    result: Known4251e000 plus c251e000 produces X0000000 under tmerge; only vendor-adder scoped exclusion produces00000000 and PASS. Application replay remains11394 cycles and68 failures. This isolates the captured IP/tmerge discrepancy without HBM but does not validate all failures or a full-DUT fix. Need add boundary guards and injected-X tests before full-reference scoped change. Build13096/run34878/test57050 terminal; clean launch restored. New launcher validates hashes and refuses log overwrite.
+  - time: '2026-09-08 23:32'
+    action: Built an isolated long-K non-driving arithmetic observer with temporary Makefile and replayed GEMM16x16x4096 through the copied wrapper using debug-xrt-vcs.
+    result: Build81395 and run97970 terminal. Trace repeats11394 cycles and68/256 failures; earliest printed monitored X is accumulator add result sequence640 at104395000ps in lanes1/8/15, then FP16 conversion receives X. Exact matching known operands are outside initial trace window; capture them before asserting vendor-adder causality. Original clean launch links restored. No archived RTL, global X checks or model parameters changed.
+  - time: '2026-09-08 23:28'
+    action: Extended exploratory stream length with unchanged GEMM16x16x4096 through the temporary VCS wrapper, then checked the same binaries/input on existing hardware under Slurm using run-bb-common.
+    result: VCS session33086 terminated normally but failed68/256 outputs with infinity mismatches;11394 cycles are not performance eligible. Hardware session72377/job4912 passed at16810 cycles with candidate UUID and100/450MHz healthy post-report. Hashes match and VCS executable/bridge/manifest hashes remained stable. Recorded a new reference-simulation correctness gap, not a shared hardware failure. Both sessions terminal; no RTL/model changes or new xclbin.
+  - time: '2026-09-08 23:26'
+    action: Inspected stage and installed library mappings, UNISIM/UNIMACRO compilation logs and existing compiled database hashes without rebuilding libraries.
+    result: Stage explicitly maps six archived IP libraries before including build/vcs_simlib. Installed VHDL primitive logs identify Vivado2025.1 source paths; reference-primitive-evidence.md records setup, log and database hashes plus the unsupported-kernel warning. Library registration is not proof of actual primitive-instance binding, which remains unproven. No RTL, IP, Makefile, setup or executable changes.
+  - time: '2026-09-08 23:23'
+    action: Polled existing session32506 to normal completion and audited actual observer-free reference Xprop logs using debug-xrt-vcs.
+    result: Four-port125MHz supplemental native tests and660-handshake FSDB adapter replay pass. Actual SV instrumentation records467 YES and26 NO entries, including five TB and21 DUT unsupported-process records; both FP guards and repo RAM processes have YES entries. Recorded compiler limitations in reference-xprop-evidence.md instead of claiming complete DUT Xprop coverage. No RTL, IP, build flags or executable changed. Installed primitive provenance, longer supported workloads, tolerance and held-out acceptance remain open.
+  - time: '2026-09-08 23:16'
+    action: Reran production TCP transport against the unchanged observer-free archived document executable and rebuilt the isolated AXI adapter selftest with FSDB off/on.
+    result: All14 transport cases pass; adapter passes all credit/reset/strobe/shutdown markers and808 handshake timestamps match exactly with FSDB off/on. regression-refresh.md records logs and distinction between transport, harness and application correctness. Sessions71510/68325 terminated normally. No RTL/model parameter or xclbin change; large GEMM correctness failure and pending error tolerance remain explicitly open.
+  - time: '2026-09-08 23:13'
+    action: Collected the terminal large-GEMM VCS result from session7753, preserved its simulator log, then ran the same hashed benchmark/input on the existing candidate xclbin.
+    result: VCS finished normally, not timeout, but fails192/65536 outputs; hardware job4911 also fails128/65536. Both first reported zero mismatches are near column112 with different rows. large-gemm-failure.md records logs, identity and limitations. Diagnostic cycles78757/80847 are excluded from performance agreement. No RTL/model fix or new xclbin; all processes and job4911 terminated. This exact case is functionally failing, not proof all larger workloads fail or that the root cause is known.
+  - time: '2026-09-08 23:11'
+    action: Refreshed legacy/document native tests and VCS AXI guards in separate output directories; launched unchanged GEMM256x256x256 as an additional exploratory VCS workload.
+    result: Legacy eight configuration tests/seven executables, document four schema tests/five supplemental executables, and eight AXI guard cases all pass. regression-refresh.md records scope and remaining suites. Large GEMM is still live in exec session7753, simv PID2644468, bounded by300-second timeout; log build_hbm_reference_document/explore_document_gemm256x256x256.log, simulator log sim/xrtsim_vcs/simv.log. Do not restart while that handle remains live or classify as passed. Native session91342 and AXI session4409 completed. No hardware job or parameter change.
+  - time: '2026-09-08 23:04'
+    action: Inverted the archived functional address remap, classified all pre-main reads using actual diagnostic ELF bounds and configured thread-stack geometry, and inspected archived data-cache geometry.
+    result: Of182 reads,165 address64 unique stack lines spanning all64 hardware threads and all map to HBM bank31/port7;17 address the program image. Diagnostic TLS/BSS sizes are zero, ruling out a large initialization payload here. The8KiB stack stride equals32KiB/four-way cache capacity per way, consistent with same-set pressure but not a proven replacement trace. startup-address-results.json/evidence record classifications and round-trip tests. No RTL/model/workload mutation or job launched; error tolerance remains pending while independent verification continues.
+  - time: '2026-09-08 23:01'
+    action: Built a separate non-driving AXI/CSR startup observer and paired read transactions around the first phase snapshot; asked user for final kernel-cycle error tolerance before held-out evaluation.
+    result: Diagnostic reproduces2684/3592/4370 cycles and6005 instructions exactly. There are182 pre-entry reads,169 on port7; AR-to-first-response180-220ns and outstanding-interval union6.84us across26.85us startup window. startup-trace-results.json/evidence explicitly distinguish this from CPU stall or hardware bus evidence. No model change, no hardware job, and launch links restored to observer-free document stage. All processes terminated; remaining verification can continue while tolerance input is pending.
+  - time: '2026-09-08 22:56'
+    action: Built a separate software-only wrapper around the unchanged GEMM poll path, recorded main/body MCYCLE snapshots, checked disassembly and matched binaries, then ran VCS twice and hardware warm-up plus five samples per count.
+    result: For one poll, document/hardware entry medians2684/4071, body908/978, post-body778/823; most of total4370/5872 gap precedes first main snapshot. At256 polls entry2684/4111 and body19013/19086. phase-diagnostic-results.json/evidence records phases, hashes, board checks and five-instruction prologue caveat. Original benchmark/RTL/xclbin unchanged; no model tuning. New diagnostic uses task-local Makefile only. Hardware job4910 and all VCS runs terminated. Next investigate startup fetch/TLS/BSS/stack traffic, not GEMM contention or host polling.
+  - time: '2026-09-08 22:50'
+    action: Traced archived scheduler cycle generation through CSR decoding, actual matching hardware/VCS ELF disassembly, device performance dump and host reporting.
+    result: Reported cycles are an exit-routine mcycle snapshot; later dump/fence/drain and host polling/download time are not added. Active-core startup/TLS/BSS and pre-snapshot stalls are included. counter-boundary-evidence.md records matching ELF hashes, exact source/disassembly boundaries and non-atomic instruction snapshot caveat. Archived RTL lacks detailed stall/cache counter cases, so host profiling cannot expose absent counters. This narrows the poll-only gap but does not establish its root cause or justify model tuning. No simulation/hardware jobs launched this step.
+  - time: '2026-09-08 22:47'
+    action: Ran existing poll-only modes at one and 256 iterations in both VCS models twice and on hardware with excluded warm-ups plus five samples; audited archived VHDL wrapper parameters.
+    result: Document medians 4152/22257 versus hardware 5701/23771, leaving 1549/1514 cycles without any GEMM submission. Marginal cost is 71 model versus 70.863 hardware cycles/poll; instruction counts match exactly. Output verification is deliberately skipped, so results are control diagnostics only. poll-diagnostic-results.json/evidence retain hashes, board checks and limitations. IP audit passes 28 parsed archived VHDL sources and 22 matching sim/synth generic maps; primitive/Xprop audit still open. Next inspect counter boundaries and startup fetch/load timing before tuning. All processes and job4909 terminated; document links restored.
+  - time: '2026-09-08 22:42'
+    action: Ran two larger exploratory GEMM shapes in both VCS models twice and on U55C with warm-up plus five samples; extracted xclbin clock sections to reconcile the HWH default annotation.
+    result: All outputs pass. HW medians 9434/10810 cycles for 16x16x256 and 64x64x64; document 7569/8919 (-19.77%/-17.49%), baseline 7082/8433. Program/stage hashes stable, job 4908 terminated and document links restored. reference-explore-results.json, hardware-explore-results.json and exploratory-gemm-evidence.md retain evidence. reference-clock-evidence.md records clock ID0 -> kernel_00, spec300 versus linked100 and runtimeDATA100, including stale nested port metadata. Existing --pol mode identified for next control-path diagnosis, not output-correctness validation. No model tuning or held-out acceptance claim.
+  - time: '2026-09-08 22:36'
+    action: Configured a separate hardware build and ran the unchanged hardware wrapper with existing temp xclbin under single-task FPGA allocations; collected warm-up plus five samples each for GEMM K16/K64.
+    result: Hardware correctness passes, host/device program hashes match VCS, and all post-run UUIDs match candidate with DATA100/HBMAXI450 clocks. Hardware medians 9094/9190 cycles versus baseline 6782/6857 and document 7344/7419; document signed errors are -19.24%/-19.27%, not acceptance. hardware-smoke-results.json records raw-log hashes and statistics. hardware-smoke-evidence.md records reset/warm-up policy, released jobs 4906/4907, existing-image load, stale HWH 300MHz attribute and remaining explicit runtime-clock mapping/IP provenance gates. No model tuning; larger exploratory and held-out cases remain. All jobs terminated.
+  - time: '2026-09-08 22:31'
+    action: Built fresh legacy-mode baseline using the same archived DUT and guards, audited compiler paths, ran K16 and K64 twice, restored document launch links and repeated document K64.
+    result: All eight combined baseline/document runs pass; baseline K16/K64 cycles are 6782/6857 and document 7344/7419, each deterministic twice. Baseline executable, manifest, bridge and programs pass before/after hash verification. reference-smoke-results.json and reference-baseline-evidence.md retain counters, exact arguments, hashes and limitations. Read-only allocated board query again reports HEALTHY/MIG calibrated but a non-candidate UUID. No hardware workload or fidelity claim; all processes terminated.
+  - time: '2026-09-08 22:26'
+    action: Added independent binary-FP stream boundary guards, passed 16 directed tests plus real-IP known/unknown cases, and built a fresh observer-free reference stage with scoped FMA/multiplier exclusions.
+    result: archived-document-guarded-mul passes GEMM16 twice at 7344 cycles and 6253 instructions, and GEMM K64 once at 7419 cycles and 6259 instructions, with no guard fatal. Compiler audit reports 217 archived sources, two approved RAM sources, nine harness sources and zero unexpected paths. Logs, hashes and remaining gates are in reference-gemm-evidence.md. Launch symlinks now select this stage; all runs terminated normally. No hardware performance agreement is claimed.
+  - time: '2026-09-08 22:21'
+    action: Traced actual GEMM v2 stages and reproduced the first scaler corruption with the same archived f32mul latency-one IP in isolation.
+    result: Known 42315400 times 3f800000 produces 42xxxxxx under tmerge, then archived FP16 conversion emits Inf. The isolated test fails under tmerge and passes with only the xil_f32mul_latency1 subtree excluded. No HBM is present in the isolated reproducer. reference-gemm-evidence.md records logs and the next gate of tested input/output boundary guards before application adoption. Current stage contains diagnostic observers; final acceptance requires a fresh observer-free build. All test/build sessions terminated.
+  - time: '2026-09-08 22:17'
+    action: Ran archived guarded-FMA GEMM16 with QBLK32 after successful repeated vecadd; preserved the failing simulator log and added a non-driving lane-zero stage observer.
+    result: GEMM terminates normally but fails all 256 outputs, including positive and negative infinity, at 7344 cycles and 6253 instructions. This is not usable performance evidence. Logs are build_hbm_reference_document/archived_guarded_gemm16.log and archived_guarded_gemm16_simv.log. Diagnose the first corrupt arithmetic stage before any additional vendor exclusion or hardware comparison; no archived DUT RTL changed.
+  - time: '2026-09-08 22:09'
+    action: Added FMA boundary guard and eleven directed VCS tests, tested scoped vendor-IP exclusion with actual IP and known/unknown controls, then built fresh archived-document-guarded-fma and ran vecadd -n64 twice.
+    result: All eleven guard cases passed (active operands/control/results rejected when X; unused C/inactive lanes allowed). Actual captured known input passes with external SV X-control active; deliberate X input is caught before vendor IP conversion. Fresh build and compile audit passed (2 repo RAM, 217 archive, 7 harness, 0 unexpected). Both archived vecadd runs PASSED with 16692 instructions and 16064 cycles, normal shutdown, no guard failure. Executable, manifest, bridge and program hashes unchanged across repeat. Logs archived_guarded_fma_vecadd.log and archived_guarded_fma_vecadd_repeat.log under build_hbm_reference_document. All sessions terminal. Hardware comparison, remaining IP scopes/workloads and full acceptance still pending.
+  - time: '2026-09-08 22:00'
+    action: Consulted installed VCS Xprop configuration docs and tested scoped exclusion with a separate SV X-control probe and intentional unknown operand.
+    result: Correct instance-only exclusion fixes captured known FMA arithmetic while external SV X-control still propagates X. However, intentional X operand becomes 0 within excluded vendor IP, so that test fails and exclusion alone is not accepted. Next add/test mask- and operation-aware FPU boundary checks before application use. Initial tree rule incorrectly used instance path and was corrected per docs; those earlier failed tests remain logged. Standalone fma_probe_scoped_v2 logs retained. No full-DUT Xprop changes, IP source edits, or assertion suppression. All sessions terminal.
+  - time: '2026-09-08 21:56'
+    action: Built standalone archived xil_fma_lowL probe in the existing IP libraries with isolated executable/csrc directories; compared continuous and four-cycle enable, captured operands, and X-propagation settings.
+    result: Same final testbench and captured operands return expected 3fc2f07e without -xprop, but X with -xprop=tmerge. Simple 1*1+1 also fails with tmerge; initial no-xprop simple continuous/gated tests passed. This reproduces the failure without DUT/RAM/HBM and narrows it to X-propagation interaction in the standalone mixed-language setup, not mismatched nominal latency. Do not globally disable DUT X checks; next determine a narrowly scoped, validated simulation configuration. Raw fma_probe_* logs reside in archived-document-repo-rams. VCS fatal runs can exit zero, so acceptance is based on explicit PASS marker and absence of Fatal, not exit alone. All sessions terminal; application still failing and hardware comparison pending.
+  - time: '2026-09-08 21:52'
+    action: Added non-driving DSP-FPU and FMA-IP boundary observers and reran vecadd through the temporary wrapper.
+    result: All four accepted 16-lane FP-add operand groups are known, while matching FPU outputs contain X. Lane0 FMA receives a=3f64f23c, b=3f800000, c=3f20eebf at 132905000ps. Enable remains asserted for four cycles; at 132945000ps IP result is X and propagated outward. Archived xil_fma_lowL VHDL wrapper specifies C_LATENCY=4 and C_HAS_ACLKEN=1, matching that window. Next independently simulate the archived FMA IP with known inputs to distinguish vendor-library integration from surrounding pipeline behavior. No DUT FPU edits or assertion suppression. Raw logs archived_repo_rams_fpu_vecadd_simv.log and archived_repo_rams_fma_ip_vecadd_simv.log under build_hbm_reference_document. All sessions terminal. One mistyped config path failed before execution and was corrected for the actual run.
+  - time: '2026-09-08 21:46'
+    action: Added non-driving HBM AW/W and AFU completion observers, increased trace coverage beyond the initial 128-record cap, and paired single-beat AW/W records with final counter coverage checks.
+    result: All 2166 AW/W pairs accounted for across eight ports. Completion raw=1, drain=1, writes_empty=1. Found eight writes to expected mapped result lines 0x20000800/0xa0000800/0x120000800/0x1a0000800; each writes 32 active bytes and all active bytes contain X. Host zero outputs are not evidence of zero-valued computation; unknown data already reaches HBM W. Next inspect input load data and FPU operands/results. Machine-readable evidence archived_result_store_trace.json; raw archived_repo_rams_store_full_simv.log under build_hbm_reference_document. Parser handles upper/lower-case X and validates 512-bit payload length; initial case-sensitive parser rejected trace rather than accepting incomplete coverage. Stage has store observer; clean observer-free rebuild still required. All sessions terminal.
+  - time: '2026-09-08 21:40'
+    action: Built fresh observer-free archived-document-repo-rams with both repo RAM definitions, audited compiled sources, retargeted owned launch symlinks and ran vecadd -n64 via temporary wrapper.
+    result: Build and audit passed (2 approved repo RAM records, 217 archive, 5 harness, 0 unexpected). Kernel completed with normal simulator shutdown and no X assertion, but all 64 output floats are zero and correctness failed. PERF reports 16692 instructions, 16064 cycles. Raw logs archived_repo_rams_vecadd.log and archived_repo_rams_vecadd_simv.log under build_hbm_reference_document. Next check store traffic, result-buffer address mapping and cache writeback/completion; no hardware fidelity claim. All build/test sessions terminal.
+  - time: '2026-09-08 21:38'
+    action: Added non-driving mux input observer and reproduced failure. Corrected incomplete RAM-source override to include the single-port RAM as well as dual-port RAM.
+    result: At 7180000ps mux LSU input valid is X while DMA valid is 0; prior strict-valid observer missed X-valued LSU valid. Actual compiler still parsed archived VX_sp_ram and VX_async_ram_patch. User request covers RAM sources, so selecting repo VX_dp_ram alone was incomplete. Generator and audit now explicitly select both RAM modules; new observer-free archived-document-repo-rams stage compiling in session 29119. Original single-RAM stage and archived files preserved. Do not accept old one-RAM audit as proof for new stage.
+  - time: '2026-09-08 21:36'
+    action: Enhanced guard fatal messages without changing conditions; ran eight VCS guard cases and added non-driving LSU/HBM request observer.
+    result: Guard tests passed. Failing request has addr=X and len=X, size=6 and burst=1, not a demonstrated 4KB boundary violation. Trace shows first LSU request 0x180000000 len0 at 6865000ps and mapped HBM port0 request 0x0c000000 len0 at 6885000ps. Later guard fails at 7185000ps without another observed LSU AR request. Next inspect DMA/mux request inputs; do not blame HBM timing from combined guard text. Saved archived_repo_ram_axi_observer_simv.log under build_hbm_reference_document. No active build/test sessions. Stage now contains diagnostic observer and requires clean observer-free rebuild before acceptance.
+  - time: '2026-09-08 21:33'
+    action: Resolved diagnostic rebuild handshake mismatch and updated temporary Makefile template dependency.
+    result: Guard source change invalidated manifest; initial launch rejected old host bridge before device time. Rebuilt matching bridge, then reproduced actual guard failure. simv now depends on hostbridge in reference-build.mk.in and regenerated temporary Makefile; subsequent observer build automatically synchronized both sides. Existing Makefiles remain untouched.
+  - time: '2026-09-08 19:28'
+    action: Applied user-selected repo VX_dp_ram source exception through prepare_reference.py --repo-ram; built fresh observer-free archived-document-repo-ram stage and host bridge with the temporary Makefile. Retargeted owned historical launch symlinks and ran vecadd through the temporary wrapper.
+    result: Build passed. Compiler-path audit found one approved repo RAM, 220 archive records, five harness records, zero unexpected paths. Archived VX_platform.vh remains selected and preserves SIMULATION conditionals. Prior LSU demux failure no longer occurs at its old timestamp, but vecadd still fails at 7185000ps with HBM_GUARD_AR unsupported or boundary-crossing burst. No guard suppression. Raw host/sim logs are archived_repo_ram_vecadd.log and archived_repo_ram_vecadd_simv.log under build_hbm_reference_document; next inspect AR fields. No live build or test sessions. Existing Makefiles, original wrapper and archived files unchanged.
+  - time: '2026-09-08 17:00'
+    action: Third consecutive audit of the same pending reference-helper replacement decision.
+    result: No user approval received; diagnostic session is confirmed terminated and evidence saved. Current reference cannot execute its first cache miss because synthesis-only placeholder connections are absent. Further reference implementation requires the explicit exception already requested. Marked blocked awaiting user choice, not complete; all hardware comparison and acceptance gates remain required.
+  - time: '2026-09-08 17:00'
+    action: Revalidated pending user decision; closed the completed interactive checkpoint inspection normally to release memory.
+    result: Session 42817 exited zero after close_design and exit. Saved log and exported FIFO netlist remain on disk; no files deleted. Automatic goal continuation is not approval of the proposed helper replacement. Same decision remains pending for a second consecutive goal turn; replacement not implemented and goal not marked complete or blocked.
+  - time: '2026-09-08 16:59'
+    action: Inspected exported optimized FIFO interface and verified the retained checkpoint session responds. Identified the next required scope decision.
+    result: Extracted FIFO contains optimized cross-boundary pipeline inputs/outputs, so it is not a drop-in isolated comparison oracle. Proposed separate simulation-only VX_async_ram_patch model selected exclusively through temporary Makefile, with explicit provenance exception and cycle validation. Awaiting user approval before replacement; archive and production helper remain unchanged. No full-goal completion claim or blocked status on this first decision turn.
+  - time: '2026-09-08 16:58'
+    action: Completed v3 load and directly queried BRAM properties/read-enable LUT; exported existing optimized icache FIFO functional netlist for inspection.
+    result: RAM read ADDR bits 6/7 connect to reset-masked next-pointer LUT2s (INIT 4h2); no extra BRAM output register. Primitive READ_FIRST mode plus collision-related enable/bypass logic requires more than naive passthrough. Export reference_icache_fifo_funcsim.v has optimized cross-boundary ports, not yet a standalone oracle. No synthesis or archived mutation. Interactive session 42817 is live at Vivado prompt with checkpoint loaded; use write_stdin for read-only queries, not another load. Detailed evidence in reference-bram-evidence.md and reference_bram_audit_v3_vivado.log.
+  - time: '2026-09-08 16:52'
+    action: Collected terminal v2 audit session 70944 (exit 1) and switched to primitive-pin inspection with a retained interactive checkpoint.
+    result: Found 67 icache FIFO cells, including prefixed VX_async_ram_patch module and raddr_next LUT2 cells, but no original patch net names. First failure was REF_NAME prefix mismatch, not proven flattening. V3 is live unified exec session 42817 (TTY, Vivado Tcl mode); log reference_bram_audit_v3_vivado.log. It will print REFERENCE_BRAM_READY and retain design for follow-up read-only Tcl queries. Do not relaunch or close before gathering required evidence. No reference model substitution or archived edits.
+  - time: '2026-09-08 16:46'
+    action: Collected terminal session 65711 result, audited search coverage, and launched revised checkpoint inspection.
+    result: First tool exited zero but matched zero cells, so it supplies no connectivity evidence. Revised audit removes REF_NAME dependency, searches nets independently, and fails on zero coverage. New unified exec session 70944 is live, with reference_bram_audit_v2.log and reference_bram_audit_v2_vivado.log under build_hbm_reference. Do not restart while live. Archive src search found VX_placeholder used only by VX_async_ram_patch; current production diff whitespace check passed. No simulation replacement implemented.
+  - time: '2026-09-08 16:44'
+    action: Resumed checkpoint audit session 65711; verified live PID 2379319 and advancing checkpoint/constraint restore logs. Inspected original macro selection and archived post-init hook read-only.
+    result: Ordinary source disables ASYNC_BRAM_PATCH in SIMULATION, but archive has already expanded that synthesis branch. Archived hook references external TOOL_DIR script, not a frozen copy. Documented this distinction. Corrected audit net selection to avoid literal hierarchy brackets being interpreted as glob syntax; already-running Tcl source may still hold its initial version, so inspect output coverage before accepting it. Session 65711 remains live; no restart or replacement simulation model yet.
+  - time: '2026-09-08 16:41'
+    action: Checked same-artifact implementation patch log and added reference-bram-evidence.md plus read-only checkpoint audit script.
+    result: impl_1_runme.log line 1457 explicitly patches the failing icache FIFO RAM. Generic placeholder passthrough is not faithful because patch uses register next-state and CE, with asynchronous fallback for some instances. Vivado checkpoint inspection launched in build_hbm_reference, unified exec session 65711, still live at last poll while loading device. Resume that handle; do not restart merely because open_checkpoint is slow. Logs reference_bram_audit.log and reference_bram_audit_vivado.log. No synthesis or archived writes performed.
+  - time: '2026-09-08 16:38'
+    action: Added read-only cache-bank observer and handshake-only input trace; rebuilt with temporary Makefile and ran vecadd through temporary wrapper.
+    result: Build passed; application failed at the same assertion. At 6815000ps accepted icache word address is 0x60000000 and bank line address is 0x6000000. At 6835000ps miss-queue push address remains 0x6000000; at 6845000ps valid queue output address is X. Archived VX_dp_ram uses VX_async_ram_patch with undriven black-box VX_placeholder. Next inspect hw/scripts/xilinx_async_bram_patch.tcl and same-artifact synthesis patch evidence before considering a faithful simulation-only replacement. No production RTL edits or assertion suppression. Raw evidence saved in build_hbm_reference_document/archived_bank_observer_simv.log.
+  - time: '2026-09-08 16:31'
+    action: Extended non-driving observer to scheduled PC/fetch and cache input/output interfaces, then reran the archived smoke.
+    result: First scheduled/fetch word address is valid 0x60000000, and sampled stalled icache input is also valid. First icache memory request at 6845000ps has X address; L2/L3 passthrough forward it. Saved scheduler/cache traces. Next capture the actual icache acceptance edge and internal miss queue; eight-sample input cap currently stops during backpressure. No archived RTL edits or assertion suppression; root cause remains unresolved.
+  - time: '2026-09-08 16:25'
+    action: Added a non-driving observer bind through the temporary Makefile and reproduced archived vecadd failure with LSU/DCR traces.
+    result: Core receives valid startup DCRs and leaves reset with startup address 0x180000000. First post-reset LSU read address is already X before remapping, with no preceding normal memory response; AR-valid-gated demux assertion fails at 6875000ps. Saved trace/VCD under build_hbm_reference_document. Next investigate scheduler/fetch/cache request path. No archived RTL changed and no assertion bypassed. Observer build is diagnostic only; final acceptance needs a fresh observer-free stage.
+  - time: '2026-09-08 16:18'
+    action: Configured isolated archived launch root, built matching host bridge, and executed first archived vecadd through the temporary wrapper.
+    result: Initial host bridge build lacked the xrtsim header include; corrected only the temporary template. Initial launch exposed stale DPI manifest caching; adding generated-header digest to temporary VCS CFLAGS resolves startup mismatch. Retry reaches device launch then fails at 6875000ps on AR-valid-gated LSU demux select X in archived axi_demux_simple.sv:475. No archive/normal Makefile edits; executable, manifest, bridge and program hashes remain unchanged across launch. reference-launch.md records layout and next X-propagation investigation. Historical application success is not claimed.
+  - time: '2026-09-08 16:02'
+    action: Applied the user's temporary-wrapper choice and tested its no-rebuild launch through run-bb-common.
+    result: Added build_hbm_reference/ci/run_black.reference.sh as a copy of the original with xrt-vcs-sim-only run-only forwarding. Bash syntax passes. Existing current RTL GEMM16 smoke passed through exec-xrt with 6524 cycles; before/after simv and manifest file hashes match. Original wrapper and all existing Makefiles remain unchanged. Historical stage selection and matching host bridge remain the next integration work; this smoke was not an archived-reference application run.
+  - time: '2026-09-08 15:05'
+    action: Revalidated the repeatedly reported historical-launch integration blocker after completing independent model, current RTL and static provenance checks.
+    result: run_black.sh still lacks run-only forwarding, while its inner blackbox supports it. Existing Makefiles and wrapper remain unchanged. The next required matched historical baseline cannot use the mandated wrapper without rebuilding current RTL over the reference executable. Stop for the outstanding user choice; do not replace historical validation with more current RTL smoke tests or mark calibration complete. No tests or hardware jobs remain running from this task.
+  - time: '2026-09-08 15:04'
+    action: Ran current RTL combined DMA/GEMM 16x16x16 smoke twice through the unchanged wrapper, using run-bb-common and log-first debug-xrt-vcs diagnosis.
+    result: Initial QBLK16 attempt was rejected by host argument validation before device connection; no model or RTL change was needed. QBLK32 runs both passed with identical 6524 kernel cycles and 6253 instructions, stable binary hashes and normal simv shutdown. Final shutdown timestamps differ, so full-session trace determinism is not claimed. Results are in current-rtl-results.json; long-stream DMA and hardware comparisons remain open.
+  - time: '2026-09-08 14:59'
+    action: Read board platform, loaded-image and memory/clock reports under a single-task Slurm FPGA allocation.
+    result: Device 0000:2a:00.1 is HEALTHY and reports DATA100/KERNEL500/HBM-AXI450 MHz, but its loaded UUID differs from candidate temp. No image was loaded or changed; candidate runtime-clock gate remains open. board-preflight.md records reports and controller-version discrepancy. Initial help enumeration required explicit BDF and single-task override; corrected query exited zero.
+  - time: '2026-09-08 14:57'
+    action: Compared archived/current ABI headers, runtime register addresses and device build flags.
+    result: VX_types.vh is byte-identical, base MMIO/DCR addresses match and rv64imaf_zfh/lp64f flags match archived ISA defines. VX_config.vh differs in ACC_FREE and DMA_DEPS timing-cut defaults, reinforcing mandatory archived headers. abi-evidence.md records checks and remaining dynamic capability, descriptor and workload gates. No historical execution or hardware calibration is claimed.
+  - time: '2026-09-08 14:56'
+    action: Added and executed read-only synthesis-input and effective VCS compile provenance audits.
+    result: Synthesis-linked kernel directory has 215 of 215 matching archived RTL/header files; no mismatches or unmapped files. Actual reference vlogan records resolve to 221 archived and five permitted harness paths, with zero unexpected paths. Initial audit incorrectly resolved a relative generated header against the repository CWD; corrected to compiler stage and reran successfully. Separate IP/wrapper and ABI/runtime-clock gates remain incomplete.
+  - time: '2026-09-08 14:51'
+    action: Completed current RTL vecadd smoke through run_black.sh and archived its result.
+    result: vecadd -n 64 passed output verification at kernel100/AXI450/DRAM900 MHz; wrapper exit zero and simv normal shutdown. Reported 14338 cycles and 16692 instructions. current-rtl-results.json records executable/program/manifest hashes and logs. Slurm reports one idle FPGA-partition node, but board identity/runtime clocks are not yet verified. Historical wrapper approval and provenance/ABI gates remain pending.
+  - time: '2026-09-08 14:50'
+    action: Ran four-port 125MHz native/adapter sweep and started separate current RTL vecadd smoke through the unchanged wrapper.
+    result: Full supplemental native suite and 660-handshake FSDB replay pass; closed-page model boundary remains 142222ps, write-only bandwidth reaches 32GB/s. Current RTL build/run is active in build_hbm_reference/current_rtl_document_vecadd.log (300-second timeout); normal simulation build generates its own floating-point IP. This is separate from the immutable archived reference build and does not create a new xclbin.
+  - time: '2026-09-08 14:47'
+    action: Ran document-mode AXI guard and adapter tests, then added service-boundary counters and integrated bandwidth assertions.
+    result: Eight VCS guard cases passed; FSDB on/off adapter traces match for 808 handshakes with credit, strobe and reset checks. Eight write/mixed cases pass for each of document and low-budget profiles with per-port, directional aggregate and shared rate bounds checked at every logic sample, from reset and over rolling windows. Low-budget eight-port mixed burst64 serves 80000 read plus 80000 write bytes in 200us. Counters are simulation diagnostics only; VCS tests predate this counter-only addition and should be rerun for final acceptance.
+  - time: '2026-09-08 14:44'
+    action: Built archived documentation-profile VCS, ran its transport suite and latest legacy native regressions, and added profile configuration invalidation coverage.
+    result: Archived document build and all fourteen transport cases passed at kernel100/AXI450/DRAM900 MHz. Legacy hbm-tests passed; the extended configuration suite separately passed eight tests, including profile edits, clock mismatch, stable no-op generation and profile removal. Updated HBM_MODEL.md to distinguish the optional uncalibrated mode. Hardware/application comparisons and current RTL VCS regressions remain pending.
+  - time: '2026-09-08 14:40'
+    action: Verified low-budget fairness outputs and ran production TCP transport tests on the archived baseline executable.
+    result: Twelve read and eight write/mixed native cases pass after grant-based arbitration and independent R/B queues. All fourteen archived VCS transport cases pass, including BO round trip, shutdown, bad manifest/version, disconnects, malformed/stalled packets and reset cancellation. Logs are under archived-baseline/transport-tests. Temporary archived compile succeeded; no application or hardware comparison yet. Service-rate bounds need direct measurement rather than host write-acceptance counts.
+  - time: '2026-09-08 13:43'
+    action: Started execution and inspected existing artifacts and launch flow.
+    result: Found a 100 MHz MXU16 candidate; no hardware jobs or simulation launched yet.
+  - time: '2026-09-08 13:47'
+    action: Added read-only audit_archive.py, resolved archived dependencies, and configured isolated build.
+    result: No manifest source is missing after using same-artifact dependency copies. HWH confirms 450 MHz AXI and 900 MHz HBM. Reference compile and model implementation remain pending.
+  - time: '2026-09-08 13:49'
+    action: Implemented and tested service budget and 900 MHz rational scheduling prerequisites while wrapper approval is pending.
+    result: Budget tests cover fractional accumulation, idle cap, reset, failed admission, overflow and throughput bounds. Clock tests include exact 900000 DRAM and 450000 AXI edges per millisecond. These primitives are not yet integrated into the memory model/profile.
+  - time: '2026-09-08 14:01'
+    action: Integrated profile-controlled model and ran legacy/document native tests.
+    result: Document profile closed-page first-return latency is 142222ps at the model HBM boundary, open-page 135555ps; native kernel-side observation is 160ns for both at 100MHz before TB publication. Not hardware calibrated. Document topology single stream drains in 1195000ps versus legacy 828000ps; investigate backend row/command behavior before claiming bandwidth fidelity. No hardware/VCS historical run yet; wrapper approval remains pending.
+  - time: '2026-09-08 14:14'
+    action: Resolved documentation-mode address/burst mismatches and measured sustained reads with simulation-only tests.
+    result: Forty-microsecond windows with burst16/64 and four outstanding bursts reach 6.4GB/s per port and 51.2GB/s aggregate at 100MHz. This holds after adding residual latency. New profile hash includes timing implementation sources. Hardware agreement, mixed/write tests and historical compilation remain incomplete.

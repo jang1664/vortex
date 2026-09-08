@@ -37,13 +37,15 @@ module VX_hbm_axi_guard #(
                 if (arsize !== $clog2(DATA_BYTES) || arburst !== 2'b01
                     || (araddr % DATA_BYTES) != 0
                     || (int'(araddr[11:0]) + (int'(arlen)+1)*DATA_BYTES > 4096))
-                    $fatal(1, "HBM_GUARD_AR: unsupported or boundary-crossing burst");
+                    $fatal(1, "HBM_GUARD_AR: unsupported or boundary-crossing burst addr=%h len=%h size=%h burst=%h data_bytes=%0d",
+                        araddr, arlen, arsize, arburst, DATA_BYTES);
             end
             if (awvalid && awready) begin
                 if (awsize !== $clog2(DATA_BYTES) || awburst !== 2'b01
                     || (awaddr % DATA_BYTES) != 0
                     || (int'(awaddr[11:0]) + (int'(awlen)+1)*DATA_BYTES > 4096))
-                    $fatal(1, "HBM_GUARD_AW: unsupported or boundary-crossing burst");
+                    $fatal(1, "HBM_GUARD_AW: unsupported or boundary-crossing burst addr=%h len=%h size=%h burst=%h data_bytes=%0d",
+                        awaddr, awlen, awsize, awburst, DATA_BYTES);
             end
             if (r_held && (!rvalid || {rid, rdata, rlast} !== saved_r))
                 $fatal(1, "HBM_GUARD_R: stalled response changed");
