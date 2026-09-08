@@ -1,0 +1,137 @@
+diff --git a/src/base/base.h b/src/base/base.h
+index 1a7643a..f68bf4c 100644
+--- a/src/base/base.h
++++ b/src/base/base.h
+@@ -78,7 +78,9 @@ class Implementation {
+     m_id(id), m_parent(parent) {};
+ 
+ 
+-    virtual ~Implementation() {};
++    virtual ~Implementation() {
++      for (auto child : m_children) delete child;
++    };
+ 
+     virtual std::string get_name() const = 0;
+     virtual std::string get_desc() const = 0;
+@@ -154,9 +156,19 @@ class Implementation {
+     _ParamGroupChainer param_group(std::string group_name) { return m_params._group(group_name); };
+   
+     template <typename T>
+-    StatWrapper<T>& register_stat(T& val) { StatWrapper<T>* s = new StatWrapper<T>(val, *this, m_stats); return *s; };
++    StatWrapper<T>& register_stat(T& val) {
++      auto stat = std::make_unique<StatWrapper<T>>(val, *this, m_stats);
++      auto& result = *stat;
++      m_stats.own(std::move(stat));
++      return result;
++    };
+     template <typename T>
+-    StatWrapper<T>& register_stat(std::vector<T>& val) { StatWrapper<T>* s = new StatWrapper<T>(val, *this, m_stats); return *s; };
++    StatWrapper<T>& register_stat(std::vector<T>& val) {
++      auto stat = std::make_unique<StatWrapper<T>>(val, *this, m_stats);
++      auto& result = *stat;
++      m_stats.own(std::move(stat));
++      return result;
++    };
+     bool has_stats() { return !m_stats.is_empty(); };
+     /**
+      * @brief    Recursively print the stats of myself and all my childs
+@@ -343,4 +355,4 @@ class TopLevel {
+ 
+ }        // namespace Ramulator
+ 
+-#endif   // RAMULATOR_BASE_BASE_H
+\ No newline at end of file
++#endif   // RAMULATOR_BASE_BASE_H
+diff --git a/src/base/stats.h b/src/base/stats.h
+index 3b6afa6..0efd58b 100644
+--- a/src/base/stats.h
++++ b/src/base/stats.h
+@@ -3,7 +3,8 @@
+ 
+ #include <vector>
+ #include <string>
+-#include <variant>
++#include <variant>
++#include <memory>
+ 
+ #include <spdlog/spdlog.h>
+ #include <yaml-cpp/yaml.h>
+@@ -15,8 +16,9 @@
+ namespace Ramulator {
+ 
+ class Implementation;
+-class StatWrapperBase {
+-  public:
++class StatWrapperBase {
++  public:
++    virtual ~StatWrapperBase() = default;
+     virtual void emit_to(YAML::Emitter& emitter) = 0;
+ };
+ 
+@@ -29,10 +31,14 @@ class Stats {
+   friend YAML::Emitter& operator << (YAML::Emitter& emitter, const Stats& s);
+ 
+   private:
+-    Registry_t<StatWrapperBase*> _registry;
+-
+-  public:
+-    bool is_empty() {
++    Registry_t<StatWrapperBase*> _registry;
++    std::vector<std::unique_ptr<StatWrapperBase>> _owned;
++
++  public:
++    void own(std::unique_ptr<StatWrapperBase> stat) {
++      _owned.push_back(std::move(stat));
++    }
++    bool is_empty() {
+       return _registry.size() == 0;
+     }
+ };
+@@ -94,4 +100,4 @@ class StatWrapper : public StatWrapperBase {
+ }        // namespace Ramulator
+ 
+ 
+-#endif   // RAMULATOR_BASE_STATS_H
+\ No newline at end of file
++#endif   // RAMULATOR_BASE_STATS_H
+diff --git a/src/dram/impl/HBM2.cpp b/src/dram/impl/HBM2.cpp
+index 39c4a65..d2cb608 100644
+--- a/src/dram/impl/HBM2.cpp
++++ b/src/dram/impl/HBM2.cpp
+@@ -114,7 +114,11 @@ class HBM2 : public IDRAM, public Implementation {
+     struct Node : public DRAMNodeBase<HBM2> {
+       Node(HBM2* dram, Node* parent, int level, int id) : DRAMNodeBase<HBM2>(dram, parent, level, id) {};
+     };
+-    std::vector<Node*> m_channels;
++    std::vector<Node*> m_channels;
++
++    ~HBM2() override {
++      for (auto channel : m_channels) delete channel;
++    }
+     
+     FuncMatrix<ActionFunc_t<Node>>  m_actions;
+     FuncMatrix<PreqFunc_t<Node>>    m_preqs;
+@@ -420,4 +424,4 @@ class HBM2 : public IDRAM, public Implementation {
+ };
+ 
+ 
+-}        // namespace Ramulator
+\ No newline at end of file
++}        // namespace Ramulator
+diff --git a/src/dram/node.h b/src/dram/node.h
+index 4caaaa3..46e1b4f 100644
+--- a/src/dram/node.h
++++ b/src/dram/node.h
+@@ -88,7 +88,11 @@ struct DRAMNodeBase {
+       }
+     };
+ 
+-    void update_states(int command, const AddrVec_t& addr_vec, Clk_t clk) {
++    ~DRAMNodeBase() {
++      for (auto child : m_child_nodes) delete child;
++    }
++
++    void update_states(int command, const AddrVec_t& addr_vec, Clk_t clk) {
+       int child_id = addr_vec[m_level+1];
+       if (m_spec->m_actions[m_level][command]) {
+         // update the state machine at this level

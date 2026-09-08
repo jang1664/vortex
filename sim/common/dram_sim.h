@@ -11,6 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#pragma once
 #include <stdint.h>
 
 namespace vortex {
@@ -20,11 +21,21 @@ public:
   typedef void (*ResponseCallback)(void *arg);
 
   DramSim(uint32_t num_channels, uint32_t channel_size, float clock_ratio);
+  enum class Profile { U55c };
+  explicit DramSim(Profile profile);
   ~DramSim();
 
   void reset();
 
   void tick();
+
+  // VCS raw path: exactly one DRAM cycle, no legacy ratio accumulator.
+  void tick_raw();
+  // No software queue or address rescaling. False means controller backpressure.
+  // Write callback denotes buffered controller acceptance, not media completion.
+  bool try_send_raw(uint64_t byte_addr, bool is_write, ResponseCallback callback, void* arg);
+  uint64_t tck_ps() const;
+  uint32_t transaction_bytes() const;
 
   // addr: per-channel block address
   void send_request(uint64_t addr, bool is_write, ResponseCallback response_cb, void* arg);

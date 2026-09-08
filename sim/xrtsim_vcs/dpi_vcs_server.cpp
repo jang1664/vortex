@@ -13,10 +13,16 @@
 
 // DPI-C socket server for VCS testbench.
 // Two TCP sockets: ctrl_sock (register commands) and mem_sock (AXI memory events).
-// No RAM or memory model here -- just packet relay between TB and App process.
+// Device RAM and timing live here; the memory socket carries host BO transfers.
 
 #include "svdpi.h"
 #include "vcs_protocol.h"
+#include "hbm_model.h"
+#include "hbm_transfer.h"
+
+static std::unique_ptr<u55c::MemoryModel> memory_model;
+static u55c::MemoryService memory_service;
+static int r_room[U55C_NUM_PORTS], b_room[U55C_NUM_PORTS];
 
 #include <cstdio>
 #include <cstdlib>
@@ -89,6 +95,7 @@ extern "C" {
 
 // Initialize server sockets on ctrl_port and mem_port
 int socket_server_init(int ctrl_port, int mem_port) {
+  memory_service = u55c::MemoryService{};
   ctrl_server_fd = create_listen_socket(ctrl_port);
   if (ctrl_server_fd < 0)
     return -1;
@@ -117,6 +124,9 @@ int socket_server_accept() {
   if (mem_client_fd < 0)
     return -1;
   printf("[DPI] mem client connected\n");
+  memory_model = std::make_unique<u55c::MemoryModel>();
+  if (memory_service.serve_one(mem_client_fd, *memory_model, U55C_MANIFEST_HASH)
+      || !memory_service.connected()) return -1;
   return 0;
 }
 
@@ -124,7 +134,9 @@ int socket_server_accept() {
 
 // Non-blocking check if a command is available on ctrl_sock
 int ctrl_has_command() {
-  return sock_has_data(ctrl_client_fd) > 0 ? 1 : 0;
+  if (ctrl_client_fd < 0) return 0; // Directed adapter self-test has no host.
+  return u55c::poll_host_command(ctrl_client_fd, mem_client_fd, memory_service,
+                                *memory_model, U55C_MANIFEST_HASH);
 }
 
 // Receive a command packet from ctrl_sock
@@ -133,6 +145,8 @@ int ctrl_recv_command(int* out_type, int* out_offset, int* out_value) {
   VcsPacket pkt;
   if (recv_all(ctrl_client_fd, &pkt, sizeof(pkt)) < 0)
     return -1;
+  if (pkt.type != CMD_REG_WRITE && pkt.type != CMD_REG_READ
+      && pkt.type != CMD_SHUTDOWN) return -1;
   *out_type   = pkt.type;
   *out_offset = (int)pkt.id;
   *out_value  = (int)pkt.value;
@@ -156,88 +170,76 @@ int ctrl_send_reg_value(int value) {
   return send_all(ctrl_client_fd, &pkt, sizeof(pkt));
 }
 
-// ---- mem_sock functions ----
-
-// Send AXI AR event (read request from DUT) to App
+// ---- VCS-thread-local device memory functions ----
+void mem_test_init() { memory_model = std::make_unique<u55c::MemoryModel>(); }
+int mem_manifest_matches(const char* hash, int ports) {
+  return ports == U55C_NUM_PORTS && strcmp(hash, U55C_MANIFEST_HASH) == 0;
+}
+void mem_logic_edge(unsigned long long time_ps) { memory_model->logic_edge(time_ps); }
+void mem_reset(unsigned long long time_ps) {
+  memory_model->reset(time_ps);
+  for (int p = 0; p < U55C_NUM_PORTS; ++p) {
+    r_room[p] = 0;
+    b_room[p] = 0;
+  }
+}
+int mem_ar_ready(int port) { return memory_model->ar_ready(port, 64); }
+int mem_aw_ready(int port) { return memory_model->aw_ready(port); }
+int mem_w_ready(int port) { return memory_model->w_ready(port); }
+void mem_response_room(int port, int reads, int writes) {
+  r_room[port] = reads; b_room[port] = writes;
+}
 int mem_send_axi_ar(int port, long long addr, int id, int len) {
-  VcsPacket pkt;
-  memset(&pkt, 0, sizeof(pkt));
-  pkt.type    = EVT_AXI_AR;
-  pkt.port_id = (uint8_t)port;
-  pkt.id      = (uint32_t)id;
-  pkt.addr    = (uint64_t)addr;
-  pkt.value   = (uint32_t)len;  // arlen
-  return send_all(mem_client_fd, &pkt, sizeof(pkt));
+  memory_model->ar(port, id, addr, unsigned(len) + 1);
+  return 0;
 }
-
-// Send AXI AW event (write address from DUT) to App
 int mem_send_axi_aw(int port, long long addr, int id, int len) {
-  VcsPacket pkt;
-  memset(&pkt, 0, sizeof(pkt));
-  pkt.type    = EVT_AXI_AW;
-  pkt.port_id = (uint8_t)port;
-  pkt.id      = (uint32_t)id;
-  pkt.addr    = (uint64_t)addr;
-  pkt.value   = (uint32_t)len;  // awlen
-  return send_all(mem_client_fd, &pkt, sizeof(pkt));
+  memory_model->aw(port, id, addr, unsigned(len) + 1);
+  return 0;
 }
-
-// Send AXI W event (write data from DUT) to App
-// data_bytes: pointer to write data (DATA_SIZE bytes)
-// strb: byte-enable mask
-// last: wlast flag
 int mem_send_axi_w(int port, const svOpenArrayHandle data_bytes,
                    long long strb, int last, int data_size) {
-  VcsPacket pkt;
-  memset(&pkt, 0, sizeof(pkt));
-  pkt.type    = EVT_AXI_W;
-  pkt.port_id = (uint8_t)port;
-  pkt.size    = (uint32_t)data_size;
-  pkt.value   = (uint32_t)last;
-  pkt.addr    = (uint64_t)strb;  // reuse addr field for strb
-
-  if (send_all(mem_client_fd, &pkt, sizeof(pkt)) < 0)
-    return -1;
-
-  // send data payload
-  const uint8_t* dptr = (const uint8_t*)svGetArrayPtr(data_bytes);
-  if (send_all(mem_client_fd, dptr, data_size) < 0)
-    return -1;
-
+  if (data_size != 64) return -1;
+  u55c::MemoryModel::Data data{};
+  for (int i = 0; i < data_size; ++i)
+    data[i] = *static_cast<uint8_t*>(svGetArrElemPtr1(data_bytes, i));
+  memory_model->w(port, data, strb, last != 0);
   return 0;
 }
-
-// Non-blocking check if a response is available on mem_sock from App
 int mem_has_response() {
-  return sock_has_data(mem_client_fd) > 0 ? 1 : 0;
+  u55c::MemoryModel::Response response;
+  for (unsigned p = 0; p < U55C_NUM_PORTS; ++p)
+    if ((r_room[p] > 0 && memory_model->read_response(p, response))
+        || (b_room[p] > 0 && memory_model->write_response(p, response))) return 1;
+  return 0;
 }
-
-// Receive AXI response (R or B) from App
-// out_type: RSP_AXI_R or RSP_AXI_B
-// out_port, out_id, out_last: response fields
-// data_bytes: buffer to receive read data (only for RSP_AXI_R)
 int mem_recv_response(int* out_type, int* out_port, int* out_id,
                       svOpenArrayHandle data_bytes, int* out_last, int data_size) {
-  VcsPacket pkt;
-  if (recv_all(mem_client_fd, &pkt, sizeof(pkt)) < 0)
-    return -1;
-
-  *out_type = pkt.type;
-  *out_port = pkt.port_id;
-  *out_id   = pkt.id;
-  *out_last = (int)pkt.value;
-
-  if (pkt.type == RSP_AXI_R && pkt.size > 0) {
-    uint8_t* dptr = (uint8_t*)svGetArrayPtr(data_bytes);
-    if (recv_all(mem_client_fd, dptr, data_size) < 0)
-      return -1;
+  if (data_size != 64) return -1;
+  u55c::MemoryModel::Response response;
+  for (unsigned p = 0; p < U55C_NUM_PORTS; ++p) {
+    if (r_room[p] > 0 && memory_model->read_response(p, response)) {
+      *out_type = RSP_AXI_R; *out_port = p; *out_id = response.id; *out_last = response.last;
+      for (int i = 0; i < data_size; ++i)
+        *static_cast<uint8_t*>(svGetArrElemPtr1(data_bytes, i)) = response.data[i];
+      memory_model->pop_read(p);
+      --r_room[p];
+      return 0;
+    }
+    if (b_room[p] > 0 && memory_model->write_response(p, response)) {
+      *out_type = RSP_AXI_B; *out_port = p; *out_id = response.id; *out_last = 1;
+      memory_model->pop_write(p);
+      --b_room[p];
+      return 0;
+    }
   }
-
-  return 0;
+  return -1;
 }
 
 // Close all sockets
 void socket_server_close() {
+  memory_model.reset();
+  memory_service = u55c::MemoryService{};
   if (ctrl_client_fd >= 0) { close(ctrl_client_fd); ctrl_client_fd = -1; }
   if (mem_client_fd >= 0)  { close(mem_client_fd);  mem_client_fd = -1; }
   if (ctrl_server_fd >= 0) { close(ctrl_server_fd); ctrl_server_fd = -1; }

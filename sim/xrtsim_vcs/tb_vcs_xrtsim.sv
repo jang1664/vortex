@@ -18,7 +18,7 @@
 //   - DPI calls live in a single initial @(negedge) block that pushes queues
 //     and consumes fire/ack flags — the only non-synthesizable part.
 //   - AXI memory slave uses generate-for to avoid VCS automatic variable issues.
-//   - Ready signals are combinational (assign) based on queue depth + stall.
+//   - Ready signals use explicit bounded model credits and injected stalls.
 
 `timescale 1ns/1ps
 
@@ -33,7 +33,7 @@ module tb_vcs_xrtsim #(
   parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_HBM_PORTS
 );
 
-  localparam int CLK_HALF_PERIOD_NS = 5;
+  `include "u55c_model_config.svh"
   localparam int DATA_SIZE = `PLATFORM_MEMORY_DATA_SIZE;
   localparam int NUM_PORTS = `NUM_HBM_PORTS;
 
@@ -66,13 +66,34 @@ module tb_vcs_xrtsim #(
   import "DPI-C" function int mem_send_axi_aw(int port, longint addr, int id, int len);
   import "DPI-C" function int mem_send_axi_w(input int port, input byte unsigned data_bytes[], input longint strb, input int last, input int data_size);
   import "DPI-C" function int mem_has_response();
+  import "DPI-C" function void mem_logic_edge(input longint unsigned time_ps);
+  import "DPI-C" function void mem_reset(input longint unsigned time_ps);
+  import "DPI-C" function void mem_test_init();
+  import "DPI-C" function int mem_ar_ready(input int port);
+  import "DPI-C" function int mem_aw_ready(input int port);
+  import "DPI-C" function int mem_w_ready(input int port);
+  import "DPI-C" function void mem_response_room(input int port, input int reads, input int writes);
+  import "DPI-C" function int mem_manifest_matches(input string hash, input int ports);
   import "DPI-C" function int mem_recv_response(output int rsp_type, output int port, output int id, output byte unsigned data_bytes[], output int last, input int data_size);
   import "DPI-C" function void socket_server_close();
 
   // ---- Clock & Reset ----
   logic ap_clk;
   logic ap_rst_n;
-  always #(CLK_HALF_PERIOD_NS) ap_clk = ~ap_clk;
+  longint unsigned last_posedge_ps;
+  bit ar_credit[NUM_PORTS], aw_credit[NUM_PORTS], w_credit[NUM_PORTS];
+  initial begin : logic_clock
+    longint unsigned phase, delay_ps, denominator;
+    denominator = 2 * 64'(`U55C_LOGIC_FREQ_HZ);
+    phase = denominator - 1;
+    forever begin
+      phase += 64'd1000000000000;
+      delay_ps = phase / denominator;
+      phase = phase % denominator;
+      #(delay_ps * 1ps) ap_clk = ~ap_clk;
+    end
+  end
+  always @(posedge ap_clk) last_posedge_ps = longint'($realtime / 1ps);
 
   // ---- AXI Memory signals (per-port) ----
   logic         m_axi_mem_awvalid [NUM_PORTS];
@@ -158,6 +179,23 @@ module tb_vcs_xrtsim #(
   } ctrl_cmd_t;
 
   ctrl_cmd_t ctrl_cmd_queue[$];
+  // DPI-loop owned; survives AXI-Lite reset until completion or failure.
+  int unsigned ctrl_pending_count = 0;
+
+  // Explicit fault injection for TCP tests; no plusarg means no injected reset.
+  initial begin : control_reset_fault_injection
+    int mode;
+    if ($value$plusargs("TEST_CONTROL_RESET=%d", mode)) begin
+      if (mode != 1 && mode != 2)
+        $fatal(1, "[TB] Invalid TEST_CONTROL_RESET mode");
+      wait (ctrl_pending_count != 0);
+      if (mode == 2)
+        wait (s_axi_ctrl_arvalid || s_axi_ctrl_awvalid);
+      #1ps;
+      $display("[TB] Injecting control reset mode=%0d", mode);
+      ap_rst_n = 0;
+    end
+  end
 
   // ---- DRAM stall Markov model ----
   int dram_req_stall_p_enter;
@@ -231,6 +269,10 @@ module tb_vcs_xrtsim #(
     .m_axi_mem_``i``_bid(m_axi_mem_bid[i])
 
   // ---- DUT Instantiation ----
+`ifdef HBM_AXI_SELFTEST
+  bit selftest_ready = 0;
+  `include "hbm_axi_selftest.svh"
+`else
 `ifdef VCS_POST_IMPL
   ulp_vortex_afu_1_0 dut (
     .ap_clk(ap_clk), .ap_rst_n(ap_rst_n),
@@ -276,6 +318,8 @@ module tb_vcs_xrtsim #(
     .s_axi_ctrl_bresp(s_axi_ctrl_bresp), .interrupt(interrupt)
   );
 `endif
+
+`endif // HBM_AXI_SELFTEST
 
 `ifdef FSDB_DUMP
 `ifndef DISABLE_FSDB
@@ -474,15 +518,29 @@ module tb_vcs_xrtsim #(
   // ================================================================
   generate
     for (genvar gi = 0; gi < NUM_PORTS; gi++) begin : mem_port
+      VX_hbm_axi_guard #(
+        .DATA_BYTES(DATA_SIZE), .ADDR_WIDTH(C_M_AXI_MEM_ADDR_WIDTH),
+        .ID_WIDTH(C_M_AXI_MEM_ID_WIDTH)
+      ) protocol_guard (
+        .clk(ap_clk), .reset_n(ap_rst_n),
+        .arvalid(m_axi_mem_arvalid[gi]), .arready(m_axi_mem_arready[gi]),
+        .araddr(m_axi_mem_araddr[gi]), .arlen(m_axi_mem_arlen[gi]),
+        .arsize(m_axi_mem_arsize[gi]), .arburst(m_axi_mem_arburst[gi]),
+        .awvalid(m_axi_mem_awvalid[gi]), .awready(m_axi_mem_awready[gi]),
+        .awaddr(m_axi_mem_awaddr[gi]), .awlen(m_axi_mem_awlen[gi]),
+        .awsize(m_axi_mem_awsize[gi]), .awburst(m_axi_mem_awburst[gi]),
+        .rvalid(m_axi_mem_rvalid[gi]), .rready(m_axi_mem_rready[gi]),
+        .rid(m_axi_mem_rid[gi]), .rdata(m_axi_mem_rdata[gi]), .rlast(m_axi_mem_rlast[gi]),
+        .bvalid(m_axi_mem_bvalid[gi]), .bready(m_axi_mem_bready[gi]), .bid(m_axi_mem_bid[gi])
+      );
 
-      // ---- Ready signals (always_comb — queue.size() requires procedural context) ----
+      // Ingress credits come from bounded model reservations. Egress room is
+      // separately supplied to DPI each negedge. Do not depend on queue.size()
+      // here: VCS does not reliably reschedule always_comb when a queue drains.
       always_comb begin
-        m_axi_mem_arready[gi] = !req_stalling[gi]
-                              && (r_queue[gi].size() < RSP_QUEUE_LIMIT);
-        m_axi_mem_awready[gi] = !req_stalling[gi]
-                              && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
-        m_axi_mem_wready[gi]  = !req_stalling[gi]
-                              && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
+        m_axi_mem_arready[gi] = ap_rst_n && ar_credit[gi] && !req_stalling[gi];
+        m_axi_mem_awready[gi] = ap_rst_n && aw_credit[gi] && !req_stalling[gi];
+        m_axi_mem_wready[gi]  = ap_rst_n && w_credit[gi] && !req_stalling[gi];
       end
 
       // ---- Response driver (R channel) ----
@@ -591,6 +649,7 @@ module tb_vcs_xrtsim #(
     int ret;
     int rsp_type, rsp_port, rsp_id, rsp_last;
     int cmd_type, cmd_offset, cmd_value;
+    bit memory_in_reset = 0;
 
     if (!$value$plusargs("SOCKET_PORT=%d", socket_port)) socket_port = 9999;
     $display("[TB] Starting VCS co-simulation testbench");
@@ -623,10 +682,16 @@ module tb_vcs_xrtsim #(
     ctrl_read_rsp_pending = 0;
 
     // Socket init
+    if (!mem_manifest_matches(`U55C_MANIFEST_HASH, NUM_PORTS))
+      $fatal(1, "[TB] RTL and DPI manifest mismatch");
+`ifdef HBM_AXI_SELFTEST
+    mem_test_init();
+`else
     ret = socket_server_init(socket_port, socket_port + 1);
     if (ret != 0) begin $fatal(1, "[TB] Failed to init socket server"); end
     ret = socket_server_accept();
     if (ret != 0) begin $fatal(1, "[TB] Failed to accept connections"); end
+`endif
 
     // Reset sequence
     repeat (20) @(negedge ap_clk);
@@ -634,15 +699,84 @@ module tb_vcs_xrtsim #(
     repeat (20) @(negedge ap_clk);
 
     $display("[TB] Reset done, entering command loop");
+`ifdef HBM_AXI_SELFTEST
+    selftest_ready = 1;
+`endif
 
     // ==== Main negedge loop ====
     forever begin
       @(negedge ap_clk);
+      // Reset cancels outstanding device transactions but preserves RAM and
+      // host transport. Keep timing advancing while reset is held; recreate
+      // Ramulator only once per assertion, on the VCS simulation thread.
+      if (!ap_rst_n) begin
+        if (ctrl_pending_count != 0) begin
+          ctrl_cmd_queue.delete();
+          socket_server_close();
+          $fatal(1, "[TB] Reset canceled an outstanding host control command");
+        end
+        if (!memory_in_reset)
+          mem_reset(last_posedge_ps);
+        else
+          mem_logic_edge(last_posedge_ps);
+        memory_in_reset = 1;
+        for (int i = 0; i < NUM_PORTS; i++) begin
+          r_queue[i].delete();
+          b_queue[i].delete();
+          ar_fire_flag[i] = 0;
+          aw_fire_flag[i] = 0;
+          w_fire_flag[i] = 0;
+          ar_credit[i] = 1;
+          aw_credit[i] = 1;
+          w_credit[i] = 1;
+        end
+        continue;
+      end
+      memory_in_reset = 0;
+      // Replay the preceding posedge before any later memory event is advanced.
+      mem_logic_edge(last_posedge_ps);
+      for (int i = 0; i < NUM_PORTS; i++)
+        mem_response_room(i, RSP_QUEUE_LIMIT-r_queue[i].size(), RSP_QUEUE_LIMIT-b_queue[i].size());
+
+      // ---- 3. Consume fire flags → DPI send ----
+      for (int i = 0; i < NUM_PORTS; i++) begin
+        if (ar_fire_flag[i]) begin
+        `ifdef DEBUG_AXI
+          $display("[TB] AR: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+                   i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i], $time);
+        `endif
+          ret = mem_send_axi_ar(i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i]);
+          ar_fire_flag[i] = 0;
+        end
+        if (aw_fire_flag[i]) begin
+        `ifdef DEBUG_AXI
+          $display("[TB] AW: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+                   i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i], $time);
+        `endif
+          ret = mem_send_axi_aw(i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i]);
+          aw_fire_flag[i] = 0;
+        end
+        if (w_fire_flag[i]) begin
+          for (int j = 0; j < DATA_SIZE; j++)
+            w_data_buf[j] = w_fire_data[i][j*8 +: 8];
+          ret = mem_send_axi_w(i, w_data_buf, w_fire_strb[i], w_fire_last[i], DATA_SIZE);
+          w_fire_flag[i] = 0;
+        end
+      end
 
       // ---- 1. Poll ctrl commands → push to ctrl_cmd_queue ----
-      while (ctrl_has_command()) begin
+      forever begin
+        ret = ctrl_has_command();
+        if (ret < 0) begin
+          socket_server_close();
+          $fatal(1, "[TB] Host transport disconnected or malformed memory request");
+        end
+        if (ret == 0) break;
         ret = ctrl_recv_command(cmd_type, cmd_offset, cmd_value);
-        if (ret != 0) break;
+        if (ret != 0) begin
+          socket_server_close();
+          $fatal(1, "[TB] Incomplete host control packet");
+        end
         if (cmd_type == CMD_SHUTDOWN) begin
           $display("[TB] Received SHUTDOWN command");
           socket_server_close();
@@ -662,6 +796,7 @@ module tb_vcs_xrtsim #(
           enq.offset   = cmd_offset;
           enq.value    = cmd_value;
           ctrl_cmd_queue.push_back(enq);
+          ctrl_pending_count++;
         end
       end
 
@@ -691,40 +826,29 @@ module tb_vcs_xrtsim #(
         end
       end
 
-      // ---- 3. Consume fire flags → DPI send ----
-      for (int i = 0; i < NUM_PORTS; i++) begin
-        if (ar_fire_flag[i]) begin
-        `ifdef DEBUG_AXI
-          $display("[TB] AR: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
-                   i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i], $time);
-        `endif
-          ret = mem_send_axi_ar(i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i]);
-          ar_fire_flag[i] = 0;
-        end
-        if (aw_fire_flag[i]) begin
-        `ifdef DEBUG_AXI
-          $display("[TB] AW: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
-                   i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i], $time);
-        `endif
-          ret = mem_send_axi_aw(i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i]);
-          aw_fire_flag[i] = 0;
-        end
-        if (w_fire_flag[i]) begin
-          for (int j = 0; j < DATA_SIZE; j++)
-            w_data_buf[j] = w_fire_data[i][j*8 +: 8];
-          ret = mem_send_axi_w(i, w_data_buf, w_fire_strb[i], w_fire_last[i], DATA_SIZE);
-          w_fire_flag[i] = 0;
-        end
-      end
-
       // ---- 4. Consume ctrl ack/read_rsp flags → DPI send ----
+      for (int i = 0; i < NUM_PORTS; i++) begin
+        ar_credit[i] = mem_ar_ready(i);
+        aw_credit[i] = mem_aw_ready(i);
+        w_credit[i] = mem_w_ready(i);
+      end
       if (ctrl_ack_pending) begin
         ret = ctrl_send_ack();
+        if (ret != 0) begin
+          socket_server_close();
+          $fatal(1, "[TB] Failed to send host control acknowledgment");
+        end
         ctrl_ack_pending = 0;
+        ctrl_pending_count--;
       end
       if (ctrl_read_rsp_pending) begin
         ret = ctrl_send_reg_value(ctrl_read_rsp_value);
+        if (ret != 0) begin
+          socket_server_close();
+          $fatal(1, "[TB] Failed to send host register response");
+        end
         ctrl_read_rsp_pending = 0;
+        ctrl_pending_count--;
       end
 
     end // forever

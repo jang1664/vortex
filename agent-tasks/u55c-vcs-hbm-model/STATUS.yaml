@@ -1,0 +1,327 @@
+task: u55c-vcs-hbm-model
+status: complete
+updated_at: '2026-09-08 10:26'
+delivery:
+  ramulator: Published 1c664006681c3ba5fd1e8cfc8ed5178aaa90f070 to jang1664/ramulator2 on vortex-hbm-lifetime; parent URL and gitlink updated. Portable patch retained as historical evidence only.
+  vortex: User approved two commits (dependency pin, then model/tests/docs) and push to origin/feat/vcs_hbm. Preparing delivery; prior verification results unchanged.
+summary: Plan implementation and scoped acceptance complete. Final four/eight-port blackboxes passed at 16208/14110 cycles; native and exact FSDB replay suites passed. Explicit abstract-routing and uncalibrated-performance limits remain documented as permitted by the plan.
+artifacts:
+  - plan.md
+  - ramulator-lifetime.patch
+  - verification.md
+  - hardware-evidence.md
+  - acceptance-audit.md
+progress:
+  platform_manifest: Seven configuration tests and actual all-layer hash handshakes passed; frequency-only 250/200/250 MHz native consumer invalidation verified.
+  scheduler: Captured posedge timestamps own model progress; rational drift/edge tests and deterministic production VCS replay passed.
+  raw_dram_api: Added compatible U55C constructor, direct finite controller admission, raw ticks and profile-derived tCK; directed test passed.
+  dpi_memory_ownership: Single VCS-owned MemoryModel verified through native/actual TCP BO tests and four/eight-port host blackboxes; host RAM and async ticks removed.
+  host_transfer_protocol: Version/hash, bounded frames, visibility ACK, monotonic timeout and reset/disconnect failures verified in actual TCP tests.
+  bounded_switch_and_cdc: Abstract ingress and paired-PC links with two-edge CDC; per-port/aggregate bounds and one-B-slot write return passed native, exact timing, adapter and both-port blackbox regressions.
+  directed_axi_tests: Production adapter replay passed for 4/8 ports, including strobes, skew, held responses, read/AW/W credit exhaustion, reset cancellation and RAM preservation.
+  vcs_blackbox: Final revised model passed at 16208/14110 cycles for four/eight ports, with no Fatal/Error and clean host shutdown.
+active_process: null
+verification:
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Session 84272 exit 0, final eight-port model PASSED at 14110 cycles, no Fatal/Error and clean shutdown. Logs hbm_vecadd_write_return_8p.log and hbm_vecadd_write_return_8p_simv.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Session 73124 exit 0, revised four-port model PASSED at 16208 cycles, no Fatal/Error and clean shutdown. Logs hbm_vecadd_write_return_4p.log and hbm_vecadd_write_return_4p_simv.log. Replaces old 16623-cycle timing evidence.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 27014 exit 0, revised four-port production adapter passed with 660 identical FSDB-off/on handshakes. Logs hbm_adapter_write_return_4p_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 39359 exit 0; seven config/seven C++ tests passed on four ports after write-return fix, including exact B notification timing, every-PC nonaliasing, 256-response loaded replay and topology service bounds. Log hbm_tests_write_return_4p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 76337 exit 0, revised write-return eight-port production replay passed with 808 identical FSDB-off/on handshakes. Logs hbm_adapter_write_return_8p_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 26353 exit 0, seven config and seven C++ tests passed; new 1/2/4-beat test asserts exact B timing with one return notification per burst. Log hbm_tests_write_return_directed_8p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 2170 exit 0, final eight-port TB replay passed with 808 identical FSDB-off/on handshakes. Logs hbm_adapter_final_8p_{no_fsdb,fsdb}.log. No process remains active.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 96122 exit 0, final four-port TB replay passed with 660 identical FSDB-off/on handshakes after control-reset changes. Logs hbm_adapter_final_4p_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 56313 exit 0; seven config and six C++ tests passed with strengthened every-PC AXI write/read and nonaliasing checks on four ports. Log hbm_tests_pc_roundtrip_4p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 82244 exit 0; seven config and six C++ tests passed including distinct patterns and AXI write/read roundtrips on all 32 PCs with retained-value nonaliasing check. Log hbm_tests_pc_roundtrip_8p.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Eight-port session 25785 exit 0, PASSED at 14110 cycles, no Fatal/Error, shutdown and socket cleanup confirmed. Logs hbm_vecadd_audit_8p.log and hbm_vecadd_audit_8p_simv.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Four-port 250 MHz session 84015 exit 0, PASSED at 16623 cycles with no Error/Fatal and clean shutdown. DPI/model object timestamps 02:21 confirm source-unchanged frequency return rebuilt consumers. Logs hbm_vecadd_audit_4p.log and hbm_vecadd_audit_4p_simv.log.
+  - command: python3 ../../../sim/xrtsim_vcs/test_hbm_config.py -v
+    cwd: build/sim/xrtsim_vcs
+    result: Session 25398 exit 0, seven tests passed including eight invalid SP_FLAGS variants (empty/missing/duplicate/out-of-range/reversed/overlapping/unknown-port/malformed). Log hbm_config_final.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-vcs-transport-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 94344 exit 0, fourteen real TCP cases passed at four ports / 200 MHz. DPI and model objects rebuilt at 02:19. Log hbm_vcs_frequency_only_4p.log. Next source-unchanged frequency return checks the new invalidation mechanism without another build-rule edit.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-vcs-transport-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Four-port 250 MHz session 5585 exit 0; all fourteen actual TCP cases passed, including normal register read/write and queued/active read/write reset cancellation with host EOF. Log hbm_vcs_control_reset_4p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Four-port session 93402 exit 0, 660 identical FSDB-off/on handshakes. Outstanding DPI cleanup passed; logs hbm_adapter_shutdown_4p_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Eight-port session 44909 exit 0, 808 identical FSDB-off/on handshakes. Production DPI cleanup returns with AW-only, W-only and long-read/blocked response outstanding. Logs hbm_adapter_shutdown_8p_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Eight-port session 56863 exit 0; six config and six C++ tests passed. Single/independent/all-eight-ports=828000 ps, paired_pc=1492000 ps, shared_ingress=1528000 ps with response-prefix service bounds. Log hbm_tests_topology_8p_all.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Four-port session 92441 exit 0; six config and six C++ tests passed. Topology single/independent/all-four-ports=828000 ps, paired_pc=1492000 ps, shared_ingress=1528000 ps, including response-prefix port/aggregate service bounds. Log hbm_tests_topology_4p_fixed.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Eight-port session 68578 exit 0; six configuration and six C++ tests passed. Topology completion times (ps) single=828000, paired_pc=1492000, shared_ingress=1528000, independent=828000, with data/ID/LAST and service-bound assertions. Log hbm_tests_topology_8p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-vcs-transport-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 98072 exit 0. All ten production TCP cases passed, including connected-stalled control and memory with 1000 ms wall deadlines. DPI object timestamp advanced to 02:09 after header-hash CFLAGS fix. Log hbm_vcs_deadline_rebuild_8p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 11630 exit 0. All six config and five C++ tests passed; transfer tests now assert ETIMEDOUT for connected partial receive and blocked send with 25 ms deadlines, bounded under 2 seconds. Log hbm_tests_deadline_8p.log.
+  - command: python3 ../sim/xrtsim_vcs/test_hbm_vcs_transport.py --simv sim/xrtsim_vcs/simv --manifest sim/xrtsim_vcs/u55c_model_manifest.json --output-dir sim/xrtsim_vcs/hbm-vcs-transport-tests
+    cwd: build
+    result: Session 47370 exit 0; all eight production simv TCP cases passed (BO roundtrip/shutdown, bad hash/version, control/memory EOF, partial/invalid control, oversized memory). Each failure requires its expected fatal and bounded termination. Logs hbm_vcs_transport_8p.log and hbm-vcs-transport-tests/*/simv.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Session 3901 exit 0, PASSED, 14110 cycles, no Error/Fatal in simv log; shutdown received and sockets closed. Logs hbm_vecadd_transport_8p.log and hbm_vecadd_transport_8p_simv.log. Includes production ready/reset/transport error changes.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 45537 exit 0. Six config tests and five C++ tests passed, including seven transport termination scenarios and 512-response CPU-load replay. Log hbm_tests_transport_8p.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Sessions 72458 and 78832 exit 0. Four/eight-port strobe and incomplete AW/W reset replay passed with 657/805 identical FSDB-off/on handshakes. Logs hbm_adapter_{4p,8p}_strobes_{no_fsdb,fsdb}.log. Each port checks full/zero/alternating/boundary-bit strobes with readback and fresh write/read after reset.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Reset-expanded replay passed for four ports at 250 MHz and eight ports at 100 MHz (HBM AXI 300 MHz). Sessions 64986 and 70996 exit 0; 533 and 561 identical FSDB-off/on timestamps. Held R/B and queued reads canceled, credits restored, RAM preserved. Logs hbm_adapter_{4p,8p}_reset_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Session 95537 exit 0. Four-port 250 MHz logic / 300 MHz HBM AXI replay passed with 528 identical FSDB-off/on handshakes. Logs preserved as hbm_adapter_4p_all_credit_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Eight-port replay passed with 556 identical FSDB-off/on timestamps after ready fix. Saturates 256 read beats, 16 AW bursts and 64 unassociated W beats; checks bounded egress, all B ordering and credit recovery. Logs hbm_adapter_8p_write_credit.log and hbm_adapter_8p_all_credit_{no_fsdb,fsdb}.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-adapter-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Verified 4-port/250 MHz manifest; 288 FSDB-off/on timestamps identical. Includes 256 read beats held behind RREADY, bounded response queue, restored admission and same-ID RLAST ordering. Logs hbm_adapter_4p_credit.log and hbm_adapter_4p_credit_{no_fsdb,fsdb}.log.
+  - command: hbm-adapter-build followed by simv, both without and with FSDB_DUMP=1
+    cwd: build/sim/xrtsim_vcs
+    result: Actual production TB adapter with synthetic accelerator replacement passed W-before-AW, two-beat writes/reads, R/B stalls and data/ID/LAST checks on all 8 ports. All 56 accepted request/response timestamps match exactly across FSDB off/on. Logs hbm_adapter_8p_no_fsdb.log and hbm_adapter_8p_fsdb.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Guarded 8-port/100 MHz blackbox exit 0, PASSED, cycles=14110, no simv errors. Log hbm_vecadd_guard_8p.log. Predates new self-test conditional (normal accelerator path preserved).
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile hbm-axi-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Eight VCS directed cases passed: legal traffic plus AR SIZE/BURST/boundary, AW SIZE/alignment and R/B stall instability rejection. This checks the shared production guard, not full adapter timing/dataflow.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Post-lifetime-fix 8-port/100 MHz exit 0, PASSED, cycles=14110, no simv errors. Logs hbm_vecadd_final_8p.log and hbm_vecadd_final_8p_simv.log. Predates guard insertion.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Valid 4-port config exit 0; all six config tests and five C++ tests passed, including 256-response CPU-load replay. Log hbm_tests_4p.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Post-lifetime-fix 4-port/250 MHz config exit 0, PASSED, cycles=16623, no simv errors. Logs hbm_vecadd_final_4p.log and hbm_vecadd_final_4p_simv.log.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile -j2 hbm-tests
+    cwd: build/sim/xrtsim_vcs
+    result: Valid 8-port config exit 0; six config tests plus scheduler, raw DRAM, memory model, transfer and 512-response replay (including four CPU-load workers) passed. Log hbm_tests_8p.log.
+  - command: ASAN_OPTIONS=detect_leaks=1 ./test_hbm_model_asan
+    cwd: build/sim/xrtsim_vcs
+    result: Exit 0 after rebuilding current library and ASan executable; hbm_model_asan_final.log contains only test success, no leak or memory error diagnostics.
+  - command: ASAN_OPTIONS=detect_leaks=1 ./test_hbm_model_asan
+    cwd: build/sim/xrtsim_vcs
+    result: After first true local library rebuild, exit 1 with 153948 bytes in 2112 allocations, all remaining traces rooted in StatWrapper registration. Log hbm_model_asan_local.log. Stats ownership fix now pending rebuild/testing.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Valid hbm8_tmem8 config at 100 MHz logic / 300 MHz HBM AXI passed, exit 0, instrs=16692, cycles=14110; no Error/Fatal/termination in simv log. Logs hbm_vecadd_valid_8p_100mhz.log and hbm_vecadd_valid_8p_100mhz_simv.log.
+  - command: ASAN_OPTIONS=detect_leaks=1 ./test_hbm_model_asan
+    cwd: build/sim/xrtsim_vcs
+    result: Before lifetime fixes, exit 1 with 19600237 bytes leaked in 64496 allocations; log hbm_model_asan.log. Post-fix executable compiled, library rebuild pending.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Valid hbm4_tmem8 config at 250 MHz logic / 300 MHz HBM AXI passed, exit 0, instrs=16692, cycles=16623. No Error/Fatal/termination in simv log. Logs hbm_vecadd_valid_4p_250mhz.log and hbm_vecadd_valid_4p_250mhz_simv.log.
+  - command: timeout 300 ci/run_black.sh xrt-vcs-sim --app vecadd --args '-n 64'
+    cwd: build
+    result: Functional exit 0, PASSED, instrs=30182, cycles=23503, but simv log contains two time-zero TMEM geometry assertions from the selected config. NOT clean integration evidence. FSDB enabled by wrapper. Logs build/hbm_vecadd.log and build/hbm_vecadd_8p_100mhz_simv.log.
+  - command: ./test_hbm_replay
+    cwd: build/sim/xrtsim_vcs
+    result: Passed exact comparison of 512 response timestamps across single-step and split-advance schedules, with deterministic output backpressure.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile simv
+    cwd: build/sim/xrtsim_vcs
+    result: Passed with exit 0; DPI, memory model, Ramulator and RTL linked into simv. Log is build/sim/xrtsim_vcs/hbm_compile.log.
+  - command: ./test_hbm_transfer
+    cwd: build/sim/xrtsim_vcs
+    result: Passed real-model socketpair test for hash mismatch/retry, chunked transfer over 1 MiB, PC boundary crossing, readback and no transport-driven device time.
+  - command: make -f ../../../sim/xrtsim_vcs/Makefile applib CXX=/usr/bin/g++
+    cwd: build/sim/xrtsim_vcs
+    result: Passed after host RAM/DramSim removal; pre-existing xrt_c.cpp warnings remain.
+  - command: ./test_hbm_model
+    cwd: build/sim/xrtsim_vcs
+    result: Passed against real Ramulator after sourcing improve_th32_tcol32_hwexp_dcache.sh and C++17 compilation. Tested all 32 PCs, bursts, W-before-AW, strobes, held responses, FIFO order, finite AR/AW/W credits, reset, address rejection and idle DRAM ticks.
+  - command: ./test_hbm_dram
+    cwd: build/sim/xrtsim_vcs
+    result: Passed after C++17 compilation against the existing libramulator; 32-PC read callbacks, finite controller backpressure, buffered write acknowledgments and address rejection tested.
+  - command: python3 /home/jaeyongjang/project.local/vortex_base/sim/xrtsim_vcs/test_hbm_config.py -v
+    cwd: build/sim/xrtsim_vcs
+    result: Six tests passed, including 4/8 ports, invalid settings, artifact consistency and incremental generation.
+  - command: /usr/bin/g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -I/home/jaeyongjang/project.local/vortex_base/sim/xrtsim_vcs /home/jaeyongjang/project.local/vortex_base/sim/xrtsim_vcs/test_hbm_clock.cpp -o test_hbm_clock
+    cwd: build/sim/xrtsim_vcs
+    result: Compiled successfully; ./test_hbm_clock passed with UBSan, including 250:300, reset, coincident edges and one million DRAM edges.
+next_actions: []
+log:
+  - timestamp: '2026-09-08 02:41'
+    action: Collected final eight-port blackbox, inspected and preserved runtime log, consolidated current acceptance evidence and completed source/requirement audit.
+    result: Session 84272 exit 0 at 14110 cycles; no Fatal/Error, normal shutdown. All implementation gates in acceptance-audit.md verified for the original transaction-level scope. Physical HMSS fidelity/calibration limitations remain explicit, as allowed by the plan. No active process, commit or hardware run; submodule changes preserved by verified patch.
+  - timestamp: '2026-09-08 02:37'
+    action: Collected revised four-port adapter result, reconciled completed source/dependency/patch audit rows, and launched required wrapper blackbox using run-bb-common.
+    result: Session 27014 exit 0 with 660 traces. Session 73124 runs four-port 250 MHz logic / 300 MHz HBM AXI integration after write-return change; blackbox and final documentation are the remaining acceptance steps.
+  - timestamp: '2026-09-08 02:34'
+    action: Collected revised eight-port production adapter result and updated stale progress summaries to distinguish established evidence from reopened timing regressions.
+    result: Session 76337 exit 0 with 808 traces. Session 39359 runs four-port native suite; old successful blackbox cycles are explicitly not final timing evidence until rerun.
+  - timestamp: '2026-09-08 02:33'
+    action: Final source audit found write beats incorrectly consumed two read-data return slots each. Corrected write bookkeeping and added exact 1/2/4-beat B timing test.
+    result: Every write beat still submits both DRAM fragments; only final beat reserves one B notification slot. Session 11456 passed existing seven config/six C++ tests after change. Session 26353 tests exact notification timing. Prior adapter/blackbox cycle evidence must be rerun because model timing changed; no completion claim.
+  - timestamp: '2026-09-08 02:29'
+    action: Verified four-port strengthened unit and final adapter results; checked portable Ramulator patch against current diff and base revision; documented all test targets.
+    result: Sessions 56313 and 96122 exit 0. Patch normalized hash matches current diff; forward check on isolated HEAD index and reverse check on current files pass with --ignore-space-change. Original CRLF context explains bytewise hash difference. Session 2170 runs final eight-port adapter replay.
+  - timestamp: '2026-09-08 02:26'
+    action: Collected final eight-port blackbox, mapped plan requirements to evidence in acceptance-audit.md, and strengthened every-PC data test.
+    result: Session 25785 exit 0 at unchanged 14110 cycles. Existing all-PC test used identical host initialization and only AXI reads; new test uses distinct PC patterns, AXI write/read on every PC and retained-value verification after all later writes. Session 82244 running; this stronger coverage is not yet claimed passed.
+  - timestamp: '2026-09-08 02:23'
+    action: Collected latest four-port blackbox and expanded invalid-connectivity tests; started final eight-port integration using run-bb-common wrapper procedure.
+    result: Four-port session 84015 exit 0 at unchanged 16623 cycles; native frequency invalidation and all-layer hash compatibility verified. Configuration session 25398 passed seven tests. Eight-port result remains pending.
+  - timestamp: '2026-09-08 02:20'
+    action: Collected passing fourteen-case 200 MHz suite, refreshed configured build, and used run-bb-common for required wrapper blackbox at 250 MHz.
+    result: Session 94344 exit 0; configure session 24536 exit 0. Session 84015 verifies host/runtime/RTL/DPI consistency after source-unchanged frequency change, with all control reset and transport deadline changes included. No other process remains active.
+  - timestamp: '2026-09-08 02:18'
+    action: Verified actual control-reset policy and audited generated-header consumer invalidation.
+    result: Session 5585 passed fourteen cases. Found source-only header hash omitted generated frequency header; changed to deferred evaluation including generated config so frequency-only changes invalidate native DPI objects after regeneration. Session 94344 tests same four-port geometry with logic clock changed from 250 to 200 MHz.
+  - timestamp: '2026-09-08 02:16'
+    action: Collected four-port outstanding cleanup pass and implemented explicit reset-cancellation policy for accepted host control operations.
+    result: DPI-loop pending counter survives AXI-Lite FSM reset; reset with outstanding command closes sockets and reports fatal rather than losing ACK. Added explicit TEST_CONTROL_RESET fault injection and four queued/active read/write actual TCP cases requiring host EOF. Normal TCP case now checks successful register write/read as well as BO roundtrip. Session 5585 validating fourteen cases.
+  - timestamp: '2026-09-08 02:14'
+    action: Verified eight-port aggregate suite and extended actual production adapter test to close DPI with incomplete AW/W and an unconsumed long-read response.
+    result: Session 56863 exit 0. Session 44909 validates shutdown cleanup using the same socket_server_close function as host CMD_SHUTDOWN; this is not yet a combined host command plus outstanding AXI test. Control reset audit found an accepted command can be lost when its AXI-Lite FSM resets; explicit failure or completion policy still needed.
+  - timestamp: '2026-09-08 02:13'
+    action: Collected complete corrected four-port suite and launched eight-port expanded aggregate verification.
+    result: Session 92441 exit 0, all tests passed, all-four-port streams finish at 828 ns. Session 56863 running; this validates abstract ingress behavior, not proprietary physical switch arbitration or measured U55C fidelity.
+  - timestamp: '2026-09-08 02:12'
+    action: Diagnosed four-port configuration-test failure, fixed test clock/platform baseline, and expanded topology checks to simultaneous traffic on every port.
+    result: Session 61321 failed hash-invalidation assertion because both initial and changed clock were 250 MHz. Test now explicitly starts at 100 MHz; no generator bug inferred. Added per-response-prefix port/aggregate service bounds and independent-all-port progress assertion. Session 92441 running.
+  - timestamp: '2026-09-08 02:10'
+    action: Verified all ten actual TCP cases after forcing native object recompilation; launched topology unit suite.
+    result: Session 98072 exit 0 establishes real VCS deadline behavior. Session 68578 is running; no model topology claim based on the unexecuted test yet.
+  - timestamp: '2026-09-08 02:08'
+    action: Investigated actual VCS stalled-control timeout failure and added native header dependency invalidation; drafted directed topology stream comparison.
+    result: Session 66877 exited 2 after eight old cases passed and stalled_control exceeded 15 seconds. Native object timestamp was 01:59 versus header 02:04; generated Makefile did not consume header dependencies. Source header SHA256 now changes VCS CFLAGS, forcing recompilation. Session 98072 reruns suite. New test_hbm_topology.cpp compares paired-PC/shared-ingress versus independent-port service but has not run yet.
+  - timestamp: '2026-09-08 02:05'
+    action: Collected passing native deadline suite and launched source-Makefile hbm-vcs-transport-tests to rebuild actual simv and test ten TCP scenarios.
+    result: Native session 11630 exit 0, including 512-response deterministic replay. Actual VCS deadline validation remains pending in session 66877; no other process active.
+  - timestamp: '2026-09-08 02:04'
+    action: Added configurable total wall-clock deadline to exact-buffer send/receive using poll and nonblocking socket operations, without device-time advancement.
+    result: Default is 300000 ms; positive VCS_TRANSPORT_TIMEOUT_MS overrides it. Added native receive-partial/send-full timeout tests and actual VCS connected-but-stalled control/memory cases. Native rebuild session 11630 is running; VCS must be rebuilt before new integration cases.
+  - timestamp: '2026-09-08 02:02'
+    action: Completed all eight actual simv TCP scenarios after correcting test harness exit-code and port-selection assumptions.
+    result: Session 47370 exit 0; every expected positive/negative diagnostic verified. No process active. Connected mid-frame timeout, control reset, outstanding shutdown, shared topology and four-port post-change integration remain open.
+  - timestamp: '2026-09-08 02:02'
+    action: Investigated final negative case startup failure after seven successful cases.
+    result: Log showed memory listen bind Address already in use, not the expected oversized-frame error. Ephemeral-range test ports can be consumed by connection retries; moved probes below local ephemeral range and matched server wildcard bind. Session 47370 reruns all eight cases without counting startup failures as negative-test success.
+  - timestamp: '2026-09-08 02:01'
+    action: Collected post-change blackbox and added actual production simv TCP tests for BO roundtrip/shutdown, bad hash/version, EOF, malformed control and oversized memory.
+    result: Blackbox clean pass at unchanged 14110 cycles. First negative run correctly reached fatal for bad hash but test assumed nonzero process exit; VCS returned zero. Fixed test to require exact expected fatal and bounded normal exit. Session 74345 rerunning all eight cases.
+  - timestamp: '2026-09-08 01:58'
+    action: Audited host transport polling, fixed ignored EOF/control errors, and added seven socketpair termination scenarios using the production polling helper.
+    result: EOF previously became perpetual idle; incomplete control frames were silently retried. TB now closes and reports errors, while queued shutdown wins over concurrent memory EOF. All eight-port unit tests passed. Partial frames whose peer stays connected can still block and require a timeout policy; full VCS failure-path verification remains pending. Configure session 93948 running.
+  - timestamp: '2026-09-08 01:54'
+    action: Collected eight-port expanded replay and preserved both FSDB logs before further builds.
+    result: Session 78832 exit 0, 805 matching handshakes. Both configurations passed all new markers and data/ID checks; git diff --check passed. No live process remains.
+  - timestamp: '2026-09-08 01:53'
+    action: Added production signal-level WSTRB tests on every port plus AW-only, W-only and incomplete two-beat-burst reset cancellation.
+    result: Four-port session 72458 exit 0 with 657 matching FSDB-off/on timestamps. Masks cover full, zero, alternating and bit 0/31/32/63 writes, with readback after each. New post-reset round trips check that old AW/W state cannot associate with new traffic. Eight-port session 78832 is running.
+  - timestamp: '2026-09-08 01:51'
+    action: Completed four-port and eight-port reset-expanded production adapter tests and preserved per-configuration replay logs.
+    result: Sessions 64986 and 70996 exited 0 with 533 and 561 identical FSDB-off/on handshakes. No process remains active. Byte strobes, incomplete AW/W reset, control/shutdown audit, shared routing contention and post-change blackbox remain open.
+  - timestamp: '2026-09-08 01:51'
+    action: Verified prior process completion, preserved four-port saturation logs, added mem_reset DPI and production TB runtime reset handling plus signal-level reset test.
+    result: Prior explanation-only turn made no implementation progress. Current turn confirmed 528-handshake replay success; reset cancels model and TB response queues once per assertion while preserving RAM. Session 64986 validates reset with held R/B, queued read responses, credit recovery and post-reset RAM readback. Still unverified until run completes.
+  - timestamp: '2026-09-08 01:44'
+    action: Diagnosed eight-port read-credit failure, fixed ready generation to avoid queue.size() sensitivity, added AW/W saturation and 80-write response-drain tests.
+    result: Diagnostic showed arready=0 with credit=1, stall=0, rvalid=0, rqueue=0. VCS did not retrigger always_comb on queue drain. Explicit credit-only ready with separately bounded DPI egress fixed it; 556-handshake eight-port replay passed. Four-port expanded run started.
+  - timestamp: '2026-09-08 01:39'
+    action: Detected nested Make dropping CONFIGS in original automated four-port run; explicitly passed original defines/frequencies/platform and asserted built manifest matches parent. Added production-adapter read-credit saturation/recovery phase.
+    result: Original session 64775 actually ran default eight-port config and is not four-port evidence. Corrected four-port base replay passed with 28 timestamps, then credit-expanded run passed with 288 timestamps. Eight-port expanded run started.
+  - timestamp: '2026-09-08 01:36'
+    action: Added HBM_AXI_SELFTEST mode replacing only DUT with timed AXI stimulus, while reusing production capture/queues/DPI/guard. Ran eight-port FSDB off/on and added automated replay target.
+    result: Both runs passed and all 56 handshake timestamps matched. W-before-AW and held B/R exercised on each port. Four-port 250:300 MHz automated replay is running in session 64775. Signal-level reset/credit exhaustion and richer traffic still need coverage.
+  - timestamp: '2026-09-08 01:30'
+    action: Collected clean final 8-port result; added VX_hbm_axi_guard to production TB and eight lightweight VCS guard tests, then launched guarded blackbox.
+    result: Final pre-guard 8-port result remains 14110 cycles. Guard tests passed after fixing missing global timescale in standalone VCS invocation. Full adapter replay/FSDB/credit coverage remains open; guard tests do not close that gate. Session 33233 running.
+  - timestamp: '2026-09-08 01:26'
+    action: Collected passing 4-port unit suite, refreshed configured build, reran post-fix 4-port VCS and inspected outer ULP handoff plus matching Vitis connectivity.
+    result: Final 4-port vecadd passed cleanly at unchanged 16623 cycles. Old eight-port handoff proves kernel N -> HMSS S(N+1) -> HBM ingress 4N, with matching four-PC reachability; current-profile physical compatibility still unproven. Final 8-port session 13132 running.
+  - timestamp: '2026-09-08 01:23'
+    action: Completed stats ownership rebuild, recompiled ASan test and verified no leaks; launched full 8-port unit suite and inspected available linked artifacts.
+    result: ASan exit 0. Old MXU16 xclbin/HWH reports HBM AXI 450 MHz and physical HBM 900 MHz, unlike current uncalibrated model settings. HMSS internal paths documented in hardware-evidence.md; outer kernel-to-HMSS mapping and current-manifest compatibility remain unverified. Unit suite session 1394 is live.
+  - timestamp: '2026-09-08 01:19'
+    action: Completed true local library rebuild and repeated ASan; added unique ownership of registered StatWrapper objects and virtual base destructor; documented model usage/contracts in HBM_MODEL.md.
+    result: Leak volume fell from 19.6 MB to 154 KB after tree cleanup. Remaining statistic objects are now owned by Stats, including unnamed objects. Dependency rebuild session 26689 is live; portable submodule patch updated. Post-fix regression not yet run.
+  - timestamp: '2026-09-08 01:15'
+    action: Reran ASan after initial dependency build; investigated unchanged leaks and library timestamp; reconfigured explicit current-source dependency build and added CPU-load replay coverage.
+    result: Initial cache unexpectedly points to vortex_fpint, so its successful build updated that other checkout's build products, not current library. No source there was edited. Correct local-source build now running as session 84253. Added verification.md with unproven acceptance gates; ASan and CPU-load replay still pending.
+  - timestamp: '2026-09-08 01:12'
+    action: Collected clean 8-port VCS result, ran ASan reset test, added owned-component/HBM node destructors and top-level deletion, and added a reproducible hbm-tests Make target.
+    result: 8-port vecadd passed at 14110 cycles. ASan exposed 19.6 MB leaks; fixes are not yet verified. Ramulator submodule was clean before changes; portable patch saved against e62c84a6f0e06566ba6e182d308434b4532068a5. Rebuild session 51749 remains live.
+  - timestamp: '2026-09-08 01:08'
+    action: Collected failed stale-profile 4-port run, switched to dedicated valid hbm4_tmem8 config, reran 250:300 MHz VCS vecadd and strengthened precompile geometry checks.
+    result: Valid run passed cleanly at 16623 cycles. Six configuration tests passed including early DMA>HBM and platform-port mismatch rejection. Started valid 8-port rerun.
+  - timestamp: '2026-09-08 01:05'
+    action: Refreshed configured build copies; used run-bb-common and the required wrapper for real VCS vecadd, then added timestamp replay test.
+    result: 8-port/100 MHz vecadd passed with 23503 cycles; 512 replay response timestamps matched exactly. Started 4-port/250 MHz blackbox in session 55577.
+  - timestamp: '2026-09-08 01:02'
+    action: Implemented BO protocol/service/client and socketpair test, removed host device RAM/timing, bound memory model to DPI and captured posedge times, added rational TB clock and explicit credits.
+    result: BO transport test, host library build and full VCS compile/link passed (session 55163 exit 0). No runtime simulation success claimed.
+  - timestamp: '2026-09-08 00:55'
+    action: Implemented hbm_model.h/cpp and directed standalone tests; added explicit switch profile provenance to generated manifest.
+    result: Real-Ramulator memory-model test passed. VCS bindings, host memory transport, signal-level tests and full acceptance matrix remain. Model preserves RAM across reset and recreates timing state.
+  - timestamp: '2026-09-08 00:51'
+    action: Added a source-compatible U55C DramSim profile and raw request/tick API without changing legacy tick or send_request contracts.
+    result: Real Ramulator directed test passed. Initial build failed on C++20-only internal DRAM headers; removed the dependency and explicitly configured organization. ChRaBaRoCo maps contiguous 512 MiB PCs across 16 physical channels. No VCS integration run yet.
+  - timestamp: '2026-09-08 00:26'
+    action: Inspected VCS build inputs and hardware platform connectivity.
+    result: Confirmed 4/8-port SP_FLAGS mappings and documented a VCS-owned DPI memory model.
+  - timestamp: '2026-09-08 00:47'
+    action: Extracted shared geometry.mk; included source platforms.mk in VCS build; added strict manifest generator and configuration tests.
+    result: Six tests passed from the existing configured build directory. No simulator run performed. Header dependencies added, but configuration consumption and startup verification remain incomplete.
+  - timestamp: '2026-09-08 00:47'
+    action: Added rational picosecond scheduler and standalone C++ tests.
+    result: UBSan test passed. Events use exact rational ordering, upward sub-picosecond quantization and DRAM-before-HBM coincident ordering. Device integration is pending.
+  - timestamp: '2026-09-08 00:47'
+    action: Inspected current DramSim and HBM2 organization for the next implementation stage.
+    result: Confirmed two pseudochannels per physical channel and 128-bit DQ with prefetch=2 (32-byte DRAM transaction); legacy DramSim assumes 16 bytes and changes addresses when splitting. A compatible raw path is needed without changing other backends.
+pitfalls:
+  - Configuration tests must set baseline clocks explicitly: inheriting LOGIC_FREQ_HZ=250000000 makes a subsequent change to 250 MHz a no-op and produces a false incremental-invalidation failure.
+  - VCS can rerun compilation while retaining native DPI objects after C++ header-only changes. Verify object timestamps, not just simv timestamp; header-content hash is now included in native CFLAGS to invalidate its cache.
+  - This VCS build may return exit 0 on SV $fatal. Negative tests must require the specific expected fatal diagnostic and bounded termination; positive tests must reject Fatal/Error logs independently of exit status.
+  - VCS queue.size() in always_comb can leave ready stale after queue drain. Production ready now uses explicit model credits; per-negedge DPI response-room budgets separately bound TB egress.
+  - platform_config.mk undefines CONFIGS before reevaluation, removing inherited export status. Nested test Make calls must explicitly pass U55C_INPUT_DEFINES and compare resulting manifest; otherwise a four-port test can silently run default eight-port geometry.
+  - Never reuse third_party/ramulator/build here: its CMake cache and generated output paths refer to vortex_fpint. Use explicit -S third_party/ramulator -B build/ramulator-u55c and verify CMAKE_HOME_DIRECTORY.
+  - SP_FLAGS expresses reachable HBM regions, not a verified physical switch ingress mapping.
+  - HBM AXI frequency and DRAM tCK must be configured separately.
+  - Kernel AXI port count is not the physical DRAM channel or pseudo-channel count.
+  - Moving DramSim into DPI also requires one authoritative RAM and ordered BO transfers.
+  - Existing configured Makefile copies are stale after source edits; configuration tests explicitly use the source Makefile from the configured working directory.
+  - Current DramSim reset only clears its ratio accumulator, not Ramulator queues; device reset must recreate or explicitly drain the timing model.
+  - Generated DRAM tCK currently records the known preset value; runtime validation against Ramulator remains required.
+  - Correction to the initial organization note: HBM2 DQ is 128 bits but channel_width defaults to 64 bits, yielding 16-byte transactions in the legacy path. U55C now explicitly selects channel_width=128 and 32-byte transactions.
+  - Including Ramulator dram/dram.h breaks C++17 builds because its implementation headers require C++20. Use the public memory-system API and explicit organization configuration instead.
+  - Original DramSim destruction only finalized Ramulator; reset leaked its component and HBM-node trees. Destructor fixes now touch the Ramulator submodule and require rebuilding libramulator.so before validation.
+  - improve_th32_tcol32_hwexp_dcache.sh specifies stale TMEM geometry: time-zero assertions require 512 KiB total capacity and 1024/2048 physical words per bank. Functional PASSED does not establish a clean simulation.
+  - Changing only NUM_HBM_PORTS to 4 with NUM_DMA_CHANNELS=8 is invalid RTL geometry; use the dedicated hbm4_tmem8 config. Original session 55577 terminated with exit 1 at time zero.

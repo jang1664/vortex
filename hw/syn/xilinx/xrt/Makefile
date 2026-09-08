@@ -154,8 +154,7 @@ export VORTEX_CONGESTION_FAIL_FAST := $(CONGESTION_FAIL_FAST)
 # from whatever hierarchy happened to survive synthesis.
 # Keep malformed and repeated definitions visibly invalid for Tcl instead of
 # normalizing e.g. an empty definition followed by a valid one to one value.
-gemm_geometry_defines = $(filter -D$(1) -D$(1)=%,$(CONFIGS))
-gemm_geometry_value = $(if $(call gemm_geometry_defines,$(1)),$(if $(filter 1,$(words $(call gemm_geometry_defines,$(1)))),$(patsubst -D$(1)=%,%,$(call gemm_geometry_defines,$(1))),invalid-duplicate-$(1)),$(2))
+include $(SRC_DIR)/geometry.mk
 export VORTEX_GEMM_TMEM_BANKS := $(call gemm_geometry_value,NUM_TMEM_BANKS)
 export VORTEX_GEMM_DMA_CHANNELS := $(call gemm_geometry_value,NUM_DMA_CHANNELS)
 # Legacy SLR profiles omit NUM_HBM_PORTS and use VX_config.vh's default 8.

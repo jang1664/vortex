@@ -6,6 +6,9 @@ SRC_DIR := $(VORTEX_HOME)/sim/xrtsim_vcs
 XRTSIM_DIR := $(VORTEX_HOME)/sim/xrtsim
 AFU_DIR := $(RTL_DIR)/afu/xrt
 
+.DEFAULT_GOAL := all
+include $(SRC_DIR)/platform_config.mk
+
 # ============================================================
 # Common flags for the App-side shared library (libxrtsim_vcs.so)
 # ============================================================
@@ -21,12 +24,11 @@ CXXFLAGS += -DXLEN_$(XLEN)
 CXXFLAGS += $(CONFIGS)
 
 LDFLAGS += -shared $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
-LDFLAGS += -Wl,-rpath,$(THIRD_PARTY_DIR)/ramulator -L$(THIRD_PARTY_DIR)/ramulator -lramulator -pthread
+LDFLAGS += -pthread
 
 # App-side C++ sources (reuse xrt_c.cpp from xrtsim, new xrt_sim_vcs.cpp)
-APP_SRCS = $(SW_COMMON_DIR)/util.cpp $(SW_COMMON_DIR)/mem.cpp
+APP_SRCS = $(SW_COMMON_DIR)/util.cpp
 APP_SRCS += $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp
-APP_SRCS += $(SW_COMMON_DIR)/dram_sim.cpp
 APP_SRCS += $(XRTSIM_DIR)/xrt_c.cpp
 APP_SRCS += $(SRC_DIR)/xrt_sim_vcs.cpp
 
@@ -123,6 +125,7 @@ RTL_PKGS += $(AXI_DIR)/src/axi_mux.sv
 
 # DPI sources for VCS side
 DPI_SRCS = $(SRC_DIR)/dpi_vcs_server.cpp
+DPI_SRCS += $(SRC_DIR)/hbm_model.cpp $(SW_COMMON_DIR)/dram_sim.cpp $(SW_COMMON_DIR)/mem.cpp $(SW_COMMON_DIR)/util.cpp
 DPI_SRCS += $(DPI_DIR)/util_dpi.cpp $(DPI_DIR)/float_dpi.cpp
 DPI_SRCS += $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp
 
@@ -147,8 +150,18 @@ RTL_DIRS += $(AXI_DIR)/src $(AXI_COMMON_CELLS_DIR)/src
 
 # VCS compile flags
 VCS_CPPFLAGS += -std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw
+# VCS-generated native object rules do not reliably include their generated
+# .d header lists. Change CFLAGS when source headers change, forcing native
+# recompilation without deleting caches or touching user source timestamps.
+# Recursive expansion is deliberate: hbm-config may regenerate the frequency
+# header after Make parses this file, before the VCS recipe is expanded.
+U55C_DPI_HEADER_HASH = $(word 1,$(shell sha256sum $(wildcard $(SRC_DIR)/*.h) $(wildcard $(DESTDIR)/u55c_model_config.h) $(SW_COMMON_DIR)/dram_sim.h $(SW_COMMON_DIR)/mem.h | sha256sum))
+VCS_CPPFLAGS += -DU55C_DPI_HEADER_HASH=$(U55C_DPI_HEADER_HASH)
 VCS_CPPFLAGS += -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include
 VCS_CPPFLAGS += -DXLEN_$(XLEN)
+VCS_CPPFLAGS += $(CONFIGS) -I$(DESTDIR)
+VCS_CPPFLAGS += -I$(THIRD_PARTY_DIR)/ramulator/src -I$(THIRD_PARTY_DIR)/ramulator/ext/yaml-cpp/include -I$(THIRD_PARTY_DIR)/ramulator/ext/spdlog/include
+RTL_DIRS += $(DESTDIR)
 
 VCS_DEFINES += +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+ASSERTS_OFF
 VCS_DEFINES += +define+XLEN_$(XLEN)
@@ -283,6 +296,12 @@ endif
 
 .PHONY: all simv applib force clean
 
+include $(SRC_DIR)/hbm_tests.mk
+
+$(DESTDIR)/simv: $(THIRD_PARTY_DIR)/ramulator/libramulator.so
+$(DESTDIR)/simv: $(SRC_DIR)/VX_hbm_axi_guard.sv
+$(DESTDIR)/simv: $(SRC_DIR)/hbm_axi_selftest.svh
+
 all: simv applib
 
 # ---- simv (VCS executable) ----
@@ -294,6 +313,9 @@ $(SIMV_CONFIG_FILE): force
 	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; fi
 
 simv: $(DESTDIR)/simv
+
+$(DESTDIR)/simv: $(DESTDIR)/u55c_model_config.h $(DESTDIR)/u55c_model_config.svh $(DPI_SRCS) $(SRC_DIR)/hbm_model.h $(SRC_DIR)/hbm_clock.h $(SRC_DIR)/hbm_transfer.h $(SRC_DIR)/vcs_protocol.h
+$(DESTDIR)/$(APP_PROJECT): $(DESTDIR)/u55c_model_config.h $(SRC_DIR)/hbm_transfer.h $(SRC_DIR)/vcs_protocol.h
 
 ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)
@@ -327,7 +349,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(SIM
 			$(VCS_SDF_PARAM) \
 			$(VCS_FSDB_OPTS) \
 			-CFLAGS "$(VCS_CPPFLAGS)" \
-			-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+			-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive -Wl,-rpath,$(THIRD_PARTY_DIR)/ramulator -L$(THIRD_PARTY_DIR)/ramulator -lramulator -pthread" \
 			$(DPI_SRCS) \
 			$(VCS_TOP) glbl \
 		-l $(DESTDIR)/vcs_elab.log \
@@ -344,14 +366,14 @@ ifdef USE_XILINX_FPU_IP
 		-l vlogan.log
 	+cd $(DESTDIR) && vcs $(VCS_P2_FLAGS) -full64 -timescale=1ns/1ps +lint=TFIPC-L \
 		-CFLAGS "$(VCS_CPPFLAGS)" \
-		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive -Wl,-rpath,$(THIRD_PARTY_DIR)/ramulator -L$(THIRD_PARTY_DIR)/ramulator -lramulator -pthread" \
 		$(DPI_SRCS) \
 		$(VCS_TOP) \
 		-l compile.log \
 		-o $(DESTDIR)/simv
 else
 	+cd $(DESTDIR) && vcs $(VCS_FLAGS) \
-		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive -Wl,-rpath,$(THIRD_PARTY_DIR)/ramulator -L$(THIRD_PARTY_DIR)/ramulator -lramulator -pthread" \
 		$(RTL_PKGS) \
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \
 		$(DPI_SRCS) \
@@ -367,7 +389,7 @@ APPLIB_CONFIG_FILE := $(DESTDIR)/.applib_config.stamp
 $(APPLIB_CONFIG_FILE): force
 	@mkdir -p $(@D)
 	@printf '%s\n' "$(CXXFLAGS)" > $@.tmp
-	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; fi
 
 applib: $(DESTDIR)/$(APP_PROJECT)
 

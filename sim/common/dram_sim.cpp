@@ -14,6 +14,8 @@
 #include "dram_sim.h"
 #include "util.h"
 #include <fstream>
+#include <cmath>
+#include <stdexcept>
 
 DISABLE_WARNING_PUSH
 DISABLE_WARNING_UNUSED_PARAMETER
@@ -44,6 +46,8 @@ private:
 	static const uint32_t tick_cycles_ = 1000;
 	static const uint32_t dram_channel_size_ = 16; // 128 bits
 	std::queue<mem_req_t> pending_reqs_;
+	bool u55c_;
+	uint32_t transaction_bytes_;
 
 	void handle_pending_requests() {
 		if (pending_reqs_.empty())
@@ -68,7 +72,7 @@ private:
 	}
 
 public:
-	Impl(uint32_t num_channels, uint32_t channel_size, float clock_ratio) {
+	Impl(uint32_t num_channels, uint32_t channel_size, float clock_ratio, bool u55c = false) : u55c_(u55c) {
 		YAML::Node dram_config;
 		dram_config["Frontend"]["impl"] = "GEM5";
 		dram_config["MemorySystem"]["impl"] = "GenericDRAM";
@@ -89,11 +93,26 @@ public:
 			dram_config["MemorySystem"]["Controller"]["plugins"].push_back(draw_plugin);
 		}
 		dram_config["MemorySystem"]["AddrMapper"]["impl"] = "RoBaRaCoCh";
+		if (u55c_) {
+			// 16 physical channels, two 512 MiB PCs per channel. Contiguous
+			// byte mapping: Ch[33:30], PC[29], BG[28:27], BA[26:25],
+			// row[24:10], column[9:5], transaction offset[4:0].
+			dram_config["MemorySystem"]["DRAM"]["org"]["channel_width"] = 128;
+			dram_config["MemorySystem"]["DRAM"]["org"]["pseudochannel"] = 2;
+			dram_config["MemorySystem"]["DRAM"]["org"]["bankgroup"] = 4;
+			dram_config["MemorySystem"]["DRAM"]["org"]["bank"] = 4;
+			dram_config["MemorySystem"]["DRAM"]["org"]["row"] = 32768;
+			dram_config["MemorySystem"]["DRAM"]["org"]["column"] = 64;
+			dram_config["MemorySystem"]["AddrMapper"]["impl"] = "ChRaBaRoCo";
+		}
 
 		ramulator_frontend_ = Ramulator::Factory::create_frontend(dram_config);
 		ramulator_memorysystem_ = Ramulator::Factory::create_memory_system(dram_config);
 		ramulator_frontend_->connect_memory_system(ramulator_memorysystem_);
 		ramulator_memorysystem_->connect_frontend(ramulator_frontend_);
+		// HBM2 uses prefetch=2. Keep its C++20 device internals out of the
+		// C++17 simulator API; all U55C organization inputs are explicit above.
+		transaction_bytes_ = u55c_ ? 32 : 16;
 
 		cpu_channel_size_ = channel_size;
 		scaled_dram_cycles_ = static_cast<uint64_t>(clock_ratio * tick_cycles_);
@@ -107,6 +126,8 @@ public:
 		ramulator_frontend_->finalize();
   	ramulator_memorysystem_->finalize();
 		std::cout.rdbuf(original_buf);
+		delete ramulator_frontend_;
+		delete ramulator_memorysystem_;
 	}
 
 	void reset() {
@@ -120,6 +141,32 @@ public:
 			ramulator_memorysystem_->tick();
 			cpu_cycles_ -= scaled_dram_cycles_;
 		}
+	}
+
+	void tick_raw() {
+		if (!pending_reqs_.empty())
+			throw std::logic_error("Cannot mix queued legacy requests with raw DRAM ticks");
+		ramulator_memorysystem_->tick();
+	}
+
+	uint64_t tck_ps() const {
+		return static_cast<uint64_t>(std::llround(ramulator_memorysystem_->get_tCK() * 1000.0));
+	}
+	uint32_t transaction_bytes() const { return transaction_bytes_; }
+
+	bool try_send_raw(uint64_t addr, bool is_write, ResponseCallback cb, void* arg) {
+		if (addr % transaction_bytes_ || (u55c_ && addr >= (uint64_t(1) << 34)))
+			throw std::invalid_argument("Unaligned or out-of-aperture raw DRAM request");
+		if (!pending_reqs_.empty())
+			throw std::logic_error("Cannot mix legacy and raw DRAM requests");
+		auto type = is_write ? Ramulator::Request::Type::Write : Ramulator::Request::Type::Read;
+		std::function<void(Ramulator::Request&)> callback = nullptr;
+		if (cb && !is_write)
+			callback = [cb, arg](Ramulator::Request&) { cb(arg); };
+		bool accepted = ramulator_frontend_->receive_external_requests(type, addr, 0, callback);
+		if (accepted && is_write && cb)
+			cb(arg);
+		return accepted;
 	}
 
 	void send_request(uint64_t addr, bool is_write, ResponseCallback response_cb, void* arg) {
@@ -150,6 +197,10 @@ DramSim::DramSim(uint32_t num_channels, uint32_t channel_size, float clock_ratio
 	: impl_(new Impl(num_channels, channel_size, clock_ratio))
 {}
 
+DramSim::DramSim(Profile)
+    : impl_(new Impl(16, 32, 1.0f, true))
+{}
+
 DramSim::~DramSim() {
   delete impl_;
 }
@@ -160,6 +211,13 @@ void DramSim::reset() {
 
 void DramSim::tick() {
   impl_->tick();
+}
+
+void DramSim::tick_raw() { impl_->tick_raw(); }
+uint64_t DramSim::tck_ps() const { return impl_->tck_ps(); }
+uint32_t DramSim::transaction_bytes() const { return impl_->transaction_bytes(); }
+bool DramSim::try_send_raw(uint64_t addr, bool write, ResponseCallback cb, void* arg) {
+  return impl_->try_send_raw(addr, write, cb, arg);
 }
 
 void DramSim::send_request(uint64_t addr, bool is_write, ResponseCallback callback, void* arg) {
