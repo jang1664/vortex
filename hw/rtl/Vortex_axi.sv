@@ -21,6 +21,11 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     parameter AXI_ADDR_WIDTH  = `PLATFORM_MEMORY_ADDR_WIDTH,
     parameter AXI_TID_WIDTH   = VX_MEM_TAG_WIDTH,
     parameter NUM_HBM_PORTS   = `NUM_HBM_PORTS,
+`ifdef NUM_BANKS_OUT
+    parameter NUM_BANKS_OUT   = `NUM_BANKS_OUT,
+`else
+    parameter NUM_BANKS_OUT   = 1 << ($clog2(`MIN(VX_MEM_PORTS, NUM_HBM_PORTS) + 1) - 1),
+`endif
     parameter AXI_DMA_ID_WIDTH = 8
 )(
     `SCOPE_IO_DECL
@@ -123,23 +128,32 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // One LSU input plus the statically-owned DMA channel from every core.
     localparam NUM_MUX_INPUTS = 1 + `NUM_CORES;
 
-    // LSU AXI adapter outputs a single bank with TID width = AXI_TID_WIDTH
-    // The demux does not change the ID width
+    // The cache adapter exposes HBM destinations with a common slave ID width.
     // The mux widens the ID by clog2(NUM_MUX_INPUTS)
     localparam SLV_ID_WIDTH = AXI_DMA_ID_WIDTH;
     localparam MUX_IDX_BITS = `CLOG2(NUM_MUX_INPUTS);
     localparam MST_ID_WIDTH = SLV_ID_WIDTH + MUX_IDX_BITS;
 
-    // For the LSU path through the demux, we need its ID to fit in SLV_ID_WIDTH
+    // Cache request IDs must fit in SLV_ID_WIDTH
     // The VX_axi_adapter TID width may differ; we use SLV_ID_WIDTH for the mux slave side
     localparam LSU_AXI_TID_WIDTH = SLV_ID_WIDTH;
 
     // Address select bits for demux: route based on address bits.
-    // After VX_mem_remap below, the HBM bank index sits at REMAP_BANK_SHIFT.
+    // DMA addresses use the same physical bank layout as the cache adapter.
     localparam HBM_SEL_BITS = `CLOG2(NUM_HBM_PORTS);
-    localparam REMAP_BANK_SHIFT = `PLATFORM_MEMORY_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS);
+
+`ifdef SIMULATION
+    initial begin
+        $display("CACHE_AXI_TOPOLOGY: P=%0d K=%0d H=%0d AXI_BYTES=%0d",
+                 VX_MEM_PORTS, NUM_BANKS_OUT, NUM_HBM_PORTS, AXI_DATA_WIDTH / 8);
+    end
+`endif
 
     initial begin
+        if ((VX_MEM_DATA_WIDTH != AXI_DATA_WIDTH)
+         || (AXI_DATA_WIDTH / 8 != 64)
+         || (`MEM_BLOCK_SIZE != 64))
+            $fatal(1, "grouped cache AXI requires equal 64-byte cache lines, AXI beats, and memory blocks");
         if ((`NUM_TMEM_BANKS < 1)
          || ((`NUM_TMEM_BANKS & (`NUM_TMEM_BANKS - 1)) != 0))
             $fatal(1, "NUM_TMEM_BANKS(%0d) must be a positive power of two", `NUM_TMEM_BANKS);
@@ -256,7 +270,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     );
 
     ///////////////////////////////////////////////////////////////////////////
-    // LSU path: data adapter + AXI adapter (single bank output)
+    // Cache path: data adapter + grouped AXI adapter
     ///////////////////////////////////////////////////////////////////////////
 
     wire                            mem_req_valid_a [VX_MEM_PORTS];
@@ -315,95 +329,52 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         );
     end
 
-    // LSU AXI adapter: single bank output (flat signals)
-    wire                            lsu_axi_awvalid;
-    wire                            lsu_axi_awready;
-    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_awaddr;
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_awid;
-    wire [7:0]                      lsu_axi_awlen;
-    wire [2:0]                      lsu_axi_awsize;
-    wire [1:0]                      lsu_axi_awburst;
-    wire [1:0]                      lsu_axi_awlock;
-    wire [3:0]                      lsu_axi_awcache;
-    wire [2:0]                      lsu_axi_awprot;
-    wire [3:0]                      lsu_axi_awqos;
-    wire [3:0]                      lsu_axi_awregion;
+    // Cache adapter outputs, one interface per physical HBM destination.
+    wire                            lsu_axi_awvalid_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_awready_arr [NUM_HBM_PORTS];
+    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_awaddr_arr [NUM_HBM_PORTS];
+    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_awid_arr [NUM_HBM_PORTS];
+    wire [7:0]                      lsu_axi_awlen_arr [NUM_HBM_PORTS];
+    wire [2:0]                      lsu_axi_awsize_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_awburst_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_awlock_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_awcache_arr [NUM_HBM_PORTS];
+    wire [2:0]                      lsu_axi_awprot_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_awqos_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_awregion_arr [NUM_HBM_PORTS];
 
-    wire                            lsu_axi_wvalid;
-    wire                            lsu_axi_wready;
-    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_wdata;
-    wire [AXI_DATA_WIDTH/8-1:0]     lsu_axi_wstrb;
-    wire                            lsu_axi_wlast;
+    wire                            lsu_axi_wvalid_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_wready_arr [NUM_HBM_PORTS];
+    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_wdata_arr [NUM_HBM_PORTS];
+    wire [AXI_DATA_WIDTH/8-1:0]     lsu_axi_wstrb_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_wlast_arr [NUM_HBM_PORTS];
 
-    wire                            lsu_axi_bvalid;
-    wire                            lsu_axi_bready;
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_bid;
-    wire [1:0]                      lsu_axi_bresp;
+    wire                            lsu_axi_bvalid_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_bready_arr [NUM_HBM_PORTS];
+    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_bid_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_bresp_arr [NUM_HBM_PORTS];
 
-    wire                            lsu_axi_arvalid;
-    wire                            lsu_axi_arready;
-    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_araddr;
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_arid;
-    wire [7:0]                      lsu_axi_arlen;
-    wire [2:0]                      lsu_axi_arsize;
-    wire [1:0]                      lsu_axi_arburst;
-    wire [1:0]                      lsu_axi_arlock;
-    wire [3:0]                      lsu_axi_arcache;
-    wire [2:0]                      lsu_axi_arprot;
-    wire [3:0]                      lsu_axi_arqos;
-    wire [3:0]                      lsu_axi_arregion;
+    wire                            lsu_axi_arvalid_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_arready_arr [NUM_HBM_PORTS];
+    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_araddr_arr [NUM_HBM_PORTS];
+    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_arid_arr [NUM_HBM_PORTS];
+    wire [7:0]                      lsu_axi_arlen_arr [NUM_HBM_PORTS];
+    wire [2:0]                      lsu_axi_arsize_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_arburst_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_arlock_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_arcache_arr [NUM_HBM_PORTS];
+    wire [2:0]                      lsu_axi_arprot_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_arqos_arr [NUM_HBM_PORTS];
+    wire [3:0]                      lsu_axi_arregion_arr [NUM_HBM_PORTS];
 
-    wire                            lsu_axi_rvalid;
-    wire                            lsu_axi_rready;
-    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_rdata;
-    wire                            lsu_axi_rlast;
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_rid;
-    wire [1:0]                      lsu_axi_rresp;
+    wire                            lsu_axi_rvalid_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_rready_arr [NUM_HBM_PORTS];
+    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_rdata_arr [NUM_HBM_PORTS];
+    wire                            lsu_axi_rlast_arr [NUM_HBM_PORTS];
+    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_rid_arr [NUM_HBM_PORTS];
+    wire [1:0]                      lsu_axi_rresp_arr [NUM_HBM_PORTS];
 
-    // Wrap flat signals in unpacked arrays for VX_axi_adapter
-    wire                            lsu_axi_awvalid_arr [1];
-    wire                            lsu_axi_awready_arr [1];
-    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_awaddr_arr [1];
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_awid_arr [1];
-    wire [7:0]                      lsu_axi_awlen_arr [1];
-    wire [2:0]                      lsu_axi_awsize_arr [1];
-    wire [1:0]                      lsu_axi_awburst_arr [1];
-    wire [1:0]                      lsu_axi_awlock_arr [1];
-    wire [3:0]                      lsu_axi_awcache_arr [1];
-    wire [2:0]                      lsu_axi_awprot_arr [1];
-    wire [3:0]                      lsu_axi_awqos_arr [1];
-    wire [3:0]                      lsu_axi_awregion_arr [1];
-
-    wire                            lsu_axi_wvalid_arr [1];
-    wire                            lsu_axi_wready_arr [1];
-    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_wdata_arr [1];
-    wire [AXI_DATA_WIDTH/8-1:0]     lsu_axi_wstrb_arr [1];
-    wire                            lsu_axi_wlast_arr [1];
-
-    wire                            lsu_axi_bvalid_arr [1];
-    wire                            lsu_axi_bready_arr [1];
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_bid_arr [1];
-    wire [1:0]                      lsu_axi_bresp_arr [1];
-
-    wire                            lsu_axi_arvalid_arr [1];
-    wire                            lsu_axi_arready_arr [1];
-    wire [AXI_ADDR_WIDTH-1:0]       lsu_axi_araddr_arr [1];
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_arid_arr [1];
-    wire [7:0]                      lsu_axi_arlen_arr [1];
-    wire [2:0]                      lsu_axi_arsize_arr [1];
-    wire [1:0]                      lsu_axi_arburst_arr [1];
-    wire [1:0]                      lsu_axi_arlock_arr [1];
-    wire [3:0]                      lsu_axi_arcache_arr [1];
-    wire [2:0]                      lsu_axi_arprot_arr [1];
-    wire [3:0]                      lsu_axi_arqos_arr [1];
-    wire [3:0]                      lsu_axi_arregion_arr [1];
-
-    wire                            lsu_axi_rvalid_arr [1];
-    wire                            lsu_axi_rready_arr [1];
-    wire [AXI_DATA_WIDTH-1:0]       lsu_axi_rdata_arr [1];
-    wire                            lsu_axi_rlast_arr [1];
-    wire [LSU_AXI_TID_WIDTH-1:0]    lsu_axi_rid_arr [1];
-    wire [1:0]                      lsu_axi_rresp_arr [1];
+    wire cache_adapter_busy;
 
     VX_axi_adapter #(
         .DATA_WIDTH     (AXI_DATA_WIDTH),
@@ -412,13 +383,15 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .TAG_WIDTH_IN   (VX_MEM_TAG_A_WIDTH),
         .TAG_WIDTH_OUT  (LSU_AXI_TID_WIDTH),
         .NUM_PORTS_IN   (VX_MEM_PORTS),
-        .NUM_BANKS_OUT  (1),
+        .NUM_BANKS_OUT  (NUM_BANKS_OUT),
+        .NUM_HBM_PORTS  (NUM_HBM_PORTS),
         .INTERLEAVE     (`PLATFORM_MEMORY_INTERLEAVE),
         .REQ_OUT_BUF    ((VX_MEM_PORTS > 1) ? 2 : 0),
         .RSP_OUT_BUF    ((VX_MEM_PORTS > 1) ? 2 : 0)
     ) axi_adapter (
         .clk            (clk),
         .reset          (reset),
+        .busy           (cache_adapter_busy),
 
         .mem_req_valid  (mem_req_valid_a),
         .mem_req_rw     (mem_req_rw_a),
@@ -478,188 +451,68 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .m_axi_rresp    (lsu_axi_rresp_arr)
     );
 
-    // Unpack array[1] to scalar signals
-    assign lsu_axi_awvalid   = lsu_axi_awvalid_arr[0];
-    assign lsu_axi_awready_arr[0] = lsu_axi_awready;
-    assign lsu_axi_awaddr    = lsu_axi_awaddr_arr[0];
-    assign lsu_axi_awid      = lsu_axi_awid_arr[0];
-    assign lsu_axi_awlen     = lsu_axi_awlen_arr[0];
-    assign lsu_axi_awsize    = lsu_axi_awsize_arr[0];
-    assign lsu_axi_awburst   = lsu_axi_awburst_arr[0];
-    assign lsu_axi_awlock    = lsu_axi_awlock_arr[0];
-    assign lsu_axi_awcache   = lsu_axi_awcache_arr[0];
-    assign lsu_axi_awprot    = lsu_axi_awprot_arr[0];
-    assign lsu_axi_awqos     = lsu_axi_awqos_arr[0];
-    assign lsu_axi_awregion  = lsu_axi_awregion_arr[0];
+    // Pack each cache endpoint directly into the existing per-output AXI cut.
+    slv_axi_req_t  [NUM_HBM_PORTS-1:0] cache_axi_req;
+    slv_axi_resp_t [NUM_HBM_PORTS-1:0] cache_axi_resp;
+    for (genvar p = 0; p < NUM_HBM_PORTS; ++p) begin : g_cache_axi
+        always_comb begin
+            cache_axi_req[p] = '0;
+            // AW channel
+            cache_axi_req[p].aw.id     = lsu_axi_awid_arr[p];
+            cache_axi_req[p].aw.addr   = lsu_axi_awaddr_arr[p];
+            cache_axi_req[p].aw.len    = lsu_axi_awlen_arr[p];
+            cache_axi_req[p].aw.size   = lsu_axi_awsize_arr[p];
+            cache_axi_req[p].aw.burst  = lsu_axi_awburst_arr[p];
+            cache_axi_req[p].aw.lock   = lsu_axi_awlock_arr[p][0];
+            cache_axi_req[p].aw.cache  = lsu_axi_awcache_arr[p];
+            cache_axi_req[p].aw.prot   = lsu_axi_awprot_arr[p];
+            cache_axi_req[p].aw.qos    = lsu_axi_awqos_arr[p];
+            cache_axi_req[p].aw.region = lsu_axi_awregion_arr[p];
+            cache_axi_req[p].aw.atop   = '0;
+            cache_axi_req[p].aw.user   = '0;
+            cache_axi_req[p].aw_valid  = lsu_axi_awvalid_arr[p];
+            // W channel
+            cache_axi_req[p].w.data    = lsu_axi_wdata_arr[p];
+            cache_axi_req[p].w.strb    = lsu_axi_wstrb_arr[p];
+            cache_axi_req[p].w.last    = lsu_axi_wlast_arr[p];
+            cache_axi_req[p].w.user    = '0;
+            cache_axi_req[p].w_valid   = lsu_axi_wvalid_arr[p];
+            // B channel ready
+            cache_axi_req[p].b_ready   = lsu_axi_bready_arr[p];
+            // AR channel
+            cache_axi_req[p].ar.id     = lsu_axi_arid_arr[p];
+            cache_axi_req[p].ar.addr   = lsu_axi_araddr_arr[p];
+            cache_axi_req[p].ar.len    = lsu_axi_arlen_arr[p];
+            cache_axi_req[p].ar.size   = lsu_axi_arsize_arr[p];
+            cache_axi_req[p].ar.burst  = lsu_axi_arburst_arr[p];
+            cache_axi_req[p].ar.lock   = lsu_axi_arlock_arr[p][0];
+            cache_axi_req[p].ar.cache  = lsu_axi_arcache_arr[p];
+            cache_axi_req[p].ar.prot   = lsu_axi_arprot_arr[p];
+            cache_axi_req[p].ar.qos    = lsu_axi_arqos_arr[p];
+            cache_axi_req[p].ar.region = lsu_axi_arregion_arr[p];
+            cache_axi_req[p].ar.user   = '0;
+            cache_axi_req[p].ar_valid  = lsu_axi_arvalid_arr[p];
+            // R channel ready
+            cache_axi_req[p].r_ready   = lsu_axi_rready_arr[p];
+        end
 
-    assign lsu_axi_wvalid    = lsu_axi_wvalid_arr[0];
-    assign lsu_axi_wready_arr[0] = lsu_axi_wready;
-    assign lsu_axi_wdata     = lsu_axi_wdata_arr[0];
-    assign lsu_axi_wstrb     = lsu_axi_wstrb_arr[0];
-    assign lsu_axi_wlast     = lsu_axi_wlast_arr[0];
+        // Unpack response struct to LSU AXI signals
+        assign lsu_axi_awready_arr[p] = cache_axi_resp[p].aw_ready;
+        assign lsu_axi_wready_arr[p]  = cache_axi_resp[p].w_ready;
+        assign lsu_axi_bvalid_arr[p]  = cache_axi_resp[p].b_valid;
+        assign lsu_axi_bid_arr[p]     = cache_axi_resp[p].b.id[LSU_AXI_TID_WIDTH-1:0];
+        assign lsu_axi_bresp_arr[p]   = cache_axi_resp[p].b.resp;
+        assign lsu_axi_arready_arr[p] = cache_axi_resp[p].ar_ready;
+        assign lsu_axi_rvalid_arr[p]  = cache_axi_resp[p].r_valid;
+        assign lsu_axi_rid_arr[p]     = cache_axi_resp[p].r.id[LSU_AXI_TID_WIDTH-1:0];
+        assign lsu_axi_rdata_arr[p]   = cache_axi_resp[p].r.data;
+        assign lsu_axi_rresp_arr[p]   = cache_axi_resp[p].r.resp;
+        assign lsu_axi_rlast_arr[p]   = cache_axi_resp[p].r.last;
 
-    assign lsu_axi_bvalid_arr[0] = lsu_axi_bvalid;
-    assign lsu_axi_bready    = lsu_axi_bready_arr[0];
-    assign lsu_axi_bid_arr[0] = lsu_axi_bid;
-    assign lsu_axi_bresp_arr[0] = lsu_axi_bresp;
-
-    assign lsu_axi_arvalid   = lsu_axi_arvalid_arr[0];
-    assign lsu_axi_arready_arr[0] = lsu_axi_arready;
-    assign lsu_axi_araddr    = lsu_axi_araddr_arr[0];
-    assign lsu_axi_arid      = lsu_axi_arid_arr[0];
-    assign lsu_axi_arlen     = lsu_axi_arlen_arr[0];
-    assign lsu_axi_arsize    = lsu_axi_arsize_arr[0];
-    assign lsu_axi_arburst   = lsu_axi_arburst_arr[0];
-    assign lsu_axi_arlock    = lsu_axi_arlock_arr[0];
-    assign lsu_axi_arcache   = lsu_axi_arcache_arr[0];
-    assign lsu_axi_arprot    = lsu_axi_arprot_arr[0];
-    assign lsu_axi_arqos     = lsu_axi_arqos_arr[0];
-    assign lsu_axi_arregion  = lsu_axi_arregion_arr[0];
-
-    assign lsu_axi_rvalid_arr[0] = lsu_axi_rvalid;
-    assign lsu_axi_rready    = lsu_axi_rready_arr[0];
-    assign lsu_axi_rdata_arr[0] = lsu_axi_rdata;
-    assign lsu_axi_rlast_arr[0] = lsu_axi_rlast;
-    assign lsu_axi_rid_arr[0] = lsu_axi_rid;
-    assign lsu_axi_rresp_arr[0] = lsu_axi_rresp;
-
-    ///////////////////////////////////////////////////////////////////////////
-    // Remap LSU AXI addresses to HBM contiguous layout before demux.
-    // Together with the DMA path's internal VX_mem_remap, this unifies the
-    // post-remap coordinate system on the AXI bus so the sim inverse
-    // transform (xrt_sim_vcs::remap_to_sw_addr) can recover sw_addr.
-    ///////////////////////////////////////////////////////////////////////////
-
-    wire [AXI_ADDR_WIDTH-1:0] lsu_axi_awaddr_remapped;
-    wire [AXI_ADDR_WIDTH-1:0] lsu_axi_araddr_remapped;
-
-    VX_mem_remap #(
-        .ADDR_W     (AXI_ADDR_WIDTH),
-        .NUM_PORTS  (NUM_HBM_PORTS),
-        .BANK_SHIFT (REMAP_BANK_SHIFT)
-    ) u_lsu_aw_remap (
-        .m_address   (lsu_axi_awaddr),
-        .hbm_address (lsu_axi_awaddr_remapped)
-    );
-
-    VX_mem_remap #(
-        .ADDR_W     (AXI_ADDR_WIDTH),
-        .NUM_PORTS  (NUM_HBM_PORTS),
-        .BANK_SHIFT (REMAP_BANK_SHIFT)
-    ) u_lsu_ar_remap (
-        .m_address   (lsu_axi_araddr),
-        .hbm_address (lsu_axi_araddr_remapped)
-    );
-
-    ///////////////////////////////////////////////////////////////////////////
-    // Convert LSU flat AXI signals to struct for demux
-    ///////////////////////////////////////////////////////////////////////////
-
-    slv_axi_req_t  lsu_axi_req;
-    slv_axi_resp_t lsu_axi_resp;
-
-    // Pack LSU AXI signals into request struct
-    always_comb begin
-        lsu_axi_req = '0;
-        // AW channel
-        lsu_axi_req.aw.id     = lsu_axi_awid;
-        lsu_axi_req.aw.addr   = lsu_axi_awaddr_remapped;
-        lsu_axi_req.aw.len    = lsu_axi_awlen;
-        lsu_axi_req.aw.size   = lsu_axi_awsize;
-        lsu_axi_req.aw.burst  = lsu_axi_awburst;
-        lsu_axi_req.aw.lock   = lsu_axi_awlock[0];
-        lsu_axi_req.aw.cache  = lsu_axi_awcache;
-        lsu_axi_req.aw.prot   = lsu_axi_awprot;
-        lsu_axi_req.aw.qos    = lsu_axi_awqos;
-        lsu_axi_req.aw.region = lsu_axi_awregion;
-        lsu_axi_req.aw.atop   = '0;
-        lsu_axi_req.aw.user   = '0;
-        lsu_axi_req.aw_valid  = lsu_axi_awvalid;
-        // W channel
-        lsu_axi_req.w.data    = lsu_axi_wdata;
-        lsu_axi_req.w.strb    = lsu_axi_wstrb;
-        lsu_axi_req.w.last    = lsu_axi_wlast;
-        lsu_axi_req.w.user    = '0;
-        lsu_axi_req.w_valid   = lsu_axi_wvalid;
-        // B channel ready
-        lsu_axi_req.b_ready   = lsu_axi_bready;
-        // AR channel
-        lsu_axi_req.ar.id     = lsu_axi_arid;
-        lsu_axi_req.ar.addr   = lsu_axi_araddr_remapped;
-        lsu_axi_req.ar.len    = lsu_axi_arlen;
-        lsu_axi_req.ar.size   = lsu_axi_arsize;
-        lsu_axi_req.ar.burst  = lsu_axi_arburst;
-        lsu_axi_req.ar.lock   = lsu_axi_arlock[0];
-        lsu_axi_req.ar.cache  = lsu_axi_arcache;
-        lsu_axi_req.ar.prot   = lsu_axi_arprot;
-        lsu_axi_req.ar.qos    = lsu_axi_arqos;
-        lsu_axi_req.ar.region = lsu_axi_arregion;
-        lsu_axi_req.ar.user   = '0;
-        lsu_axi_req.ar_valid  = lsu_axi_arvalid;
-        // R channel ready
-        lsu_axi_req.r_ready   = lsu_axi_rready;
     end
 
-    // Unpack response struct to LSU AXI signals
-    assign lsu_axi_awready = lsu_axi_resp.aw_ready;
-    assign lsu_axi_wready  = lsu_axi_resp.w_ready;
-    assign lsu_axi_bvalid  = lsu_axi_resp.b_valid;
-    assign lsu_axi_bid     = lsu_axi_resp.b.id[LSU_AXI_TID_WIDTH-1:0];
-    assign lsu_axi_bresp   = lsu_axi_resp.b.resp;
-    assign lsu_axi_arready = lsu_axi_resp.ar_ready;
-    assign lsu_axi_rvalid  = lsu_axi_resp.r_valid;
-    assign lsu_axi_rid     = lsu_axi_resp.r.id[LSU_AXI_TID_WIDTH-1:0];
-    assign lsu_axi_rdata   = lsu_axi_resp.r.data;
-    assign lsu_axi_rresp   = lsu_axi_resp.r.resp;
-    assign lsu_axi_rlast   = lsu_axi_resp.r.last;
-
-    ///////////////////////////////////////////////////////////////////////////
-    // LSU AXI demux: split LSU AXI into NUM_HBM_PORTS based on address
-    ///////////////////////////////////////////////////////////////////////////
-
-    // Address-based select for demux: after remap, the HBM bank index bits
-    // live at [REMAP_BANK_SHIFT +: CLOG2(PLATFORM_MEMORY_NUM_BANKS)]. The new
-    // VX_mem_remap packs bank_idx = {r[2:0], q[1:0]}, so the per-port "r"
-    // field sits at the HIGH HBM_SEL_BITS of bank_idx (i.e. the top
-    // HBM_SEL_BITS of the full address). Using the top bits keeps DMA
-    // channel c routed to HBM port c (HBM_BUS_STRIDE stride invariant).
+    // DMA routing still selects ports from the remapped physical address.
     localparam PORT_SEL_SHIFT = `PLATFORM_MEMORY_ADDR_WIDTH - HBM_SEL_BITS;
-    wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr_remapped[PORT_SEL_SHIFT +: HBM_SEL_BITS];
-    wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr_remapped[PORT_SEL_SHIFT +: HBM_SEL_BITS];
-
-    slv_axi_req_t  [NUM_HBM_PORTS-1:0] lsu_demux_req;
-    slv_axi_resp_t [NUM_HBM_PORTS-1:0] lsu_demux_resp;
-
-    axi_demux #(
-        .AxiIdWidth  (SLV_ID_WIDTH),
-        .AtopSupport (1'b0),
-        .aw_chan_t   (slv_axi_aw_chan_t),
-        .w_chan_t    (slv_axi_w_chan_t),
-        .b_chan_t    (slv_axi_b_chan_t),
-        .ar_chan_t   (slv_axi_ar_chan_t),
-        .r_chan_t    (slv_axi_r_chan_t),
-        .axi_req_t   (slv_axi_req_t),
-        .axi_resp_t  (slv_axi_resp_t),
-        .NoMstPorts  (NUM_HBM_PORTS),
-        .MaxTrans    (8),
-        .AxiLookBits (SLV_ID_WIDTH),
-        .UniqueIds   (1'b0),
-        .SpillAw     (1'b1),
-        .SpillW      (1'b0),
-        .SpillB      (1'b0),
-        .SpillAr     (1'b1),
-        .SpillR      (1'b0)
-    ) u_lsu_demux (
-        .clk_i              (clk),
-        .rst_ni             (~reset),
-        .test_i             (1'b0),
-        .slv_req_i          (lsu_axi_req),
-        .slv_aw_select_i    (lsu_aw_select),
-        .slv_ar_select_i    (lsu_ar_select),
-        .slv_resp_o         (lsu_axi_resp),
-        .mst_reqs_o         (lsu_demux_req),
-        .mst_resps_i        (lsu_demux_resp)
-    );
 
     ///////////////////////////////////////////////////////////////////////////
     // Restricted DMA AXI routing for H>D
@@ -743,11 +596,11 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     end
 
     ///////////////////////////////////////////////////////////////////////////
-    // Per-HBM-port AXI mux: merge LSU demux + DMA channels
+    // Per-HBM-port AXI mux: merge cache endpoints + DMA channels
     ///////////////////////////////////////////////////////////////////////////
 
     // For each HBM port j, the mux has NUM_MUX_INPUTS slaves:
-    //   slave[0]   = lsu_demux[j]
+    //   slave[0]   = cache_axi[j]
     //   slave[i+1] = core[i].dma[j]   for i in 0..NUM_CORES-1
     //
     // DMA port mapping: core i, channel j => dma_axi_m[i * NUM_DMA_CHANNELS + j]
@@ -778,8 +631,8 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         ) u_lsu_mux_cut (
             .clk_i      (clk),
             .rst_ni     (~reset),
-            .slv_req_i  (lsu_demux_req[j]),
-            .slv_resp_o (lsu_demux_resp[j]),
+            .slv_req_i  (cache_axi_req[j]),
+            .slv_resp_o (cache_axi_resp[j]),
             .mst_req_o  (lsu_mux_req),
             .mst_resp_i (lsu_mux_resp)
         );
@@ -935,6 +788,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     end
 
     assign cache_drain = vortex_cache_drain
+                      && ~cache_adapter_busy
                       && ~(| mem_req_stall)
                       && ~(| mem_rsp_stall)
                       && ~(| mem_req_a_stall)
