@@ -537,7 +537,10 @@ module VX_gemm_acc_lmem #(
             final_lmem_stall_probe_q <= 1'b0;
             final_lmem_stall_addr_q <= '0;
             final_lmem_stall_data_q <= '0;
-        end else begin
+        end else if (reset === 1'b0) begin
+            // Reset relays are unknown before the initial reset reaches this
+            // module. Do not execute procedural diagnostics speculatively
+            // under X propagation until reset is known to be deasserted.
             assert (txn_count <= TXN_COUNTW'(TXN_DEPTH))
                 else $fatal(1, "LMEM ACC transaction queue overflow");
             assert (rd_lmem_outstanding <= READ_COUNTW'(READ_SLOTS))

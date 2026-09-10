@@ -547,11 +547,6 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
           qparam_install_writes_remaining_r
               <= qparam_install_expected_writes;
         end
-        if (output_dma_ctrl_if.start && output_dma_ctrl_if.idle) begin
-          assert ((output_mt_eff >> `DMA_BOUND_WIDTH) == 0)
-            else $fatal(1, "%s: output bound exceeds %0d bits",
-                        INSTANCE_ID, `DMA_BOUND_WIDTH);
-        end
         if (((qparam_install_opcode_r == OP_SC_LDMA_MXU)
           && gemm_unit_v2_if.scale_register_write)
          || ((qparam_install_opcode_r == OP_ZP_LDMA_MXU)
@@ -589,6 +584,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     wire [31:0] output_nt_eff_raw = (output_nt_eff_cmd != 0) ? output_nt_eff_cmd : NT;
     wire [31:0] output_mt_eff     = (output_mt_eff_raw > MT) ? MT : output_mt_eff_raw;
     wire [31:0] output_nt_eff     = (output_nt_eff_raw > NT) ? NT : output_nt_eff_raw;
+    always_ff @(posedge clk) begin
+        if (!reset && output_dma_ctrl_if.start && output_dma_ctrl_if.idle) begin
+            assert ((output_mt_eff >> `DMA_BOUND_WIDTH) == 0)
+                else $fatal(1, "%s: output bound exceeds %0d bits",
+                            INSTANCE_ID, `DMA_BOUND_WIDTH);
+        end
+    end
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
     assign output_dma_ctrl_if.src_strides[0] = output_nt_eff * 16/8;
