@@ -1,9 +1,13 @@
 `timescale 1ns / 1ps
 `include "VX_define.vh"
 
-module tb_VX_gemm_psum_read_ooo_join;
+module tb_VX_gemm_psum_read_ooo_join #(
+    parameter NUM_LANES = 16
+);
     localparam PERIOD = 10;
-    localparam NUM_LANES = 16;
+    localparam HALF_LANES = NUM_LANES / 2;
+    localparam logic [NUM_LANES-1:0] LOWER_MASK = (NUM_LANES'(1) << HALF_LANES) - 1;
+    localparam logic [NUM_LANES-1:0] UPPER_MASK = ~LOWER_MASK;
     localparam LANE_BYTES = 8;
     localparam WIDE_BYTES = NUM_LANES * LANE_BYTES;
     localparam TAGW = 16;
@@ -252,8 +256,8 @@ module tb_VX_gemm_psum_read_ooo_join;
 
         // Complete set-1 slots first. Slot 1 is deliberately lane-skewed; its
         // odd-lane arrival also exercises same-cycle complete/FIFO push.
-        respond_slot_mask(1, 16'h5555);
-        respond_slot_mask(1, 16'haaaa);
+        respond_slot_mask(1, NUM_LANES'(16'h5555));
+        respond_slot_mask(1, NUM_LANES'(16'haaaa));
         respond_slot(3);
 
         // The FIFO is now full. Further complete slots must retain all data
@@ -288,21 +292,21 @@ module tb_VX_gemm_psum_read_ooo_join;
         check_stale_not_ready(0, 0);
 
         // A physical lane may respond before the other lanes in its wide
-        // request have been accepted.  Hold lanes 0..7, return lanes 8..15,
-        // then release and finish the slot.
+        // request have been accepted. Hold the lower half, return the upper
+        // half, then release and finish the slot.
         @(negedge clk);
-        lane_req_ready_drv[7:0] = '0;
+        lane_req_ready_drv[HALF_LANES-1:0] = '0;
         send_wide_read(5, WIDE_ADDRW'(16'h45));
-        wait (lane_req_seen[0][15:8] == 8'hff);
-        respond_slot_mask(0, 16'hff00);
-        assert ((u_dut.slot_rsp_valid[0] == 16'hff00)
+        wait (&lane_req_seen[0][NUM_LANES-1:HALF_LANES]);
+        respond_slot_mask(0, UPPER_MASK);
+        assert ((u_dut.slot_rsp_valid[0] == UPPER_MASK)
              && !u_dut.slot_req_done[0]
              && !wide_bus_if.rsp_valid)
             else $fatal(1, "early lane responses did not remain owned by the partial request");
         @(negedge clk);
-        lane_req_ready_drv[7:0] = '1;
+        lane_req_ready_drv[HALF_LANES-1:0] = '1;
         wait_slot_requests(0);
-        respond_slot_mask(0, 16'h00ff);
+        respond_slot_mask(0, LOWER_MASK);
         wait (response_seen[5]);
 
         $display("TEST PASSED: requests=%0d responses=%0d", wide_req_count, wide_rsp_count);

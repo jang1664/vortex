@@ -38,8 +38,8 @@ module VX_gemm_psum_read_ooo_join import VX_gpu_pkg::*; #(
     localparam ORDER_W = SLOT_W + 1;
     localparam FIFO_DATA_W = TAG_WIDTH + WIDE_DATA_W;
 
-    `VX_STATIC_ASSERT(NUM_LANES == 16,
-        ("NAIVE PSUM OOO join requires sixteen physical lanes"))
+    `VX_STATIC_ASSERT(NUM_LANES == 8 || NUM_LANES == 16,
+        ("NAIVE PSUM OOO join requires eight or sixteen physical lanes"))
     `VX_STATIC_ASSERT((NUM_LANES & (NUM_LANES - 1)) == 0,
         ("NAIVE PSUM OOO join lane count must be a power of two"))
     `VX_STATIC_ASSERT(PHYS_RESPONSE_SLOTS >= 2,

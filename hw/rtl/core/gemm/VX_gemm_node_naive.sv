@@ -70,9 +70,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int WEIGHT_ROW_BYTES  = (`MXU_COL * `W_BIT_WIDTH) / 8;
     localparam int WEIGHT_ROW_LANES  = WEIGHT_ROW_BYTES / LSU_WORD_SIZE;
     localparam int I_LANE_OFFSET     = 0;
-    localparam int W_LANE_OFFSET     = 8;
-    localparam int SZ_LANE_OFFSET    = 16;
-    localparam int O_LANE_OFFSET     = 24;
+    // Reserve one native activation-width region per tensor client. This
+    // keeps the MXU32 placement and scales the regions for MXU16.
+    localparam int W_LANE_OFFSET     = GEMM_INPUT_LANES;
+    localparam int SZ_LANE_OFFSET    = 2 * GEMM_INPUT_LANES;
+    localparam int O_LANE_OFFSET     = 3 * GEMM_INPUT_LANES;
 
     `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
         ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
@@ -340,10 +342,27 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[0]));
     assign psum_wr_lane_pop_by_set[1]
         = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[1]));
+    // A splitter can forward some lanes before all lanes have accepted the
+    // wide request. Reserve its writes on first presentation, before any
+    // downstream completion, and retain that reservation until wide ready.
+    logic psum_wr_reserved_r, final_wr_reserved_r;
+    wire psum_wr_reserve = psum_wr_raw_bus_if.req_valid && !psum_wr_reserved_r;
+    wire final_wr_reserve = final_raw_bus_if.req_valid && !final_wr_reserved_r;
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        psum_wr_reserved_r <= 1'b0;
+        final_wr_reserved_r <= 1'b0;
+      end else begin
+        if (psum_wr_raw_bus_if.req_valid)
+          psum_wr_reserved_r <= !psum_wr_raw_bus_if.req_ready;
+        if (final_raw_bus_if.req_valid)
+          final_wr_reserved_r <= !final_raw_bus_if.req_ready;
+      end
+    end
     wire [GEMM_WR_LANE_COUNT_W-1:0] gemm_wr_lane_push
-        = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready
+        = (psum_wr_reserve
             ? GEMM_WR_LANE_COUNT_W'(GEMM_PSUM_LANES) : '0)
-        + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready
+        + (final_wr_reserve
             ? GEMM_WR_LANE_COUNT_W'(GEMM_OUTPUT_LANES) : '0);
     wire [GEMM_WR_LANE_COUNT_W-1:0] gemm_wr_lane_pop
         = GEMM_WR_LANE_COUNT_W'($countones(gemm_wr_lane_fire));
@@ -680,9 +699,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     initial begin
       if (`LMEM_NUM_PORTS < 8)
         $fatal(1, "%s: GEMM_NAIVE requires at least eight LMEM ports", INSTANCE_ID);
-      if (GEMM_INPUT_LANES != 8 || GEMM_SZ_LANES != 8
-       || GEMM_OUTPUT_LANES != 8)
-        $fatal(1, "%s: GEMM_NAIVE Input/SZ/Output paths must each be 64 bytes", INSTANCE_ID);
+      if ((GEMM_INPUT_LANES != 4 && GEMM_INPUT_LANES != 8)
+       || GEMM_SZ_LANES != GEMM_INPUT_LANES
+       || GEMM_OUTPUT_LANES != GEMM_INPUT_LANES)
+        $fatal(1, "%s: GEMM_NAIVE requires matching 32-byte or 64-byte Input/SZ/Output paths", INSTANCE_ID);
       if ((WEIGHT_ROW_BYTES % LSU_WORD_SIZE) != 0
        || (GEMM_WEIGHT_LANES != (`MXU_WLOAD_NUM * WEIGHT_ROW_LANES)))
         $fatal(1, "%s: invalid GEMM_NAIVE Weight shape bytes=%0d lanes=%0d wload=%0d row_lanes=%0d",
@@ -766,7 +786,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     end
 
 
-    // A 128-byte PSUM request contains sixteen 64-bit lanes. Each physical
+    // A native PSUM request contains GEMM_PSUM_LANES words. Each physical
     // LMEM port serves lanes i and i+LMEM_NUM_PORTS. Write and read remain on
     // separate paths so the bank xbar can enforce write > read > normal.
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_psum_lane_arb
@@ -910,17 +930,16 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign psum_wr_marked_bus_if.rsp_ready = psum_wr_wide_bus_if.rsp_ready;
 
     // Keep reads behind every queued write that targets the same physical
-    // 16-bank set. The GEMM-unit gate covers only a write generated in the
+    // bank set. The GEMM-unit gate covers only a write generated in the
     // current cycle; these counters extend ordering across the write queue.
-    // Each write remains pending until all sixteen marked narrow lanes complete
+    // Each write remains pending until all marked narrow lanes complete
     // their downstream PSUM request handshakes.
     // A set may accumulate more than seven complete 16-lane writes while the
     // downstream LMEM arbiter is busy.  Use the authoritative aggregate
     // pending-counter width so 8*16 cannot alias to "empty" and admit a stale
     // PSUM read before those writes reach LMEM.
     logic [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_pending_by_set [2];
-    wire psum_wr_pending_push = psum_wr_raw_bus_if.req_valid
-                              && psum_wr_raw_bus_if.req_ready;
+    wire psum_wr_pending_push = psum_wr_reserve;
     wire [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_lane_push_by_set [2];
     assign psum_wr_lane_push_by_set[0] = (psum_wr_pending_push
         && ~psum_wr_raw_bus_if.req_data.addr[0])

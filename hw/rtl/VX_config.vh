@@ -1530,8 +1530,8 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_FSM_MT 128
 `define GEMM_FSM_NT 128
 `define GEMM_FSM_KT 128
-`define GEMM_FSM_MXU_KT 32
-`define GEMM_FSM_MXU_NT 32
+`define GEMM_FSM_MXU_KT `MXU_ROW
+`define GEMM_FSM_MXU_NT `MXU_COL
 `endif
 
 // Output scaling mode (uncomment to enable FP16 output scaling)

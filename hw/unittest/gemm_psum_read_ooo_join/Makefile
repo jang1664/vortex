@@ -21,7 +21,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 	$(RTL_DIR)/libs/VX_fifo_queue.sv \
 	$(RTL_DIR)/core/gemm/VX_gemm_psum_read_ooo_join.sv
 
-INCDIRS_ := $(VORTEX_HOME)/build/hw $(VORTEX_HOME)/hw $(RTL_DIR) \
+INCDIRS_ := $(ROOT_DIR)/hw $(VORTEX_HOME)/hw $(RTL_DIR) \
 	$(RTL_DIR)/core/gemm
 DEFINES_ := SIMULATION NDEBUG
 CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
