@@ -1,0 +1,2 @@
+source configs/naive_gemm_th16_tcol16_hwexp_dcache_sxbar_f16.sh
+export CONFIGS
