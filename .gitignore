@@ -87,6 +87,8 @@ simv.vdb/
 /agent-tasks/**/execution/
 /agent-tasks/**/results/
 /agent-tasks/**/logs/
+# Raw simulation evidence (ooc workspaces are covered by agent-tasks/.gitignore).
+/agent-tasks/**/evidence/
 /agent-tasks/**/*.fsdb*
 /agent-tasks/**/*.vcd
 /agent-tasks/**/*.vpd
