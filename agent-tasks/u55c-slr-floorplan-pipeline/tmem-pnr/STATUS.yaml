@@ -1,0 +1,92 @@
+task: tmem-pnr
+state: completed_timing_not_met
+scope: Fresh source-based URAM and BRAM PnR, with user updates every 30 minutes.
+monitoring_interval_seconds: 1800
+postfix: spread_v1
+log:
+  - timestamp: "2026-09-08 21:54"
+    attempted: Checked configs, tool availability, free memory/disk, and prior source-based runner.
+    result: Both configs are ready; launching independent builds with exact configs sourced before configure and run_hw.sh.
+    learned: Record inherited base configs and the dirty RTL diff, not just git HEAD. Existing simulation evidence is focused VCS only, not a new exact-config blackbox run.
+  - timestamp: "2026-09-08 21:55"
+    attempted: Launched both independent source-based hardware builds after fresh configure.
+    result: Both runner processes are alive in IP generation/kernel packaging. Verified TMEM_USE_URAM=1/0 and requested directives in build startup. Next scheduled status update is approximately 22:25 KST.
+    learned: Historical preparation/verification builds are preserved; current outputs use spread_v1 in fresh build_timing_cuts_pnr roots.
+  - timestamp: "2026-09-08 22:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both runners alive; URAM block synthesis 141/144 jobs complete, BRAM 142/144. No terminal errors; disk free 250.2 GiB. Placement/routing has not started.
+    learned: Main synthesis runs are not yet visible in prj.runs; use the Vitis block-synthesis progress lines for the current stage.
+  - timestamp: "2026-09-08 22:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both runners alive with 143/144 block synthesis jobs complete and one running. No terminal errors; disk free 249.6 GiB. Placement/routing has not started.
+    learned: Both variants are still waiting on their final block-level synthesis job; no retry or configuration change is warranted from this status alone.
+  - timestamp: "2026-09-08 23:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: URAM synthesis completed at 23:17:20 and BRAM at 23:17:39. Both are in impl_1 init_design with live runners and no terminal errors; disk free 247.3 GiB.
+    learned: Source-based synthesis passed for both variants; final physical mapping and implementation closure remain to be checked after completion.
+  - timestamp: "2026-09-08 23:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs advanced to impl_1 opt_design. No terminal errors; disk free 245.4 GiB.
+    learned: Initialization completed; placement and final timing evaluation remain ahead.
+  - timestamp: "2026-09-09 00:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs reached place_design. URAM is in Phase 1.1 netlist sorting; BRAM is in Phase 1.2 IO/clock placement and device setup. No terminal errors; disk free 243.5 GiB.
+    learned: opt_design completed and placement started for both memory implementations.
+  - timestamp: "2026-09-09 00:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both runners alive in placement Phase 2.5 Global Place Phase1, after floorplanning and physical synthesis. No terminal errors; disk free 243.4 GiB.
+    learned: Both implementations have progressed beyond placer initialization; no intermediate timing claim was made.
+  - timestamp: "2026-09-09 01:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs advanced to placement Phase 2.6.2 Physical Synthesis In Placer. No terminal errors; disk free 245.5 GiB. Routing has not started.
+    learned: Global Place Phase1 finished in both variants; current optimization remains inside placement.
+  - timestamp: "2026-09-09 01:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs reached placement Phase 4.1.1 post-placement optimization. URAM is at BUFG insertion/physical-synthesis initialization; BRAM at post-placement timing optimization. No terminal errors; disk free 244.1 GiB.
+    learned: Placement is in its later optimization phases, but routing and final signoff have not begun.
+  - timestamp: "2026-09-09 02:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: URAM entered route_design at 02:22:42; BRAM is in phys_opt_design after placement. Both runners alive, no terminal errors, disk free 241.9 GiB.
+    learned: URAM has reached routing without a placement-hook failure; no routing or timing success is established yet.
+  - timestamp: "2026-09-09 02:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs are in route_design Phase 5.1 Global Iteration 0 after initial routing. No terminal errors; disk free 240.6 GiB.
+    learned: Both memory variants reached the iterative rip-up/reroute phase; legality and timing outcomes remain pending.
+  - timestamp: "2026-09-09 03:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both runners remain alive in route_design; the latest phase marker is still Global Iteration 0. No terminal result or errors; disk free 240.3 GiB.
+    learned: An unchanged coarse routing phase is not by itself evidence of a hang; continue the requested monitoring without intervention.
+  - timestamp: "2026-09-09 03:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: URAM remains in routing Global Iteration 0; BRAM advanced to Global Iteration 1 at 03:54:29. Both runners alive, no terminal errors; disk free 240.2 GiB.
+    learned: BRAM routing has advanced to another global iteration; neither route legality nor final timing is established yet.
+  - timestamp: "2026-09-09 04:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: URAM reached routing Global Iteration 2; BRAM reached Phase 6.1 Delay CleanUp after global iterations. Both runners alive, no terminal errors; disk free 237.7 GiB.
+    learned: BRAM is in a later routing optimization phase, but this does not establish final route legality or timing closure.
+  - timestamp: "2026-09-09 04:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Both live runs reached routing Phase 16 Physical Synthesis in Router. URAM is at initialization; BRAM at critical-path optimization. No terminal errors; disk free 237.7 GiB.
+    learned: Both progressed past post-router timing into router-internal optimization; final legality/timing and binary generation are still pending.
+  - timestamp: "2026-09-09 05:25"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: Vitis reports FPGA routing finished for URAM at 05:04:22 and BRAM at 05:11:28, followed by Starting bitstream generation. Both runners remain alive, no xclbin yet, no terminal errors; disk free 237.4 GiB.
+    learned: The last impl begin marker still names route_design while downstream reporting/hooks finish; report the Vitis phase transition without claiming final timing closure or binary success.
+  - timestamp: "2026-09-09 05:55"
+    attempted: Scheduled 30-minute read-only status snapshot.
+    result: URAM reached write_bitstream after post-route physical optimization. BRAM is in post_route_phys_opt_design. Both runners alive, no terminal errors or xclbin yet; disk free 235.5 GiB.
+    learned: The hardware builds are nearing binary generation, but final reports must still be inspected after terminal completion.
+  - timestamp: "2026-09-09 06:25"
+    attempted: Final scheduled snapshot; stopped the recurring timer once both runs were terminal.
+    result: Both builds returned 0 and generated xclbin files. URAM finished 06:10:00; BRAM finished 06:20:33.
+    learned: Build success still requires explicit achieved-clock and timing checks.
+  - timestamp: "2026-09-09 06:28"
+    attempted: Inspected final clock information, post-route-physopt timing, route status, SLR-hook logs, and memory hierarchy utilization.
+    result: Routing errors 0 and hold violations 0 for both. Requested 100 MHz was not met; URAM achieved 88.4 MHz with WNS -1.304 ns, BRAM 95.4 MHz with WNS -0.472 ns. TMEM mapped to 64 URAM versus 128 RAMB36 as intended.
+    learned: Both worst setup paths are operand-collector pipe_reg2 to out_buf, with approximately 98 percent routing delay. No fix or retry was attempted. See results.md.
+pitfalls:
+  - Do not retry automatically or change RTL/directives after a failed run.
+  - A routing-success result is not timing signoff; check final setup and hold.
+  - Existing user and other users' hardware runs must not be interrupted.
+  - Vitis can produce xclbin files with an achieved frequency below the requested 100 MHz; exit code 0 does not establish target timing closure.
+  - Optional report-copy failures were ignored by the Makefile; use the existing implementation reports rather than treating these warnings as a PnR failure.

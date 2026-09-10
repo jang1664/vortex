@@ -1,0 +1,44 @@
+task: tmem-placement-exploration
+state: complete
+scope: Prepare URAM/BRAM configurations and memory selection; do not launch synthesis or PnR.
+log:
+  - timestamp: "2026-09-08 21:29"
+    status: in_progress
+    attempted: Inspected TMEM mapping, configuration macros, XRT directive validation, and focused tests.
+    result: TMEM forces URAM and the XRT Makefile rejects SSI_SpreadSLLs. Existing HBM4/TMEM8 config is untracked user work and will be preserved.
+    learned: GEMM_SLR_PIPELINE is presence-based, while the new TMEM selection must be numeric.
+  - timestamp: "2026-09-08 21:35"
+    status: pass
+    attempted: Verification iteration 1 using verify_rtl.py and VCS in three fresh configured builds.
+    result: A2, B2, and the original default config all passed the tensor_mem_bank unit test; selected SRAM parameters were 1, 0, and 1 respectively.
+    learned: The new config macro reaches the bank and SRAM instance; behavioral tests do not prove primitive mapping.
+  - timestamp: "2026-09-08 21:36"
+    status: test_fix
+    attempted: Ran all 14 XRT ini/build-option integration tests with the A2 config sourced.
+    result: 13 passed. The existing absent-gate-default fixture inherited the new config's CONGESTION_FAIL_FAST=0 and incorrectly expected default 1.
+    fix: Isolated CONGESTION_FAIL_FAST from the fixture environment when checking Makefile defaults; rerunning the full suite.
+    learned: Source-config exports must not override an absent-setting default fixture. No production hook or early-fail behavior was changed.
+  - timestamp: "2026-09-08 21:38"
+    status: pass
+    attempted: Reran all XRT ini/build-option regressions and six plain-Tcl hook fixture scripts; prepared actual A2/B2 v1 ini targets in their independent configured builds.
+    result: All 14 Python tests passed in 155.037 seconds. Tcl fixtures passed 59, 24, 22, 13, 89, and 25 checks. Both generated ini files request 100 MHz, SSI_SpreadSLLs, AlternateCLBRouting, and full-SLR hooks without subdirectives or ultrathreads. git diff --check passed.
+    learned: A2/B2 can be launched with the README commands. Physical mapping and PnR closure remain intentionally untested; no synthesis, PnR, DCP retry, or blackbox was launched.
+  - timestamp: "2026-09-08 21:42"
+    status: pass
+    attempted: Renamed experiment configs and current documentation from a2/b2 to uram/bram, updated the integration fixture, and configured fresh matching build roots.
+    result: Renamed-config integration test passed in 8.884 seconds; shell syntax and git diff checks passed. Both newly named build roots have generated 100 MHz ini files with unchanged directives and hooks. No RTL behavior changes or hardware builds.
+    learned: Historical a2/b2 verification directories and log entries remain intact as evidence; current launch commands use uram/bram exclusively.
+artifacts:
+  - build_tmem_exploration_verify_uram/ini_prepare.log
+  - build_tmem_exploration_verify_bram/ini_prepare.log
+  - build_tmem_placement_exploration/ini_tests.log
+  - build_tmem_exploration_verify_a2/verification.json
+  - build_tmem_exploration_verify_b2/verification.json
+  - build_tmem_exploration_verify_default/verification.json
+  - build_tmem_exploration_verify_a2/ini_prepare.log
+  - build_tmem_exploration_verify_b2/ini_prepare.log
+pitfalls:
+  - Defining GEMM_SLR_PIPELINE=0 still enables its ifdef paths.
+  - Do not infer physical RAM mapping or PnR closure from behavioral simulation.
+  - Configure-generated Makefiles and scripts must be refreshed before build-side tests.
+  - The gate-default integration fixture must remove inherited CONGESTION_FAIL_FAST.
