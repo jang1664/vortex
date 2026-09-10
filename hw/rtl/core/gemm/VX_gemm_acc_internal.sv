@@ -270,7 +270,7 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
                 .DATAW    (`MXU_COL * FP32_WIDTH),
                 .SIZE     (`GEMM_ACC_MEM_DEPTH),
                 .OUT_REG  (1),
-                .USE_URAM (1),
+                .USE_URAM (`GEMM_ACC_USE_URAM),
                 .RDW_MODE ("R")
             ) VX_sp_ram_instance (
                 .clk   (clk),

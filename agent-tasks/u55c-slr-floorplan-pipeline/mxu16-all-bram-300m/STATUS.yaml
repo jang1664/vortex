@@ -1,0 +1,19 @@
+task: mxu16-all-bram-300m
+state: pnr_running
+config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_300m.sh
+scope: Fresh source PnR of the same MXU16/HBM4/DMA4/TMEM8 all-BRAM profile at300MHz; no RTL change or DCP retry.
+log:
+  - timestamp: "2026-09-10 11:21 KST"
+    status: running
+    attempted: Added300MHz config wrapper, verified identical RTL/options to100MHz profile, checked tools/syntax and launched fresh source PnR.
+    result: Runner PID141988; metadata derives actual clock from sourced config. Original100MHz config remains unchanged.
+physical_run:
+  runner_pid: 141988
+  postfix: spread_v1
+  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/state.json
+  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/build.log
+pitfalls:
+  - CLOCK_FREQ_HZ is historically named but expressed in MHz in this flow.
+  - Config sourcing overrides the wrapper's initial100MHz default.
+  - The100MHz baseline passed with only3ps setup margin;300MHz closure is not assumed.
+  - Preserve existing physical outputs; do not automatically retry or fix RTL.

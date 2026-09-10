@@ -1,0 +1,26 @@
+task: Read-only HBM4/TMEM8 routed-error DCP congestion diagnosis
+state: complete
+scope:
+  modify_rtl: false
+  modify_constraints: false
+  run_implementation: false
+  write_checkpoint: false
+  objective: Identify exact conflicting physical resources, endpoint placements and floorplan constraints; assess possible floorplan remedies.
+evidence_directory: build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis
+pitfalls:
+  - Overall SLL utilization does not establish local routability.
+  - Architectural SLR ownership must be distinguished from actual optimized endpoint placements.
+  - Failed-route timing is diagnostic only, not signoff.
+  - Vivado Tcl lacks redirect in this environment; use Tcl file handles for diagnostic text.
+  - get_nets -segments -of_objects with a net object returned no segments; pass the net object as the positional pattern or query leaf pins directly.
+  - Error net D[243] aliases logical payload246 Q-to-D; do not infer pin identity from optimized net names.
+  - Empty Laguna BELs do not imply free SLL wires; neighboring X52 column is fully occupied despite empty examined BELs.
+log:
+  - timestamp: '2026-09-08 16:31'
+    result: Started read-only analysis at user request. Located611MiB routed-error DCP and verified448GiB available memory. No implementation retry authorized.
+  - timestamp: '2026-09-08 16:41'
+    result: DCP loaded in seven minutes. Corrected diagnostic Tcl output and net-segment lookup without reopening or modifying design. Both error nets resolve to one shared UBUMP21 routing node.
+  - timestamp: '2026-09-08 16:49'
+    result: Confirmed opposite-direction SLR0/SLR1 conflict, correct endpoint ownership and no endpoint LOC/BEL fixing. Full boundary inventory found12974/23040 used SLL nodes, but X40 is1411/1440 and adjacent X52 is1440/1440. The collision tile is24/24 with25 users. X23/X31 has1608 free SLL nodes. Recomputed diagnostic WNS-3.409ns and WHS-0.220ns; collision paths themselves have positive setup/hold. Wrote analysis.md with bounded floorplan candidates and separate SLR1-control timing risk. No implementation or RTL changes performed.
+  - timestamp: '2026-09-08 16:52'
+    result: Closed design and Vivado exited0. Original DCP timestamp remained13:45; no checkpoint written. Read-only diagnosis complete; floorplan proposals are untested and no100MHz closure is claimed.

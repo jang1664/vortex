@@ -272,6 +272,10 @@
 `define LMEM_LOG_SIZE   21
 `endif
 
+`ifndef LMEM_USE_URAM
+`define LMEM_USE_URAM 1          // 0: BRAM, 1: URAM
+`endif
+
 `ifndef LMEM_BASE_ADDR
 `define LMEM_BASE_ADDR  `STACK_BASE_ADDR
 `endif
@@ -1367,6 +1371,9 @@ for block_size in range(1, full_bitwidth+1):
 `ifndef GEMM_ACC_MEM_DEPTH
 `define GEMM_ACC_MEM_DEPTH 1024
 `endif
+`ifndef GEMM_ACC_USE_URAM
+`define GEMM_ACC_USE_URAM 1      // 0: BRAM, 1: URAM
+`endif
 `define GEMM_ACC_MEM_BANK_NUM 4
 `define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM)
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
@@ -1389,6 +1396,10 @@ for block_size in range(1, full_bitwidth+1):
 `endif
 `ifndef TMEM_BANK_SIZE
 `define TMEM_BANK_SIZE (64 * 1024) // 64KB
+`endif
+// Numeric selection for TMEM SRAM only; ACC and local memory are independent.
+`ifndef TMEM_USE_URAM
+`define TMEM_USE_URAM 0           // 0: BRAM, 1: URAM
 `endif
 
 `ifndef MISALIGN_PACK_BYTES

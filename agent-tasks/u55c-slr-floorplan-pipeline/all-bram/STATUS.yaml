@@ -1,0 +1,114 @@
+task: all-bram
+state: completed_timing_not_met
+log:
+  - timestamp: "2026-09-09 10:55 KST"
+    status: in_progress
+    attempted: Audited all hard-coded URAM SRAM users and prior PnR resource reports.
+    result: Confirmed TMEM, active and legacy ACC, and core local memory scope. User authorized BRAM adoption and an all-BRAM experiment.
+    learned: Remaining 92 URAMs are in SLR1; converting them may create high BRAM occupancy despite reducing URAM placement constraints.
+pitfalls:
+  - Preserve registered read latency and read-during-write mode.
+  - Numeric memory macros differ from presence-based GEMM_SLR_PIPELINE.
+  - Behavioral simulation does not establish physical primitive mapping.
+  - Do not overwrite completed baseline artifacts or retry PnR automatically.
+  - Configure must execute inside the build directory, not the source root.
+verification:
+  - timestamp: "2026-09-09 11:06 KST"
+    status: pass
+    attempted: Four-case fpint GEMM blackbox through ci/run_black.sh xrt-vcs-sim with exact all_bram config and tracing.
+    result: Smoke, overlap, QROW, and odd-tail all passed; wrapper exits zero, no strict trace failures, response slot accounting balanced. First case including compilation took 100 seconds; no timeout extension required.
+    learned: Integrated GEMM with the changed local-memory and ACC selections preserves tested functionality. This is not a performance A/B or physical mapping proof.
+    artifacts:
+      - build_all_bram_verify_v1/evidence/summary.json
+      - build_all_bram_verify_v1/blackbox_runner.log
+  - timestamp: "2026-09-09 11:03 KST"
+    iteration: 1
+    status: pass
+    attempted: Legacy GEMM unit verification with ACC BRAM and URAM selections through verify_rtl.py.
+    result: Both legacy checks passed; total seven focused VCS checks passed. Started four-case fpint GEMM xrt-vcs-sim through run-bb-common wrapper in build_all_bram_verify_v1 with 300-second per-case timeout.
+    learned: Both legacy and active ACC implementations retain tested behavior after selection forwarding.
+    artifacts:
+      - build_all_bram_unit_verify/gemm_unit.verify.json
+      - build_tmem_only_unit_verify/gemm_unit.verify.json
+  - timestamp: "2026-09-09 11:01 KST"
+    iteration: 1
+    status: pass
+    attempted: VCS tensor_mem_bank and gemm_unit_v2_backpressure in all-BRAM and TMEM-only BRAM configured builds; omitted-TMEM default tensor check; all ini integration tests.
+    result: Five focused VCS checks passed. All 14 ini integration tests passed in 156.615 seconds. Legacy ACC tests remain running.
+    learned: The omitted macro selects TMEM BRAM; both ACC selections preserve tested transaction ordering and backpressure behavior. Behavioral tests do not establish primitive mapping.
+    artifacts:
+      - build_all_bram_unit_verify/tensor_mem_bank.verify.json
+      - build_all_bram_unit_verify/gemm_unit_v2_backpressure.verify.json
+      - build_tmem_only_unit_verify/tensor_mem_bank.verify.json
+      - build_tmem_only_unit_verify/gemm_unit_v2_backpressure.verify.json
+      - build_tmem_default_unit_verify/tensor_mem_bank.verify.json
+      - build_all_bram_verify_v1/ini_tests.log
+implementation:
+  timestamp: "2026-09-09 10:59 KST"
+  result: Added numeric ACC/local-memory mapping macros; made TMEM default BRAM; added all_bram config and extended ini integration regression to three variants.
+  compatibility: Memory dimensions, byte enables, read-first behavior, and registered latency are unchanged. ACC and local-memory defaults remain URAM outside the experiment.
+  setup_issue: First configure attempt used source-root cwd and stopped at missing relative config before configure ran. Retried from build_all_bram_verify_v1 successfully.
+physical_run:
+  launched: "2026-09-09 11:06 KST"
+  runner_pid: 2204520
+  config: configs/improve_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram.sh
+  postfix: spread_v1
+  monitoring_interval_seconds: 1800
+  state_file: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/state.json
+  log: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/build.log
+  result: Started a fresh source-based configure/synthesis/PnR run; no DCP retry. Initial snapshot confirms runner alive and configuring.
+monitoring:
+  - timestamp: "2026-09-09 20:06 KST"
+    status: complete
+    result: Build finished 19:52:17 with exit0 and generated xclbin. Routing errors0, achieved95.8MHz, final10ns WNS-0.437ns, TNS-70.680ns, 603 setup failures, WHS+0.004ns, hold failures0. URAM0 and BRAM1249.5; SLR1 BRAM570/672. Monitoring ended; comparison recorded in results.md.
+  - timestamp: "2026-09-09 19:36 KST"
+    status: running
+    result: Optional post-route physical optimization finished; write_bitstream active. Final xclbin absent, runner alive, no recent terminal errors. Disk free 217.4 GiB.
+  - timestamp: "2026-09-09 19:06 KST"
+    status: running
+    result: Vitis reports FPGA routing completed and bitstream generation starting at 18:44:36. Implementation marker still route_design; runner alive and final xclbin absent. No recent terminal errors. Disk free 222.3 GiB.
+  - timestamp: "2026-09-09 18:36 KST"
+    status: running
+    result: route_design advanced past reroute iterations into post-processing and Phase 15 Physical Synthesis in Router. No recent terminal errors; build not complete. Disk free 224.4 GiB.
+  - timestamp: "2026-09-09 18:06 KST"
+    status: running
+    result: route_design advanced to Global Iteration 5 at 18:05:33. No recent terminal errors; routing and final timing unresolved. Disk free 224.7 GiB.
+  - timestamp: "2026-09-09 17:52 KST"
+    status: running
+    result: Continued monitoring at user request; queued snapshot ran after turn resumed. route_design advanced through Global Iterations 1 and 2 to 3 (17:46:31). No recent terminal errors. Disk free 224.7 GiB; next scheduled check 18:06 KST.
+  - timestamp: "2026-09-09 17:06 KST"
+    status: running
+    result: route_design still Global Iteration 0. Read-only implementation log tail confirms active progress reducing overlapped nodes (latest 43); Vivado using CPU. No terminal failure. Disk free 225.0 GiB.
+  - timestamp: "2026-09-09 16:36 KST"
+    status: running
+    result: route_design remains in Global Iteration 0; no stage change or recent terminal error. Runner alive. Disk free 225.1 GiB.
+  - timestamp: "2026-09-09 16:06 KST"
+    status: running
+    result: route_design, Phase 5 Rip-up And Reroute / 5.1 Global Iteration 0 after initial routing. No recent terminal errors. Disk free 224.9 GiB.
+  - timestamp: "2026-09-09 15:36 KST"
+    status: running
+    result: Placement finished; route_design active, Phase 2.4 Update Timing after global clock net routing. No recent terminal errors. Disk free 223.8 GiB.
+  - timestamp: "2026-09-09 15:06 KST"
+    status: running
+    result: place_design, post-placement timing optimization and Phase 4.1.1.4 Replication. No recent terminal errors; final routed timing not yet available. Disk free 225.1 GiB.
+  - timestamp: "2026-09-09 14:36 KST"
+    status: running
+    result: Detail Placement, Phase 3.2 Commit Most Macros and LUTRAMs. No recent terminal errors. Disk free 226.2 GiB.
+  - timestamp: "2026-09-09 14:06 KST"
+    status: running
+    result: place_design, latest Phase 2.5 Global Place Phase1 after floorplanning and timing updates. No recent terminal errors; routing not started. Disk free 226.3 GiB.
+  - timestamp: "2026-09-09 13:36 KST"
+    status: running
+    result: place_design active, Phase 2 Global Placement / 2.1 Floorplanning. Synthesis and opt stages passed; no recent terminal errors. Disk free 227.4 GiB.
+  - timestamp: "2026-09-09 13:06 KST"
+    status: running
+    result: opt_design marker active; recent log shows post-processing and final netlist connectivity verification. No recent terminal errors. Disk free 226.5 GiB.
+  - timestamp: "2026-09-09 12:36 KST"
+    status: running
+    result: Synthesis completed at 12:21:44; implementation started, current marker init_design. No recent terminal errors. Disk free 226.7 GiB.
+  - timestamp: "2026-09-09 12:06 KST"
+    status: running
+    result: Block-level synthesis remains at 143/144 complete, one running. Runner alive; no recent terminal errors. No placement/routing result yet. Disk free 228.1 GiB.
+  - timestamp: "2026-09-09 11:36 KST"
+    status: running
+    result: Block-level synthesis 143/144 jobs complete; one running. No terminal error in recent log; implementation not started. Disk free 229.3 GiB.

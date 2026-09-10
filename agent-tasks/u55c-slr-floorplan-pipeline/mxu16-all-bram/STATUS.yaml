@@ -1,0 +1,42 @@
+task: mxu16-all-bram
+state: complete
+config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh
+log:
+  - timestamp: "2026-09-10 01:54 KST"
+    status: pass
+    attempted: Resumed monitoring at user request and checked final binary, timing, routing, utilization and SLR hook reports.
+    result: Build finished01:40:36 with exit0. Achieved100MHz, WNS+0.003ns, TNS0, setup failures0, WHS+0.004ns, hold failures0. Routing errors0. BRAM991.5tiles, URAM0. All three SLR marked-group/FF-pair hook checks passed. Monitoring ended.
+    learned: This physical run meets100MHz but setup margin is only3ps; success does not guarantee closure after RTL or placement changes. No new exact-profile simulation was run.
+  - timestamp: "2026-09-09 23:58 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: place_design active, Phase3.6 Pipeline Register Optimization after detailed placement. No recent terminal errors; disk free210.6GiB.
+  - timestamp: "2026-09-09 23:28 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: place_design active, Phase2.2 Physical Synthesis After Floorplan. No recent terminal errors; disk free209.5GiB.
+  - timestamp: "2026-09-09 22:58 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: Synthesis completed22:37:08, implementation active at opt_design. No recent terminal errors; disk free210.2GiB.
+  - timestamp: "2026-09-09 22:28 KST"
+    status: running
+    attempted: Scheduled read-only monitoring after configure and generated-INI verification.
+    result: Block synthesis143/144 complete, one running; no recent terminal errors. Actual INI confirms100MHz, four HBM port mappings, full-SLR hooks and selected directives. Disk free211.0GiB.
+  - timestamp: "2026-09-09 21:58 KST"
+    status: running
+    attempted: Added config wrapper, checked shell syntax, expanded memory/geometry/directive settings, verified required tools, and launched fresh source PnR.
+    result: Runner PID742092 started. Full-SLR, 100MHz, SSI_SpreadSLLs, AlternateCLBRouting; all three memory selects0. No RTL edits or DCP retry.
+    learned: Existing base config already supplies four HBM/DMA channels and eight paired 32B TMEM arrays; only memory mapping and placement directive require overrides.
+physical_run:
+  runner_pid: 742092
+  postfix: spread_v1
+  monitoring_interval_seconds: 1800
+  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/state.json
+  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/build.log
+pitfalls:
+  - Source the exact config before configuring a fresh build directory.
+  - Preserve existing dirty worktree and prior physical results.
+  - GEMM_SLR_PIPELINE is presence-based; memory selections are numeric.
+  - A generated xclbin does not by itself establish 100MHz setup closure.
+  - Historical simulation is not an exact-profile all-BRAM simulation pass.

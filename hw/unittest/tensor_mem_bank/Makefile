@@ -29,6 +29,7 @@ INCDIRS_ := $(RTL_DIR) \
             $(RTL_DIR)/libs \
             $(RTL_DIR)/mem
 DEFINES_ := SIMULATION NDEBUG
+DEFINES_ += $(patsubst -D%,%,$(filter -D%,$(CONFIGS)))
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log

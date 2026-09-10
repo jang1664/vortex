@@ -1,0 +1,114 @@
+task: TH32 t4/t8 and HBM4/TMEM8 timing-cut source PnR rerun
+state: completed_with_failures
+scope:
+  configs:
+    - configs/improve_th32_tcol32_m32_t4_bigmem.sh
+    - configs/improve_th32_tcol32_m32_t8_bigmem.sh
+    - configs/improve_th32_tcol32_m32_bigmem_hbm4_tmem8.sh
+  source_commit: 6ba2e16a
+  postfix: slr_v3
+  clock_mhz: 100
+  timing_cuts: 1
+  wload_num: 4
+  full_slr_floorplan: true
+  place_directive: Explore
+  route_directive: AlternateCLBRouting
+  implementation_ultrathreads: false
+  congestion_early_fail: false
+  source_synthesis: true
+  dcp_retry: false
+  automatic_retry: false
+monitoring:
+  interval_seconds: 3600
+  next_check: null
+  stopped: '2026-09-08 14:20'
+  user_summary: brief stage and terminal result per config every hour
+  completion_requires: terminal build status, artifact existence, requested clock outcome
+evidence:
+  t4: build_timing_cuts_pnr_artifacts/th32_t4_slr_v3/state.json
+  t8: build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/state.json
+  hbm4_tmem8: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/state.json
+terminal_results:
+  th32_hbm4_tmem8:
+    finished: '2026-09-08 13:46'
+    returncode: 2
+    xclbin_exists: false
+    outcome: failed_routing_verification
+    node_overlaps: 1
+    error: 'VPL 35-2: Design is not legally routed; VPL 18-1000: partially-conflicted nets'
+    conflicted_nets:
+      - level0_i/ulp/hmss_0/inst/path_12/slice0_12/inst/w15.w_multi/triple_slr.fwd.slr_middle/Q[122]
+      - level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_input_req_reservation/u_slr/u_response/g_slr.u_link/u_tx/D[243]
+    evidence_log: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/build.log
+    note: One residual overlap still invalidates routing. This does not establish timing closure or guarantee an easy retry. No DCP inspection or retry performed.
+  th32_t8:
+    finished: '2026-09-08 10:21'
+    returncode: 2
+    xclbin_exists: false
+    outcome: failed_routing_verification
+    node_overlaps: 4408
+    error: 'VPL 35-2: Design is not legally routed; VPL 18-1000: partially-conflicted nets'
+    representative_conflicted_hierarchy: dcache/g_cache_wrap[0].cache_wrap/g_bypass.cache_bypass/mem_bus_out_arb/req_arb
+    evidence_log: build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/build.log
+    note: Representative first-ten conflicted nets do not establish the complete root cause. No retry or implementation changes performed.
+  th32_t4:
+    finished: '2026-09-08 06:54'
+    returncode: 0
+    xclbin_exists: true
+    requested_clock_mhz: 100
+    achieved_clock_mhz: 100
+    final_wns_ns: 0.003
+    final_tns_ns: 0.000
+    final_whs_ns: 0.004
+    final_ths_ns: 0.000
+    routing_errors: 0
+    evidence_root: build_timing_cuts_pnr_th32_t4_slr_v3/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v3_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+    frequency_report: bin/vortex_afu.xclbin.info
+    timing_report: _x/link/vivado/vpl/prj/prj.runs/impl_1/hw_bb_locked_timing_summary_postroute_physopted.rpt
+pitfalls:
+  - Historical simulation gates predate some current config changes; no new exact-config simulation pass is claimed by this physical runner.
+  - Previous t4 built an xclbin at only 92.2 MHz; artifact generation does not imply 100 MHz closure.
+  - Previous t8 failed routing congestion; do not silently retry or change directives.
+  - User changed reports to every hour at00:16KST; the original two launch state files retain the previous1800-second launch metadata, but the active monitor uses3600seconds.
+  - Startup platforminfo printed duplicate platform-search diagnostics, but emconfigutil resolved the intended U55C XPFM and both builds progressed into IP generation; this is not treated as a terminal failure.
+log:
+  - timestamp: '2026-09-07 23:07'
+    result: User requested fresh source PnR for both TH32 configs and half-hourly summaries. Verified tool/platform availability, existing runs absent, approximately 297 GiB disk and 400 GiB available memory. Preserve prior outputs with separate configured builds and postfix slr_v3.
+  - timestamp: '2026-09-07 23:10'
+    result: Both fresh configure steps passed. Launched run_hw.sh with the exact source config, postfix slr_v3, --slr-floorplan 1 and --no-early-fail. t4 runner/build PIDs 2430531/2435311; t8 2430756/2435834. Both reached Vivado IP generation/kernel packaging. Next routine log snapshot at23:40KST, then every30minutes. No RTL or config changes and no implementation retry.
+  - timestamp: '2026-09-07 23:40'
+    result: Both runners alive and block-level synthesis progressing. Latest t4 progress142/144 jobs complete,2 running; t8 progress137/156 complete,6 running. No terminal build result, no xclbin yet, and no errors in the recent log tails. No intervening DCP inspection or implementation changes. Next check00:10KST.
+  - timestamp: '2026-09-08 00:10'
+    result: Both runners alive with one block synthesis job remaining per config; t4 at143/144, t8 at155/156. Recent log tails contain no errors. No xclbin or terminal return code yet. Next check00:40KST.
+  - timestamp: '2026-09-08 00:16'
+    result: User requested adding HBM4/TMEM8 and hourly reports. Stopped only the30-minute monitoring timer, not either physical build. Existing runners remain alive at143/144 and155/156 block jobs. The new config has timing cuts but no SLR macro/floorplan setting; asked whether to add full-SLR settings or preserve non-SLR before launching it. Generalized the launch helper to accept an exact source config and honor its SLR setting. Next routine report01:20KST.
+  - timestamp: '2026-09-08 00:28'
+    result: User explicitly approved matching full-SLR settings for HBM4/TMEM8. Added GEMM_SLR_PIPELINE, GEMM_SLR_FLOORPLAN=1, Explore/AlternateCLBRouting and ultrathreads0 to that config only. Shell syntax and actual Tcl geometry check passed, selecting bank_select for eight64B TMEM arrays/four64B HBM-DMA channels. Fresh configure passed; run_hw.sh launched00:27:53 with postfix slr_v3 and --no-early-fail. Runner/build PIDs3327700/3331991. Startup output confirms full-SLR enabled. Existing t4/t8 builds were not restarted. All three are in the hourly monitor; next report01:20KST.
+  - timestamp: '2026-09-08 01:20'
+    result: All three runners alive. TH32/t4 and t8 passed synthesis and reached impl_1 opt_design. HBM4/TMEM8 remains at143/144 block synthesis jobs completed with one running. No terminal result, xclbin, or recent log-tail errors. No DCP inspection or runtime implementation changes. Next hourly check02:20KST.
+  - timestamp: '2026-09-08 02:20'
+    result: All three runners alive. TH32/t4 at place_design Global Place Phase1; t8 at place_design Partition Driven Placement. HBM4/TMEM8 passed synthesis at01:56:37 and reached init_design. No terminal result, xclbin, or recent log-tail errors. Next hourly check03:20KST.
+  - timestamp: '2026-09-08 03:20'
+    result: All three runners alive in place_design. TH32/t4 reached post-placement optimization Phase4.1.1; t8 reached detailed placement Slice Area Swap Phase3.3.2.1; HBM4/TMEM8 reached global-placement floorplanning Phase2.1. No terminal result, xclbin, or recent log-tail errors. Next hourly check04:20KST.
+  - timestamp: '2026-09-08 04:20'
+    result: All three runners alive. TH32/t4 is routing in Rip-up And Reroute Global Iteration0; t8 is routing at timing/bus-skew update after clock routing; HBM4/TMEM8 is in detailed placement committing macros/LUTRAMs. No terminal result, xclbin, or recent log-tail errors. Next hourly check05:20KST.
+  - timestamp: '2026-09-08 05:20'
+    result: All three runners alive in route_design. TH32/t4 is at Rip-up And Reroute Global Iteration3, t8 at Global Iteration1, and HBM4/TMEM8 at timing update after global clock routing. No terminal result, xclbin, or recent log-tail errors. Next hourly check06:20KST.
+  - timestamp: '2026-09-08 06:20'
+    result: All three runners alive without terminal return codes or xclbins. TH32/t4 outer log reports FPGA routing finished and bitstream generation started05:56:37, despite latest run marker still being route_design. TH32/t8 latest log remains Global Iteration1 and HBM4/TMEM8 Global Iteration0. No recent log-tail errors. Do not infer 100MHz closure from t4 routing completion. Next hourly check07:20KST.
+  - timestamp: '2026-09-08 07:20'
+    result: TH32/t4 finished06:54:11 with returncode0 and xclbin. Final xclbin.info confirms100MHz requested/achieved; postroute-physopt summary has WNS+0.003ns/TNS0 and WHS+0.004ns/THS0 with all constraints met; routing errors0. A missing optional kernel-utilization report copy produced an ignored make warning, not a build failure. TH32/t8 and HBM4/TMEM8 runners remain alive in route_design, latest outer logs still Global Iteration1 and0 respectively. No DCP was opened. Next hourly check08:20KST.
+  - timestamp: '2026-09-08 08:20'
+    result: TH32/t4 remains complete at100MHz. TH32/t8 runner alive without terminal status; outer route log has not advanced past04:56 Global Iteration1. HBM4/TMEM8 advanced to Global Iteration1 at07:34 and Iteration2 at08:12. No new terminal result or recent log-tail errors for either pending run. Next hourly check09:20KST.
+  - timestamp: '2026-09-08 09:20'
+    result: TH32/t4 remains complete at100MHz. Both pending runners remain alive in route_design, with no terminal return code or xclbin. TH32/t8 and HBM4/TMEM8 outer logs remain at Global Iteration1 and2 respectively, unchanged since the previous check. No recent log-tail errors. Next hourly check10:20KST.
+  - timestamp: '2026-09-08 10:20'
+    result: TH32/t4 remains complete at100MHz. TH32/t8 advanced through route finalize, routed-net verification and route deposition to Post-Route Event Processing at10:13. HBM4/TMEM8 outer log remains Global Iteration2. Both pending runners remain alive without terminal return codes or xclbins; no recent log-tail errors. No timing-closure conclusion before final reports. Next hourly check11:20KST.
+  - timestamp: '2026-09-08 11:20'
+    result: TH32/t8 finished10:21:46 with returncode2 and no xclbin. Terminal log reports4408 node overlaps and partially-conflicted nets during routing verification; representative first-ten nets are in dcache bypass request arbitration. Preserved results without retry. TH32/t4 remains complete at100MHz. HBM4/TMEM8 runner remains alive in route_design Global Iteration2 with no terminal status or recent log-tail errors. Next hourly check12:20KST.
+  - timestamp: '2026-09-08 12:20'
+    result: TH32/t4 complete at100MHz and TH32/t8 failed routing verification remain unchanged. HBM4/TMEM8 advanced to route_design Global Iteration3 at12:01:37; runner alive without terminal return code or xclbin, and no recent log-tail errors. Next hourly check13:20KST.
+  - timestamp: '2026-09-08 13:20'
+    result: Terminal t4 success and t8 routing failure unchanged. HBM4/TMEM8 runner remains alive in route_design Global Iteration3; no new outer-log progress, recent log-tail errors, terminal return code or xclbin since the previous check. Next hourly check14:20KST.
+  - timestamp: '2026-09-08 14:20'
+    result: All three runs terminal; hourly monitor stopped automatically. HBM4/TMEM8 finished13:46:12 with returncode2 and no xclbin. Terminal log reports one node overlap between the listed HMSS middle-SLR net and GEMM input response SLR-link TX net. TH32/t4 succeeded at100MHz; TH32/t8 failed with4408 overlaps. Preserved all outputs, no retries or RTL changes. Run-and-monitor task completed with two physical implementation failures, not overall timing closure.

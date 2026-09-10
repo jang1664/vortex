@@ -105,6 +105,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin
     configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_051cabe511
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh
+
   temp:
     path: /home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin
     configs: configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh
