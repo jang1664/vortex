@@ -1686,8 +1686,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .DATAW    (`MXU_COL * FP32_WIDTH),
                 .SIZE     (`GEMM_ACC_MEM_DEPTH),
                 .OUT_REG  (1),
-                .USE_URAM (1),   // Force URAM after VX_sp_ram auto-infer removal
-                .RDW_MODE ("R")  // Read-first required for URAM mapping
+                .USE_URAM (`GEMM_ACC_USE_URAM),
+                .RDW_MODE ("R")  // Preserve read-first behavior for either SRAM choice
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),

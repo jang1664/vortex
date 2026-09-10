@@ -26,7 +26,8 @@ PLACE_DESIGN_DIRECTIVE ?=
 ROUTE_DESIGN_DIRECTIVE ?=
 IMPL_ULTRATHREADS ?= 0
 
-SUPPORTED_PLACE_DESIGN_DIRECTIVES := Explore RuntimeOptimized Quick Default
+# SSI_SpreadSLLs is an UltraScale+ placement directive, not a subdirective.
+SUPPORTED_PLACE_DESIGN_DIRECTIVES := Explore SSI_SpreadSLLs RuntimeOptimized Quick Default
 SUPPORTED_ROUTE_DESIGN_DIRECTIVES := Explore AggressiveExplore NoTimingRelaxation MoreGlobalIterations HigherDelayCost AdvancedSkewModeling AlternateCLBRouting RuntimeOptimized Quick Default
 
 ifneq ($(FAST_MODE),0)

@@ -1,0 +1,10 @@
+# MXU16: 4 HBM ports / 4 DMA channels / 8 physical 32B TMEM arrays.
+# Use BRAM for TMEM, GEMM ACC, and core local memory.
+source "$(dirname "${BASH_SOURCE[0]}")/improve_th16_tcol16_m16_t8_bigmem.sh"
+
+CONFIGS+=" -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0"
+PLACE_DESIGN_DIRECTIVE=SSI_SpreadSLLs
+FAST_MODE=0
+CONGESTION_FAIL_FAST=0
+
+export CONFIGS PLACE_DESIGN_DIRECTIVE FAST_MODE CONGESTION_FAIL_FAST

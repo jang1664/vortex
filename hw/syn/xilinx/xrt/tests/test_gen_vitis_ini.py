@@ -148,6 +148,71 @@ class GenVitisIniTest(unittest.TestCase):
         self.assertFalse(any("PLACE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
         self.assertFalse(any("ROUTE_DESIGN.ARGS.DIRECTIVE" in line for line in lines))
 
+    def test_hbm4_tmem8_spread_experiment_configs(self):
+        """Memory experiments differ only in mapping and reach the real ini generator."""
+        platform = "xilinx_u55c_gen3x16_xdma_3_202210_1"
+        configs_without_mapping = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for experiment, use_uram in (("uram", 1), ("bram", 0), ("all_bram", 0)):
+                config = REPO_ROOT / "configs" / (
+                    f"improve_th32_tcol32_m32_bigmem_hbm4_tmem8_{experiment}.sh"
+                )
+                sourced = subprocess.run(
+                    ["bash", "-eu", "-c", 'source "$1"; '
+                     'printf "%s\\n" "$CONFIGS" "$GEMM_SLR_FLOORPLAN" '
+                     '"$PLACE_DESIGN_DIRECTIVE" "$ROUTE_DESIGN_DIRECTIVE" '
+                     '"$IMPL_ULTRATHREADS" "$FAST_MODE" "$CONGESTION_FAIL_FAST"',
+                     "config-fixture", str(config)],
+                    cwd=temp_dir, text=True, capture_output=True, check=True,
+                )
+                configs, *settings = sourced.stdout.strip().splitlines()
+                self.assertEqual(settings, ["1", "SSI_SpreadSLLs", "AlternateCLBRouting",
+                                            "0", "0", "0"])
+                defines = shlex.split(configs)
+                self.assertEqual([d for d in defines if d.startswith("-DTMEM_USE_URAM")],
+                                 [f"-DTMEM_USE_URAM={use_uram}"])
+                for name in ("GEMM_ACC_USE_URAM", "LMEM_USE_URAM"):
+                    self.assertEqual([d for d in defines if d.startswith(f"-D{name}")],
+                                     [f"-D{name}=0"] if experiment == "all_bram" else [])
+                for define in ("-DGEMM_SLR_PIPELINE", "-DGEMM_TIMING_CUTS=1",
+                               "-DNUM_THREADS=32", "-DNUM_TMEM_BANKS=8",
+                               "-DNUM_HBM_PORTS=4", "-DNUM_DMA_CHANNELS=4",
+                               "-DTMEM_BANK_SIZE=65536", "-DMXU_WLOAD_NUM=4"):
+                    self.assertIn(define, defines)
+                configs_without_mapping.append(
+                    [d for d in defines if not d.startswith(("-DTMEM_USE_URAM=",
+                        "-DGEMM_ACC_USE_URAM=", "-DLMEM_USE_URAM="))])
+                prefix = Path(temp_dir) / experiment
+                ini = Path(f"{prefix}_{platform}_hw/xrt_backup/vitis.gen.ini")
+                generated = subprocess.run(
+                    ["make", "-f", str(XRT_DIR / "Makefile"), str(ini),
+                     f"VORTEX_HOME={REPO_ROOT}", f"PREFIX={prefix}",
+                     f"PLATFORM={platform}", "DEVICE_PART=xcu55c-fsvh2892-2L-e",
+                     "DEV_ARCH=", "CPU_TYPE=", f"CONFIGS={configs}",
+                     "CLOCK_FREQ_HZ=100", "GEMM_SLR_FLOORPLAN=1",
+                     "PLACE_DESIGN_DIRECTIVE=SSI_SpreadSLLs",
+                     "ROUTE_DESIGN_DIRECTIVE=AlternateCLBRouting",
+                     "IMPL_ULTRATHREADS=0", "FAST_MODE=0", "CONGESTION_FAIL_FAST=0"],
+                    cwd=BUILD_XRT_DIR, text=True, capture_output=True,
+                )
+                self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
+                lines = ini.read_text().splitlines()
+                for line in ("kernel_frequency=0:100",
+                             "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=SSI_SpreadSLLs",
+                             "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=AlternateCLBRouting"):
+                    self.assertIn(line, lines)
+                for hook in ("INIT_DESIGN.TCL.POST", "OPT_DESIGN.TCL.POST", "PLACE_DESIGN.TCL.POST"):
+                    self.assertTrue(any(hook in line for line in lines), hook)
+                self.assertEqual([line for line in lines if line.startswith("sp=")],
+                                 [f"sp=vortex_afu_1.m_axi_mem_{p}:HBM[{p * 8}:{p * 8 + 7}]"
+                                  for p in range(4)])
+                self.assertFalse(any("-subdirective" in line or "-ultrathreads" in line
+                                     for line in lines))
+                stamp = (ini.parent / ".link_config.stamp").read_text()
+                self.assertIn("PLACE_DESIGN_DIRECTIVE=SSI_SpreadSLLs", stamp)
+        for defines in configs_without_mapping[1:]:
+            self.assertEqual(configs_without_mapping[0], defines)
+
     def test_floorplan_width_formula_matches_rtl(self):
         # The hook intentionally mirrors fixed FP16 definitions, not a
         # second configurable format. Fail this test if that contract changes.
@@ -320,9 +385,14 @@ class GenVitisIniTest(unittest.TestCase):
                 if setting is not None:
                     command.append(f"CONGESTION_FAIL_FAST={setting}")
                 command.extend(f"{name}={value}" for name, value in overrides.items())
+                # Exercise the Makefile's absent-setting default even when the
+                # sourced exploration config exports CONGESTION_FAIL_FAST=0.
+                fixture_env = os.environ.copy()
+                fixture_env.pop("CONGESTION_FAIL_FAST", None)
                 return subprocess.run(
                     command,
                     cwd=BUILD_XRT_DIR,
+                    env=fixture_env,
                     text=True,
                     capture_output=True,
                 )
