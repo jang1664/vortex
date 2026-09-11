@@ -93,8 +93,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
-    localparam int GEMM_ACC_LMEM_READ_SLOTS = 8;
-    localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = 4;
+    localparam int GEMM_ACC_LMEM_READ_SLOTS = 16;
+    localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = 16;
     localparam int GEMM_PSUM_RESPONSE_FIFO_DEPTH = 2;
     // GEMM-unit-facing buses (native GEMM widths)
     VX_mem_bus_if # (
@@ -311,7 +311,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .quiescent(executor_idle[3]), .M_orig(geometry[0]), .N_orig(geometry[1]), .K_orig(geometry[2]),
       .qblk_orig(geometry[3]), .M_target(geometry[4]), .N_target(geometry[5]), .K_target(geometry[6]),
       .wtrans_tot(geometry[7]), .qdir_tot(geometry[8]), .dma_if(dma_if), .store_done(output_store_done));
-    assign gemm_unit_v2_if.input_admission_ready = 1;
+    wire acc_txn_accept_ready;
+    assign gemm_unit_v2_if.input_admission_ready = acc_txn_accept_ready;
     assign gemm_unit_v2_if.w_load_value[0] = child_if.sync_value[GEMM_RID_W0];
     assign gemm_unit_v2_if.w_load_value[1] = child_if.sync_value[GEMM_RID_W1];
     assign gemm_unit_v2_if.s_load_value[0] = child_if.sync_value[GEMM_RID_SC0];
@@ -724,6 +725,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     ) u_VX_gemm_acc_lmem (
       .clk(clk),
       .reset(reset),
+      .txn_accept_ready(acc_txn_accept_ready),
       .acc_if(gemm_acc_if),
       .psum_rd_lmem_bus_if(psum_rd_raw_bus_if),
       .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),

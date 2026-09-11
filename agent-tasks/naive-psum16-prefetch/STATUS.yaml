@@ -1,0 +1,43 @@
+task: naive-psum16-prefetch
+state: complete
+spec: psum16-spec.md
+iterations:
+  - iteration: 1
+    timestamp: '2026-09-11 16:54'
+    case: M4_K512_N512
+    status: pass
+    error_summary: none
+    root_cause: Previously accepted inputs could skip prefetch when slots were full.
+    fix_applied: Increased both slot capacities to 16 and required prefetch reservation at Input admission.
+    lesson: GEMM cycles fell from 25547 to 19981; more capacity and mandatory reservation do not eliminate all latency.
+    gemm_cycles: 19981
+    core_cycles: 26529
+    evidence: runs/naive-m4/result.json
+  - iteration: 1
+    timestamp: '2026-09-11 17:21'
+    case: M256_K512_N512
+    status: pass
+    error_summary: none
+    root_cause: Previously accepted inputs could skip prefetch when slots were full.
+    fix_applied: Same 16-slot capacity and mandatory prefetch admission as M4.
+    lesson: GEMM cycles fell from 1315844 to 676378, a 48.60 percent reduction for the combined change.
+    gemm_cycles: 676378
+    core_cycles: 682929
+    evidence: runs/naive-m256/result.json
+pitfalls:
+  - Response completion order may differ from input order; retain response tags.
+  - Admission ready must not depend on input_fire or create a combinational loop.
+  - The separate transport FIFO is not the physical response assembly capacity.
+log:
+  - timestamp: '2026-09-11 16:50'
+    action: Confirmed 16-slot capacity and mandatory prefetch admission; delegated naive-only RTL implementation.
+    result: Preparing ordinary xrt-vcs-sim M4/M256 runs and RTL preservation review.
+  - timestamp: '2026-09-11 16:53'
+    action: Implemented 16 read and physical response slots and adapter-driven Input admission in two naive-guarded modules.
+    result: Diff review passed. Improve preprocessing is exactly empty before/after for both changed modules with PERF off/on; all other tracked RTL is unchanged. Started verification preparation in the reconfigured build directory.
+  - timestamp: '2026-09-11 16:54'
+    action: Completed M4 xrt-vcs-sim and started M256 with the same rebuilt executable.
+    result: M4 application and deterministic verify_rtl checks passed with unchanged source hashes; GEMM 19981 and core 26529 cycles.
+  - timestamp: '2026-09-11 17:21'
+    action: Completed M256 and replaced outdated naive values in the cycle-only comparison document.
+    result: Both requested cases passed with no RTL changes during runs. Validation details are in results.md; improve RTL is unchanged and its prior measurements are retained.
