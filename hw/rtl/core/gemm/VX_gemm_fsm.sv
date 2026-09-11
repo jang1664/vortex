@@ -51,12 +51,12 @@
           acc_reuse_after = acc_free[acc_group]
 
       # S_WAIT_CUR_TILE_READY initializes indices; it does not block here.
-      # K microtiles are fastest within each MXU_NT-wide N slice. One ARM
+      # N microtiles are fastest within each MXU_KT-wide K slice. One ARM
       # streams all mt_eff M rows, so this FSM has no inner M-microtile loop.
       # Supported job geometry supplies K extents divisible by MXU_KT.
       microtiles = [(nb, kb)
-                    for nb in range(ceil_div(nt_eff, MXU_NT))
-                    for kb in range(kt_eff // MXU_KT)]
+                    for kb in range(kt_eff // MXU_KT)
+                    for nb in range(ceil_div(nt_eff, MXU_NT))]
       wsz_ready = {0: enqueue_wsz(t, microtiles[0], slot=0)}
       for u, (nb, kb) in enumerate(microtiles):
           # Preload u+1 into the opposite W/S/Z slots BEFORE arming u.
@@ -944,8 +944,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // handshake.  Keep it beside the synthesized command instead of encoding
   // debug-only state in gemm_unified_cmd_t.
   always_comb begin
-    logic [31:0] meta_kt_eff;
-    logic [31:0] meta_kt_mxu_dim;
+    logic [31:0] meta_nt_eff;
+    logic [31:0] meta_nt_mxu_dim;
 
     dbg_cmd_meta_valid_o = out_start_d && state_child_ready;
     dbg_cmd_meta_state_o = state_q;
@@ -991,14 +991,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         dbg_cmd_meta_generation_o = buf_gen(tile_pre_q);
       end
       S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
-        meta_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
-        meta_kt_mxu_dim = ceil_div_log2(meta_kt_eff, $clog2(MXU_KT));
+        meta_nt_eff = (tile_cur_nt_q == nt_dim_q - 1) ? n_last_q : NT_q;
+        meta_nt_mxu_dim = ceil_div_log2(meta_nt_eff, $clog2(MXU_NT));
         dbg_cmd_meta_mxu_buf_o = ~w_buf_q[0];
-        if (32'(kt_mxu_q) + 1 < meta_kt_mxu_dim) begin
-          dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q) + 1;
-        end else begin
+        if (32'(nt_mxu_q) + 1 < meta_nt_mxu_dim) begin
           dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q) + 1;
-          dbg_cmd_meta_mxu_kt_o = 32'd0;
+        end else begin
+          dbg_cmd_meta_mxu_nt_o = 32'd0;
+          dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q) + 1;
         end
       end
       S_MXU_ARM_GEMM: dbg_cmd_meta_phase_o = 4'd2;
@@ -1031,8 +1031,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // child_ready even though the mathematical sequence uses registered state
   // only.
   always_comb begin
-    mm_tile_sz_t sched_kt_eff;
-    mm_mxu_dim_t sched_kt_mxu_dim;
+    mm_tile_sz_t sched_nt_eff;
+    mm_mxu_dim_t sched_nt_mxu_dim;
     mm_mxu_dim_t sched_next_nt_mxu;
     mm_mxu_dim_t sched_next_kt_mxu;
     mm_mxu_linear_t sched_mxu_linear;
@@ -1040,23 +1040,23 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     logic sched_has_next_mxu;
     u32_t sched_tile_mxu_base;
 
-    sched_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
-    sched_kt_mxu_dim = mm_mxu_dim_t'(
-        div_log2(u32_t'(sched_kt_eff), $clog2(MXU_KT)));
+    sched_nt_eff = (tile_cur_nt_q == nt_dim_q - 1) ? n_last_q : NT_q;
+    sched_nt_mxu_dim = mm_mxu_dim_t'(
+        ceil_div_log2(u32_t'(sched_nt_eff), $clog2(MXU_NT)));
     sched_mxu_linear = mm_mxu_linear_t'(
-        mm_mxu_linear_t'(nt_mxu_q) * mm_mxu_linear_t'(sched_kt_mxu_dim)
-      + mm_mxu_linear_t'(kt_mxu_q));
-    sched_next_kt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
-                      ? '0 : (kt_mxu_q + 1);
-    sched_next_nt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
-                      ? (nt_mxu_q + 1) : nt_mxu_q;
-    sched_has_next_mxu = sched_next_nt_mxu < mm_mxu_dim_t'(
-        ceil_div_log2(u32_t'((tile_cur_nt_q == nt_dim_q - 1)
-                           ? n_last_q : NT_q), $clog2(MXU_NT)));
+        mm_mxu_linear_t'(kt_mxu_q) * mm_mxu_linear_t'(sched_nt_mxu_dim)
+      + mm_mxu_linear_t'(nt_mxu_q));
+    sched_next_nt_mxu = (nt_mxu_q + 1 == sched_nt_mxu_dim)
+                      ? '0 : (nt_mxu_q + 1);
+    sched_next_kt_mxu = (nt_mxu_q + 1 == sched_nt_mxu_dim)
+                      ? (kt_mxu_q + 1) : kt_mxu_q;
+    sched_has_next_mxu = sched_next_kt_mxu < mm_mxu_dim_t'(
+        div_log2(u32_t'((tile_cur_kt_q == kt_dim_q - 1)
+                      ? k_last_q : KT_q), $clog2(MXU_KT)));
     sched_next_mxu_linear = mm_mxu_linear_t'(
-        mm_mxu_linear_t'(sched_next_nt_mxu)
-          * mm_mxu_linear_t'(sched_kt_mxu_dim)
-      + mm_mxu_linear_t'(sched_next_kt_mxu));
+        mm_mxu_linear_t'(sched_next_kt_mxu)
+          * mm_mxu_linear_t'(sched_nt_mxu_dim)
+      + mm_mxu_linear_t'(sched_next_nt_mxu));
     sched_tile_mxu_base = tile_cur_q * u32_t'(MXU_PER_TILE_MAX);
 
     pending_scheduler_work_o = 1'b0;
@@ -1470,16 +1470,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     nt_mxu_dim = mm_mxu_dim_t'(ceil_div_log2(u32_t'(nt_eff_cur), $clog2(MXU_NT)));
     kt_mxu_dim = mm_mxu_dim_t'(div_log2(u32_t'(kt_eff_cur), $clog2(MXU_KT))); // assume divisible
 
-    mxu_linear = mm_mxu_linear_t'((mm_mxu_linear_t'(nt_mxu_q) * mm_mxu_linear_t'(kt_mxu_dim))
-                             +  mm_mxu_linear_t'(kt_mxu_q));
+    mxu_linear = mm_mxu_linear_t'((mm_mxu_linear_t'(kt_mxu_q) * mm_mxu_linear_t'(nt_mxu_dim))
+                             +  mm_mxu_linear_t'(nt_mxu_q));
 
-    // next mxu indices: kb fastest within each MXU_NT-wide N microtile.
-    n_kt_mxu = (kt_mxu_q + 1 == kt_mxu_dim) ? 0 : (kt_mxu_q + 1);
-    n_nt_mxu = (kt_mxu_q + 1 == kt_mxu_dim) ? (nt_mxu_q + 1) : nt_mxu_q;
+    // Next microtile: nb fastest, then kb. Sequence numbers follow issue order;
+    // the physical TMEM layout remains [nb][kb].
+    n_nt_mxu = (nt_mxu_q + 1 == nt_mxu_dim) ? 0 : (nt_mxu_q + 1);
+    n_kt_mxu = (nt_mxu_q + 1 == nt_mxu_dim) ? (kt_mxu_q + 1) : kt_mxu_q;
 
-    has_next_mxu     = (n_nt_mxu < nt_mxu_dim);
-    next_mxu_linear  = mm_mxu_linear_t'((mm_mxu_linear_t'(n_nt_mxu) * mm_mxu_linear_t'(kt_mxu_dim))
-                                   +  mm_mxu_linear_t'(n_kt_mxu));
+    has_next_mxu     = (n_kt_mxu < kt_mxu_dim);
+    next_mxu_linear  = mm_mxu_linear_t'((mm_mxu_linear_t'(n_kt_mxu) * mm_mxu_linear_t'(nt_mxu_dim))
+                                   +  mm_mxu_linear_t'(n_nt_mxu));
     tile_mxu_base      = tile_cur_q * u32_t'(MXU_PER_TILE_MAX);
     global_mxu_seq     = tile_mxu_base + u32_t'(mxu_linear) + 32'd1;
     next_global_mxu_seq = tile_mxu_base + u32_t'(next_mxu_linear) + 32'd1;

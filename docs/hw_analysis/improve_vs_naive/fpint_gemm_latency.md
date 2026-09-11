@@ -1,14 +1,14 @@
 # FPINT GEMM cycle 비교: improve vs naive
 
 현재 RTL 기준, `xrt-vcs-sim`, TH16 / MXU16×16, K=N=512.
-naive: PSUM read/response slot 16개, Input 수락 시 prefetch 예약.
+양쪽 모두 micro-tile N-fast, Weight response slot 8개. naive PSUM read/response slot은 16개이며 Input 수락 시 prefetch를 예약한다.
 
 ## GEMM cycles
 
 | M | improve | naive | 차이 (naive − improve) | naive / improve | improve의 cycle 감소율 |
 |---:|---:|---:|---:|---:|---:|
-| 4 | 6,449 | 19,981 | 13,532 | 3.098× | 67.72% |
-| 256 | 272,870 | 676,378 | 403,508 | 2.479× | 59.66% |
+| 4 | 6,433 | 15,867 | 9,434 | 2.467× | 59.46% |
+| 256 | 272,869 | 671,929 | 399,060 | 2.462× | 59.39% |
 
 GEMM cycles는 configuration 수락부터 최초 completion-valid까지의 구간이다.
 
@@ -16,7 +16,14 @@ GEMM cycles는 configuration 수락부터 최초 completion-valid까지의 구�
 
 | M | improve | naive | 차이 (naive − improve) | naive / improve | improve의 cycle 감소율 |
 |---:|---:|---:|---:|---:|---:|
-| 4 | 12,206 | 26,529 | 14,323 | 2.173× | 53.99% |
-| 256 | 278,684 | 682,929 | 404,245 | 2.451× | 59.19% |
+| 4 | 12,206 | 22,404 | 10,198 | 1.835× | 45.52% |
+| 256 | 278,684 | 678,504 | 399,820 | 2.435× | 58.93% |
 
 감소율 = `(naive − improve) / naive × 100`.
+
+## improve의 micro-tile 순서 변경 전후
+
+| M | K-fast GEMM | N-fast GEMM | cycle 감소 | K-fast core | N-fast core |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 6,449 | 6,433 | 16 | 12,206 | 12,206 |
+| 256 | 272,870 | 272,869 | 1 | 278,684 | 278,684 |
