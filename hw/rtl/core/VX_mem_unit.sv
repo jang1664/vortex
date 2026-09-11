@@ -34,6 +34,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
    ,VX_mem_bus_if.slave     gemm_data_if [`LMEM_NUM_PORTS]
    ,VX_mem_bus_if.slave     gemm_psum_rd_if [`LMEM_NUM_PORTS]
    ,VX_mem_bus_if.slave     gemm_psum_wr_if [`LMEM_NUM_PORTS]
+   ,output wire [`LMEM_NUM_BANKS-1:0][2:0] naive_write_commit
 `endif
 );
     VX_lsu_mem_if #(
@@ -272,6 +273,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `endif
         .OUT_BUF    (3)
     ) local_mem (
+`ifdef GEMM_NAIVE
+        .naive_write_commit(naive_write_commit),
+`endif
         .clk        (clk),
         .reset      (reset),
     `ifdef PERF_ENABLE
@@ -286,6 +290,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
 `else
 
+`ifdef GEMM_NAIVE
+    assign naive_write_commit = '0;
+`endif
 `ifdef PERF_ENABLE
     assign lmem_perf = '0;
 `endif

@@ -334,34 +334,10 @@ module tb_vcs_xrtsim #(
         .g_sockets[0].socket.g_cores[0].core.gemm_node,
       "+all");
 `else
-    $fsdbDumpvars(2,
+    // Dump the current naive metadata controller and all executor descendants.
+    $fsdbDumpvars(0,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
         .g_sockets[0].socket.g_cores[0].core.gemm_node_naive,
-      "+all");
-    $fsdbDumpvars(0,
-      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
-        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
-        .u_VX_gemm_ctrl_naive,
-      "+all");
-    $fsdbDumpvars(0,
-      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
-        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
-        .u_input_lmem_dma,
-      "+all");
-    $fsdbDumpvars(0,
-      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
-        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
-        .u_quant_param_lmem_dma,
-      "+all");
-    $fsdbDumpvars(0,
-      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
-        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
-        .u_output_lmem_dma,
-      "+all");
-    $fsdbDumpvars(0,
-      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
-        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
-        .u_weight_gather_dma,
       "+all");
 `endif
 `elsif FSDB_DMA_ONLY

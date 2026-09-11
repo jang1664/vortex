@@ -182,9 +182,17 @@ module VX_gemm_acc_lmem #(
             end
         end
     end
+    // A transaction may miss prefetch while the slots are full. Younger
+    // accepts must not occupy every newly freed slot before its core demand
+    // arrives: completed speculative reads cannot retire without that demand.
+    // Reserve one slot for the late-demand path. A simultaneous late demand
+    // may consume that reservation; any other free slot can still prefetch.
+    wire prefetch_capacity = ($countones(read_slot_valid) < READ_SLOTS-1)
+                           || late_read_alloc;
     assign prefetch_alloc = acc_if.txn_accept_valid
                           && acc_if.txn_accept_rd_en
-                          && prefetch_free_valid;
+                          && prefetch_free_valid
+                          && prefetch_capacity;
 
     // Select the oldest accepted, unissued read.  The node's dedicated PSUM
     // OOO join gives each physical read an independent lane-response slot, so

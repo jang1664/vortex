@@ -48,6 +48,9 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 `endif
 
     VX_mem_bus_if.slave mem_bus_if [NUM_REQS]
+`ifdef GEMM_NAIVE
+    ,output wire [NUM_BANKS-1:0][2:0] naive_write_commit
+`endif
 );
     `UNUSED_SPARAM (INSTANCE_ID)
 
@@ -96,6 +99,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
 `endif
 
+
     // bank selection
 
     wire [NUM_REQS-1:0][BANK_SEL_WIDTH-1:0] req_bank_idx;
@@ -128,6 +132,25 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_BANKS-1:0][STORE_CAM_SLOT_WIDTH-1:0] per_bank_req_store_slot;
 `endif
     wire [NUM_BANKS-1:0]                    per_bank_req_ready;
+
+`ifdef GEMM_NAIVE
+    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_naive_commit
+        if (TAG_WIDTH >= LMEM_LOCAL_TAG_WIDTH + 1) begin : g_routed
+            wire [ADDR_WIDTH-1:0] word_addr
+                = (ADDR_WIDTH'(per_bank_req_addr[b]) << BANK_SEL_BITS) | ADDR_WIDTH'(b);
+            VX_naive_lmem_commit_decode #(
+                .TAGW(TAG_WIDTH), .PORTW(REQ_SEL_WIDTH), .ADDRW(ADDR_WIDTH)
+            ) decode (
+                .write_fire(per_bank_req_valid[b] && per_bank_req_ready[b] && per_bank_req_rw[b]),
+                .tag(per_bank_req_tag[b]), .port_id(per_bank_req_idx[b]),
+                .word_addr(word_addr), .commit(naive_write_commit[b])
+            );
+        end else begin : g_unrouted
+            // Standalone memories with no core routing tags have no commit client.
+            assign naive_write_commit[b] = '0;
+        end
+    end
+`endif
 
     wire [NUM_BANKS-1:0][REQ_DATAW-1:0]     per_bank_req_data_aos;
 

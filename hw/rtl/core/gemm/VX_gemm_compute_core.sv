@@ -660,9 +660,17 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         = scaler_consumer_fire
        && (qcol_scale_consumer_ctrl.quant_dir == `QDIR_COL);
     assign qrow_scale_consume_last
+`ifdef GEMM_NAIVE
+        = qrow_scale_consumer_fire && qrow_scale_consumer_ctrl.notify_on_writeback;
+`else
         = qrow_scale_consumer_fire && qrow_scale_consumer_ctrl.last;
+`endif
     assign qcol_scale_consume_last
+`ifdef GEMM_NAIVE
+        = qcol_scale_consumer_fire && qcol_scale_consumer_ctrl.notify_on_writeback;
+`else
         = qcol_scale_consumer_fire && qcol_scale_consumer_ctrl.last;
+`endif
     assign scale_last_consume_idx = qcol_scale_consume_last
         ? qcol_scale_consumer_ctrl.sreg_use_idx
         : qrow_scale_consumer_ctrl.sreg_use_idx;
@@ -675,10 +683,18 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
        && (qrow_zp_consumer_ctrl.quant_dir == `QDIR_ROW);
     assign qcol_zp_consumer_fire = qcol_reduce_valid_out;
     assign qrow_zp_consume_last
+`ifdef GEMM_NAIVE
+        = qrow_zp_consumer_fire && qrow_zp_consumer_ctrl.notify_on_writeback;
+`else
         = qrow_zp_consumer_fire && qrow_zp_consumer_ctrl.last;
+`endif
     assign qcol_zp_consume_last
         = qcol_zp_consumer_fire
+`ifdef GEMM_NAIVE
+       && qcol_zp_consumer_ctrl.notify_on_writeback;
+`else
        && qcol_zp_consumer_ctrl.last;
+`endif
     assign zp_last_consume_idx = qcol_zp_consume_last
         ? qcol_zp_consumer_ctrl.zreg_use_idx
         : qrow_zp_consumer_ctrl.zreg_use_idx;
@@ -1266,7 +1282,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // QCOL final result consumes Scale on this cycle, hold a QROW-final input
     // for one cycle; non-final direct reads remain freely concurrent.
     assign scale_consume_channel_ready
+`ifdef GEMM_NAIVE
+        = !(in_pipe_payload_out.ctrl.notify_on_writeback && qcol_scale_consume_last);
+`else
         = !(in_pipe_payload_out.ctrl.last && qcol_scale_consume_last);
+`endif
     assign qrow_scaler_issue
         = input_stage_fire && !input_stage_is_qcol;
 
@@ -1649,7 +1669,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         always_ff @(posedge clk) begin
             install_valid_q[0] <= mxu_ready_weight && !reset;
             consume_valid_q[0]
+`ifdef GEMM_NAIVE
+                <= compute_fire && pre_meta_out.ctrl.notify_on_writeback && !reset;
+`else
                 <= compute_fire && pre_meta_out.ctrl.last && !reset;
+`endif
             consume_idx_q[0] <= pre_meta_out.ctrl.wreg_use_idx;
             for (int i = 1; i < MXU_INPUT_TRANSPORT_DLY; ++i) begin
                 install_valid_q[i] <= install_valid_q[i-1];
@@ -1682,7 +1706,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign mxu_output_valid_capture = mxu_output_valid;
     assign gemm_unit_if.weight_register_write = mxu_ready_weight;
     assign gemm_unit_if.weight_consume_valid
+`ifdef GEMM_NAIVE
+        = compute_fire && pre_meta_out.ctrl.notify_on_writeback;
+`else
         = compute_fire && pre_meta_out.ctrl.last;
+`endif
     assign gemm_unit_if.weight_consume_idx = pre_meta_out.ctrl.wreg_use_idx;
     assign mxu_transport_busy = 1'b0;
 `endif
@@ -1748,7 +1776,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // QROW final fork is elastic and retries on the next cycle.
     assign zp_consume_channel_ready
         = !((pre_meta_out.ctrl.quant_dir == `QDIR_ROW)
+`ifdef GEMM_NAIVE
+         && pre_meta_out.ctrl.notify_on_writeback
+`else
          && pre_meta_out.ctrl.last
+`endif
          && qcol_zp_consume_last);
     assign compute_fire = prealigner_out_valid
                        && pre_meta_valid_out
@@ -2745,7 +2777,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                 else $fatal(1, "GEMM SLR input capture metadata misaligned");
             assert (gemm_unit_if.weight_consume_valid
                  == (mxu_input_valid_capture
+`ifdef GEMM_NAIVE
+                  && tree_meta_pipe[MXU_INPUT_TRANSPORT_DLY-1].ctrl.notify_on_writeback))
+`else
                   && tree_meta_pipe[MXU_INPUT_TRANSPORT_DLY-1].ctrl.last))
+`endif
                 else $fatal(1, "GEMM SLR old weight released before final capture");
             if (gemm_unit_if.weight_consume_valid) begin
                 assert (gemm_unit_if.weight_consume_idx
@@ -2770,7 +2806,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             end
 `else
             assert (gemm_unit_if.weight_consume_valid
+`ifdef GEMM_NAIVE
+                 == (compute_fire && pre_meta_out.ctrl.notify_on_writeback))
+`else
                  == (compute_fire && pre_meta_out.ctrl.last))
+`endif
                 else $fatal(1, "GEMM v2 weight consume pulse misaligned");
 `endif
             if (mxu_ready_weight) begin

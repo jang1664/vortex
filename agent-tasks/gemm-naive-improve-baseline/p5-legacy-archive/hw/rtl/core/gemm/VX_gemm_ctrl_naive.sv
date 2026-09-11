@@ -372,6 +372,24 @@ module VX_gemm_ctrl_naive import VX_gpu_pkg::*; #(
     assign perf.lmem_rd_bytes = '0;  // filled by gemm_node
     assign perf.lmem_wr_bytes = '0;  // filled by gemm_node
 `endif
+
+`ifndef SYNTHESIS
+`ifdef GEMM_LATENCY_OBSERVER
+    // synthesis translate_off
+    VX_gemm_latency_observer #(
+        .INSTANCE_ID(INSTANCE_ID), .BACKEND("naive")
+    ) latency_observer (
+        .clk(clk), .reset(reset),
+        .cfg_start_fire(cfg_reg_if.valid && cfg_reg_if.ready && cfg_reg_if.regs[0][0]),
+        .cfg_entry_id(cfg_reg_if.entry_id),
+        .store_done(output_store_done_i),
+        .done_valid(done_if.valid), .done_ready(done_if.ready),
+        .done_entry_id(done_if.entry_id)
+    );
+    // synthesis translate_on
+`endif
+`endif
+
 endmodule
 
 `endif // GEMM_NAIVE

@@ -25,6 +25,9 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_lsu_mem_if.slave     mmio_if[N_MASTER], // from LSU
   VX_mem_bus_if.master    dcache_bus_if, // to dcache
   VX_mem_bus_if.master    lmem_bus_if [LMEM_NUM_LANES_P] // to local memory lanes
+`ifdef GEMM_NAIVE
+  ,input wire [`LMEM_NUM_BANKS-1:0][2:0] naive_write_commit
+`endif
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
 `endif
@@ -48,6 +51,11 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   ) cfg_reg_if ();
 
   VX_node_done_if done_if ();
+`ifdef GEMM_NAIVE
+  VX_node_done_if worker_done_if ();
+  wire dma_writes_drained;
+  assign done_if.entry_id = worker_done_if.entry_id;
+`endif
   VX_dma_lookahead_if #(
     .BOUND_WIDTH(BOUND_WIDTH)
   ) dma_lookahead_if ();
@@ -69,6 +77,35 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .DATA_SIZE(LMEM_WIDE_BYTES),
     .TAG_WIDTH(LMEM_TAG_WIDTH_P)
   ) lmem_wide_bus_if ();
+
+`ifdef GEMM_NAIVE
+  VX_mem_bus_if #(
+    .DATA_SIZE(LMEM_WIDE_BYTES), .TAG_WIDTH(LMEM_TAG_WIDTH_P)
+  ) fenced_lmem_bus_if ();
+  wire allow_lmem_request;
+  wire [`LMEM_NUM_BANKS-1:0] dma_bank_commit;
+  for (genvar b = 0; b < `LMEM_NUM_BANKS; ++b) begin : g_dma_commit
+    assign dma_bank_commit[b] = naive_write_commit[b][2:1] == 2'b11;
+  end
+  VX_naive_dma_write_fence #(
+    .NUM_LANES(LMEM_NUM_LANES_P), .NUM_BANKS(`LMEM_NUM_BANKS)
+  ) write_fence (
+    .clk(clk), .reset(reset),
+    .req_valid(lmem_wide_bus_if.req_valid), .req_write(lmem_wide_bus_if.req_data.rw),
+    .req_byteen(lmem_wide_bus_if.req_data.byteen),
+    .downstream_ready(fenced_lmem_bus_if.req_ready), .commit_valid(dma_bank_commit),
+    .worker_done_valid(worker_done_if.valid), .frontend_done_ready(done_if.ready),
+    .allow_request(allow_lmem_request), .drained(dma_writes_drained),
+    .frontend_done_valid(done_if.valid), .worker_done_ready(worker_done_if.ready)
+  );
+  `UNUSED_VAR (dma_writes_drained)
+  assign fenced_lmem_bus_if.req_valid = lmem_wide_bus_if.req_valid && allow_lmem_request;
+  assign fenced_lmem_bus_if.req_data = lmem_wide_bus_if.req_data;
+  assign lmem_wide_bus_if.req_ready = fenced_lmem_bus_if.req_ready && allow_lmem_request;
+  assign lmem_wide_bus_if.rsp_valid = fenced_lmem_bus_if.rsp_valid;
+  assign lmem_wide_bus_if.rsp_data = fenced_lmem_bus_if.rsp_data;
+  assign fenced_lmem_bus_if.rsp_ready = lmem_wide_bus_if.rsp_ready;
+`endif
 
   // MMIO front-end:
   //  - handles multi-master arbitration
@@ -115,14 +152,22 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .lookahead_if (dma_lookahead_if.slave),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_wide_bus_if),
+`ifdef GEMM_NAIVE
+    .done_if      (worker_done_if.master)
+`else
     .done_if      (done_if.master)
+`endif
 `ifdef PERF_ENABLE
     ,.perf        (perf)
 `endif
   );
 
   if (LMEM_NUM_LANES_P == 1) begin : g_single_lmem_lane
+`ifdef GEMM_NAIVE
+    `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if[0], fenced_lmem_bus_if);
+`else
     `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if[0], lmem_wide_bus_if);
+`endif
   end else begin : g_split_lmem_lanes
     VX_mem_bus_split #(
       .NUM_LANES      (LMEM_NUM_LANES_P),
@@ -132,7 +177,11 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     ) lmem_lane_split (
       .clk         (clk),
       .reset       (reset),
+`ifdef GEMM_NAIVE
+      .wide_bus_if (fenced_lmem_bus_if),
+`else
       .wide_bus_if (lmem_wide_bus_if),
+`endif
       .lane_bus_if (lmem_bus_if)
     );
   end

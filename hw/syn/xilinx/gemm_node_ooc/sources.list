@@ -131,3 +131,10 @@ hw/rtl/mem/VX_dma_engine.sv
 hw/rtl/mem/VX_tensor_mem_bank.sv
 hw/rtl/mem/VX_tmem_switch.sv
 hw/syn/xilinx/gemm_node_ooc/VX_gemm_node_ooc.sv
+
+# Transport dependencies used by the current node revision.
+hw/rtl/core/gemm/VX_gemm_dma_transport.sv
+hw/rtl/mem/VX_slr_mem_bus.sv
+hw/rtl/mem/VX_mem_bus_split.sv
+hw/rtl/libs/VX_stream_transport.sv
+hw/rtl/libs/VX_slr_stream.sv

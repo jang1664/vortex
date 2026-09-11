@@ -2590,4 +2590,22 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                    && (RID_ZP_CONSUME1 == 20),
       ("VX_gemm_ctrl sync RID encoding changed"));
 
+
+`ifndef SYNTHESIS
+`ifdef GEMM_LATENCY_OBSERVER
+    // synthesis translate_off
+    VX_gemm_latency_observer #(
+        .INSTANCE_ID(INSTANCE_ID), .BACKEND("improve")
+    ) latency_observer (
+        .clk(clk), .reset(reset),
+        .cfg_start_fire(cfg_reg_if.valid && cfg_reg_if.ready && cfg_reg_if.regs[0][0]),
+        .cfg_entry_id(cfg_reg_if.entry_id),
+        .store_done(output_store_done_i),
+        .done_valid(done_if.valid), .done_ready(done_if.ready),
+        .done_entry_id(done_if.entry_id)
+    );
+    // synthesis translate_on
+`endif
+`endif
+
 endmodule

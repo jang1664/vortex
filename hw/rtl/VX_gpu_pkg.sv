@@ -917,7 +917,11 @@ package VX_gpu_pkg;
    localparam int GEMM_SYNC_REG_ID_WIDTH = 5;
    localparam int GEMM_DMA_TAG_WIDTH     = 3;
    localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
+`ifdef GEMM_NAIVE
+   localparam int GEMM_NUM_SYNC_REGS     = 23;
+`else
    localparam int GEMM_NUM_SYNC_REGS     = 21;
+`endif
    localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
    localparam int GEMM_SCHED_PRIORITY_WIDTH = 2;
    localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
@@ -975,6 +979,17 @@ package VX_gpu_pkg;
    // Keep every surviving RID value stable.  IDs 21-24, which were appended
    // solely for the temporary four-bank Weight scheme, are intentionally
    // removed when Weight returns to two-bank double buffering.
+`ifdef GEMM_NAIVE
+   // Source-buffer generations are independent of register consumer lifetime.
+   localparam int GEMM_RID_SRC_FREE0 = 21;
+   localparam int GEMM_RID_SRC_FREE1 = 22;
+   localparam int GEMM_NAIVE_NUM_CHILDREN = 5;
+   localparam int GEMM_NAIVE_INPUT_CHILD = 0;
+   localparam int GEMM_NAIVE_WEIGHT_CHILD = 1;
+   localparam int GEMM_NAIVE_SCALE_CHILD = 2;
+   localparam int GEMM_NAIVE_ZERO_CHILD = 3;
+   localparam int GEMM_NAIVE_DMA_CHILD = 4;
+`endif
 
    typedef logic       gemm_wreg_idx_t;
    typedef logic       gemm_qreg_idx_t;
@@ -1035,6 +1050,15 @@ package VX_gpu_pkg;
        gemm_wait_meta_t          writer_wait;
        gemm_prepare_meta_t       prepare;
        gemm_notify_meta_t        notify;
+`ifdef GEMM_NAIVE
+       // Exactly 130 naive-only bits. PSUM base/stride remain rs1_data/stride.
+       // The final address must not pass through the legacy 32-bit stride.
+       logic [63:0]              naive_final_base;
+       logic [31:0]              naive_final_stride;
+       logic                     naive_terminal;
+       logic                     naive_source_buffer;
+       logic [31:0]              naive_source_generation;
+`endif
    } gemm_unified_cmd_t; // it can be union
 
    typedef struct packed {
