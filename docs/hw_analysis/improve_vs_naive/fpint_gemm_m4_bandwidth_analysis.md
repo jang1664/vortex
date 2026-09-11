@@ -8,6 +8,8 @@ Analyzed on 2026-09-10 using `tools/fsdb_cli`, with fresh final-RTL `xrt-vcs-sim
 
 If “bandwidth” means the achieved rate of supplying operands to the MXU, improve does supply them much faster. The distinction is the cause: the evidence points to command latency, synchronization, and local data delivery, rather than a demonstrated physical HBM bandwidth ceiling. These captures do not isolate the bandwidth limit of LMEM/TMEM or measure performance under a bandwidth-only change.
 
+The [input-gap root-cause follow-up](fpint_gemm_naive_input_gap_root_cause.md) decomposes the 23-cycle startup into 7 cycles of DMA launch, 13 cycles of LMEM round trip, and 3 cycles of response staging. It also traces the writeback fence and the subsequent NOTIFY/WAIT command sequence.
+
 ## 1. Same external bytes, faster external transfer path
 
 All cycle counts below are within the controller's GEMM-active interval. “External DMA” means naive's `accel_perf.cpu_dma.busy` or improve's `accel_perf.hbm_dma.aggregate.busy`; the CPU-DMA name denotes the naive transfer engine, not CPU instruction execution.

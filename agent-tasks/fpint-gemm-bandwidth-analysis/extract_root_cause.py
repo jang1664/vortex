@@ -13,6 +13,14 @@ add(dma,'cfg_fire perf_src_rd_req_fire perf_src_rd_data_fire perf_dst_wr_fire pe
 add(impl,'state rd_state wr_state cmd_start precalc_issue precalc_done src_req_issue_fire src_req_fire src_rsp_fire gen_slot_valid gen_slot_ready gen_dst_valid gen_dst_ready dst_req_issue_fire dst_req_fire response_payload_read wr_slot_ready','impl_')
 add(base,'input_dma_ctrl_if/start input_dma_ctrl_if/idle input_dma_ctrl_if/done gemm_ctrl_if/input_read_flag.idle input_notify_req input_notify_fire input_notify_pending_r packetizer_active packetizer_ingress_complete packetizer_command_done gemm_done_pending_r gemm_write_queues_empty gemm_wr_lane_pending_r gemm_wr_lane_push gemm_wr_lane_pop gemm_unit_v2_if/tagged_writeback i_gemm_bus_if/req_valid i_gemm_bus_if/req_ready')
 add(sync,'in_valid opcode is_wait wait_reg_id wait_reg_val wait_target wait_satisfied can_accept upd0_valid','sync_')
+core=base.rsplit('/',1)[0]
+for lane in range(4):
+ for prefix,label in [(base+f'/i_lane_mem_if[{lane}]',f'lane{lane}_'),(base+f'/lmem_bus_if[{lane}]',f'node_lmem{lane}_'),(core+f'/mem_unit/lmem_membus_arb_out_if[{lane}]',f'mem_arb{lane}_'),(core+f'/mem_unit/lmem_priority_if[{lane}]',f'local_mem{lane}_')]:
+  add(prefix,'req_valid req_ready rsp_valid rsp_ready',label)
+add(impl+'/gen_path','aligned_fast_path','path_')
+add(core+'/mem_unit/local_mem','per_bank_req_valid per_bank_req_ready per_bank_req_rw per_bank_rsp_valid per_bank_rsp_ready','bank_')
+add(core+'/mem_unit/lmem_priority_if[0]','req_data.addr','local0_')
+add(base+'/u_input_packetizer','context_count','packet_')
 start=83325000;lo=1480;hi=1680
 
 def read(item):

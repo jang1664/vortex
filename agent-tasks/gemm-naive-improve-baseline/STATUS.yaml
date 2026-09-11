@@ -1,0 +1,265 @@
+task: gemm-naive-improve-baseline
+state: complete
+request: "Plan improve-based naive redesign: overlapping microtile input and metadata-based synchronization, retaining LMEM."
+plan: agent-tasks/gemm-naive-improve-baseline/plan.rev3.md
+implementation_started: true
+rtl_implementation_started: true
+measurement_instrumentation_started: true
+vector_initialization_fixed: true
+review: agent-tasks/gemm-naive-improve-baseline/review.rev2.md
+numerical_relative_tolerance: 0.001
+zero_reference_absolute_tolerance: 0.001
+host_validation_log: agent-tasks/gemm-naive-improve-baseline/test-vectors.rev3.log
+required_naive_traversal: N-fast
+required_naive_quant_dma: independent_scale_and_zero_point
+required_improve_change_policy: unchanged_rtl_and_zero_latency_delta
+plan_user_update: agent-tasks/gemm-naive-improve-baseline/plan.user-update.rtl-preservation.md
+sz_validation_user_update: agent-tasks/gemm-naive-improve-baseline/plan.user-update.sz-validation.md
+sz_bidirectional_forced_stall_gate: not_required_by_user
+improve_synthesis_gate: not_required_by_user
+improve_preservation_evidence: RTL_level_identity
+required_naive_specific_selection: ifdef_GEMM_NAIVE
+final_validation_user_update: agent-tasks/gemm-naive-improve-baseline/plan.user-update.final-validation.md
+remaining_validation: complete
+phase: complete
+log:
+  - timestamp: "2026-09-10 23:36"
+    message: "Inspected current improve FSM/controller metadata, readiness scheduler, ordered inflight queues, overlap DMA, naive LMEM accumulator, and existing tests. Drafted shared-control/backend-adapter plan; no RTL changes."
+  - timestamp: "2026-09-10 23:41"
+    message: "Completed plan and checked local links, required outcomes, staged acceptance criteria, and Markdown code fences. Implementation remains unstarted."
+  - timestamp: "2026-09-11 00:53"
+    message: "Validated R1-R6 against RTL and host code; wrote plan.rev2.md. Kept TMEM scheduler improve-only, N-fast initial traversal, fixed payload capacity and no new forwarding/hierarchy, concrete G1 output-ready/O store-done graph, defined reset scope, and frozen performance/sustained-overlap targets. Latest user instruction supersedes preserving old vectors."
+  - timestamp: "2026-09-11 00:53"
+    message: "Fixed naive default S/Z initialization to vary with K group/row. Host-only production-initializer check passed 12 shape/mode combinations and rejected all 36 wrong-payload controls. No RTL simulation or redesign performed; corrected-vector device baselines and fresh-payload per-job verification remain P0 work."
+  - timestamp: "2026-09-11 01:35"
+    message: "Evaluated review.rev2 R1-R4 and wrote plan.rev3.md. User instructions are binding: 0.1% numerical tolerance, independent scale/zero-point DMA, and fixed naive N-fast with no alternate traversal candidates. Specified per-engine ownership and payload partition, bidirectional progress tests, 510 eligible adjacent pairs, and P0 normalized cfg-to-done-valid measurement with FSDB/perf matching and separate notification delivery delay."
+  - timestamp: "2026-09-11 01:35"
+    message: "Changed comparator constants to 0.001f in both apps. Host checks passed 12 normal shape/mode combinations, rejected 36 broad and 24 sparse local controls, and detected all 7680 cases in the review's single-scale census at 0.1% (1390 misses at historical 1%). Checked zero/nonzero comparator branches and improve host syntax. No new RTL simulation or redesign; shared corrected device baselines and physical lane/beat/stale-install fault checks remain P0 work."
+  - timestamp: "2026-09-11 01:51"
+    message: "Added the user's improve-preservation rule to plan.rev3.md: share only where improve behavior, latency and hardware cost remain unchanged; otherwise use naive-specific ifdef GEMM_NAIVE logic. Scoped SRC_FREE counters/decoders and packet normalization to naive, required synthesis-excluded measurement, and added P0 baseline plus zero latency/cost gates and checklist coverage. Documentation only; no RTL changes or simulation/synthesis executed."
+pitfalls:
+  - "Removing packetizer_active alone exposes premature NOTIFY and does not separate packet admission from completion."
+  - "packet_ctrl.last has different current naive/improve semantics; normalize packet end versus final-output mode before sharing contexts."
+  - "Improve K-fast traversal creates closer same-address PSUM dependencies than naive's current N-fast traversal."
+  - "An upstream LMEM write handshake is not automatically a proof of RAM visibility; define and verify the fence endpoint."
+  - "Current source revision differs from the original latency report's baseline; preserve hashes and refresh baseline if changed."
+  - "Existing local-DMA tests may hard-code GEMM_IMPROVE and must be adapted for backend parity."
+  - "Rev2 supersedes mandatory K-fast and shared TMEM readiness scheduler requirements in PLAN.md; historical log entries do not authorize those designs."
+  - "Old-payload latency counters cannot be used as rev2 pass/fail baselines after the default vector fix."
+  - "Naive has one physical OBUF and PBUF; its store must wait for output-ready G1, not for its own store-done O."
+  - "Active full-node reset remains unsupported; occupied component reset needs a jointly flushed response domain."
+  - "Rev3 supersedes rev2's optional K-fast/static-interleave candidates. User requires fixed naive N-fast; improve traversal is unchanged."
+  - "Independent S/Z DMA must not merge ordered descriptor/response retirement or writer ownership; shared physical LMEM arbitration is allowed within the existing ports/banks and payload budget."
+  - "The shared-writer cycle in review.rev2 is a conditional design risk, not an observed deadlock in current naive RTL."
+  - "Legacy naive/common GEMM counters have different done boundaries. Freeze normalized per-job measurement and prove FSDB agreement before creating rev3 performance baselines."
+  - "The 7680-case host census covers one QCOL scale fault family; it does not prove all device lane/beat or stale-install faults are detected."
+  - "User rule: commonization must not change improve latency or hardware cost. Isolate any differing implementation under ifdef GEMM_NAIVE; improve keeps its 21 counters, existing interfaces/pipeline/scheduler, and synthesized perf hardware."
+
+execution_log:
+  - timestamp: "2026-09-11 01:58"
+    message: "Started user-authorized plan.rev3 execution. P0 software parity and per-job oracle plus synthesis-excluded latency observation are assigned as bounded implementation tasks. Preparing baseline provenance and auditing storage/completion endpoints. Existing unrelated changes preserved; no functional RTL redesign yet."
+  - timestamp: "2026-09-11 02:01"
+    message: "Captured 522 initial source/config hashes and tracked diff in p0-baseline. Launched improve TH16/MXU16 GEMM-node OOC synthesis with Vivado2025.1, U55C part, unchanged7ns constraints, 8jobs, checkpoint and full input manifests. Exec session81884; output build_fpint_latency_improve_vcs/gemm_baseline_rev3_ooc. fsdb_cli works via PYTHONPATH=tools python3 -m fsdb_cli (no standalone executable). Identified naive store_done as cache-path retirement rather than final HBM visibility; endpoint audit remains open."
+  - timestamp: "2026-09-11 02:04"
+    message: "P0 OOC attempt1 failed: stale source manifest omitted VX_gemm_dma_transport. Added five transport dependencies (manifest only), retried synthesis in gemm_baseline_rev3_ooc_retry1; live exec65107. Historical FSDB strict-preedge extraction independently finds naive L_gemm61552 (four stores) and improve6449 (32stores), while improve legacy counter was6448. These are old-vector diagnostic results, not corrected baselines. Observer/controller tests delegated to verification agent; new extractor and per-run provenance runner added."
+  - timestamp: "2026-09-11 02:07"
+    message: "P0 host parity passed72 cases for both MXU16 backends and additional improveMXU32, independent reference and address-fault controls. All three VCS observation/controller suites passed iteration1. First fresh M4 blackbox compile failed in both backends: CFCILFBI VX_gemm_latency_observer missing from mixed-language liblist despite include parsing; no simulation or numerical result. Implementation agent fixing library integration before retry. Run manifests preserved at p0-baseline/{naive,improve}-m4."
+  - timestamp: "2026-09-11 02:08"
+    message: "Fixed observer library integration by removing controller module includes and explicitly listing observer source for unit tests; independent -y library resolution remains for blackbox. Iteration2 verification in progress. FSDB extractor strict-preedge/laststore arithmetic synthetic check passed. Storage ledger audit and source-grounded N-fast/region/RID DAG model progressing independently; neither substitutes for integrated physical visibility proof."
+  - timestamp: "2026-09-11 02:09"
+    message: "Iteration2 all3 VCS observer/controller suites passed after independent-library fix. Fresh corrected M4 blackbox retries launched in existing configured builds: improve session31490 and naive88943, manifests p0-baseline/{backend}-m4-retry1. Production host and monitor sources held stable during capture. Improve OOC retry1 remains live session65107 in timing optimization."
+  - timestamp: "2026-09-11 02:11"
+    message: "Corrected shared-vector M4 numerical PASS in both backends at0.1%; source hashes unchanged during runs. Improve normalized L_gemm6449 matches FSDB exactly, corecycles12206. Naive legacy61552/core68154; independent endpoint extraction live session73670. M256 captures launched improve42023 and naive94569; OOC retry1 live65107. Storage source audit documents old928B per Input/quant and candidate independentquant896B, with elaboration/physicalproof explicitly pending."
+  - timestamp: "2026-09-11 02:15"
+    message: "Naive M4 normalized L_gemm61552 and all endpoint fields now match FSDB exactly. Added p0-measurement.md with both corrected M4 results and unresolved store-visibility distinction. Completed source-grounded p0-contract model:24 geometry/mode cases,1024Input descriptors,510eligiblepairs,4outputowner/16sourcegeneration DAG with delayed schedules and cycle negativecontrol. M256 simulations still live; actual S/Z accepted-payload FSDB checker underway. No overlap/metadata FSM redesign yet."
+  - timestamp: "2026-09-11 02:18"
+    message: "Improve baseline OOC synthesis completed and72MB checkpoint retained. Existing7ns timing gate FAILED (WNS-0.690ns, reportTNS-31.566ns,65endpoints); preserve improve RTL/constraints per userrule. Top resources LUT168816 FF90387 RAMB36=265 RAMB18=16 URAM32 DSP826, copied reports/summary under p0-baseline/improve-cost. Functional-source equality after excluding guarded observer and blank lines PASS bothcontrollers (observer-isolation.json). No candidate comparison yet. Initial local isolation regex checks failed to match block layout, corrected matcher then passed; no RTL error."
+  - timestamp: "2026-09-11 02:21"
+    message: "Actual naive M4 QCOL/WTRANS0 S/Z install checker PASS:2048accepted32Binstalls,8192tagged8Blaneresponses,zero payloadmismatches. Frozen independent tensor/descriptor/generation oracle detects8representative payloadcopyfaults and all7680previous-group lane substitutions. Evidence p0-install-check.md and p0-install-naive-m4-results.json; QROW/layout/tails/repeatedjobs/improve remain pending. M256 handles42023/94569 re-polled live; no restarted runs."
+
+  - timestamp: "2026-09-11 02:28"
+    message: "Continuation revalidated both originalM256 sessions live (previous turn made implementation/evidence progress). Added runner explicit build/config overrides and launched separate configuredMXU32 M3K64N64 QROW/WTRANS1 tagged repeated3-job test, session30487, without touching M256 builds. Source visibility audit is distinguishing OBUF source-read release from downstream HBM drain and tracing G1 post-node request buffering; no new RTL edits."
+
+  - timestamp: "2026-09-11 02:29"
+    message: "ImproveM256 numericalPASS legacy272869/core278684, stable source hashes; independent FSDB extraction live48202. MXU32 M3K64N64 QROW/WTRANS1 tagged3repetitions allverifiedPASS (session30487done). Started TH16/MXU16 same3-jobcase improve22602 and naive87319; naive uses newly configured isolated build_gemm_naive_baseline_matrix with copied generatedIP. Original naiveM25694569 remains live. Source OBUF release proof audit progressing."
+
+  - timestamp: "2026-09-11 02:47"
+    message: "Previous turn added authoritative improve preservation rule to AGENTS.md (progress). Revalidated original naive M256 handle terminal timeout124, stable source hashes and no completed numerical result; launched identical7200s retry31476. ImproveM256 normalized272870/core278684 and exact FSDB endpoints PASS. QROW/WTRANS1 MXU16/MXU32 accepted S/Z install payload checks complete with zero mismatches and explicit stale-fault/equivalent-case accounting. Added new one-vx_start lifecycle regression app; both host/kernel compiles pass. Reconfigured idle builds and launched improve79902/naive76076 lifecycle; runtime proof pending. Storage elaboration assigned independently. No functional naive redesign yet."
+
+  - timestamp: "2026-09-11 02:53"
+    message: "Both actual lifecycle blackboxes PASS and all3jobs per backend independently match FSDB endpoints in epoch1 with jobs0/1/2. Device printf markers absent, so strengthening durable device trace before claiming direct marker-order proof. M1QROW/WTRANS0 taggedrepeat2 bothPASS; earlier M16QCOL/WTRANS1 repeat2 and M3QROW/WTRANS1 repeat3 manifests also confirmed PASS and source-stable. Frozen independent S/Z finite fairness/progress stimuli in p0-progress-contract.md; these are candidate acceptance requirements, not current-RTL results. Fixed-window actual M4 service trace extraction and storage elaboration underway."
+
+  - timestamp: "2026-09-11 02:54"
+    message: "Trace-enhanced one-vx_start lifecycle bothPASS. Durable device timestamps prove verify[j]<start[j+1]; exact independent FSDB match confirms three invocations in epoch1 with jobs0/1/2. Checker and results p0-lifecycle-verify.py/results.md plus backendJSON. No printf dependency remains. M256retry31476 still live; no functional source edits. Static Input/SZ elaboration reports928B per subtreeMXU16/1856B MXU32, detailed metadata report pending agent finalization. Actual service extractor preserves raw addresses and explicitly normalizes existing truncated legacy final addresses to physical LMEM offsets; full-width redesign requirement remains."
+
+  - timestamp: "2026-09-11 02:59"
+    message: "Previous turn made progress through durable no-reset lifecycle proof. Continued M256retry31476 confirmed live. Actual service baseline finalized:2048rows/30233cycles=6.77405%,0/510overlappingpairs; fixed candidate service<=24186cycles and>=255pairs. Extended QROW checker to WTRANS0 M1repeat2:1024installs/4096physicalresponses/64commands,zero mismatches; all10representative and32stale-generation controls detected,32equivalent predecessors excluded. Replayed original QROW checkerPASS. Single-N-slice M3K64N16 taggedrepeat2 bothbackendsPASS. Added p0-gates.py numeric threshold derivation; checked existing3completed shape/backend captures, full output waits for naiveM256. Remaining full-boundary storage audit assigned; no functional RTL integration yet."
+
+  - timestamp: "2026-09-11 03:03"
+    message: "Input/SZ static elaboration ledger completed and reviewed in p0-storage-elaborated.md: per-subtree928B/1856B operand payload for MXU16/32; metadata3607/4878bits plus977PERFbits; inactive zero-data excluded from spendable credits. Full boundary audit still in progress (weight prefetch resolves4, finalconversion OUT_REG0 combinational, vendor IP opaque fixed components). p0-gates.py now validates older manifests through exact recorded CLI because original M4/M256 manifests omit later qdir/wtrans fields; verified completed3capture measurements. QCOL/WTRANS1 physical oracle and P1interface map progressing independently. M256 retry re-polled same31476 handle for60s, still live; no restart or functional source changes."
+
+  - timestamp: "2026-09-11 03:06"
+    message: "QCOL/WTRANS1 M16K64N64 generation0/1 physical install oracle completed and report reviewed:64installs/256physicalresponses,zero mismatches;8representative faults,32stalecommands,128stalelanes and60adjacentcommand substitutions detected. Added p0-exit-checklist.md mapping full P0 requirements to actual evidence and pending work. M256retry31476 revalidated live during60s wait; no functional RTL changes. Remaining P0 integration gates: completed naiveM256 exactmeasurements, complete boundary-storage ledger, exact newmetadata boundedallocation. User improve latency/cost rule and fullP1-P5 objectives unchanged."
+
+  - timestamp: "2026-09-11 03:09"
+    message: "Reviewed complete disjoint boundary ledger p0-boundary-storage-audit.md:2976/6464B boundary payload plus two dedicated928/1856B transports totals4832/10176B atMXU16/32; exactweight288/1088B and finalconvertercombinational. FixedopaquevendorIP and outside-node memory infrastructure excluded from credits. Reviewed p1-interface-map.md proposed guards/schema/context/bankcommit design; requested finite cap for previously excluded adapter/lane/FIFO-copy/PERF metadata and geometry-correct SZpayload896/1792B beforeP0freeze. M25631476 remains live afteranother60spoll. No functional RTL changes."
+
+  - timestamp: "2026-09-11 03:10"
+    message: "Preserved481source files matching every active baseline manifest hash in deterministic p0-baseline/corrected-source-snapshot.zip; archive reopened and allmemberhashesverified, provenanceJSON retained. This preserves future old-RTL analysis aftercandidateedits; it is not a passing/frozenM256 claim. No source changes. Boundaryledger complete; finite adapter metadata bound pending final map revision."
+
+  - timestamp: "2026-09-11 03:14"
+    message: "Finalized finite per-engine adapter/lane/FIFO-copy/PERF metadata bounds in p1-interface-map.md; machine-readable p0-allocation-bounds.json records MXU16/32 payload896/1792B and functionalcontrol6996/10280bits perengine, plus448PERFbits. Reviewed arithmetic; not a candidate cost result. LiveFSDB sample showed quant work_seq1475/1476/1477 progressing through10066525000..10080795000ps. Started finish_m256_baseline.py session41487 to await existingrun terminalPASS, then extract exactFSDB endpoints and derive p0-numeric-gates.json without restarting simulation. Threecompletedcaptures also pass geometry/observer/commonoraclehash assertions. Previousgoalturn made progress via ledger review and source snapshot; fullgoal remainsactive."
+
+  - timestamp: "2026-09-11 03:21"
+    message: "Independent P0 readiness audit found an unresolved external LOAD T0/T1 physical visibility contract: current p0-visibility proves STORE source release and GEMM-priority PSUM/final commit, not normal-input externalDMA I/W/S/Z LOAD writes. Added explicit P0exit item; auditor tracing completion/arbitration ordering and will specify source-ready physical fence/finitecontrol ifneeded. Do not assume fixed startup gap covers it. M256run31476 and endpointwatcher41487 stilllive. Previousturnprogress included frozenmetadata and automaticpostrun checks; fullgoal remainsactive."
+
+  - timestamp: "2026-09-11 03:24"
+    message: "M256retry31476 and watcher41487 bothterminalPASS. Naive normalized1372729/store1372722/finalize7/delivery0/core1379304; allFSDB/endpoints match,8stores,sourcehashesstable. Allnumericgates now derived in p0-numeric-gates.json: naiveM4<=46164/core68835, M256<=1386456/core1393097; improveexact6449/272870 andcore12206/278684. Updatedmeasurementandexitreports. OnlyP0readinessLOADphysicalcontract/finitecredits review remains beforeintegration; proposednaiveDMAworker S_DONE handshakefence retainsoneactiveowner untilallLMEMwritescommit. No simulationslive, nofunctionalRTLedits."
+
+  - timestamp: "2026-09-11 03:34"
+    message: "P0 frozen in p0-baseline-freeze.json after independent readiness review and adopted LOAD physical fence/Tjoin contract. Refreshed allocation hash after audit report finalized Tjoin section; all16freeze evidence hashes and allocation references verified. Numeric baselines/caps fixed, source snapshot retained. MovingtoP1-P5 functional implementation; no candidate pass claimed. New LOAD fence13bits plus Tjoin74/optionalreceipt36 cap123, shared3bit/bankkind encoding adopted. First freeze attempt correctly rejected stale pre-finalization report hash before refresh/recheck."
+
+  - timestamp: "2026-09-11 03:48"
+    message: "P1 functional RTL implementation has started: guarded command schema/staged metadata controller, independent S/Z helper and physical bank-commit return/DMA fence are written. Physical directed verification iteration1 failed compilation at both MXU16/32: VX_local_mem per_bank_req_addr referenced before declaration; implementation agent fixing, no simulation PASS. Results p1-verification/physical-iteration1. Root is checking changed shared-source synthesis preprocessing against frozen P0; this does not replace elaboration/cost/cycle gates. Full P1-P5 remains incomplete."
+
+  - timestamp: "2026-09-11 03:49"
+    message: "P1 improve synthesis-preprocessing isolation PASS for captured source:40 comparisons, MXU16/32 with/without PERF, changed shared files identical and all new naive SV helpers absent. Normalize only blank/source-location lines and two proven __LINE__ instance-name families with bijective renaming. First2 attempts failed missing FPU include path; attempt3 exposed only6 PERF name differences; attempt4 completedPASS withstableinputs. Report p1-improve-isolation.md and p1-isolation/iteration4/result.json. This is not elaboration, synthesis cost or cycle evidence."
+
+  - timestamp: "2026-09-11 03:50"
+    message: "Physical iteration2 implementation fix ready: guarded commit decoder block moved below referenced bank declarations; no logic/test changes. Independent verifier is running staged metadata tests then physical MXU16/32 rerun. Assigned staged metadata-only N-fast FSM implementation with actual real-command stream tests; root retains node/four-context integration. Independent S/Z implementation reports static448/896B per-engine payload within frozen bounds; VCS verification still queued. No candidate blackbox PASS or full-goal completion claimed."
+
+  - timestamp: "2026-09-11 03:57"
+    message: "Previous turn made implementation/evidence progress; continued active P1. Physical iteration2 simfailure traced to new test Makefile omitting XLEN64 (RTL default32 mismatched fixture8Bwords), fixed fixture define and added geometry assertion without weakening checks. Physical iteration3 independentlyPASS MX16/32 withstablehashes. Metadata iteration1 similarlywrongXLEN32:29records/23expected/6typefailures, incomplete andnot64evidence; corrected36-caseiteration2 nowlive39036."
+
+  - timestamp: "2026-09-11 03:57"
+    message: "Added staged VX_naive_input_contexts with separate admission/retirement pointers, ordinary registered-ingress completion, exact-owner terminal fence, full-widthaddresses and Oadmission gate, plus VCS directedTB. Contextiteration1 failed timezeroallocation: frozenmap listedfields sum449bits, not549. Corrected assertion/TB to1805total (4*449+9), belowunchanged2205ceiling; nofunctionalchange/noomittedfields. DocumentedarithmeticinunittestREADME; independentiteration2 pending. Shared improve preprocessingiteration5PASS44comparisons stablecapturedsources, including newcontexthelperabsentunderimprove. Fullnode/FSM integration andcandidategates remainincomplete."
+
+  - timestamp: "2026-09-11 10:54"
+    message: "Contextiteration2 independentlyPASS MXU16/32 atXLEN64; metadataiteration2 terminalsummary all36cases meetexpectedoutcomes, withonlyuncompiledcontext/FSMsourcechanges duringcapture. NewN-fast metadataFSMsource exists but agent endedwithusage-limiterrorbeforehandoff/tests; reviewandverificationremain. S/Ziteration1 ranallfourcases tofinish but verifiercorrectlyrejected unrecognizedPASSmarker; rootfixedonlyfinaldisplay toTEST PASSED andlaunched deterministiciteration2 MXU16/32 (exec40309). Earlier S/ZfixtureXLENpropagation correctedbeforefirstactualrun. Threeagentsendedwithusage-limiterrors; roottoolsremainavailable, fullgoalactive."
+
+  - timestamp: "2026-09-11 10:54"
+    message: "S/Ziteration2 deterministicVCS PASS MXU16/32 after onlyfinaldisplaymarkerfix; rootreran after independentagentsusagefailure, retainedlogs/JSON/report p2-verification/qparam-iteration2. Exec40309terminal0. NoengineRTL/assertion/finiteboundchanges. Context/directphysical/componentcontrollerchecks complete atthisboundary; FSMcommandstreamverification, actualnodeintegration/source-generationjoins, fullcorrectness/lifecycle/performance/costgates stillrequired."
+
+  - timestamp: "2026-09-11 11:01"
+    message: "Previous turn made verifiedcomponentprogress. Reviewed staged metadata-onlyFSM andadded actualVCScommandstreamTB plus p3-fsm-check.py usingfrozenp0canonical. InitialnewTBcompilefailedwrongsourcefilename; correctedMakefilelist, noFSMlogicchange. Iteration2 seven cases PASS VCS+oracle: MX16M4/M256K512N512; MX16M3K160N33 QCOLWT1/QROWWT0/QROWWT1; MX32M4K512N512 andM3K160N33QROWWT1. Expandedoracle replays all7PASS for full>4GiB local/externaladdresses, bytecounts, Nfastorder, W/S/Zinstall/writer targets, O/G1/SRCFREEandclosurecounts. Exec53900terminal0; evidence p3-verification/fsm-iteration2 andunittestREADME. Producer-onlyproof, noactualnodeintegration/performanceclaim."
+
+  - timestamp: "2026-09-11 11:11"
+    message: "Implemented VX_naive_source_join and integrated FSM/controller/join in VX_naive_gemm_control. Inspection of existing stream-DMA fetch_complete showed per-response-owner completion may be outoforder; replaced initial monotonic-ID counterjoin with exact per-engine/per-buffer descriptorbitmaps before nodeintegration. Actualfiniteglobalcontrol598bitsMX16/210MX32, zeropayload, ledger p3-source-join-allocation.json. Source/controliteration2 all9expectedoutcomes: positivejoin16/32, fourexactnegativeDUTdiagnostics, integratedcontrolM4/M256MX16 andtailMX32 PASS. Executorfixturesmodeled; notphysical/numericalproof. Initialcontrolfixtureusedinvalid4-bitentry17, correctedto7 withoutDUTchange. Improvepreprocessiteration6PASS56comparisons stableinputs. Allsessions13540/12016terminal0. RealnodeDMA/context/quant integration andfullP4/P5gatesremain."
+
+  - timestamp: "2026-09-11 11:26"
+    message: "Implemented actual unified-command/prepare/install adapter VX_naive_qparam_executor and dual-engine physical-lane bridge VX_naive_qparam_pair. Audited outerarb: activating oldtied-off5thinput wouldadd64/128Bresponsepayload; insteadpairusesunbuffered2:1arbs beforeexistingquantpositions andoneexistingtagbit, noadditionalpayloadqueue. Newexecutoronlyprepared1bit, compactmappingcombinational. Pairiteration2 all8geometry/layout/reciprocalblockcasesPASS plusMX16NDEBUGQROWZblockedPASS. Fixtureinitialcompileerror fullUUIDtagtableoverflow fixed tofinitevaluebits, buswidthpreserved. Improvedpreprocessiteration7PASS64comparisonsstableinputs. Legacy node stillnotreplaced; Input/W/externalDMA adapters andcompletephysicalnodeintegrationremain. Reports p3-verification/quant-pair-iteration2 andunittestREADME."
+
+  - timestamp: "2026-09-11 11:40"
+    message: "Added VX_naive_input_executor integrating physical read-ahead, prepared activation and sole4contextarray. Reused naive lane-banked operandengine withparameterized16slots/8laneFIFO forInput; S/Zdefaults8/4unchanged. Thisavoidswidejoin assumptionsunderreorderedphysicalresponses. VCS Input16/32/NDEBUGPASS including4commands/all16slotsfullwhileGEMMstopped, immutablepayload>4GiB, nextingressbeforepreviouscompletion, O/terminalownerfencesand32rowrollingreuse. OriginalS/Z16/32 andquantpairrepresentativesPASS. StaticInputpayload832/1664B metadata4620/5040bits, belowoldpayload928/1856; currentS/Zledgerexactlyunchanged448/896B and2260/2504bits. Archivedoldquantledgers. Improvepreprocessiteration8completed; fullnodeandW/externalDMAintegrationremain. Evidencep3-verification/input-executor-iteration1 andp3-input-storage16/32.json."
+
+  - timestamp: "2026-09-11 11:50"
+    message: "Added guarded opt-in Weight metadata transport:4descriptor capacity, per-owner writer wait/release, separate source/install work IDs and per-slot32bit stride to prevent next-command overwrite of outstanding lane addresses. Defaultlegacy remainsselected; enabledpath and realadapter stillunverified. Improvepreprocessiteration9PASS72 stablecomparisons, not cost/cycleproof. LegacyVCSiteration1compilefailedmissingVX_dp_ram Makefiledependency; fixed. Iteration2exact-time525vs515failure reproducedidenticallyagainstfrozenP0RTL; correctedstaleexactexpectationto525ns. Iteration3PASS withallpayload/backpressure/ownershipchecksretained. Evidence p3-weight-metadata-progress.md andp3-weight-legacy-iteration1/2/3.json. Next implementdirectedmultiownerWeighttest andrealmetadataexecutor; noP4/P5completionclaim."
+
+  - timestamp: "2026-09-11 11:55"
+    message: "Previousgoalturnprogress revalidated. Added actual enabled Weight metadata VCS test with4simultaneousowners/eightdistinctstrides and>4GiBsourceaddresses, forcedsourcecompletionreordering, sourcecapturebeforewriterrelease, exacthead/source/installIDandpayload checks, destinationbackpressureandnoresetreuse. Newfixtureiteration1missingvcs.mkfixed; iterations2/3exposedblockingcycleupdate handshake race, fixedfixtureNBAonly; iteration4MX16PASS andMX32PASS. Finalstrengthenedmatrix MX16/MX32/MX16NDEBUG allPASS withcompile/simlogs andsourcehashes in p3-verification/weight-metadata-matrix. NoDUTchanges thisturn. ActualWeightexecutor/preparedownership/fullmicrotileandnodeintegrationremain; overallgoalactive."
+
+  - timestamp: "2026-09-11 12:00"
+    message: "Implemented VX_naive_weight_executor actualunifiedcommand/prepare/activation/writerfence/heldcompletion adapter oververifiedgather. Soleadapterownership69bits, zeropayload;fourtotalownersincludingpreparedandheldcompletion. FullallocatedmicrotilesreadforlogicalNtails; numericpaddingintegrationstillpending. Executoriteration1 actualVCSMX16PASS; retainedsource-stablematrixMX16/MX32/MX16NDEBUG allPASS: eightfullmicrotiles,distinctstrides>4GiB,preparecapturewithwriterreadybutnoissue, fourowners, independentwriterfences,19cycleheldcompletions,exactaddresses/payload/workIDsandnoresetreuse. Improvepreprocessiteration10PASS76stablecomparisons, notcost/cycleproof. Reports p3-verification/weight-executor-iteration1 andunittestREADME. RemainingexternalDMAmetadataadapter/jobgeometryandactualnodeintegration, terminalphysicalfencesandfullP4/P5gates. Overallgoalactive."
+
+  - timestamp: "2026-09-11 12:03"
+    message: "Implemented guarded VX_naive_external_dma_executor derivedfromexistingnaivephysicaldescriptorprogrammer: realnibbleLOAD1/STORE2 only, noNOTIFYstate/syncwriteinterface, holdsS_DONE andoriginalworksequntilcontrolleraccepts. Preservedallocator/descriptorcoalescing/owner-generationpollprotocol; stagedseparatelyuntilnodeconversion. ActualVCSiteration1andretainedsource-stableMX16/MX32/MX16NDEBUGmatrixallPASS forcontiguousLOAD,edgeSTORE,amountbits,>4GiBaddresses,mutatedliveinputsunderprogrammingstallsand19cycleheldcompletionIDs. ModeledDMApollresponder doesnotprovephysicalLMEMcommit; nodeintegrationmustconnectexistingworkerfence. Improvepreprocessiteration11PASS80stablecomparisons, noresource/cycleclaim. Reports p3-verification/external-executor-iteration1 andunittestREADME. Next exposeacceptedFSMjobgeometry, replaceactualnaivenodelegacycontrol/executorsandwireterminalphysicalowners; fullP4/P5stillrequired. Previousgoalturnprogressconfirmed; goalactive."
+
+  - timestamp: "2026-09-11 12:11"
+    message: "ReplacedactualVX_gemm_node_naive legacycontroller/packetizer/combinedSZ/outputdummyDMA withverifiedmetadataFSM/controller/sourcejoinandInput/Weight/independentSZ/externalexecutors. Retainedphysicalordinary/PSUMarbs,ACCbackend,splittersandactualbankcommitcounters. TerminalcompletionmatchesregisteredtaggedwritebackworkIDplusbankdrain/noACCwriterequest; Opreventsnextoutputownerfromreplacingterminalwhilepending, assertionadded. FSMexposesacceptedjobgeometrycombinationally,noextrageometryregisters. Restoredprogress/perfandnormalizedobserveronnewnode. Integrationunititeration1missingnewtestsourcepaths; correctedpaths,iteration2actualMX16nodeVCSelaboration/resetquiescencePASS,notnumericproof. Improvepreprocessiteration12PASS80stablecomparisons. Startedactualxrt-vcs-sim M4K64N64 candidate smoke via run_baseline.py/ciwrapper,session66456,build_naive_input_contexts_verify,outp4-smoke/m4k64n64-iteration1;currentlygeneratingvendorFPIP. Do notmodifyRTLorappswhilecaptureactive. Previousgoalturnprogress; goalactive,fullP4/P5incomplete."
+
+  - timestamp: "2026-09-11 12:25"
+    message: "Actualfullcoreiteration1stalledafterwork2:FSDBallW/S/Zconsumesneverassertedbecausecommoncoreusedlast(finaloutputmodeinnaive)aspacketend. StoppedverifiedsimvSIGTERM,runnerterminalrc2withstablesources. Guarded10consume/collision/assertionsitesselectnotify_on_writebackonlyfornaive;improvepreprocessiteration13PASS84. Fullcoreiteration2advancedtowork6thenACCreaddeadlock: demandtag24,all8slotscompletedundemandedtags25..32,noresourceversionblock/noPSUMpending. Stoppedverifiedsimv,runnerterminalrc2stablesources. Addedoldestlate-demandreproductiontoexistingACCunit;unfixedRTLfailscore-readaccepttimeout. Reserveonephysicalslotagainstspeculative-onlyprefetch(noaddedstorage);fixedextendedACCunitPASS preservingall8demandedslotsandpriorRAW/reorder/backpressuretests. DiagnosesandliveFSDBJSONretainedunderp4-smoke/iterations1and2,negative/passlogsunderp4-verification. Updatedextract_latency.py opt-in--metadata-nodefornewDUTendpointswithoutchangingbaselinepath. Startedfullcoreiteration3M4K64N64session5299;improvepreprocessiteration14terminalPASS88comparisons/stablesources. NoRTL/appchangeswhileactive. Fullgoalactive."
+
+  - timestamp: "2026-09-11 12:37"
+    message: "Actualsmokeiteration3M4K64N64numericalPASSwithstablesources,FSDBstrictpreedgeexact861/store858/finalize3/core7392. RequiredM4K512N512candidateiteration1numericalPASSwithstablesources;normalized25547/store25544/finalize3/core32154,FSDBobserverexactmatch. Compared61552/core68154correctedbaseline:58.50percentGEMMreduction,bothfrozenlatencygatesPASS. Newp4-service-check.py validates1024InputIDs/sourcegenerations/addresses,4096rows/writebacks,4terminalowners;fixed256..767window2048rows/12344cycles,510of510eligiblepairs overlap,allservicegatesPASS. Additionaloutputownercheck provesWB<physicalterminaldone<STOREretire<nextownerInput. UpdatedrequestedlatencydocwithcandidateM4andclearlylabeledhistoricaloldvectorsection. StartedM256fullcandidatecapture81601(timeout5400basedonbaseline35min),andidenticalimproveOOCsynth27399(sameVivado2025.1/U55C7ns8jobs,definesandsourcefilelistsbyteidentical);bothlive. ACCregressionfirstMX32attemptreusedcachedMX16andexcluded;forcedrecompilesatXLEN64MX16andexplicitMX32bothPASSwithretainedlogs. Allfinalcost/lifecycle/modes/tails/MXU32physical/fullvisibilitygatesstillopen;phaseP4_validationdoesnotmarkearlieracceptancegatescomplete."
+
+  - timestamp: "2026-09-11 12:45"
+    message: "Revalidated live candidate M256 session81601/process3835958 and improve OOC27399/process3882069; neither restarted. Added separate P4 full-node XML declaration probes/inventory for MXU16/32, static elaboration bothPASS:2273/5089 sequentialobjects and48/96 opaquevendorinstances. Blocking procedural exclusions reviewed: FSMresource/bank andqparamcommand/slot arefor-loopindices. ProductionRTL/apps andfrozenP0 unchanged. Newp4-boundary-storage-elaborated16/32.json andmodule-totals retainwidth/source/XMLhashes; payload/controlclassification andcapacitycomparison remainopen, no synthesizedcost claim. Previous rule-onlyturnwasnoimplementationprogress; thisturn producednewcandidateinventoryevidence. Fullgoalactive."
+
+  - timestamp: "2026-09-11 12:48"
+    message: "P4 retaineddeclarationcomparisonPASS MXU16/32 ACC/PSUMjoin/write-splits/arbs/compute/frontend exactnames/modules/widths; weightpayload288/1088Bunchanged,metadata2584/3361bits. Evidencep4-boundary-storage-comparison.json. ImproveOOC27399terminalrc1dueexistingtimingfailure; allhierarchicalutilizationtablerowsidenticaltoP0,topLUT168816/FF90387/RAMB36265/RAMB1816/URAM32/DSP826,officialWNS-.690/TNS-31.566/65identical. Firstcomparisonincludedreportdate/outputpathpreambleandrejected; excludedonlysinglecolumnpreamble,allmulticolumntablerowsPASS. Evidencep4-improve-cost-comparison.json. StartedcurrentimproveM4rebuild/measurement83288; naiveM25681601stilllive. Fullgoalactive, cyclepreservationandremainingP4/P5gatesopen."
+
+  - timestamp: "2026-09-11 12:51"
+    message: "IntegratedoperandstoragecheckPASS16/32: Inputmatchesdedicatedledgerobject-for-object; eachSZengineonlydiffersbyoneFIFOtagbitperentry/head(20/40controlbitsless),payloadunchanged. Normalizedgeneratescopenameswithduplicate-keyrejection. Fullquantpairincludingprepared/arbstates4498/4962controlbits. Boundarypayload3776/8064BvsP04832/10176B; eachreplacementwithinownbudget,noinactiveoutputcapacitycredit. Addedp4-boundary-storage-audit.md andp4-integrated-operand-storage-check.json. Externalboundaryownership andsynthesizednaivecost/timingstillopen. Previousgoalturnprogress; currentimproveM4andnaiveM256handlesconfirmedlive."
+
+  - timestamp: "2026-09-11 12:53"
+    message: "CurrentimproveM4iteration1terminalPASS83288,stablesources,core12206exactP0. FSDBextract43774terminalPASSwithstrictpreedgeobservermatch:GEMM6449/store6446/finalize3/delivery0,32stores,exactP0durations. Absoluteconfigurationedge8154differsfromP08230butnormalizedandcorecyclecountsunchanged. Addedp4-improve-m4-preservation.json. StartedimproveM25691692usingexistingcandidatebuildwithoutrebuild; naiveM25681601stillrunning. Fullgoalactive; M256/lifecycle/tails/physical/finalcostandcleanupremain."
+
+  - timestamp: "2026-09-11 12:54"
+    message: "Improveregressions36507terminalPASSall4existingVCSsuites:readinessscheduler,wideTMEMreadswitch,reservation,tensorbank;fresh-BcompileandXLEN64logsverified,summaryunderp4-verification/improve-units-iteration1. ActualM4PSUMtiming56146terminalPASS4096transactions/3968reads:readroundtrip11..29cycles,median14;response-to-coremedian1/max86;producerwrite-to-readminimum71;allreadproducerwrites/retirementsorderedbeforeissue. Firstextract54809failedwronganalysisinterfacepathacc_if;fixedtogemm_acc_ifwithoutRTLchange,preservedfailure. Evidencep4-candidate/m4-iteration1/psum-timing. Thisdoesnotreplaceper-bankcommit/fairnessproof. UpdatedstalegateJSONforcompletedimprovecost/M4. BothM256handlesremainlive;goalactive."
+
+  - timestamp: "2026-09-11 12:56"
+    message: "StartedP4actualM4physicalvisibility31319usingseparateadaptedP0audit: newmetadataterminalhandshakeandSTOREendpoints,all16nodeports,retainedbankdata/byteenablematchingandDMA/AFUdrainchecks. Resultpending; legacyregionassumptionsrequireexplicitcandidategeometryvalidationbeforeacceptance. OriginalP0script/evidenceretained. BothM256simulationscontinue."
+
+  - timestamp: "2026-09-11 12:58"
+    message: "M4physicalvisibility31319terminalPASS; strengthenedreplay50011checksmanifestshape/stablesources/samewavecanonicalserviceaddresses,exact32256acceptedandbankcommittedwrites(3968PSUMrows*8+128finalrows*4),31744PBUFreads/512OBUFreads,noovertaking. All4terminalhandshakesandSTOREretirementshavezerouncommittedbankwrites;4DMASTOREworkersdrainedsource/destinationqueuesandoneAFUdoneaftercachedrain/AXIpendingempty. Node-to-banklatency3..16cycles. Retainedsignals29MBandresultphysical-visibility-results.json; scopedactualM4proof,notinjectedstallmatrix. Fullgoalactive."
+
+  - timestamp: "2026-09-11 13:01"
+    message: "RequirednaiveM25681601terminalnumericalPASS/stablesources,core1322379vsP01379304within1393097cap. StartednormalizedFSDBextract19636andsequentialactualnaivematrix23055(lifecyclethenM16QCOLWT1/M1QROWWT0/M3QROWWT1/singleNslice),buildownershipverifiedpreviousmanifestfinishedPASS. M4installoracle68568analysisfailedoldbuspath; correctedquant_gemm_bus_ifarray,rerun22906live. ImproveM25691692stilllive. Goalactive; noM256normalizedgateclaimbeforeextraction."
+
+  - timestamp: "2026-09-11 13:02"
+    message: "NaiveM256FSDB19636terminalexactnormalizedPASS:GEMM1315844/store1315841/finalize3/core1322379,8stores;bothfrozencapsPASS,4.14percentGEMMreduction. Updatedcurrentgatesandrequestedlatencydoc,removestaleM256pending. M4installoracle22906terminalPASS2048installs/32768words/canonicalIDs/sourceaddresses/banks;8negativepayloadcopycontrolsand7680of7680stalelanesdetected. NoQROW/livefaultclaim. Naivelifecyclematrix23055andimproveM25691692remainlive;fullgoalactive."
+
+  - timestamp: "2026-09-11 13:03"
+    message: "ImproveM25691692terminalnumericalPASS/stablesources/core278684exactP0;FSDBextract21766started. NaivelifecyclematrixfirstcasePASSsameepoch3freshgenerationsverifiedbeforeeachnextjob;M16QCOLWT1numericPASS,extractionpending. Startedimprovematrix1013andnaiveMX32taggedM3K64N64QROW/WT1repeat3rebuild75371inexistingconfiguredXLEN64naive32build. NoRTL/appsourcechangesduringcaptures;goalactive."
+
+  - timestamp: "2026-09-11 13:05"
+    message: "ImproveM256FSDB21766terminalPASSexactP0GEMM272870/store272867/finalize3/core278684,64stores. Naivematrix23055terminalFAILatM1QROW/WT0afterlifecycleandM16QCOLWT1PASS. ActualsimfatalACCwriterequestchangedwhilestalledat65325000ps. Diagnostic54992showsvalid/tag12/addressstablebutwr_dataandstallcopycontainX; ordinaryequalityassertionexposesunknownpayload,notyetprovenhandshakemutation. UpstreamS/Z/input/ACCpayloadextraction66496live. Do notweakenassertion. Otheralreadylaunchedimprovematrix1013/MX32capture75371continue;noRTL/appeditsduringcaptures. Goalactive;QROWfailuremustberesolved."
+
+  - timestamp: "2026-09-11 13:10"
+    message: "QROWrootcauseprovenFSDB: geometryqblk_orig32passedtoceil_div_log2expecting5,ngtot/tile/effandquantsegmentsize0;firstusefulS/ZwordsXbeforeACC. Improveentire5casematrix1013terminalPASS. NaiveMX32iteration175371sameACCXfatal. Allcapturesfinishedbeforeone-lineFSMfixgeometry[3]=job_q.qlog(noimprovechange). AddedFSMnegative16915expectedFAILgot32,positive16PASS31301;addedrealQROWDMAstride/bound/segment/paddingchecks,external16PASS25221;fixtureqblkencodingcorrected5. Retainedlogsnegative/positive16anddiagnosis. Improvepreprocess15completed;fixedactualQROW16/32rebuildsessions46634/33959started,MX32unitmatrixalsoinprogress. Goalactive;QROWfixnotaccepteduntilactualrerunsPASS."
+
+  - timestamp: "2026-09-11 13:13"
+    message: "FixedQROW16/32actualreruns46634/33959terminalnumericPASSstablesources;strictpreedgeextract25998PASSall2/3epochs. FSMandQROWDMAunitMX32alsoPASS29917withretainedlogs. Startedremainingnaiveshapes/finalrequiredreruns63811;QROWwt1M3andsingleNslicenumericalPASS,tailM17K160N48QROWWT1numericalPASSextractionpending. SeparateMX32M17K160N48QCOLWT0tail24649numericPASS,extractionneeded. Allreadiness/SZbugfixsourcesunchangedduringnewcaptures. Goalactive."
+
+  - timestamp: "2026-09-11 13:14"
+    message: "RemainingnaiveQROWwt1/singleN/tailM17K160N48QROWWT1allnumericandFSDBPASS;currentrevisionM4final1PASSnumeric/exactFSDBthrough63811,nowM256final1running. MX32tailM17K160N48QCOLWT0numericPASS24649. QueriedlocalVCSUCLIhelp23700(time0only)forforce/release/run syntax. Extendedrunneroptional--ucli-filecopies/hashesstimulusandrecordsflags;ordinaryrunsunchanged. StarteddirectedactualMX16QCOLScale-writerhold70802inidlebaseline-naivebuildrecompiledcurrentRTL. Holdwriter_releaseuntil100us,thenrelease;zero-progress/finalcorrectnessstilltobecheckedfromFSDB. Goalactive."
+
+  - timestamp: "2026-09-11 13:22"
+    message: "DirectedQCOLScaleblock70802terminalbeforestimulusUCLI-FORCE-NODBG:existingVCS_P2_FLAGSusesinvalid-debug_access=all,VCSwarningignoredoption. NoRTLfailure. RunnerUCLIonlyrecordedMAKEFLAGSoverrideVCS_P2_FLAGS=-debug_access+alladded;retry31999rebuildlaunched;simsourceMakefileunchangedduringM256capture. Addedfullcorecross-progresscheckerforfinite100uswriterhold,oppositeinstallcompletion,all16ownedcompletions/sourceIDsandfinalnumericalPASS;notyetexecutedonpassingstimulus. CurrentM4finalserviceFSDBrerunstarted;MX32tailFSDB77742exactPASS1731cycles. Goalactive."
+
+  - timestamp: "2026-09-11 13:27"
+    message: "UserexplicitlyreplacedimproveGEMM-node synthesis/costmatchingwithRTL-levelidentityevidence. UpdatedAGENTS.mdandbindingplan.user-update.rtl-preservation.md; P0-frozenplan/hashesuntouched,oldcostreportshistoricalonly. Noimprovesynthesisisrunningorwillbererun. Preservezero-cyclechecks,interfaces/widths/queues/pipeline/handshakeRTLidentityandnaiveifdefisolation. AlsofinalM4service4043PASS510of510overlap/12344cycles. Directediteration2wasstimulusalways_combforce-releaseartifact(provenlivewriter_head1/waitvalid0/release0),specificsimv230524terminatedandrunner31999terminalstablehashes;sequentialgrant-latchstimuluspreparedforretry. FinalM25663811stillactive."
+
+  - timestamp: "2026-09-11 13:32"
+    message: "User removed mandatory bidirectional S/Z forced-stall progress validation. No further such runs will be launched; dependency metadata and ordinary numerical checks remain required. Binding update: plan.user-update.sz-validation.md. Existing QCOL Scale-hold iteration3 session97472 numerical PASS and postcapture checker33752 PASS (four Zero completions during 4373 held cycles) are reference only, not full matrix acceptance. Current-revision M256 session63811 remains active."
+
+  - timestamp: "2026-09-11 13:36"
+    message: "Completed improve RTL identity without synthesis: full node XML AST exact at MXU16 (213111 elements/3436 cells) and MXU32 (450577 elements/10028 cells), only source loc and XML formatting removed. Same private frontend width expansion and opaque vendor boundaries recorded; no production source changes. P0 archive335 files and live candidate hashes verified. Evidence p4-improve-rtl-identity.md and p4-improve-rtl/comparison.json. Final M256 session63811 remains live; goal incomplete."
+
+  - timestamp: "2026-09-11 13:42"
+    message: "Current naive metadata controller endpoint suite50299 terminal PASS all12 VCS combinations: MXU16/32, D0/1/17, STORE delay0/19. Independent pre-edge oracle matches all observer fields, done stable, no done with busy executors; delivery does not affect GEMM, STORE19 shifts store/valid exactly19. XLEN64 and stable source hashes verified. Testbench/Makefile only changed; production sources untouched. QROW accepted-install analysis9844 started on retained waveform; finalM25663811 still live."
+
+  - timestamp: "2026-09-11 13:44"
+    message: "Current QROW masked install oracle PASS: MX16 WT0/WT1 and MX32 WT1,3328 accepted masked writes with184 owned completions,18 representative copied payload faults and112 whole stale previous-job commands detected. Evidence p5-qrow-install-results.md; actual install mapping/IDs checked, no physical source-lane correlation or live injection claim. Analysis9844/74628/92898 terminal. CurrentM25663811 still live; production sources unchanged."
+
+  - timestamp: "2026-09-11 13:47"
+    message: "Named metadata allocation reconciliation PASS16/32:26 complete command copies/3380 extra bits within30/3900, command pointers/occupancy38, notification1207within1539, Input contexts1805within2205, external receipt+T-ready+physical fence123within123. Full controller26840, external programmer1847, source join598/210 and node-local108 bits explicitly accounted. Evidence p5-metadata-allocation.md/json; not synthesis or full physical-stall closure. CurrentM25663811 remains live, source RTL unchanged."
+
+  - timestamp: "2026-09-11 13:48"
+    message: "Final current-revision M256 session63811 terminal PASS: numerical/stable sources and independent FSDB log agreement, GEMM1315844/store1315841/finalize3/delivery0, core1322379,8stores. Same cycles as initial accepted candidate. Endpoint cfg21307/store1337148/valid1337151. Required final M4/M256 gates now PASS on qlog-fixed RTL. No captures remain live. Cleanup and final physical/storage/timing audit remain; goal active."
+
+  - timestamp: "2026-09-11 13:51"
+    message: "Migrated public gemm_latency_observer naive controller entry to actual metadata control/testbench, removed old naive branches from improve fixture, added explicit XLEN build define. Improve entry41193 PASS; first naive compiled wrong backend because verify_rtl params only reach run, diagnosis retained. Retry77304 with BACKEND/TEST env and MAKEFLAGS-B PASS actual tb_control, D17/STORE19. Production RTL unchanged. Evidence p5-latency-test-migration.md; remaining legacy node fixture/manifests still require migration."
+
+  - timestamp: "2026-09-11 13:56"
+    message: "Removed8 unused legacy RTL files from naive_node_integration manifest; fresh VCS smoke39688 PASS16/32 and stable source hashes. Actual pre-qlog M4 LOAD fence audit79862 PASS22528 reserved/physical words,64LOADs+4STOREs; all64 workers complete with writes still pending, frontend held up to22cycles until drain. Initial checker incorrectly assumed registered return; source proves same-edge combinational decode, checker/docs corrected without DUT changes. Final M4 current-wave physical audit launched, see p5-final-m4-visibility.log. Legacy gemm_node fixture migration and final audit remain."
+
+  - timestamp: "2026-09-11 14:00"
+    message: "Final M4 physical audit31605 PASS32256 writes/4terminal owners/no read overtakes. Current LOAD fence77741 PASS22528words/64LOADs, all worker completions precede physical drain, frontend holds up to22cycles. Readiness join51137 PASS68 owned external commands and16four-member T0/T1 publications, expected versions derived independently. Evidence p5-current-physical-evidence.md. Reset audit found current naive node lacks required explicit active-invocation reset diagnostic; address next with expected-failure test, not unsupported cancellation. No live processes; legacy fixture migration and final audit remain."
+
+  - timestamp: "2026-09-11 14:03"
+    message: "Added SYNTHESIS-excluded naive node fatal for reset while real job_active_q is1. New integration test injects a valid job at existing frontend/control boundary (active state never forced), confirms accepted job, then resets; initial/quiescent second reset also tested. MX16 positive PASS and exact expected diagnostic PASS at395000ps. MX32 cases still running28741. Synthesis-selected node text matches measured M256 source at16/32 PERFoff/on: p5-verification/reset-hardware-isolation/result.json. No hardware or improve change. Remaining occupied isolated-adapter reset coverage and legacy node fixture migration are not yet closed."
+
+  - timestamp: "2026-09-11 14:04"
+    message: "Reset contract28741 terminal PASS all4 expected outcomes: initial/quiescent reset positive16/32 and exact active-invocation diagnostic negative16/32 after actual config acceptance,395000ps. Stable RTL source hashes retained. p5-reset-contract.md and gate updated. Diagnostic is simulation-only; synthesis-selected naive node identical to final measured source across4geometry/PERF configurations. No active processes. Isolated occupied-adapter reset and legacy helper/test cleanup remain."
+
+  - timestamp: "2026-09-11 14:12"
+    message: "User narrowed remaining validation to ordinary xrt-vcs-sim PASS; no further fine reset tests. Occupied adapter reset16/32 completed before this instruction and remains reference only. Archived8 obsolete RTL helpers and3 legacy fixture directories with33-file manifest. Final no-waveform session88539: M4 numerical PASS, stable sources, GEMM25547/core32154; M256 running. Remaining checks follow plan.user-update.final-validation.md."
+
+  - timestamp: "2026-09-11 14:43"
+    message: "Final ordinary session88539 exited0: M4 and M256 numerical PASS with stable488-file manifests, GEMM25547/1315844 and core32154/1322379. No further reset microtests. Archived33 files verified; retired active references migrated. Optional naive FSDB selector updated only inside disabled waveform branch after captures; all production RTL/app hashes still match final capture. Final report and requirement audit complete under all3 user updates; no synthesis timing/arbitrary-stall claims. Evidence p5-final-result.json and p5-final-result.md."
+
+active_processes: []
+next_actions: []
+final_result: agent-tasks/gemm-naive-improve-baseline/p5-final-result.md

@@ -11,6 +11,10 @@ log:
     message: "Used fsdb_cli report to extract scalar counters and cycle timelines. Equal external payload 184320 bytes, but external DMA elapsed busy 1599 improve versus 10130 naive. Both accept 4096 input packets; naive ready is continuously high."
   - timestamp: "2026-09-10 21:00"
     message: "Validated 1024 four-row commands, naive startup 23 cycles, median command interval 58 versus improve 5. Representative naive commands retain this gap with external DMA idle. Documented command/writeback serialization and M256 tiling-amortization inference. Corrected noncomparable logged DMA overlap interpretation in the latency report and its generator."
+  - timestamp: "2026-09-10"
+    message: "Follow-up root cause: fsdb_cli traced three idle-external-DMA commands. Startup is 7 launch + 13 uncontended registered LMEM round trip + 3 response staging. Packetizer active blocks command execution after DMA idle until physical write drain; subsequent GEMM NOTIFY/WAIT and ordered weight/quant commands explain the 13-cycle representative tail. Detailed report and transitions retained. No RTL changes."
+  - timestamp: "2026-09-10"
+    message: "Packetizer follow-up: the idle gate blocks queued completion NOTIFY as well as next input. Shared head advances only at physical completion; a gate-only removal would expose premature sync notification without enabling input overlap. Confirmed naive already has accepted-transaction PSUM RAW tracking and shared-core operand-bank lifetime protection. Documented the distinction; no RTL edits."
 validation:
   - "summarize.py checks capture PASS, controller-window/perf cycle equality, equal payload counters, binary critical signals, valid/ready handshake identity, command counts, naive phase ordering, and idle external DMA across representative commands."
   - "M256 explanation derives from source tiling and prior verified results; no fresh M256 FSDB analysis was performed."
