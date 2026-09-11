@@ -1320,10 +1320,14 @@ for block_size in range(1, full_bitwidth+1):
 `define TMEM_ARB_MAX_CONSECUTIVE_URGENT 4
 `endif
 
-// Legacy single-command DMA capacity remains one command.  The improve TMEM
-// Weight path selects W_LMEM_DMA_RESPONSE_SLOTS explicitly.
+// Naive weight gather matches the improve weight response capacity by default.
+// Preserve the legacy single-command capacity for other backends.
 `ifndef W_LMEM_DMA_RD_OUTSTANDING_SLOTS
+`ifdef GEMM_NAIVE
+`define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `W_LMEM_DMA_RESPONSE_SLOTS
+`else
 `define W_LMEM_DMA_RD_OUTSTANDING_SLOTS `W_LMEM_DMA_CMD_BEATS
+`endif
 `endif
 
 // -------------------------------------------------------
