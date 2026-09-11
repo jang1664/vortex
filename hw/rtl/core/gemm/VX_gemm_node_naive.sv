@@ -18,6 +18,14 @@
 
 `ifdef GEMM_NAIVE
 
+// Independent capacity controls for PSUM prefetch and physical read responses.
+`ifndef GEMM_NAIVE_PSUM_READ_SLOTS
+`define GEMM_NAIVE_PSUM_READ_SLOTS 16
+`endif
+`ifndef GEMM_NAIVE_PSUM_RESPONSE_SLOTS
+`define GEMM_NAIVE_PSUM_RESPONSE_SLOTS 16
+`endif
+
 module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
@@ -93,8 +101,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
-    localparam int GEMM_ACC_LMEM_READ_SLOTS = 16;
-    localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = 16;
+    localparam int GEMM_ACC_LMEM_READ_SLOTS = `GEMM_NAIVE_PSUM_READ_SLOTS;
+    localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = `GEMM_NAIVE_PSUM_RESPONSE_SLOTS;
     localparam int GEMM_PSUM_RESPONSE_FIFO_DEPTH = 2;
     // GEMM-unit-facing buses (native GEMM widths)
     VX_mem_bus_if # (

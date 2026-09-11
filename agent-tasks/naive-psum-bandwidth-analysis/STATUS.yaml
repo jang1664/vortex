@@ -1,0 +1,19 @@
+state: complete
+objective: Attribute the post-prefetch M4/M256 improve speedup using FSDB signals.
+configuration: TH16 MXU16, K512 N512, naive read/response slots32
+pitfalls:
+  - Previous naive waveforms predate mandatory prefetch and cannot describe current stalls.
+  - DMA busy and bandwidth saturation are different measurements.
+  - Completed-window comparison must compare accepted bank handshakes, not inactive ready X encodings.
+  - Inactive physical bank ready contains X; mask it only where valid is zero and assert no active unknown handshake.
+log:
+  - timestamp: '2026-09-11 18:14'
+    event: Started fresh naive waveform capture; unchanged improve waveforms will be reused with provenance checks.
+  - timestamp: '2026-09-11 18:22'
+    event: M4 capture PASS at 19981 cycles. PSUM read request stalls zero; weight waits 14736 cycles. Weight fetch has four response slots, blocked without a slot for 15026 cycles. Each weight command targets only two LMEM banks. M256 capture remains in progress.
+  - timestamp: '2026-09-11 18:29'
+    event: M4 weight fetch no-slot block overlaps compute weight wait for 11767 cycles. Improve weight queue has eight slots and zero no-slot fetch blocks. External-idle command41 reads only banks0/8 and waits30 cycles from first request through install.
+  - timestamp: '2026-09-11 18:29'
+    event: Completed M256 window at cfg+50000..54095 from the already-flushed trace. No external DMA, no weight wait, no PSUM response-slot fullness. Raw PSUM reads blocked2355 cycles by node bank-set ordering;716 current-write conflicts all target different full addresses. Postprocessing waits for PSUM2408 cycles; bank utilization48.94%. Full application capture is still running.
+  - timestamp: '2026-09-11 18:44'
+    event: Both fresh captures PASS and reproduce slot32 cycles. Full-trace analysis, source hashes, and cached-window consistency checks completed. Published fpint_gemm_post_prefetch_bandwidth.md; RTL and cycle-only comparison document unchanged.
