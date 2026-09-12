@@ -1,5 +1,7 @@
 # FPINT GEMM parameter fairness audit
 
+> Historical scope: this audit predates the external DMA slot sweep (improve8 / naive16). Current external DMA settings are improve16 per channel / naive32; see [DMA saturation and phase comparison](fpint_gemm_dma_slot_saturation.md). Local Weight/PSUM read/response payload capacities described here are unchanged. The later naive scheduler adds 16 pending-write address/lane metadata entries, without a write-data FIFO; see [scheduler sweep](fpint_gemm_read_priority_sweep.md).
+
 The production naive weight response queue now has eight slots, matching improve for TH16/MXU16/WLOAD4. Other capacity asymmetries remain, but the directly comparable ones found in this audit favor naive: its Input response queue and local DMA command queues are larger. Some apparent configuration differences are inactive settings; others describe different memory architectures and cannot be equated by copying a number.
 
 ## Scope and method
