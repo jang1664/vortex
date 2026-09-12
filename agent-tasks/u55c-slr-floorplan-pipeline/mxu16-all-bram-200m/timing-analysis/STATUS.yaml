@@ -1,0 +1,16 @@
+task: mxu16-200m-critical-path-analysis
+state: complete
+scope: Read-only final DCP timing extraction and RTL source mapping; no RTL edits or physical implementation rerun.
+log:
+  - timestamp: "2026-09-11 11:09"
+    attempted: Read-only Vivado extraction of global and per-source-block paths from the final DCP, followed by RTL mapping.
+    result: Vivado exited0;530 setup samples including overlap, grouped into20 representative paths in timing-analysis.md. No synthesis/PnR/RTL edits. Current source hashes match the physical run. diff check passed.
+    learned: Additional bottlenecks include FSM DSP address/size arithmetic, registered-decode chunk construction, AXI R ready feedback, general-DMA RAM read enable, slot recycling, physical TMEM arbitration, and compute-to-input backpressure. Hidden compute endpoints are explicitly not attributed to guessed RTL.
+  - timestamp: "2026-09-11 10:57"
+    attempted: Parsed575 setup paths from the final report and verified RTL source hashes against the run manifest.
+    result: No RTL drift. Default intra-kernel top10 covers mainly operand selector fanout and scheduler priority logic. Extracting additional per-block paths from the completed DCP.
+    learned: Overall WNS+0.003ns belongs to a fixed platform clock; kernel worst slack is+0.312ns at the report's10ns reference period. Vitis metadata independently reports103.2MHz.
+pitfalls:
+  - Initial optional u_fsm hierarchy filter matched no cells; actual FSM paths were captured under ctrl and global reports. Redundant filter removed from reproduction script.
+  - Do not conflate fixed-platform WNS with the kernel frequency limiter.
+  - The default timing summary samples only10 intra-kernel setup paths, with repeated endpoints from the same control net.

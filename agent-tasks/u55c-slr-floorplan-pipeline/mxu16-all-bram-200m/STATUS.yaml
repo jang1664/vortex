@@ -1,0 +1,35 @@
+task: mxu16-all-bram-200m
+state: complete
+config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_200m.sh
+objective: Explore achieved frequency using a 200 MHz optimization target, not mandatory target closure.
+scope: Fresh all-BRAM full-SLR PnR with the warning-only zero-Laguna policy; no RTL changes or DCP retry.
+monitoring_interval_seconds: 3600
+postfix: spread_v1
+runner_pid: 4069667
+started: "2026-09-10 23:43:21 KST"
+finished: "2026-09-11 03:41:54 KST"
+returncode: 0
+achieved_frequency_mhz: 103.2
+results: results.md
+state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/state.json
+log:
+  - timestamp: "2026-09-11 03:43 KST"
+    status: complete
+    attempted: Final hourly check and inspection of xclbin metadata, route status, and final timing.
+    result: Build completed in3h58m33s; xclbin generated. Vitis scaled200MHz to103.2MHz. Final WNS+0.003ns, WHS+0.004ns, zero setup/hold failures and routing errors. All three SLR pair checks passed. Monitoring ended.
+  - timestamp: "2026-09-11 02:43 KST"
+    status: running
+    attempted: Scheduled hourly monitoring.
+    result: route_design Global Iteration1 active after placement; runner alive, no recent errors.
+  - timestamp: "2026-09-11 01:43 KST"
+    status: running
+    attempted: Scheduled hourly monitoring.
+    result: place_design Phase3.4 Place Remaining active; runner alive, no recent errors.
+  - timestamp: "2026-09-11 00:43 KST"
+    status: running
+    attempted: Scheduled hourly monitoring.
+    result: Synthesis completed at00:22:44; implementation opt_design active, runner alive, no recent errors.
+  - timestamp: "2026-09-10"
+    status: launching
+    attempted: User-authorized fresh 200 MHz run using the shared runner, sourcing config before configure.
+    result: Config and hourly status wrapper prepared. Preserve the failed 300 MHz outputs.
