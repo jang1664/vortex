@@ -1,0 +1,27 @@
+state: complete
+objective: Address-safe naive PSUM read priority with ratios1/2/4/8, preserving improve RTL.
+pitfalls:
+  - Wide write acceptance precedes physical bank commit.
+  - Reserve only writes actually presented downstream; partial splits must remain stable.
+  - Protect older reads from younger same-address writes as well as read-after-write hazards.
+  - Preserve existing DMA saturation edits and measurement artifacts.
+  - Original TH16 LMEM arbitration has two buffered first-level slices plus a buffered root; a flat replacement changes latency/capacity.
+log:
+  - timestamp: "2026-09-12 13:39"
+    action: User approved complete plan; snapshot of pre-change RTL and frozen comparison configs saved. Starting implementation and verification preparation.
+  - timestamp: "2026-09-12 13:48"
+    action: User resumed implementation. Initial improve identity passes572 checks. Before any VCS run, root review caught loss of first-level slice buffers in new bank arbiter; implementation agent is restoring original hierarchy and captured class metadata. Verification scripts/builds for all4 quotas ready; no simulations started yet.
+  - timestamp: "2026-09-12 13:50"
+    action: "v1 freeze restored original request-buffer hierarchy; improve preprocessing identity passed all 572 checks. R1 short4 compile_error: assertion references to psum_rd_pending_conflict and psum_rd_current_conflict precede their declarations. All new runs stopped; RTL fix requested for v2."
+  - timestamp: "2026-09-12 13:56"
+    action: "v2 moved enabled conflict declarations ahead of procedural assertions. Improve identity passed 572 checks again. R1 short4 PASS (GEMM625/core7167), short16 PASS (797/7392); unchanged sources/profiles. Starting performance sweep and waveform scheduler audit."
+  - timestamp: "2026-09-12 14:00"
+    action: "R1 M4 PASS15693 (baseline15970); R2 M4 PASS15981 but regresses11 and is ineligible. Both M256 running. R1 short4 FSDB exact RAW15cycles proves same-row reuse coverage; short16 all-bank quota audit passed, max6 pending metadata entries, empty at completion."
+  - timestamp: "2026-09-12 14:04"
+    action: "All eight shortcases PASS with identical625/797 GEMM cycles. R4 M4 PASS15942; R8 M4 running. R1 M4 accepts2513 reads while different-row writes remain physically pending, versus prior broad bank-set fence. Quota audits pass; R1 max7 metadata entries and empty at done."
+  - timestamp: "2026-09-12 14:25"
+    action: "R1 M256 PASS576763/core583329, unchanged source/profile. GEMM improves95230cycles (14.17%); R1 passes both-shape gate. R4 M256 started as slot opened; R2 active. R1 full phase analysis and representative-bank quota audit started."
+  - timestamp: "2026-09-12 14:31"
+    action: "R2 M256 PASS583150/core589704, unchanged sources; R4/R8 M256 are final two active tests (14/16 PASS). R1 phase analysis: all95230cycles saved in Input stream; PSUM-only356262->67708, write backpressure824->19089. R1 metadata peak7, exact-address hazards/table-full0 for benchmark, representative bank quota audit passes."
+  - timestamp: "2026-09-12 15:04"
+    action: "All16 v2 VCS cases PASS with identical488-file source snapshots. R1 selected: M4=15693/core22254, M256=576763/core583329; R4/R8 tie15942/583658. Production naive profile enablesR1 and matches tested effective flags. Improve572 preprocessed RTL comparisons remain identical; no RTL changed after tests. All eight benchmark FSDB phase analyses and quota audits complete; reports updated, cycle-only document contains current values. No commit created."

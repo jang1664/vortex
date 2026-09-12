@@ -154,3 +154,9 @@ docs/future_optim/dma_experiments/**/*.csv
 !docs/future_optim/dma_experiments/**/*.md
 
 docs/**/ooc/
+
+# Hardware-analysis captures and simulator logs are reproducible evidence.
+# Keep the Markdown reports and extraction scripts, but exclude raw FSDB trees
+# and their generated log bundles regardless of the analysis name.
+/docs/hw_analysis/**/fsdb*/
+/docs/hw_analysis/**/logs/

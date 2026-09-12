@@ -1,0 +1,24 @@
+task: fpint-gemm-latency-compare
+state: complete
+request: "Current RTL xrt-vcs-sim; th16 and MXU16x16; M4/M256 K512 N512"
+log:
+  - timestamp: "2026-09-10 18:19"
+    message: "User clarified RTL simulation and geometry. Started two freshly configured build directories, matched th16/MXU16x16/WLOAD4/cache sizes/DCACHE4/L1ports2/accumulator1024; --perf 3 with numerical validation. Initial hardware measurements completed but are excluded from requested comparison."
+  - timestamp: "2026-09-10 18:21"
+    message: "Naive initial compile failed because inherited LMEM32 geometry conflicts with MXU16 split-PSUM wiring. Changed task config to LMEM16 ports/banks, as required by VX_mem_unit static assertions; no RTL edits. Restarted naive."
+  - timestamp: "2026-09-10 18:27"
+    message: "User authorized naive MXU16 RTL support. Parameterized tensor lane offsets, enabled 8-lane PSUM join, derived naive FSM microtiles from MXU_ROW/COL, and added reusable config. PSUM tests passed for 8 and 16 lanes. Started MXU32 compatibility blackbox. Freshly rebuilt naive after detecting stale simulator header dependency."
+  - timestamp: "2026-09-10 18:32"
+    message: "Improve M4/M256 both passed: GEMM cycles 6448/272869, kernel cycles 12206/278684. Naive MXU16 M4 initially passed at 61552 GEMM cycles, but M256 exposed pending-write underflow from partial lane forwarding before wide acceptance. Reserve writes on first valid presentation; rerunning both sizes and MXU32 compatibility. Disabled FSDB for these reruns to reduce simulation overhead."
+  - timestamp: "2026-09-10 18:39"
+    message: "Post-fix naive MXU16 M4 and MXU32 M4 both passed with unchanged latency counters. Final naive M256 is running without FSDB; no simulation errors so far. Report generator and source/binary provenance are ready."
+  - timestamp: "2026-09-10 19:00"
+    message: "Complete: all four comparison cases PASSED, naive MXU32 regression PASSED, PSUM8/16 tests PASSED. Final naive M256 GEMM/core cycles 1372729/1379304. Report generated and links, source/binary provenance, logs, and diff whitespace checked."
+pitfalls:
+  - "VX_mem_bus_split may drain some lanes before wide req_ready. Count pending writes once at first presentation, not only at wide acceptance."
+  - "xrt-vcs simv target does not track RTL header dependencies; header-only change reused stale FSM geometry. Use fresh build after RTL edits."
+  - "Unittest config sourcing must occur from repository root; a first attempt in build cwd failed to source config and was rerun correctly."
+  - "MXU16 naive requires LMEM_NUM_PORTS=LMEM_NUM_BANKS=16 for XLEN64; inherited MXU32 config cannot retain 32."
+  - "Do not confuse xrt hardware host benchmark time with RTL cycle latency."
+  - "Naive bench CSV label is fpint_gemm_ffn_hw as well; distinguish by app command and config."
+  - "Initial configure invocation used repository cwd; reran inside dedicated build directory."

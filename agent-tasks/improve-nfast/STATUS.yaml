@@ -1,0 +1,14 @@
+state: complete
+objective: Change improve microtile traversal to N-fast and compare xrt-vcs-sim cycles.
+log:
+  - action: User confirmed implementation and performance comparison. Checking existing baseline captures while RTL implementation proceeds.
+  - time: 2026-09-11T20:11:18.931115
+    action: Verification started in configured build_improve_nfast_vcs; FSDB enabled for M4 and M256.
+  - time: 2026-09-11T20:14:27.177975
+    action: M4 PASS with GEMM 6433 and core 12206 cycles; M256 running using same simulator.
+  - time: 2026-09-11T20:14:42.800887
+    action: Root confirmed both retained baseline FSDBs are K-fast and the fresh M4 FSDB is N-fast across every accepted Input ARM. Work IDs increase consecutively; input counts match. M4 cycle delta is -16.
+  - time: 2026-09-11T20:26:16.476359
+    action: M256 PASS with GEMM 272869 and core 278684 cycles; both simulations complete with unchanged source hashes and fresh FSDB captures. Root waveform review and reporting remain.
+  - time: 2026-09-11T20:27:02.757021
+    action: Root verified all four FSDB traversals and accepted input counts, checked final source hashes, published waveform comparison, and updated cycle-only report. Both N-fast simulations PASS; GEMM deltas -16/-1 and core deltas zero. No commit or synthesis.

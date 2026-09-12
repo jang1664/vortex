@@ -1,0 +1,16 @@
+state: complete
+objective: Match naive weight response slots to improve and audit remaining parameter asymmetries.
+pitfalls:
+  - Equal parameter names or numbers do not guarantee equal bytes or scope.
+  - PSUM32 was an experimental override; the current RTL default is16.
+log:
+  - timestamp: "2026-09-11 18:52"
+    action: "Verification started: configured build_naive_weight8_vcs; naive W8/PSUM16 M4 then M256 using ci/run_black.sh xrt-vcs-sim, FSDB0, PERF3."
+  - timestamp: "2026-09-11 18:54"
+    action: "M4 W8/PSUM16 PASS: GEMM15867/core22404; wrapper/runner rc0, strict failure false, source changes empty. M256 started with the same simulator."
+  - timestamp: "2026-09-11 18:59"
+    action: "Published parameter audit: Input slots16vs8 and local DMA commands4vs2 favor naive; S/Z actual8vs8 despite disconnected macro16; common compute queue depths and active no-SLR weight turnover match. RTL implementation cross-check complete. M256 verification remains in progress."
+  - timestamp: "2026-09-11 19:21"
+    action: "Verification PASS: W8/PSUM16 M4 GEMM15867/core22404; M256 GEMM671929/core678504. Both wrapper/runner rc0, deterministic PASS true, strict failure false, source changes empty; both source manifests match the final worktree. Effective weight capacity preprocessing confirms eight slots. Results saved in results.md and ignored runs/."
+  - timestamp: "2026-09-11 19:21"
+    action: "Completed weight8 change and parameter audit; independently checked both PASS result records, updated cycle-only comparison, and marked prior W4 waveform/sweep reports historical. Improve selected RTL config unchanged; no synthesis or commit."

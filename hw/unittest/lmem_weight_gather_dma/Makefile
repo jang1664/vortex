@@ -17,6 +17,7 @@ TOP_MODULE := tb_lmem_weight_gather_dma
 CONFIG_DEFINES := $(patsubst -D%,+define+%,$(filter-out -DMXU_WLOAD_NUM=%,$(CONFIGS)))
 
 SRCS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/libs/VX_dp_ram.sv \
         $(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \

@@ -11,7 +11,8 @@ module tb_lmem_weight_gather_dma;
     localparam logic [63:0] SRC_BASE = 64'h1000;
     localparam logic [31:0] SRC_STRIDE = 32'd64;
     localparam logic [63:0] DST_BASE = 64'h8000;
-    localparam time LEGACY_FINISH_TIME = 515ns;
+    // Frozen P0 stream-queue RTL completes at 525ns (synchronous payload RAM).
+    localparam time LEGACY_FINISH_TIME = 525ns;
 
     logic clk = 0;
     logic reset = 1;

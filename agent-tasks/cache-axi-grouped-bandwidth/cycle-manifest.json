@@ -1,0 +1,38 @@
+[
+  {
+    "case": "vecadd n4096",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-baseline/vecadd-1",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-1/vecadd-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-2/vecadd-1"
+  },
+  {
+    "case": "softmax rev2_shuffle_grouped",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-baseline/softmax-1",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-1/softmax-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-2/softmax-1"
+  },
+  {
+    "case": "improve fpint M32 K128 N32",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-baseline/small-1",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-1/small-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-2/small-1"
+  },
+  {
+    "case": "improve fpint M256 K256 N256",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-baseline/large-1",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-1/large-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/improve-2/large-1"
+  },
+  {
+    "case": "naive fpint M32 K128 N32",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-baseline/small-4",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-1/small-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-2/small-1"
+  },
+  {
+    "case": "naive fpint M256 K256 N256",
+    "baseline": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-baseline/large-3",
+    "k1": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-1/large-1",
+    "k2": "agent-tasks/cache-axi-grouped-bandwidth/logs/naive-2/large-1"
+  }
+]

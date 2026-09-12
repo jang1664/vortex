@@ -1,0 +1,34 @@
+state: complete
+objective: Find external DMA read-slot saturation for both backends and compare phases at M4/M256.
+pitfalls:
+  - Local weight response slots and PSUM slots are distinct from external DMA read slots.
+  - Equal total GEMM cycles can conceal improvements to overlapped DMA work.
+  - Outstanding tags and downstream AXI queues may impose capacity limits.
+  - Naive uses g_misaligned/u_impl via VX_core ENABLE_MISALIGN=1; do not assume engine defaults select aligned.
+log:
+  - timestamp: "2026-09-12 02:52"
+    action: User confirmed sweeps, selected configurations and final FSDB phase comparison. Inspecting active RTL bindings.
+  - timestamp: "2026-09-12 02:58"
+    action: Safe backend-specific tag-width growth implemented; defaults unchanged. Static depth8..256 checks pass. Concurrent improve16/32 and naive32/64 VCS sweeps started. Wave parser now handles symbolic RD_IDLE/RD_RUN/RD_DONE enum values explicitly.
+  - timestamp: "2026-09-12 03:03"
+    action: Corrected initial naive aligned-path assumption using VX_core binding; actual misaligned response RAM and tag checks confirmed. Both tag-width changes remain valid. Improve16 M4 PASS6431, naive32 M4 PASS15970, fresh naive16 M4 PASS15867. Improve16 M4 max occupancy14; naive32 max26, neither full. M256 sweeps continuing.
+  - timestamp: "2026-09-12 03:06"
+    action: M4 FSDB comparison complete. Improve8->16 read-busy1393->1323 and full-slot waits disappear, GEMM6433->6431. Naive16->32 read-busy10769->10667 and full-slot waits2811->0, but GEMM15867->15970 with PSUM order-block8953->9070. Keep DMA saturation distinct from whole-GEMM peak. Three M256 runs continue.
+  - timestamp: "2026-09-12 03:14"
+    action: Improve16 M256 PASS GEMM272856/core278622; depth32 comparison started. Naive16/32 M256 continue. Final16 M256 waveform extraction started.
+  - timestamp: "2026-09-12 03:20"
+    action: Improve32 M4 PASS6431/core12205. FSDB metrics exactly match16 including phases/read-busy1323/max14/no-full. Improve16 M256 max16 with4 full-pending channel-cycles; depth32 M256 pending.
+  - timestamp: "2026-09-12 03:30"
+    action: Naive32 M256 PASS GEMM671993/core678579, DMA busy65789; depth64 M4/M256 started. Both M4/M256 whole-GEMM are slightly slower than depth16 despite faster DMA at M4; distinguish DMA plateau from best kernel cycles in final selection.
+  - timestamp: "2026-09-12 03:34"
+    action: Improve32 M256 PASS272856/core278622, identical16 printed metrics; inspect DMA FSDB before optional64. Naive64 M4 PASS15970/core22554 identical32; M256 running. Fresh naive16 M256 PASS671929/core678504 matches prior reference exactly. All baseline captures complete.
+  - timestamp: "2026-09-12 03:37"
+    action: Improve saturation16 confirmed by32: all GEMM/core/phase/DMA timing and counters identical in both shapes. Skip64 improve. Naive16 baseline M256 analysis complete read-busy61837 vs32 60501;32 saves265 startup cycles but Input interval grows329, netGEMM+64. Awaitnaive64 M256 plateau comparison. Production configs remain frozen until active simulations finish.
+  - timestamp: "2026-09-12 03:58"
+    action: Naive64 M256 PASS GEMM671993/core678579, all PERF metrics identical32. Ten fresh run source manifests verified unchanged. Final64 FSDB phase extraction running. Frozen reproduction profiles exactly match all ten tested flag sets.
+  - timestamp: "2026-09-12 04:02"
+    action: Final FSDB confirms improve16->32 and naive32->64 identical GEMM/core/phase/read-write busy times. Naive64 still fills but only moves stalls upstream/downstream; no throughput benefit. Selected improve16 and naive32 in production configs. Tested macro equivalence and unchanged RTL/app hashes confirmed. Published cycle-only comparison and detailed sweep/phase report, including naive global GEMM regression relative16. All ten fresh cases PASS; raw artifacts ignored; git diff --check passes.
+  - timestamp: "2026-09-12 follow-up"
+    action: Added detailed explanation with absolute/relative FSDB cycle annotations and RTL links. Re-extracted four review windows via fsdb_cli, retained per-cycle CSV and full signal maps, verified documented gate predicates. Whole-run summary separates DMA-active/idle Weight and PSUM waits, exact Input handshake categories, and long improve streaming intervals. Document explicitly distinguishes internal accumulator RAM from operand TMEM and avoids causal bandwidth percentages. No RTL/config changes in this follow-up.
+  - timestamp: "2026-09-12 read-priority analysis"
+    action: Reconstructed per-word pending PSUM writes from first presentation through physical bank commits. Reconstructed totals match both RTL pending counters on all15970/671993 cycles. All9070/357280 node read-block cycles involve different rows; zero presented reads conflict with a same-row pending or current write. Documented qualified read-priority recommendation, reservation/ready circular-wait trap and finite result-credit constraint. Evidence and analysis saved; no RTL/config changes.

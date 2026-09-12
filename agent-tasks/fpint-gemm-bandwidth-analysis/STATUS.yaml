@@ -1,0 +1,27 @@
+task: fpint-gemm-bandwidth-analysis
+state: complete
+request: "Use fsdb_cli to explain whether bandwidth causes the larger M4 improve/naive speedup."
+report: docs/hw_analysis/improve_vs_naive/fpint_gemm_m4_bandwidth_analysis.md
+log:
+  - timestamp: "2026-09-10 20:41"
+    message: "Started fresh M4 FSDB capture in both previously configured xrt-vcs-sim builds, sourcing the prior comparison configs. Preserved previous simulator executables and forced re-elaboration. No RTL changes."
+  - timestamp: "2026-09-10 20:44"
+    message: "Both captures passed numerical verification and reproduced exact previous GEMM/core counters: improve 6448/12206, naive 61552/68154. Retained FSDB, wrapper/simv logs, configs, and memory-model manifests."
+  - timestamp: "2026-09-10 20:50"
+    message: "Used fsdb_cli report to extract scalar counters and cycle timelines. Equal external payload 184320 bytes, but external DMA elapsed busy 1599 improve versus 10130 naive. Both accept 4096 input packets; naive ready is continuously high."
+  - timestamp: "2026-09-10 21:00"
+    message: "Validated 1024 four-row commands, naive startup 23 cycles, median command interval 58 versus improve 5. Representative naive commands retain this gap with external DMA idle. Documented command/writeback serialization and M256 tiling-amortization inference. Corrected noncomparable logged DMA overlap interpretation in the latency report and its generator."
+  - timestamp: "2026-09-10"
+    message: "Follow-up root cause: fsdb_cli traced three idle-external-DMA commands. Startup is 7 launch + 13 uncontended registered LMEM round trip + 3 response staging. Packetizer active blocks command execution after DMA idle until physical write drain; subsequent GEMM NOTIFY/WAIT and ordered weight/quant commands explain the 13-cycle representative tail. Detailed report and transitions retained. No RTL changes."
+  - timestamp: "2026-09-10"
+    message: "Packetizer follow-up: the idle gate blocks queued completion NOTIFY as well as next input. Shared head advances only at physical completion; a gate-only removal would expose premature sync notification without enabling input overlap. Confirmed naive already has accepted-transaction PSUM RAW tracking and shared-core operand-bank lifetime protection. Documented the distinction; no RTL edits."
+validation:
+  - "summarize.py checks capture PASS, controller-window/perf cycle equality, equal payload counters, binary critical signals, valid/ready handshake identity, command counts, naive phase ordering, and idle external DMA across representative commands."
+  - "M256 explanation derives from source tiling and prior verified results; no fresh M256 FSDB analysis was performed."
+pitfalls:
+  - "The fsdb_cli streaming fsdbdebug tree helper stalled with undrained stderr. Used run_fsdbdebug(['-tree'], wave), which collects both streams, for indexing. No tool implementation changed."
+  - "Packed performance structs use dot field paths; interfaces use slash paths. Enum state values require name decoding."
+  - "HBM aggregate active_cycles sums channel occupancy, unlike the aggregate busy waveform's elapsed cycles."
+  - "Naive local-DMA perf structs are tied to zero; logged DMA/MXU overlap has a different denominator scope from improve."
+  - "Improve input_dma_idle has four unknown samples and is unused in conclusions; critical handshake/start/external-busy signals have none."
+  - "Do not interpret timeline busy/idle differences as a controlled bandwidth-only speedup decomposition."

@@ -110,6 +110,10 @@ module VX_core import VX_gpu_pkg::*; #(
     ) dma_local_data_if[`LMEM_NUM_PORTS]();
 
 `ifdef GEMM_NAIVE
+    wire [`LMEM_NUM_BANKS-1:0][2:0] naive_write_commit;
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    wire [`LMEM_NUM_BANKS-1:0][3:0] naive_psum_commit_slot;
+`endif
     // Shared-LMEM GEMM data path used by the naive backend.
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
@@ -307,6 +311,10 @@ module VX_core import VX_gpu_pkg::*; #(
        ,.gemm_data_if      (gemm_data_if)
        ,.gemm_psum_rd_if   (gemm_psum_rd_if)
        ,.gemm_psum_wr_if   (gemm_psum_wr_if)
+       ,.naive_write_commit(naive_write_commit)
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+       ,.naive_psum_commit_slot(naive_psum_commit_slot)
+`endif
 `endif
     );
 
@@ -329,7 +337,8 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
       .mmio_if(dma_ctrl_if),
       .dcache_bus_if(dma_global_data_if),
-      .lmem_bus_if(dma_local_data_if)
+      .lmem_bus_if(dma_local_data_if),
+      .naive_write_commit(naive_write_commit)
     );
 `else
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl
@@ -375,6 +384,10 @@ module VX_core import VX_gpu_pkg::*; #(
         .lmem_bus_if (gemm_data_if)
        ,.psum_rd_lmem_bus_if(gemm_psum_rd_if)
        ,.psum_wr_lmem_bus_if(gemm_psum_wr_if)
+       ,.naive_write_commit(naive_write_commit)
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+       ,.naive_psum_commit_slot(naive_psum_commit_slot)
+`endif
     );
 
     for (genvar i = 0; i < NUM_DMA_CHANNELS; ++i) begin : g_naive_gemm_dma_axi

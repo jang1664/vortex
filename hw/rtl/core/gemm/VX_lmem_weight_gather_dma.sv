@@ -10,11 +10,25 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     parameter int TAG_WIDTH = 1,
     parameter int RD_PREFETCH_DEPTH = 4,
     parameter int CMD_FIFO_DEPTH = 1,
+`ifdef GEMM_NAIVE
+    parameter bit NAIVE_METADATA = 0,
+`endif
     parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH
 ) (
     input wire clk,
     input wire reset,
 
+`ifdef GEMM_NAIVE
+    input gemm_wait_meta_t writer_wait_i,
+    input wire writer_release_i,
+    output wire writer_head_valid_o,
+    output gemm_wait_meta_t writer_wait_o,
+    output wire [31:0] writer_work_seq_o,
+    output wire source_done_valid_o,
+    output wire [31:0] source_done_work_seq_o,
+    output wire install_done_valid_o,
+    output wire [31:0] install_done_work_seq_o,
+`endif
     VX_lmem_dma_ctrl_if.slave ctrl_if,
     VX_mem_bus_if.master      lmem_bus_if[NUM_LANES],
     VX_mem_bus_if.master      gemm_bus_if
@@ -38,7 +52,11 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     localparam int GROUP_OFFSET_WIDTH = GROUP_ROW_WIDTH + 32;
     localparam int SEQUENCE_BITS = 32;
     localparam int SOURCE_META_BITS = 96;
+`ifdef GEMM_NAIVE
+    localparam int DEST_META_BITS = 64 + (NAIVE_METADATA ? $bits(gemm_wait_meta_t) : 0);
+`else
     localparam int DEST_META_BITS = 64;
+`endif
     localparam int CMD_PAYLOAD_BITS = SOURCE_META_BITS + DEST_META_BITS;
     localparam int REQ_PAYLOAD_BITS = SOURCE_META_BITS + COUNT_BITS;
     localparam int SINK_PAYLOAD_BITS = DEST_META_BITS + COUNT_BITS
@@ -65,7 +83,13 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     wire [SOURCE_META_BITS-1:0] command_source_meta = {
         ctrl_if.src_base_addr, ctrl_if.src_strides[0]
     };
+`ifdef GEMM_NAIVE
+    wire [DEST_META_BITS-1:0] command_dest_meta = NAIVE_METADATA
+        ? DEST_META_BITS'({writer_wait_i, ctrl_if.dst_base_addr})
+        : DEST_META_BITS'(ctrl_if.dst_base_addr);
+`else
     wire [DEST_META_BITS-1:0] command_dest_meta = ctrl_if.dst_base_addr;
+`endif
     wire [BOUND_WIDTH-1:0] command_total_groups
         = ctrl_if.bounds[0] / ROWS_PER_GROUP;
     wire command_valid = ctrl_if.start && ctrl_if.idle;
@@ -100,6 +124,7 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     logic [SLOT_BITS-1:0] lane_issue_ptr_r[NUM_LANES];
     logic [RD_PREFETCH_DEPTH-1:0] assembly_valid_r;
     logic [63:0] assembly_base_r[RD_PREFETCH_DEPTH];
+
     logic [NUM_LANES-1:0]
         assembly_req_sent_r[RD_PREFETCH_DEPTH];
     logic [NUM_LANES-1:0]
@@ -110,6 +135,24 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     wire source_request_fire = dma_fetch_if.req_valid
                              && dma_fetch_if.req_ready;
     assign dma_fetch_if.req_ready = !assembly_valid_r[fetch_slot];
+`ifdef GEMM_NAIVE
+    // A new command must not change the stride of outstanding lane requests.
+    wire [31:0] assembly_stride[RD_PREFETCH_DEPTH];
+    if (NAIVE_METADATA) begin : g_owned_stride
+        logic [31:0] stride_r[RD_PREFETCH_DEPTH];
+        for (genvar slot = 0; slot < RD_PREFETCH_DEPTH; ++slot) begin : g_slot
+            assign assembly_stride[slot] = stride_r[slot];
+            always_ff @(posedge clk) begin
+                if (reset) stride_r[slot] <= '0;
+                else if (source_request_fire && fetch_slot == SLOT_BITS'(slot))
+                    stride_r[slot] <= fetch_source_stride;
+            end
+        end
+    end else begin : g_legacy_stride
+        for (genvar slot = 0; slot < RD_PREFETCH_DEPTH; ++slot)
+            assign assembly_stride[slot] = source_stride_r;
+    end
+`endif
 
     wire [NUM_LANES-1:0] lane_req_fire;
     wire [NUM_LANES-1:0] lane_rsp_fire;
@@ -123,7 +166,11 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
         wire issue_valid = assembly_valid_r[issue_slot]
                         && !assembly_req_sent_r[issue_slot][lane];
         wire [63:0] lane_byte_addr = assembly_base_r[issue_slot]
+`ifdef GEMM_NAIVE
+                                   + (ROW_IDX * assembly_stride[issue_slot])
+`else
                                    + (ROW_IDX * source_stride_r)
+`endif
                                    + (ROW_LANE_IDX * LANE_BYTES);
 
         assign lmem_bus_if[lane].req_valid = issue_valid;
@@ -205,7 +252,11 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     assign gemm_bus_if.req_valid = dma_sink_if.write_valid;
     assign gemm_bus_if.req_data.rw = 1'b1;
     assign gemm_bus_if.req_data.addr
+`ifdef GEMM_NAIVE
+        = sink_dest_meta[63:0] >> `CLOG2(GEMM_BYTES);
+`else
         = sink_dest_meta >> `CLOG2(GEMM_BYTES);
+`endif
     assign gemm_bus_if.req_data.data = sink_data;
     assign gemm_bus_if.req_data.byteen = '1;
     assign gemm_bus_if.req_data.flags = '0;
@@ -214,7 +265,15 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
 
     wire queue_install_complete;
     wire [SLOT_COUNT_BITS-1:0] queue_slot_occupancy;
+`ifdef GEMM_NAIVE
+    wire [`CLOG2(CMD_FIFO_DEPTH+1)-1:0] queue_cmd_occupancy;
+    wire [CMD_PAYLOAD_BITS-1:0] writer_payload;
+    assign writer_wait_o = NAIVE_METADATA
+        ? gemm_wait_meta_t'(writer_payload >> 64) : '0;
+    assign install_done_valid_o = queue_install_complete;
+`else
     wire queue_cmd_occupancy;
+`endif
     VX_gemm_stream_dma_queue #(
         .INSTANCE_ID             ({INSTANCE_ID, ".stream_queue"}),
         .CMD_FIFO_DEPTH          (CMD_FIFO_DEPTH),
@@ -231,9 +290,25 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     ) u_stream_queue (
         .clk(clk),
         .reset(reset),
+`ifdef GEMM_NAIVE
+        .writer_release_i(NAIVE_METADATA ? writer_release_i : 1'b1),
+`else
         .writer_release_i(1'b1),
+`endif
         .fetch_if(dma_fetch_if),
         .sink_if(dma_sink_if),
+`ifdef GEMM_NAIVE
+        .writer_head_valid_o(writer_head_valid_o),
+        .writer_head_cmd_id_o(writer_work_seq_o),
+        .writer_head_cmd_payload_o(writer_payload),
+        `UNUSED_PIN (writer_head_sequence_o),
+        .fetch_complete_valid_o(source_done_valid_o),
+        .fetch_complete_cmd_id_o(source_done_work_seq_o),
+        `UNUSED_PIN (fetch_complete_sequence_o),
+        .install_complete_valid_o(queue_install_complete),
+        .install_complete_cmd_id_o(install_done_work_seq_o),
+        `UNUSED_PIN (install_complete_sequence_o),
+`else
         `UNUSED_PIN (writer_head_valid_o),
         `UNUSED_PIN (writer_head_cmd_id_o),
         `UNUSED_PIN (writer_head_cmd_payload_o),
@@ -244,6 +319,7 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
         .install_complete_valid_o(queue_install_complete),
         `UNUSED_PIN (install_complete_cmd_id_o),
         `UNUSED_PIN (install_complete_sequence_o),
+`endif
         `UNUSED_PIN (fetch_head_write_beats_o),
         `UNUSED_PIN (install_ready_ahead_o),
         .cmd_occupancy_o(queue_cmd_occupancy),
@@ -251,7 +327,11 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     );
 
     logic done_r;
+`ifdef GEMM_NAIVE
+    assign ctrl_if.idle = NAIVE_METADATA ? dma_fetch_if.cmd_ready : !queue_cmd_occupancy;
+`else
     assign ctrl_if.idle = !queue_cmd_occupancy;
+`endif
     assign ctrl_if.done = done_r;
     assign ctrl_if.prepare_ready = 1'b0;
     assign ctrl_if.write_done = queue_install_complete;
@@ -289,7 +369,11 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
          || ((RD_PREFETCH_DEPTH & (RD_PREFETCH_DEPTH - 1)) != 0))
             $fatal(1, "%s: RD_PREFETCH_DEPTH must be a power of two >= 2",
                    INSTANCE_ID);
+`ifdef GEMM_NAIVE
+        if (NAIVE_METADATA ? (CMD_FIFO_DEPTH != 4) : (CMD_FIFO_DEPTH != 1))
+`else
         if (CMD_FIFO_DEPTH != 1)
+`endif
             $fatal(1, "%s: initial NAIVE Weight migration requires command depth 1",
                    INSTANCE_ID);
         if (BOUND_WIDTH != ctrl_if.BOUND_WIDTH)
@@ -327,6 +411,9 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
                 assert (!assembly_valid_r[fetch_slot])
                     else $fatal(1, "%s: logical fetch reused a live assembly slot=%0d",
                                 INSTANCE_ID, fetch_slot);
+`ifdef GEMM_NAIVE
+                if (!NAIVE_METADATA)
+`endif
                 assert ((fetch_group_base == next_group_base_r)
                      && (fetch_source_stride == source_stride_r))
                     else $fatal(1, "%s: logical fetch metadata/order changed beat=%0d",

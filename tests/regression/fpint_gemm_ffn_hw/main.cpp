@@ -8,6 +8,7 @@
 #include <limits>
 #include <vortex.h>
 #include "common.h"
+#include "../fpint_gemm_ffn_hw/test_vectors.h"
 #include "layout.h"
 
 #define RT_CHECK(_expr)                                         \
@@ -33,6 +34,7 @@ static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
+static bool TAGGED_VECTORS = false;
 // Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
 // Used to isolate Vortex-core polling power from HW-GEMM power.
 static uint32_t POLL_ONLY_ITERS = 0;
@@ -48,7 +50,8 @@ static vx_buffer_h scales_buffer = nullptr;
 static vx_buffer_h zeros_buffer = nullptr;
 static vx_buffer_h C_buffer = nullptr;
 
-static constexpr float FP16_TOL = 0.01f;
+// Relative error for nonzero references; absolute error when the reference is zero.
+static constexpr float FP16_TOL = 0.001f;
 
 // Tile constants
 static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
@@ -89,14 +92,17 @@ static void show_usage() {
   std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]" << std::endl;
   std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
   std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
+  std::cout << "       [--tagged] (directed A/W address-identity vectors)" << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
+static constexpr int OPT_TAGGED = 0x101;
 
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
+  {"tagged", no_argument, nullptr, OPT_TAGGED},
   {nullptr, 0, nullptr, 0},
 };
 
@@ -113,6 +119,7 @@ static void parse_args(int argc, char **argv) {
     case 'd': QDIR = atoi(optarg); break;
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
+    case OPT_TAGGED: TAGGED_VECTORS = true; break;
     case OPT_POL:
       POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
       POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
@@ -214,86 +221,45 @@ static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
 }
 
 // ============================================================================
-// Test vector generation (row-major, same data patterns as before)
+// Shared corrected logical vectors and backend-specific weight decoding
 // ============================================================================
+
+static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
+                                 std::vector<uint8_t>& tiled);
+
+// Random access decoder independent of the sequential packing loop below.
+static int8_t tiled_weight_at(const std::vector<uint8_t>& packed,
+                              uint32_t k, uint32_t n) {
+  const uint32_t kt = k / DMA_KT;
+  const uint32_t ck = std::min(K - kt * DMA_KT, DMA_KT);
+  const uint32_t kb = (k % DMA_KT) / DMA_MXU_KT;
+  const uint32_t nt = n / DMA_MXU_NT;
+  const size_t segment = DMA_MXU_KT * DMA_MXU_NT / 2;
+  const size_t base = size_t(kt) * DMA_KT * N / 2
+                    + (size_t(nt) * (ck / DMA_MXU_KT) + kb) * segment;
+  const uint32_t local_k = k % DMA_MXU_KT;
+  const uint32_t local_n = n % DMA_MXU_NT;
+  const size_t index = base + (WTRANS ? local_n * (DMA_MXU_KT / 2) + local_k / 2
+                                      : local_k * (DMA_MXU_NT / 2) + local_n / 2);
+  return fpint_gemm_test::unpack_int4(packed.at(index), WTRANS ? local_k : local_n);
+}
 
 static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<int8_t>& h_W_raw,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
                                std::vector<uint16_t>& h_ref_out_fp16,
-                               bool compute_reference = true) {
-  uint32_t groups_total = (K + QBLK - 1) / QBLK;
-  uint32_t ng_total = (N + QBLK - 1) / QBLK;
-  uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
-
-  h_A.assign(M * K, 0);
-  h_W_raw.assign(K * N, 0);
-  h_scales.assign(sc_zp_size, 0);
-  h_zeros.assign(sc_zp_size, 0);
+                               bool compute_reference = true,
+                               uint32_t generation = 0) {
+  fpint_gemm_test::initialize(M, K, N, K_logical, N_logical, QBLK, QDIR,
+      generation, TAGGED_VECTORS, h_A, h_W_raw, h_scales, h_zeros, float_to_fp16);
   h_ref_out_fp16.assign(M * N, 0);
-
-  // Input matrix A [M x K] fp16
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K_logical; ++k) {
-      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 3)/100.0);
-      // h_A[m * K + k] = float_to_fp16(1.0f);
-    }
-  }
-
-  // Weight matrix W [K x N] raw int4 values (unpacked for reference)
-  for (uint32_t k = 0; k < K_logical; ++k){
-    for (uint32_t n = 0; n < N_logical; ++n) {
-      h_W_raw[k * N + n] = int8_t(int((k * N + n) % 7) - 3);
-      // h_W_raw[k * N + n] = int8_t(int(1));
-    }
-  }
-
-  // Scale and zero-point
-  if (QDIR == 0) {
-    for (uint32_t kg = 0; kg < (K_logical + QBLK - 1) / QBLK; ++kg)
-      for (uint32_t n = 0; n < N_logical; ++n) {
-        h_scales[kg * N + n] = float_to_fp16(1.0f + float((n+kg) % 3)/100.0);
-        h_zeros[kg * N + n] = int16_t(int((n+kg) % 7) - 3);
-        // h_scales[kg * N + n] = float_to_fp16(1.0f);
-        // h_zeros[kg * N + n] = int16_t(-1);
-      }
-  } else {
-    for (uint32_t k = 0; k < K_logical; ++k)
-      for (uint32_t ng = 0; ng < (N_logical + QBLK - 1) / QBLK; ++ng) {
-        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float((ng+k) % 3)/100.0);
-        h_zeros[k * ng_total + ng] = int16_t(int((ng+k) % 7) - 3);
-        // h_scales[k * ng_total + ng] = float_to_fp16(1.0f);
-        // h_zeros[k * ng_total + ng] = int16_t(-1);
-      }
-  }
-
-  // Reference output C = A * dequant(W) [M x N]
   if (compute_reference) {
-    for (uint32_t m = 0; m < M; ++m)
-      for (uint32_t n = 0; n < N_logical; ++n) {
-        float sum = 0.0f;
-        for (uint32_t k = 0; k < K_logical; ++k) {
-          float a = fp16_to_float(h_A[m * K + k]);
-          float scale, zp;
-          if (QDIR == 0) {
-            uint32_t gid = k / QBLK;
-            scale = fp16_to_float(h_scales[gid * N + n]);
-            zp = float(h_zeros[gid * N + n]);
-          } else {
-            uint32_t ng = n / QBLK;
-            scale = fp16_to_float(h_scales[k * ng_total + ng]);
-            zp = float(h_zeros[k * ng_total + ng]);
-          }
-          float w = float(h_W_raw[k * N + n]);
-          if (QDIR == 0) {
-            sum += a * (w - zp) * scale;
-          } else {
-            sum += fp16_mul_rne(a, scale) * (w - zp);
-          }
-        }
-        h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
-      }
+    std::vector<uint8_t> packed;
+    convert_weight_tiled(h_W_raw, packed);
+    auto weight = [&](uint32_t k, uint32_t n) { return tiled_weight_at(packed, k, n); };
+    fpint_gemm_test::reference(M, K, N, K_logical, N_logical, QBLK, QDIR,
+        h_A, h_scales, h_zeros, weight, fp16_to_float, float_to_fp16, h_ref_out_fp16);
   }
 }
 
@@ -636,6 +602,10 @@ static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
 
 int main(int argc, char *argv[]) {
   parse_args(argc, argv);
+  if (REPS == 0) {
+    std::cerr << "REPS must be > 0" << std::endl;
+    return -1;
+  }
 
   // Validate constraints
   if (QBLK != 32 || WTRANS > 1 || QDIR > 1) {
@@ -671,7 +641,8 @@ int main(int argc, char *argv[]) {
             << ", N=" << N_logical << " (execution " << N << ")"
             << ", K=" << K_logical << " (execution " << K << ")"
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
-            << ", QDIR=" << QDIR << ", REPS=" << REPS << std::endl;
+            << ", QDIR=" << QDIR << ", REPS=" << REPS
+            << ", vectors=" << (TAGGED_VECTORS ? "tagged" : "corrected-default") << std::endl;
   std::cout << "Active MXU profile: MXU_ROW=" << DMA_MXU_KT
             << " MXU_COL=" << DMA_MXU_NT
             << " MXU_COL_TILE=" << DMA_MXU_COL_TILE << std::endl;
@@ -774,16 +745,6 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_zp.size(),     DRAM_ALIGN_BYTES, VX_MEM_READ, &zeros_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_WRITE, &C_buffer));
 
-  // ---- Upload tiled data ----
-  RT_CHECK(vx_copy_to_dev(A_buffer,       tiled_input.data(),  0, tiled_input.size()));
-  RT_CHECK(vx_copy_to_dev(W_int4_buffer,  tiled_weight.data(), 0, tiled_weight.size()));
-  RT_CHECK(vx_copy_to_dev(scales_buffer,  tiled_scale.data(),  0, tiled_scale.size()));
-  RT_CHECK(vx_copy_to_dev(zeros_buffer,   tiled_zp.data(),     0, tiled_zp.size()));
-
-  // Zero output buffer
-  std::vector<uint8_t> zero_out(out_total_bytes, 0);
-  RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));
-
   // ---- Upload kernel ----
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
@@ -829,6 +790,22 @@ int main(int argc, char *argv[]) {
             << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")
             << ", poll_iters=" << POLL_ONLY_ITERS << ")" << std::endl;
   for (uint32_t rep = 0; rep < REPS; ++rep) {
+    if (rep != 0) {
+      build_test_vectors(h_A, h_W_raw, h_scales, h_zeros, h_ref_out_fp16,
+                         !POWER_MODE, rep);
+      convert_input_tiled(h_A, tiled_input);
+      convert_weight_tiled(h_W_raw, tiled_weight);
+      convert_scale_tiled(h_scales, tiled_scale);
+      convert_zp_tiled(h_zeros, tiled_zp);
+    }
+    RT_CHECK(vx_copy_to_dev(A_buffer, tiled_input.data(), 0, tiled_input.size()));
+    RT_CHECK(vx_copy_to_dev(W_int4_buffer, tiled_weight.data(), 0, tiled_weight.size()));
+    RT_CHECK(vx_copy_to_dev(scales_buffer, tiled_scale.data(), 0, tiled_scale.size()));
+    RT_CHECK(vx_copy_to_dev(zeros_buffer, tiled_zp.data(), 0, tiled_zp.size()));
+    // Every FP16 lane is NaN, including reserved padding between output slots.
+    const std::vector<uint8_t> poison_out(out_total_bytes, 0xffu);
+    RT_CHECK(vx_copy_to_dev(C_buffer, poison_out.data(), 0, poison_out.size()));
+
     // Reset status before each launch so the kernel sees a fresh INIT.
     kargs.status = STATUS_INIT;
     if (POLL_ONLY_ITERS) {
@@ -864,22 +841,19 @@ int main(int argc, char *argv[]) {
       cleanup();
       return -1;
     }
+    if (!POWER_MODE) {
+      const int errors = verify_results_tiled(C_buffer, h_ref_out_fp16);
+      if (errors != 0) {
+        std::cerr << "FAILED: rep=" << rep << ", errors=" << errors << std::endl;
+        cleanup();
+        return -1;
+      }
+      std::cout << "Verified job " << rep + 1 << "/" << REPS << std::endl;
+    }
   }
-
-  // ---- Verify output ----
-  int errors = 0;
-  if (POWER_MODE) {
-    std::cout << "Power mode: skipping verification" << std::endl;
-  } else {
-    errors = verify_results_tiled(C_buffer, h_ref_out_fp16);
-  }
-
+  if (POWER_MODE)
+    std::cout << "Power mode: skipping numerical verification" << std::endl;
   cleanup();
-
-  if (errors != 0) {
-    std::cout << "FAILED: errors/total=" << errors << "/" << (M * N) << std::endl;
-    return -1;
-  }
 
   std::cout << "PASSED" << std::endl;
   return 0;

@@ -106,7 +106,7 @@ aliases:
     configs: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 
   improve_th16_tcol16_m16_t8_bigmem_all_bram_spread:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_051cabe511
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_051cabe511/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh
 
   temp:

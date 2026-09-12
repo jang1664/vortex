@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <vortex.h>
 #include "common.h"
+#include "../fpint_gemm_ffn_hw/test_vectors.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -28,6 +29,7 @@ static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
+static bool TAGGED_VECTORS = false;
 // Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
 // Used to isolate Vortex-core polling power from HW-GEMM power.
 static uint32_t POLL_ONLY_ITERS = 0;
@@ -43,7 +45,8 @@ static vx_buffer_h scales_buffer = nullptr;  // fp16 [KG x N]
 static vx_buffer_h zeros_buffer = nullptr;   // int16 [KG x N]
 static vx_buffer_h C_buffer = nullptr;       // fp16 [M x N]
 
-static constexpr float FP16_TOL = 0.01f;
+// Relative error for nonzero references; absolute error when the reference is zero.
+static constexpr float FP16_TOL = 0.001f;
 
 static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 64;
 static constexpr uint64_t LMEM_STACK_GUARD_BYTES = (1ull << STACK_LOG2_SIZE);
@@ -95,14 +98,17 @@ static void show_usage() {
   std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]" << std::endl;
   std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
   std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
+  std::cout << "       [--tagged] (directed A/W address-identity vectors)" << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
+static constexpr int OPT_TAGGED = 0x101;
 
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
+  {"tagged", no_argument, nullptr, OPT_TAGGED},
   {nullptr, 0, nullptr, 0},
 };
 
@@ -119,6 +125,7 @@ static void parse_args(int argc, char **argv) {
     case 'd': QDIR = atoi(optarg); break;
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
+    case OPT_TAGGED: TAGGED_VECTORS = true; break;
     case OPT_POL:
       POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
       POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
@@ -212,101 +219,27 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
                                std::vector<uint16_t>& h_ref_out_fp16,
-                               bool compute_reference) {
-  uint32_t groups_total = (K + QBLK - 1) / QBLK;
-  uint32_t ng_total = (N + QBLK - 1) / QBLK;
-
-  uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
-
-  h_A.resize(M * K);
-  h_W_int4.resize((WTRANS == 0) ? (K * ((N + 1) / 2)) : (N * ((K + 1) / 2)));
-  h_scales.resize(sc_zp_size);
-  h_zeros.resize(sc_zp_size);
-  h_ref_out_fp16.resize(M * N);
-
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K; ++k) {
-      float v = 1.0f + float((m + k) % 7);
-      h_A[m * K + k] = float_to_fp16(v);
-    }
-  }
-
-  if (WTRANS == 0) {
-    for (uint32_t k = 0; k < K; ++k) {
-      for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
-        uint32_t n0 = n_pair * 2;
-        uint32_t n1 = n0 + 1;
-        int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
-        int8_t w1 = 0;
-        if (n1 < N) {
-          w1 = int8_t(int((k * N + n1) % 7) - 3);
-        }
-        h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
-      }
-    }
-  } else {
+                               bool compute_reference,
+                               uint32_t generation = 0) {
+  std::vector<int8_t> raw_weight;
+  fpint_gemm_test::initialize(M, K, N, K, N, QBLK, QDIR,
+      generation, TAGGED_VECTORS, h_A, raw_weight, h_scales, h_zeros, float_to_fp16);
+  const uint32_t stride = WTRANS ? (K + 1) / 2 : (N + 1) / 2;
+  h_W_int4.assign((WTRANS ? N : K) * stride, 0);
+  for (uint32_t k = 0; k < K; ++k)
     for (uint32_t n = 0; n < N; ++n) {
-      for (uint32_t k_pair = 0; k_pair < ((K + 1) / 2); ++k_pair) {
-        uint32_t k0 = k_pair * 2;
-        uint32_t k1 = k0 + 1;
-        int8_t w0 = int8_t(int((k0 * N + n) % 7) - 3);
-        int8_t w1 = 0;
-        if (k1 < K) {
-          w1 = int8_t(int((k1 * N + n) % 7) - 3);
-        }
-        h_W_int4[n * ((K + 1) / 2) + k_pair] = pack_int4_pair(w0, w1);
-      }
+      const uint32_t index = WTRANS ? n * stride + k / 2 : k * stride + n / 2;
+      const uint32_t lane = WTRANS ? k : n;
+      h_W_int4[index] |= (uint8_t(raw_weight[k * N + n]) & 15) << (4 * (lane & 1));
     }
-  }
-
-  if (QDIR == 0) {
-    for (uint32_t kg = 0; kg < groups_total; ++kg) {
-      for (uint32_t n = 0; n < N; ++n) {
-        float scale = 1.0f + float(n % 7);
-        int16_t zp = int16_t(int(n % 7) - 3);
-        h_scales[kg * N + n] = float_to_fp16(scale);
-        h_zeros[kg * N + n] = zp;
-      }
-    }
-  } else {
-    for (uint32_t k = 0; k < K; ++k) {
-      for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        float scale = 1.0f + float(ng % 7);
-        int16_t zp = int16_t(int(ng % 7) - 3);
-        h_scales[k * ng_total + ng] = float_to_fp16(scale);
-        h_zeros[k * ng_total + ng] = zp;
-      }
-    }
-  }
-
-  if (!compute_reference) {
-    return;
-  }
-
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t n = 0; n < N; ++n) {
-      float sum = 0.0f;
-      for (uint32_t k = 0; k < K; ++k) {
-        float a = fp16_to_float(h_A[m * K + k]);
-
-        float scale, zp;
-        if (QDIR == 0) {
-          uint32_t group_id = k / QBLK;
-          scale = fp16_to_float(h_scales[group_id * N + n]);
-          zp = float(h_zeros[group_id * N + n]);
-        } else {
-          uint32_t ng = n / QBLK;
-          scale = fp16_to_float(h_scales[k * ng_total + ng]);
-          zp = float(h_zeros[k * ng_total + ng]);
-        }
-
-        int8_t w = int8_t(int((k * N + n) % 7) - 3);
-
-        float dequant = (float(w) - zp) * scale;
-        sum += a * dequant;
-      }
-      h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
-    }
+  h_ref_out_fp16.assign(M * N, 0);
+  if (compute_reference) {
+    auto weight = [&](uint32_t k, uint32_t n) {
+      const uint32_t index = WTRANS ? n * stride + k / 2 : k * stride + n / 2;
+      return fpint_gemm_test::unpack_int4(h_W_int4[index], WTRANS ? k : n);
+    };
+    fpint_gemm_test::reference(M, K, N, K, N, QBLK, QDIR,
+        h_A, h_scales, h_zeros, weight, fp16_to_float, float_to_fp16, h_ref_out_fp16);
   }
 }
 
@@ -404,6 +337,10 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 
 int main(int argc, char *argv[]) {
   parse_args(argc, argv);
+  if (REPS == 0) {
+    std::cerr << "REPS must be > 0" << std::endl;
+    return -1;
+  }
 
   if (QBLK == 0) {
     std::cout << "QBLK must be > 0" << std::endl;
@@ -423,7 +360,8 @@ int main(int argc, char *argv[]) {
             << std::endl;
   std::cout << "M=" << M << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
-            << ", QDIR=" << QDIR << ", REPS=" << REPS << std::endl;
+            << ", QDIR=" << QDIR << ", REPS=" << REPS
+            << ", vectors=" << (TAGGED_VECTORS ? "tagged" : "corrected-default") << std::endl;
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -454,16 +392,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, h_W_int4.size() * sizeof(uint8_t), VX_MEM_READ, &W_int4_buffer));
   RT_CHECK(vx_mem_alloc(device, h_scales.size() * sizeof(uint16_t), VX_MEM_READ, &scales_buffer));
   RT_CHECK(vx_mem_alloc(device, h_zeros.size() * sizeof(int16_t), VX_MEM_READ, &zeros_buffer));
-  RT_CHECK(vx_mem_alloc(device, h_ref_out_fp16.size() * sizeof(uint16_t), VX_MEM_WRITE, &C_buffer));
+  RT_CHECK(vx_mem_alloc(device, size_t(M) * N * sizeof(uint16_t), VX_MEM_WRITE, &C_buffer));
 
   std::cout << "Host buffers allocated and initialized" << std::endl;
-  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size() * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, h_W_int4.size() * sizeof(uint8_t)));
-  RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, h_scales.size() * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(zeros_buffer, h_zeros.data(), 0, h_zeros.size() * sizeof(int16_t)));
-
-  std::vector<uint16_t> zero_out(h_ref_out_fp16.size(), 0);
-  RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, zero_out.size() * sizeof(uint16_t)));
 
   std::cout << "Kernel file uploaded" << std::endl;
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
@@ -513,6 +444,17 @@ int main(int argc, char *argv[]) {
             << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")
             << ", poll_iters=" << POLL_ONLY_ITERS << ")" << std::endl;
   for (uint32_t rep = 0; rep < REPS; ++rep) {
+    if (rep != 0)
+      build_test_vectors(h_A, h_W_int4, h_scales, h_zeros, h_ref_out_fp16,
+                         !POWER_MODE, rep);
+    RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size() * sizeof(uint16_t)));
+    RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, h_W_int4.size()));
+    RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, h_scales.size() * sizeof(uint16_t)));
+    RT_CHECK(vx_copy_to_dev(zeros_buffer, h_zeros.data(), 0, h_zeros.size() * sizeof(int16_t)));
+    // A missed output store must fail even when the expected value is zero.
+    const std::vector<uint16_t> poison_out(size_t(M) * N, 0x7e00u);
+    RT_CHECK(vx_copy_to_dev(C_buffer, poison_out.data(), 0, poison_out.size() * sizeof(uint16_t)));
+
     // Reset status before each launch and bump generation/eid so the AFU
     // does not treat consecutive launches as duplicates.
     kargs.status = MMIO_STATUS_INIT;
@@ -549,35 +491,30 @@ int main(int argc, char *argv[]) {
       cleanup();
       return -1;
     }
+    RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+    if (kargs.status != MMIO_STATUS_OK) {
+      std::cerr << "MMIO kernel failed at rep=" << rep
+                << ": status=" << kargs.status
+                << " (" << status_to_str(kargs.status) << ")"
+                << ", eid=" << kargs.job_eid << ", gen=" << kargs.job_generation
+                << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec << std::endl;
+      cleanup();
+      return -1;
+    }
+    if (!POWER_MODE) {
+      const int errors = verify_results(C_buffer, h_ref_out_fp16);
+      if (errors != 0) {
+        std::cerr << "FAILED: rep=" << rep << ", errors=" << errors << std::endl;
+        cleanup();
+        return -1;
+      }
+      std::cout << "Verified job " << rep + 1 << "/" << REPS << std::endl;
+    }
   }
-
-  std::cout << "Kernel execution completed, reading back results" << std::endl;
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
-
-  if (kargs.status != MMIO_STATUS_OK) {
-    std::cout << "MMIO kernel failed: status=" << kargs.status
-              << " (" << status_to_str(kargs.status) << ")"
-              << ", eid=" << kargs.job_eid
-              << ", gen=" << kargs.job_generation
-              << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
-              << std::endl;
-    cleanup();
-    return -1;
-  }
-
-  int errors = 0;
-  if (POWER_MODE) {
-    std::cout << "Power mode: skipping verification" << std::endl;
-  } else {
-    errors = verify_results(C_buffer, h_ref_out_fp16);
-  }
+  if (POWER_MODE)
+    std::cout << "Power mode: skipping numerical verification" << std::endl;
 
   cleanup();
-
-  if (errors != 0) {
-    std::cout << "FAILED: errors=" << errors << std::endl;
-    return -1;
-  }
 
   std::cout << "PASSED" << std::endl;
   return 0;

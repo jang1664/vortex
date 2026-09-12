@@ -1,0 +1,343 @@
+task: cache-axi-grouped-bandwidth
+status: complete
+updated_at: "2026-09-10 14:52"
+objective: >-
+  Implement and verify a grouped cache-to-HBM adapter using NUM_BANKS_OUT for intermediate
+  transport count and NUM_HBM_PORTS for external destinations, targeting
+  128 bytes per cycle at TH16 without a response reorder buffer.
+plan: plan.md
+implementation_started: true
+verification_run: true
+execution:
+  baseline_revision: 979ea6ea2036e54bc8a04a24bb6c7e09b05b8b90
+  baseline_builds: [build-cache-axi-baseline, build-cache-axi-naive-baseline]
+  production_rtl_modified: true
+  prerequisite_fix: Move naive output bound assertion after its referenced wire declaration; preserve condition and assertion.
+  current_stage: Complete; all 18 numerical runs, focused production VCS tests, defaults and cycle comparisons passed
+  baseline_rtl_snapshot: build-cache-axi-baseline/frozen-rtl
+  baseline_rtl_manifest: baseline-rtl-sha256.json
+  integration_processes: []
+  delegated_comparisons:
+    - Verification agent completed improve K1 matrix and production unittest iteration2 including width rejection cases; all pass.
+    - verification_naive completed K1 large PASS exit0, total97376/node88452/jobs16384; small passed10888/node1947.
+  active_process: null
+  next_actions: []
+  results: results.md
+  completion_audit: completion-audit.md
+  confirmed_spec: grouped-bandwidth-spec.md
+scope_constraints:
+  synthesis_allowed: false
+  place_and_route_allowed: false
+  hardware_cost_reporting: false
+  performance_metrics: [simulated_total_kernel_cycles, simulated_gemm_node_cycles]
+  cycle_comparisons: [pre_change, implemented_k1, implemented_k2]
+  vecadd_profile: {perf: 1, compare: total_kernel_cycles}
+  fpint_profile: {perf: 3, compare: [total_kernel_cycles, gemm_node_total_cycles]}
+required_kernel_gate:
+  mode: xrt-vcs-sim
+  wrapper: ci/run_black.sh
+  kernels:
+    - softmax
+    - vecadd
+    - fpint_gemm_ffn_hw
+    - fpint_gemm_ffn_hw_naive
+  shared_geometry:
+    num_threads: 16
+    num_banks_out: 2
+    num_hbm_ports: 8
+  naive_config: configs/naive_gemm_th16_tcol32_hwexp_dcache.sh
+  naive_config_extra: -DNUM_HBM_PORTS=8 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32
+  fpint_cases_for_both_paths:
+    - {m: 32, k: 128, n: 32, qblk: 32, wtrans: 0, qdir: 0}
+    - {m: 256, k: 256, n: 256, qblk: 32, wtrans: 0, qdir: 0}
+assumptions:
+  - The unified fpint_gemm_ffn_hw app is confirmed by the user; the explicit TH16 HBM8/TMEM8 improve profile is the planning default.
+  - The user also requires fpint_gemm_ffn_hw_naive with a naive config and the same HBM port count as the improve path.
+  - Initial implementation supports the existing 64-byte cache-line and AXI-beat geometry.
+  - K=2 provides parallel bandwidth for different groups; same-group requests may serialize.
+log:
+  - timestamp: "2026-09-10 14:52"
+    attempted: >-
+      Completed final frozen-RTL naive baseline large retry with numerical PASS,
+      exit 0, total106967/node97762/jobs16384. Validated all 18 selected runs
+      with compare-cycles.py and generated the complete results table. Confirmed
+      final memory manifests match within each profile apart from K and its hash,
+      all 335 baseline files match their frozen hashes, and production focused
+      tests prove sustained K2 128B/cycle versus K1 64B/cycle.
+    failed: None in the final selected runs. Earlier failed attempts remain archived and excluded.
+    learned: >-
+      Naive 256 K2 reduces total cycles by 8.97% and node cycles by 9.53%
+      versus baseline; K2 versus K1 improves total by 1 and node by 8 cycles.
+      All plan gates and reporting are complete. No synthesis or cost reporting.
+  - timestamp: "2026-09-10 14:26"
+    attempted: >-
+      Naive large K2 completed PASSED with wrapped exit0, kernel97375/node88444,
+      raw jobs16384. Strict cycle parser accepted archived wrapper and simulator
+      evidence. All six required K2 numerical gates now pass. K1 naive large
+      and immutable-runner baseline retry remain live and required for the
+      complete comparison table.
+    failed: No failure in K2 large; baseline attempt2 remains excluded because its command exit status was not captured.
+    learned: >-
+      Full target implementation functional verification is complete. Do not
+      mark the overall plan complete until all baseline/K1 metrics have equally
+      strong terminal evidence and final reporting is generated.
+  - timestamp: "2026-09-10 14:21"
+    attempted: >-
+      Naive baseline large2 printed numerical PASSED, kernel106967/node97762,
+      but its post-run shell parser failed before saving command exit status.
+      Archived all final simulation logs and waveform and excluded this attempt
+      from final comparison. Started identical baseline large3 with a frozen
+      runner copy and3600s, using the immutable pre-change RTL_DIR. Compile log
+      confirms frozen-rtl paths. Updated manifest to baseline large3 and refined
+      the naive256 retry limit to include compile/full result capture.
+    failed: >-
+      Root had edited run-case.sh while large2 was blocked inside timeout;
+      Bash resumed at a stale file offset and reported unexpected EOF, exit2.
+      Kernel numerical PASS is real but wrapped-command exit0 was not recorded,
+      so the complete gate cannot be claimed from that attempt.
+    learned: >-
+      Never edit a running shell script in place. Do not modify run-case.sh or
+      run-case-frozen.sh until every active caller exits. Use immutable copies
+      for long execution. Preserve missing exit evidence rather than inventing
+      a zero status from a pass marker.
+  - timestamp: "2026-09-10 14:18"
+    attempted: >-
+      Revalidated baseline and K2 simulator sessions as live. Current baseline
+      waveform proves finite tile progress: tile_cur6 at850us is the seventh
+      of8 DMA tiles (mt/nt/kt dimensions2 each); output store count advanced
+      twice. Prepared requirement-by-requirement completion-audit.md, leaving
+      only naive large numerical/cycle comparisons and final table pending.
+      Compared successful profile model manifests: all differences between
+      baseline/K1/K2 are NUM_BANKS_OUT and its dependent configuration hash.
+    failed: No new terminal failures; baseline approaches1800s execution limit.
+    learned: >-
+      Tile coordinates advance, so activity is productive rather than a
+      repeated-request deadlock. Preserve running jobs and terminal evidence;
+      a pending or timeout case cannot satisfy numerical completion.
+  - timestamp: "2026-09-10 14:09"
+    attempted: >-
+      Final production focused iteration2 passed via verify_rtl.py, including
+      five invalid geometry/width cases and valid control. Both automatic K2
+      profile runs pass with the expected topology and explicit-K2 cycle counts.
+      Rebuilt results.md from validated selected logs with every missing naive
+      large result explicitly marked Pending. Baseline session64686 and K2
+      session23101 were polled live; naive K1 session15088 is agent-owned/live.
+    failed: No new failures. Three naive large comparison results remain pending.
+    learned: >-
+      Original cache demux had MaxTrans8; restructuring also removes that
+      stage, so full pre-change deltas are not purely K1-versus-K2 bandwidth
+      effects. No extra attribution experiment is required by this plan.
+  - timestamp: "2026-09-10 14:07"
+    attempted: >-
+      All improve baseline/K1/K2 cases are complete and pass. K1 large23600
+      total/node17827. Improve default vecadd passed43261 with P2/K2/H8/64B.
+      Naive K1 small passed10888/node1947; naive default small passed10887/
+      node1947 with automatic K2. Final structural audit found missing guards
+      against narrower physical AXI addresses and inconsistent DATA_WIDTH/SIZE;
+      added static assertions, synchronized draft and extended negative probes.
+      Verification agent runs final production focused iteration2.
+    failed: >-
+      No target-geometry failures. Audit found only unsupported-parameter
+      rejection gaps, now fixed; valid geometry behavior is unchanged.
+    learned: >-
+      Only naive large baseline/K1/K2 remain as numerical/cycle gates, plus
+      final production negative-check confirmation. Do not repeat already
+      passing kernel runs solely for elaboration guards on invalid parameters.
+  - timestamp: "2026-09-10 14:02"
+    attempted: >-
+      Improve large K2 passed at23599 total/node17827 cycles, completing
+      all four improve K2 gates. Started no-override improve vecadd to verify
+      automatic K2. K1 softmax passed82636 and small FPINT6122/node334;
+      verification agent runs K1 large. Naive K1 small is now simulating in
+      its independent build. Prepared explicit six-case cycle-manifest.json.
+    failed: None in these completed runs.
+    learned: >-
+      Improve small and large node durations remain unchanged versus baseline.
+      Five of six K2 target gates passed; all naive large comparisons and
+      automatic defaults still need final evidence.
+  - timestamp: "2026-09-10 14:00"
+    attempted: >-
+      K2 softmax passed at82096 cycles and improve small FPINT passed at6121
+      kernel/node334 cycles. Improve large K2 is running. K1 vecadd passed
+      at43322 cycles; K1 softmax running. Delegated naive K1 small/large and
+      default check to an independent build. Baseline large and K2 naive large
+      remain live. Cycle parser now accepts identical repeated softmax dumps,
+      which occur before numerical verification and again at device close.
+    failed: None in completed production runs; long-run results pending.
+    learned: >-
+      K1 vecadd is already close to K2 (-61 cycles for K2). Do not attribute
+      the full pre-change improvement solely to the additional group bandwidth;
+      compare the path restructuring and K1-to-K2 effects separately.
+  - timestamp: "2026-09-10 13:56"
+    attempted: >-
+      Production K2 vecadd passed at43261 total cycles versus68471 baseline.
+      K2 naive small passed at10887 total/node1947 versus11115/node1952.
+      Started K2 softmax and naive large (known slow case,1800s). Verification
+      agent is running independent improve K1 matrix. Added simulation-only
+      topology log; softmax reports P2/K2/H8/64B. The only change since passing
+      focused draft is this top-level simulation display.
+    failed: None in completed K2 integration runs.
+    learned: >-
+      Initial vecadd improvement is36.82percent; naive small total improves
+      2.05percent with essentially unchanged node duration. Full comparisons,
+      automatic-default runs and long naive cases remain required.
+  - timestamp: "2026-09-10 13:54"
+    attempted: >-
+      Revalidated live baseline session64686. Archived waveform analysis proves
+      active partial-sum requests/responses near the first timeout. Froze and
+      SHA256-verified all335 RTL files before applying the two tested drafts
+      byte-for-byte to production. Future baseline wrapper runs override
+      RTL_DIR to that snapshot; current baseline executable is already built.
+      Started production K2 improve vecadd and naive small in separate builds.
+    failed: None during snapshot/application; integration results pending.
+    learned: >-
+      Keeping an immutable baseline RTL snapshot allows production integration
+      while the long pre-change simulator continues unchanged. Do not rebuild
+      a baseline from the current production source.
+  - timestamp: "2026-09-10 13:50"
+    attempted: >-
+      Naive large baseline attempt 1 timed out at 300 seconds (exit124).
+      Archived logs and waveform. After confirming live simulator CPU activity
+      and increasing waveform output, restarted the same case with the planned
+      1800-second limit as attempt 2, session64686. Requested read-only analysis
+      of the first waveform to distinguish active work from a protocol hang.
+    failed: No numerical result for naive large yet; timeout is not PASS.
+    learned: >-
+      Five baseline cases and all focused/invalid-geometry tests have passed.
+      Production cache adapter/top remain unchanged to preserve pre-change
+      measurement. Final K1/K2/default integration tests are still required.
+  - timestamp: "2026-09-10 13:45"
+    attempted: >-
+      Draft focused VCS iteration 1 passed via tools/verify_rtl.py; invalid
+      K/H rejection checks also passed. Nine parameter cases exercised direct
+      and compressed tags, zero-requested buffers, single slot, bypasses,
+      protocol stalls, response identity, mapping and drain. K2 sustained
+      128 transactions per 64-cycle interval on reads/responses and writes;
+      K1 sustained 64. Naive small baseline passed: kernel 11115, node 1952.
+      Naive large baseline is running in session 67579. Configured final improve
+      and naive build trees and prepared explicit-run cycle comparison tooling.
+    failed: None in focused iteration 1 or naive small attempt 4.
+    learned: >-
+      Draft protocol/bandwidth requirements now have simulator evidence, but
+      production integration and complete K1/K2/default matrix remain pending.
+      Evidence is archived under logs/unittest-draft/iteration-1.
+  - timestamp: "2026-09-10 13:42"
+    attempted: >-
+      All four improve baseline cases passed: vecadd 68471 cycles, softmax
+      100660, small FPINT 6188 (node 334), large FPINT 23665 (node 17827).
+      RTL drafts and focused testbench exist; configured a separate unittest
+      build for draft verification without altering the baseline cache topology.
+    failed: >-
+      Naive attempt 2 failed LMEM geometry; added ports/banks32 consistently.
+      Attempt 3 then failed a procedural diagnostic at 5ns before reset relays
+      initialized under VCS tmerge. Guarded the simulation checker on known-low
+      reset, preserving operational assertions; attempt 4 is simulating.
+    learned: >-
+      Improve jobs field counts accumulator writes, not invocations. Its node
+      total_cycles counter is independently wired correctly. Naive requires
+      the compile assertion fix, LMEM geometry correction, and pre-reset
+      simulation-checker guard for meaningful baseline comparison.
+  - timestamp: "2026-09-10 13:37"
+    attempted: >-
+      Baseline improve vecadd passed with final total cycles 68471 and exit 0.
+      Archived compile/simulation logs, started softmax baseline, and added
+      run-case.sh to preserve per-run configuration, source diff, exit status,
+      command, model settings, and compile/simulation logs.
+    failed: >-
+      Baseline naive small FPINT failed VCS compilation with IND at
+      VX_gemm_node_naive.sv:551: output_mt_eff referenced in assertion before
+      declaration. RTL implementation agent moved the assertion below the wire
+      declaration with identical reset/start/idle gating; restarted naive baseline.
+    learned: >-
+      The unchanged cache topology baseline requires this naive compile-only
+      prerequisite fix. Apply the same fix to all naive comparison variants.
+      The grouped adapter and Vortex_axi production changes remain unapplied.
+  - timestamp: "2026-09-10 13:34"
+    attempted: >-
+      Started execution of the confirmed plan. Read project and execution skills,
+      checked VCS/compiler availability, configured independent improve/naive
+      baseline builds after sourcing their profiles, and started baseline vecadd
+      and naive small FPINT simulations. Delegated isolated RTL drafts and focused
+      testbench creation under the rtl-improve procedure.
+    failed: >-
+      First configure tool invocation targeted a directory before it existed;
+      created the directories from repository root and configure then succeeded.
+    learned: >-
+      Production RTL remains untouched until all pre-change measurements are
+      captured. Baseline jobs use the required wrapper and matching perf flags.
+  - timestamp: "2026-09-10 12:13"
+    attempted: >-
+      Inspected adapter request/response routing, address remapping, DMA mux and
+      drain connections, sourced-config candidates, kernel argument parsers,
+      and wrapper usage. Created the requested implementation plan.
+    failed: >-
+      No build or simulation was attempted. The wrapper default app names a
+      deprecated FPINT variant, so the plan specifies the unified app explicitly.
+    learned: >-
+      Existing read IDs preserve input identity and tag compression can be reused.
+      The group count must not affect physical HBM mapping. Partial AW/W
+      handshakes and group buffers must be included in correctness/drain checks.
+  - timestamp: "2026-09-10 12:13"
+    attempted: >-
+      Incorporated the user's unified FPINT app selection and checked the four
+      requested headings, shell example syntax, and test-app source paths.
+    failed: >-
+      An initial prose-presence check used a literal phrase split across Markdown
+      lines; normalized whitespace in the check before rerunning it.
+    learned: >-
+      The document commands name real app paths and parse as Bash; no kernel
+      result is claimed before implementation and execution.
+  - timestamp: "2026-09-10 12:17"
+    attempted: >-
+      Added the user-requested naive FPINT gate, a matching HBM8 config override,
+      separate naive build/log paths, and pre-change/K1/K2 comparisons for both
+      accelerator profiles. Checked the naive app CLI and config source.
+    failed: "No implementation or simulation was attempted."
+    learned: >-
+      The selected naive config enables GEMM_NAIVE and legacy external port count
+      8; explicitly setting NUM_HBM_PORTS=8 preserves the required HBM geometry.
+  - timestamp: "2026-09-10 13:20"
+    attempted: >-
+      Added M256/K256/N256 to both unified and naive FPINT required cases,
+      preserving the smaller case and shared HBM8/intermediate-port-2 settings.
+      Added separate large-case commands/log names and extended baseline/K1/K2
+      comparisons to all six kernel runs.
+    failed: "No implementation or simulation was attempted."
+    learned: >-
+      Each FPINT path must compare all 65536 output elements for the added
+      shape; GEMM K=256 is separate from NUM_BANKS_OUT=2.
+  - timestamp: "2026-09-10 13:22"
+    attempted: >-
+      Removed optional synthesis and cost reporting, prohibited synthesis and
+      place-and-route, and specified kernel-cycle comparisons for all six cases
+      against pre-change and implemented K1 baselines.
+    failed: "No implementation, simulation, or synthesis was attempted."
+    learned: >-
+      The user limits performance reporting to cycle changes. Compare each
+      accelerator profile against its own baseline with identical measurement
+      boundaries and simulation settings; report absolute and percentage deltas.
+  - timestamp: "2026-09-10 13:24"
+    attempted: >-
+      Added --perf 3 to both FPINT shapes on both accelerator paths and required
+      separate total-kernel and GEMM-node cycle comparisons. Set vecadd to
+      --perf 1 with total-cycle comparison. Traced runtime output to the
+      GEMM total-cycle CSR and both node implementations.
+    failed: "No implementation or simulation was attempted."
+    learned: >-
+      The MXU PERF jobs/total_cycles/busy_cycles line contains GEMM-node duration;
+      the final PERF instrs/cycles/IPC line contains total kernel cycles. Keep
+      these metrics distinct and enable matching profiling on all baselines.
+pitfalls:
+  - Never edit an executing shell script in place; Bash may resume parsing from a stale byte offset after a long command. Use immutable runner copies.
+  - Current naive split-PSUM RTL requires LMEM_NUM_PORTS=32 at this geometry; apply LMEM banks32 and ports32 to every naive comparison.
+  - VCS tmerge can execute procedural diagnostics speculatively before registered reset relays initialize; simulation checks require reset known low.
+  - Improve PERF jobs is accumulator-write count, not invocation count; use logged app REPS and dimensions to establish equal invocations.
+  - Do not replace the original requester index in read IDs with a group index.
+  - Do not use NUM_BANKS_OUT in the physical address remap; use NUM_HBM_PORTS.
+  - The existing wider-source memory adapter assembles chunks by arrival order; reject unsupported width geometry in this task.
+  - AW acceptance alone does not release a write request whose W remains pending.
+  - Existing app test scripts may contain destructive cleanup and unsupported default drivers; use the planned wrapper commands.
+  - A user change to ci/fpga_bin_alias_map.yaml was already present and was not modified.
+  - Do not run the naive app with an improve config or reuse mixed-profile build artifacts.
+  - Do not run synthesis or collect hardware cost metrics for this task; performance reporting uses total-kernel and GEMM-node cycles only.
+  - FPINT node timing uses the MXU PERF total_cycles field, not busy_cycles, compute_cycles, or final total kernel cycles.

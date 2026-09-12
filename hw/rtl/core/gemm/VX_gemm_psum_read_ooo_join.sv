@@ -24,6 +24,10 @@ module VX_gemm_psum_read_ooo_join import VX_gpu_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    input wire [`LMEM_LOG_SIZE-`CLOG2(NUM_LANES*LANE_DATA_SIZE)-1:0] write_probe_addr,
+    output logic write_probe_conflict,
+`endif
 
     VX_mem_bus_if.slave wide_bus_if,
     VX_mem_bus_if.master lane_bus_if [NUM_LANES]
@@ -38,8 +42,8 @@ module VX_gemm_psum_read_ooo_join import VX_gpu_pkg::*; #(
     localparam ORDER_W = SLOT_W + 1;
     localparam FIFO_DATA_W = TAG_WIDTH + WIDE_DATA_W;
 
-    `VX_STATIC_ASSERT(NUM_LANES == 16,
-        ("NAIVE PSUM OOO join requires sixteen physical lanes"))
+    `VX_STATIC_ASSERT(NUM_LANES == 8 || NUM_LANES == 16,
+        ("NAIVE PSUM OOO join requires eight or sixteen physical lanes"))
     `VX_STATIC_ASSERT((NUM_LANES & (NUM_LANES - 1)) == 0,
         ("NAIVE PSUM OOO join lane count must be a power of two"))
     `VX_STATIC_ASSERT(PHYS_RESPONSE_SLOTS >= 2,
@@ -69,6 +73,20 @@ module VX_gemm_psum_read_ooo_join import VX_gpu_pkg::*; #(
     logic [PHYS_RESPONSE_SLOTS-1:0][NUM_LANES-1:0] slot_rsp_valid;
     logic [PHYS_RESPONSE_SLOTS-1:0][NUM_LANES-1:0][LANE_DATA_W-1:0]
         slot_rsp_data;
+
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    // Protect captured reads only until their final physical response arrives.
+    // Completed rows waiting in the response FIFO no longer read LMEM.
+    always_comb begin
+        write_probe_conflict = 1'b0;
+        for (int slot = 0; slot < PHYS_RESPONSE_SLOTS; ++slot) begin
+            if (slot_valid[slot] && !slot_complete[slot]
+             && ((`LMEM_LOG_SIZE-`CLOG2(WIDE_DATA_SIZE))'(slot_addr[slot])
+                 == write_probe_addr))
+                write_probe_conflict = 1'b1;
+        end
+    end
+`endif
 
     logic [ORDER_W-1:0] alloc_order_r;
     logic [ORDER_W-1:0] issue_order_r;

@@ -1,0 +1,6 @@
+# Keep task source/report files; generated run trees stay local.
+/*/
+!/p5-legacy-archive/
+*.snapshot
+*.zip
+*.xml

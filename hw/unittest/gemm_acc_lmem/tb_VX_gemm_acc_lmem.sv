@@ -738,6 +738,38 @@ module tb_VX_gemm_acc_lmem;
                  max_txn_count, read_request_stall_cycles,
                  response_stall_cycles, psum_write_stall_cycles,
                  final_write_stall_cycles);
+        // Regression for overlapped Input: a late older demand must not be
+        // excluded by completed prefetches belonging to younger transactions.
+        @(negedge clk); drive_defaults();
+        for (int i=0;i<READ_SLOTS;++i) begin
+            accept_txn(32'd100+i, 1'b1, 1'b0, psum_addr(100+i), '0);
+            request_read(32'd100+i, psum_addr(100+i), lmem_tags[i]);
+        end
+        accept_txn(32'd200, 1'b1, 1'b0, psum_addr(200), '0);
+        assert (u_dut.read_slot_valid == {READ_SLOTS{1'b1}})
+            else $fatal(1,"late-demand setup must exhaust physical slots");
+        for (int i=0;i<READ_SLOTS;++i) begin
+            send_response(lmem_tags[i], row_pattern(32'hC100+i));
+            expect_response(32'd100+i, row_pattern(32'hC100+i));
+            retire_txn(32'd100+i, 1'b1, 1'b0, psum_addr(100+i), '0);
+        end
+        // All younger reads may be accepted, but speculative allocation must
+        // leave a demand path for tag 200, which missed its initial prefetch.
+        for (int i=0;i<READ_SLOTS;++i)
+            accept_txn(32'd201+i, 1'b1, 1'b0, psum_addr(201+i), '0);
+        request_read(32'd200, psum_addr(200), lmem_tag_a);
+        send_response(lmem_tag_a, row_pattern(32'hC200));
+        expect_response(32'd200, row_pattern(32'hC200));
+        retire_txn(32'd200, 1'b1, 1'b0, psum_addr(200), '0);
+        for (int i=0;i<READ_SLOTS;++i) begin
+            request_read(32'd201+i, psum_addr(201+i), lmem_tag_a);
+            send_response(lmem_tag_a, row_pattern(32'hC201+i));
+            expect_response(32'd201+i, row_pattern(32'hC201+i));
+            retire_txn(32'd201+i, 1'b1, 1'b0, psum_addr(201+i), '0);
+        end
+        assert (u_dut.txn_count == 0 && u_dut.read_slot_valid == 0)
+            else $fatal(1,"late-demand regression failed to drain all owners");
+        $display("LMEM_ACC_LATE_DEMAND_PASS older_miss=200 younger_prefetches=8 slots=8");
         $display("TEST PASSED: LMEM ACC early prefetch batching, eight-slot late fallback, reorder, RAW, backpressure and occupied reset checks");
         $finish;
     end

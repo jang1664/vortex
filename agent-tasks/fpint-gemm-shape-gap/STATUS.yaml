@@ -1,0 +1,22 @@
+task: fpint-gemm-shape-gap
+state: complete
+request: Explain why current improve/naive speedup is larger at M256 than M4 using fsdb_cli.
+log:
+  - timestamp: "2026-09-11 15:23"
+    message: Located four passing current-cycle FSDB captures; compare input supply, compute backpressure, accumulator and external DMA over normalized invocation windows. No RTL modifications or new simulations.
+  - timestamp: "2026-09-11 15:33"
+    message: "Completed strict-preedge extraction, tagged command-gap mapping, physical queue/bank window and waveform provenance. Initial nonexistent signal aliases were corrected; final captures have no missing or unknown signals. Overlapping stalls are not additive. Wrote separate diagnosis report."
+  - timestamp: "2026-09-11 15:53"
+    message: "Followed work tag9993 through FSDB: input accepted50053, prefetch skipped at full8 slots, demand waits50103-50122 while later prefetched tags occupy slots, late read accepted50123, response50142. Confirmed one-shot prefetch has no retry queue; added report follow-up. No RTL changes."
+pitfalls:
+  - Legacy printed DMA overlap includes different activity sets between backends; use explicit interfaces.
+  - GEMM cycle count excludes kernel setup; report separate core cycles.
+
+result: docs/hw_analysis/improve_vs_naive/fpint_gemm_m4_m256_gap_analysis.md
+completed:
+  - Four FSDB cfg/done endpoints and all work-count identities match.
+  - Naive M256 input backpressure is 1032476 cycles; 1000917 occur with external DMA idle.
+  - Naive M256 PSUM head waits 1032840 cycles; improve M256 has none.
+  - Fixed naive M256 window proves adapter read-slot exhaustion and postqueue backpressure with zero external activity and 24.64 percent bank request utilization.
+  - Improve command payload grows from4 to128 rows; M256 reaches nearly continuous input.
+  - Cycle-only latency report and RTL remain unchanged; no new simulation or commit.

@@ -61,6 +61,13 @@ ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
   requests extra compile-time defines; prefer the alias config as the source of
   truth.
 
+## Naive GEMM changes: preserve improve
+
+- Changes to naive must leave improve latency and hardware cost unchanged under identical configuration, workload, tools, and constraints.
+- Share existing code only when improve's implementation and behavior remain unchanged. If sharing requires changing improve, add the required naive-specific logic under SystemVerilog `ifdef GEMM_NAIVE` guards and preserve the existing improve branch.
+- Naive-specific declarations, metadata, counters, queues, adapters, and modules must be absent from improve compilation; do not introduce runtime backend muxes or widen improve structures for naive.
+- Use RTL-level identity as the evidence for preserving improve: compare selected/preprocessed RTL, elaborated logic, interfaces and widths, register/queue capacities, pipelines, and ready/valid behavior. Verify zero improve GEMM/core-cycle delta. Do not run improve GEMM-node synthesis or optimize/match synthesis resource counts for this task; existing synthesis reports are historical reference only. Do not offset added improve RTL resources with savings elsewhere.
+
 ## Codex Skills
 
 - Codex project skills are exposed through `.agents/skills`, with each skill symlinked to the shared source under `harness/skills`.

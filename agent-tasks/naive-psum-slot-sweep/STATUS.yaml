@@ -1,0 +1,70 @@
+task: naive-psum-slot-sweep
+state: complete
+spec: spec.md
+reference_commit: 24b83bf2
+iterations:
+  - iteration: 1
+    timestamp: '2026-09-11 17:40'
+    read_slots: 32
+    response_slots: 32
+    case: M4_K512_N512
+    status: pass
+    error_summary: none
+    fix_applied: Increased both slot capacities through naive-only compile settings.
+    lesson: GEMM and core cycles equal the default16 reference exactly.
+    gemm_cycles: 19981
+    core_cycles: 26529
+    evidence: runs/slots32/naive-m4/result.json
+  - iteration: 1
+    timestamp: '2026-09-11 17:40'
+    read_slots: 64
+    response_slots: 64
+    case: M4_K512_N512
+    status: pass
+    error_summary: none
+    fix_applied: Increased both slot capacities through naive-only compile settings.
+    lesson: M4 has an exact observed plateau at 16 through 64 slots.
+    gemm_cycles: 19981
+    core_cycles: 26529
+    evidence: runs/slots64/naive-m4/result.json
+  - iteration: 1
+    timestamp: '2026-09-11 18:07'
+    read_slots: 64
+    response_slots: 64
+    case: M256_K512_N512
+    status: pass
+    error_summary: none
+    fix_applied: Increased both slot capacities through naive-only compile settings.
+    lesson: Only 894 GEMM cycles (0.1322 percent) are saved relative to 16 slots.
+    gemm_cycles: 675484
+    core_cycles: 682029
+    evidence: runs/slots64/naive-m256/result.json
+  - iteration: 1
+    timestamp: '2026-09-11 18:08'
+    read_slots: 32
+    response_slots: 32
+    case: M256_K512_N512
+    status: pass
+    error_summary: none
+    fix_applied: Increased both slot capacities through naive-only compile settings.
+    lesson: Exact equality with 64 slots confirms a plateau at 32 among tested powers of two; 16 is already within 0.1322 percent.
+    gemm_cycles: 675484
+    core_cycles: 682029
+    evidence: runs/slots32/naive-m256/result.json
+pitfalls:
+  - Compare simulator cycles, not wall-clock time; large arrays change VCS runtime.
+  - Keep read/data slots and physical response assembly slots distinct from the transport FIFO.
+  - Transaction tracking and compute pipeline capacities can limit reachable occupancy.
+log:
+  - timestamp: '2026-09-11 17:35'
+    action: Started a paired-capacity sweep from the verified 16/16 baseline, with 32/32 and 64/64 first.
+    result: Delegated naive-only compile hooks and configured independent build directories.
+  - timestamp: '2026-09-11 17:38'
+    action: Started 32/32 and 64/64 xrt-vcs-sim sweeps in independent builds with stable RTL.
+    result: Default16 naive and improve preprocessing matches HEAD for PERF off/on. Only the guarded naive node has changed. Current core ownership upper bound is 19; 64 slots fit existing tag widths even with NDEBUG.
+  - timestamp: '2026-09-11 17:40'
+    action: Completed M4 for both larger capacities and started both M256 runs.
+    result: Both M4 cases PASS with stable sources and exact default16 cycles; M256 measurements pending.
+  - timestamp: '2026-09-11 18:08'
+    action: Completed both M256 runs and checked every measured source hash against the current worktree.
+    result: All four cases PASS. M4 is identical at 16/32/64; M256 is identical at 32/64 and only 894 GEMM cycles faster than 16. No larger sweep is needed for the observed plateau; default16 and improve remain unchanged.

@@ -15,11 +15,16 @@ module VX_gemm_acc_lmem #(
     parameter TAGW = 32,
     parameter LMEM_TAGW = VX_gpu_pkg::GEMM_BASE_TAG_WIDTH,
     parameter LMEM_ADDRW = `MEM_ADDR_WIDTH,
-    parameter READ_SLOTS = 8,
+    parameter READ_SLOTS = 16,
     parameter TXN_DEPTH = 64
 ) (
     input wire clk,
     input wire reset,
+
+    output wire txn_accept_ready,
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    output wire [TAGW-1:0] psum_rd_transaction,
+`endif
 
     VX_gemm_acc_if.backend acc_if,
     VX_mem_bus_if.master psum_rd_lmem_bus_if,
@@ -87,7 +92,12 @@ module VX_gemm_acc_lmem #(
                     read_txn_entry = TXN_PTRW'(idx);
                 end
                 if (!reached_request && txn_wr_en[idx]
-                 && (txn_wr_addr[idx] == acc_if.rd_req_addr))
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+                 && (txn_wr_addr[idx][`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)] == acc_if.rd_req_addr[`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)])
+`else
+                 && (txn_wr_addr[idx] == acc_if.rd_req_addr)
+`endif
+                )
                     read_raw_block = 1'b1;
             end
         end
@@ -158,8 +168,8 @@ module VX_gemm_acc_lmem #(
         end
     end
 
-    // A normal core read demand either claims its txn_accept-prefetched slot
-    // or allocates a late slot when prefetch capacity was unavailable.  Its
+    // A normal core read demand claims its txn_accept-prefetched slot. The
+    // late allocation path remains available for a non-prefetched demand. Its
     // readiness is isolated from physical LMEM ready; LMEM backpressure is
     // absorbed by the bounded slot table and issue hold below.
     assign acc_if.rd_req_ready
@@ -168,9 +178,9 @@ module VX_gemm_acc_lmem #(
     assign rd_core_fire = acc_if.rd_req_valid && acc_if.rd_req_ready;
     assign late_read_alloc = rd_core_fire && !read_req_slot_found;
 
-    // Core demand has priority over speculative allocation when both need a
-    // free slot on the same edge.  Prefetch is opportunistic: lack of a slot
-    // never backpressures txn_accept/Input and the normal late path remains.
+    // Core demand has priority when both it and Input need a free slot on
+    // the same edge. Capacity depends on existing state and the downstream
+    // demand, never on txn_accept_valid or the Input handshake.
     always_comb begin
         prefetch_free_valid = 1'b0;
         prefetch_free_slot = '0;
@@ -182,6 +192,13 @@ module VX_gemm_acc_lmem #(
             end
         end
     end
+    // Admit Input only when its transaction and required PSUM prefetch can
+    // both be registered. No-read inputs bypass PSUM capacity, and accepted
+    // work continues to drain while admission is stopped. Since no accepted
+    // read can miss prefetch, no slot needs reserving for a skipped request.
+    assign txn_accept_ready = (txn_count < TXN_COUNTW'(TXN_DEPTH))
+                           && (!acc_if.txn_accept_rd_en
+                            || prefetch_free_valid);
     assign prefetch_alloc = acc_if.txn_accept_valid
                           && acc_if.txn_accept_rd_en
                           && prefetch_free_valid;
@@ -227,7 +244,12 @@ module VX_gemm_acc_lmem #(
                 end
                 if (rd_issue_candidate_valid && !reached_candidate
                  && txn_wr_en[txn_idx]
-                 && (txn_wr_addr[txn_idx] == rd_issue_candidate_addr)) begin
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+                 && (txn_wr_addr[txn_idx][`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)] == rd_issue_candidate_addr[`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)])
+`else
+                 && (txn_wr_addr[txn_idx] == rd_issue_candidate_addr)
+`endif
+                ) begin
                     rd_issue_candidate_raw_block = 1'b1;
                 end
             end
@@ -250,6 +272,9 @@ module VX_gemm_acc_lmem #(
     assign psum_rd_lmem_bus_if.req_data.byteen = '1;
     assign psum_rd_lmem_bus_if.req_data.flags = '0;
     assign psum_rd_lmem_bus_if.req_data.tag = LMEM_TAGW'(rd_issue_slot);
+    `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    assign psum_rd_transaction = read_slot_tag[rd_issue_slot];
+`endif
     assign rd_lmem_fire = psum_rd_lmem_bus_if.req_valid
                         && psum_rd_lmem_bus_if.req_ready;
 
@@ -537,7 +562,10 @@ module VX_gemm_acc_lmem #(
             final_lmem_stall_probe_q <= 1'b0;
             final_lmem_stall_addr_q <= '0;
             final_lmem_stall_data_q <= '0;
-        end else begin
+        end else if (reset === 1'b0) begin
+            // Reset relays are unknown before the initial reset reaches this
+            // module. Do not execute procedural diagnostics speculatively
+            // under X propagation until reset is known to be deasserted.
             assert (txn_count <= TXN_COUNTW'(TXN_DEPTH))
                 else $fatal(1, "LMEM ACC transaction queue overflow");
             assert (rd_lmem_outstanding <= READ_COUNTW'(READ_SLOTS))
@@ -545,6 +573,10 @@ module VX_gemm_acc_lmem #(
             if (acc_if.txn_accept_valid) begin
                 assert (txn_count < TXN_COUNTW'(TXN_DEPTH))
                     else $fatal(1, "LMEM ACC accepted beyond transaction bound");
+                assert (txn_accept_ready)
+                    else $fatal(1, "LMEM ACC accepted without admission capacity");
+                assert (!acc_if.txn_accept_rd_en || prefetch_alloc)
+                    else $fatal(1, "LMEM ACC accepted read without prefetch reservation");
             end
             if (acc_if.txn_retire_valid) begin
                 assert ((txn_count != 0) && txn_valid[txn_rd_ptr])
