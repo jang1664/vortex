@@ -351,7 +351,17 @@ close $channel
 ::vortex::slr::validate_links 0 $report_file
 ::vortex::slr::validate_links 1 $report_file
 dict set ::mock_locations $rx SLICE_X0Y0
-fails {::vortex::slr::validate_links 1 $report_file} {*no actual Laguna*}
+::vortex::slr::validate_links 1 $report_file
+set report [open $report_file r]
+set contents [read $report]
+close $report
+equal [string match {*# WARNING *no actual Laguna TX/RX pairs*} $contents] 1 "fabric RX placement warns"
+equal [string match {*laguna_pairs=0*} $contents] 1 "zero Laguna pairs remain reported"
+dict set ::mock_locations $tx SLICE_X0Y1
+::vortex::slr::validate_links 1 $report_file
+dict set ::mock_slrs $rx SLR1
+fails {::vortex::slr::validate_links 1 $report_file} {*actual SLRs*disagree with ownership*}
+dict set ::mock_slrs $rx SLR2
 dict set ::mock_pins mock_net [list top/unmarked_lut/O "$rx/D"]
 fails {::vortex::slr::validate_links 0 $report_file} {*not exactly one direct driver*}
 # Constant metadata FFs may survive after the TX is folded away. Only actual

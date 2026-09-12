@@ -172,8 +172,14 @@ proc ::vortex::slr::validate_links {placed report_file} {
         set count 0
         if {[dict exists $mapped $group]} {set count [dict get $mapped $group]}
         puts $out "# group=$group pairs=[dict get $expected $group] laguna_pairs=$count"
-        # A nonzero global count can conceal an entirely unregistered group.
-        if {$placed && $count == 0} {lappend errors "$group: no actual Laguna TX/RX pairs"}
+        # Physical Laguna mapping is a QoR preference, not a connectivity
+        # requirement. Direct FF pairing and actual SLR ownership above remain
+        # mandatory even when the placer chooses fabric registers.
+        if {$placed && $count == 0} {
+            set message "$group: no actual Laguna TX/RX pairs; continuing with fabric placement"
+            puts $out "# WARNING $message"
+            puts "WARNING: SLR placement: $message"
+        }
     }
     foreach message $errors {puts $out "# ERROR $message"}
     close $out

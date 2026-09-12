@@ -68,6 +68,9 @@ and that a disabled floorplan does not source or execute these checks.
 - each leaf's actual user-pblock membership and actual SLR;
 - required marked endpoint groups and exact FF-to-FF connectivity;
 - every endpoint's LOC/BEL, with per-group actual Laguna TX/RX pair counts;
+  zero Laguna pairs are a warning, not a fatal condition (2026-09-10 policy).
+  Direct FF pairing, group correspondence and actual SLR ownership remain fatal
+  checks. Fabric placement is permitted so routed timing can determine QoR.
 - nets touching logical partition hierarchy ports, rejecting unregistered
   functional owner-to-owner connections, including reverse ready/status;
   clock/reset control pins, constants and platform-owned endpoints are exempt.
