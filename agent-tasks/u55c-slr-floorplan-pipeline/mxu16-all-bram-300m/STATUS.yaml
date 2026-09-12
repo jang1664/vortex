@@ -1,8 +1,118 @@
 task: mxu16-all-bram-300m
-state: pnr_running
+state: retry_failed
 config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_300m.sh
 scope: Fresh source PnR of the same MXU16/HBM4/DMA4/TMEM8 all-BRAM profile at300MHz; no RTL change or DCP retry.
 log:
+  - timestamp: "2026-09-10 23:38 KST"
+    status: failed
+    attempted: Final scheduled monitoring and read-only inspection of routing termination.
+    result: spread_v2 exited2 at23:29:49 after7h51m39s. All SLR pair checks passed with the intended zero-Laguna warning. route_design failed with921848 node overlaps; no xclbin or achieved frequency. Monitoring finished; no automatic retry.
+    learned: This is illegal routing, not merely negative300MHz slack. Zero unrouted nets does not imply legal routing when resources overlap. Intermediate or placed slack cannot establish usable Fmax.
+  - timestamp: "2026-09-10 23:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring and read-only process liveness check after a long routing iteration.
+    result: route_design remains Global Iteration2 with no recent terminal errors. Implementation Vivado PID3523555 alive, accumulated CPU18h21m and lifetime CPU264 percent at subsequent process check.
+  - timestamp: "2026-09-10 22:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design remains Global Iteration2; runner alive with no recent terminal errors, approximately seven hours since launch.
+  - timestamp: "2026-09-10 22:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design remains Global Iteration2; runner alive with no recent terminal errors. Long-running routing retained without intervention.
+  - timestamp: "2026-09-10 21:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design remains Global Iteration2; runner alive with no recent terminal errors or stage changes.
+  - timestamp: "2026-09-10 21:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design remains Global Iteration2; runner alive with no recent terminal errors. Final achieved frequency pending.
+  - timestamp: "2026-09-10 20:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design advanced to Global Iteration2; runner alive with no recent terminal errors.
+  - timestamp: "2026-09-10 20:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design remains Global Iteration1; runner alive with no recent terminal errors.
+  - timestamp: "2026-09-10 19:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: route_design active, Rip-up And Reroute Global Iteration1; no recent terminal errors. Achieved frequency not yet available.
+  - timestamp: "2026-09-10 19:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring and confirmation of actual modified hook execution.
+    result: Post-place emitted warning for mxu_output zero Laguna pairs, direct FF/SLR checks passed, and route_design started. Current Phase2.4 Update Timing; no recent terminal errors.
+  - timestamp: "2026-09-10 18:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: Post Placement Timing Optimization active; modified post-place hook and routing pending. No recent terminal errors.
+  - timestamp: "2026-09-10 18:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: Global Place Phase2 / Physical Synthesis In Placer active; no recent terminal errors.
+  - timestamp: "2026-09-10 17:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: place_design advanced to Phase2.5 Global Place Phase1; no recent terminal errors.
+  - timestamp: "2026-09-10 17:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: place_design active at Phase2.1 Floorplanning; no recent terminal errors. Modified post-place hook not reached yet.
+  - timestamp: "2026-09-10 16:38 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring.
+    result: Synthesis completed16:17:59; implementation opt_design active, no recent terminal errors.
+  - timestamp: "2026-09-10 16:08 KST"
+    status: running
+    attempted: Scheduled spread_v2 monitoring after confirming copied warning-only hook and300MHz INI.
+    result: Block synthesis143/144 complete, one running; no recent terminal errors.
+  - timestamp: "2026-09-10 15:36 KST"
+    status: pass
+    attempted: Changed zero physical Laguna pairs from fatal to warning, retaining direct FF connectivity/group/actual SLR checks; extended fixtures for fabric endpoints and wrong-SLR failure.
+    result: Main SLR fixture and all seven auxiliary Tcl fixtures passed. New user-authorized fresh run will use spread_v2. No RTL changes.
+    learned: Objective is achieved-frequency exploration under a300MHz optimization target, not mandatory300MHz closure. One run measures that implementation, not a global maximum across all possible targets/directives.
+objective: Explore final achieved frequency with a300MHz optimization target; report routed timing and Vitis achieved kernel frequency, not merely target pass/fail.
+physical_run_v2:
+  finished: "2026-09-10 23:29:49 KST"
+  returncode: 2
+  result: results-v2.md
+  launched: "2026-09-10 15:38 KST"
+  runner_pid: 3066604
+  postfix: spread_v2
+  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/state.json
+  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/build.log
+previous_run_log:
+  - timestamp: "2026-09-10 14:51 KST"
+    status: failed
+    attempted: Final scheduled check and read-only inspection of first fatal error, pair inventory and placed timing.
+    result: Build exited2 at14:39:54, no xclbin. Post-place hook rejected mxu_output group:625 Laguna TX registers, zero Laguna RX, zero actual pairs. Placed WNS-8.142ns, TNS-425732.656ns,216853 setup failing endpoints. Routing did not start. No retry or hook bypass; monitoring ended.
+    learned: Clock target alone can change physical FF mapping despite unchanged RTL; passing marked-group ownership does not guarantee Laguna pairing. Placed timing also substantially misses300MHz independently of the hook failure.
+  - timestamp: "2026-09-10 14:21 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: place_design active, Post Placement Timing Optimization. No recent terminal errors; routing pending.
+  - timestamp: "2026-09-10 13:51 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: Detail Placement started13:51:40 after global placement and physical synthesis. No recent terminal errors.
+  - timestamp: "2026-09-10 13:21 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: place_design active, Phase2.5 Global Place Phase1 after floorplanning. No recent terminal errors.
+  - timestamp: "2026-09-10 12:51 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: place_design active, Global Placement/Phase2.1 Floorplanning. No recent terminal errors.
+  - timestamp: "2026-09-10 12:21 KST"
+    status: running
+    attempted: Scheduled read-only monitoring.
+    result: Synthesis completed12:04:11; implementation init_design active. No recent terminal errors.
+  - timestamp: "2026-09-10 11:51 KST"
+    status: running
+    attempted: Scheduled monitoring after generated INI confirmed kernel_frequency=0:300.
+    result: Block synthesis142/144 complete, two running; no recent terminal errors.
   - timestamp: "2026-09-10 11:21 KST"
     status: running
     attempted: Added300MHz config wrapper, verified identical RTL/options to100MHz profile, checked tools/syntax and launched fresh source PnR.
