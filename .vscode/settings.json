@@ -3,5 +3,6 @@
     "${workspaceFolder}/third_party/hwexplorer"
   ],
   "python-envs.defaultEnvManager": "ms-python.python:conda",
-  "python-envs.defaultPackageManager": "ms-python.python:conda"
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "cmake.sourceDirectory": "/home/jaeyongjang/project.local/vortex_fpint/pytorch"
 }
