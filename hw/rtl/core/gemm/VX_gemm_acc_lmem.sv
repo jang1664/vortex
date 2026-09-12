@@ -22,6 +22,9 @@ module VX_gemm_acc_lmem #(
     input wire reset,
 
     output wire txn_accept_ready,
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    output wire [TAGW-1:0] psum_rd_transaction,
+`endif
 
     VX_gemm_acc_if.backend acc_if,
     VX_mem_bus_if.master psum_rd_lmem_bus_if,
@@ -89,7 +92,12 @@ module VX_gemm_acc_lmem #(
                     read_txn_entry = TXN_PTRW'(idx);
                 end
                 if (!reached_request && txn_wr_en[idx]
-                 && (txn_wr_addr[idx] == acc_if.rd_req_addr))
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+                 && (txn_wr_addr[idx][`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)] == acc_if.rd_req_addr[`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)])
+`else
+                 && (txn_wr_addr[idx] == acc_if.rd_req_addr)
+`endif
+                )
                     read_raw_block = 1'b1;
             end
         end
@@ -236,7 +244,12 @@ module VX_gemm_acc_lmem #(
                 end
                 if (rd_issue_candidate_valid && !reached_candidate
                  && txn_wr_en[txn_idx]
-                 && (txn_wr_addr[txn_idx] == rd_issue_candidate_addr)) begin
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+                 && (txn_wr_addr[txn_idx][`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)] == rd_issue_candidate_addr[`LMEM_LOG_SIZE-1:`CLOG2(PSUM_BYTES)])
+`else
+                 && (txn_wr_addr[txn_idx] == rd_issue_candidate_addr)
+`endif
+                ) begin
                     rd_issue_candidate_raw_block = 1'b1;
                 end
             end
@@ -259,6 +272,9 @@ module VX_gemm_acc_lmem #(
     assign psum_rd_lmem_bus_if.req_data.byteen = '1;
     assign psum_rd_lmem_bus_if.req_data.flags = '0;
     assign psum_rd_lmem_bus_if.req_data.tag = LMEM_TAGW'(rd_issue_slot);
+    `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    assign psum_rd_transaction = read_slot_tag[rd_issue_slot];
+`endif
     assign rd_lmem_fire = psum_rd_lmem_bus_if.req_valid
                         && psum_rd_lmem_bus_if.req_ready;
 

@@ -51,6 +51,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    psum_rd_lmem_bus_if [`LMEM_NUM_PORTS],
     VX_mem_bus_if.master    psum_wr_lmem_bus_if [`LMEM_NUM_PORTS],
     input wire [`LMEM_NUM_BANKS-1:0][2:0] naive_write_commit
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    ,input wire [`LMEM_NUM_BANKS-1:0][3:0] naive_psum_commit_slot
+`endif
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t gemm_unit_perf
     ,output gemm_node_perf_t gemm_node_perf
@@ -184,15 +187,24 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // wide request. Reserve its writes on first presentation, before any
     // downstream completion, and retain that reservation until wide ready.
     logic psum_wr_reserved_r, final_wr_reserved_r;
+    `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    wire psum_wr_reserve = psum_wr_wide_bus_if.req_valid && !psum_wr_reserved_r;
+`else
     wire psum_wr_reserve = psum_wr_raw_bus_if.req_valid && !psum_wr_reserved_r;
+`endif
     wire final_wr_reserve = final_raw_bus_if.req_valid && !final_wr_reserved_r;
     always_ff @(posedge clk) begin
       if (reset) begin
         psum_wr_reserved_r <= 1'b0;
         final_wr_reserved_r <= 1'b0;
       end else begin
+        `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+        if (psum_wr_wide_bus_if.req_valid)
+          psum_wr_reserved_r <= !psum_wr_wide_bus_if.req_ready;
+`else
         if (psum_wr_raw_bus_if.req_valid)
           psum_wr_reserved_r <= !psum_wr_raw_bus_if.req_ready;
+`endif
         if (final_raw_bus_if.req_valid)
           final_wr_reserved_r <= !final_raw_bus_if.req_ready;
       end
@@ -535,9 +547,150 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // The common core already owns a bounded, backpressurable result queue.
     // Keep no second wide write queue in the node: adapter acceptance now
     // means the existing lane splitter accepted the destination transaction.
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    localparam PSUM_WRITE_SLOTS = 16;
+    localparam PSUM_WRITE_SLOTW = $clog2(PSUM_WRITE_SLOTS);
+    localparam PSUM_PHYS_ROWW = `LMEM_LOG_SIZE - `CLOG2(`GEMM_PSUM_DATA_SIZE);
+    logic [PSUM_WRITE_SLOTS-1:0] psum_write_valid;
+    logic [PSUM_WRITE_SLOTS-1:0][PSUM_PHYS_ROWW-1:0] psum_write_addr;
+    logic [PSUM_WRITE_SLOTS-1:0][GEMM_PSUM_LANES-1:0] psum_write_remaining;
+    logic [PSUM_WRITE_SLOTS-1:0][GEMM_PSUM_LANES-1:0] psum_write_committed;
+    logic psum_write_free_valid;
+    logic [PSUM_WRITE_SLOTW-1:0] psum_write_free_slot;
+    logic [PSUM_WRITE_SLOTW-1:0] psum_write_hold_slot;
+    wire [PSUM_WRITE_SLOTW-1:0] psum_write_slot = psum_wr_reserved_r
+        ? psum_write_hold_slot : psum_write_free_slot;
+    wire [PSUM_PHYS_ROWW-1:0] psum_write_probe_addr
+        = PSUM_PHYS_ROWW'(psum_wr_raw_bus_if.req_data.addr);
+    wire [PSUM_PHYS_ROWW-1:0] psum_read_probe_addr
+        = PSUM_PHYS_ROWW'(psum_rd_raw_bus_if.req_data.addr);
+    wire [31:0] psum_rd_transaction;
+    wire psum_write_read_conflict;
+    wire psum_rd_pending_conflict, psum_rd_current_conflict;
+    logic psum_write_pending_conflict;
+    logic psum_read_pending_conflict;
+    wire psum_same_current_addr = psum_rd_raw_bus_if.req_valid
+        && psum_wr_raw_bus_if.req_valid
+        && (psum_read_probe_addr == psum_write_probe_addr);
+    // Tags span much less than half the 32-bit sequence space in flight.
+    wire [31:0] psum_age_delta = gemm_acc_if.wr_req_tag - psum_rd_transaction;
+    wire psum_current_write_older = psum_age_delta[31];
+    wire psum_write_current_conflict = psum_same_current_addr
+        && !psum_current_write_older;
+    wire psum_write_allow = psum_wr_reserved_r
+        || (psum_write_free_valid && !psum_write_pending_conflict
+            && !psum_write_read_conflict && !psum_write_current_conflict);
+    always_comb begin
+        psum_write_free_valid = 1'b0;
+        psum_write_free_slot = '0;
+        psum_write_pending_conflict = 1'b0;
+        psum_read_pending_conflict = 1'b0;
+        psum_write_committed = '0;
+        for (int slot = 0; slot < PSUM_WRITE_SLOTS; ++slot) begin
+            if (!psum_write_free_valid && !psum_write_valid[slot]) begin
+                psum_write_free_valid = 1'b1;
+                psum_write_free_slot = PSUM_WRITE_SLOTW'(slot);
+            end
+            if (psum_write_valid[slot]) begin
+                psum_write_pending_conflict |= (psum_write_addr[slot] == psum_write_probe_addr);
+                psum_read_pending_conflict |= (psum_write_addr[slot] == psum_read_probe_addr);
+            end
+        end
+        for (int bank = 0; bank < `LMEM_NUM_BANKS; ++bank) begin
+            if (naive_write_commit[bank][2:1] == 2'b01)
+                psum_write_committed[naive_psum_commit_slot[bank]][bank % GEMM_PSUM_LANES] = 1'b1;
+        end
+    end
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            psum_write_valid <= '0;
+            psum_write_remaining <= '0;
+            psum_write_hold_slot <= '0;
+        end else begin
+            for (int slot = 0; slot < PSUM_WRITE_SLOTS; ++slot) begin
+                if (psum_write_valid[slot]) begin
+                    psum_write_remaining[slot] <= psum_write_remaining[slot] & ~psum_write_committed[slot];
+                    if ((psum_write_remaining[slot] & ~psum_write_committed[slot]) == 0)
+                        psum_write_valid[slot] <= 1'b0;
+                end
+`ifndef SYNTHESIS
+                if (|psum_write_committed[slot]) begin
+                    assert (psum_write_valid[slot]) else $fatal(1, "PSUM commit without slot owner");
+                    assert ((psum_write_committed[slot] & ~psum_write_remaining[slot]) == 0)
+                        else $fatal(1, "PSUM lane committed twice");
+                end
+`endif
+            end
+            if (psum_wr_reserve) begin
+                psum_write_valid[psum_write_slot] <= 1'b1;
+                psum_write_addr[psum_write_slot] <= psum_write_probe_addr;
+                psum_write_remaining[psum_write_slot] <= '1;
+                psum_write_hold_slot <= psum_write_slot;
+`ifndef SYNTHESIS
+                assert (!psum_write_valid[psum_write_slot]) else $fatal(1, "PSUM slot reused before commit");
+                assert (!psum_write_pending_conflict && !psum_write_read_conflict && !psum_write_current_conflict)
+                    else $fatal(1, "PSUM write bypassed address dependency");
+`endif
+            end
+        end
+    end
+    wire psum_write_table_full = !psum_write_free_valid && !psum_wr_reserved_r;
+    wire psum_write_waw_block = psum_wr_raw_bus_if.req_valid
+        && !psum_wr_reserved_r && psum_write_pending_conflict;
+    wire psum_write_war_block = psum_wr_raw_bus_if.req_valid
+        && !psum_wr_reserved_r && (psum_write_read_conflict || psum_write_current_conflict);
+    wire [PSUM_WRITE_SLOTS-1:0] psum_write_retire;
+    for (genvar slot = 0; slot < PSUM_WRITE_SLOTS; ++slot) begin : g_psum_write_retire
+        assign psum_write_retire[slot] = psum_write_valid[slot]
+            && ((psum_write_remaining[slot] & ~psum_write_committed[slot]) == 0);
+    end
+`ifndef SYNTHESIS
+    logic psum_write_stalled;
+    logic [$bits(psum_wr_wide_bus_if.req_data)-1:0] psum_write_stalled_data;
+    logic [63:0] psum_exact_raw_cycles, psum_waw_cycles, psum_war_cycles;
+    logic [63:0] psum_write_full_cycles, psum_same_cycle_addr_cycles;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            psum_write_stalled <= 1'b0;
+            psum_exact_raw_cycles <= '0;
+            psum_waw_cycles <= '0;
+            psum_war_cycles <= '0;
+            psum_write_full_cycles <= '0;
+            psum_same_cycle_addr_cycles <= '0;
+        end else begin
+            if (psum_write_stalled)
+                assert (psum_wr_wide_bus_if.req_valid && psum_wr_wide_bus_if.req_data == psum_write_stalled_data)
+                    else $fatal(1, "PSUM partial write changed while stalled");
+            psum_write_stalled <= psum_wr_wide_bus_if.req_valid && !psum_wr_wide_bus_if.req_ready;
+            psum_write_stalled_data <= psum_wr_wide_bus_if.req_data;
+            psum_exact_raw_cycles <= psum_exact_raw_cycles + 64'(psum_rd_pending_conflict);
+            psum_waw_cycles <= psum_waw_cycles + 64'(psum_write_waw_block);
+            psum_war_cycles <= psum_war_cycles + 64'(psum_write_war_block);
+            psum_write_full_cycles <= psum_write_full_cycles + 64'(psum_wr_raw_bus_if.req_valid && psum_write_table_full);
+            psum_same_cycle_addr_cycles <= psum_same_cycle_addr_cycles + 64'(psum_same_current_addr);
+            if (psum_rd_wide_bus_if.req_valid && psum_rd_wide_bus_if.req_ready)
+                assert (!psum_rd_pending_conflict && !psum_rd_current_conflict)
+                    else $fatal(1, "PSUM read bypassed uncommitted write");
+        end
+    end
+`endif
+    `VX_STATIC_ASSERT(GEMM_BASE_TAG_WIDTH - UUID_WIDTH >= PSUM_WRITE_SLOTW,
+        ("PSUM write slot does not fit tag value"))
+    assign psum_wr_wide_bus_if.req_valid = psum_wr_raw_bus_if.req_valid && psum_write_allow;
+    assign psum_wr_wide_bus_if.req_data.rw = psum_wr_raw_bus_if.req_data.rw;
+    assign psum_wr_wide_bus_if.req_data.addr = psum_wr_raw_bus_if.req_data.addr;
+    assign psum_wr_wide_bus_if.req_data.data = psum_wr_raw_bus_if.req_data.data;
+    assign psum_wr_wide_bus_if.req_data.byteen = psum_wr_raw_bus_if.req_data.byteen;
+    assign psum_wr_wide_bus_if.req_data.flags = psum_wr_raw_bus_if.req_data.flags;
+    assign psum_wr_wide_bus_if.req_data.tag
+        = (psum_wr_raw_bus_if.req_data.tag & ~(GEMM_BASE_TAG_WIDTH'(PSUM_WRITE_SLOTS-1)))
+        | GEMM_BASE_TAG_WIDTH'(psum_write_slot);
+    assign psum_wr_raw_bus_if.req_ready = psum_wr_wide_bus_if.req_ready && psum_write_allow;
+`else
     assign psum_wr_wide_bus_if.req_valid = psum_wr_raw_bus_if.req_valid;
     assign psum_wr_wide_bus_if.req_data = psum_wr_raw_bus_if.req_data;
     assign psum_wr_raw_bus_if.req_ready = psum_wr_wide_bus_if.req_ready;
+`endif
     assign psum_wr_raw_bus_if.rsp_valid = psum_wr_wide_bus_if.rsp_valid;
     assign psum_wr_raw_bus_if.rsp_data = psum_wr_wide_bus_if.rsp_data;
     assign psum_wr_wide_bus_if.rsp_ready = psum_wr_raw_bus_if.rsp_ready;
@@ -575,6 +728,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign psum_wr_lane_push_by_set[1] = (psum_wr_pending_push
         && psum_wr_raw_bus_if.req_data.addr[0])
         ? GEMM_WR_LANE_COUNT_W'(GEMM_PSUM_LANES) : '0;
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+    assign psum_rd_pending_conflict = psum_rd_raw_bus_if.req_valid && psum_read_pending_conflict;
+    assign psum_rd_current_conflict = psum_same_current_addr
+        && (psum_current_write_older || psum_wr_reserved_r);
+`else
     wire psum_rd_pending_conflict
         = psum_rd_raw_bus_if.req_valid
        && (psum_wr_pending_by_set[psum_rd_raw_bus_if.req_data.addr[0]] != 0);
@@ -583,6 +741,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
        && psum_wr_raw_bus_if.req_valid
        && (psum_wr_raw_bus_if.req_data.addr[0]
         == psum_rd_raw_bus_if.req_data.addr[0]);
+`endif
     wire psum_rd_order_block = psum_rd_pending_conflict
                              || psum_rd_current_conflict;
 
@@ -642,6 +801,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .RESPONSE_FIFO_DEPTH(GEMM_PSUM_RESPONSE_FIFO_DEPTH)
     ) psum_rd_lane_split (
       .clk(clk), .reset(reset), .wide_bus_if(psum_rd_wide_bus_if),
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+      .write_probe_addr(psum_write_probe_addr),
+      .write_probe_conflict(psum_write_read_conflict),
+`endif
       .lane_bus_if(psum_rd_lane_mem_if)
     );
     VX_mem_bus_split #(
@@ -734,6 +897,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .txn_accept_ready(acc_txn_accept_ready),
+`ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
+      .psum_rd_transaction(psum_rd_transaction),
+`endif
       .acc_if(gemm_acc_if),
       .psum_rd_lmem_bus_if(psum_rd_raw_bus_if),
       .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
