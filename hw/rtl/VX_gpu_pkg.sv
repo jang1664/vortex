@@ -1172,9 +1172,17 @@ package VX_gpu_pkg;
         `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RESPONSE_SLOTS),
         `MAX(`SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS, `O_LMEM_DMA_RD_OUTSTANDING_SLOTS));
     localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS);
+`ifdef GEMM_NAIVE
+    // External DMA reads also return through LMEM on output transfers.
+    // Keep their slot indices distinct when the external queue grows.
+    localparam LMEM_TAG_WIDTH = `MAX(
+        (LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS)),
+        (UUID_WIDTH + `MAX(LMEM_DMA_SLOT_BITS, `CLOG2(`DMA_NODE_RD_OUTSTANDING_SLOT))));
+`else
     localparam LMEM_TAG_WIDTH = `MAX(
         (LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS)),
         (UUID_WIDTH + LMEM_DMA_SLOT_BITS));
+`endif
     // Track explicit +1 tag growth introduced by 2->1 VX_mem_arb routing.
     localparam MEM_ARB_ROUTE_TAG_BITS = 1;
 
@@ -1190,9 +1198,16 @@ package VX_gpu_pkg;
     localparam GEMM_ADAPTER_O_SPLIT_BITS   = (`GEMM_OUTPUT_DATA_SIZE     > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_OUTPUT_DATA_SIZE)     - `CLOG2(LSU_WORD_SIZE)) : 0;
     localparam GEMM_ADAPTER_MAX_SPLIT_BITS = `MAX(`MAX(GEMM_ADAPTER_I_SPLIT_BITS, GEMM_ADAPTER_W_SPLIT_BITS),
                                                    `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
+`ifdef GEMM_IMPROVE
+    // TMEM shares tags between local clients and the external DMA channels.
+    localparam GEMM_BASE_TAG_WIDTH = `MAX(
+        `MAX(LMEM_TAG_WIDTH, (UUID_WIDTH + `CLOG2(`TMEM_DMA_RD_OUTSTANDING_SLOT))),
+        (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
+`else
     localparam GEMM_BASE_TAG_WIDTH = `MAX(
         LMEM_TAG_WIDTH,
         (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
+`endif
 
     // The naive backend merges five GEMM clients before shared LMEM. Improve
     // keeps this width for interface consistency even though it uses TMEM.
