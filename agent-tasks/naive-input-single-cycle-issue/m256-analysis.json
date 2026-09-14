@@ -1,0 +1,89 @@
+{
+  "case": "m256",
+  "gemm_cycles": 606387,
+  "input_count": 262144,
+  "boundaries": {
+    "cfg": 21191,
+    "first_input": 22773,
+    "last_input": 626847,
+    "last_acc_write": 626883,
+    "store": 627575,
+    "done": 627578
+  },
+  "phases": {
+    "startup": 1582,
+    "input_stream": 604074,
+    "compute_drain": 36,
+    "output_tail": 692,
+    "finalize": 3
+  },
+  "input_activity": {
+    "input_fire": 262143,
+    "input_backpressure": 120031,
+    "input_no_supply": 221900
+  },
+  "source_partition": {
+    "allocation_only": 22624,
+    "request_complete_with_replacement": 239505,
+    "request_complete_without_replacement": 22625,
+    "request_wait": 231028,
+    "inactive_full": 88263,
+    "inactive_free": 29
+  },
+  "request_intervals": {
+    "1": 202944,
+    "2": 22076,
+    "3": 12550,
+    "4": 4012,
+    "5": 2262,
+    "6": 3774,
+    "7": 1366,
+    "8": 833,
+    "9": 385,
+    "10": 2177,
+    "11": 243,
+    "12": 515,
+    "13": 1794,
+    "14": 148,
+    "15": 1,
+    "16": 14,
+    "17": 695,
+    "18": 119,
+    "19": 309,
+    "20": 315,
+    "21": 64,
+    "22": 274,
+    "23": 134,
+    "24": 206,
+    "25": 88,
+    "26": 93,
+    "27": 70,
+    "28": 67,
+    "29": 2194,
+    "30": 35,
+    "31": 2073,
+    "32": 248,
+    "33": 42,
+    "34": 2,
+    "730": 7
+  },
+  "rollover_total": 239519,
+  "command_rollover_total": 1852,
+  "max_input_slots": 16,
+  "partial_lane_wait_cycles": 8934,
+  "eligible_replacements": 239519,
+  "handshake_checks": "pass",
+  "overlapping_stalls": {
+    "weight_wait": 24,
+    "psum_wait": 150870,
+    "psum_only_wait": 134203,
+    "bp_weight_only": 24,
+    "bp_psum_only": 75631,
+    "bp_both": 0,
+    "bp_neither": 44376
+  },
+  "psum_backpressure_window": [
+    96578,
+    96602
+  ]
+}

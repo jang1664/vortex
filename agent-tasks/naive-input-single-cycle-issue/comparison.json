@@ -1,0 +1,42 @@
+[
+  {
+    "m": 4,
+    "before_gemm": 15693,
+    "after_gemm": 16257,
+    "improve_gemm": 6431,
+    "delta_gemm": 564,
+    "change_percent": 3.5939590900401455,
+    "before_core": 22254,
+    "after_core": 22854,
+    "improve_core": 12205,
+    "naive_over_improve": 2.527911677810605,
+    "gemm_gap": 9826,
+    "phases": {
+      "startup": 762,
+      "input_stream": 15392,
+      "compute_drain": 28,
+      "output_tail": 72,
+      "finalize": 3
+    }
+  },
+  {
+    "m": 256,
+    "before_gemm": 576763,
+    "after_gemm": 606387,
+    "improve_gemm": 272856,
+    "delta_gemm": 29624,
+    "change_percent": 5.136251805334253,
+    "before_core": 583329,
+    "after_core": 612954,
+    "improve_core": 278622,
+    "naive_over_improve": 2.222370041340487,
+    "gemm_gap": 333531,
+    "phases": {
+      "startup": 1582,
+      "input_stream": 604074,
+      "compute_drain": 36,
+      "output_tail": 692,
+      "finalize": 3
+    }
+  }
+]

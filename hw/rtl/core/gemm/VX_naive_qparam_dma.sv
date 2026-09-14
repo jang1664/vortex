@@ -11,6 +11,7 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
     parameter integer DATA_BYTES = `GEMM_SCALE_ZERO_DATA_SIZE,
     parameter integer RESPONSE_SLOTS = 8,
     parameter integer LANE_FIFO_DEPTH = 4,
+    parameter integer PIPELINED_ISSUE = 0,
     parameter integer TAG_WIDTH = GEMM_BASE_TAG_WIDTH
 ) (
     input wire clk,
@@ -78,8 +79,26 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
     wire request_done = fetch_active_r && (&(sent_r | request_fire));
     logic free_found;
     logic [SLOT_BITS-1:0] free_slot;
-    wire allocate = !fetch_active_r && free_found && valid_r[issue_head_r]
-                 && (issued_r[issue_head_r] < cmd_r[issue_head_r].source.segments);
+    // Input may reserve the following row while the current row's last
+    // outstanding lane is accepted. Requests still use registered slot state.
+    logic [1:0] allocate_owner;
+    logic [15:0] allocate_segment;
+    always_comb begin
+        allocate_owner = issue_head_r;
+        allocate_segment = issued_r[issue_head_r];
+        if (PIPELINED_ISSUE && request_done) begin
+            if ((issued_r[issue_head_r] + 16'd1) == cmd_r[issue_head_r].source.segments) begin
+                allocate_owner = issue_head_r + 2'd1;
+                allocate_segment = issued_r[allocate_owner];
+            end else begin
+                allocate_segment = issued_r[issue_head_r] + 16'd1;
+            end
+        end
+    end
+    // Only an already free slot and an already admitted command qualify.
+    wire allocate = (!fetch_active_r || (PIPELINED_ISSUE && request_done))
+                 && free_found && valid_r[allocate_owner]
+                 && (allocate_segment < cmd_r[allocate_owner].source.segments);
     wire [33:0] request_byte_addr = cmd_r[slot_owner_r[fetch_slot_r]].source.base
         + 34'(slot_segment_r[fetch_slot_r]) * 34'(cmd_r[slot_owner_r[fetch_slot_r]].source.stride);
 
@@ -294,9 +313,9 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
             end
             if (allocate) begin
                 slot_valid_r[free_slot] <= 1'b1;
-                slot_owner_r[free_slot] <= issue_head_r;
-                slot_sequence_r[free_slot] <= cmd_sequence_r[issue_head_r];
-                slot_segment_r[free_slot] <= issued_r[issue_head_r];
+                slot_owner_r[free_slot] <= allocate_owner;
+                slot_sequence_r[free_slot] <= cmd_sequence_r[allocate_owner];
+                slot_segment_r[free_slot] <= allocate_segment;
                 arrived_r[free_slot] <= '0;
                 fetch_active_r <= 1'b1;
                 fetch_slot_r <= free_slot;
@@ -305,10 +324,14 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
                 sent_r <= sent_r | request_fire;
                 if (request_done) begin
                     fetch_active_r <= 1'b0;
-                    issued_r[issue_head_r] <= issued_r[issue_head_r] + 16'd1;
-                    if ((issued_r[issue_head_r] + 16'd1) == cmd_r[issue_head_r].source.segments)
-                        issue_head_r <= issue_head_r + 2'd1;
                 end
+            end
+            // Completion must advance issue accounting even when allocation
+            // keeps fetch_active_r asserted for a consecutive request.
+            if (request_done) begin
+                issued_r[issue_head_r] <= issued_r[issue_head_r] + 16'd1;
+                if ((issued_r[issue_head_r] + 16'd1) == cmd_r[issue_head_r].source.segments)
+                    issue_head_r <= issue_head_r + 2'd1;
             end
             if (source_complete) begin
                 source_reported_r[source_head_r] <= 1'b1;

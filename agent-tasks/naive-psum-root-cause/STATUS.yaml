@@ -1,0 +1,8 @@
+task: naive-psum-root-cause
+status: complete
+objective: Trace current M256 Input backpressure through PSUM and physical LMEM service, without RTL changes.
+report: docs/hw_analysis/improve_vs_naive/fpint_gemm_naive_psum_root_cause.md
+artifacts:
+  - summary.json
+  - stall-window.csv
+scope: Existing FSDB analysis only; no new simulation or RTL/configuration changes.

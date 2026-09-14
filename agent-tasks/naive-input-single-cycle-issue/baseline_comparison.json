@@ -1,0 +1,8 @@
+{
+  "same_compile_flags": true,
+  "same_app_args": true,
+  "changed_rtl_files": [
+    "hw/rtl/core/gemm/VX_naive_input_executor.sv",
+    "hw/rtl/core/gemm/VX_naive_qparam_dma.sv"
+  ]
+}

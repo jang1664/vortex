@@ -1,0 +1,23 @@
+{
+  "bank0_root_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/root_valid",
+  "bank0_root_read": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/root_read",
+  "bank0_root_write": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/root_write",
+  "bank0_selected_root": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/selected_root",
+  "bank0_selected": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/selected",
+  "bank0_grant_fire": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/grant_fire",
+  "bank0_buffer_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/buffer_ready",
+  "bank0_read_streak": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/read_streak",
+  "bank0_locked": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[0]/locked",
+  "bank8_root_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/root_valid",
+  "bank8_root_read": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/root_read",
+  "bank8_root_write": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/root_write",
+  "bank8_selected_root": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/selected_root",
+  "bank8_selected": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/selected",
+  "bank8_grant_fire": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/grant_fire",
+  "bank8_buffer_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/buffer_ready",
+  "bank8_read_streak": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/read_streak",
+  "bank8_locked": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/g_naive_psum_priority/req_xbar/g_bank[8]/locked",
+  "per_bank_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/per_bank_req_valid",
+  "per_bank_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/per_bank_req_ready",
+  "per_bank_req_rw": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/local_mem/per_bank_req_rw"
+}

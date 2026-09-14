@@ -65,7 +65,8 @@ module VX_naive_input_executor import VX_gpu_pkg::*; #(
         end
     end
     VX_naive_qparam_dma #(.INSTANCE_ID(INSTANCE_ID), .DATA_BYTES(B),
-        .RESPONSE_SLOTS(16), .LANE_FIFO_DEPTH(8), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)) source_dma (
+        .RESPONSE_SLOTS(16), .LANE_FIFO_DEPTH(8), .PIPELINED_ISSUE(1),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)) source_dma (
         .clk(clk), .reset(reset), .cmd_valid_i(dma_admit_valid), .cmd_ready_o(dma_ready),
         .cmd_id_i(cmd.work_seq), .cmd_payload_i(descriptor),
         .activate_valid_i(cmd_valid && context_ready), .activate_ready_o(activate_ready),
