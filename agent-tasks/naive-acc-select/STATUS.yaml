@@ -1,0 +1,23 @@
+task: naive-acc-select
+status: complete
+baseline: 52442ab7
+spec: acc-select-spec.md
+pitfalls:
+  - "Existing gemm_unit_v2 qparam stimulus omitted naive packet-end notification; failed identically with ACC define OFF. Improve fixture passed."
+log:
+  - time: "2026-09-14 22:09"
+    event: "Plan confirmed; begin existing internal ACC reuse and verification preparation."
+  - time: "2026-09-14 22:14"
+    event: "Iteration 1 RTL frozen: three naive files, common ACC/compute/DMA unchanged. Corrected one existing test packet notification for naive; rerun requested."
+  - time: "2026-09-14 22:17"
+    event: "ACC unit corrected2 ON PASS; backpressure PASS. Twelve selected-RTL identity checks PASS. ON/OFF/improve M4/M256 blackbox comparisons launched in isolated configured builds."
+  - time: "2026-09-14 22:23"
+    event: "Five final unit/control checks PASS. M4 ON/OFF/improve blackbox PASS; OFF/improve exact prior cycles. M4 waveform confirms 4096 SRAM writes, 128 output reads/writes, zero PSUM LMEM requests, all four STORE allocations after physical drain; copy+drain 296 cycles. Edge cases running separately."
+  - time: "2026-09-14 22:28"
+    event: "All six ACC edge cases PASS, including N150 partial MXU row. M256 three-way comparisons still advancing. Final diff remains three RTL files and localized existing TB metadata corrections; common modules unchanged."
+  - time: "2026-09-14 22:37"
+    event: "M256 ACC ON PASS: GEMM295631/core302256. Improve M256 PASS: GEMM272856/core278622, exact historical cycles. Only OFF M256 rerun and final waveform/report work remain."
+  - time: "2026-09-14 22:54"
+    event: "All 12 blackbox runs PASS. OFF M256 reproduced GEMM411384/core417981 exactly; ON core decreases 27.69%. ON M256 waveform checks PASS, including zero PSUM LMEM accesses and all STORE allocations after output drain. Final OFF waveform analysis pending."
+  - time: "2026-09-14 22:55"
+    event: "OFF M256 waveform PASS: 253952 PSUM reads and writes each, versus zero with ACC ON. Final report generated: 12 blackbox, 5 unit and 12 RTL identity checks PASS; OFF/improve cycle deltas zero. Common ACC/compute/DMA modules byte-identical to baseline. Final diff checked; no remaining work or synthesis."

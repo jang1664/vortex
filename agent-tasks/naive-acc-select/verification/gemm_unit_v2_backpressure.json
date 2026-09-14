@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "gemm_unit_v2_backpressure",
+  "error_log": "",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2_backpressure/logs/sim.log"
+}

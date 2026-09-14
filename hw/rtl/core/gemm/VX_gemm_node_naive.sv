@@ -104,9 +104,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     localparam int GEMM_ACC_LMEM_READ_SLOTS = `GEMM_NAIVE_PSUM_READ_SLOTS;
     localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = `GEMM_NAIVE_PSUM_RESPONSE_SLOTS;
     localparam int GEMM_PSUM_RESPONSE_FIFO_DEPTH = 2;
+`endif
     // GEMM-unit-facing buses (native GEMM widths)
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
@@ -120,11 +122,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
       .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
     ) quant_gemm_bus_if [2] ();
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     VX_mem_bus_if #(
       .DATA_SIZE(`GEMM_PSUM_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) psum_rd_wide_bus_if (), psum_rd_raw_bus_if (),
       psum_wr_wide_bus_if (), psum_wr_marked_bus_if (), psum_wr_raw_bus_if ();
+`endif
     VX_mem_bus_if #(
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -153,6 +157,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) final_lane_mem_if [GEMM_OUTPUT_LANES] ();
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     VX_mem_bus_if #(
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -162,48 +167,69 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) psum_wr_lane_mem_if [GEMM_PSUM_LANES] ();
 
+`endif
     VX_gemm_unit_v2_if gemm_unit_v2_if ();
     VX_gemm_acc_if #(
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      .ADDRW(`GEMM_ACC_MEM_ADDR_WIDTH),
+`else
       .ADDRW(`MEM_ADDR_WIDTH),
+`endif
       .DATAW(`GEMM_PSUM_DATA_SIZE * 8),
       .TAGW(32)
     ) gemm_acc_if ();
     logic [11:0] gemm_wr_lane_pending_r;
     localparam int GEMM_WR_LANE_COUNT_W = $bits(gemm_wr_lane_pending_r);
     wire [`LMEM_NUM_BANKS-1:0] gemm_wr_lane_fire;
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     wire [`LMEM_NUM_BANKS-1:0] psum_wr_lane_fire_by_set [2];
+`endif
     for (genvar b = 0; b < `LMEM_NUM_BANKS; ++b) begin : g_wr_commit
       assign gemm_wr_lane_fire[b] = (naive_write_commit[b][2:1] == 2'b01)
                                   || (naive_write_commit[b][2:1] == 2'b10);
+`ifndef GEMM_NAIVE_USE_ACC_MEM
       assign psum_wr_lane_fire_by_set[0][b] = naive_write_commit[b] == 3'b010;
       assign psum_wr_lane_fire_by_set[1][b] = naive_write_commit[b] == 3'b011;
+`endif
     end
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     wire [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_lane_pop_by_set [2];
     assign psum_wr_lane_pop_by_set[0]
         = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[0]));
     assign psum_wr_lane_pop_by_set[1]
         = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[1]));
+`endif
     // A splitter can forward some lanes before all lanes have accepted the
     // wide request. Reserve its writes on first presentation, before any
     // downstream completion, and retain that reservation until wide ready.
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+    wire psum_wr_reserved_r = 1'b0;
+    wire psum_wr_reserve = 1'b0;
+    logic final_wr_reserved_r;
+`else
     logic psum_wr_reserved_r, final_wr_reserved_r;
     `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
     wire psum_wr_reserve = psum_wr_wide_bus_if.req_valid && !psum_wr_reserved_r;
 `else
     wire psum_wr_reserve = psum_wr_raw_bus_if.req_valid && !psum_wr_reserved_r;
 `endif
+`endif
     wire final_wr_reserve = final_raw_bus_if.req_valid && !final_wr_reserved_r;
     always_ff @(posedge clk) begin
       if (reset) begin
+`ifndef GEMM_NAIVE_USE_ACC_MEM
         psum_wr_reserved_r <= 1'b0;
+`endif
         final_wr_reserved_r <= 1'b0;
       end else begin
+`ifndef GEMM_NAIVE_USE_ACC_MEM
         `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
         if (psum_wr_wide_bus_if.req_valid)
           psum_wr_reserved_r <= !psum_wr_wide_bus_if.req_ready;
 `else
         if (psum_wr_raw_bus_if.req_valid)
           psum_wr_reserved_r <= !psum_wr_raw_bus_if.req_ready;
+`endif
 `endif
         if (final_raw_bus_if.req_valid)
           final_wr_reserved_r <= !final_raw_bus_if.req_ready;
@@ -325,13 +351,20 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .sync_value(child_if.sync_value), .lane_bus_if(sz_lane_mem_if), .install_bus_if(quant_gemm_bus_if),
       .source_done_valid(source_done[3:2]), .source_done_work_seq(quant_source_id), .quiescent(executor_idle[2]));
     assign child_if.prepare_ready[4] = 0;
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+    VX_lmem_dma_ctrl_if o_dma_ctrl_if ();
+`endif
     VX_naive_external_dma_executor #(.INSTANCE_ID({INSTANCE_ID,"_dma"}), .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR)) dma_executor (
       .clk(clk), .reset(reset), .cmd(child_if.cmd[4]), .cmd_valid(child_if.cmd_valid[4]),
       .cmd_ready(child_if.cmd_ready[4]), .done_valid(child_if.done_valid[4]),
       .done_ready(child_if.done_ready[4]), .done_work_seq(child_if.done_work_seq[4]),
       .quiescent(executor_idle[3]), .M_orig(geometry[0]), .N_orig(geometry[1]), .K_orig(geometry[2]),
       .qblk_orig(geometry[3]), .M_target(geometry[4]), .N_target(geometry[5]), .K_target(geometry[6]),
-      .wtrans_tot(geometry[7]), .qdir_tot(geometry[8]), .dma_if(dma_if), .store_done(output_store_done));
+      .wtrans_tot(geometry[7]), .qdir_tot(geometry[8]), .dma_if(dma_if), .store_done(output_store_done)
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      , .o_dma_ctrl_if(o_dma_ctrl_if), .output_write_drained(gemm_write_queues_empty)
+`endif
+    );
     wire acc_txn_accept_ready;
     assign gemm_unit_v2_if.input_admission_ready = acc_txn_accept_ready;
     assign gemm_unit_v2_if.w_load_value[0] = child_if.sync_value[GEMM_RID_W0];
@@ -491,10 +524,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         .TAG_WIDTH(PSUM_ARB_TAG_WIDTH)
       ) wr_out_if[1]();
 
+`ifndef GEMM_NAIVE_USE_ACC_MEM
       if (i < GEMM_PSUM_LANES) begin : g_lower_lane
         `ASSIGN_VX_MEM_BUS_IF(rd_in_if[0], psum_rd_lane_mem_if[i]);
         `ASSIGN_VX_MEM_BUS_IF(wr_in_if[0], psum_wr_lane_mem_if[i]);
-      end else begin : g_no_lower_lane
+      end else
+`endif
+      begin : g_no_lower_lane
         assign rd_in_if[0].req_valid = 1'b0;
         assign rd_in_if[0].req_data  = '0;
         assign rd_in_if[0].rsp_ready = 1'b1;
@@ -502,10 +538,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         assign wr_in_if[0].req_data  = '0;
         assign wr_in_if[0].rsp_ready = 1'b1;
       end
+`ifndef GEMM_NAIVE_USE_ACC_MEM
       if ((i + `LMEM_NUM_PORTS) < GEMM_PSUM_LANES) begin : g_upper_lane
         `ASSIGN_VX_MEM_BUS_IF(rd_in_if[1], psum_rd_lane_mem_if[i + `LMEM_NUM_PORTS]);
         `ASSIGN_VX_MEM_BUS_IF(wr_in_if[1], psum_wr_lane_mem_if[i + `LMEM_NUM_PORTS]);
-      end else begin : g_no_upper_lane
+      end else
+`endif
+      begin : g_no_upper_lane
         assign rd_in_if[1].req_valid = 1'b0;
         assign rd_in_if[1].req_data  = '0;
         assign rd_in_if[1].rsp_ready = 1'b1;
@@ -522,6 +561,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         assign wr_in_if[2].rsp_ready = 1'b1;
       end
 
+`ifndef GEMM_NAIVE_USE_ACC_MEM
       VX_mem_arb #(
         .NUM_INPUTS(2), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
@@ -530,6 +570,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       ) psum_rd_arb (
         .clk(clk), .reset(reset), .bus_in_if(rd_in_if), .bus_out_if(rd_out_if)
       );
+`endif
       VX_mem_arb #(
         .NUM_INPUTS(3), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
@@ -539,7 +580,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         .clk(clk), .reset(reset), .bus_in_if(wr_in_if), .bus_out_if(wr_out_if)
       );
 
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      assign psum_rd_lmem_bus_if[i].req_valid = 1'b0;
+      assign psum_rd_lmem_bus_if[i].req_data = '0;
+      assign psum_rd_lmem_bus_if[i].rsp_ready = 1'b1;
+`else
       `ASSIGN_VX_MEM_BUS_IF(psum_rd_lmem_bus_if[i], rd_out_if[0]);
+`endif
       // The production core keeps the full PSUM_ARB_TAG_WIDTH here, while a
       // focused hierarchy may expose the narrower PSUM_LMEM_TAG_WIDTH because
       // writes have no response routing to recover.  Adapt only the tag: a
@@ -550,6 +597,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
           PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
     end
 
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     // The common core already owns a bounded, backpressurable result queue.
     // Keep no second wide write queue in the node: adapter acceptance now
     // means the existing lane splitter accepted the destination transaction.
@@ -785,6 +833,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       end
     end
 
+`endif
     assign final_wide_bus_if.req_valid = final_raw_bus_if.req_valid;
     assign final_wide_bus_if.req_data = final_raw_bus_if.req_data;
     assign final_raw_bus_if.req_ready = final_wide_bus_if.req_ready;
@@ -800,6 +849,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .lane_bus_if(final_lane_mem_if)
     );
 
+`ifndef GEMM_NAIVE_USE_ACC_MEM
     VX_gemm_psum_read_ooo_join #(
       .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
@@ -876,6 +926,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     end
 `endif
 
+`endif
     VX_gemm_compute_core #(
       .INSTANCE_ID(INSTANCE_ID)
     ) u_VX_gemm_compute_core (
@@ -893,6 +944,85 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     `endif
     );
 
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+    `VX_STATIC_ASSERT(MT * NT * 4 <= `GEMM_ACC_MEM_TOT_SIZE,
+        ("Naive output tile exceeds ACC memory capacity"))
+    `VX_STATIC_ASSERT((NT % `MXU_COL) == 0,
+        ("Naive ACC output requires whole MXU column blocks"))
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+      if (!reset && gemm_acc_if.txn_accept_valid) begin
+        if (gemm_unit_v2_if.packet_ctrl.acc_rd_en) begin
+          assert ((gemm_unit_v2_if.packet_ctrl.acc_rd_addr % `GEMM_PSUM_DATA_SIZE) == 0
+                  && gemm_unit_v2_if.packet_ctrl.acc_rd_addr < `GEMM_ACC_MEM_TOT_SIZE)
+            else $fatal(1, "%s: invalid naive ACC read address", INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.packet_ctrl.acc_wr_en) begin
+          assert ((gemm_unit_v2_if.packet_ctrl.acc_wr_addr % `GEMM_PSUM_DATA_SIZE) == 0
+                  && gemm_unit_v2_if.packet_ctrl.acc_wr_addr < `GEMM_ACC_MEM_TOT_SIZE)
+            else $fatal(1, "%s: invalid naive ACC write address", INSTANCE_ID);
+        end
+      end
+    end
+`endif
+
+    assign acc_txn_accept_ready = 1'b1;
+    VX_mem_bus_if #(
+      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) o_gemm_bus_if ();
+    VX_gemm_sync_if o_dma_sync_if ();
+    assign o_dma_sync_if.ready = 1'b1;
+
+    VX_gemm_acc_internal #(
+      .INSTANCE_ID(INSTANCE_ID), .TAGW(32)
+    ) u_acc_internal (
+      .clk(clk), .reset(reset), .acc_if(gemm_acc_if),
+      .o_lmem_bus_if(o_gemm_bus_if),
+      `UNUSED_PIN(early_read_req),
+      `UNUSED_PIN(nominal_read_req),
+      `UNUSED_PIN(read_req_addr),
+      `UNUSED_PIN(early_rsp_pending),
+      `UNUSED_PIN(early_hold_valid),
+      `UNUSED_PIN(early_hold_data),
+      `UNUSED_PIN(acc_mem_out_data),
+      `UNUSED_PIN(acc_mem_in_data),
+      `UNUSED_PIN(acc_mem_addr),
+      `UNUSED_PIN(acc_mem_rd_en),
+      `UNUSED_PIN(acc_mem_wr_en),
+      `UNUSED_PIN(write_bank),
+      `UNUSED_PIN(output_read_bank),
+      `UNUSED_PIN(output_read_addr),
+      `UNUSED_PIN(output_read_fire),
+      `UNUSED_PIN(output_read_valid),
+      `UNUSED_PIN(output_group_conflict),
+      `UNUSED_PIN(compute_bank_read_req),
+      `UNUSED_PIN(output_bank_read_req),
+      `UNUSED_PIN(compute_group_busy),
+      `UNUSED_PIN(compute_group_pending_count),
+      `UNUSED_PIN(accum_bank),
+      `UNUSED_PIN(output_read_bank_q),
+      `UNUSED_PIN(output_read_tag_q)
+    );
+    VX_lmem_dma_misal #(
+      .INSTANCE_ID({INSTANCE_ID, "_o_dma"}), .DIR(1),
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
+      .RD_OUTSTANDING(O_RD_OUTSTANDING),
+      .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),
+      .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),
+      .LMEM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
+      .GEMM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH)
+    ) o_lmem_dma (
+      .clk(clk), .reset(reset), .ctrl_if(o_dma_ctrl_if),
+      .gemm_sync_if(o_dma_sync_if),
+      .lmem_bus_if(final_raw_bus_if), .gemm_bus_if(o_gemm_bus_if)
+`ifdef PERF_ENABLE
+      , `UNUSED_PIN(perf)
+`endif
+    );
+`else
     VX_gemm_acc_lmem #(
       .ADDRW(`MEM_ADDR_WIDTH),
       .DATAW(`GEMM_PSUM_DATA_SIZE * 8),
@@ -911,6 +1041,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
       .final_lmem_bus_if(final_raw_bus_if)
     );
+
+`endif
 
 `ifdef PERF_ENABLE
     // LMEM byte counters: tally per-lane fires across physical LMEM ports.

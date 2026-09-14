@@ -40,6 +40,10 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
     input wire [31:0] wtrans_tot, qdir_tot,
     VX_lsu_mem_if.master            dma_if,
     output wire                     store_done
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+    ,VX_lmem_dma_ctrl_if.master      o_dma_ctrl_if
+    ,input wire                     output_write_drained
+`endif
 );
 
   // ============================================================
@@ -498,6 +502,9 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
     S_POLL_R_REQ,
     S_POLL_R_WAIT,
     S_DONE
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+    ,S_OUTPUT_START, S_OUTPUT_WAIT, S_OUTPUT_DRAIN
+`endif
   } state_t;
 
   state_t state_q, state_d;
@@ -517,6 +524,29 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
   assign store_done = (state_q == S_POLL_R_WAIT)
                    && (state_d == S_DONE)
                    && (cmd_op == OP_DMA_ST);
+
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+  // The ACC output port returns FP16 but indexes FP32 rows. Express the
+  // source in FP16 bytes so DMA word addresses select the existing ACC rows.
+  assign o_dma_ctrl_if.start = (state_q == S_OUTPUT_START) && o_dma_ctrl_if.idle;
+  assign o_dma_ctrl_if.prepare = 1'b0;
+  assign o_dma_ctrl_if.prepare_max_beats = '0;
+  assign o_dma_ctrl_if.src_base_addr = '0;
+  assign o_dma_ctrl_if.dst_base_addr = src_base;
+  assign o_dma_ctrl_if.src_strides[0] = `MXU_COL * 2;
+  assign o_dma_ctrl_if.dst_strides[0] = NT * 2;
+  assign o_dma_ctrl_if.src_strides[1] = MT * `MXU_COL * 2;
+  assign o_dma_ctrl_if.dst_strides[1] = `MXU_COL * 2;
+  assign o_dma_ctrl_if.src_strides[2] = '0;
+  assign o_dma_ctrl_if.dst_strides[2] = '0;
+  assign o_dma_ctrl_if.bounds[0] = `DMA_BOUND_WIDTH'(dram_b0);
+  assign o_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'((nt_eff + `MXU_COL - 1) / `MXU_COL);
+  assign o_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
+  assign o_dma_ctrl_if.seg_size = `MXU_COL * 2;
+  assign o_dma_ctrl_if.reg_idx = '0;
+  assign o_dma_ctrl_if.reg_value = '0;
+  assign o_dma_ctrl_if.scheduler_work_seq = cmd_q.work_seq;
+`endif
 
   // ============================================================
   // Comb
@@ -560,7 +590,23 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
 
       S_DECODE: begin
         state_d = S_ALLOC_REQ;
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+        if (cmd_op == OP_DMA_ST && tensor_sel == T_OUTPUT)
+          state_d = S_OUTPUT_START;
+`endif
       end
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      S_OUTPUT_START: begin
+        if (o_dma_ctrl_if.start) state_d = S_OUTPUT_WAIT;
+      end
+      S_OUTPUT_WAIT: begin
+        if (o_dma_ctrl_if.done) state_d = S_OUTPUT_DRAIN;
+      end
+      S_OUTPUT_DRAIN: begin
+        if (o_dma_ctrl_if.idle && output_write_drained)
+          state_d = S_ALLOC_REQ;
+      end
+`endif
 
       S_ALLOC_REQ: begin
         // Global alloc register read at DMA_CFG_BASE_ADDR + 0.

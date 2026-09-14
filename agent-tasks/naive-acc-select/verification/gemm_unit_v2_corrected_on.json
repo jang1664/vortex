@@ -1,0 +1,6 @@
+{
+  "status": "sim_fail",
+  "test_name": "gemm_unit_v2",
+  "error_log": "tb_VX_gemm_unit_v2.u_dut.u_compute_core : [885000] | GEMM_V2_ACC_LAUNCH | {inst=gemm_unit_v2_ut, ctrl_valid=1, data_valid=1, load=0, rd=0, addr=0x40, last=1}\ntb_VX_gemm_unit_v2.u_dut.u_compute_core : [895000] | GEMM_V2_OWNERSHIP | {inst=gemm_unit_v2_ut, accept=0, retire=1, pending=1, pre=0, tree=0, post=1, acc=0, resource=1, empty=0}\nFatal: \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv\", 1308: tb_VX_gemm_unit_v2.test_resource_consumer_stages: at time 2740000 ps\ntimeout waiting for consumer-stage resource events\n$finish called from file \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv\", line 1308.",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2/logs/sim.log"
+}

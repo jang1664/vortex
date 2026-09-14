@@ -1,0 +1,469 @@
+{
+  "baseline": "52442ab7919ca69353252a743d0d479d0b8d4142",
+  "runs": [
+    {
+      "mode": "on",
+      "case": "m4",
+      "returncode": 0,
+      "gemm_cycles": [
+        14953
+      ],
+      "core_cycles": [
+        21531
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "on",
+        "case": "m4",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 128,
+        "final_lmem_write_bytes": 4096,
+        "final_lmem_stall_cycles": 0,
+        "copies": [
+          {
+            "start_cycle": 12804,
+            "dma_done_cycle": 12874,
+            "hbm_allocate_cycle": 12878,
+            "copy_cycles": 70,
+            "copy_and_drain_cycles": 74
+          },
+          {
+            "start_cycle": 16377,
+            "dma_done_cycle": 16447,
+            "hbm_allocate_cycle": 16451,
+            "copy_cycles": 70,
+            "copy_and_drain_cycles": 74
+          },
+          {
+            "start_cycle": 19920,
+            "dma_done_cycle": 19990,
+            "hbm_allocate_cycle": 19994,
+            "copy_cycles": 70,
+            "copy_and_drain_cycles": 74
+          },
+          {
+            "start_cycle": 23182,
+            "dma_done_cycle": 23252,
+            "hbm_allocate_cycle": 23256,
+            "copy_cycles": 70,
+            "copy_and_drain_cycles": 74
+          }
+        ],
+        "copy_cycles": 280,
+        "copy_and_drain_cycles": 296,
+        "acc_writes": 4096,
+        "acc_final_writes": 128,
+        "acc_sram_writes": 4096,
+        "acc_output_reads": 128,
+        "psum_lmem_reads": 0,
+        "psum_lmem_writes": 0,
+        "store_after_physical_drain": true
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/on/m4"
+    },
+    {
+      "mode": "on",
+      "case": "m256",
+      "returncode": 0,
+      "gemm_cycles": [
+        295631
+      ],
+      "core_cycles": [
+        302256
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "on",
+        "case": "m256",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 8192,
+        "final_lmem_write_bytes": 262144,
+        "final_lmem_stall_cycles": 0,
+        "copies": [
+          {
+            "start_cycle": 56865,
+            "dma_done_cycle": 58919,
+            "hbm_allocate_cycle": 58923,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 93641,
+            "dma_done_cycle": 95695,
+            "hbm_allocate_cycle": 95699,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 130434,
+            "dma_done_cycle": 132488,
+            "hbm_allocate_cycle": 132492,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 167226,
+            "dma_done_cycle": 169280,
+            "hbm_allocate_cycle": 169284,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 204015,
+            "dma_done_cycle": 206069,
+            "hbm_allocate_cycle": 206073,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 240804,
+            "dma_done_cycle": 242858,
+            "hbm_allocate_cycle": 242862,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 277593,
+            "dma_done_cycle": 279647,
+            "hbm_allocate_cycle": 279651,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          },
+          {
+            "start_cycle": 314216,
+            "dma_done_cycle": 316270,
+            "hbm_allocate_cycle": 316274,
+            "copy_cycles": 2054,
+            "copy_and_drain_cycles": 2058
+          }
+        ],
+        "copy_cycles": 16432,
+        "copy_and_drain_cycles": 16464,
+        "acc_writes": 262144,
+        "acc_final_writes": 8192,
+        "acc_sram_writes": 262144,
+        "acc_output_reads": 8192,
+        "psum_lmem_reads": 0,
+        "psum_lmem_writes": 0,
+        "store_after_physical_drain": true
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/on/m256"
+    },
+    {
+      "mode": "off",
+      "case": "m4",
+      "returncode": 0,
+      "gemm_cycles": [
+        14759
+      ],
+      "core_cycles": [
+        21381
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "off",
+        "case": "m4",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 128,
+        "final_lmem_write_bytes": 4096,
+        "final_lmem_stall_cycles": 0,
+        "psum_lmem_reads": 3968,
+        "psum_lmem_writes": 3968
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/off/m4"
+    },
+    {
+      "mode": "off",
+      "case": "m256",
+      "returncode": 0,
+      "gemm_cycles": [
+        411384
+      ],
+      "core_cycles": [
+        417981
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "off",
+        "case": "m256",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 8192,
+        "final_lmem_write_bytes": 262144,
+        "final_lmem_stall_cycles": 0,
+        "psum_lmem_reads": 253952,
+        "psum_lmem_writes": 253952
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/off/m256"
+    },
+    {
+      "mode": "improve",
+      "case": "m4",
+      "returncode": 0,
+      "gemm_cycles": [
+        6431
+      ],
+      "core_cycles": [
+        12205
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=16 -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DTMEM_DMA_RD_OUTSTANDING_SLOT=16 -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/improve/m4"
+    },
+    {
+      "mode": "improve",
+      "case": "m256",
+      "returncode": 0,
+      "gemm_cycles": [
+        272856
+      ],
+      "core_cycles": [
+        278622
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=16 -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DTMEM_DMA_RD_OUTSTANDING_SLOT=16 -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/improve/m256"
+    },
+    {
+      "mode": "on",
+      "case": "m1",
+      "returncode": 0,
+      "gemm_cycles": [
+        1010
+      ],
+      "core_cycles": [
+        7567
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/m1"
+    },
+    {
+      "mode": "on",
+      "case": "m3_tail",
+      "returncode": 0,
+      "gemm_cycles": [
+        3328
+      ],
+      "core_cycles": [
+        9892
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "on",
+        "case": "m3_tail",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 30,
+        "final_lmem_write_bytes": 960,
+        "final_lmem_stall_cycles": 0,
+        "copies": [
+          {
+            "start_cycle": 8414,
+            "dma_done_cycle": 8468,
+            "hbm_allocate_cycle": 8472,
+            "copy_cycles": 54,
+            "copy_and_drain_cycles": 58
+          },
+          {
+            "start_cycle": 9285,
+            "dma_done_cycle": 9303,
+            "hbm_allocate_cycle": 9307,
+            "copy_cycles": 18,
+            "copy_and_drain_cycles": 22
+          }
+        ],
+        "copy_cycles": 72,
+        "copy_and_drain_cycles": 80,
+        "acc_writes": 480,
+        "acc_final_writes": 30,
+        "acc_sram_writes": 480,
+        "acc_output_reads": 30,
+        "psum_lmem_reads": 0,
+        "psum_lmem_writes": 0,
+        "store_after_physical_drain": true
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/m3_tail"
+    },
+    {
+      "mode": "on",
+      "case": "n150",
+      "returncode": 0,
+      "gemm_cycles": [
+        1810
+      ],
+      "core_cycles": [
+        8390
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "waveform": {
+        "mode": "on",
+        "case": "n150",
+        "sample": "Immediately before each 100MHz rising edge through GEMM completion",
+        "final_lmem_writes": 30,
+        "final_lmem_write_bytes": 960,
+        "final_lmem_stall_cycles": 0,
+        "copies": [
+          {
+            "start_cycle": 7289,
+            "dma_done_cycle": 7343,
+            "hbm_allocate_cycle": 7347,
+            "copy_cycles": 54,
+            "copy_and_drain_cycles": 58
+          },
+          {
+            "start_cycle": 7535,
+            "dma_done_cycle": 7553,
+            "hbm_allocate_cycle": 7557,
+            "copy_cycles": 18,
+            "copy_and_drain_cycles": 22
+          }
+        ],
+        "copy_cycles": 72,
+        "copy_and_drain_cycles": 80,
+        "acc_writes": 240,
+        "acc_final_writes": 30,
+        "acc_sram_writes": 240,
+        "acc_output_reads": 30,
+        "psum_lmem_reads": 0,
+        "psum_lmem_writes": 0,
+        "store_after_physical_drain": true
+      },
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/n150"
+    },
+    {
+      "mode": "on",
+      "case": "qrow",
+      "returncode": 0,
+      "gemm_cycles": [
+        2869
+      ],
+      "core_cycles": [
+        9442
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/qrow"
+    },
+    {
+      "mode": "on",
+      "case": "transpose",
+      "returncode": 0,
+      "gemm_cycles": [
+        1151
+      ],
+      "core_cycles": [
+        7717
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/transpose"
+    },
+    {
+      "mode": "on",
+      "case": "qrow_transpose",
+      "returncode": 0,
+      "gemm_cycles": [
+        2797
+      ],
+      "core_cycles": [
+        9367
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true,
+      "evidence": "agent-tasks/naive-acc-select/runs/on_edges/qrow_transpose"
+    }
+  ],
+  "unit_tests": {
+    "gemm_unit_v2_corrected2_on": {
+      "status": "pass",
+      "test_name": "gemm_unit_v2",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2/logs/sim.log"
+    },
+    "gemm_unit_v2_corrected2_off": {
+      "status": "pass",
+      "test_name": "gemm_unit_v2",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2/logs/sim.log"
+    },
+    "gemm_unit_v2_corrected2_improve": {
+      "status": "pass",
+      "test_name": "gemm_unit_v2",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2/logs/sim.log"
+    },
+    "gemm_unit_v2_backpressure": {
+      "status": "pass",
+      "test_name": "gemm_unit_v2_backpressure",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2_backpressure/logs/sim.log"
+    },
+    "lmem_dma32": {
+      "status": "pass",
+      "test_name": "lmem_dma_misal",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/lmem_dma_misal/logs/sim.log"
+    }
+  },
+  "baseline_cycle_checks": [
+    {
+      "mode": "off",
+      "case": "m4",
+      "gemm_delta": 0,
+      "core_delta": 0
+    },
+    {
+      "mode": "off",
+      "case": "m256",
+      "gemm_delta": 0,
+      "core_delta": 0
+    },
+    {
+      "mode": "improve",
+      "case": "m4",
+      "gemm_delta": 0,
+      "core_delta": 0
+    },
+    {
+      "mode": "improve",
+      "case": "m256",
+      "gemm_delta": 0,
+      "core_delta": 0
+    }
+  ],
+  "unchanged_common_rtl": {
+    "hw/rtl/core/gemm/VX_gemm_acc_internal.sv": "68382491401147ad4799708d94e60eef4f6d1a84bcd854bc6f622cadf34a1fec",
+    "hw/rtl/core/gemm/VX_gemm_compute_core.sv": "e01f06c28a4e04f83b8abdf3fb6ae814e13709d7cccb5e18aa6b29cac645ca0c",
+    "hw/rtl/core/gemm/VX_lmem_dma_misal.sv": "f1e4fc00d34dc0daedb373e3aea4ffb73982fe7dce664d3efd78a717278bdc3c"
+  },
+  "selected_rtl_checks": 12
+}
