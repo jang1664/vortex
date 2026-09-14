@@ -87,3 +87,15 @@ ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
   explicitly requests both.
 - Once a Superpowers skill is explicitly invoked, allow its internal workflow
   to run, but do not activate unrelated Superpowers skills automatically.
+
+# Before modifying code:
+
+1. Identify the existing abstractions and helpers related to the task.
+2. Prefer reusing existing code over introducing parallel implementations.
+3. Make the smallest change necessary to satisfy the requirement.
+4. Preserve existing control flow, naming, interfaces, and architecture unless
+   changing them is strictly necessary.
+5. Do not perform unrelated refactoring or cleanup.
+6. Do not rewrite an entire function when a localized edit is sufficient.
+7. Avoid duplicating logic that already exists elsewhere in the repository.
+8. After the change, inspect the git diff and remove unnecessary modifications.
