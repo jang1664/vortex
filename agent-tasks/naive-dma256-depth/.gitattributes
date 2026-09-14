@@ -1,0 +1,8 @@
+# Preserve byte-identical source evidence, including pre-existing whitespace.
+before/** whitespace=-blank-at-eol
+depth_only/** whitespace=-blank-at-eol
+
+# Matplotlib emits trailing spaces in SVG paths; csv.writer uses CRLF records.
+core_cycles.svg whitespace=-blank-at-eol
+dma_active_cycles.svg whitespace=-blank-at-eol
+results.csv whitespace=cr-at-eol

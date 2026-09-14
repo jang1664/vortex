@@ -1,0 +1,17 @@
+{
+  "variant": "d8_r32_ordered",
+  "depth": 8,
+  "slots": 32,
+  "best_core_cycles": 417606,
+  "selected_core_cycles": 417981,
+  "rule": "Smallest response depth within 1% of best valid M256 core cycles, then smallest DMA slot count",
+  "eligible": [
+    "d8_r32_ordered",
+    "d16_r32_ordered",
+    "d32_r32_ordered",
+    "d64_r32_ordered",
+    "d128_r32_ordered",
+    "d128_r64_ordered",
+    "d128_r128_ordered"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "variants": [
+    "l16",
+    "l32",
+    "d8_r32_ordered",
+    "d16_r32_ordered",
+    "d32_r32_ordered",
+    "d64_r32_ordered",
+    "d128_r32_ordered",
+    "d128_r64_ordered",
+    "d128_r128_ordered"
+  ],
+  "identical": true,
+  "model": {
+    "aperture_bytes": 17179869184,
+    "dram_freq_hz": 1000000000,
+    "dram_profile": "HBM2_2Gbps",
+    "dram_tck_ps": 1000,
+    "hbm_axi_freq_hz": 300000000,
+    "kernel_data_bytes": 64,
+    "kernel_ports": 8,
+    "logic_freq_hz": 100000000,
+    "pc_bytes": 536870912,
+    "pc_count": 32,
+    "routes": [
+      {
+        "first_pc": 0,
+        "last_pc": 3,
+        "port": 0
+      },
+      {
+        "first_pc": 4,
+        "last_pc": 7,
+        "port": 1
+      },
+      {
+        "first_pc": 8,
+        "last_pc": 11,
+        "port": 2
+      },
+      {
+        "first_pc": 12,
+        "last_pc": 15,
+        "port": 3
+      },
+      {
+        "first_pc": 16,
+        "last_pc": 19,
+        "port": 4
+      },
+      {
+        "first_pc": 20,
+        "last_pc": 23,
+        "port": 5
+      },
+      {
+        "first_pc": 24,
+        "last_pc": 27,
+        "port": 6
+      },
+      {
+        "first_pc": 28,
+        "last_pc": 31,
+        "port": 7
+      }
+    ],
+    "switch_profile": {
+      "name": "abstract-paired-pc-links-v1",
+      "ordering": "FIFO per port per response channel; stronger than same-ID AXI ordering",
+      "read_response_capacity_per_port": 256,
+      "request_bytes_per_hbm_edge_per_port": 32,
+      "request_cdc_receiving_edges": 2,
+      "response_cdc_receiving_edges": 2,
+      "return_bytes_per_hbm_edge_per_port": 32,
+      "shared_link": "one 32-byte link per physical channel, per direction",
+      "unassociated_w_capacity_per_port": 64,
+      "visibility": "AR snapshots RAM; W updates RAM when associated with AW; BO writes immediate on service",
+      "write_burst_capacity_per_port": 16
+    },
+    "provenance": {
+      "backend_source_sha256": {
+        "common/dram_sim.cpp": "f19c18a20b3c5e4b1e799ecb142b61b38ff2c3a1684097723f57012c926dabf0",
+        "common/dram_sim.h": "a90cb30d2b8141d386fae5634f34c3c574801af7e8d4d7101ed745ead8af216b",
+        "common/u55c_address.h": "31a118c245d08fa877764201c92e107d1d5ab3e7760efce95aa0f364c1a8b592",
+        "xrtsim_vcs/VX_hbm_axi_guard.sv": "58f0731073b3473763d7aef4fcb17e336e956aba6fdfd1c43f3809add4d49517",
+        "xrtsim_vcs/dpi_vcs_server.cpp": "f688f61e1dbc55d43114e3b44d1341381662c2aa10033be5e7c0362ab6cbc696",
+        "xrtsim_vcs/gen_hbm_config.py": "d22ad0db612b25cfb34e114c2cb1d43a19af367b1938f5460cd899914bc6211b",
+        "xrtsim_vcs/hbm_clock.h": "a0f2a947ca38bcd5bd5b603f7425e7ddb720d7dbb1e232e0676f672f3e30fc23",
+        "xrtsim_vcs/hbm_model.cpp": "d4e717b0ab83742bed2901751ea21644a348108960982a36549d8e27509f8644",
+        "xrtsim_vcs/hbm_model.h": "ee38b7515c55b48186e3e591621cbde32d42ae632402d81c02e09a9029dfc059",
+        "xrtsim_vcs/hbm_performance_profile.py": "b473ef50b8d749b1c909787fa5d18e3ce0dd828d388eec352b6faf7b7172d89f",
+        "xrtsim_vcs/hbm_service_budget.h": "9b1cfdbf8683a732399f437129d04c037ba93b4f5537decfef50dd0bb2628044",
+        "xrtsim_vcs/tb_vcs_xrtsim.sv": "39eee06fb7d49bc8bd59866bf865b29d00358bd7753c0bd7a94ab3ceda876509",
+        "xrtsim_vcs/vcs_protocol.h": "1f2cc55caa43b526fc75c51c38e15630ac38980a9a40186fd90e87b218262e0d"
+      },
+      "connectivity": "Make-evaluated platforms.mk SP_FLAGS",
+      "physical_routing": "abstract; no verified linked HMSS ingress metadata",
+      "source_sha256": {
+        "geometry.mk": "9da8671708df4ded6f530f59a90445898ea42e39b94773bafb713928e68ada6c",
+        "platforms.mk": "a614794267be7a1c81db6032091f18e3a3bc9646276fbf48082ae804b5aa7a0e"
+      },
+      "timing": "uncalibrated; HBM AXI frequency is a model input, not a measured U55C clock"
+    }
+  }
+}

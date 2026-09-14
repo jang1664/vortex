@@ -1,0 +1,40 @@
+{
+  "before": "agent-tasks/naive-dma256-depth/ordered_measured/VX_mem_bus_split.sv",
+  "after": "hw/rtl/mem/VX_mem_bus_split.sv",
+  "checks": [
+    {
+      "config": "d8_r32_ordered",
+      "ndebug": false,
+      "identical": true,
+      "token_count": 2445,
+      "before": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261",
+      "after": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261"
+    },
+    {
+      "config": "d8_r32_ordered",
+      "ndebug": true,
+      "identical": true,
+      "token_count": 2445,
+      "before": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261",
+      "after": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261"
+    },
+    {
+      "config": "d128_r128_ordered",
+      "ndebug": false,
+      "identical": true,
+      "token_count": 2445,
+      "before": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261",
+      "after": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261"
+    },
+    {
+      "config": "d128_r128_ordered",
+      "ndebug": true,
+      "identical": true,
+      "token_count": 2445,
+      "before": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261",
+      "after": "e1696cb6281556b6ae9deac8a93bb6615be8a792174949cdcdde616746452261"
+    }
+  ],
+  "excluded": "Unused INSTANCE_ID string parameter for optional debug tracing only",
+  "improve_reorder_module_absent": true
+}

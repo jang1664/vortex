@@ -1,0 +1,16 @@
+# Reconstructible preprocessing overlay and waveform transition cache.
+/identity/before-rtl/
+/runs/*/*/samples/
+
+# Retain concise, reviewable summaries despite the repository-wide raw-data rules.
+!/results.csv
+!/selection.json
+!/baseline.json
+!/baseline_attestation.json
+!/hbm_model_identity.json
+!/final_application.json
+!/split_verified_manifest.json
+!/split_verified_results.json
+!/identity/result.json
+!/identity/improve_hierarchy.json
+!/identity/guarded_candidate.json

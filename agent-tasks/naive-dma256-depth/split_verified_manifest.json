@@ -1,0 +1,7 @@
+{
+  "completed": "2026-09-14 16:28",
+  "passed": 29,
+  "rtl_sha256": "78e1b8057359080f0aaf0a2eaba79935db1003295397facdfddcdb69dee48e6d",
+  "tb_sha256": "e25a33efbd3836151eb078122b4c734ac31ce6982f18c25741904000b5081d30",
+  "details": "26 depth/mask/tag cases plus 2 non-naive legacy cases and 1 full-UUID debug trace case; all original-tag UUID checks enabled."
+}
