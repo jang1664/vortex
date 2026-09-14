@@ -943,6 +943,11 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
             gemm_unit_v2_if.packet_ctrl.s_load_target = 32'd1;
             gemm_unit_v2_if.packet_ctrl.z_load_target = 32'd1;
             gemm_unit_v2_if.packet_ctrl.last = 1'b1;
+`ifdef GEMM_NAIVE
+            // Naive releases qparam registers at packet end, independently
+            // of the final-accumulation marker used by improve.
+            gemm_unit_v2_if.packet_ctrl.notify_on_writeback = 1'b1;
+`endif
             do @(posedge clk); while (!i_lmem_bus_if.req_ready);
             @(negedge clk);
             i_lmem_bus_if.req_valid = 1'b0;
@@ -1281,7 +1286,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                               `GEMM_ACC_MEM_ADDR_WIDTH'(ACC_ROW_BYTES),
                               1'b0, 1'b0, 1'b0,
                               quant_dir, bank, bank, bank,
-                              1'b0, 1'b1);
+                              1'b1, 1'b1);
             end_stream();
 
             timeout = 0;
@@ -1340,7 +1345,7 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
                 drive_packet_ctrl(input_data, '0, 1'b0, 1'b0, 1'b0,
                                   `QDIR_COL, expected_wreg,
                                   expected_sreg, expected_zreg,
-                                  1'b0, 1'b1);
+                                  1'b1, 1'b1);
                 end_stream();
 
                 timeout = 0;
