@@ -1,0 +1,126 @@
+task: naive-lmem32-distribution
+status: complete
+phase: complete
+iterations:
+- timestamp: 2026-09-13 02:09
+  action: Started frozen v1 serial VCS matrix; p32_b32 M4 first
+  state: running
+- timestamp: 2026-09-13 02:09
+  action: v1 p32_b32 M4 stopped at VCS compilation
+  state: failed
+  reason: VX_gpu_pkg.sv:988 refers to undeclared LSU_WORD_SIZE
+  source_changes: []
+- timestamp: 2026-09-13 02:10
+  action: Started refrozen v2 serial VCS matrix after package declaration-order fix
+  state: running
+- timestamp: 2026-09-13 02:12
+  action: v2 p32_b32 M4 PASS; M256 started
+  state: running
+  gemm_cycles: 13034
+  core_cycles: 19629
+  source_changes: []
+- timestamp: 2026-09-13 02:14
+  action: Parallelized four topologies after output-path audit; original matrix parent
+    paused while its M256 child continues
+  state: running
+  resume_condition: Resume PID2096446 after other topology matrices terminate; on
+    failure stop original scheduler before resuming to prevent duplicate run.
+- timestamp: 2026-09-13 02:16
+  action: All four M4 cases PASS; four M256 cases running; MXU32 compile-only checks
+    started
+  results:
+  - topology: p16_b16
+    case: m4
+    passed: true
+    gemm_cycles:
+    - 16257
+    core_cycles:
+    - 22854
+  - topology: p16_b32
+    case: m4
+    passed: true
+    gemm_cycles:
+    - 13574
+    core_cycles:
+    - 20154
+  - topology: p32_b16
+    case: m4
+    passed: true
+    gemm_cycles:
+    - 15846
+    core_cycles:
+    - 22404
+  - topology: p32_b32
+    case: m4
+    passed: true
+    gemm_cycles:
+    - 13034
+    core_cycles:
+    - 19629
+  state: running
+- timestamp: 2026-09-13 02:18
+  action: Compile-only v2 failed missing VX_config.h; added make -C hw config prerequisite,
+    started v3 compile-only retry
+  state: running
+  reason: Configured directory does not generate hardware C header until hw config
+    target runs
+  rtl_modified: false
+- timestamp: 2026-09-13 02:21
+  action: v3 compile-only MXU32 32/32 and64/64 PASS; four M256 simulations continue
+  state: running
+  source_changes: []
+- timestamp: 2026-09-13 02:43
+  action: v2 p16_b16 M256 PASS, exactly reproduces baseline; three M256 cases remain
+  state: running
+  gemm_cycles: 606387
+  core_cycles: 612954
+  source_changes: []
+- timestamp: 2026-09-13 02:44
+  action: v2 p16_b32 M256 PASS; two M256 cases remain
+  state: running
+  gemm_cycles: 574406
+  core_cycles: 581004
+  source_changes: []
+- timestamp: 2026-09-13 02:47
+  action: v2 p32_b32 M256 PASS; only p32_b16 M256 remains
+  state: running
+  gemm_cycles: 414891
+  core_cycles: 421479
+  source_changes: []
+- timestamp: 2026-09-14 14:32
+  action: Recovered p32_b16 M256 completed PASS from original wrapper and surviving
+    simv log; source hashes equal original at recovery; process exitcode unobserved.
+    All old matrix PIDs absent, no resume needed. Fresh improve cycle identity runs
+    started.
+  state: running
+  gemm_cycles: 546009
+  core_cycles: 552579
+- timestamp: 2026-09-14 14:49
+  action: Fresh improve M4/M256 PASS with zero GEMM/core cycle delta; verification
+    complete
+  state: passed
+  m4_gemm: 6431
+  m4_core: 12205
+  m256_gemm: 272856
+  m256_core: 278622
+  source_changes: []
+pitfalls:
+- Use isolated configured builds and serial execution to avoid shared generated-file
+  races.
+- LSU_WORD_SIZE was declared later than the original placement; new constants must
+  follow its declaration.
+- Parallel topologies need distinct builds and preexisting shared simulator library/third-party
+  artifacts; never run two cases in the same build concurrently.
+- Compile-only full-system simv needs make -C hw config after configure; blackbox
+  performs this normally.
+paused_matrix_parent_pid: null
+completion:
+  naive_simulation_cases_passed: 8
+  mxu32_compile_only_cases_passed: 2
+  improve_simulation_cases_passed: 2
+  improve_gemm_core_cycle_delta: 0
+  improve_active_rtl_identity_checks: 572
+  fsdb_analysis_cases_complete: 8
+  reports_updated: true
+  commit_created: true
+  recovered_case: p32_b16/m256; provenance limitations retained in report and result

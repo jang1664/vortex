@@ -64,12 +64,12 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `VX_STATIC_ASSERT(CPU_LMEM_TAG_WIDTH <= GEMM_LMEM_TAG_WIDTH,
         ("invalid CPU LMEM tag width: CPU=%0d, shared=%0d", CPU_LMEM_TAG_WIDTH, GEMM_LMEM_TAG_WIDTH))
 `ifdef GEMM_NAIVE
-    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
-        ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
-         2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
-    `VX_STATIC_ASSERT(`LMEM_NUM_BANKS == `LMEM_NUM_PORTS,
-        ("GEMM naive split PSUM path requires one bank per request port: ports=%0d banks=%0d",
-         `LMEM_NUM_PORTS, `LMEM_NUM_BANKS))
+    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS >= 2 * GEMM_PSUM_LANES
+        && (`LMEM_NUM_PORTS & (`LMEM_NUM_PORTS - 1)) == 0,
+        ("GEMM naive requires power-of-two ports >= %0d", 2 * GEMM_PSUM_LANES))
+    `VX_STATIC_ASSERT(`LMEM_NUM_BANKS >= GEMM_PSUM_LANES
+        && (`LMEM_NUM_BANKS & (`LMEM_NUM_BANKS - 1)) == 0,
+        ("GEMM naive requires power-of-two banks >= %0d", GEMM_PSUM_LANES))
 `endif
 
     VX_lsu_mem_if #(
@@ -222,12 +222,16 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
         ) priority_arb_out_if[1]();
 
-        if (i < GEMM_PSUM_LANES) begin : g_psum_write_slot
-            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_wr_if[i],
+        if (i >= NAIVE_LMEM_PW_OFFSET && i < NAIVE_LMEM_PW_OFFSET + GEMM_PSUM_LANES) begin : g_psum_write_slot
+            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_wr_if[i - NAIVE_LMEM_PW_OFFSET],
                 LMEM_LOCAL_TAG_WIDTH, PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
-        end else begin : g_psum_read_slot
-            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_rd_if[i - GEMM_PSUM_LANES],
+        end else if (i >= NAIVE_LMEM_PR_OFFSET && i < NAIVE_LMEM_PR_OFFSET + GEMM_PSUM_LANES) begin : g_psum_read_slot
+            `ASSIGN_VX_MEM_BUS_IF_EX(priority_arb_in_if[0], gemm_psum_rd_if[i - NAIVE_LMEM_PR_OFFSET],
                 LMEM_LOCAL_TAG_WIDTH, PSUM_LMEM_TAG_WIDTH, UUID_WIDTH);
+        end else begin : g_no_psum_slot
+            assign priority_arb_in_if[0].req_valid = 1'b0;
+            assign priority_arb_in_if[0].req_data = '0;
+            assign priority_arb_in_if[0].rsp_ready = 1'b1;
         end
         `ASSIGN_VX_MEM_BUS_IF(priority_arb_in_if[1], lmem_membus_arb_out_if[i]);
 
@@ -247,7 +251,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .bus_out_if (priority_arb_out_if)
         );
 
-        // Slots 0..15 carry PSUM writes and slots 16..31 carry PSUM reads.
+        // PSUM lane ranges follow the shared elaborated placement constants.
         // Ordinary LMEM traffic shares each slot behind its assigned PSUM lane.
         `ASSIGN_VX_MEM_BUS_IF(lmem_priority_if[i], priority_arb_out_if[0]);
     end

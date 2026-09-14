@@ -81,16 +81,16 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int GEMM_PSUM_LANES   = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
     localparam int WEIGHT_ROW_BYTES  = (`MXU_COL * `W_BIT_WIDTH) / 8;
     localparam int WEIGHT_ROW_LANES  = WEIGHT_ROW_BYTES / LSU_WORD_SIZE;
-    localparam int I_LANE_OFFSET     = 0;
-    // Reserve one native activation-width region per tensor client. This
-    // keeps the MXU32 placement and scales the regions for MXU16.
-    localparam int W_LANE_OFFSET     = GEMM_INPUT_LANES;
-    localparam int SZ_LANE_OFFSET    = 2 * GEMM_INPUT_LANES;
-    localparam int O_LANE_OFFSET     = 3 * GEMM_INPUT_LANES;
+    localparam int I_LANE_OFFSET = NAIVE_LMEM_I_OFFSET;
+    localparam int W_LANE_OFFSET = NAIVE_LMEM_W_OFFSET;
+    localparam int SZ_LANE_OFFSET = NAIVE_LMEM_S_OFFSET;
+    localparam int Z_LANE_OFFSET = NAIVE_LMEM_Z_OFFSET;
+    localparam int O_LANE_OFFSET = 3 * GEMM_INPUT_LANES;
+    localparam int SZ_PORT_LANES = GEMM_SZ_LANES * (NAIVE_LMEM_DISTRIBUTED ? 2 : 1);
 
-    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
-        ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
-         2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
+    `VX_STATIC_ASSERT(`LMEM_NUM_PORTS >= 2 * GEMM_PSUM_LANES
+        && (`LMEM_NUM_PORTS & (`LMEM_NUM_PORTS - 1)) == 0,
+        ("GEMM naive requires power-of-two ports >= %0d", 2 * GEMM_PSUM_LANES))
 
     // DMA tile sizes
     localparam int MT = `GEMM_FSM_MT;
@@ -144,7 +144,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) sz_lane_mem_if [GEMM_SZ_LANES] ();
+    ) sz_lane_mem_if [SZ_PORT_LANES] ();
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -316,7 +316,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       assign child_if.done_work_seq[q+2] = quant_done_id[q];
       assign source_id[q+2] = quant_source_id[q];
     end
-    VX_naive_qparam_pair #(.INSTANCE_ID({INSTANCE_ID,"_quant"})) quant_executor (
+    VX_naive_qparam_pair #(.INSTANCE_ID({INSTANCE_ID,"_quant"}),
+      .SEPARATE_LANES(NAIVE_LMEM_DISTRIBUTED)) quant_executor (
       .clk(clk), .reset(reset), .cmd(quant_cmd), .cmd_valid(child_if.cmd_valid[3:2]),
       .cmd_ready(child_if.cmd_ready[3:2]), .prepare_valid(child_if.prepare_valid[3:2]),
       .prepare_ready(child_if.prepare_ready[3:2]), .done_valid(child_if.done_valid[3:2]),
@@ -401,6 +402,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       localparam int I_LOGICAL = (i + `LMEM_NUM_PORTS - (I_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
       localparam int W_LOGICAL = (i + `LMEM_NUM_PORTS - (W_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
       localparam int SZ_LOGICAL = (i + `LMEM_NUM_PORTS - (SZ_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
+      localparam int Z_LOGICAL = (i + `LMEM_NUM_PORTS - (Z_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
       localparam int O_LOGICAL = (i + `LMEM_NUM_PORTS - (O_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
 
       VX_mem_bus_if #(
@@ -444,9 +446,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         assign lane_arb_in_if[3].rsp_ready = 1'b1;
       end
 
-      assign lane_arb_in_if[4].req_valid = 1'b0;
-      assign lane_arb_in_if[4].req_data  = '0;
-      assign lane_arb_in_if[4].rsp_ready = 1'b1;
+      if (NAIVE_LMEM_DISTRIBUTED && Z_LOGICAL < GEMM_SZ_LANES) begin : g_z_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[4], sz_lane_mem_if[GEMM_SZ_LANES + Z_LOGICAL]);
+      end else begin : g_z_tied
+        assign lane_arb_in_if[4].req_valid = 1'b0;
+        assign lane_arb_in_if[4].req_data  = '0;
+        assign lane_arb_in_if[4].rsp_ready = 1'b1;
+      end
 
       VX_mem_arb #(
         .NUM_INPUTS(5),

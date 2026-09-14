@@ -346,7 +346,8 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             assign psum_write[i] = write_class[2:1] == 2'b01;
             assign psum_read[i] = !mem_bus_if[i].req_data.rw
                 && !mem_bus_if[i].req_data.tag[LMEM_LOCAL_TAG_WIDTH - UUID_WIDTH]
-                && (i >= (`GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE));
+                && (i >= NAIVE_LMEM_PR_OFFSET)
+                && (i < NAIVE_LMEM_PR_OFFSET + NAIVE_LMEM_P_LANES);
         end
         VX_naive_psum_bank_xbar #(
             .NUM_INPUTS(NUM_REQS), .NUM_OUTPUTS(NUM_BANKS), .DATAW(REQ_DATAW),
