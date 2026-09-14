@@ -4,8 +4,18 @@ namespace eval ::vortex::slr {
     variable roots {}
     variable groups [dict create]
     variable primitive_names {}; variable primitive_refs {}; variable primitive_parents {}
+    variable recovered_lut_names {}
     variable script_dir [file dirname [file normalize [info script]]]
 }
+# The backend is derived from CONFIGS by the build, not from synthesized names.
+proc ::vortex::slr::backend {} {
+    set value improve
+    if {[info exists ::env(VORTEX_GEMM_BACKEND)]} {set value $::env(VORTEX_GEMM_BACKEND)}
+    if {$value ni {improve naive}} {error "invalid VORTEX_GEMM_BACKEND: $value"}
+    return $value
+}
+source [file join $::vortex::slr::script_dir naive_floorplan.tcl]
+source [file join $::vortex::slr::script_dir naive_lut_ownership.tcl]
 proc ::vortex::slr::enabled {} {
     set value 0
     if {[info exists ::env(VORTEX_GEMM_SLR_FLOORPLAN)]} {set value $::env(VORTEX_GEMM_SLR_FLOORPLAN)}
@@ -17,6 +27,9 @@ proc ::vortex::slr::enabled {} {
 # Do not normalize arbitrary dots (including IP/leaf names), and never pass
 # this view to a Vivado object/property query or use it as an ownership key.
 proc ::vortex::slr::logical_path {path} {
+    if {[backend] eq "naive"} {
+        regsub -all {(g_mmio\[[0-9]+\])[.](u_request|u_response)/} $path {\1/\2/} path
+    }
     if {[string first "g_slr." $path] >= 0} {
         regsub -all {(^|/)g_slr[.]u_link(/|$)} $path {\1g_slr/u_link\2} path
     }
@@ -27,6 +40,7 @@ proc ::vortex::slr::logical_path {path} {
 }
 # Classify leaf cells, never a mixed-ownership parent hierarchy.
 proc ::vortex::slr::owner_for {path} {
+    if {[backend] eq "naive"} {return [naive_owner_for $path]}
     set original $path
     set path [logical_path $path]
     if {[string match {u_tmem_dma_ctrl/*} $path]} {return 0}
@@ -93,7 +107,9 @@ proc ::vortex::slr::matching {cells expression} {
 proc ::vortex::slr::recover_lifted_owner {leaf root ref} {
     if {[string first "$root/" $leaf] != 0} {error "lifted helper is outside GEMM root"}
     set relative [logical_path [string range $leaf [expr {[string length $root]+1}] end]]
-    if {$ref ne "LUT1" || ![regexp {^g_slr/u_link/u_rx/[^/]+$} $relative]} {
+    set eligible [regexp {^g_slr/u_link/u_rx/[^/]+$} $relative]
+    if {[backend] eq "naive" && [regexp {^u_naive_dma_slr/g_slr/u_link/u_rx/[^/]+$} $relative]} {set eligible 1}
+    if {$ref ne "LUT1" || !$eligible} {
         error "not an eligible lifted receiver LUT1"
     }
     set cell [cell_objects [list $leaf]]
@@ -148,8 +164,10 @@ proc ::vortex::slr::recover_lifted_owner {leaf root ref} {
     set ff [get_property NAME $source]
     if {[string first "$root/" $ff] != 0} {error "lifted LUT1 FF belongs to a different GEMM root"}
     set endpoint [logical_path [string range $ff [expr {[string length $root]+1}] end]]
-    if {![regexp {^u_gemm_dma_transport/u_(commands|completions|sync)/g_slr/u_link/u_rx/[^/]+$} $endpoint]
-        && ![regexp {^u_tmem_subsystem/(u_(input|weight|scale|zero_point)_req_reservation/u_slr|u_output_slr)/u_(request|response)/g_slr/u_link/u_rx/[^/]+$} $endpoint]} {
+    set retained [expr {[regexp {^u_gemm_dma_transport/u_(commands|completions|sync)/g_slr/u_link/u_rx/[^/]+$} $endpoint]
+        || [regexp {^u_tmem_subsystem/(u_(input|weight|scale|zero_point)_req_reservation/u_slr|u_output_slr)/u_(request|response)/g_slr/u_link/u_rx/[^/]+$} $endpoint]}]
+    if {[backend] eq "naive" && [regexp {^u_naive_dma_slr/(g_mmio\[[0-9]+\]|g_lmem\[[0-9]+\][/.]u_transport|u_global)/u_(request|response)/g_slr/u_link/u_rx/[^/]+$} $endpoint]} {set retained 1}
+    if {!$retained} {
         error "lifted LUT1 FF lost its retained architectural receiver identity: $ff"
     }
     return [dict create owner [owner_for $endpoint] endpoint $ff \
@@ -159,6 +177,7 @@ proc ::vortex::slr::recover_lifted_owner {leaf root ref} {
 # synthesis. Validate structural RTL/platform contracts, not a list of tested
 # configurations. Thread count does not affect ownership.
 proc ::vortex::slr::geometry {} {
+    if {[backend] eq "naive"} {return [naive_geometry]}
     set geometry [dict create]
     foreach field {TMEM_BANKS DMA_CHANNELS HBM_PORTS MXU_COL MXU_ROW HBM_DATA_BYTES} {
         set name VORTEX_GEMM_$field
@@ -205,10 +224,14 @@ proc ::vortex::slr::geometry {} {
 }
 proc ::vortex::slr::inventory {} {
     variable owners; variable roots; variable groups
+    variable recovered_lut_names
+    set recovered_lut_names {}
     variable primitive_names; variable primitive_refs; variable primitive_parents
     set geometry [geometry]
-    set arrays [dict get $geometry TMEM_BANKS]
-    set channels [dict get $geometry DMA_CHANNELS]
+    if {[backend] eq "improve"} {
+        set arrays [dict get $geometry TMEM_BANKS]
+        set channels [dict get $geometry DMA_CHANNELS]
+    }
     set owners [dict create]
     set groups [dict create 0 {} 1 {} 2 {}]
     set root_set [dict create]
@@ -226,9 +249,15 @@ proc ::vortex::slr::inventory {} {
     # Use canonical full strings, not Vivado collection handles, as map keys.
     set leaves $names
     foreach leaf $leaves {
-        if {[regexp {^(.*)/u_tmem_subsystem/u_dma_engine/} $leaf -> root]} {dict set root_set $root 1}
+        if {[backend] eq "naive"} {
+            if {[regexp {^(.*)/gemm_node_naive/u_VX_gemm_compute_core/u_mxu/} $leaf -> root]} {dict set root_set $root 1}
+        } elseif {[regexp {^(.*)/u_tmem_subsystem/u_dma_engine/} $leaf -> root]} {dict set root_set $root 1}
     }
-    need [dict keys $root_set] "GEMM node with HBM DMA engine"
+    if {[backend] eq "naive"} {
+        need [dict keys $root_set] "naive GEMM placement core"
+    } else {
+        need [dict keys $root_set] "GEMM node with HBM DMA engine"
+    }
     set roots [lsort [dict keys $root_set]]
     # Batch property lookup and unshared local lists avoid one Vivado lookup
     # and repeated dictionary-value list updates per primitive (750k+ leaves).
@@ -244,7 +273,10 @@ proc ::vortex::slr::inventory {} {
             if {$ref in {GND VCC} || [string match "BUFG*" $ref]} {break}
             set relative [string range $leaf [expr {[string length $root]+1}] end]
             if {[catch {owner_for $relative} owner]} {
-                if {$ref eq "LUT1" && [regexp {^g_slr/u_link/u_rx/} [logical_path $relative]]} {
+                # Naive recovers all anonymous LUTs in one batched cone pass
+                # below. Keep improve's original feedback-only proof intact.
+                if {[backend] eq "improve" && $ref eq "LUT1"
+                    && [regexp {^g_slr/u_link/u_rx/} [logical_path $relative]]} {
                     if {[catch {recover_lifted_owner $leaf $root $ref} proof]} {
                         lappend classification_errors [list $leaf $ref "$owner; connectivity recovery rejected: $proof"]
                         break
@@ -257,6 +289,7 @@ proc ::vortex::slr::inventory {} {
                     break
                 }
             }
+            if {$owner eq ""} {break}
             if {[info exists owner_map($leaf)]} {error "multiply assigned leaf $leaf"}
             set owner_map($leaf) $owner
             switch -- $owner {
@@ -267,6 +300,25 @@ proc ::vortex::slr::inventory {} {
             }
             break
         }
+    }
+    if {[backend] eq "naive"} {
+        set cone_result [naive_recover_lut_owners $classification_errors [array get owner_map] $roots]
+        set classification_errors [dict get $cone_result errors]
+        dict for {leaf owner} [dict get $cone_result owners] {
+            set owner_map($leaf) $owner
+            lappend recovered_lut_names $leaf
+            switch -- $owner {
+                0 {lappend group0 $leaf}
+                1 {lappend group1 $leaf}
+                2 {lappend group2 $leaf}
+                default {error "invalid recovered owner $owner for $leaf"}
+            }
+        }
+        set report [open slr_recovered_lut_cones.tsv w]
+        puts $report "cell\tref\tslr\tproven_output_sinks"
+        foreach row [dict get $cone_result proofs] {puts $report [join $row "\t"]}
+        close $report
+        puts "INFO: naive SLR inventory: [llength $recovered_lut_names] lifted LUTs proven by unanimous downstream ownership"
     }
     set report [open slr_recovered_leaves.tsv w]
     puts $report "cell\tref\tslr\tretained_endpoint_ff\tinput_driver\toutput_sink"
@@ -291,6 +343,10 @@ proc ::vortex::slr::inventory {} {
         set local {}
         foreach leaf [dict keys $owners] {
             if {[string first "$root/" $leaf] == 0} {lappend local [string range $leaf [expr {[string length $root]+1}] end]}
+        }
+        if {[backend] eq "naive"} {
+            naive_require_groups $local $geometry 0
+            continue
         }
         foreach hierarchy {u_job_frontend u_VX_gemm_ctrl u_tmem_dma_ctrl u_VX_gemm_unit_v2/u_compute_core/u_mxu} {
             need [matching $local "^$hierarchy/"] "$root/$hierarchy"
@@ -468,6 +524,7 @@ proc ::vortex::slr::check_membership {cells expected allow_missing} {
 # become hierarchy anchors even if optimization removes one side temporarily.
 proc ::vortex::slr::anchor_barrier {relative} {
     set relative [logical_path $relative]
+    if {[backend] eq "naive" && [naive_anchor_barrier $relative]} {return 1}
     if {$relative in {{} u_tmem_subsystem u_VX_gemm_unit_v2 u_VX_gemm_unit_v2/u_compute_core u_gemm_dma_transport}} {return 1}
     return [regexp {(^|/)(u_request|u_response|u_commands|u_completions|u_sync)(/g_slr(/u_link)?)?$|/g_slr_status$} $relative]
 }
@@ -629,6 +686,7 @@ proc ::vortex::slr::anchor_homogeneous_hierarchy {} {
 # Preserve the observed local-FP profile check while proving its old 96
 # special-case anchors are subsumed by the general homogeneous islands.
 proc ::vortex::slr::validate_fp_anchor_coverage {coverage} {
+    if {[backend] eq "naive"} {return [naive_validate_fp_coverage $coverage]}
     variable primitive_names; variable primitive_refs; variable owners; variable roots
     array set owner_map $owners
     set reset_cells {}; set expected_parents {}

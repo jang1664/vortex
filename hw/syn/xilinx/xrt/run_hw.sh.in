@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
-PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1
+PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}"
 TARGET=hw
 CLOCK_FREQ_HZ=100
 
@@ -50,6 +50,8 @@ The same gate can be controlled with the CONGESTION_FAIL_FAST environment
 variable (1: enabled, 0: disabled). Implementation QoR options may be supplied
 by the sourced config using GEMM_SLR_FLOORPLAN, PLACE_DESIGN_DIRECTIVE,
 ROUTE_DESIGN_DIRECTIVE, and IMPL_ULTRATHREADS.
+Set PLATFORM in the environment to override the default U55C platform name,
+including with an absolute .xpfm path when platform-name lookup is ambiguous.
 EOF
 }
 
@@ -217,7 +219,9 @@ fi
 [[ "${IMPL_ULTRATHREADS_VALUE}" =~ ^[01]$ ]] || \
   fail "IMPL_ULTRATHREADS must be 0 or 1"
 
-OUTPUT_DIR="${PREFIX}_${PLATFORM}_${TARGET}"
+# Match the Makefile's XSA naming when PLATFORM is an absolute .xpfm path.
+PLATFORM_NAME="$(basename "${PLATFORM}" .xpfm)"
+OUTPUT_DIR="${PREFIX}_${PLATFORM_NAME}_${TARGET}"
 mkdir -p "${OUTPUT_DIR}"
 
 MAKE_ENV=(

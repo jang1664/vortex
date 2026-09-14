@@ -150,6 +150,7 @@ LINK_CONFIG_FINGERPRINT = FAST_MODE=$(FAST_MODE) VPP_OPTIMIZE=$(VPP_OPTIMIZE) CO
 
 # post_init_hook.tcl reads this setting while sourcing floorplan.tcl.
 export VORTEX_GEMM_SLR_FLOORPLAN := $(GEMM_SLR_FLOORPLAN)
+export VORTEX_GEMM_BACKEND := $(if $(filter -DGEMM_NAIVE -DGEMM_NAIVE=%,$(CONFIGS)),naive,improve)
 export VORTEX_CONGESTION_FAIL_FAST := $(CONGESTION_FAIL_FAST)
 # The floorplan validates the source-selected geometry, not an inferred guess
 # from whatever hierarchy happened to survive synthesis.
@@ -168,6 +169,11 @@ export VORTEX_GEMM_MXU_COL := $(call gemm_geometry_value,MXU_COL)
 # IFP_WIDTH is fixed at 16 in VX_config.vh. HBM uses MEM_BLOCK_SIZE.
 export VORTEX_GEMM_MXU_ROW := $(call gemm_geometry_value,MXU_ROW,32)
 export VORTEX_GEMM_HBM_DATA_BYTES := $(call gemm_geometry_value,MEM_BLOCK_SIZE,64)
+export VORTEX_GEMM_MXU_COL_TILE := $(call gemm_geometry_value,MXU_COL_TILE,1)
+export VORTEX_GEMM_LMEM_PORTS := $(call gemm_geometry_value,LMEM_NUM_PORTS)
+export VORTEX_GEMM_LMEM_BANKS := $(call gemm_geometry_value,LMEM_NUM_BANKS)
+export VORTEX_GEMM_LMEM_LOG_SIZE := $(call gemm_geometry_value,LMEM_LOG_SIZE)
+export VORTEX_GEMM_LSU_BLOCKS := $(call gemm_geometry_value,NUM_LSU_BLOCKS,1)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin

@@ -226,6 +226,41 @@ class GenVitisIniTest(unittest.TestCase):
         self.assertRegex(node, r"TMEM_PHYSICAL_DATA_SIZE\s*=\s*`GEMM_INPUT_DATA_SIZE;")
         self.assertRegex(node, r"\.HBM_DMA_DATA_SIZE\s*\(\s*`MEM_BLOCK_SIZE\s*\)")
 
+    def test_naive_profile_exports_backend_and_geometry(self):
+        profile = REPO_ROOT / "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram.sh"
+        sourced = subprocess.run(
+            ["bash", "-c", 'source "$1"; printf "%s" "$CONFIGS"', "fixture", str(profile)],
+            check=True, text=True, capture_output=True,
+        )
+        fields = ("BACKEND", "MXU_ROW", "MXU_COL", "MXU_COL_TILE",
+                  "LMEM_PORTS", "LMEM_BANKS", "LMEM_LOG_SIZE", "LSU_BLOCKS")
+        recipe = "show_naive:\n\t@printf '%s\\n' " + " ".join(
+            f'"$$VORTEX_GEMM_{field}"' for field in fields
+        ) + "\n"
+        command = ["make", "--no-print-directory", "-f", str(XRT_DIR / "Makefile"),
+                   "-f", "-", "show_naive", f"VORTEX_HOME={REPO_ROOT}",
+                   "PLATFORM=fixture", "DEVICE_PART=xcu55c-fsvh2892-2L-e",
+                   "DEV_ARCH=", "CPU_TYPE=", "GEMM_SLR_FLOORPLAN=1", "FAST_MODE=0"]
+        result = subprocess.run(command + [f"CONFIGS={sourced.stdout}"], input=recipe,
+                                cwd=BUILD_XRT_DIR, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["naive", "16", "16", "16", "16", "16", "20", "1"])
+        env = os.environ.copy()
+        env.update({f"VORTEX_GEMM_{field}": value
+                    for field, value in zip(fields, result.stdout.splitlines())})
+        checked = subprocess.run(
+            ["tclsh"], input='set ::vortex_slr_definitions_only 1\nsource floorplan.tcl\n'
+            'if {[catch {::vortex::slr::geometry} g]} {puts stderr $g; exit 1}\n',
+            cwd=XRT_DIR, env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        invalid = subprocess.run(
+            command + ["CONFIGS=" + sourced.stdout.replace("-DGEMM_SLR_PIPELINE", "")],
+            input=recipe, cwd=BUILD_XRT_DIR, text=True, capture_output=True,
+        )
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("requires -DGEMM_SLR_PIPELINE", invalid.stderr)
+
     def test_makefile_exports_selected_slr_geometry(self):
         def geometry(configs):
             result = subprocess.run(

@@ -11,6 +11,9 @@ proc ::vortex::slr::register_role {name} {
 proc ::vortex::slr::link_group {name} {
     set original $name
     set name [logical_path $name]
+    if {[backend] eq "naive" && [regexp {^(.*u_naive_dma_slr)/(g_commit|g_perf)[/.]g_slr[01][/.]payload_(?:tx|rx)_q_reg} $name -> parent kind]} {
+        return "$parent/$kind"
+    }
     if {[regexp {^(.*)/g_slr_mxu_(input|weight|output)_(?:tx|rx)[/.]} $name -> parent kind]} {
         return "$parent/mxu_$kind"
     }
@@ -39,6 +42,10 @@ proc ::vortex::slr::require_marked_groups {} {
             if {[string first "$root/" $cell] == 0} {
                 lappend local [string range $cell [expr {[string length $root]+1}] end]
             }
+        }
+        if {[backend] eq "naive"} {
+            naive_require_groups $local [geometry] 1
+            continue
         }
         foreach group {input_tx input_rx weight_tx weight_rx output_tx output_rx} {
             need [matching $local [format {/g_slr_mxu_%s[/.]} $group]] "marked MXU $group"
@@ -193,6 +200,7 @@ proc ::vortex::slr::validate_links {placed report_file} {
 # clocks and constant drivers are the only infrastructure exceptions.
 proc ::vortex::slr::validate_boundary_nets {report_file} {
     variable owners; variable roots
+    variable recovered_lut_names
     array set owner_map $owners
     array set net_set {}
     set boundaries {}
@@ -200,7 +208,7 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
         foreach root $roots {
             if {[string first "$root/" $cell] != 0} {continue}
             set rel [logical_path [string range $cell [expr {[string length $root]+1}] end]]
-            if {[regexp {^[^/]+$|^u_tmem_subsystem/[^/]+$|^u_VX_gemm_unit_v2/u_compute_core/u_mxu$|^u_gemm_dma_transport/u_(commands|completions|sync)$} $rel]} {
+            if {([backend] eq "naive" && [naive_boundary $rel]) || [regexp {^[^/]+$|^u_tmem_subsystem/[^/]+$|^u_VX_gemm_unit_v2/u_compute_core/u_mxu$|^u_gemm_dma_transport/u_(commands|completions|sync)$} $rel]} {
                 lappend boundaries $cell
             }
             break
@@ -210,9 +218,23 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
     foreach net [get_nets -quiet -segments -top_net_of_hierarchical_group -of_objects [get_pins -quiet -of_objects $boundaries]] {
         set net_set($net) 1
     }
+    # Synthesis can lift naive LUTs into a mixed wrapper, bypassing hierarchy
+    # ports. Audit every incident net of recovered logic as well: output-cone
+    # ownership alone does not prove that input-side crossings are registered.
+    if {[backend] eq "naive" && [info exists recovered_lut_names] && [llength $recovered_lut_names]} {
+        set recovered_cells [cell_objects $recovered_lut_names]
+        foreach net [get_nets -quiet -segments -top_net_of_hierarchical_group -of_objects [get_pins -quiet -of_objects $recovered_cells]] {
+            set net_set($net) 1
+        }
+    }
     set out [open $report_file w]
     puts $out "net\tsource_pin\tdestination_pin\tsource_slr\tdestination_slr\tlegal"
     set errors 0
+    set external {}
+    if {[backend] eq "naive"} {
+        set external [open [string map {boundary_nets external_nets} $report_file] w]
+        puts $external "net\tsource_pin\tdestination_pin\tassigned_source_slr\tassigned_destination_slr"
+    }
     foreach net [lsort [array names net_set]] {
         set pins [get_pins -quiet -leaf -of_objects [get_nets -quiet -segments $net]]
         set driver {}; set destinations {}
@@ -221,11 +243,22 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
         }
         if {$driver eq ""} {continue}
         set source [get_cells -quiet -of_objects $driver]
-        if {![info exists owner_map($source)]} {continue}
+        if {![info exists owner_map($source)]} {
+            if {$external ne ""} {
+                foreach pin $destinations {
+                    set destination [get_cells -quiet -of_objects $pin]
+                    if {[info exists owner_map($destination)]} {puts $external "$net\t$driver\t$pin\tunassigned\t$owner_map($destination)"}
+                }
+            }
+            continue
+        }
         set source_slr $owner_map($source)
         foreach pin $destinations {
             set destination [get_cells -quiet -of_objects $pin]
-            if {![info exists owner_map($destination)]} {continue}
+            if {![info exists owner_map($destination)]} {
+                if {$external ne ""} {puts $external "$net\t$driver\t$pin\t$source_slr\tunassigned"}
+                continue
+            }
             set destination_slr $owner_map($destination)
             if {$source_slr == $destination_slr} {continue}
             set terminal [get_property REF_PIN_NAME $pin]
@@ -241,6 +274,7 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
         }
     }
     close $out
+    if {$external ne ""} {close $external}
     if {$errors} {error "$errors unregistered partition-boundary connections; see $report_file"}
 }
 
