@@ -1,0 +1,33 @@
+{
+  "baseline": "59be9da2",
+  "changed_rtl": [
+    "hw/rtl/core/gemm/VX_naive_input_executor.sv",
+    "hw/rtl/core/gemm/VX_naive_qparam_dma.sv"
+  ],
+  "checks": [
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_qparam_dma.sv",
+      "ndebug": false,
+      "identical": true,
+      "active_sha256": "8f702154621f9e7221cdb0df5ff59a54e631b2c443c6723a2632b4199e1e6b24"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_qparam_dma.sv",
+      "ndebug": true,
+      "identical": true,
+      "active_sha256": "8f702154621f9e7221cdb0df5ff59a54e631b2c443c6723a2632b4199e1e6b24"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_input_executor.sv",
+      "ndebug": false,
+      "identical": true,
+      "active_sha256": "8f702154621f9e7221cdb0df5ff59a54e631b2c443c6723a2632b4199e1e6b24"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_input_executor.sv",
+      "ndebug": true,
+      "identical": true,
+      "active_sha256": "8f702154621f9e7221cdb0df5ff59a54e631b2c443c6723a2632b4199e1e6b24"
+    }
+  ]
+}

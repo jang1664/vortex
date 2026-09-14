@@ -246,11 +246,20 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                 end
                 S_INPUT: begin
                     cmd_o.instr = instruction(OP_INPUT, rows);
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+                    cmd_o.rs1_data = 64'(n0) * MT * 4;
+`else
                     cmd_o.rs1_data = job_q.pbuf + 64'(n0) * MT * 4;
+`endif
                     cmd_o.rs2_data = job_q.source[0][source_bank] + 64'(k0) * 2;
                     cmd_o.stride = MN * 4;
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+                    cmd_o.naive_final_base = cmd_o.rs1_data;
+                    cmd_o.naive_final_stride = cmd_o.stride;
+`else
                     cmd_o.naive_final_base = job_q.obuf + 64'(n0) * 2;
                     cmd_o.naive_final_stride = NT * 2;
+`endif
                     cmd_o.naive_terminal = terminal;
                     cmd_o.flags = {1'b0, job_q.qrow, terminal, (kt_q * KT + k0 != 0), last_k,
                                    register_bank, register_bank, register_bank};

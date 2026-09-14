@@ -1,0 +1,15 @@
+{
+  "port0_in0_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_in_if[0]/req_valid",
+  "port0_in0_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_in_if[0]/req_ready",
+  "port0_in1_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_in_if[1]/req_valid",
+  "port0_in1_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_in_if[1]/req_ready",
+  "port0_out0_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_out_if[0]/req_valid",
+  "port0_out0_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[0]/priority_arb_out_if[0]/req_ready",
+  "port8_in0_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_in_if[0]/req_valid",
+  "port8_in0_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_in_if[0]/req_ready",
+  "port8_in1_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_in_if[1]/req_valid",
+  "port8_in1_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_in_if[1]/req_ready",
+  "port8_out0_req_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_out_if[0]/req_valid",
+  "port8_out0_req_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_lmem_priority_order[8]/priority_arb_out_if[0]/req_ready",
+  "prefetch_free_slot": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_acc_lmem/prefetch_free_slot"
+}

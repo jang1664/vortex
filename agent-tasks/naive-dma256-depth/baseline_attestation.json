@@ -1,0 +1,80 @@
+[
+  {
+    "variant": "l16",
+    "case": "m4",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v2/p16_b16/m4/manifest.json",
+    "passed": true,
+    "gemm": [
+      16257
+    ],
+    "core": [
+      22854
+    ],
+    "pre_edit_differences": []
+  },
+  {
+    "variant": "l16",
+    "case": "m256",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v2/p16_b16/m256/manifest.json",
+    "passed": true,
+    "gemm": [
+      606387
+    ],
+    "core": [
+      612954
+    ],
+    "pre_edit_differences": []
+  },
+  {
+    "variant": "l32",
+    "case": "m4",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v2/p32_b32/m4/manifest.json",
+    "passed": true,
+    "gemm": [
+      13034
+    ],
+    "core": [
+      19629
+    ],
+    "pre_edit_differences": []
+  },
+  {
+    "variant": "l32",
+    "case": "m256",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v2/p32_b32/m256/manifest.json",
+    "passed": true,
+    "gemm": [
+      414891
+    ],
+    "core": [
+      421479
+    ],
+    "pre_edit_differences": []
+  },
+  {
+    "variant": "improve",
+    "case": "m4",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v3/improve/m4/manifest.json",
+    "passed": true,
+    "gemm": [
+      6431
+    ],
+    "core": [
+      12205
+    ],
+    "pre_edit_differences": []
+  },
+  {
+    "variant": "improve",
+    "case": "m256",
+    "manifest": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-lmem32-distribution/runs/v3/improve/m256/manifest.json",
+    "passed": true,
+    "gemm": [
+      272856
+    ],
+    "core": [
+      278622
+    ],
+    "pre_edit_differences": []
+  }
+]

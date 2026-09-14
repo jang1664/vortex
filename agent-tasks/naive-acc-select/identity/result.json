@@ -1,0 +1,107 @@
+{
+  "baseline": "52442ab7919ca69353252a743d0d479d0b8d4142",
+  "changed_rtl": [
+    "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+    "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+    "hw/rtl/core/gemm/VX_naive_external_dma_executor.sv"
+  ],
+  "checks": [
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+      "mode": "off",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "9f75d174779e503ebecadace6dbb80f00bd6041562b324ebf368e13c32ae686f",
+      "after_sha256": "9f75d174779e503ebecadace6dbb80f00bd6041562b324ebf368e13c32ae686f"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+      "mode": "off",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "9f75d174779e503ebecadace6dbb80f00bd6041562b324ebf368e13c32ae686f",
+      "after_sha256": "9f75d174779e503ebecadace6dbb80f00bd6041562b324ebf368e13c32ae686f"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+      "mode": "improve",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+      "mode": "improve",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+      "mode": "off",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "cb871eeaee180f1ccb29cbd663480b72e4381db68d932b6c6750d7538ac2215e",
+      "after_sha256": "cb871eeaee180f1ccb29cbd663480b72e4381db68d932b6c6750d7538ac2215e"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+      "mode": "off",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "cb871eeaee180f1ccb29cbd663480b72e4381db68d932b6c6750d7538ac2215e",
+      "after_sha256": "cb871eeaee180f1ccb29cbd663480b72e4381db68d932b6c6750d7538ac2215e"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+      "mode": "improve",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+      "mode": "improve",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_external_dma_executor.sv",
+      "mode": "off",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "b82a4172fd03f632d0859d11916aefa10145bd71ea2da0c436deef0284d92e92",
+      "after_sha256": "b82a4172fd03f632d0859d11916aefa10145bd71ea2da0c436deef0284d92e92"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_external_dma_executor.sv",
+      "mode": "off",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "b82a4172fd03f632d0859d11916aefa10145bd71ea2da0c436deef0284d92e92",
+      "after_sha256": "b82a4172fd03f632d0859d11916aefa10145bd71ea2da0c436deef0284d92e92"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_external_dma_executor.sv",
+      "mode": "improve",
+      "ndebug": false,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    },
+    {
+      "file": "hw/rtl/core/gemm/VX_naive_external_dma_executor.sv",
+      "mode": "improve",
+      "ndebug": true,
+      "identical": true,
+      "before_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909",
+      "after_sha256": "9ffca77c05ea749831a37b033312cd0283c79eb5ad844eae0e86e4dbf5108909"
+    }
+  ],
+  "unchanged_rtl_evidence": "git diff against baseline covers all hw/rtl; no header edits"
+}

@@ -1,0 +1,142 @@
+{
+  "interval": [
+    22773,
+    626847
+  ],
+  "counts": {
+    "input_backpressure": 120031,
+    "bp_admission_only": 117,
+    "bp_pipe_only": 105824,
+    "bp_both": 14090,
+    "bp_txn_full": 0,
+    "bp_required_psum_slot_unavailable": 14207,
+    "max_txn_count": 19,
+    "request_wait": 231028,
+    "request_wait_no_lane_accepted": 215615,
+    "request_wait_some_lane_accepted": 15413,
+    "request_wait_previously_sent_lane": 8934,
+    "consecutive_same_bank_group": 261888,
+    "consecutive_pairs": 262143,
+    "bp_tree_credit_unavailable": 119915,
+    "bp_result_credit_unavailable": 10171,
+    "bp_compute_not_ready": 119942
+  },
+  "examples": [
+    {
+      "cycle": 25222,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25302,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25316,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25383,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25397,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25464,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25478,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    },
+    {
+      "cycle": 25569,
+      "admit_ready": 0,
+      "pipe_ready": 0,
+      "prefetch_free": 0,
+      "txn_count": 17,
+      "rd_enable": 1,
+      "tree_credit_q": 0,
+      "credit_return_q": 0,
+      "acc_result_credit": 2,
+      "acc_result_commit": 0,
+      "compute_ready": 0
+    }
+  ],
+  "signal_paths": {
+    "admit_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/acc_txn_accept_ready",
+    "pipe_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/in_pipe_ready_in",
+    "prefetch_free": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_acc_lmem/prefetch_free_valid",
+    "txn_count": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_acc_lmem/txn_count",
+    "rd_enable": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_acc_lmem/acc_if/txn_accept_rd_en",
+    "tree_credit_q": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/tree_credit_q",
+    "credit_return_q": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/credit_return_q",
+    "acc_result_credit": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/acc_result_credit",
+    "acc_result_commit": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/acc_result_commit",
+    "compute_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/compute_ready"
+  }
+}

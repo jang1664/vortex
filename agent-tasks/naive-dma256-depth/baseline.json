@@ -1,0 +1,9 @@
+{
+  "git_head": "f3088de781ab68012d6b9086070ed6b6cf2047e4",
+  "files": {
+    "hw/rtl/mem/VX_mem_bus_split.sv": "c43020604088ab5be73086fc24218494fed3cc7528481553fe4bb6df0b78eb94",
+    "hw/rtl/VX_config.vh": "716137a75ed3ee3e0593bd8f70284924fdf3c2636e09b159a8b35070fbded1fd",
+    "hw/rtl/core/VX_mem_unit.sv": "63ccfcdb4f798aa2adecf276825954cd694cffaa32997fd9a6635d9183f91273",
+    "hw/rtl/core/VX_dma_node.sv": "7d9e9843d078b2830f996304bb457cb7eee41c33041b42e7efbe479c6ec1be18"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "selection": {
+    "variant": "d8_r32_ordered",
+    "depth": 8,
+    "slots": 32,
+    "best_core_cycles": 417606,
+    "selected_core_cycles": 417981,
+    "rule": "Smallest response depth within 1% of best valid M256 core cycles, then smallest DMA slot count",
+    "eligible": [
+      "d8_r32_ordered",
+      "d16_r32_ordered",
+      "d32_r32_ordered",
+      "d64_r32_ordered",
+      "d128_r32_ordered",
+      "d128_r64_ordered",
+      "d128_r128_ordered"
+    ]
+  },
+  "final_config": "/home/jaeyongjang/project.local/vortex_base/configs/naive_th16_tcol16_m16_L32_bigmem_all_bram_D256.sh",
+  "config_flags_identical_to_measured": true,
+  "final_rtl_sha256": "78e1b8057359080f0aaf0a2eaba79935db1003295397facdfddcdb69dee48e6d",
+  "unit_test_rtl_identical": true,
+  "original_l16_unchanged": true,
+  "measured_rtl_copy": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/naive-dma256-depth/ordered_measured/VX_mem_bus_split.sv",
+  "timestamp": "2026-09-14 16:54"
+}

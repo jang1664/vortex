@@ -1161,6 +1161,25 @@ package VX_gpu_pkg;
     ///////////////////////// LSU memory Parameters ///////////////////////////
 
     localparam LSU_WORD_SIZE        = XLENB;
+`ifdef GEMM_NAIVE
+   // Elaborated-only lane placement. Extra ports separate the tensor clients;
+   // smaller supported fabrics retain their original shared-port wiring.
+   localparam int NAIVE_LMEM_I_LANES = `GEMM_INPUT_DATA_SIZE / LSU_WORD_SIZE;
+   localparam int NAIVE_LMEM_W_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE;
+   localparam int NAIVE_LMEM_SZ_LANES = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
+   localparam int NAIVE_LMEM_P_LANES = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
+   localparam int NAIVE_LMEM_DISTRIBUTED_PORTS = 2 * NAIVE_LMEM_P_LANES
+       + NAIVE_LMEM_I_LANES + NAIVE_LMEM_W_LANES + 2 * NAIVE_LMEM_SZ_LANES;
+   localparam bit NAIVE_LMEM_DISTRIBUTED = `LMEM_NUM_PORTS >= NAIVE_LMEM_DISTRIBUTED_PORTS;
+   localparam int NAIVE_LMEM_PR_OFFSET = NAIVE_LMEM_DISTRIBUTED ? 0 : NAIVE_LMEM_P_LANES;
+   localparam int NAIVE_LMEM_PW_OFFSET = NAIVE_LMEM_DISTRIBUTED ? NAIVE_LMEM_P_LANES : 0;
+   localparam int NAIVE_LMEM_I_OFFSET = NAIVE_LMEM_DISTRIBUTED ? 2 * NAIVE_LMEM_P_LANES : 0;
+   localparam int NAIVE_LMEM_W_OFFSET = NAIVE_LMEM_I_OFFSET + NAIVE_LMEM_I_LANES;
+   localparam int NAIVE_LMEM_S_OFFSET = NAIVE_LMEM_DISTRIBUTED
+       ? NAIVE_LMEM_W_OFFSET + NAIVE_LMEM_W_LANES : 2 * NAIVE_LMEM_I_LANES;
+   localparam int NAIVE_LMEM_Z_OFFSET = NAIVE_LMEM_DISTRIBUTED
+       ? NAIVE_LMEM_S_OFFSET + NAIVE_LMEM_SZ_LANES : NAIVE_LMEM_S_OFFSET;
+`endif
     localparam LSU_ADDR_WIDTH	    = (`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE));
     localparam LSU_MEM_BATCHES      = 1;
     localparam LSU_TAG_ID_BITS      = (`CLOG2(`LSUQ_IN_SIZE) + `CLOG2(LSU_MEM_BATCHES));

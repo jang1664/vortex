@@ -1,0 +1,198 @@
+{
+  "counts": {
+    "bp_int2fp_launch_ready_blocking": 94033,
+    "bp_post_txn_space_blocking": 94033,
+    "bp_rd_hold_valid_blocking": 0,
+    "bp_post_head_d3_raw_stall_blocking": 0,
+    "bp_qcol_scale_ready_blocking": 26,
+    "bp_out_scaler_input_ready_blocking": 0,
+    "rd_issue_candidate_raw_block": 0,
+    "psum_rd_order_block": 0,
+    "psum_write_table_full": 0,
+    "psum_write_waw_block": 0,
+    "psum_write_war_block": 0,
+    "psum_read_request_bp": 0,
+    "psum_write_request_bp": 10329,
+    "join_no_free_slot": 1134,
+    "join_issue_wait": 120794,
+    "join_lane_rsp_bp": 0
+  },
+  "read_accept_to_wide_response": {
+    "n": 253952,
+    "min": 11,
+    "mean": 18.778363627772176,
+    "median": 14.0,
+    "p90": 29.0,
+    "p99": 39.0,
+    "max": 54
+  },
+  "prefetch_to_read_accept": {
+    "n": 253952,
+    "min": 1,
+    "mean": 1.0,
+    "median": 1.0,
+    "p90": 1.0,
+    "p99": 1.0,
+    "max": 1
+  },
+  "banks": [
+    {
+      "bank": 0,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 1,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 2,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 3,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 4,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 12,
+      "idle": 268967
+    },
+    {
+      "bank": 5,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 12,
+      "idle": 268967
+    },
+    {
+      "bank": 6,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 12,
+      "idle": 268967
+    },
+    {
+      "bank": 7,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 2,
+      "idle": 268977
+    },
+    {
+      "bank": 8,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 8,
+      "idle": 268971
+    },
+    {
+      "bank": 9,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 7,
+      "idle": 268972
+    },
+    {
+      "bank": 10,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 11,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 0,
+      "idle": 268979
+    },
+    {
+      "bank": 12,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 64,
+      "idle": 268915
+    },
+    {
+      "bank": 13,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 60,
+      "idle": 268919
+    },
+    {
+      "bank": 14,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 62,
+      "idle": 268917
+    },
+    {
+      "bank": 15,
+      "reads": 197632,
+      "writes": 139776,
+      "stall": 62,
+      "idle": 268917
+    }
+  ],
+  "roots": [
+    {
+      "bank": 0,
+      "read_grants": 126976,
+      "write_grants": 126976,
+      "normal_grants": 83456,
+      "read_wait": 51681,
+      "read_wait_write_grant": 8397,
+      "read_wait_normal_grant": 43284,
+      "read_wait_no_grant": 0,
+      "out_buffer_stall": 0
+    },
+    {
+      "bank": 8,
+      "read_grants": 126976,
+      "write_grants": 126976,
+      "normal_grants": 83456,
+      "read_wait": 43038,
+      "read_wait_write_grant": 5570,
+      "read_wait_normal_grant": 37468,
+      "read_wait_no_grant": 0,
+      "out_buffer_stall": 8
+    }
+  ],
+  "ports": [
+    {
+      "port": 0,
+      "psum_accept": 262144,
+      "normal_accept": 274944,
+      "psum_wait": 643,
+      "normal_wait": 232530,
+      "normal_wait_psum_accept": 231182,
+      "output_fire": 537088,
+      "output_wait": 1483
+    },
+    {
+      "port": 8,
+      "psum_accept": 253952,
+      "normal_accept": 16896,
+      "psum_wait": 57585,
+      "normal_wait": 43880,
+      "normal_wait_psum_accept": 27644,
+      "output_fire": 270848,
+      "output_wait": 61252
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+task: naive-m256-residual-gap
+status: complete
+updated: 2026-09-12T19:01:58+09:00
+objective: Explain the current M256 naive versus improve gap using FSDB cycles and RTL references.
+source_commit: 59be9da2
+scope: Analysis only; no RTL changes or simulation reruns.
+report: docs/hw_analysis/improve_vs_naive/fpint_gemm_m256_residual_gap.md
+evidence: agent-tasks/naive-m256-residual-gap/summary.json
+findings:
+  - Naive local Input DMA cannot allocate and issue a row in the same cycle.
+  - Its 262136 allocation-only cycles dominate the 304109-cycle Input stream gap.
+  - Shared LMEM also has a 319488-cycle optimistic bound for observed Input and PSUM traffic alone.
+validation:
+  - Exclusive phase and source-state partitions reproduce observed cycle counts.
+  - Reviewed RTL files match run manifest hashes.
+  - Representative FSDB cycles are exported as small CSV tables.

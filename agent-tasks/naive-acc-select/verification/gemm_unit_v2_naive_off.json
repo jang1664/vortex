@@ -1,0 +1,6 @@
+{
+  "status": "sim_fail",
+  "test_name": "gemm_unit_v2",
+  "error_log": "tb_VX_gemm_unit_v2.u_dut.u_compute_core : [385000] | GEMM_V2_ACC_LAUNCH | {inst=gemm_unit_v2_ut, ctrl_valid=1, data_valid=1, load=0, rd=0, addr=0x0, last=1}\ntb_VX_gemm_unit_v2.u_dut.u_compute_core : [395000] | GEMM_V2_OWNERSHIP | {inst=gemm_unit_v2_ut, accept=0, retire=1, pending=1, pre=0, tree=0, post=1, acc=0, resource=1, empty=0}\nFatal: \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv\", 960: tb_VX_gemm_unit_v2.test_parallel_qparam_ports: at time 2235000 ps\nindependent consumer-stage qparam metadata mismatch\n$finish called from file \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv\", line 960.\n$finish at simulation time              2235000",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_unit_vcs/hw/unittest/gemm_unit_v2/logs/sim.log"
+}

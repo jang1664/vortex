@@ -1,0 +1,1525 @@
+{
+  "passed": true,
+  "checks": {
+    "baseline_improve_off/m4": true,
+    "baseline_improve_off/m256": true,
+    "baseline_improve_on/m4": true,
+    "baseline_improve_on/m256": true,
+    "candidate_improve_off/m4": true,
+    "candidate_improve_off/m256": true,
+    "candidate_improve_on/m4": true,
+    "candidate_improve_on/m256": true,
+    "candidate_l16_off/m4": true,
+    "candidate_l16_off/m256": true,
+    "candidate_l16_on/m4": true,
+    "candidate_l16_on/m256": true,
+    "candidate_l32_off/m4": true,
+    "candidate_l32_off/m256": true,
+    "candidate_d256_off_lmem/m4": true,
+    "candidate_d256_off_lmem/m256": true,
+    "candidate_d256_off_acc/m4": true,
+    "candidate_d256_off_acc/m256": true,
+    "candidate_d256_on_lmem/m4": true,
+    "candidate_d256_on_lmem/m256": true,
+    "candidate_d256_on_lmem/tag_w0_d0": true,
+    "candidate_d256_on_lmem/tag_w0_d1": true,
+    "candidate_d256_on_lmem/tag_w1_d0": true,
+    "candidate_d256_on_lmem/tag_w1_d1": true,
+    "candidate_d256_on_acc/m4": true,
+    "candidate_d256_on_acc/m256": true,
+    "candidate_d256_on_acc/tag_w0_d0": true,
+    "candidate_d256_on_acc/tag_w0_d1": true,
+    "candidate_d256_on_acc/tag_w1_d0": true,
+    "candidate_d256_on_acc/tag_w1_d1": true,
+    "improve_cycles/off/m4": true,
+    "improve_hbm/off/m4": true,
+    "improve_cycles/off/m256": true,
+    "improve_hbm/off/m256": true,
+    "improve_cycles/on/m4": true,
+    "improve_hbm/on/m4": true,
+    "improve_cycles/on/m256": true,
+    "improve_hbm/on/m256": true,
+    "unit_bridge_l16_on": true,
+    "unit_bridge_d256_on_lmem": true,
+    "unit_dma_l16_on": true,
+    "unit_dma_d256_on_lmem_wide": true,
+    "unit_gemm_improve_off": true,
+    "unit_gemm_d256_off_lmem": true,
+    "unit_gemm_d256_off_acc": true,
+    "unit_lmem32": true,
+    "splitter_29": true,
+    "improve_selected_rtl": true,
+    "improve_elaborated_hierarchy": true,
+    "improve_inspected_executables": true,
+    "automatic_merge_unchanged": true
+  },
+  "pending_or_failed": [],
+  "baseline": "b04c54c00f9f1b7b3b483b50335e43c3c7a3dab4",
+  "incoming": "77b38ac1dc57d5d09e18b9654f8c47766b98efad",
+  "automatic_merge_tree": "d668f60241873caa8490d935845e62f91a4d28f8",
+  "manual_product_edits": 0,
+  "blackbox": [
+    {
+      "label": "baseline_improve_off",
+      "case": "m4",
+      "profile": "improve_off",
+      "revision": "baseline",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "1800",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:23:01.713146",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source",
+      "state": "finished",
+      "end": "2026-09-15T00:24:48.234700",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        6459
+      ],
+      "core_cycles": [
+        12197
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "baseline_improve_off",
+      "case": "m256",
+      "profile": "improve_off",
+      "revision": "baseline",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:55:59.717997",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source",
+      "state": "finished",
+      "end": "2026-09-15T01:37:02.451185",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        273807
+      ],
+      "core_cycles": [
+        279574
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "baseline_improve_on",
+      "case": "m4",
+      "profile": "improve_on",
+      "revision": "baseline",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "1800",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:23:01.713042",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source",
+      "state": "finished",
+      "end": "2026-09-15T00:25:02.589426",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        8189
+      ],
+      "core_cycles": [
+        13997
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "baseline_improve_on",
+      "case": "m256",
+      "profile": "improve_on",
+      "revision": "baseline",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:55:59.706314",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source",
+      "state": "finished",
+      "end": "2026-09-15T01:44:55.539107",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        306947
+      ],
+      "core_cycles": [
+        312726
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_improve_off",
+      "case": "m4",
+      "profile": "improve_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "1800",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:23:17.707541",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:25:03.671758",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        6459
+      ],
+      "core_cycles": [
+        12197
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_improve_off",
+      "case": "m256",
+      "profile": "improve_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:55:59.717051",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:36:38.925069",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        273807
+      ],
+      "core_cycles": [
+        279574
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_improve_on",
+      "case": "m4",
+      "profile": "improve_on",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "1800",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:23:17.680920",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:25:17.188812",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        8189
+      ],
+      "core_cycles": [
+        13997
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_improve_on",
+      "case": "m256",
+      "profile": "improve_on",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:55:59.715803",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:43:03.266346",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        306947
+      ],
+      "core_cycles": [
+        312726
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l16_off",
+      "case": "m4",
+      "profile": "l16_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l16_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.507909",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:42.654719",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        16257
+      ],
+      "core_cycles": [
+        22854
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l16_off",
+      "case": "m256",
+      "profile": "l16_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l16_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.693933",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:58:10.024479",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        606387
+      ],
+      "core_cycles": [
+        612954
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l16_on",
+      "case": "m4",
+      "profile": "l16_on",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l16_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.173749",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:50.125124",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        16087
+      ],
+      "core_cycles": [
+        22629
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l16_on",
+      "case": "m256",
+      "profile": "l16_on",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l16_on",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.731835",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:11:46.282278",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        571360
+      ],
+      "core_cycles": [
+        577929
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l32_off",
+      "case": "m4",
+      "profile": "l32_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l32_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.029585",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:47.312324",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        13034
+      ],
+      "core_cycles": [
+        19629
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_l32_off",
+      "case": "m256",
+      "profile": "l32_off",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_l32_off",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.732010",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:19:05.746831",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        414891
+      ],
+      "core_cycles": [
+        421479
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_off_lmem",
+      "case": "m4",
+      "profile": "d256_off_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_off_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.518041",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:56.070928",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        14759
+      ],
+      "core_cycles": [
+        21381
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_off_lmem",
+      "case": "m256",
+      "profile": "d256_off_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_off_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.734886",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:18:39.353584",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        411384
+      ],
+      "core_cycles": [
+        417981
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_off_acc",
+      "case": "m4",
+      "profile": "d256_off_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_off_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.244082",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:36.554143",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        14953
+      ],
+      "core_cycles": [
+        21531
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_off_acc",
+      "case": "m256",
+      "profile": "d256_off_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_off_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.732824",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:44:58.973970",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        295631
+      ],
+      "core_cycles": [
+        302256
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "m4",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.435414",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:38:05.794207",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        16061
+      ],
+      "core_cycles": [
+        22656
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "m256",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.729014",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:09:42.846454",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        412553
+      ],
+      "core_cycles": [
+        419181
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "tag_w0_d0",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 0 -d 0 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T02:09:42.846929",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:10:04.902019",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1241,
+        1241
+      ],
+      "core_cycles": [
+        7762
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "tag_w0_d1",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 0 -d 1 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T02:10:04.902431",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:10:27.583800",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1832,
+        1832
+      ],
+      "core_cycles": [
+        8362
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "tag_w1_d0",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 1 -d 0 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T02:10:27.584478",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:10:49.730194",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1245,
+        1245
+      ],
+      "core_cycles": [
+        7762
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "tag_w1_d1",
+      "profile": "d256_on_lmem",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_lmem",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 1 -d 1 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T02:10:49.730657",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T02:11:12.696359",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1832,
+        1832
+      ],
+      "core_cycles": [
+        8362
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "m4",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 4 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:35:00.435566",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T00:37:47.276664",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        16178
+      ],
+      "core_cycles": [
+        22806
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "m256",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 256 -k 512 -n 512 -q 32 -t 0 -d 0 -r 1"
+      ],
+      "start": "2026-09-15T00:58:54.731675",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:45:03.398926",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        296685
+      ],
+      "core_cycles": [
+        303306
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "tag_w0_d0",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 0 -d 0 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T01:45:03.399463",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:45:24.291468",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1252,
+        1252
+      ],
+      "core_cycles": [
+        7837
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "tag_w0_d1",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 0 -d 1 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T01:45:24.291935",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:45:46.860434",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1908,
+        1908
+      ],
+      "core_cycles": [
+        8437
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "tag_w1_d0",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 1 -d 0 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T01:45:46.860916",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:46:06.724618",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1256,
+        1256
+      ],
+      "core_cycles": [
+        7837
+      ],
+      "source_changed": false
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "tag_w1_d1",
+      "profile": "d256_on_acc",
+      "revision": "candidate",
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_d256_on_acc",
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER -DDISABLE_FSDB",
+      "makeflags": "VCS_P2_FLAGS=-debug_access+all SIMLIB_DIR=/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib XILINX_IP_DIR=/home/jaeyongjang/project.local/vortex_fpint/build_naive_slr_candidate_source/build_improve_on/sim/xrtsim_vcs/xilinx_ip XILINX_IP_GEN_TCL=/home/jaeyongjang/project.local/vortex_fpint/hw/scripts/xilinx_ip_gen.tcl",
+      "command": [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=30",
+        "7200",
+        "ci/run_black.sh",
+        "xrt-vcs-sim",
+        "--perf",
+        "3",
+        "--app",
+        "fpint_gemm_ffn_hw_naive",
+        "--args",
+        "-m 16 -k 64 -n 64 -q 32 -t 1 -d 1 -r 2 --tagged"
+      ],
+      "start": "2026-09-15T01:46:06.725186",
+      "source": "/home/jaeyongjang/project.local/vortex_fpint",
+      "state": "finished",
+      "end": "2026-09-15T01:46:29.449138",
+      "returncode": 0,
+      "passed": true,
+      "gemm_cycles": [
+        1890,
+        1890
+      ],
+      "core_cycles": [
+        8437
+      ],
+      "source_changed": false
+    }
+  ],
+  "improve_comparisons": [
+    {
+      "mode": "off",
+      "case": "m4",
+      "identical": true,
+      "baseline_gemm": [
+        6459
+      ],
+      "candidate_gemm": [
+        6459
+      ],
+      "baseline_core": [
+        12197
+      ],
+      "candidate_core": [
+        12197
+      ]
+    },
+    {
+      "mode": "off",
+      "case": "m256",
+      "identical": true,
+      "baseline_gemm": [
+        273807
+      ],
+      "candidate_gemm": [
+        273807
+      ],
+      "baseline_core": [
+        279574
+      ],
+      "candidate_core": [
+        279574
+      ]
+    },
+    {
+      "mode": "on",
+      "case": "m4",
+      "identical": true,
+      "baseline_gemm": [
+        8189
+      ],
+      "candidate_gemm": [
+        8189
+      ],
+      "baseline_core": [
+        13997
+      ],
+      "candidate_core": [
+        13997
+      ]
+    },
+    {
+      "mode": "on",
+      "case": "m256",
+      "identical": true,
+      "baseline_gemm": [
+        306947
+      ],
+      "candidate_gemm": [
+        306947
+      ],
+      "baseline_core": [
+        312726
+      ],
+      "candidate_core": [
+        312726
+      ]
+    }
+  ],
+  "units": [
+    {
+      "name": "unit_bridge_l16_on",
+      "profile": "l16_on",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_bridge_l16_on/hw/unittest/naive_dma_slr",
+        "SIM_EXEC=vcs",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_bridge_l16_on"
+    },
+    {
+      "name": "unit_bridge_d256_on_lmem",
+      "profile": "d256_on_lmem",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_bridge_d256_on_lmem/hw/unittest/naive_dma_slr",
+        "SIM_EXEC=vcs",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_bridge_d256_on_lmem"
+    },
+    {
+      "name": "unit_dma_l16_on",
+      "profile": "l16_on",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_dma_l16_on/hw/unittest/dma_node",
+        "SIM_EXEC=vcs",
+        "CONFIGS=-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DNAIVE_DMA_SLR_TEST",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=16 -DLMEM_NUM_BANKS=16 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_dma_l16_on"
+    },
+    {
+      "name": "unit_dma_d256_on_lmem_wide",
+      "profile": "d256_on_lmem",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_dma_d256_on_lmem_wide/hw/unittest/dma_node",
+        "SIM_EXEC=vcs",
+        "CONFIGS=-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE -DNAIVE_DMA_SLR_TEST",
+        "PARAMS=-pvalue+tb_VX_dma_node.TB_DCACHE_NUM_LANES=4",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_dma_d256_on_lmem_wide"
+    },
+    {
+      "name": "unit_gemm_improve_off",
+      "profile": "improve_off",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_improve_off/hw/unittest/gemm_unit_v2",
+        "SIM_EXEC=vcs",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DGEMM_TIMING_CUTS=1 -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DNUM_TMEM_BANKS=8 -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=4 -DNUM_HBM_PORTS=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_DMA_CMD_FIFO_DEPTH=2 -DW_LMEM_DMA_RESPONSE_SLOTS=8 -DTMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_improve_off"
+    },
+    {
+      "name": "unit_gemm_d256_off_lmem",
+      "profile": "d256_off_lmem",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_d256_off_lmem/hw/unittest/gemm_unit_v2",
+        "SIM_EXEC=vcs",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_d256_off_lmem"
+    },
+    {
+      "name": "unit_gemm_d256_off_acc",
+      "profile": "d256_off_acc",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_d256_off_acc/hw/unittest/gemm_unit_v2",
+        "SIM_EXEC=vcs",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_gemm_d256_off_acc"
+    },
+    {
+      "name": "unit_lmem32",
+      "profile": "d256_off_acc",
+      "command": [
+        "make",
+        "-C",
+        "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_lmem32/hw/unittest/lmem_dma_misal",
+        "SIM_EXEC=vcs",
+        "TB_BUS_BYTES=32",
+        "RD_PREFETCH_DEPTH=4",
+        "REORDER_RESPONSES=1",
+        "GEMM_REQ_BACKPRESSURE=1",
+        "ENABLE_MISALIGN=1",
+        "GENERALIZED=0",
+        "sim"
+      ],
+      "configs": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=8 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM",
+      "passed": true,
+      "returncode": 0,
+      "build": "/home/jaeyongjang/project.local/vortex_fpint/build_merge_unit_lmem32"
+    }
+  ],
+  "splitter_cases": 29,
+  "identity": {
+    "baseline": "b04c54c00f9f1b7b3b483b50335e43c3c7a3dab4",
+    "files": 286,
+    "checks": 1144,
+    "passed": true,
+    "excluded": "mem/VX_mem_bus_split.sv: separately verify absence from improve elaboration",
+    "normalization": "Whitespace, line directives, bijective line-derived private identifiers only"
+  },
+  "hierarchy": {
+    "passed": true,
+    "hierarchy_identical": {
+      "off": true,
+      "on": true
+    },
+    "records": [
+      {
+        "label": "baseline_improve_off",
+        "instance_lines": 6415,
+        "absent": {
+          "VX_mem_bus_split": true,
+          "VX_mem_bus_split_reorder": true,
+          "VX_dma_node": true,
+          "VX_naive_dma_slr": true
+        },
+        "instances_sha256": "7f187ff9a424a2f630040dca6e9731a914c8329138f90071dccb25998139b25e",
+        "simv_sha256": "60d68ec5718a2716d7e05d326635ce6a1d820a379c238b2992b28cac0f79cc28",
+        "command": [
+          "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_off/sim/xrtsim_vcs/simv",
+          "-ucli",
+          "-do",
+          "inspect.tcl"
+        ],
+        "raw_instances_sha256": "cd0321fa456a07d4eb2c2b74017844f056c701e260e83e069389aa56472431c0"
+      },
+      {
+        "label": "baseline_improve_on",
+        "instance_lines": 6459,
+        "absent": {
+          "VX_mem_bus_split": true,
+          "VX_mem_bus_split_reorder": true,
+          "VX_dma_node": true,
+          "VX_naive_dma_slr": true
+        },
+        "instances_sha256": "5c53f52ac2003a20131a61ae7108f43533c69d5dfa94d4471f529c29e647b671",
+        "simv_sha256": "1cebb809ec83a226de1e9e8b52d3331fd96bf9a20dee0bf48f7ace9e48b29d6b",
+        "command": [
+          "/home/jaeyongjang/project.local/vortex_fpint/build_merge_naive_baseline_source/build_merge_baseline_improve_on/sim/xrtsim_vcs/simv",
+          "-ucli",
+          "-do",
+          "inspect.tcl"
+        ],
+        "raw_instances_sha256": "a2b2c8463a3cacf90586d25aa763a4f412ca48e2027761b3491617154c9ec9f1"
+      },
+      {
+        "label": "candidate_improve_off",
+        "instance_lines": 6415,
+        "absent": {
+          "VX_mem_bus_split": true,
+          "VX_mem_bus_split_reorder": true,
+          "VX_dma_node": true,
+          "VX_naive_dma_slr": true
+        },
+        "instances_sha256": "7f187ff9a424a2f630040dca6e9731a914c8329138f90071dccb25998139b25e",
+        "simv_sha256": "556459693b8a4d44537a981db57f2046e4638f79cb404c69b058514a433856da",
+        "command": [
+          "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_off/sim/xrtsim_vcs/simv",
+          "-ucli",
+          "-do",
+          "inspect.tcl"
+        ],
+        "raw_instances_sha256": "9ebbe2ec5dfe0f51a1b9838cdf662c2fbbceeb92a4bad8b1d773ad73e9329f13"
+      },
+      {
+        "label": "candidate_improve_on",
+        "instance_lines": 6459,
+        "absent": {
+          "VX_mem_bus_split": true,
+          "VX_mem_bus_split_reorder": true,
+          "VX_dma_node": true,
+          "VX_naive_dma_slr": true
+        },
+        "instances_sha256": "5c53f52ac2003a20131a61ae7108f43533c69d5dfa94d4471f529c29e647b671",
+        "simv_sha256": "a87c39c50f04450d95374c437d8e9c57875dba35297ff511d404bd5a86632cd9",
+        "command": [
+          "/home/jaeyongjang/project.local/vortex_fpint/build_merge_candidate_improve_on/sim/xrtsim_vcs/simv",
+          "-ucli",
+          "-do",
+          "inspect.tcl"
+        ],
+        "raw_instances_sha256": "aa4d75a5d3ec66f4e1ce704b2cc1a6c5e0442ed9e923a4fca9c0a435ec8a217d"
+      }
+    ]
+  },
+  "superseded_attempts": [
+    {
+      "label": "baseline_improve_off",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/baseline_improve_off/m256/manifest.json",
+      "returncode": 124,
+      "reason": "Initial 1800-second timeout; retained and excluded from passing results."
+    },
+    {
+      "label": "baseline_improve_on",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/baseline_improve_on/m256/manifest.json",
+      "returncode": 124,
+      "reason": "Initial 1800-second timeout; retained and excluded from passing results."
+    },
+    {
+      "label": "candidate_improve_off",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/candidate_improve_off/m256/manifest.json",
+      "returncode": 124,
+      "reason": "Initial 1800-second timeout; retained and excluded from passing results."
+    },
+    {
+      "label": "candidate_improve_on",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/candidate_improve_on/m256/manifest.json",
+      "returncode": 124,
+      "reason": "Initial 1800-second timeout; retained and excluded from passing results."
+    },
+    {
+      "label": "candidate_l16_off",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_l16_off/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_l16_on",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_l16_on/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_l32_off",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_l32_off/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_d256_off_lmem",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_d256_off_lmem/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_d256_off_acc",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_d256_off_acc/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_d256_on_lmem",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_d256_on_lmem/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    },
+    {
+      "label": "candidate_d256_on_acc",
+      "case": "m256",
+      "manifest": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/merge-naive-into-gemv/execution/naive/candidate_d256_on_acc/m256/manifest.json",
+      "returncode": 2,
+      "reason": "Agent simulator-only pause expired the host socket deadline; retained failure."
+    }
+  ]
+}

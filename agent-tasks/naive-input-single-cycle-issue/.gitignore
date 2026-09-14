@@ -1,0 +1,7 @@
+runs/
+captures/
+snapshot/
+*.log
+__pycache__/
+!/*.json
+!/*.csv

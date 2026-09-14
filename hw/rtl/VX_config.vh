@@ -735,6 +735,16 @@
 `define DMA_DCACHE_PORTS 1
 `endif
 
+`ifdef GEMM_NAIVE
+// Response payload and context depth for the external DMA's two splitters.
+`ifndef DMA_SPLIT_RSP_DEPTH
+`define DMA_SPLIT_RSP_DEPTH 8
+`endif
+`ifndef DMA_SPLIT_RSP_REORDER
+`define DMA_SPLIT_RSP_REORDER 0
+`endif
+`endif
+
 // Cache Enable
 `ifndef DCACHE_DISABLE
 `define DCACHE_ENABLE

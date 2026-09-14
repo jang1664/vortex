@@ -17,18 +17,20 @@ module VX_naive_lmem_commit_decode import VX_gpu_pkg::*; #(
     localparam PRIORITY_BIT = LMEM_LOCAL_TAG_WIDTH - UUID_WIDTH;
     localparam NORMAL_ROUTE_BIT = GEMM_LMEM_TAG_WIDTH - UUID_WIDTH;
     localparam WRITE_ROUTE_BIT = GEMM_BASE_TAG_WIDTH - UUID_WIDTH;
+    wire [PORTW:0] write_lane = {1'b0, port_id} - (PORTW+1)'(NAIVE_LMEM_PW_OFFSET);
     always_comb begin
         commit = '0;
         if (write_fire) begin
             if (tag[PRIORITY_BIT]) begin
                 if (tag[NORMAL_ROUTE_BIT +: `ARB_SEL_BITS(3, 1)] == 1)
                     commit = {2'b11, 1'b0};
-            end else if (int'(port_id) < PSUM_LANES) begin
+            end else if (int'(port_id) >= NAIVE_LMEM_PW_OFFSET
+                && int'(port_id) < NAIVE_LMEM_PW_OFFSET + PSUM_LANES) begin
                 case (tag[WRITE_ROUTE_BIT +: `ARB_SEL_BITS(3, 1)])
                     0: commit = {2'b01, word_addr[`CLOG2(PSUM_LANES)]};
-                    1: if (int'(port_id) + `LMEM_NUM_PORTS < PSUM_LANES)
+                    1: if (int'(write_lane) + `LMEM_NUM_PORTS < PSUM_LANES)
                         commit = {2'b01, word_addr[`CLOG2(PSUM_LANES)]};
-                    2: if (int'(port_id) < FINAL_LANES)
+                    2: if (int'(write_lane) < FINAL_LANES)
                         commit = {2'b10, 1'b0};
                     default: begin end
                 endcase

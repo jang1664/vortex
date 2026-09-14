@@ -1,0 +1,5 @@
+{
+  "scope_lines": 76808,
+  "external_dma_or_splitter_instances": [],
+  "reason": "GEMM_NAIVE removes VX_core external DMA instance; DMA_DCACHE_PORTS=1 selects the direct cache branch."
+}

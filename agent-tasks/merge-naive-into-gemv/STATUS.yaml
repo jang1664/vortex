@@ -1,0 +1,48 @@
+task: merge-naive-into-gemv
+state: DONE
+baseline: b04c54c00f9f1b7b3b483b50335e43c3c7a3dab4
+incoming: 77b38ac1dc57d5d09e18b9654f8c47766b98efad
+steps:
+  - timestamp: "2026-09-15 00:20"
+    action: Freeze pre-merge inputs and prepare independent VCS builds.
+    result: Clean worktree, current remote SHA verified, virtual merge conflict-free.
+  - timestamp: "2026-09-15 00:26"
+    action: Apply automatic merge and execute initial regression gates.
+    result: No manual RTL edits; 8 unit suites and 29 splitter cases pass. Improve M4 cycles match for SLR OFF and ON; 1144 selected RTL comparisons pass. M256 and naive blackbox matrix are running.
+  - timestamp: "2026-09-15 00:31"
+    action: Validate actual improve VCS hierarchy and tighten D256 unit geometry.
+    result: SLR OFF/ON hierarchy identical after bijective line-derived-name normalization; 6415/6459 instance paths. No external DMA or splitter elaborated. Re-run D256 DMA interlock with explicit 4 cache lanes.
+  - timestamp: "2026-09-15 00:34"
+    action: Move not-yet-started naive profiles to an independent 7200-second scheduler.
+    result: Historical naive M256 runs took 35-38 minutes; initial 1800-second limit is unsuitable. Reserve original queued output directories to prevent duplicate launches; their fail-closed directory guard is a scheduler event, not a test failure. Existing improve runs continue.
+  - timestamp: "2026-09-15 00:39"
+    action: Complete small-matrix coverage and full-width DMA interlock regression.
+    result: All seven naive M4 profiles pass, including D256 plus SLR plus ACC. Full-width DMA test passes with 18 interlock cycles (4 transport-only). All M256 runs are active; tagged repeats remain queued per profile.
+  - timestamp: "2026-09-15 00:49"
+    action: Prioritize the four in-flight improve M256 measurements.
+    result: Seven owned naive simulator processes temporarily SIGSTOP-paused to reduce concurrent load; a PID/start-time/cwd-checked watchdog resumes them when improve completes or after eight minutes. Simulator state was preserved, but the live host deadline was overlooked; the later socket failures are recorded below.
+  - timestamp: "2026-09-15 00:57"
+    action: Inspect and retry four improve M256 timeouts using debug-xrt-vcs log-first procedure.
+    result: All initial M256 wrappers exited 124 at 1800 seconds; compile/vlogan logs contain no errors and simulation logs contain no Fatal/Error/MISMATCH or completion marker. Preserve failed attempts, reuse configured builds and identical CONFIGS, rerun only M256 with 7200 seconds under execution/improve_retry. Naive simulators automatically resumed at 00:55:17.
+  - timestamp: "2026-09-15 00:58"
+    action: Diagnose naive M256 failures after simulator-only pause.
+    result: Agent scheduling error caused host register_read recv failures while simv was paused. The transport uses a real-time socket deadline in vcs_protocol.h; all seven wrappers exited 2 with zero perf counters after resuming and shutting down. These are failed infrastructure attempts, not passes. Preserve evidence and retry M256 plus unrun tagged cases without process suspension or RTL changes.
+  - timestamp: "2026-09-15 01:39"
+    action: Complete improve SLR-OFF M256 comparison.
+    result: Both baseline and candidate pass numerical verification with GEMM 273807 and core 279574 cycles, exactly zero delta. Extended runs completed in approximately 41 minutes; original 30-minute failures were insufficient wall-time limits. Remaining configurations continue without process suspension.
+  - timestamp: "2026-09-15 01:45"
+    action: Complete all improve preservation comparisons and initial naive M256 cases.
+    result: Improve M4/M256 SLR OFF/ON all pass with zero GEMM/core-cycle delta. SLR-ON M256 is 306947/312726 for both parents. D256 ACC ON passes M256 with SLR OFF and ON; tagged repeats are running.
+  - timestamp: "2026-09-15 02:05"
+    action: Complete ACC tagged coverage and legacy L16 M256 verification.
+    result: D256 SLR plus ACC passes all four transpose/qdir combinations with two repeats each. L16 SLR-OFF M256 passes at GEMM 606387 and core 612954 cycles. Remaining LMEM-PSUM profiles continue; no new retry failures.
+  - timestamp: "2026-09-15 02:19"
+    action: Complete the final merge regression gate and prepare the single merge commit.
+    result: All 30 blackboxes, 8 required unit runs, 29 splitter cases, 1144 selected RTL comparisons, and both elaborated hierarchy comparisons pass. Improve M4/M256 SLR OFF/ON GEMM and core cycle deltas are zero. No manual product edits; all 11 superseded infrastructure failures remain documented. Both retry runners exit zero.
+pitfalls:
+  - Historical verification scripts embed old source and evidence paths; use task-local outputs.
+  - Shared splitter requires elaborated comparison because constant parameters and hierarchy names changed.
+  - Raw hierarchy names differ only for five line-derived macro instances; retain raw diff and compare bijectively canonicalized paths.
+  - DMA unit fixture defaults to one cache lane even with DMA_DCACHE_PORTS=4; explicitly set TB_DCACHE_NUM_LANES=4 for D256.
+  - Historical wall times underestimate this run; do not count a numerical test without completion and a zero wrapper return code. Initial improve M256 timeout attempts remain explicit failures.
+  - "Never SIGSTOP only simv during xrt-vcs co-simulation: the live host has a 300000 ms socket deadline and aborts. Reduce concurrency before launching; do not suspend active co-simulation processes."

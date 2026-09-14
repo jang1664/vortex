@@ -1,0 +1,12 @@
+{
+  "int2fp_launch_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/int2fp_launch_ready",
+  "merged_fifo_pop": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/merged_fifo_pop",
+  "int2fp_result_pop": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/int2fp_result_pop",
+  "post_txn_space": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/post_txn_space",
+  "rd_hold_valid": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/rd_hold_valid",
+  "post_head_d3_raw_stall": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/post_head_d3_raw_stall",
+  "qcol_scale_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/qcol_scale_ready",
+  "out_scaler_input_ready": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/out_scaler_input_ready",
+  "post_txn_launch": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/post_txn_launch",
+  "acc_result_commit": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/u_VX_gemm_compute_core/acc_result_commit"
+}

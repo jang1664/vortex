@@ -1,0 +1,15 @@
+task: naive-input-single-cycle-issue
+status: complete
+updated: 2026-09-12T21:15:09+09:00
+objective: Remove only the naive Input DMA allocation bubble and compare M4/M256 with the frozen baselines.
+spec: spec.md
+baseline_commit: 59be9da2
+iteration: 1
+events:
+  - action: User confirmed plan and requested implementation. RTL agent implementing two-file change; root preparing fixed-config verification.
+  - action: Root reviewed rollover ownership and partial-lane stability. Improve active RTL identity passes with NDEBUG on/off. RTL frozen; M4 fresh-build xrt-vcs-sim launched, M256 follows sequentially.
+  - action: M4 PASS GEMM16257/core22854, no source/config changes. FSDB confirms4096 Input vectors and lane completions,3111 replacements including39 command boundaries, no eligible replacement skipped, and stable partial-lane requests. M4 regresses564 GEMM cycles; extra Input backpressure overlaps weight dependency waiting. M256 executing; no further RTL tuning.
+  - action: M256 PASS GEMM606387/core612954, no source/config changes. FSDB confirms262144 ordered Input vectors,239519 replacements including1852 command boundaries,202944 one-cycle request intervals in stream, and no handshake invariant failures. Allocation-only cycles decrease239512; lane-acceptance waits increase187392 and full-slot waits increase81749. Net GEMM regression29624 cycles. No LMEM optimization or rollback applied.
+  - action: Updated cycle-only comparison and isolated-experiment report; historical allocation-bubble interpretation corrected. Improve active RTL identity and final diff checks pass.
+report: docs/hw_analysis/improve_vs_naive/fpint_gemm_input_issue_experiment.md
+results: comparison.json
