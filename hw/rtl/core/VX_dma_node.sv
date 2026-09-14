@@ -173,6 +173,10 @@ module VX_dma_node import VX_gpu_pkg::*; #(
       .NUM_LANES      (LMEM_NUM_LANES_P),
       .LANE_DATA_SIZE (LSU_WORD_SIZE),
       .TAG_WIDTH      (LMEM_TAG_WIDTH_P),
+`ifdef GEMM_NAIVE
+      .RSP_DEPTH      (`DMA_SPLIT_RSP_DEPTH),
+      .RSP_REORDER    (`DMA_SPLIT_RSP_REORDER),
+`endif
       .ENABLE_LANE_MASK(1)
     ) lmem_lane_split (
       .clk         (clk),

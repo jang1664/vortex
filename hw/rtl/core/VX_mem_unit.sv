@@ -463,6 +463,10 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .NUM_LANES      (`DMA_DCACHE_PORTS),
             .LANE_DATA_SIZE (DCACHE_WORD_SIZE),
             .TAG_WIDTH      (DMA_DCACHE_TAG_WIDTH),
+`ifdef GEMM_NAIVE
+            .RSP_DEPTH      (`DMA_SPLIT_RSP_DEPTH),
+            .RSP_REORDER    (`DMA_SPLIT_RSP_REORDER),
+`endif
             .ENABLE_LANE_MASK(1)
         ) dma_dcache_split (
             .clk         (clk),
