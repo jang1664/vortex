@@ -1,0 +1,19 @@
+task: naive-slr-strategy-comparison
+state: complete
+objective: "Compare fresh base and SLR 100 MHz PnR through the configured build run_hw.sh."
+log:
+  - timestamp: "2026-09-14 14:39"
+    action: "Configured main build; verified live RTL matches prior VCS candidate; base configuration differs only by removing SLR pipeline/floorplan and place/route overrides. Launched detached concurrent fresh builds; hourly evidence and completion records enabled."
+  - timestamp: "2026-09-14 15:39"
+    action: "Hourly check1: both synthesis runs completed and implementation initialization started. Actual generated INI/config stamps confirm base SLR macro/directive overrides absent and SLR strategy enabled. No terminal errors."
+  - timestamp: "2026-09-14 16:39"
+    action: "Hourly check2: both running in placement; base Global Place Phase1, SLR placer model initialization. No final physical outcome yet."
+  - timestamp: "2026-09-14 19:39"
+    action: "Hourly checks3-5: both advanced into routing. SLR placed WNS -17.970ns and physical-opt WNS -17.923ns; base placed -9.423ns but routing iteration0 worsened to -17.705ns. These are intermediate values, not final routed timing. No terminal failure yet."
+  - timestamp: "2026-09-14 23:44"
+    action: "User requested termination. Both runs already finished independently with route_design failure: base64373 and SLR180973 node overlaps, no xclbin. No processes needed termination; final comparison recorded. No source hash changes; no further experiments."
+pitfalls:
+  - "Base removes the SLR macro entirely; defining it as zero would still activate ifdef branches."
+  - "Old V4 state.json says running despite dead processes; both comparison runs use new output directories."
+  - "Both builds retain common correctness hooks, clock uncertainty and standard Vitis optimization settings."
+  - "Initial config-preflight shell quoting failed; rerun with Python code as a positional argument passed."

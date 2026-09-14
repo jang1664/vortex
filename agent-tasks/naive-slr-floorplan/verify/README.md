@@ -1,0 +1,11 @@
+# Naive SLR verification
+
+`final_gate.py` regenerates `results.md`, `summary.json`, and `simulation_gate.json`. It requires the complete candidate matrix, exact improve cycle equality, selected-RTL identities, required unit tests, and FSDB retirement checks. Missing results remain pending; an application success message alone is insufficient.
+
+Baseline RTL/configuration is copied from the task snapshot into `build_naive_slr_baseline_source`. Candidate RTL/configuration is frozen separately in `build_naive_slr_candidate_source`. Both contain copied simulation/software inputs and separate configured build directories per backend and SLR mode. The existing compiled Xilinx simulation library is shared as an input. Every blackbox manifest records source hashes before/after, effective defines, command, return code, and timing. The verification runner adds only the latency observer, performance counters, and waveform capture, and invokes `ci/run_black.sh xrt-vcs-sim` from a configured build.
+
+`run.py SOURCE BACKEND --m M --n N --k K --build BUILD --config CONFIG --output NEW_DIRECTORY` runs one case. It supports the underlying runner's `--tagged`, `--wtrans`, `--qdir`, and `--repeat` arguments. Existing evidence directories are never reused. `audit_drain.py RUN_DIRECTORY...` checks actual GEMM and DMA retirements from each completed naive waveform. `summarize.py` compares matched baseline/candidate improve GEMM and core cycles.
+
+Unit tests use `build_naive_slr_verify` after configure and source the target naive config. Tests cover the new bridge with and without PERF, the actual DMA node with the bridge (`SIM_EXEC=vcs`, `CONFIGS` additionally contains `-DNAIVE_DMA_SLR_TEST`), naive reset/quiescence with SLR on/off, and the existing generic SLR memory transport. The actual-node test observes completion stalls after the write fence has drained, proving the new request-transport interlock itself is exercised.
+
+Two initial baseline launches were intentionally stopped during simulation-library setup and replaced by the `-v2` runs; they are classified as aborted infrastructure setup. An exploratory single 8-byte LMEM lane fails the existing DMA gearbox minimum-width check at time zero. It is outside the target 16-lane configuration and is recorded as a non-gating exploratory result, not silently counted as passing.
