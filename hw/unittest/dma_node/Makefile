@@ -141,3 +141,11 @@ clean:
 	rm -rf reports logs
 	rm -rf simv novas* ucli* verdi* csrc* simv.daidir*
 	rm -rf vcd2fsdb*
+
+# Optional actual-node SLR bridge scenario (enable all three CONFIGS defines:
+# GEMM_NAIVE, GEMM_SLR_PIPELINE, NAIVE_DMA_SLR_TEST).
+RTLS += $(RTL_DIR)/libs/VX_slr_stream.sv \
+        $(RTL_DIR)/libs/VX_stream_transport.sv \
+        $(RTL_DIR)/mem/VX_slr_mem_bus.sv \
+        $(RTL_DIR)/core/VX_naive_dma_write_fence.sv \
+        $(RTL_DIR)/core/VX_naive_dma_slr.sv

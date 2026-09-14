@@ -186,6 +186,64 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[0], dma_to_arb_lmem_if);
   `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[1], bg_local_if);
 
+`ifdef NAIVE_DMA_SLR_TEST
+  // Exercise the real descriptor worker and fence across the core's bridge.
+  VX_lsu_mem_if #(
+    .NUM_LANES (`NUM_LSU_LANES), .DATA_SIZE (LSU_WORD_SIZE), .TAG_WIDTH (LSU_TAG_WIDTH)
+  ) slr_mmio_if[N_MASTER]();
+  VX_mem_bus_if #(.DATA_SIZE (DCACHE_BYTES), .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)) slr_global_if();
+  VX_mem_bus_if #(.DATA_SIZE (LMEM_BYTES), .TAG_WIDTH (DMA_LMEM_TAG_WIDTH)) slr_local_if[TB_LMEM_NUM_LANES]();
+  wire slr_requests_drained;
+  wire [`LMEM_NUM_BANKS-1:0][2:0] slr_commit_in, slr_commit_out;
+  int slr_cycle = 0;
+  int slr_completion_stalls = 0;
+  int slr_transport_only_stalls = 0;
+  for (genvar bank = 0; bank < `LMEM_NUM_BANKS; ++bank) begin : g_slr_commit_model
+    if (bank < TB_LMEM_NUM_LANES) begin : g_active
+      // Return ownership several cycles after the actual memory-model write.
+      logic [7:0] commit_delay;
+      always @(posedge clk) begin
+        if (reset) commit_delay <= '0;
+        else commit_delay <= {commit_delay[6:0], dma_lmem_if_array[bank].req_valid
+                 && dma_lmem_if_array[bank].req_ready && dma_lmem_if_array[bank].req_data.rw};
+      end
+      assign slr_commit_in[bank] = {commit_delay[7], commit_delay[7], 1'b0};
+    end else begin : g_inactive
+      assign slr_commit_in[bank] = '0;
+    end
+  end
+  VX_naive_dma_slr #(
+    .INSTANCE_ID ("dma_node_tb_slr"), .N_MASTER (N_MASTER), .NUM_LANES (TB_LMEM_NUM_LANES)
+  ) slr_bridge (
+    .clk (clk), .reset (reset), .mmio_up (mmio_if), .mmio_down (slr_mmio_if),
+    .lmem_up (slr_local_if), .lmem_down (dma_lmem_if_array),
+    .global_up (slr_global_if), .global_down (dma_dcache_if),
+    .commit_in (slr_commit_in), .commit_out (slr_commit_out),
+    .requests_drained (slr_requests_drained)
+`ifdef PERF_ENABLE
+    ,.perf_in (perf), .perf_out ()
+`endif
+  );
+  always @(posedge clk) begin
+    if (reset) begin
+      slr_cycle <= 0;
+      slr_completion_stalls <= 0;
+      slr_transport_only_stalls <= 0;
+    end else begin
+      slr_cycle <= slr_cycle + 1;
+      // The existing LMEM write fence cannot account for this case: only
+      // the new external transport interlock prevents early descriptor reuse.
+      if (dut.worker_done_if.valid && dut.dma_writes_drained && !slr_requests_drained)
+        slr_transport_only_stalls <= slr_transport_only_stalls + 1;
+      if (dut.worker_done_if.valid && (!slr_requests_drained || !dut.dma_writes_drained)) begin
+        slr_completion_stalls <= slr_completion_stalls + 1;
+        assert (!dut.done_if.valid && !dut.worker_done_if.ready)
+          else $fatal(1, "descriptor completed before transport/fence drained");
+      end
+    end
+  end
+`endif
+
   // DUT
   VX_dma_node #(
     .INSTANCE_ID ("dma_node_tb"),
@@ -199,9 +257,25 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   ) dut (
     .clk          (clk),
     .reset        (reset),
+`ifdef NAIVE_DMA_SLR_TEST
+    .mmio_if      (slr_mmio_if),
+    .dcache_bus_if(slr_global_if),
+    .lmem_bus_if  (slr_local_if),
+    .naive_write_commit(slr_commit_out)
+`else
     .mmio_if      (mmio_if),
     .dcache_bus_if(dma_dcache_if),
     .lmem_bus_if  (dma_lmem_if_array)
+`endif
+`ifdef GEMM_NAIVE
+`ifdef GEMM_SLR_PIPELINE
+`ifdef NAIVE_DMA_SLR_TEST
+    ,.slr_requests_drained(slr_requests_drained)
+`else
+    ,.slr_requests_drained(1'b1) // No external transport in this isolated DUT test.
+`endif
+`endif
+`endif
 `ifdef PERF_ENABLE
     ,.perf        (perf)
 `endif
@@ -411,7 +485,11 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   int unsigned lmem_tail_q;
   int unsigned lmem_count_q;
 
+`ifdef NAIVE_DMA_SLR_TEST
+  assign dma_dcache_if.req_ready = !reset && (slr_cycle % 128 >= 64);
+`else
   assign dma_dcache_if.req_ready = 1'b1;
+`endif
   assign dma_lmem_if.req_ready   = 1'b1;
 
   always_ff @(posedge clk) begin
@@ -1514,6 +1592,14 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
         $fatal(1, "PERF counters mismatch: expected=%h actual=%h", perf_expected, perf);
 `endif
 
+`ifdef NAIVE_DMA_SLR_TEST
+      if (slr_completion_stalls == 0)
+        $fatal(1, "SLR completion interlock was not exercised");
+      if (slr_transport_only_stalls == 0)
+        $fatal(1, "SLR transport-only completion interlock was not exercised");
+      $display("SLR completion interlock held for %0d cycles; transport-only=%0d",
+               slr_completion_stalls, slr_transport_only_stalls);
+`endif
       print_summary();
 
       if (case_pass_count != case_total_count)

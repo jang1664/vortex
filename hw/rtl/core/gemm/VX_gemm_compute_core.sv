@@ -1614,6 +1614,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                 mxu_weight_use_capture} = payload_q;
     end
     if (1) begin : g_slr_mxu_weight_tx
+`ifdef GEMM_NAIVE
+        // The naive gather response BRAM must not absorb this SLR1 TX FF
+        // into its output register: the SLR2 RX requires a fabric FF Q driver.
+        (* DONT_TOUCH = "TRUE" *)
+`endif
         (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO" *)
         mxu_weight_transport_t payload_q;
         always_ff @(posedge clk) begin

@@ -319,6 +319,37 @@ module VX_core import VX_gpu_pkg::*; #(
     );
 
 `ifdef GEMM_NAIVE
+`ifdef GEMM_SLR_PIPELINE
+    VX_lsu_mem_if #(
+        .NUM_LANES (`NUM_LSU_LANES), .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LSU_TAG_WIDTH)
+    ) dma_slr_ctrl_if[`NUM_LSU_BLOCKS+1]();
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE), .TAG_WIDTH (LMEM_TAG_WIDTH)
+    ) dma_slr_local_if[`LMEM_NUM_PORTS]();
+    VX_mem_bus_if #(
+        .DATA_SIZE (`DMA_DCACHE_PORTS * DCACHE_WORD_SIZE),
+        .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)
+    ) dma_slr_global_if();
+    wire [`LMEM_NUM_BANKS-1:0][2:0] dma_slr_commit;
+    wire dma_slr_requests_drained;
+`ifdef PERF_ENABLE
+    dma_perf_t dma_slr_perf;
+`endif
+    VX_naive_dma_slr #(
+        .INSTANCE_ID (INSTANCE_ID)
+    ) u_naive_dma_slr (
+        .clk (clk), .reset (reset),
+        .mmio_up (dma_ctrl_if), .mmio_down (dma_slr_ctrl_if),
+        .lmem_up (dma_slr_local_if), .lmem_down (dma_local_data_if),
+        .global_up (dma_slr_global_if), .global_down (dma_global_data_if),
+        .commit_in (naive_write_commit), .commit_out (dma_slr_commit),
+        .requests_drained (dma_slr_requests_drained)
+`ifdef PERF_ENABLE
+        ,.perf_in (dma_slr_perf), .perf_out (accel_perf.cpu_dma)
+`endif
+    );
+`endif
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_MASTER(`NUM_LSU_BLOCKS+1),
@@ -333,12 +364,24 @@ module VX_core import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
     `ifdef PERF_ENABLE
+    `ifdef GEMM_SLR_PIPELINE
+      .perf(dma_slr_perf),
+    `else
       .perf(accel_perf.cpu_dma),
     `endif
+    `endif
+    `ifdef GEMM_SLR_PIPELINE
+      .mmio_if(dma_slr_ctrl_if),
+      .dcache_bus_if(dma_slr_global_if),
+      .lmem_bus_if(dma_slr_local_if),
+      .naive_write_commit(dma_slr_commit),
+      .slr_requests_drained(dma_slr_requests_drained)
+    `else
       .mmio_if(dma_ctrl_if),
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if),
       .naive_write_commit(naive_write_commit)
+    `endif
     );
 `else
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl

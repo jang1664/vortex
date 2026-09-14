@@ -27,6 +27,9 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master    lmem_bus_if [LMEM_NUM_LANES_P] // to local memory lanes
 `ifdef GEMM_NAIVE
   ,input wire [`LMEM_NUM_BANKS-1:0][2:0] naive_write_commit
+`ifdef GEMM_SLR_PIPELINE
+  ,input wire slr_requests_drained
+`endif
 `endif
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
@@ -87,6 +90,11 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   for (genvar b = 0; b < `LMEM_NUM_BANKS; ++b) begin : g_dma_commit
     assign dma_bank_commit[b] = naive_write_commit[b][2:1] == 2'b11;
   end
+`ifdef GEMM_SLR_PIPELINE
+  wire fence_done_valid, fence_done_ready;
+  assign done_if.valid = fence_done_valid && slr_requests_drained;
+  assign worker_done_if.ready = fence_done_ready && slr_requests_drained;
+`endif
   VX_naive_dma_write_fence #(
     .NUM_LANES(LMEM_NUM_LANES_P), .NUM_BANKS(`LMEM_NUM_BANKS)
   ) write_fence (
@@ -94,9 +102,18 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .req_valid(lmem_wide_bus_if.req_valid), .req_write(lmem_wide_bus_if.req_data.rw),
     .req_byteen(lmem_wide_bus_if.req_data.byteen),
     .downstream_ready(fenced_lmem_bus_if.req_ready), .commit_valid(dma_bank_commit),
+`ifdef GEMM_SLR_PIPELINE
+    .worker_done_valid(worker_done_if.valid && slr_requests_drained),
+    .frontend_done_ready(done_if.ready && slr_requests_drained),
+`else
     .worker_done_valid(worker_done_if.valid), .frontend_done_ready(done_if.ready),
+`endif
     .allow_request(allow_lmem_request), .drained(dma_writes_drained),
+`ifdef GEMM_SLR_PIPELINE
+    .frontend_done_valid(fence_done_valid), .worker_done_ready(fence_done_ready)
+`else
     .frontend_done_valid(done_if.valid), .worker_done_ready(worker_done_if.ready)
+`endif
   );
   `UNUSED_VAR (dma_writes_drained)
   assign fenced_lmem_bus_if.req_valid = lmem_wide_bus_if.req_valid && allow_lmem_request;
