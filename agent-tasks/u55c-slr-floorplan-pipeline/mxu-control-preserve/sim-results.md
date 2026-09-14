@@ -6,7 +6,7 @@
 
 - Completed: 2026-09-07T10:51:47 KST.
 - Exact production TH32/t4 and TH32/t8 configs; MXU32x32, W4, RAM8, SLR enabled.
-- Two fresh isolated builds: `build_mxu_preserve_th32_t4` and `build_mxu_preserve_th32_t8`.
+- Two fresh isolated builds: `build/experiment-archive/build_mxu_preserve_th32_t4` and `build/experiment-archive/build_mxu_preserve_th32_t8`.
   Each was configured after sourcing its exact config, using XLEN64 and `/opt/vortex`.
 - VCS W-2024.09-SP1, `/usr/bin/gcc`, `/usr/bin/g++`, shared `build/vcs_simlib`.
 - Every run uses the configure-generated `ci/run_black.sh xrt-vcs-sim` wrapper from its build.

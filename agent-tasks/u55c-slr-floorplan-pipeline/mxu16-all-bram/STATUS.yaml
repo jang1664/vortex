@@ -32,8 +32,8 @@ physical_run:
   runner_pid: 742092
   postfix: spread_v1
   monitoring_interval_seconds: 1800
-  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/state.json
-  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/build.log
+  state_file: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/state.json
+  log: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/build.log
 pitfalls:
   - Source the exact config before configuring a fresh build directory.
   - Preserve existing dirty worktree and prior physical results.

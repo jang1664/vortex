@@ -60,7 +60,7 @@ occupancy is high even though the complete device uses 49.18% of BRAM tiles.
 Output directory, relative to repository root:
 
 ```text
-build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
+build/pnr/build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
 ```
 
 Within that directory:
@@ -73,6 +73,6 @@ Within that directory:
   `runme.log` (directives and hook checks).
 
 Runner identity and source hashes:
-`build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/`.
+`build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_spread_v1/`.
 Actual monitor timestamps:
-`build_timing_cuts_pnr_artifacts/mxu16_all_bram_spread_v1_monitor/history.jsonl`.
+`build/pnr/build_timing_cuts_pnr_artifacts/mxu16_all_bram_spread_v1_monitor/history.jsonl`.

@@ -18,7 +18,7 @@ checkpoint retry. The primary config selects TH16, MXU32 and WLOAD4.
 
 ```sh
 source configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
-cd build_slr_hw
+cd build/pnr/build_slr_hw
 ../configure --xlen=64 --tooldir=/opt/vortex --prefix="$HOME/tools/vortex"
 cd hw/syn/xilinx/xrt
 make \
@@ -31,8 +31,8 @@ make \
 
 - Tools: Vivado/Vitis 2025.1.
 - Placement: Explore. Routing: AlternateCLBRouting. Ultrathreads disabled.
-- Full log: `build_slr_hw/full-implementation-slr-v1.log`.
-- Output root, relative to `build_slr_hw/hw/syn/xilinx/xrt`:
+- Full log: `build/pnr/build_slr_hw/full-implementation-slr-v1.log`.
+- Output root, relative to `build/pnr/build_slr_hw/hw/syn/xilinx/xrt`:
   `improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw`.
 - Run reports reside below `_x/link/vivado/vpl/prj/prj.runs/impl_1` in that
   output root.
@@ -112,7 +112,7 @@ fallback. Neither is the fatal SLR-group validation failure above.
 
 The failed run's kernel checkpoint was opened only for cell/connectivity
 queries, without pblock creation, optimization, placement or routing. Diagnostic
-logs are `build_slr_hw/slr_synth_preflight*.log`; interrupted slow-checker
+logs are `build/pnr/build_slr_hw/slr_synth_preflight*.log`; interrupted slow-checker
 versions remain preserved. The current completed inspection is version 4,
 with `slr_synth_preflight_v4_links.tsv`:
 
@@ -172,7 +172,7 @@ Measure the new synthesized and placed resource reports before claiming a delta.
 Started 2026-09-05 18:46 KST, after final MXU32/MXU16 unit suites and all twelve
 primary W4 host-cycle comparisons passed. The same full source command above
 uses `PREFIX=improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v2` and log
-`build_slr_hw/full-implementation-slr-v2.log`; config and configure were refreshed
+`build/pnr/build_slr_hw/full-implementation-slr-v2.log`; config and configure were refreshed
 immediately before launch. No prior checkpoint is used for implementation.
 The post-init hook now also produces `post_init_slr_boundary_nets.tsv` and fails
 on unregistered cross-owner connections before placement. Results are pending.
@@ -209,15 +209,15 @@ However, strict pair validation reports two errors for one remaining connection:
 `g_slr_mxu_weight_rx.payload_q_reg[valid]` has a LUT on D rather than a direct
 marked TX Q; its corresponding TX valid is therefore unmatched. The LUT is
 `g_slr_mxu_weight_rx.payload_q[valid]_i_1`. This is not waived as a data-path pass.
-Read-only `build_slr_hw/slr_v2_valid_diagnose.log` confirms LUT2 `INIT=4'h2`,
+Read-only `build/pnr/build_slr_hw/slr_v2_valid_diagnose.log` confirms LUT2 `INIT=4'h2`,
 I0 from TX valid Q, and I1 from the core reset relay: `TX_valid && !reset`.
 The RX primitive is FDRE with R tied GND and CE tied VCC. A narrow
 `EXTRACT_RESET="yes"` attribute is now applied to existing synchronous-reset
 boundary declarations only; every sequential equation and cycle is unchanged.
 Current-source simulation and a new full source run must verify the correction.
 
-Evidence: `build_slr_hw/slr_v2_preflight_pairs.{log,tsv}` (exit 1) and
-`build_slr_hw/slr_v2_preflight_boundaries.{log,tsv}` (exit 0). Both only read the
+Evidence: `build/pnr/build_slr_hw/slr_v2_preflight_pairs.{log,tsv}` (exit 1) and
+`build/pnr/build_slr_hw/slr_v2_preflight_boundaries.{log,tsv}` (exit 0). Both only read the
 new kernel checkpoint; normal source implementation continues separately.
 
 Normal `slr_v2` implementation subsequently reproduced exactly these two pair
@@ -242,7 +242,7 @@ primary W4 measurements passed. Same explicit U55C platform, 100 MHz clock,
 Explore/AlternateCLBRouting, and normal source flow; fresh source config and
 configure immediately precede make. Prefix is
 `improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v3`; log is
-`build_slr_hw/full-implementation-slr-v3.log`.
+`build/pnr/build_slr_hw/full-implementation-slr-v3.log`.
 
 The flow now reapplies and verifies the three intended pblock properties
 after adding cells, and reports `SNAPPING_MODE`, `GRID_RANGES`, and
@@ -265,10 +265,10 @@ to FF or hard-memory/DSP counts. It does not establish placement or timing.
 
 By 21:06 KST, both independent read-only checks exited 0:
 
-- `build_slr_hw/slr_v3_preflight_pairs.{log,tsv}`: required hierarchy/profile
+- `build/pnr/build_slr_hw/slr_v3_preflight_pairs.{log,tsv}`: required hierarchy/profile
   and marked groups pass; all direct FF-pair checks pass across 10,754 marked
   boundary FFs. The formerly failing Weight RX valid connection is now direct.
-- `build_slr_hw/slr_v3_preflight_boundaries.{log,tsv}`: complete logical
+- `build/pnr/build_slr_hw/slr_v3_preflight_boundaries.{log,tsv}`: complete logical
   partition-boundary scan passes, including hard-IP absorption and helper logic.
 - Logical owner leaves: SLR0 126,328; SLR1 229,261; SLR2 143,551.
 
@@ -319,7 +319,7 @@ The standard optimized checkpoint was written before placement. Independent
 read-only inspection reports 10,751 owned marked FFs and 5,408 valid direct
 TX/RX pairs. The full logical boundary-net scan passes. All 5,408 checked RX
 CE pins are driven by literal constants; no remote CE fanin was introduced.
-Evidence: `build_slr_hw/slr_v3_post_opt_audit.log` and the accompanying
+Evidence: `build/pnr/build_slr_hw/slr_v3_post_opt_audit.log` and the accompanying
 `slr_v3_post_opt_{pairs,boundaries,rx_ce}.tsv` files. This audit did not run
 optimization or placement and is not a checkpoint implementation retry.
 
@@ -351,7 +351,7 @@ and `LUT_BMA` primitives. Both cases require attention: refresh existing leaf
 membership and anchor only validated homogeneous floating-point IP hierarchies
 so later local helpers inherit the same owner. All 96 matching original reset
 FFs are SLR1-owned; the affected IP families also include output multiplication.
-Evidence: `build_slr_hw/slr_v3_post_opt_membership.{log,tsv}`. No RTL latency or
+Evidence: `build/pnr/build_slr_hw/slr_v3_post_opt_membership.{log,tsv}`. No RTL latency or
 logical SLR assignment changes are necessary for this correction.
 
 No post-place Laguna results, routed-net legality, or final WNS/WHS exist for
@@ -368,7 +368,7 @@ implementation retry is used.
 
 The same source-build command uses prefix
 `improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v4` and log
-`build_slr_hw/full-implementation-slr-v4.log`. The new OPT_DESIGN post-hook
+`build/pnr/build_slr_hw/full-implementation-slr-v4.log`. The new OPT_DESIGN post-hook
 refreshes existing leaf membership and anchors all three local FP IP families
 (FP16 input scaling, FP32 accumulation/output scaling) after proving every
 nonconstant descendant belongs to SLR1. No mixed-owner parent is attached.
@@ -443,7 +443,7 @@ physical result must still come from the normal source flow.
 
 ### First complete in-memory corrected hook: PASS
 
-`build_slr_hw/slr_v4_capped_preflight.log` confirms the complete current-source
+`build/pnr/build_slr_hw/slr_v4_capped_preflight.log` confirms the complete current-source
 hook passes in actual Vivado (246.763 seconds). All 96 homogeneous FP
 `i_synth` parents were attached to SLR1, the 512 missing SLR1 leaves were
 recovered, and all hard-pblock properties, direct FF pairs and full boundary
@@ -473,15 +473,15 @@ query change was made. The diagnostic design is closed without saving.
 
 Evidence: `slr_v4_capped_preflight.log:1424` (zero accumulated hook/strict
 failures), `:1429` (complete preflight PASS), `:1470` (get_slrs API checks
-PASS), under `build_slr_hw`. Post-opt hook remains enabled as requested.
+PASS), under `build/pnr/build_slr_hw`. Post-opt hook remains enabled as requested.
 
 ## Fifth normal source build: slr_v5
 
 Started 2026-09-06 01:26 KST after sourcing the primary TH16/MXU32/W4 config
-and reconfiguring `build_slr_hw`. Same explicit U55C platform,100MHz,
+and reconfiguring `build/pnr/build_slr_hw`. Same explicit U55C platform,100MHz,
 Explore/AlternateCLBRouting and normal source make; post-opt hook remains
 enabled. Prefix is `improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v5`,
-log `build_slr_hw/full-implementation-slr-v5.log`.
+log `build/pnr/build_slr_hw/full-implementation-slr-v5.log`.
 
 RTL is unchanged from simulation iteration7. The change relative to slr_v4
 is explicit cell-object resolution for property queries and contextual hook
@@ -560,7 +560,7 @@ from an IS_PRIMITIVE0-only hierarchy inventory. The corrected algorithm
 traverses these composite primitive nodes without selecting them as anchors;
 all child ownership still contributes to the enclosing hierarchy decision.
 The first diagnostic closes without any constraint mutation; its evidence is
-retained in `build_slr_hw/slr_v5_hierarchy_audit.log`.
+retained in `build/pnr/build_slr_hw/slr_v5_hierarchy_audit.log`.
 
 The corrected second audit (`slr_v5_hierarchy_audit_v2.log`) and exact candidate
 selector independently agree on189 maximal islands: SLR0=27,SLR1=161,SLR2=1.
@@ -611,11 +611,11 @@ without saving and exits0 at04:05:06 KST. Source `floorplan.tcl` SHA256 is
 ## Sixth normal source build: slr_v6
 
 Started2026-09-06 04:05 KST after sourcing the primary TH16/MXU32/W4 config
-and reconfiguring `build_slr_hw`. Same explicit U55C platform,100MHz,
+and reconfiguring `build/pnr/build_slr_hw`. Same explicit U55C platform,100MHz,
 Explore/AlternateCLBRouting and congestion fail-fast disabled; independent
 SLR hooks, including post-opt, remain enabled. Prefix:
 `improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v6`.
-Log: `build_slr_hw/full-implementation-slr-v6.log`.
+Log: `build/pnr/build_slr_hw/full-implementation-slr-v6.log`.
 
 RTL remains the iteration7 simulation-verified source. The flow-only delta
 from slr_v5 is general single-owner hierarchy anchoring, primitive-container
@@ -792,7 +792,7 @@ command done. No candidate above is part of the current implemented result.
 
 ### Actual placed-object lookup preflight: PASS
 
-`build_slr_hw/slr_v6_placed_api_probe.log:1025` records32 physical SLICE
+`build/pnr/build_slr_hw/slr_v6_placed_api_probe.log:1025` records32 physical SLICE
 FF samples:32 pass,0 errors,32 raw-NAME queries empty. Typed-cell queries
 and independently resolved typed-site queries agree on nonempty SLR1/SLR2.
 The current source `cell_objects` helper passes single,32-cell and reversed
@@ -813,7 +813,7 @@ No placement/routing/constraint mutation or checkpoint save is performed.
 Started2026-09-06 07:48 KST after primary TH16/MXU32/W4 config and configure,
 using the same explicit U55C platform,100MHz,Explore/AlternateCLBRouting,
 congestion fail-fast disabled and independent SLR hooks enabled. Log:
-`build_slr_hw/full-implementation-slr-v7.log`, main session79546. The actual
+`build/pnr/build_slr_hw/full-implementation-slr-v7.log`, main session79546. The actual
 API diagnostic exits0 unsaved at07:47:49 before implementation begins.
 
 The flow-only delta is strict typed-cell post-place SLR lookup plus a
@@ -935,7 +935,7 @@ routing, final setup/hold and final-state boundary verification remain open.
 
 ### Read-only diagnosis of response TX placement
 
-`build_slr_hw/slr_v7_response_mapping_audit.log` and its companion TSVs
+`build/pnr/build_slr_hw/slr_v7_response_mapping_audit.log` and its companion TSVs
 compare representative data bits100/300,tag0 and valid for all four read
 streams in the actual placed checkpoint. The diagnostic closes unsaved
 at11:39:12 KST with exit0, freeing its memory before routing. It performs
@@ -1165,7 +1165,7 @@ constraints, optimizing, placing, routing, or saving a checkpoint. The
 diagnostic exited 0 and closed unsaved at 12:33:01; the normal routing
 process was untouched.
 
-- `build_slr_hw/slr_v7_placed_bus_skew_minmax.rpt` uses the installed
+- `build/pnr/build_slr_hw/slr_v7_placed_bus_skew_minmax.rpt` uses the installed
   `report_bus_skew -delay_type min_max -sort_by_slack -path_type short`.
 - There are 196 effective report entries: 195 numeric, one NA, and zero
   negative slacks. The 90 HMSS entries have worst slack +1.754 ns
@@ -1182,5 +1182,5 @@ process was untouched.
   bus-skew closure. Platform-scoped constraints also do not exclude an
   indirect effect from user-logic congestion. No constraint was relaxed.
 
-Logs/inventory: `build_slr_hw/slr_v7_bus_skew_audit.log` and
-`build_slr_hw/slr_v7_bus_skew_constraint_inventory.tsv`.
+Logs/inventory: `build/pnr/build_slr_hw/slr_v7_bus_skew_audit.log` and
+`build/pnr/build_slr_hw/slr_v7_bus_skew_constraint_inventory.tsv`.

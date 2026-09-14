@@ -61,7 +61,7 @@ because routing and xclbin generation did not complete.
 Repository-relative output directory:
 
 ```text
-build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
+build/pnr/build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
 ```
 
 Under `_x/link/vivado/vpl/prj/prj.runs/impl_1/`:
@@ -74,6 +74,6 @@ Under `_x/link/vivado/vpl/prj/prj.runs/impl_1/`:
   not loaded or used for retry in this task.
 
 Runner artifacts:
-`build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/`.
+`build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/`.
 Monitor history:
-`build_timing_cuts_pnr_artifacts/mxu16_all_bram_300m_monitor/history.jsonl`.
+`build/pnr/build_timing_cuts_pnr_artifacts/mxu16_all_bram_300m_monitor/history.jsonl`.

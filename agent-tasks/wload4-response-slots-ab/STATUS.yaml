@@ -10,9 +10,9 @@ configuration:
   mxu_wload_num: 4
   variants:
     - response_slots: 8
-      build: build_gemm_response_ram_w4
+      build: build/experiment-archive/build_gemm_response_ram_w4
     - response_slots: 16
-      build: build_gemm_response_ram_w4_slots16
+      build: build/experiment-archive/build_gemm_response_ram_w4_slots16
 workloads:
   - {m: 4, n: 256, k: 256, qblk: 32, qdir: 0, wtrans: 0}
   - {m: 4, n: 256, k: 256, qblk: 32, qdir: 1, wtrans: 0}

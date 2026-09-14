@@ -34,7 +34,7 @@ python3 agent-tasks/u55c-slr-floorplan-pipeline/mxu-control-preserve/run_physica
 For each `N=4,8`:
 
 - Build: `build_mxu_control_pnr_th32_tN_slr_v2/`
-- Evidence: `build_mxu_control_pnr_artifacts/th32_tN_slr_v2/`
+- Evidence: `build/pnr/build_mxu_control_pnr_artifacts/th32_tN_slr_v2/`
 - Terminal state: evidence `state.json`; main output: `build.log`.
 - Xclbin (only on successful completion): build
   `hw/syn/xilinx/xrt/improve_th32_tcol32_m32_tN_bigmem_slr_v2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin`.
@@ -87,7 +87,7 @@ Both full synthesis flows passed: TH32/t4 at 12:11:02 KST and TH32/t8 at
 TH32/t4's targeted synthesized-DCP inspection passed and exited zero at
 12:19:12 KST: 160 separate local FFs and all 160 exclusive marked TX-to-RX
 block-index links survive synthesis. Per-FF evidence is under
-`build_mxu_control_pnr_artifacts/th32_t4_slr_v2/synth-dcp-check/`.
+`build/pnr/build_mxu_control_pnr_artifacts/th32_t4_slr_v2/synth-dcp-check/`.
 This confirms the intended logical/physical register identities before placement,
 not actual SLR or Laguna placement. The analogous TH32/t8 inspection also passed
 and exited zero at 12:30:00 KST, with its per-FF evidence in the corresponding
@@ -148,7 +148,7 @@ congestion level 7; these are warnings, not a terminal routing result.
 The complete source build exited **0** at **20:32:45 KST**. Bitgen and the final
 DRC succeeded (0 DRC errors). The xclbin is **79,989,273 bytes**:
 
-`build_mxu_control_pnr_th32_t4_slr_v2/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin`
+`build/pnr/build_mxu_control_pnr_th32_t4_slr_v2/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin`
 
 However, **100 MHz timing closure did not pass**. `vortex_afu.xclbin.info:59`
 records 100 MHz requested and **92.2 MHz achieved** (DATA clock metadata rounded

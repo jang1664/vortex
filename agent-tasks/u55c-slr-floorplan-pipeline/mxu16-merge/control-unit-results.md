@@ -4,7 +4,7 @@ Recorded: 2026-09-06 22:42 KST. Result: PASS with GEMM tracing disabled and enab
 
 ## Environment and command
 
-- Dedicated build: `build_mxu16_merge_u3_verify`.
+- Dedicated build: `build/experiment-archive/build_mxu16_merge_u3_verify`.
 - Configured using `../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex` before testing.
 - Sourced `configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh`: TH16, MXU32, WLOAD_NUM=4, DMA8, SLR enabled at the top-level config.
 - VCS: `/tool/Program/synopsys/vcs/W-2024.09-SP1/amd64/bin/vcs`.
@@ -52,10 +52,10 @@ The verification-agent document references `harness/rules/testbench.md` and `har
 
 Retained generated logs, relative to the repository:
 
-- `build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/compile_trace_off.log`
-- `build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/sim_trace_off.log`
-- `build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/compile_trace_on.log`
-- `build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/sim_trace_on.log`
+- `build/experiment-archive/build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/compile_trace_off.log`
+- `build/experiment-archive/build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/sim_trace_off.log`
+- `build/experiment-archive/build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/compile_trace_on.log`
+- `build/experiment-archive/build_mxu16_merge_u3_verify/hw/unittest/gemm_dma_slr_bridge/logs/sim_trace_on.log`
 
 SHA-256 after both successful runs:
 

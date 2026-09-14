@@ -54,7 +54,7 @@ iterations:
 verification:
   baseline_xrt_vcs_sim:
     status: pass
-    build: build_gemm_response_ram_w4
+    build: build/experiment-archive/build_gemm_response_ram_w4
     app: fpint_gemm_ffn_hw
     args_common: "-m 32 -n 32 -k 32 -q 32 -t 0"
     perf_class: 3
@@ -71,7 +71,7 @@ verification:
       - gemm_node_improve_qdir1
   candidate_xrt_vcs_sim:
     status: pass
-    build: build_gemm_postroute_top5
+    build: build/experiment-archive/build_gemm_postroute_top5
     rebuild_evidence: >-
       A fresh configured build directory compiled all RTL, including the five
       changed modules, before the candidate measurements.

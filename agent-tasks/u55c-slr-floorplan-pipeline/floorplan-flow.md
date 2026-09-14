@@ -113,7 +113,7 @@ the checks on meaningful command/completion crossings. Fixtures cover absent
 both halves (pass), a single remaining half (fail), and an unmarked endpoint
 on a surviving pair (fail). No functional RTL change was needed.
 
-The first inspection log is `build_slr_hw/slr_synth_preflight.log`. Its
+The first inspection log is `build/pnr/build_slr_hw/slr_synth_preflight.log`. Its
 per-leaf inventory was stopped after ten minutes and replaced with an
 equivalent batch-property/local-list implementation, with stage and 100k-leaf
 progress messages. A second run showed classification, not global cell
@@ -132,8 +132,8 @@ dictionary, retaining identical membership/SLR tests without per-pin large
 dictionary lookup costs.
 
 Earlier diagnostic logs are preserved. The current read-only run uses
-`build_slr_hw/slr_synth_preflight_v4.log` and
-`build_slr_hw/slr_synth_preflight_v4_links.tsv`. These inspect synthesized
+`build/pnr/build_slr_hw/slr_synth_preflight_v4.log` and
+`build/pnr/build_slr_hw/slr_synth_preflight_v4_links.tsv`. These inspect synthesized
 logic only, not successful placement or Laguna mapping.
 
 The v4 read-only check completed in approximately 3m19s. It classified
@@ -210,7 +210,7 @@ the complete partition-boundary scan passed. Exact-pair checking nevertheless
 reported two related errors: weight RX valid had a LUT on D, and its TX valid
 FF consequently had no direct RX peer.
 
-Read-only inspection (`build_slr_hw/slr_v2_valid_diagnose.log`) established:
+Read-only inspection (`build/pnr/build_slr_hw/slr_v2_valid_diagnose.log`) established:
 
 - The intervening primitive is `LUT2`, `INIT=4'h2`.
 - I0 is weight TX valid Q; I1 is the core-reset relay Q.
@@ -233,12 +233,12 @@ mapping correction; no DCP implementation retry or path exception is used.
 
 ## Local flow-test evidence
 
-Run from the source workspace, with a configured `build_slr_hw` directory:
+Run from the source workspace, with a configured `build/pnr/build_slr_hw` directory:
 
 ```sh
 tclsh hw/syn/xilinx/xrt/test_slr_floorplan.tcl
 tclsh hw/syn/xilinx/xrt/tests/test_post_place_hook.tcl
-XRT_TEST_BUILD_DIR="$PWD/build_slr_hw/hw/syn/xilinx/xrt" \
+XRT_TEST_BUILD_DIR="$PWD/build/pnr/build_slr_hw/hw/syn/xilinx/xrt" \
   python3 hw/syn/xilinx/xrt/tests/test_gen_vitis_ini.py
 bash -n hw/syn/xilinx/xrt/run_hw.sh.in
 git diff --check
@@ -251,7 +251,7 @@ Shell syntax and whitespace checks passed. None of these tests starts Vivado
 synthesis, implementation or an FPGA run. Functional/performance simulation
 gates must pass before the normal source-based full implementation is started.
 
-After refreshing `build_slr_hw` from the primary config, a full hardware
+After refreshing `build/pnr/build_slr_hw` from the primary config, a full hardware
 `make -n` completed successfully and retained both `--gemm-slr-floorplan` and
 `--disable-congestion-fail-fast` in the generated command. The current 2025.1
 `platforminfo` environment warned that the bare U55C platform name resolved
@@ -263,7 +263,7 @@ the explicit `.xpfm` path to `make PLATFORM=...` before the actual build.
 An API-only batch process used installed Vivado 2025.1 (SW build 6140274),
 without creating/opening a project, loading a checkpoint or running synthesis
 or implementation. Its help output is retained in the generated
-`build_slr_hw/slr_api_preflight.log`. The installed command reference confirms:
+`build/pnr/build_slr_hw/slr_api_preflight.log`. The installed command reference confirms:
 
 - `get_slrs -of_objects` accepts cells;
 - `get_pblocks -of_objects` accepts cells;
@@ -378,7 +378,7 @@ Replaced the fixed configuration whitelist with the width/count contracts
 described above. SLR ownership, full-SLR ranges, marked endpoint checks and
 post-opt/post-place checks are unchanged. No RTL or pipeline latency changed.
 
-Verification used a separate `build_floorplan_geometry.84rxny` directory,
+Verification used a separate `build/experiment-archive/build_floorplan_geometry.84rxny` directory,
 configured after sourcing `configs/improve_th16_tcol16_m16_t8_bigmem.sh` with
 `../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex`.
 

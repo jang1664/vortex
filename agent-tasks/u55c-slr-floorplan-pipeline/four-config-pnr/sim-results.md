@@ -10,8 +10,8 @@ physical-TMEM-array depth runs PASS.** No RTL changes were required.
   across 334 files. This matches the previously verified merged RTL.
 - Configs: `configs/improve_th{16,32}_tcol32_m32_t{4,8}_bigmem.sh`.
   Every profile retains MXU32x32, W4, RAM8, SLR transports and 512KiB TMEM.
-- Four separate `build_four_config_th16_t4`, `build_four_config_th16_t8`,
-  `build_four_config_th32_t4`, `build_four_config_th32_t8` directories were
+- Four separate `build/experiment-archive/build_four_config_th16_t4`, `build/experiment-archive/build_four_config_th16_t8`,
+  `build/experiment-archive/build_four_config_th32_t4`, `build/experiment-archive/build_four_config_th32_t8` directories were
   configured with `../configure --xlen=64 --tooldir=/opt/vortex
   --prefix="$HOME/tools/vortex"`, sourcing the associated config first.
 - Each blackbox run sources its exact profile and uses
@@ -65,8 +65,8 @@ Reproduction from the source root after configure:
 ```bash
 SIMLIB_DIR="$PWD/build/vcs_simlib" CC=/usr/bin/gcc CXX=/usr/bin/g++ \
 python3 agent-tasks/u55c-slr-floorplan-pipeline/measure_gemm.py \
-  --build build_four_config_th32_t4 \
-  --out build_four_config_th32_t4/new-evidence \
+  --build build/experiment-archive/build_four_config_th32_t4 \
+  --out build/experiment-archive/build_four_config_th32_t4/new-evidence \
   --config configs/improve_th32_tcol32_m32_t4_bigmem.sh \
   --repeat 1 --timeout 300
 ```
@@ -113,7 +113,7 @@ Reproduce after sourcing the matching t4 profile:
 ```bash
 source configs/improve_th32_tcol32_m32_t4_bigmem.sh
 PATH="/usr/bin:$PATH" python3 tools/verify_rtl.py unittest \
-  --path build_four_config_th32_t4/hw/unittest/tmem_depth \
+  --path build/experiment-archive/build_four_config_th32_t4/hw/unittest/tmem_depth \
   --sim vcs --timeout 300
 ```
 
@@ -122,7 +122,7 @@ PATH="/usr/bin:$PATH" python3 tools/verify_rtl.py unittest \
 - Initial TH16/t8 wrapper attempt ran before its configure-generated app
   directory had finished copying. It failed immediately with
   `Application folder not found: fpint_gemm_ffn_hw`; no RTL simulation ran.
-  Evidence remains at `build_four_config_th16_t8/evidence/`. Retrying after
+  Evidence remains at `build/experiment-archive/build_four_config_th16_t8/evidence/`. Retrying after
   configure completed passed all four cases. This setup failure is not counted
   as a functional run or hidden in the successful suite.
 - Referenced legacy verification-agent instructions `harness/rules/testbench.md`

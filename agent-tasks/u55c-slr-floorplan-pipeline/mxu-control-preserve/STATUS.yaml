@@ -19,8 +19,8 @@ physical_runs:
     session_id: 11321
     runner_pid: 2047462
     make_pid: 2052892
-    state_file: build_mxu_control_pnr_artifacts/th32_t4_slr_v2/state.json
-    log: build_mxu_control_pnr_artifacts/th32_t4_slr_v2/build.log
+    state_file: build/pnr/build_mxu_control_pnr_artifacts/th32_t4_slr_v2/state.json
+    log: build/pnr/build_mxu_control_pnr_artifacts/th32_t4_slr_v2/build.log
     finished_at_kst: '2026-09-07 20:32:45'
     returncode: 0
     xclbin_exists: true
@@ -33,8 +33,8 @@ physical_runs:
     session_id: 23014
     runner_pid: 2047478
     make_pid: 2052489
-    state_file: build_mxu_control_pnr_artifacts/th32_t8_slr_v2/state.json
-    log: build_mxu_control_pnr_artifacts/th32_t8_slr_v2/build.log
+    state_file: build/pnr/build_mxu_control_pnr_artifacts/th32_t8_slr_v2/state.json
+    log: build/pnr/build_mxu_control_pnr_artifacts/th32_t8_slr_v2/build.log
     finished_at_kst: '2026-09-07 20:46:10'
     returncode: 2
     xclbin_exists: false

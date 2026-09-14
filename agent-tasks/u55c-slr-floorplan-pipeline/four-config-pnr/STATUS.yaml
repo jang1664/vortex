@@ -22,14 +22,14 @@ physical_runs:
     session_id: 24071
     runner_pid: 3885149
     make_pid: 3907092
-    state_file: build_four_config_pnr_artifacts/th32_t4_slr_v1/state.json
-    log: build_four_config_pnr_artifacts/th32_t4_slr_v1/build.log
+    state_file: build/pnr/build_four_config_pnr_artifacts/th32_t4_slr_v1/state.json
+    log: build/pnr/build_four_config_pnr_artifacts/th32_t4_slr_v1/build.log
   th32_t8:
     session_id: 41945
     runner_pid: 3886501
     make_pid: 3906735
-    state_file: build_four_config_pnr_artifacts/th32_t8_slr_v1/state.json
-    log: build_four_config_pnr_artifacts/th32_t8_slr_v1/build.log
+    state_file: build/pnr/build_four_config_pnr_artifacts/th32_t8_slr_v1/state.json
+    log: build/pnr/build_four_config_pnr_artifacts/th32_t8_slr_v1/build.log
 pitfalls:
   - Existing floorplan assumes eight DMA channels and derives MXU columns from TMEM count.
   - t4 configs currently retain RTL SLR pipelines but disable physical floorplan.

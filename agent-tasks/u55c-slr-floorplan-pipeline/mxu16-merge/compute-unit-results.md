@@ -28,10 +28,10 @@ markers in the simulation logs. No `NDEBUG` override was added.
 
 | Fresh build directory | Geometry | SLR | Config C2 | Result |
 |---|---|---:|---:|---|
-| `build_merge_compute_mxu32_slr0` | MXU32, W4, DMA8, TMEM8 | 0 | 0 | PASS |
-| `build_merge_compute_mxu32_slr1` | MXU32, W4, DMA8, TMEM8 | 1 | 0 | PASS |
-| `build_merge_compute_mxu16_slr0` | MXU16, W4, DMA8, TMEM16 | 0 | 1 | PASS |
-| `build_merge_compute_mxu16_slr1` | MXU16, W4, DMA8, TMEM16 | 1 | 1 | PASS |
+| `build/experiment-archive/build_merge_compute_mxu32_slr0` | MXU32, W4, DMA8, TMEM8 | 0 | 0 | PASS |
+| `build/experiment-archive/build_merge_compute_mxu32_slr1` | MXU32, W4, DMA8, TMEM8 | 1 | 0 | PASS |
+| `build/experiment-archive/build_merge_compute_mxu16_slr0` | MXU16, W4, DMA8, TMEM16 | 0 | 1 | PASS |
+| `build/experiment-archive/build_merge_compute_mxu16_slr1` | MXU16, W4, DMA8, TMEM16 | 1 | 1 | PASS |
 
 The compute unit does not instantiate the command controller: the MXU16
 config's C2 define is **not** evidence of exercising controller timing cuts.

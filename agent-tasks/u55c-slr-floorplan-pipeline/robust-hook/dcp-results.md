@@ -4,7 +4,7 @@
 
 The verification uses Vivado 2025.1 (SW build 6140274) and the existing
 TH32/t4 and TH32/t8 synthesized kernel checkpoints from the failed source
-implementation builds. A dedicated `build_slr_hook_check` directory was
+implementation builds. A dedicated `build/experiment-archive/build_slr_hook_check` directory was
 configured with XLEN64 after sourcing the TH32/t4 config. Each subsequent
 Vivado invocation sources its matching TH32 config before launch.
 
@@ -20,7 +20,7 @@ The reusable driver is [check-kernel-dcp.tcl](check-kernel-dcp.tcl). It accepts
   membership. The driver exits nonzero on any unexpected result.
 - Neither mode saves a checkpoint or runs synthesis, optimization, placement,
   routing, or a source-build retry. Raw logs and TSV reports are stored only
-  in ignored `build_slr_hook_check` subdirectories.
+  in ignored `build/experiment-archive/build_slr_hook_check` subdirectories.
 
 The verification-agent references to `harness/rules/testbench.md`,
 `harness/skills/run-test/SKILL.md`, and
@@ -65,15 +65,15 @@ u_gemm_dma_transport/u_commands/g_slr.u_link/u_rx/FSM_onehot_state_q[5]_i_7
 
 The original inventory discovers 1,307,521 primitive leaves for t4 and
 1,386,188 for t8 before reproducing the classification failure. Log paths:
-`build_slr_hook_check/reproduce_t4/vivado.log` and
-`build_slr_hook_check/reproduce_t8/vivado.log`. Both include the explicit
+`build/experiment-archive/build_slr_hook_check/reproduce_t4/vivado.log` and
+`build/experiment-archive/build_slr_hook_check/reproduce_t8/vivado.log`. Both include the explicit
 `PASS: DCP regression mode=reproduce` marker and exit 0. No user pblock was
 created by this reproduction.
 
 ### Updated-source iteration 1
 
 Started 2026-09-07 10:10 KST; logs are
-`build_slr_hook_check/updated_v1_t{4,8}/vivado.log`.
+`build/experiment-archive/build_slr_hook_check/updated_v1_t{4,8}/vivado.log`.
 
 | Source hook | SHA256 at launch |
 |---|---|
@@ -104,7 +104,7 @@ dumping connectivity. Four additional helpers retain partial memory stream
 identity under `u_tmem_subsystem/u_slr/u_{request,response}`. The bounded
 diagnostic now includes all six to compare synthesis lifting across streams;
 this changes no hook or ownership rule. Updated diagnostic logs are stored
-under `build_slr_hook_check/diagnose_v2_t{4,8}`.
+under `build/experiment-archive/build_slr_hook_check/diagnose_v2_t{4,8}`.
 
 Both diagnostic reruns exit 0. Their complete connectivity TSVs are byte
 identical (SHA256
@@ -142,7 +142,7 @@ not an ownership exception.
 The hooks now recognize the additional output-completion generate spelling
 and resolve only structurally proven, unmarked lifted LUT1 pointer
 self-loops to a retained stream-receiver endpoint. Runs use
-`build_slr_hook_check/updated_v2_t{4,8}/vivado.log`.
+`build/experiment-archive/build_slr_hook_check/updated_v2_t{4,8}/vivado.log`.
 
 | Source hook | SHA256 at launch |
 |---|---|

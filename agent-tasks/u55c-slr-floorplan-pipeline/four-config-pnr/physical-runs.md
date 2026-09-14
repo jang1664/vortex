@@ -30,19 +30,19 @@ document. The launch-time source/config hashes are in sibling `sources.json`.
 
 | Profile | State file | Full log |
 |---|---|---|
-| TH32/t4 | `build_four_config_pnr_artifacts/th32_t4_slr_v1/state.json` | `build_four_config_pnr_artifacts/th32_t4_slr_v1/build.log` |
-| TH32/t8 | `build_four_config_pnr_artifacts/th32_t8_slr_v1/state.json` | `build_four_config_pnr_artifacts/th32_t8_slr_v1/build.log` |
+| TH32/t4 | `build/pnr/build_four_config_pnr_artifacts/th32_t4_slr_v1/state.json` | `build/pnr/build_four_config_pnr_artifacts/th32_t4_slr_v1/build.log` |
+| TH32/t8 | `build/pnr/build_four_config_pnr_artifacts/th32_t8_slr_v1/state.json` | `build/pnr/build_four_config_pnr_artifacts/th32_t8_slr_v1/build.log` |
 
 TH32/t4 expected xclbin (not yet produced at launch):
 
 ```text
-build_four_config_pnr_th32_t4/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
+build/pnr/build_four_config_pnr_th32_t4/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
 ```
 
 TH32/t8 expected xclbin (not yet produced at launch):
 
 ```text
-build_four_config_pnr_th32_t8/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t8_bigmem_slr_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
+build/pnr/build_four_config_pnr_th32_t8/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t8_bigmem_slr_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
 ```
 
 Physical reports will appear under each output's

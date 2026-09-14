@@ -21,7 +21,7 @@ verification:
     3 focused workload generator tests passed, including Llama3 q_per_kv=4
     args and Llama2 q_per_kv=1 preservation.
   - >-
-    build_latency_llama3 head_concat_layout_fused bench rebuilt successfully
+    build/experiment-archive/build_latency_llama3 head_concat_layout_fused bench rebuilt successfully
     with /usr/bin/g++ under the C4_v3 configuration.
   - >-
     Generated Llama3 decode payload reports q_per_kv=4 and 8 input matrices.

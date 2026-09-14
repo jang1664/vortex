@@ -4,13 +4,13 @@ Completed: 2026-09-06 22:53 KST. The supported U4 unit configurations below pass
 
 ## Environment
 
-- Fresh configured build: `build_mxu16_merge_u4_verify`.
+- Fresh configured build: `build/experiment-archive/build_mxu16_merge_u4_verify`.
 - Configuration command: `../configure --xlen=64 --tooldir=/opt/vortex --prefix="$HOME/tools/vortex"`.
 - VCS W-2024.09-SP1; host compilers `/usr/bin/gcc` and `/usr/bin/g++`.
 - Tests invoked through `tools/verify_rtl.py unittest --sim vcs --timeout 300`, with `MAKEFLAGS=-B` to prevent stale executables when compile-time parameters change.
 - Each invocation sources `configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh` (primary MXU32/W4), except the supported paired32 subsystem fixture, which sources the MXU16/W4 `tcol16` configuration.
 - Parameter values are exported before the runner. Its `--params` option is not used to configure compilation because it applies only to the run command.
-- Raw JSON reports, copied simulation/compile logs, source hashes and result hashes are retained in `build_mxu16_merge_u4_verify/verification-results/`.
+- Raw JSON reports, copied simulation/compile logs, source hashes and result hashes are retained in `build/experiment-archive/build_mxu16_merge_u4_verify/verification-results/`.
 - No RTL was changed by verification. No blackbox test, synthesis, OOC or PnR was run in this unit-verification task.
 
 The verification-agent references `harness/rules/testbench.md`, `harness/skills/run-test/SKILL.md` and `harness/skills/add-test-case/SKILL.md` are absent in this checkout. Available project-context/RTL verification instructions, existing unit Makefiles and the deterministic runner were used instead; the missing references were reported to the parent agent.
@@ -62,7 +62,7 @@ After configuring the build, from the repository root:
 source configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 export CC=/usr/bin/gcc CXX=/usr/bin/g++ MAKEFLAGS=-B
 python3 tools/verify_rtl.py unittest \
-  --path build_mxu16_merge_u4_verify/hw/unittest/slr_mem_bus --sim vcs --timeout 300
+  --path build/experiment-archive/build_mxu16_merge_u4_verify/hw/unittest/slr_mem_bus --sim vcs --timeout 300
 ```
 
 Use the same command shape for `slr_stream` and `tmem_read_req_reservation`. For reservation runs export `TB_SLR_ENABLE=0|1 TB_DATA_SIZE=32|64 NDEBUG=0` before invoking the runner.

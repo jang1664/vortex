@@ -15,7 +15,7 @@ All four independent VCS suites returned deterministic `status: pass` from
 
 - Source HEAD: `5d8fc73fbaae62cb5cebbd3320b5e8dc5ef0836e`, plus the current
   uncommitted SLR pipeline implementation.
-- Dedicated build: `build_slr_compat` (not the primary blackbox build).
+- Dedicated build: `build/experiment-archive/build_slr_compat` (not the primary blackbox build).
 - Config: `configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh`:
   TH16, MXU16, W4, sixteen 32-byte TMEM arrays, eight HBM DMA channels.
 - Additional RTL define: `GEMM_SLR_PIPELINE`.
@@ -60,13 +60,13 @@ Backend markers:
 - `TMEM_DMA_PHASE7_SKEW_PRIORITY_PASS ... late_high_blocks_prepared_fallback=1 no_partial_cfg=1`
 - `TMEM_DMA_EXACT_COMPLETION_PASS dma_done_pulses=41 store_done_pulses=17 notify_removed=1`
 
-Logs are under `build_slr_compat/hw/unittest/<suite>/logs/compile.log` and
+Logs are under `build/experiment-archive/build_slr_compat/hw/unittest/<suite>/logs/compile.log` and
 `logs/sim.log`. The four runner invocations used this pattern from the
 configured build, after sourcing the config and appending the SLR define:
 
 ```sh
 python3 ../tools/verify_rtl.py unittest \
-  --path /home/jaeyongjang/project.local/vortex_fpint/build_slr_compat/hw/unittest/gemm_unit_v2 \
+  --path /home/jaeyongjang/project.local/vortex_fpint/build/experiment-archive/build_slr_compat/hw/unittest/gemm_unit_v2 \
   --sim vcs --timeout 600
 ```
 
@@ -93,7 +93,7 @@ No synthesis or PnR was launched by this compatibility verification step.
 
 Date: 2026-09-05 16:00 KST. Both cases passed numerical reference checking
 through `ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --debug 3` from
-`build_slr_compat`. This was that build's first xrt-vcs image, compiled fresh
+`build/experiment-archive/build_slr_compat`. This was that build's first xrt-vcs image, compiled fresh
 with the SLR pipeline and early Weight RAM-slot release implementation.
 
 | Case | Arguments | Status | Host PERF cycles |
@@ -122,7 +122,7 @@ complete RTL logs. First-case build plus run took 87.8 seconds; the second
 case took 5.7 seconds on the same image. These single-sample cycle values
 are observations, not an MXU16 2% performance acceptance claim.
 
-Artifacts are retained in `build_slr_compat/compat-integration-results/`:
+Artifacts are retained in `build/experiment-archive/build_slr_compat/compat-integration-results/`:
 `summary.json`, per-case `.wrapper.log`, `.app.log`, and `.simv.log.gz`.
 
 | Artifact | SHA-256 |
@@ -166,12 +166,12 @@ is 8–9 cycles (mean 8.0833); the preceding early-release-only image required
 
 The build was reconfigured after sourcing the MXU16 config. The preceding
 image and its entire `simv.daidir` were preserved under
-`build_slr_compat/compat-integration-results/image/`; the previous target was
+`build/experiment-archive/build_slr_compat/compat-integration-results/image/`; the previous target was
 renamed `simv.pre_bypass` so the final `simv` target was rebuilt. VCS may reuse
 unchanged compiled module archives; the full final executable/shared-object
 hash set is retained. The old logs and results were not overwritten.
 
-New artifacts: `build_slr_compat/compat-integration-bypass/summary.json` and
+New artifacts: `build/experiment-archive/build_slr_compat/compat-integration-bypass/summary.json` and
 the two sets of wrapper/application/compressed RTL logs. Explicit MXU16/W4
 compiler defines and `MXU_KT=16 MXU_NT=16` application banners were checked
 again. The helper uses `tools/verify_rtl.py` deterministic checks and reports
@@ -194,7 +194,7 @@ Date: 2026-09-05 18:41 KST. The final source separates MXU input control from
 data and preserves the input data TX/RX FFs against DSP register absorption.
 No RTL edits were made by this verification step.
 
-- Fresh independent configured build: `build_slr_final_mxu16_verify`.
+- Fresh independent configured build: `build/experiment-archive/build_slr_final_mxu16_verify`.
 - Sourced `configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh`, then
   appended `-DGEMM_SLR_PIPELINE`; configured XLEN64 using the standard
   `../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex`.
@@ -210,12 +210,12 @@ No RTL edits were made by this verification step.
   and `VX_gemm_unit_v2 unittest PASSED`.
 - Unit `simv` SHA256:
   `9b6ee9b33555237bd36c3a7989297823c59a2f2dc940686283ffe865de0fd3b7`.
-- Evidence: `build_slr_final_mxu16_verify/gemm-unit-v2-verification.json` and
-  `build_slr_final_mxu16_verify/hw/unittest/gemm_unit_v2/logs/compile.log`
+- Evidence: `build/experiment-archive/build_slr_final_mxu16_verify/gemm-unit-v2-verification.json` and
+  `build/experiment-archive/build_slr_final_mxu16_verify/hw/unittest/gemm_unit_v2/logs/compile.log`
   / `logs/sim.log`. All preceding builds and images remain preserved.
 
 The primary MXU32 version of the same final-source unit suite also passes in
-`build_slr_final_verify`, with identical RAW/write-stall event counts and unit
+`build/experiment-archive/build_slr_final_verify`, with identical RAW/write-stall event counts and unit
 image SHA256
 `8b358a6b14f7850d6feb1c3c75686ba130e357588aff5b1ff088db946c54a225`.
 Its full-system performance matrix is reported in `simulation-results.md`.
@@ -231,7 +231,7 @@ Date: 2026-09-05 20:04 KST. The final source additionally marks ten existing
 resettable crossing-register declarations with `EXTRACT_RESET="yes"`.
 Sequential assignments, reset behavior and pipeline depth are unchanged.
 
-- Fresh configured build: `build_slr_reset_mxu16_verify`.
+- Fresh configured build: `build/experiment-archive/build_slr_reset_mxu16_verify`.
 - Sourced the same TH16/MXU16/W4 config and appended
   `-DGEMM_SLR_PIPELINE` before standard XLEN64 configuration.
 - Full `gemm_unit_v2` VCS suite through `tools/verify_rtl.py`: **PASS**.
@@ -242,7 +242,7 @@ Sequential assignments, reset behavior and pipeline depth are unchanged.
   rows=5 qdir=row write_stalls=2 writes=10`.
 - Unit image SHA256:
   `676edb0b88c371d2fb4aeef7fce8d747ddde024841a5b982bc829639ccb6d3eb`.
-- Evidence: `build_slr_reset_mxu16_verify/gemm-unit-verification.json`,
+- Evidence: `build/experiment-archive/build_slr_reset_mxu16_verify/gemm-unit-verification.json`,
   plus `hw/unittest/gemm_unit_v2/logs/compile.log` and `logs/sim.log` under
   that build. No attribute-related VCS warning or compilation failure was found.
 

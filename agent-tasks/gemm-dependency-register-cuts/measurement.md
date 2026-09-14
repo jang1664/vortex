@@ -93,9 +93,9 @@ accumulation-mode selector. Coverage claims should retain those exact meanings.
 
 ## Current evidence
 
-Original baseline completed 14/14 checks in `build_gemm_depcuts_original`.
-Final-code OFF/ON builds are `build_gemm_depcuts_cuts0` and
-`build_gemm_depcuts_cuts1`; each completed all seven cases twice.
+Original baseline completed 14/14 checks in `build/experiment-archive/build_gemm_depcuts_original`.
+Final-code OFF/ON builds are `build/experiment-archive/build_gemm_depcuts_cuts0` and
+`build/experiment-archive/build_gemm_depcuts_cuts1`; each completed all seven cases twice.
 Raw wrapper/application logs, compressed simulation logs, simulator hashes,
 config/source manifest, exact arguments, and counter records are retained under
 `perf3-evidence/`. Final-code runs additionally record identical-input host

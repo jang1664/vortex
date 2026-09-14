@@ -32,14 +32,14 @@ TH32/t4 config. Raw logs are ignored build artifacts, not source files.
 
 | Suite | Result | Evidence |
 |---|---|---|
-| `test_slr_floorplan.tcl` | PASS | `build_four_config_pnr_artifacts/robust-v2-test_slr_floorplan.tcl.log` |
-| `test_lifted_owner.tcl` | PASS, 25 checks | `build_four_config_pnr_artifacts/robust-v2-test_lifted_owner.tcl.log` |
-| `test_homogeneous_anchors.tcl` | PASS, 89 checks | `build_four_config_pnr_artifacts/robust-v2-test_homogeneous_anchors.tcl.log` |
-| `test_post_opt_hook.tcl` | PASS, 59 checks | `build_four_config_pnr_artifacts/robust-v2-test_post_opt_hook.tcl.log` |
-| `test_post_place_hook.tcl` | PASS, 24 checks | `build_four_config_pnr_artifacts/robust-v2-test_post_place_hook.tcl.log` |
-| `test_post_place_slr_objects.tcl` | PASS, 22 checks | `build_four_config_pnr_artifacts/robust-v2-test_post_place_slr_objects.tcl.log` |
-| `test_post_place_slr_snapshot.tcl` | PASS, 13 checks | `build_four_config_pnr_artifacts/robust-v2-test_post_place_slr_snapshot.tcl.log` |
-| `test_gen_vitis_ini.py` | PASS, 12 tests (final source) | `build_slr_hook_check/hook-python-v2.log` |
+| `test_slr_floorplan.tcl` | PASS | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_slr_floorplan.tcl.log` |
+| `test_lifted_owner.tcl` | PASS, 25 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_lifted_owner.tcl.log` |
+| `test_homogeneous_anchors.tcl` | PASS, 89 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_homogeneous_anchors.tcl.log` |
+| `test_post_opt_hook.tcl` | PASS, 59 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_post_opt_hook.tcl.log` |
+| `test_post_place_hook.tcl` | PASS, 24 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_post_place_hook.tcl.log` |
+| `test_post_place_slr_objects.tcl` | PASS, 22 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_post_place_slr_objects.tcl.log` |
+| `test_post_place_slr_snapshot.tcl` | PASS, 13 checks | `build/pnr/build_four_config_pnr_artifacts/robust-v2-test_post_place_slr_snapshot.tcl.log` |
+| `test_gen_vitis_ini.py` | PASS, 12 tests (final source) | `build/experiment-archive/build_slr_hook_check/hook-python-v2.log` |
 
 Coverage includes the 4/8/16-array profiles with slash, dot and mixed spelling;
 actual failing synthesized cell spelling; renamed/replicated leaves; malformed

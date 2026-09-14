@@ -168,7 +168,7 @@ The replacement scanner differs only by guarding the expensive slot regex
 with its required literal `" SLOT_"`; failure and timestamp checks remain
 unchanged. The system-verification worker confirmed exact full-metric equality
 on 41 MB and 82 MB retained traces and on six crafted failures including line
-numbers (`build_mxu16_merge_system_artifacts/scanner-equivalence.json`). The
+numbers (`build/experiment-archive/build_mxu16_merge_system_artifacts/scanner-equivalence.json`). The
 frozen external helper copy has SHA256
 `edda3a2e188a31bd1ada14e36cc44c57690847dc85ad61242fb1024f7dfd0eb7`.
 It is used for the resumed incoming runs and the not-yet-started MXU16 SLR

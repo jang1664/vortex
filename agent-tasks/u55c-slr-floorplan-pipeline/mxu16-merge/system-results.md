@@ -9,7 +9,7 @@ Started 2026-09-06 22:55 KST after the U4 verification gate.
 - The digest is SHA-256 of the sorted `sha256sum` output for all 334 paths from
   `rg --files hw/rtl`; it includes the new common transport modules and excludes
   the deleted old DMA bridge. Individual hashes are retained in
-  `build_mxu16_merge_system_artifacts/rtl-source.sha256`.
+  `build/experiment-archive/build_mxu16_merge_system_artifacts/rtl-source.sha256`.
 - Each candidate configuration uses its own configured XLEN64 build with
   `/opt/vortex` and prefix `/home/jaeyongjang/tools/vortex`.
 - Tests source the selected profile and use `ci/run_black.sh xrt-vcs-sim`,
@@ -93,7 +93,7 @@ The same source profile is used on both sides. The device kernel hash also
 matches exactly: `15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177`.
 Host-cycle sample variation is retained in full; it must not be interpreted as
 a deterministic 75-cycle RTL delay. Raw evidence and detailed per-run binary
-hashes are under `build_mxu16_merge_system_artifacts/primary/`.
+hashes are under `build/experiment-archive/build_mxu16_merge_system_artifacts/primary/`.
 
 ## Secondary local results: MXU32/W4
 
@@ -112,7 +112,7 @@ not MXU16 cycle counts. These tables use M4/K256/N256 with QBLK32.
 | C2 | 1 / 0 | 6473, 6472, 6472 | 6473 / 6472 | -0.015% |
 | C2 | 1 / 1 | 6472, 6474, 6474 | 6473 / 6474 | +0.015% |
 
-Raw evidence is in `build_mxu16_merge_system_artifacts/mxu32_local_off/` and
+Raw evidence is in `build/experiment-archive/build_mxu16_merge_system_artifacts/mxu32_local_off/` and
 `mxu32_local_c2/`. Exact expanded profile snapshots are retained alongside the
 temporary `.sh` configurations; production profiles are unchanged.
 
@@ -178,7 +178,7 @@ for a 41.4 MB pre-merge current overlap trace and an 82.1 MB incoming M4 trace.
 A crafted six-marker failure trace also preserves all failure records and
 original line numbers. Old/new parsing times were 20.45/2.38 seconds and
 37.75/2.90 seconds respectively. The proof is retained in
-`build_mxu16_merge_system_artifacts/scanner-equivalence.json`. This accelerates
+`build/experiment-archive/build_mxu16_merge_system_artifacts/scanner-equivalence.json`. This accelerates
 host log processing only; it does not change simulated cycles or RTL.
 
 Primary internal medians expose real latency costs despite passing host gates:

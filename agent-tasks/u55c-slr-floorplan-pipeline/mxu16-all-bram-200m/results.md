@@ -45,7 +45,7 @@ returned zero and the xclbin was generated.
 ## Evidence locations
 
 Build root:
-`build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1`
+`build/pnr/build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1`
 
 Output beneath that root:
 `hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw`
@@ -59,7 +59,7 @@ Output beneath that root:
 - Same directory, `hw_bb_locked_route_status.rpt`: zero routing errors.
 - Same directory, `runme.log:1351`, `:1643`, `:2255`: exact FF-pair check passes.
 - Runner state/log and source manifest:
-  `build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/`.
+  `build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/`.
 
 The 300 MHz attempt failed with routing overlaps, whereas this 200 MHz attempt
 legally routed and produced a 103.2 MHz binary. No further run was launched.

@@ -25,9 +25,9 @@ monitoring:
   user_summary: brief stage and terminal result per config every hour
   completion_requires: terminal build status, artifact existence, requested clock outcome
 evidence:
-  t4: build_timing_cuts_pnr_artifacts/th32_t4_slr_v3/state.json
-  t8: build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/state.json
-  hbm4_tmem8: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/state.json
+  t4: build/pnr/build_timing_cuts_pnr_artifacts/th32_t4_slr_v3/state.json
+  t8: build/pnr/build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/state.json
+  hbm4_tmem8: build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/state.json
 terminal_results:
   th32_hbm4_tmem8:
     finished: '2026-09-08 13:46'
@@ -39,7 +39,7 @@ terminal_results:
     conflicted_nets:
       - level0_i/ulp/hmss_0/inst/path_12/slice0_12/inst/w15.w_multi/triple_slr.fwd.slr_middle/Q[122]
       - level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_input_req_reservation/u_slr/u_response/g_slr.u_link/u_tx/D[243]
-    evidence_log: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/build.log
+    evidence_log: build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/build.log
     note: One residual overlap still invalidates routing. This does not establish timing closure or guarantee an easy retry. No DCP inspection or retry performed.
   th32_t8:
     finished: '2026-09-08 10:21'
@@ -49,7 +49,7 @@ terminal_results:
     node_overlaps: 4408
     error: 'VPL 35-2: Design is not legally routed; VPL 18-1000: partially-conflicted nets'
     representative_conflicted_hierarchy: dcache/g_cache_wrap[0].cache_wrap/g_bypass.cache_bypass/mem_bus_out_arb/req_arb
-    evidence_log: build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/build.log
+    evidence_log: build/pnr/build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/build.log
     note: Representative first-ten conflicted nets do not establish the complete root cause. No retry or implementation changes performed.
   th32_t4:
     finished: '2026-09-08 06:54'
@@ -62,7 +62,7 @@ terminal_results:
     final_whs_ns: 0.004
     final_ths_ns: 0.000
     routing_errors: 0
-    evidence_root: build_timing_cuts_pnr_th32_t4_slr_v3/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v3_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+    evidence_root: build/pnr/build_timing_cuts_pnr_th32_t4_slr_v3/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v3_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
     frequency_report: bin/vortex_afu.xclbin.info
     timing_report: _x/link/vivado/vpl/prj/prj.runs/impl_1/hw_bb_locked_timing_summary_postroute_physopted.rpt
 pitfalls:

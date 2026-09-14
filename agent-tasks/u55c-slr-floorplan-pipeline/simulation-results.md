@@ -20,15 +20,15 @@ No synthesis or PnR acceptance is implied.
 
 ### Build and functional evidence
 
-- Configured build: `build_slr_verify`, sourced primary TH16/MXU32/W4 config
+- Configured build: `build/experiment-archive/build_slr_verify`, sourced primary TH16/MXU32/W4 config
   with `GEMM_SLR_PIPELINE`; eight response slots remain unchanged.
 - Fresh candidate `simv` SHA256:
   `4aaa1f369aa1490612211caeeb1dfb9309be7a7973a4aafb19e24890fe535e24`.
   Source compiled and linked at 15:44, after initial SLR RTL implementation.
   Compiled RTL shared object `simv.daidir/_892155_archive_1.so` SHA256:
   `65dae522cc0e62db44665ef5e3fc8c6d711af15627b6c17ef92380276760ae96`.
-- Invocation: `measure_gemm.py --build build_slr_verify --out
-  build_slr_verify/gemm-results --repeat 3 --timeout 1800`, with vendor-only
+- Invocation: `measure_gemm.py --build build/experiment-archive/build_slr_verify --out
+  build/experiment-archive/build_slr_verify/gemm-results --repeat 3 --timeout 1800`, with vendor-only
   `SIMLIB_DIR` as in `baseline-results.md`.
 - All 12 blackbox launches pass numerical checking and deterministic
   return-code/fatal-marker checks; `gemm-results/summary.json` retains exact
@@ -46,7 +46,7 @@ configured build, using system GCC/G++:
 | `gemm_dma_slr_bridge` | PASS | Command, prepare, completion and status bridge focused suite |
 | `gemm_unit_v2`, SLR latency enabled | PASS | Full suite; `M3_D3_RAW_STALL_PASSED rows=3 qdir=row stalls=1 early=0 nominal=3 writes=6`; `M5_ACC_READ_WRITE_ARBITRATION_PASSED rows=5 qdir=row write_stalls=2 writes=10` |
 
-Deterministic JSON reports are `build_slr_verify/*-verification.json`;
+Deterministic JSON reports are `build/experiment-archive/build_slr_verify/*-verification.json`;
 individual compile/simulation logs are under each configured unittest's
 `logs/` directory. The existing `gemm_unit_v2` unit flow uses its default
 `FPU_FPNEW` numerical model; the whole-system blackbox uses the primary
@@ -85,7 +85,7 @@ The detailed comparison uses baseline and candidate `overlap_qcol-3` traces.
 Baseline raw trace:
 `/tmp/vortex-slr-baseline-5d8fc73f.4w9kmJ/results-w4/overlap_qcol-3.simv.log.gz`.
 Candidate raw trace:
-`build_slr_verify/gemm-results/overlap_qcol-3.simv.log.gz`.
+`build/experiment-archive/build_slr_verify/gemm-results/overlap_qcol-3.simv.log.gz`.
 
 The weight DMA's next descriptor is already queued before the repeated gap:
 
@@ -139,11 +139,11 @@ physical response RAM remains eight slots; no additional payload RAM is used.
   descriptors, out-of-order responses, held sink data/metadata, same-slot
   rewrite while the old payload is held, and correct ordered completion.
 - Existing `gemm_stream_dma_queue` suite: **PASS**. Both results come from
-  `tools/verify_rtl.py` in `build_slr_verify`. Queue-internal plain assertions
+  `tools/verify_rtl.py` in `build/experiment-archive/build_slr_verify`. Queue-internal plain assertions
   are enabled because they are guarded by `ifndef SYNTHESIS`; the test's
   `NDEBUG` define does not disable these assertions.
-- Fresh isolated full-system build: `build_slr_early_verify`.
-  The original `build_slr_verify` image and initial results are preserved.
+- Fresh isolated full-system build: `build/experiment-archive/build_slr_early_verify`.
+  The original `build/experiment-archive/build_slr_verify` image and initial results are preserved.
 - Accepted image `simv` SHA256:
   `ebde4858a4961b75d98a83cbb2958281fa58920d899ef46f9170c19ff9216186`.
   RTL shared object `_1203784_archive_1.so` SHA256:
@@ -151,7 +151,7 @@ physical response RAM remains eight slots; no additional payload RAM is used.
 - The kernel binary hash remains identical to the frozen baseline and initial
   candidate: `15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177`.
 - The same primary W4 matrix passes all **12/12** numerical/protocol checks.
-  Evidence: `build_slr_early_verify/gemm-results-early-release/summary.json`
+  Evidence: `build/experiment-archive/build_slr_early_verify/gemm-results-early-release/summary.json`
   and adjacent per-run logs. The measurement helper also records compiled
   shared-object and application binary hashes.
 
@@ -227,13 +227,13 @@ protected against later RAM-slot reuse.
 
 ### Accepted image and focused coverage
 
-- Fresh configured build: `build_slr_bypass_verify`; prior iteration builds
+- Fresh configured build: `build/experiment-archive/build_slr_bypass_verify`; prior iteration builds
   and full-system results are preserved.
 - `simv` SHA256:
   `dea4c8b2d64232df985696e6e3ae86dccf13f7519889d9e74251cda70b47d010`.
 - Compiled RTL `_1396267_archive_1.so` SHA256:
   `95f23356543ece967028459b7cbed18fd9c0da86756cfd5313d6e29b2b179fd1`.
-- Evidence: `build_slr_bypass_verify/gemm-results-bypass/summary.json` and
+- Evidence: `build/experiment-archive/build_slr_bypass_verify/gemm-results-bypass/summary.json` and
   adjacent logs; the same case order, three independent launches per case,
   primary config, W4, reference checks and tracing settings were used.
 - Generic `gemm_stream_dma_queue` regression: **PASS**.
@@ -246,7 +246,7 @@ protected against later RAM-slot reuse.
   transition, three held-fast-stage stall cycles, and 16 writes after sequence
   wrap**. Numerical payload, tags, final flags and completion are checked.
 - Deterministic focused-test JSON, compile logs and simulation logs are
-  copied into `build_slr_bypass_verify/unit-evidence/`, including separate
+  copied into `build/experiment-archive/build_slr_bypass_verify/unit-evidence/`, including separate
   `early-release-ordered.*` files for the final six-case test.
 
 ### Primary performance gate: PASS
@@ -314,7 +314,7 @@ response payload vector; a subsequent refinement will restrict preservation
 to the data bits so constant/unused tag fields are not unnecessarily retained.
 This result must not be mistaken for sign-off of that upcoming refinement.
 
-Fresh configured build `build_slr_tx_verify` used the unchanged primary W4
+Fresh configured build `build/experiment-archive/build_slr_tx_verify` used the unchanged primary W4
 config and the same measurement matrix/settings. `slr_stream`, `slr_mem_bus`
 and `gemm_dma_slr_bridge` all pass deterministic VCS checks. All **12/12**
 full-system runs pass numerical/protocol checks and slot-event/final-summary
@@ -337,8 +337,8 @@ the frozen 563–568 cycles. No attribute-related VCS warning or compilation
 error was found in the focused or integrated compile logs. Simulation does
 not demonstrate whether synthesis retains or places the requested FFs.
 
-- Evidence: `build_slr_tx_verify/gemm-results-tx-preserve/summary.json`, its
-  adjacent per-run logs, and `build_slr_tx_verify/*-verification.json`.
+- Evidence: `build/experiment-archive/build_slr_tx_verify/gemm-results-tx-preserve/summary.json`, its
+  adjacent per-run logs, and `build/experiment-archive/build_slr_tx_verify/*-verification.json`.
 - One accepted `simv` SHA256 for the entire matrix:
   `67e0397ec4a81a5ee602816d36b736413837655ac7f46b5856a013c85ff72d95`.
 - Compiled RTL `_2878242_archive_1.so` SHA256:
@@ -358,7 +358,7 @@ remains off elsewhere. Handshake equations and pipeline stage counts are
 unchanged; simulation does not establish whether synthesis/Laguna mapping
 honors this preservation request.
 
-Fresh configured `build_slr_tx_data_verify` sourced the primary W4 config,
+Fresh configured `build/experiment-archive/build_slr_tx_data_verify` sourced the primary W4 config,
 ran `../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex`,
 and used the same vendor simulation library and measurement settings. The
 whole-payload-preservation build remains untouched.
@@ -400,9 +400,9 @@ metrics are retained in the JSON, including their long consumer-held slots.
 
 ### Final image and evidence
 
-- `build_slr_tx_data_verify/gemm-results-tx-data-preserve/summary.json` and
+- `build/experiment-archive/build_slr_tx_data_verify/gemm-results-tx-data-preserve/summary.json` and
   adjacent per-run application, wrapper and compressed RTL logs.
-- Focused reports: `build_slr_tx_data_verify/*-verification.json`, with
+- Focused reports: `build/experiment-archive/build_slr_tx_data_verify/*-verification.json`, with
   individual unittest compile/simulation logs under that configured build.
 - One `simv` SHA256 across all twelve runs:
   `afa3465ffd89c9d3cc67dccef796b1373c900470b186275e632d29e21cdb6cce`.
@@ -427,8 +427,8 @@ preservation change.
 
 ### Fresh builds and ACC compatibility
 
-- Primary: `build_slr_final_verify`, sourced TH16/MXU32/W4 config.
-- MXU16 unit compatibility: `build_slr_final_mxu16_verify`, sourced the
+- Primary: `build/experiment-archive/build_slr_final_verify`, sourced TH16/MXU32/W4 config.
+- MXU16 unit compatibility: `build/experiment-archive/build_slr_final_mxu16_verify`, sourced the
   MXU16/W4 config with `GEMM_SLR_PIPELINE` explicitly appended.
 - Both builds were independently configured for XLEN64 with the standard
   configure command before verification. Prior images/results are preserved.
@@ -475,7 +475,7 @@ allocation-to-release latency (mean 8.06055). All twelve runs report
 ### Final hardware-rerun source image
 
 - Full-system evidence:
-  `build_slr_final_verify/gemm-results-final/summary.json` and adjacent
+  `build/experiment-archive/build_slr_final_verify/gemm-results-final/summary.json` and adjacent
   per-run wrapper/application/compressed RTL logs.
 - One `simv` image throughout the final matrix:
   `d4422bdf60fb4c38af50b47d9a8c040cb6e6e15b8e3c51688a2270c11ceed0d2`.
@@ -504,8 +504,8 @@ simulation cannot establish that mapping.
 
 ### Focused and compatibility gates
 
-Fresh configured builds are `build_slr_reset_verify` (primary TH16/MXU32/W4)
-and `build_slr_reset_mxu16_verify` (TH16/MXU16/W4 with
+Fresh configured builds are `build/experiment-archive/build_slr_reset_verify` (primary TH16/MXU32/W4)
+and `build/experiment-archive/build_slr_reset_mxu16_verify` (TH16/MXU16/W4 with
 `-DGEMM_SLR_PIPELINE` explicitly appended). Both sourced their corresponding
 config before XLEN64 configuration. No previous image or results were replaced.
 All tests used `tools/verify_rtl.py unittest --sim vcs --timeout 1800` and
@@ -553,7 +553,7 @@ allocation-to-release is 8–12 cycles (mean 8.06055). All twelve runs report
 ### Frozen iteration-seven artifacts
 
 - Full-system summary and per-run application/wrapper/compressed RTL logs:
-  `build_slr_reset_verify/gemm-results-reset/summary.json`.
+  `build/experiment-archive/build_slr_reset_verify/gemm-results-reset/summary.json`.
 - One `simv` SHA256 throughout the matrix:
   `6e41fda0990eb57f7aedfc8ee38e1169fe6a27d1aa8e057048271111c85a1694`.
 - Compiled RTL `_3975316_archive_1.so` SHA256:

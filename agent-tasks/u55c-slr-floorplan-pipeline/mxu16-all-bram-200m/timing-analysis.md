@@ -335,9 +335,9 @@ performed as part of this analysis.
 ## Evidence roots
 
 Original implementation directory:
-`build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1`
+`build/pnr/build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1`
 
 Additional read-only reports:
-`build_timing_cuts_pnr_artifacts/mxu16_200m_timing_analysis/`.
+`build/pnr/build_timing_cuts_pnr_artifacts/mxu16_200m_timing_analysis/`.
 
 Reproduction scripts: `inspect-timing.tcl` and `extract_paths.py` in this task.

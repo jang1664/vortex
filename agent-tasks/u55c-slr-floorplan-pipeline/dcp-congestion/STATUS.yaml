@@ -6,7 +6,7 @@ scope:
   run_implementation: false
   write_checkpoint: false
   objective: Identify exact conflicting physical resources, endpoint placements and floorplan constraints; assess possible floorplan remedies.
-evidence_directory: build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis
+evidence_directory: build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis
 pitfalls:
   - Overall SLL utilization does not establish local routability.
   - Architectural SLR ownership must be distinguished from actual optimized endpoint placements.

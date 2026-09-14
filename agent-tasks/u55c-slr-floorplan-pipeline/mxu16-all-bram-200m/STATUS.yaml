@@ -11,7 +11,7 @@ finished: "2026-09-11 03:41:54 KST"
 returncode: 0
 achieved_frequency_mhz: 103.2
 results: results.md
-state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/state.json
+state_file: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_200m_spread_v1/state.json
 log:
   - timestamp: "2026-09-11 03:43 KST"
     status: complete

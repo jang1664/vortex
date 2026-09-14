@@ -4,13 +4,13 @@ Completed: 2026-09-06 22:39 KST. U2 verification gate passed for the supported c
 
 ## Environment and scope
 
-- Configured build: `build_mxu16_merge_u2_verify`.
+- Configured build: `build/experiment-archive/build_mxu16_merge_u2_verify`.
 - Configure command: `../configure --xlen=64 --tooldir=/opt/vortex --prefix="$HOME/tools/vortex"`.
 - Simulator: VCS W-2024.09-SP1; host compilers `/usr/bin/gcc` and `/usr/bin/g++`.
 - Every run sources a repository configuration before invoking `tools/verify_rtl.py unittest --sim vcs`.
 - Compile-time parameters are exported environment variables. The runner's `--params` only affects its run command, not its initial compilation.
 - `MAKEFLAGS=-B` prevents stale executable reuse when test parameters change.
-- Raw logs are under `build_mxu16_merge_u2_verify/verification-results/`; generated artifacts are not committed.
+- Raw logs are under `build/experiment-archive/build_mxu16_merge_u2_verify/verification-results/`; generated artifacts are not committed.
 - This document records U2 only. It does not establish U3/U4 transport compatibility, full-system performance, synthesis, or physical timing.
 
 ## Queue characterization and extensions
@@ -79,7 +79,7 @@ Run from the repository root after configuring the build above:
 source configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 export CC=/usr/bin/gcc CXX=/usr/bin/g++ MAKEFLAGS=-B
 python3 tools/verify_rtl.py unittest \
-  --path build_mxu16_merge_u2_verify/hw/unittest/gemm_stream_dma_queue \
+  --path build/experiment-archive/build_mxu16_merge_u2_verify/hw/unittest/gemm_stream_dma_queue \
   --sim vcs --timeout 300
 ```
 

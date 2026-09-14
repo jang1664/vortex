@@ -27,5 +27,5 @@ physical FFs are expected to survive. Final utilization and separation must
 be checked in the new source synthesis, not inferred from this RTL estimate.
 
 Seven existing/extended Tcl hook regression suites pass with the current
-source; logs are in ignored `build_slr_hook_check/mxu-preserve-hooks/`.
+source; logs are in ignored `build/experiment-archive/build_slr_hook_check/mxu-preserve-hooks/`.
 Directed VCS, end-to-end GEMM and physical results are recorded separately.

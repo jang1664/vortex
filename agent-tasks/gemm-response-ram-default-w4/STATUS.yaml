@@ -31,7 +31,7 @@ verification:
       W_LMEM_DMA_CMD_BEATS=8 where applicable.
   xrt_vcs_sim_w4:
     status: pass
-    build: build_gemm_response_ram_w4
+    build: build/experiment-archive/build_gemm_response_ram_w4
     config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
     qcol_cycles: 5873
     qrow_cycles: 5873

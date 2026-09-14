@@ -123,7 +123,7 @@ claim is made. As requested, stop here without further fixes or retries.
 Changes remain uncommitted and no board was programmed.
 
 Artifact directory:
-`build_slr_hw/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v7_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/`.
+`build/pnr/build_slr_hw/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v7_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/`.
 Frequency: `bin/vortex_afu.xclbin.info:54`.
 Final timing and route/bus-skew reports: `_x/link/vivado/vpl/prj/prj.runs/impl_1/`.
 The build's optional copies of `kernel_util_synthed.rpt` and

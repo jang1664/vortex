@@ -29,14 +29,14 @@ log:
     result: Renamed-config integration test passed in 8.884 seconds; shell syntax and git diff checks passed. Both newly named build roots have generated 100 MHz ini files with unchanged directives and hooks. No RTL behavior changes or hardware builds.
     learned: Historical a2/b2 verification directories and log entries remain intact as evidence; current launch commands use uram/bram exclusively.
 artifacts:
-  - build_tmem_exploration_verify_uram/ini_prepare.log
-  - build_tmem_exploration_verify_bram/ini_prepare.log
-  - build_tmem_placement_exploration/ini_tests.log
-  - build_tmem_exploration_verify_a2/verification.json
-  - build_tmem_exploration_verify_b2/verification.json
-  - build_tmem_exploration_verify_default/verification.json
-  - build_tmem_exploration_verify_a2/ini_prepare.log
-  - build_tmem_exploration_verify_b2/ini_prepare.log
+  - build/experiment-archive/build_tmem_exploration_verify_uram/ini_prepare.log
+  - build/experiment-archive/build_tmem_exploration_verify_bram/ini_prepare.log
+  - build/experiment-archive/build_tmem_placement_exploration/ini_tests.log
+  - build/experiment-archive/build_tmem_exploration_verify_a2/verification.json
+  - build/experiment-archive/build_tmem_exploration_verify_b2/verification.json
+  - build/experiment-archive/build_tmem_exploration_verify_default/verification.json
+  - build/experiment-archive/build_tmem_exploration_verify_a2/ini_prepare.log
+  - build/experiment-archive/build_tmem_exploration_verify_b2/ini_prepare.log
 pitfalls:
   - Defining GEMM_SLR_PIPELINE=0 still enables its ifdef paths.
   - Do not infer physical RAM mapping or PnR closure from behavioral simulation.

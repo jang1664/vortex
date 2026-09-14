@@ -34,7 +34,7 @@ TH32/t4 config. No Vivado synthesis or implementation is invoked by fixtures.
 | tests/test_gen_vitis_ini.py | PASS: 12 tests, including all four sourced configs, strict exports and actual U55C INI connectivity/hook generation |
 | tests/test_parse_floorplan_util.py | PASS: 3 parser tests |
 
-Logs are in `build_four_config_pnr_artifacts/`. Expected errors in negative
+Logs are in `build/pnr/build_four_config_pnr_artifacts/`. Expected errors in negative
 Tcl fixtures are caught assertions, not failures of the test suite.
 
 Python iteration 1 loaded an obsolete duplicate-definition expectation before

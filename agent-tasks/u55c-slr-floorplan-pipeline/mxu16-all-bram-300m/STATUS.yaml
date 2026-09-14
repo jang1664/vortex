@@ -81,8 +81,8 @@ physical_run_v2:
   launched: "2026-09-10 15:38 KST"
   runner_pid: 3066604
   postfix: spread_v2
-  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/state.json
-  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/build.log
+  state_file: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/state.json
+  log: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/build.log
 previous_run_log:
   - timestamp: "2026-09-10 14:51 KST"
     status: failed
@@ -120,8 +120,8 @@ previous_run_log:
 physical_run:
   runner_pid: 141988
   postfix: spread_v1
-  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/state.json
-  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/build.log
+  state_file: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/state.json
+  log: build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v1/build.log
 pitfalls:
   - CLOCK_FREQ_HZ is historically named but expressed in MHz in this flow.
   - Config sourcing overrides the wrapper's initial100MHz default.

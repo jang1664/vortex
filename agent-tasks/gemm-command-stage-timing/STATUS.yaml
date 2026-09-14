@@ -51,7 +51,7 @@ iterations:
         partial M tile and multiple output N microtiles.
     xrt_vcs_sim:
       status: pass
-      build: build_gemm_cmd_stage_i2
+      build: build/experiment-archive/build_gemm_cmd_stage_i2
       baseline_cycles: 5873
       qcol_cycles: 5874
       qrow_cycles: 5874
@@ -61,7 +61,7 @@ verification:
   focused_vcs: pass
   xrt_vcs_sim:
     status: pass
-    build: build_gemm_cmd_stage
+    build: build/experiment-archive/build_gemm_cmd_stage
     baseline_cycles: 5873
     qcol_cycles: 5873
     qcol_delta_percent: 0.0

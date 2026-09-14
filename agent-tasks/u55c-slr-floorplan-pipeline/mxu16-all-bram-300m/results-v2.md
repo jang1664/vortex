@@ -67,7 +67,7 @@ an intermediate target would be needed to continue the search.
 ## Evidence
 
 Build root:
-`build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2`
+`build/pnr/build_timing_cuts_pnr_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2`
 
 Output beneath that root:
 `hw/syn/xilinx/xrt/improve_th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw`
@@ -78,6 +78,6 @@ Implementation logs and reports beneath output:
 - `runme.log`: actual hook execution and routing failure.
 - `hw_bb_locked_timing_summary_placed.rpt`: placed timing only.
 - `level0_wrapper_routed_error.dcp`: failure checkpoint, not reused or loaded.
-- Runner state/log: `build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/`.
+- Runner state/log: `build/pnr/build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_300m_spread_v2/`.
 
 Monitoring ended after detecting termination. No further build was launched.

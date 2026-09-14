@@ -52,7 +52,7 @@ All paths below are relative to the repository root.
 Successful TH32/t4 artifact:
 
 ```text
-build_timing_cuts_pnr_th32_t4_slr_v3/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v3_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
+build/pnr/build_timing_cuts_pnr_th32_t4_slr_v3/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_t4_bigmem_slr_v3_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin
 ```
 
 Under that same output root:
@@ -64,9 +64,9 @@ Under that same output root:
 Each evidence directory contains `build.log`, terminal `state.json`, and source hashes in `sources.json`:
 
 ```text
-build_timing_cuts_pnr_artifacts/th32_t4_slr_v3/
-build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/
-build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/
+build/pnr/build_timing_cuts_pnr_artifacts/th32_t4_slr_v3/
+build/pnr/build_timing_cuts_pnr_artifacts/th32_t8_slr_v3/
+build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_slr_v3/
 ```
 
 No new exact-config simulation pass is claimed by this physical run task. All outputs were preserved for subsequent analysis.

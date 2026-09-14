@@ -38,8 +38,8 @@ Each build's `perf3-evidence/manifest.json` contains exact config/RTL hashes,
 arguments, results, application/kernel hashes and performance counters.
 Per-case `.wrapper.log` and `.simv.log.gz` retain raw output and assertion checks.
 
-- `build_gemm_depcuts_m16_t8/perf3-evidence/`
-- `build_gemm_depcuts_m16_t16/perf3-evidence/`
+- `build/experiment-archive/build_gemm_depcuts_m16_t8/perf3-evidence/`
+- `build/experiment-archive/build_gemm_depcuts_m16_t16/perf3-evidence/`
 
 The task launcher reuses the previous verified snapshot/blackbox harness:
 

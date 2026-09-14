@@ -20,7 +20,7 @@ iterations:
     root_cause: none
     fix_applied: none
     lesson: Four round-trip credits with local registered acknowledgment lookahead sustain one beat per cycle.
-    evidence: build_slr_verify/slr-stream-verification.json
+    evidence: build/experiment-archive/build_slr_verify/slr-stream-verification.json
   - feature: initial_complete_slr_pipeline
     iteration: 1
     status: sim_fail
@@ -30,7 +30,7 @@ iterations:
     root_cause: Weight source-to-writer latency grew from 7 to 10 cycles; eight-slot reuse interval grew from 8 to 11 cycles across 64 commands.
     fix_applied: Pending iteration 2; recycle response RAM slots after data is captured in the existing sink stage, without increasing RAM slot count.
     lesson: One-beat-per-cycle transport does not ensure full rate with eight finite response slots.
-    evidence: build_slr_verify/gemm-results/summary.json
+    evidence: build/experiment-archive/build_slr_verify/gemm-results/summary.json
   - feature: early_ram_slot_release
     iteration: 2
     status: sim_fail
@@ -40,7 +40,7 @@ iterations:
     root_cause: Ordered response still traverses RAM write then registered read; typical slot reuse interval is nine cycles.
     fix_applied: Pending iteration 3; optional single-beat ordered response bypass into the logical sink stage, retaining RAM fallback for out-of-order data.
     lesson: Releasing RAM after registered read removes only part of the added round trip; held stage metadata must remain independently owned.
-    evidence: build_slr_early_verify/gemm-results/summary.json
+    evidence: build/experiment-archive/build_slr_early_verify/gemm-results/summary.json
   - feature: ordered_response_stage_bypass
     iteration: 3
     status: pass
@@ -49,7 +49,7 @@ iterations:
     root_cause: Ordered responses need not wait for an additional RAM read before entering the held sink stage.
     fix_applied: Weight-only ordered response capture into a DATAW-bit FF plus selector; out-of-order RAM fallback and architectural sink completion retained.
     lesson: Separate physical RAM-address ownership from held sink-stage ownership; preserve metadata and check mixed fast/RAM turnover.
-    evidence: build_slr_bypass_verify/gemm-results-bypass/summary.json
+    evidence: build/experiment-archive/build_slr_bypass_verify/gemm-results-bypass/summary.json
     host_cycle_medians:
       smoke: {baseline: 5799, final: 5800}
       overlap: {baseline: 6474, final: 6552}
@@ -64,7 +64,7 @@ iterations:
     root_cause: Synthesis absorbed Weight TX FFs into BRAM output registers despite USER_SLL_REG.
     fix_applied: Optional TX-payload DONT_TOUCH attribute, enabled only on Weight response; no handshake or cycle equation changed.
     lesson: Preserve physical SLR endpoints explicitly when a producer RAM can absorb their register stage; do not unnecessarily preserve constant metadata.
-    evidence: build_slr_tx_verify/gemm-results-tx-preserve/summary.json
+    evidence: build/experiment-archive/build_slr_tx_verify/gemm-results-tx-preserve/summary.json
     host_cycle_medians:
       smoke: {baseline: 5799, current: 5874}
       overlap: {baseline: 6474, current: 6550}
@@ -79,7 +79,7 @@ iterations:
     root_cause: Constant response metadata must remain optimizable while actual Weight data FFs remain standalone.
     fix_applied: Per-bit TX preservation enabled only above the response-tag LSB slice, only for the Weight response.
     lesson: Preserve the functional hard-IP boundary data, not unused constant fields.
-    evidence: build_slr_tx_data_verify/gemm-results-tx-data-preserve/summary.json
+    evidence: build/experiment-archive/build_slr_tx_data_verify/gemm-results-tx-data-preserve/summary.json
     host_cycle_medians:
       smoke: {baseline: 5799, current: 5875}
       overlap: {baseline: 6474, current: 6547}
@@ -94,7 +94,7 @@ iterations:
     root_cause: Synthesis absorbed both MXU input-data transport stages into DSP input registers.
     fix_applied: Separate data/control banks; DONT_TOUCH only the existing input-data TX/RX FFs, no cycle change.
     lesson: Check every logical partition boundary, not only the surviving marked metadata registers.
-    evidence: build_slr_final_verify/gemm-results-final/summary.json
+    evidence: build/experiment-archive/build_slr_final_verify/gemm-results-final/summary.json
     host_cycle_medians:
       smoke: {baseline: 5799, current: 5876}
       overlap: {baseline: 6474, current: 6547}
@@ -110,7 +110,7 @@ iterations:
     root_cause: Synthesis mapped the Weight RX valid synchronous reset to a D-input LUT, breaking the direct FF pair.
     fix_applied: EXTRACT_RESET=yes only on existing explicitly resettable USER_SLL boundary declarations; no sequential equation or latency change.
     lesson: Dedicated endpoint FF preservation and dedicated reset-pin extraction are separate physical requirements.
-    evidence: build_slr_reset_verify/gemm-results-reset/summary.json
+    evidence: build/experiment-archive/build_slr_reset_verify/gemm-results-reset/summary.json
     host_cycle_medians:
       smoke: {baseline: 5799, current: 5801}
       overlap: {baseline: 6474, current: 6549}
@@ -120,11 +120,11 @@ iterations:
     focused: All three transport suites and both primary/MXU16 full RAW/write-stall suites pass.
 previous_physical_run:
   session_id: 87695
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v1
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v1.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v1.log
   flow: normal source-based make all; no DCP retry
   timing_status: not_reached
   result: post_init_failed
@@ -132,11 +132,11 @@ previous_physical_run:
   kernel_synthesis_resources: {lut: 447090, ff: 309789, bram_tiles: 403.5, uram: 156, dsp: 2273}
 previous_physical_run_v2:
   session_id: 41621
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v2
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v2.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v2.log
   flow: normal source-based make all after fresh configure; no DCP retry
   timing_status: not_reached
   result: post_init_failed
@@ -144,11 +144,11 @@ previous_physical_run_v2:
   kernel_synthesis_resources: {lut: 447647, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
 previous_physical_run_v3:
   session_id: 93051
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v3
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v3.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v3.log
   flow: normal source-based make all after fresh configure; no DCP retry
   timing_status: not_reached
   result: placement_failed
@@ -156,11 +156,11 @@ previous_physical_run_v3:
   kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
 previous_physical_run_v4:
   session_id: 34335
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v4
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v4.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v4.log
   flow: normal source-based make all after fresh configure; no DCP retry
   timing_status: not_reached
   result: post_opt_hook_failed
@@ -168,11 +168,11 @@ previous_physical_run_v4:
   kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
 previous_physical_run_v5:
   session_id: 80692
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v5
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v5.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v5.log
   flow: normal source-based make all after fresh configure; no DCP retry
   timing_status: not_reached
   result: place_failed
@@ -180,11 +180,11 @@ previous_physical_run_v5:
   kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
 previous_physical_run_v6:
   session_id: 12113
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v6
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v6.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v6.log
   flow: normal source-based make all after fresh primary config/configure; no DCP retry
   timing_status: placed_setup_fail_routed_pending
   result: post_place_hook_failed
@@ -192,11 +192,11 @@ previous_physical_run_v6:
   kernel_synthesis_resources: {lut: 447646, ff: 309020, bram_tiles: 403.5, uram: 156, dsp: 2273}
 physical_run:
   session_id: 79546
-  build: build_slr_hw
+  build: build/pnr/build_slr_hw
   prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_slr_v7
   platform: /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
   clock_mhz: 100
-  log: build_slr_hw/full-implementation-slr-v7.log
+  log: build/pnr/build_slr_hw/full-implementation-slr-v7.log
   flow: normal source-based make all after fresh primary config/configure; no DCP retry
   timing_status: setup_failed_at_100mhz_hold_passed
   result: xclbin_created_with_automatic_downclock
@@ -416,7 +416,7 @@ log:
       - Physical response RAM stays at eight addresses; existing logical sink stage has independent ownership.
       - Proposed bypass adds one DATAW-bit FF data bank (512 bits primary, 256 bits MXU16), not another queue entry or RAM slot.
       - Three full-SLR pblocks and post-place checks are implemented; fixture/hook/INI tests pass, but real Vivado evidence is pending.
-      - build_slr_hw configured and make dry-run passed; actual build will use explicit XPFM path to avoid duplicate platform-name search.
+      - build/pnr/build_slr_hw configured and make dry-run passed; actual build will use explicit XPFM path to avoid duplicate platform-name search.
   - timestamp: '2026-09-05 16:18'
     action: Started normal source-based full hardware implementation after final functional/performance gates passed.
     result: Primary 12/12 numerical passes and every individual host-cycle sample within 2 percent; final MXU16 odd-tail QCOL/QROW pass. Six-case queue bypass tests cover 19 consecutive fast captures and both fast/RAM transitions.

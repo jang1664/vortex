@@ -44,9 +44,9 @@ It refuses existing build/evidence directories, and does not retry from DCP.
 the actual 30-minute snapshots using `all-bram/status.py`.
 
 Artifacts use prefix
-`build_timing_cuts_pnr_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1`;
+`build/pnr/build_timing_cuts_pnr_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1`;
 runner state/logs are in
-`build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1`.
+`build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1`.
 
 ## Comparison criteria
 

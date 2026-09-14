@@ -98,7 +98,7 @@ All paths below are relative to the repository root unless otherwise noted.
 Build output prefix:
 
 ```text
-build_timing_cuts_pnr_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
+build/pnr/build_timing_cuts_pnr_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/hw/syn/xilinx/xrt/improve_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/
 ```
 
 Within that output directory:
@@ -113,6 +113,6 @@ Within that output directory:
 - `runme.log`: actual directives and SLR-hook results.
 
 Runner state and source manifest:
-`build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/`.
-Monitor history: `build_timing_cuts_pnr_artifacts/all_bram_spread_v1_monitor/history.jsonl`.
-Simulation evidence: `build_all_bram_verify_v1/evidence/summary.json`.
+`build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/`.
+Monitor history: `build/pnr/build_timing_cuts_pnr_artifacts/all_bram_spread_v1_monitor/history.jsonl`.
+Simulation evidence: `build/experiment-archive/build_all_bram_verify_v1/evidence/summary.json`.

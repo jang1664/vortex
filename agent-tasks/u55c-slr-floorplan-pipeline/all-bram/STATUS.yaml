@@ -19,17 +19,17 @@ verification:
     result: Smoke, overlap, QROW, and odd-tail all passed; wrapper exits zero, no strict trace failures, response slot accounting balanced. First case including compilation took 100 seconds; no timeout extension required.
     learned: Integrated GEMM with the changed local-memory and ACC selections preserves tested functionality. This is not a performance A/B or physical mapping proof.
     artifacts:
-      - build_all_bram_verify_v1/evidence/summary.json
-      - build_all_bram_verify_v1/blackbox_runner.log
+      - build/experiment-archive/build_all_bram_verify_v1/evidence/summary.json
+      - build/experiment-archive/build_all_bram_verify_v1/blackbox_runner.log
   - timestamp: "2026-09-09 11:03 KST"
     iteration: 1
     status: pass
     attempted: Legacy GEMM unit verification with ACC BRAM and URAM selections through verify_rtl.py.
-    result: Both legacy checks passed; total seven focused VCS checks passed. Started four-case fpint GEMM xrt-vcs-sim through run-bb-common wrapper in build_all_bram_verify_v1 with 300-second per-case timeout.
+    result: Both legacy checks passed; total seven focused VCS checks passed. Started four-case fpint GEMM xrt-vcs-sim through run-bb-common wrapper in build/experiment-archive/build_all_bram_verify_v1 with 300-second per-case timeout.
     learned: Both legacy and active ACC implementations retain tested behavior after selection forwarding.
     artifacts:
-      - build_all_bram_unit_verify/gemm_unit.verify.json
-      - build_tmem_only_unit_verify/gemm_unit.verify.json
+      - build/experiment-archive/build_all_bram_unit_verify/gemm_unit.verify.json
+      - build/experiment-archive/build_tmem_only_unit_verify/gemm_unit.verify.json
   - timestamp: "2026-09-09 11:01 KST"
     iteration: 1
     status: pass
@@ -37,25 +37,25 @@ verification:
     result: Five focused VCS checks passed. All 14 ini integration tests passed in 156.615 seconds. Legacy ACC tests remain running.
     learned: The omitted macro selects TMEM BRAM; both ACC selections preserve tested transaction ordering and backpressure behavior. Behavioral tests do not establish primitive mapping.
     artifacts:
-      - build_all_bram_unit_verify/tensor_mem_bank.verify.json
-      - build_all_bram_unit_verify/gemm_unit_v2_backpressure.verify.json
-      - build_tmem_only_unit_verify/tensor_mem_bank.verify.json
-      - build_tmem_only_unit_verify/gemm_unit_v2_backpressure.verify.json
-      - build_tmem_default_unit_verify/tensor_mem_bank.verify.json
-      - build_all_bram_verify_v1/ini_tests.log
+      - build/experiment-archive/build_all_bram_unit_verify/tensor_mem_bank.verify.json
+      - build/experiment-archive/build_all_bram_unit_verify/gemm_unit_v2_backpressure.verify.json
+      - build/experiment-archive/build_tmem_only_unit_verify/tensor_mem_bank.verify.json
+      - build/experiment-archive/build_tmem_only_unit_verify/gemm_unit_v2_backpressure.verify.json
+      - build/experiment-archive/build_tmem_default_unit_verify/tensor_mem_bank.verify.json
+      - build/experiment-archive/build_all_bram_verify_v1/ini_tests.log
 implementation:
   timestamp: "2026-09-09 10:59 KST"
   result: Added numeric ACC/local-memory mapping macros; made TMEM default BRAM; added all_bram config and extended ini integration regression to three variants.
   compatibility: Memory dimensions, byte enables, read-first behavior, and registered latency are unchanged. ACC and local-memory defaults remain URAM outside the experiment.
-  setup_issue: First configure attempt used source-root cwd and stopped at missing relative config before configure ran. Retried from build_all_bram_verify_v1 successfully.
+  setup_issue: First configure attempt used source-root cwd and stopped at missing relative config before configure ran. Retried from build/experiment-archive/build_all_bram_verify_v1 successfully.
 physical_run:
   launched: "2026-09-09 11:06 KST"
   runner_pid: 2204520
   config: configs/improve_th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram.sh
   postfix: spread_v1
   monitoring_interval_seconds: 1800
-  state_file: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/state.json
-  log: build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/build.log
+  state_file: build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/state.json
+  log: build/pnr/build_timing_cuts_pnr_artifacts/th32_tcol32_m32_bigmem_hbm4_tmem8_all_bram_spread_v1/build.log
   result: Started a fresh source-based configure/synthesis/PnR run; no DCP retry. Initial snapshot confirms runner alive and configuring.
 monitoring:
   - timestamp: "2026-09-09 20:06 KST"

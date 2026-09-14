@@ -36,7 +36,7 @@ GEMM: LAG_LAG_X40Y190 TXOUT -> shared UBUMP21 -> LAG_LAG_X40Y250 RXD
 
 The error name `u_tx/D[243]` is an optimized net alias. It is **not** evidence of an upstream TX D-input failure. Leaf-pin inspection resolves it to `g_payload[246].payload_tx_q_reg/Q` driving `payload_rx_q_reg[246]/D`; aliases also include `link_data[246]`.
 
-Evidence: [endpoint inspection](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/endpoint_inspection.txt), [route status](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/route_status.rpt), [physical nodes, PIPs and controls](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/physical_detail.txt).
+Evidence: [endpoint inspection](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/endpoint_inspection.txt), [route status](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/route_status.rpt), [physical nodes, PIPs and controls](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/physical_detail.txt).
 
 ## 2. Why spare global SLLs did not help
 
@@ -60,7 +60,7 @@ Empty Laguna registers are not empty SLLs. For example, `LAGUNA_X10Y21` and `LAG
 
 Thus the bottleneck is a local physical corridor, not the total SLL budget. The neighboring clock-region pair `X2Y3/X2Y4` (columns X40/X52) uses 2851 of 2880 SLLs, while `X1Y3/X1Y4` (X23/X31) uses only 1272 of 2880.
 
-Evidence: [full physical SLL inventory](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/sll_boundary_inventory.tsv), [column summary](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/sll_boundary_summary.tsv).
+Evidence: [full physical SLL inventory](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/sll_boundary_inventory.tsv), [column summary](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/sll_boundary_summary.tsv).
 
 ## 3. What the current floorplan permits and fails to guarantee
 
@@ -84,7 +84,7 @@ The hook in `hw/syn/xilinx/xrt/slr_floorplan_report.tcl:174` requires only a non
 
 Weight separately enables `PRESERVE_RESPONSE_TX_PAYLOAD=1` at `hw/rtl/mem/VX_tmem_subsystem.sv:553`. The input-response TX still exists, so the conflict is not caused by a missing pipeline stage. Do not infer that enabling preservation alone will resolve this placement/routing conflict.
 
-Evidence: [candidate region and local connectivity](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/floorplan_candidates.txt), [Pblock membership checks](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/candidate_constraints.txt). Placement group counts are in the original run's `post_place_slr_links.tsv`.
+Evidence: [candidate region and local connectivity](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/floorplan_candidates.txt), [Pblock membership checks](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/candidate_constraints.txt). Placement group counts are in the original run's `post_place_slr_links.tsv`.
 
 ## 4. Timing: collision paths versus the separate worst path
 
@@ -113,7 +113,7 @@ Its data path is **12.413 ns**, including **11.284 ns routing (90.905%)** and **
 
 The failed-route snapshot has not passed legal routing or normal post-route optimization. Its timing is diagnostic, not final signoff. Nevertheless, it demonstrates that a one-overlap repair alone cannot be advertised as 100 MHz closure.
 
-Evidence: [failed-route timing summary](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/failed_route_timing_summary.rpt), [GEMM conflict path timing](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/gemm_conflict_timing.rpt), [HMSS conflict path timing](../../../build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/hmss_conflict_timing.rpt).
+Evidence: [failed-route timing summary](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/failed_route_timing_summary.rpt), [GEMM conflict path timing](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/gemm_conflict_timing.rpt), [HMSS conflict path timing](../../../build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/hmss_conflict_timing.rpt).
 
 ## 5. Bounded floorplan experiment suggested by the evidence
 
@@ -129,6 +129,6 @@ For a subsequent source PnR, compare route legality, column occupancy, final set
 
 ## Reproduction and limitations
 
-Scripts in this directory reuse one interactive Vivado session: `inspect.tcl`, then `physical-detail.tcl`, `sll-inventory.tcl`, and `floorplan-candidates.tcl`. The initial DCP load took approximately seven minutes. Generated evidence is under `build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/`; the tool transcript is `build_timing_cuts_pnr_artifacts/dcp_analysis_vivado.log`.
+Scripts in this directory reuse one interactive Vivado session: `inspect.tcl`, then `physical-detail.tcl`, `sll-inventory.tcl`, and `floorplan-candidates.tcl`. The initial DCP load took approximately seven minutes. Generated evidence is under `build/pnr/build_timing_cuts_pnr_artifacts/th32_hbm4_tmem8_dcp_analysis/`; the tool transcript is `build/pnr/build_timing_cuts_pnr_artifacts/dcp_analysis_vivado.log`.
 
 The snapshot proves the shared physical node, opposing directions, current endpoint placement/constraints, and local occupancy. It does not expose the router's internal reason for rejecting each alternate route, nor establish a legal alternative placement without an implementation experiment.

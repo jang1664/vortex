@@ -12,7 +12,7 @@
 
 ### Focused parity와 contract
 
-`build_verify_dma_parity_i1` 결과:
+`build/experiment-archive/build_verify_dma_parity_i1` 결과:
 
 - 32B/64B baseline padding parity: PASS
 - aligned `MAX_DIMS=1/2` 대 `MAX_DIMS=3`: PASS
