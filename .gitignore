@@ -132,6 +132,12 @@ vivado*.jou
 
 /hw/syn/xilinx/xrt/tests/**/*.rpt
 
+# SLR inventory diagnostics written in the working directory by floorplan.tcl.
+# Build/task outputs are already ignored; cover fixtures launched at repo root.
+/slr_recovered_leaves.tsv
+/slr_recovered_lut_cones.tsv
+/slr_unclassified_leaves.tsv
+
 # ---- documentation DMA experiment artifacts ----
 docs/future_optim/dma_experiments/**/before/
 docs/future_optim/dma_experiments/**/project/
