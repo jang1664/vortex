@@ -1,0 +1,91 @@
+{
+  "runs": [
+    {
+      "name": "qparam_default",
+      "status": "pass",
+      "test_name": "naive_qparam_dma",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+    },
+    {
+      "name": "qparam_min16",
+      "status": "pass",
+      "test_name": "naive_qparam_dma",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+    },
+    {
+      "name": "qparam_min16_tag4",
+      "status": "pass",
+      "test_name": "naive_qparam_dma",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+    },
+    {
+      "name": "input_default",
+      "status": "pass",
+      "test_name": "naive_input_executor",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_input_executor/logs/sim.log"
+    },
+    {
+      "name": "input_min16",
+      "status": "pass",
+      "test_name": "naive_input_executor",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_input_executor/logs/sim.log"
+    },
+    {
+      "name": "weight_min16",
+      "status": "pass",
+      "test_name": "naive_weight_executor",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_weight_executor/logs/sim.log"
+    },
+    {
+      "name": "pair_q0_blocked0",
+      "status": "pass",
+      "test_name": "naive_qparam_pair",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_pair/logs/sim.log"
+    },
+    {
+      "name": "pair_q0_blocked1",
+      "status": "pass",
+      "test_name": "naive_qparam_pair",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_pair/logs/sim.log"
+    },
+    {
+      "name": "pair_q1_blocked0",
+      "status": "pass",
+      "test_name": "naive_qparam_pair",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_pair/logs/sim.log"
+    },
+    {
+      "name": "pair_q1_blocked1",
+      "status": "pass",
+      "test_name": "naive_qparam_pair",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_pair/logs/sim.log"
+    },
+    {
+      "name": "qparam_min16_tag4_reset",
+      "status": "pass",
+      "test_name": "naive_qparam_dma",
+      "error_log": "",
+      "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+    }
+  ],
+  "initial_fixture_failure": {
+    "file": "qparam_min16_initial_stimulus.json",
+    "reason": "QCOL four segments per command did not saturate expanded16slot window; adapted QCOL segments to RESPONSE_SLOTS/2, preserving default8slot behavior."
+  },
+  "limitations": [
+    "Lane FIFO16 naturally drains every cycle; no claim that16entries fill under normaltraffic.",
+    "qparam_pair tests sharedlanes; separate engines covered qparamDMA."
+  ],
+  "passed": true,
+  "pass_count": 11
+}

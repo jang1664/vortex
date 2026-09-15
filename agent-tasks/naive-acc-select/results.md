@@ -31,6 +31,25 @@ PSUM counts are wide requests, 64 bytes each for MXU16. Waveform checks prove fi
 
 Exact workload tuples are defined in `run.py`. All five final unit checks passed. Existing DMA tests cover reorder/backpressure; blackbox output tests cover unequal source/destination strides.
 
+## ACC ON BW64 topology extension (2026-09-15)
+
+Existing L16/L32 all_bram configs plus GEMM_NAIVE_USE_ACC_MEM; no RTL changes. K=N512, q32, transpose=0, qdir=0, repeat=1. Cache num_req=2, DMA cache ports=1, L1 memory ports=2, DMA outstanding=32.
+
+| LMEM ports / banks | M | GEMM cycles | Core cycles |
+|---|---:|---:|---:|
+| 16/16 | 4 | 13,502 | 20,079 |
+| 16/16 | 256 | 304,956 | 311,529 |
+| 32/32 | 4 | 13,053 | 19,629 |
+| 32/32 | 256 | 299,334 | 305,904 |
+
+These four additional runs validate numerical output and cycle counts. Detailed ACC-copy waveform assertions above refer to the original BW256 runs.
+
+## M4 response-depth control experiment
+
+ACC ON BW256 with only DMA_SPLIT_RSP_DEPTH changed from 8 to 16: GEMM 12,563, core 19,131; numerical PASS and no source changes during execution.
+
+The depth parameter applies to both DMA splitters. Cache-context blocking and zero DMA LMEM wait identify the cache request path as the observed bottleneck. See [root-cause waveform counters](verification/m4_bandwidth_root_cause.json). M256 was not rerun at BUF16.
+
 ## Preservation
 
 Naive OFF and improve reproduce both historical M4/M256 GEMM and core cycles exactly. All 12 edited-translation-unit preprocessing comparisons pass (OFF/improve, debug/NDEBUG). All other RTL is unchanged; internal ACC, common compute and DMA wrapper SHA256 values are recorded in `results.json`.

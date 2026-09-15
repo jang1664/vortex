@@ -5,6 +5,14 @@ spec: acc-select-spec.md
 pitfalls:
   - "Existing gemm_unit_v2 qparam stimulus omitted naive packet-end notification; failed identically with ACC define OFF. Improve fixture passed."
 log:
+  - time: "2026-09-15 11:20"
+    event: "M4 causal analysis: ACC ON BW256 BUF16 control PASS GEMM12563/core19131, only response-depth define differs from BUF8. Context-gated request stalls fall6305 to2092; cache wait6660 to3988. Sparse weight rows use64B at256B stride; 30-35cycle cache response latency exceeds an8-context window. Completed-later HOL accounts for only30 stalled cycles. Evidence saved; summary M4 best result updated. No RTL changes or M256 BUF16 measurement."
+  - time: "2026-09-15"
+    event: "User requested ACC ON BW64 extension for LMEM16/16 and32/32, M4/M256. Reuse VCS runner with config override and isolated builds; no RTL edits. Existing OFF results remain comparison references."
+  - time: "2026-09-15 01:25"
+    event: "Both BW64 ACC ON M4 runs PASS: L16 GEMM13502/core20079, L32 GEMM13053/core19629; source_changes empty. Manifest config differences against original OFF profiles contain only GEMM_NAIVE_USE_ACC_MEM. Both M256 measurements running."
+  - time: "2026-09-15 01:46"
+    event: "Both BW64 ACC ON M256 runs PASS: L16 GEMM304956/core311529, L32 GEMM299334/core305904. All four new runs returncode0/source_changes empty. Report now covers16 blackbox cases; prior5 unit and12 RTL identity checks retained. Summary updated with symmetric ON/OFF rows and ratios. No RTL modifications."
   - time: "2026-09-14 22:09"
     event: "Plan confirmed; begin existing internal ACC reuse and verification preparation."
   - time: "2026-09-14 22:14"

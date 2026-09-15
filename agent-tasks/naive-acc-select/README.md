@@ -66,6 +66,21 @@ python3 agent-tasks/naive-acc-select/run.py on --cases m4 m256 --rebuild
 `--label` for a new run. `--build` selects a separate configured build for
 independent cases. Concurrent runs must use distinct builds.
 
+For the ACC ON BW64 extension, source `configs/on_l16_bw64.sh` or
+`configs/on_l32_bw64.sh` from this task directory, still from the repository
+root, and configure a separate build as above. Example after configuring:
+
+```bash
+python3 agent-tasks/naive-acc-select/run.py on \
+  --config agent-tasks/naive-acc-select/configs/on_l16_bw64.sh \
+  --label on_l16_bw64 --build build_naive_acc_l16_bw64_vcs \
+  --cases m4 m256 --rebuild
+```
+
+Substitute `l32` for `l16` in the config, label and build to measure LMEM32.
+The configs add only ACC selection to the existing L16/L32 BW64 all_bram
+profiles; the original BW256 results remain under `runs/on/`.
+
 `check_identity.py` reconstructs baseline translation units from Git and checks
 all edited RTL under OFF/improve, debug/NDEBUG. Only whitespace, source line
 directives and line-derived private identifiers are normalized.

@@ -1,0 +1,6 @@
+{
+  "status": "sim_fail",
+  "test_name": "naive_qparam_dma",
+  "error_log": "\"/home/jaeyongjang/project.local/vortex_base/hw/unittest/naive_qparam_dma/tb_VX_naive_qparam_dma.sv\", 348: tb_VX_naive_qparam_dma.run_case.unnamed$$_33: started at 6055000ps failed at 6055000ps\n\tOffending '(((peak_commands[0] == 4) && (peak_commands[1] == 4)) && (peak_slots[blocked] == RESPONSE_SLOTS))'\nFatal: \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/naive_qparam_dma/tb_VX_naive_qparam_dma.sv\", 348: tb_VX_naive_qparam_dma.run_case.unnamed$$_33: at time 6055000 ps\nRequired queue saturation not reached\n$finish called from file \"/home/jaeyongjang/project.local/vortex_base/hw/unittest/naive_qparam_dma/tb_VX_naive_qparam_dma.sv\", line 348.",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+}

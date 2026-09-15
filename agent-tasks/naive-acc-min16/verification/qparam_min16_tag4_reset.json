@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "naive_qparam_dma",
+  "error_log": "",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_qparam_dma/logs/sim.log"
+}

@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "naive_input_executor",
+  "error_log": "",
+  "log_file": "/home/jaeyongjang/project.local/vortex_base/build_naive_acc_min16_unit_vcs/hw/unittest/naive_input_executor/logs/sim.log"
+}
