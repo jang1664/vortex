@@ -4,7 +4,9 @@
 `ifdef GEMM_NAIVE
 // Physical Input read-ahead and the sole four-entry packet context array.
 module VX_naive_input_executor import VX_gpu_pkg::*; #(
-    parameter `STRING INSTANCE_ID = ""
+    parameter `STRING INSTANCE_ID = "",
+    parameter int RESPONSE_SLOTS = `GEMM_NAIVE_INPUT_RESPONSE_SLOTS,
+    parameter int LANE_FIFO_DEPTH = `GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH
 ) (
     input wire clk,
     input wire reset,
@@ -36,7 +38,7 @@ module VX_naive_input_executor import VX_gpu_pkg::*; #(
     logic prepared_q;
     wire dma_ready, activate_ready, context_ready, context_quiescent;
     wire [2:0] dma_commands;
-    wire [4:0] dma_slots;
+    wire [$clog2(RESPONSE_SLOTS+1)-1:0] dma_slots;
     wire dma_done;
     wire data_valid, data_ready;
     wire [B*8-1:0] data;
@@ -65,7 +67,7 @@ module VX_naive_input_executor import VX_gpu_pkg::*; #(
         end
     end
     VX_naive_qparam_dma #(.INSTANCE_ID(INSTANCE_ID), .DATA_BYTES(B),
-        .RESPONSE_SLOTS(16), .LANE_FIFO_DEPTH(8), .PIPELINED_ISSUE(1),
+        .RESPONSE_SLOTS(RESPONSE_SLOTS), .LANE_FIFO_DEPTH(LANE_FIFO_DEPTH), .PIPELINED_ISSUE(1),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)) source_dma (
         .clk(clk), .reset(reset), .cmd_valid_i(dma_admit_valid), .cmd_ready_o(dma_ready),
         .cmd_id_i(cmd.work_seq), .cmd_payload_i(descriptor),

@@ -736,6 +736,19 @@
 `endif
 
 `ifdef GEMM_NAIVE
+// Naive lane-response storage. Keep the historical input and quant capacities.
+`ifndef GEMM_NAIVE_INPUT_RESPONSE_SLOTS
+`define GEMM_NAIVE_INPUT_RESPONSE_SLOTS 16
+`endif
+`ifndef GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH
+`define GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH 8
+`endif
+`ifndef GEMM_NAIVE_QPARAM_RESPONSE_SLOTS
+`define GEMM_NAIVE_QPARAM_RESPONSE_SLOTS 8
+`endif
+`ifndef GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH
+`define GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH 4
+`endif
 // Response payload and context depth for the external DMA's two splitters.
 `ifndef DMA_SPLIT_RSP_DEPTH
 `define DMA_SPLIT_RSP_DEPTH 8

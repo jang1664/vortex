@@ -1,0 +1,194 @@
+{
+  "256": {
+    "evidence": "agent-tasks/naive-acc-select/runs/on/m4",
+    "wide_read_requests": 2240,
+    "active_byte_histogram": {
+      "256": 192,
+      "64": 2048
+    },
+    "single64_requests": 2048,
+    "consecutive_single64_address_deltas": {
+      "256": 2032
+    },
+    "wide_req_stall_context_blocked": 6305,
+    "wide_req_stall_context_available": 355,
+    "blocked_head_incomplete": 6305,
+    "blocked_head_complete": 0,
+    "output_backpressure": 0,
+    "blocked_with_later_complete_context": 30,
+    "HOL_example": {
+      "cycle": 10292,
+      "head_slot": 4,
+      "head_mask": 1,
+      "later_complete_slots": [
+        5
+      ]
+    },
+    "cache_perf": {
+      "reads": 3045,
+      "read_misses": 2914,
+      "mshr_stalls": 35,
+      "crsp_stalls": 0
+    },
+    "lane_response_latency": {
+      "0": {
+        "requests": 704,
+        "min": 8,
+        "median": 35.0,
+        "p95": 36.85000000000002,
+        "max": 39,
+        "over100": 0,
+        "examples": []
+      },
+      "1": {
+        "requests": 704,
+        "min": 8,
+        "median": 33.0,
+        "p95": 34.85000000000002,
+        "max": 37,
+        "over100": 0,
+        "examples": []
+      },
+      "2": {
+        "requests": 704,
+        "min": 6,
+        "median": 30.0,
+        "p95": 33.0,
+        "max": 35,
+        "over100": 0,
+        "examples": []
+      },
+      "3": {
+        "requests": 704,
+        "min": 6,
+        "median": 30.0,
+        "p95": 33.0,
+        "max": 35,
+        "over100": 0,
+        "examples": []
+      }
+    },
+    "dma_slot_max": 15,
+    "dma_active_cycles": 11986,
+    "wait_dcache": 6660,
+    "wait_lmem": 0,
+    "cache_context_max": 8,
+    "cache_context_full_dma_cycles": 8333,
+    "single64_lane_histogram": {
+      "0": 512,
+      "1": 512,
+      "2": 512,
+      "3": 512
+    }
+  },
+  "64": {
+    "evidence": "agent-tasks/naive-acc-select/runs/on_l32_bw64/m4",
+    "wide_read_requests": 2816,
+    "active_byte_histogram": {
+      "64": 2816
+    },
+    "single64_requests": 2816,
+    "consecutive_single64_address_deltas": {
+      "64": 576,
+      "832": 145,
+      "256": 2032,
+      "98560": 2,
+      "13120": 17,
+      "-154560": 1,
+      "33344": 1,
+      "69888": 1,
+      "-158400": 1,
+      "65856": 1,
+      "41216": 1,
+      "-162240": 1,
+      "98368": 1,
+      "12544": 1,
+      "-167104": 1,
+      "896": 1,
+      "98752": 1,
+      "-154816": 1,
+      "33408": 1,
+      "70080": 1,
+      "-158656": 1,
+      "65920": 1,
+      "41408": 1,
+      "-162496": 1,
+      "98432": 1,
+      "12736": 1,
+      "-167360": 1,
+      "960": 1,
+      "98944": 1,
+      "-155072": 1,
+      "33472": 1,
+      "70272": 1,
+      "-158912": 1,
+      "65984": 1,
+      "41600": 1,
+      "-162752": 1,
+      "98496": 1,
+      "12928": 1,
+      "-167616": 1,
+      "1024": 1,
+      "99136": 1,
+      "-155328": 1,
+      "33536": 1,
+      "70464": 1,
+      "-159168": 1,
+      "66048": 1,
+      "41792": 1,
+      "-163008": 1
+    },
+    "cache_perf": {
+      "reads": 3045,
+      "read_misses": 2915,
+      "mshr_stalls": 827,
+      "crsp_stalls": 0
+    },
+    "lane_response_latency": {
+      "0": {
+        "requests": 2816,
+        "min": 7,
+        "median": 35.0,
+        "p95": 63.0,
+        "max": 69,
+        "over100": 0,
+        "examples": []
+      }
+    },
+    "dma_slot_max": 23,
+    "dma_active_cycles": 10050,
+    "wait_dcache": 4047,
+    "wait_lmem": 0
+  },
+  "256_buf16": {
+    "evidence": "agent-tasks/naive-acc-select/runs/on_buf16/m4",
+    "result": {
+      "mode": "on",
+      "case": "m4",
+      "returncode": 0,
+      "gemm_cycles": [
+        12563
+      ],
+      "core_cycles": [
+        19131
+      ],
+      "source_changes": [],
+      "configs": " -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=4 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DDMA_DCACHE_PORTS=4 -DDMA_SPLIT_RSP_DEPTH=16 -DDMA_SPLIT_RSP_REORDER=1 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_ROW=16 -DMXU_COL=16 -DMXU_COL_TILE=16 -DMXU_WLOAD_NUM=4 -DGEMM_ACC_MEM_DEPTH=1024 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DDMA_NODE_RD_OUTSTANDING_SLOT=32 -DGEMM_NAIVE_PSUM_READ_PRIORITY -DGEMM_NAIVE_PSUM_READ_QUOTA=1 -DGEMM_ACC_USE_URAM=0 -DLMEM_USE_URAM=0 -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_LATENCY_OBSERVER",
+      "strict_failure": false,
+      "passed": true
+    },
+    "dma_slot_max": 23,
+    "dma_active_cycles": 9538,
+    "wait_dcache": 3988,
+    "wait_lmem": 0,
+    "wide_req_stall_context_blocked": 2092,
+    "cache_context_max": 16,
+    "cache_context_full_dma_cycles": 3028,
+    "single64_lane_histogram": {
+      "0": 512,
+      "1": 512,
+      "2": 512,
+      "3": 512
+    }
+  }
+}

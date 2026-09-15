@@ -1,0 +1,6 @@
+/identity/before-rtl/
+/before/
+!/baseline.json
+!/results.json
+!/identity/*.json
+!/verification/*.json

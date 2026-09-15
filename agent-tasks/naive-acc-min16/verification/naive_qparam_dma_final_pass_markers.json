@@ -1,0 +1,7 @@
+[
+  "CASE PASS bytes=32 qrow=0 blocked=0 cycles=833 peak_slots=16,8 fifo_depth=16",
+  "CASE PASS bytes=32 qrow=0 blocked=1 cycles=832 peak_slots=8,16 fifo_depth=16",
+  "CASE PASS bytes=32 qrow=1 blocked=0 cycles=1337 peak_slots=16,8 fifo_depth=16",
+  "CASE PASS bytes=32 qrow=1 blocked=1 cycles=1336 peak_slots=8,16 fifo_depth=16",
+  "TEST PASSED naive_qparam_dma"
+]

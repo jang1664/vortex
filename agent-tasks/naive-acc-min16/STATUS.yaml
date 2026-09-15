@@ -1,0 +1,23 @@
+task: naive-acc-min16
+status: complete
+spec: spec.md
+baseline: 77b38ac1dc57d5d09e18b9654f8c47766b98efad
+pitfalls:
+  - "Generic I/SZ outstanding knobs are unused by current naive executors; wiring generic SZ=16 directly would change the current quant default8."
+  - "Quant executor occupancy is fixed4 bits for8slots and must widen for16slots; FIFO16 also needs existing transport assertion support."
+  - "The original qparam unit workload filled8slots but did not saturate16 before retirement; the min16 fixture needs more segments to prove full-capacity coverage."
+log:
+  - time: "2026-09-15 13:59"
+    event: "User confirmed slots and lane response FIFOs minimum16; cache internals excluded. RTL agent implements four naive-specific knobs retaining defaults. Verify agent prepares existing fixtures; main prepares configs and controlled measurements."
+  - time: "2026-09-15 14:03"
+    event: "RTL frozen in five files. Improve identity PASS1144 comparisons including header overlay, debug/NDEBUG and nominal/new-naive-defines16. Qparamdefault unit PASS; min16 capacity assertion requires increased fixture segments (functional retirement completed). Seven isolated blackbox builds configured, awaiting final unit checks."
+  - time: "2026-09-15 14:05"
+    event: "Ten unit checks PASS including16slot saturation/minimumtagwidth, default input/quant controls, weight16 and quantqdir/block variants. Started seven independent configured VCS builds for14 blackbox runs (current/min16×3topologies×M4/M256 plusimproveM4/M256). Measurement RTL/configs frozen."
+  - time: "2026-09-15 14:09"
+    event: "All seven M4 cases PASS. Current naive/improve cycles identical to prior. Min16 GEMM/core: L16BW64 13322/19929, L32BW64 12850/19404, L32BW256 12385/18981. Eleven final unit checks PASS including occupied reset. All seven M256 measurements active; elaboratedcapacity audit pending."
+  - time: "2026-09-15 14:33"
+    event: "All14 blackbox runs PASS with source_changes empty. Current6naive and2improve controls exactly reproduce prior GEMM/core cycles. Min16 M256 GEMM/core: L16BW64 300931/307479, L32BW64 296071/302679, L32BW256 291853/298431. Actualcapacity58checks PASS; units11PASS; improveRTL1144PASS. Fullresults and latencySummary updated; originalconfigs retained, no cacheinternal edits or synthesis."
+  - time: "2026-09-15 15:10"
+    event: "User confirmed input/scale/zero lane FIFO4 with all minimum16 slots retained. Three config-only wrappers audited: exactly two define changes. Six M4/M256 VCS comparisons started in isolated builds; original measurements retained."
+  - time: "2026-09-15 15:30"
+    event: "FIFO4 follow-up complete: all6 M4/M256 VCS runs PASS, source_changes empty. GEMM/core cycles and input utilization exactly equal FIFO16 for all3 topologies. Actual run CONFIGS differ only in input/qparam lane FIFO depths;58 new elaboratedcapacity checks PASS. Comparison table appended, Summary notes tie. No RTL edits or additional improve/synthesis runs."

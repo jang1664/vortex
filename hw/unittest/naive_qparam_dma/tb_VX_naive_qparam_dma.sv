@@ -1,12 +1,23 @@
 `include "VX_define.vh"
 `include "VX_naive_qparam_types.vh"
+`ifndef TB_RESPONSE_SLOTS
+`define TB_RESPONSE_SLOTS 8
+`endif
+`ifndef TB_LANE_FIFO_DEPTH
+`define TB_LANE_FIFO_DEPTH 4
+`endif
+`ifndef TB_TAG_WIDTH
+`define TB_TAG_WIDTH GEMM_BASE_TAG_WIDTH
+`endif
 module tb_VX_naive_qparam_dma;
     import VX_gpu_pkg::*;
     `VX_NAIVE_QPARAM_TYPES
     localparam integer BYTES = `GEMM_SCALE_ZERO_DATA_SIZE;
     localparam integer LANES = BYTES / 8;
-    localparam integer TAGW = GEMM_BASE_TAG_WIDTH;
+    localparam integer TAGW = `TB_TAG_WIDTH;
     localparam integer RELEASE = 257;
+    localparam integer RESPONSE_SLOTS = `TB_RESPONSE_SLOTS;
+    localparam integer LANE_FIFO_DEPTH = `TB_LANE_FIFO_DEPTH;
     logic clk = 0;
     always #5 clk = ~clk;
     logic reset;
@@ -23,7 +34,7 @@ module tb_VX_naive_qparam_dma;
     wire [1:0][31:0] source_id, source_sequence, source_generation;
     wire [1:0][31:0] done_id, done_sequence, done_target;
     wire [1:0][2:0] occupancy;
-    wire [1:0][3:0] slots;
+    wire [1:0][$clog2(RESPONSE_SLOTS+1)-1:0] slots;
     wire [1:0][LANES-1:0] req_valid;
     logic [1:0][LANES-1:0] req_ready, rsp_valid;
     wire [1:0][LANES-1:0] rsp_ready;
@@ -34,7 +45,9 @@ module tb_VX_naive_qparam_dma;
     wire [1:0][LANES-1:0][7:0] req_mask;
     for (genvar engine = 0; engine < 2; ++engine) begin : g_engine
         VX_mem_bus_if #(.DATA_SIZE(8), .TAG_WIDTH(TAGW)) memory[LANES]();
-        VX_naive_qparam_dma #(.INSTANCE_ID("qparam_test")) dut (
+        VX_naive_qparam_dma #(.INSTANCE_ID("qparam_test"),
+            .RESPONSE_SLOTS(RESPONSE_SLOTS), .LANE_FIFO_DEPTH(LANE_FIFO_DEPTH),
+            .TAG_WIDTH(TAGW)) dut (
             .clk(clk), .reset(reset), .cmd_valid_i(cmd_valid[engine]),
             .cmd_ready_o(cmd_ready[engine]), .cmd_id_i(cmd_id[engine]),
             .cmd_payload_i(cmd_payload[engine]),
@@ -78,7 +91,7 @@ module tb_VX_naive_qparam_dma;
         d = '0;
         d.source.base = 34'('h10000 + engine * 'h10000 + command * 'h1000);
         d.source.stride = (qrow != 0) ? 8 : BYTES;
-        d.source.segments = 16'((qrow != 0) ? BYTES / 2 : 4);
+        d.source.segments = 16'((qrow != 0) ? BYTES / 2 : RESPONSE_SLOTS / 2);
         d.source.useful_bytes = 16'((qrow != 0) ? 2 : (command == 3 ? BYTES - 2 : BYTES));
         if (qrow != 0)
             d.source.base += 34'd6;
@@ -95,10 +108,10 @@ module tb_VX_naive_qparam_dma;
         return d;
     endfunction
 
-    bit pending[2][LANES][8];
+    bit pending[2][LANES][RESPONSE_SLOTS];
     bit response_taken[2][LANES];
-    longint unsigned address_r[2][LANES][8];
-    int accepted_at[2][LANES][8], due_at[2][LANES][8];
+    longint unsigned address_r[2][LANES][RESPONSE_SLOTS];
+    int accepted_at[2][LANES][RESPONSE_SLOTS], due_at[2][LANES][RESPONSE_SLOTS];
     int submitted[2], activated[2], installed[2][4], returned[2][4];
     int requests[2][4][LANES], request_number[2][LANES];
     int source_completions[2], install_completions[2], consumed[2];
@@ -178,7 +191,7 @@ module tb_VX_naive_qparam_dma;
                     end
                     if (!rsp_valid[e][l]) begin
                         chosen = -1;
-                        for (int t = 0; t < 8; ++t)
+                        for (int t = 0; t < RESPONSE_SLOTS; ++t)
                             if (pending[e][l][t] && cycle >= due_at[e][l][t]
                              && (chosen < 0 || accepted_at[e][l][t] > accepted_at[e][l][chosen]))
                                 chosen = t;
@@ -187,7 +200,7 @@ module tb_VX_naive_qparam_dma;
                             rsp_tag[e][l] = TAGW'(chosen);
                             for (int b = 0; b < 8; ++b)
                                 rsp_data[e][l][b*8 +: 8] = image_byte(address_r[e][l][chosen] + 64'(b));
-                            for (int t = 0; t < 8; ++t)
+                            for (int t = 0; t < RESPONSE_SLOTS; ++t)
                                 if (pending[e][l][t] && accepted_at[e][l][t] < accepted_at[e][l][chosen])
                                     reorder_seen = 1;
                         end
@@ -229,7 +242,7 @@ module tb_VX_naive_qparam_dma;
                     if (req_valid[e][l] && !(e == complementary && (release_edge < 0 || cycle < release_edge))) eligible_age[e][l]++;
                     if (req_valid[e][l] && req_ready[e][l]) begin
                         chosen = int'(req_tag[e][l]);
-                        assert (chosen < 8 && !pending[e][l][chosen]) else $fatal(1, "Unreserved/reused tag");
+                        assert (chosen < RESPONSE_SLOTS && !pending[e][l][chosen]) else $fatal(1, "Unreserved/reused tag");
                         assert (req_mask[e][l] == 255) else $fatal(1, "Not a full-lane source read");
                         source_address = 64'(req_addr[e][l]) * 8;
                         generation = int'((source_address - 'h10000 - e * 'h10000) / 'h1000);
@@ -332,8 +345,9 @@ module tb_VX_naive_qparam_dma;
         end
         assert (finished && source_completions[0] == 4 && source_completions[1] == 4)
             else $fatal(1, "Finite full retirement bound");
-        assert (peak_commands[0] == 4 && peak_commands[1] == 4 && peak_slots[blocked] == 8)
-            else $fatal(1, "Required queue saturation not reached");
+        assert (peak_commands[0] == 4 && peak_commands[1] == 4 && peak_slots[blocked] == RESPONSE_SLOTS)
+            else $fatal(1, "Required queue saturation not reached commands=%0d,%0d slots=%0d,%0d expected_slots=%0d",
+                peak_commands[0], peak_commands[1], peak_slots[0], peak_slots[1], RESPONSE_SLOTS);
         assert (overlap_response && overlap_install && reorder_seen && preactivate_fetch
              && first_complement_request >= release_edge && first_complement_request <= release_edge + 64)
             else $fatal(1, "Missing independent progress/reordering/prepare coverage");
@@ -342,7 +356,7 @@ module tb_VX_naive_qparam_dma;
         assert (seen_sink_delay[0] && seen_sink_delay[1] && seen_sink_delay[7] && seen_sink_delay[15])
             else $fatal(1, "Missing frozen install delay coverage");
         foreach (pending[e,l,t]) assert (!pending[e][l][t]) else $fatal(1, "Leaked physical ownership");
-        $display("CASE PASS bytes=%0d qrow=%0d blocked=%0d cycles=%0d peak_slots=%0d,%0d", BYTES,qrow,blocked,cycle,peak_slots[0],peak_slots[1]);
+        $display("CASE PASS bytes=%0d qrow=%0d blocked=%0d cycles=%0d peak_slots=%0d,%0d fifo_depth=%0d", BYTES,qrow,blocked,cycle,peak_slots[0],peak_slots[1],LANE_FIFO_DEPTH);
         @(negedge clk);
     endtask
     bit reset_case_mode = 0;

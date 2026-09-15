@@ -34,8 +34,10 @@ def main():
     parser.add_argument('--rebuild', action='store_true')
     parser.add_argument('--ucli-file', type=Path)
     parser.add_argument('--build', type=Path, help='Separate configured build for independent cases')
+    parser.add_argument('--config', type=Path, help='Config override for additional ACC topology measurements')
     args = parser.parse_args()
     build = args.build.resolve() if args.build else ROOT / f'build_naive_acc_{args.mode}_vcs'
+    config = args.config.resolve() if args.config else TASK / 'configs' / f'{args.mode}.sh'
     assert (build / 'config.mk').is_file(), 'Source config and configure build first'
     for index, case in enumerate(args.cases):
         out = TASK / 'runs' / (args.label or args.mode) / case
@@ -48,7 +50,7 @@ def main():
                    '--m', str(m), '--k', str(k), '--n', str(n), '--qdir', str(qdir),
                    '--wtrans', str(wtrans), '--repeat', '1', '--timeout', '7200',
                    '--build', str(build), '--output', str(out),
-                   '--config', str(TASK / 'configs' / f'{args.mode}.sh')]
+                   '--config', str(config)]
         if index == 0 and args.rebuild:
             command.append('--rebuild')
         if args.ucli_file:

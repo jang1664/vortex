@@ -1,0 +1,54 @@
+{
+  "64": {
+    "gemm_cycles": 13053,
+    "core_cycles": 19629,
+    "dma_active_cycles": 10050,
+    "window": "cycle 1 through GEMM completion, pre-edge samples",
+    "perf": {
+      "rd_bytes": 180224,
+      "wr_bytes": 4096,
+      "src_rd_req_fire": 2832,
+      "src_rd_req_stall": 4047,
+      "src_rd_data_stall": 0,
+      "dst_wr_stall": 0,
+      "wait_dcache": 4047,
+      "wait_lmem": 0
+    },
+    "enabled_read_bytes": 180224,
+    "aggregate_read_bytes": 180224,
+    "output_copy_cycles": 280,
+    "output_copy_count": 4,
+    "output_write_stalls": 0,
+    "evidence": "agent-tasks/naive-acc-select/runs/on_l32_bw64/m4"
+  },
+  "256": {
+    "gemm_cycles": 14953,
+    "core_cycles": 21531,
+    "dma_active_cycles": 11986,
+    "window": "cycle 1 through GEMM completion, pre-edge samples",
+    "perf": {
+      "rd_bytes": 573440,
+      "wr_bytes": 4096,
+      "src_rd_req_fire": 2256,
+      "src_rd_req_stall": 6660,
+      "src_rd_data_stall": 0,
+      "dst_wr_stall": 0,
+      "wait_dcache": 6660,
+      "wait_lmem": 0
+    },
+    "enabled_read_bytes": 180224,
+    "aggregate_read_bytes": 573440,
+    "cache_context_max": 8,
+    "cache_context_full_dma_cycles": 8333,
+    "lane_read_requests": [
+      704,
+      704,
+      704,
+      704
+    ],
+    "output_copy_cycles": 280,
+    "output_copy_count": 4,
+    "output_write_stalls": 0,
+    "evidence": "agent-tasks/naive-acc-select/runs/on/m4"
+  }
+}

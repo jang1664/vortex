@@ -1,0 +1,45 @@
+"""Prove improve preprocessed RTL identity against the pre-edit snapshot."""
+import concurrent.futures,hashlib,json,re,shlex,subprocess
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[2];TASK=Path(__file__).resolve().parent
+NEW=ROOT/'hw/rtl';OLD=TASK/'identity/before-rtl';OUT=TASK/'identity';OUT.mkdir(parents=True,exist_ok=True)
+BASELINE='77b38ac1dc57d5d09e18b9654f8c47766b98efad'
+# Every baseline RTL file comes directly from Git, including include headers.
+import io, tarfile
+archive=subprocess.check_output(['git','archive',BASELINE,'hw/rtl'],cwd=ROOT)
+with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+ for member in tar:
+  if member.isfile():
+   rel=Path(member.name).relative_to('hw/rtl')
+   dst=OLD/rel;dst.parent.mkdir(parents=True,exist_ok=True)
+   dst.write_bytes(tar.extractfile(member).read())
+flags=shlex.split(subprocess.check_output(['bash','-c','source "$1"; printf "%s" "$CONFIGS"','bash',str(ROOT/'agent-tasks/dma-read-slot-saturation/improve/depth16.sh')],cwd=ROOT,text=True))
+scope={Path(x) for x in ['.','libs','interfaces','core','core/gemm','mem','cache','fpu','verification','afu/xrt']}
+files=sorted({p.relative_to(tree) for tree in [OLD,NEW] for p in tree.rglob('*') if p.suffix in ('.sv','.v') and p.parent.relative_to(tree) in scope})
+def preprocess(tree,rel,ndebug,min16):
+ path=tree/rel
+ if not path.exists():return ''
+ dirs=sorted({p.parent for ext in ['*.vh','*.svh'] for p in tree.rglob(ext)} | {ROOT/'third_party/axi/include',ROOT/'third_party/cvfpu/src/common_cells/include',ROOT/'third_party/cvfpu/src',ROOT/'third_party/axi/src',ROOT/'hw/dpi'})
+ args=['verilator','-E','-DXLEN_64','-DPERF_ENABLE','-DGEMM_LATENCY_OBSERVER','-DSIMULATION','-DSV_DPI','-DVCS','-DNOXRT','-DASSERTS_OFF',*(['-DNDEBUG'] if ndebug else []),*flags,*([f'-D{x}=16' for x in ['GEMM_NAIVE_INPUT_RESPONSE_SLOTS','GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH','GEMM_NAIVE_QPARAM_RESPONSE_SLOTS','GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH']] if min16 else []),*[f'+incdir+{d}' for d in dirs],str(path)]
+ p=subprocess.run(args,cwd=ROOT,text=True,capture_output=True)
+ if p.returncode:raise RuntimeError(str(rel)+' '+p.stderr[-1500:])
+ text='\n'.join(line.strip() for line in p.stdout.splitlines() if line.strip() and not line.lstrip().startswith('`line'))
+ # These macros derive private instance identifiers from __LINE__. Rename
+ # bijectively by first occurrence, preserving all references and counts.
+ names={};counts={}
+ def rename(match):
+  token=match[0];kind=match[1]
+  if token not in names:
+   counts[kind]=counts.get(kind,0)+1;names[token]=f'__{kind}CANON{counts[kind]}'
+  return names[token]
+ return re.sub(r'\s+', '', re.sub(r'\b__(buffer_ex|pop_count_ex)[0-9]+\b',rename,text))
+def check(item):
+ rel,ndebug,min16=item;a=preprocess(OLD,rel,ndebug,min16);b=preprocess(NEW,rel,ndebug,min16)
+ if a!=b:
+  key=str(rel).replace('/','__')+f'.ndebug{int(ndebug)}.min16{int(min16)}';(OUT/(key+'.before')).write_text(a);(OUT/(key+'.after')).write_text(b)
+ return {'file':str(rel),'ndebug':ndebug,'min16_defines':min16,'identical':a==b,'sha256_before':hashlib.sha256(a.encode()).hexdigest(),'sha256_after':hashlib.sha256(b.encode()).hexdigest()}
+if __name__=='__main__':
+ with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:results=list(pool.map(check,[(r,n,m) for r in files for n in [False,True] for m in [False,True]]))
+ (OUT/'result.json').write_text(json.dumps(results,indent=2)+'\n')
+ bad=[x for x in results if not x['identical']];print(json.dumps(dict(checks=len(results),different=bad)),flush=True)
+ assert not bad,'Improve preprocessing changed'

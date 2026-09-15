@@ -1,0 +1,429 @@
+{
+  "method": "Completed M4 FSDB vector widths at time0; bitmaps give directcapacity, power-of-two FIFO/slotindex widths match sourceddefines. Parameters are not dumped.",
+  "profiles": [
+    {
+      "profile": "l16_bw64",
+      "passed": true,
+      "checks": [
+        {
+          "name": "input_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "input_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "scale_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "zero_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "weight_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/weight_executor/gather/assembly_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "output_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/o_lmem_dma/dma_core/g_aligned/u_impl/rd_issue_slot_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "external_dma_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/u_dma_unit/g_misaligned/u_impl/rd_issue_slot_r",
+          "width": 5,
+          "capacity": 32,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "lmem_split_depth",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/g_split_lmem_lanes/lmem_lane_split/g_masked_response/rsp_context_queue/g_depth_n/rd_ptr_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        }
+      ]
+    },
+    {
+      "profile": "l32_bw64",
+      "passed": true,
+      "checks": [
+        {
+          "name": "input_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "input_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "scale_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "zero_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "weight_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/weight_executor/gather/assembly_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "output_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/o_lmem_dma/dma_core/g_aligned/u_impl/rd_issue_slot_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "external_dma_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/u_dma_unit/g_misaligned/u_impl/rd_issue_slot_r",
+          "width": 5,
+          "capacity": 32,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "lmem_split_depth",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/g_split_lmem_lanes/lmem_lane_split/g_masked_response/rsp_context_queue/g_depth_n/rd_ptr_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        }
+      ]
+    },
+    {
+      "profile": "l32_bw256",
+      "passed": true,
+      "checks": [
+        {
+          "name": "input_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "input_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "input_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/input_executor/source_dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "scale_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "scale_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[0]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/slot_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "zero_lane0_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[0]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane1_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[1]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane2_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[2]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "zero_lane3_fifo",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/quant_executor/g_engine[1]/executor/dma/g_lane[3]/response_fifo/g_depth_n/rd_ptr_r",
+          "width": 2,
+          "capacity": 4,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "weight_response_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/weight_executor/gather/assembly_valid_r",
+          "width": 16,
+          "capacity": 16,
+          "evidence_kind": "bitmap"
+        },
+        {
+          "name": "output_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node_naive/o_lmem_dma/dma_core/g_aligned/u_impl/rd_issue_slot_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "external_dma_slots",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/u_dma_unit/g_misaligned/u_impl/rd_issue_slot_r",
+          "width": 5,
+          "capacity": 32,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "lmem_split_depth",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/u_VX_dma_node/g_split_lmem_lanes/lmem_lane_split/g_reorder_response/response_store/read_slot_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        },
+        {
+          "name": "dcache_split_depth",
+          "path": "/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/mem_unit/g_split_dma_dcache_ports/dma_dcache_split/g_reorder_response/response_store/read_slot_r",
+          "width": 4,
+          "capacity": 16,
+          "evidence_kind": "index"
+        }
+      ]
+    }
+  ]
+}

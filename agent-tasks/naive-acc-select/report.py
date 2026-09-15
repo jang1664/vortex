@@ -9,6 +9,8 @@ TASK = Path(__file__).resolve().parent
 ROOT = TASK.parents[1]
 expected = [(mode, case) for mode in ['on', 'off', 'improve'] for case in ['m4', 'm256']]
 expected += [('on_edges', case) for case in ['m1', 'm3_tail', 'n150', 'qrow', 'transpose', 'qrow_transpose']]
+expected += [(label, case) for label in ['on_l16_bw64', 'on_l32_bw64'] for case in ['m4', 'm256']]
+expected += [('on_buf16', 'm4')]
 results = []
 for label, case in expected:
     run = TASK / 'runs' / label / case
@@ -75,6 +77,19 @@ for result in results:
     if 'on_edges' in result['evidence']:
         lines.append(f"| {result['case']} | {result['gemm_cycles'][0]:,} | {result['core_cycles'][0]:,} |")
 lines += ['', 'Exact workload tuples are defined in `run.py`. All five final unit checks passed. Existing DMA tests cover reorder/backpressure; blackbox output tests cover unequal source/destination strides.', '',
+          '## ACC ON BW64 topology extension (2026-09-15)', '',
+          'Existing L16/L32 all_bram configs plus GEMM_NAIVE_USE_ACC_MEM; no RTL changes. K=N512, q32, transpose=0, qdir=0, repeat=1. Cache num_req=2, DMA cache ports=1, L1 memory ports=2, DMA outstanding=32.', '',
+          '| LMEM ports / banks | M | GEMM cycles | Core cycles |',
+          '|---|---:|---:|---:|']
+for ports in [16, 32]:
+    for case in ['m4', 'm256']:
+        result = next(r for r in results if f'/on_l{ports}_bw64/' in r['evidence'] and r['case'] == case)
+        lines.append(f"| {ports}/{ports} | {case[1:]} | {result['gemm_cycles'][0]:,} | {result['core_cycles'][0]:,} |")
+lines += ['', 'These four additional runs validate numerical output and cycle counts. Detailed ACC-copy waveform assertions above refer to the original BW256 runs.', '',
+          '## M4 response-depth control experiment', '']
+control = next(r for r in results if '/on_buf16/' in r['evidence'])
+lines += [f"ACC ON BW256 with only DMA_SPLIT_RSP_DEPTH changed from 8 to 16: GEMM {control['gemm_cycles'][0]:,}, core {control['core_cycles'][0]:,}; numerical PASS and no source changes during execution.", '',
+          'The depth parameter applies to both DMA splitters. Cache-context blocking and zero DMA LMEM wait identify the cache request path as the observed bottleneck. See [root-cause waveform counters](verification/m4_bandwidth_root_cause.json). M256 was not rerun at BUF16.', '',
           '## Preservation', '',
           'Naive OFF and improve reproduce both historical M4/M256 GEMM and core cycles exactly. All 12 edited-translation-unit preprocessing comparisons pass (OFF/improve, debug/NDEBUG). All other RTL is unchanged; internal ACC, common compute and DMA wrapper SHA256 values are recorded in `results.json`.', '',
           'No synthesis was run. HBM timings are from the existing simulation model.', '']

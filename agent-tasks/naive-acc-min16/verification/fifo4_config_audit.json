@@ -1,0 +1,38 @@
+[
+  {
+    "topology": "l16_bw64",
+    "removed": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=16",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=16"
+    ],
+    "added": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=4",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=4"
+    ],
+    "passed": true
+  },
+  {
+    "topology": "l32_bw64",
+    "removed": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=16",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=16"
+    ],
+    "added": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=4",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=4"
+    ],
+    "passed": true
+  },
+  {
+    "topology": "l32_bw256",
+    "removed": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=16",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=16"
+    ],
+    "added": [
+      "-DGEMM_NAIVE_INPUT_LANE_FIFO_DEPTH=4",
+      "-DGEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH=4"
+    ],
+    "passed": true
+  }
+]

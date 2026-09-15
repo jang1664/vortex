@@ -1,0 +1,135 @@
+{
+  "method": "Sourced exact profiles; comparison of explicit compiler defines. Actual capacities are verified separately in elaborated_capacity_audit.json.",
+  "profiles": [
+    {
+      "profile": "l16_bw64",
+      "cache_defines_unchanged": true,
+      "cache_defines": {
+        "ICACHE_SIZE": "32768",
+        "DCACHE_SIZE": "32768",
+        "DCACHE_NUM_BANKS": "4",
+        "L1_MEM_PORTS": "2",
+        "AFU_DONE_WAIT_CACHE_DRAIN": "1"
+      },
+      "changed_defines": {
+        "DMA_SPLIT_RSP_DEPTH": {
+          "current": null,
+          "min16": "16"
+        },
+        "W_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "O_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        }
+      },
+      "dma_outstanding": "32",
+      "split_response_depth": "16"
+    },
+    {
+      "profile": "l32_bw64",
+      "cache_defines_unchanged": true,
+      "cache_defines": {
+        "ICACHE_SIZE": "32768",
+        "DCACHE_SIZE": "32768",
+        "DCACHE_NUM_BANKS": "4",
+        "L1_MEM_PORTS": "2",
+        "AFU_DONE_WAIT_CACHE_DRAIN": "1"
+      },
+      "changed_defines": {
+        "DMA_SPLIT_RSP_DEPTH": {
+          "current": null,
+          "min16": "16"
+        },
+        "W_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "O_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        }
+      },
+      "dma_outstanding": "32",
+      "split_response_depth": "16"
+    },
+    {
+      "profile": "l32_bw256",
+      "cache_defines_unchanged": true,
+      "cache_defines": {
+        "ICACHE_SIZE": "32768",
+        "DCACHE_SIZE": "32768",
+        "DCACHE_NUM_BANKS": "4",
+        "L1_MEM_PORTS": "4",
+        "DMA_DCACHE_PORTS": "4",
+        "AFU_DONE_WAIT_CACHE_DRAIN": "1"
+      },
+      "changed_defines": {
+        "DMA_SPLIT_RSP_DEPTH": {
+          "current": "8",
+          "min16": "16"
+        },
+        "W_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "O_LMEM_DMA_RD_OUTSTANDING_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_INPUT_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_RESPONSE_SLOTS": {
+          "current": null,
+          "min16": "16"
+        },
+        "GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH": {
+          "current": null,
+          "min16": "16"
+        }
+      },
+      "dma_outstanding": "32",
+      "split_response_depth": "16"
+    }
+  ]
+}
