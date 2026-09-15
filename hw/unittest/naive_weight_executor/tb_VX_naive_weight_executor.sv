@@ -1,5 +1,8 @@
 `timescale 1ns/1ps
 `include "VX_define.vh"
+`ifndef TB_RESPONSE_SLOTS
+`define TB_RESPONSE_SLOTS `W_LMEM_DMA_CMD_BEATS
+`endif
 module tb_VX_naive_weight_executor;
     import VX_gpu_pkg::*;
     localparam int BYTES = `GEMM_WEIGHT_DATA_SIZE;
@@ -8,7 +11,7 @@ module tb_VX_naive_weight_executor;
     localparam int ROWS = BYTES / ROW_BYTES;
     localparam int DEPTH = `MXU_ROW / ROWS;
     localparam int TW = GEMM_BASE_TAG_WIDTH;
-    localparam int SB = $clog2(DEPTH);
+    localparam int RESPONSE_SLOTS = `TB_RESPONSE_SLOTS;
     logic clk = 0, reset = 1;
     always #5 clk = ~clk;
     int cycle, accepted, installed, captured;
@@ -26,7 +29,8 @@ module tb_VX_naive_weight_executor;
     wire [31:0] source_id;
     VX_mem_bus_if #(.DATA_SIZE(8), .TAG_WIDTH(TW)) lanes[LANES]();
     VX_mem_bus_if #(.DATA_SIZE(BYTES), .TAG_WIDTH(TW)) gemm();
-    VX_naive_weight_executor #(.INSTANCE_ID("weight_executor_test")) dut (
+    VX_naive_weight_executor #(.INSTANCE_ID("weight_executor_test"),
+        .RESPONSE_SLOTS(RESPONSE_SLOTS)) dut (
         .clk(clk), .reset(reset), .cmd(cmd), .cmd_valid(cmd_valid), .cmd_ready(cmd_ready),
         .prepare_valid(prepare_valid), .prepare_ready(prepare_ready),
         .done_valid(done_valid), .done_ready(done_ready), .done_work_seq(done_id),
@@ -46,9 +50,9 @@ module tb_VX_naive_weight_executor;
         return (addr*64'h9e3779b1) ^ 64'h913abca500ff0042;
     endfunction
     for (genvar l=0; l<LANES; ++l) begin : g_mem
-        bit [DEPTH-1:0] pending;
-        logic [63:0] data[DEPTH];
-        logic [TW-1:0] tags[DEPTH];
+        bit [RESPONSE_SLOTS-1:0] pending;
+        logic [63:0] data[RESPONSE_SLOTS];
+        logic [TW-1:0] tags[RESPONSE_SLOTS];
         int requests;
         assign lanes[l].req_ready = (cycle%5 != l%5);
         always @(posedge clk) begin
@@ -72,7 +76,7 @@ module tb_VX_naive_weight_executor;
                 // Highest slot first plus lane skew deliberately reorders replies.
                 if (!lanes[l].rsp_valid && allow_responses && cycle%3 != l%3) begin
                     automatic bit found=0;
-                    for (int slot=DEPTH-1; slot>=0; --slot) begin
+                    for (int slot=RESPONSE_SLOTS-1; slot>=0; --slot) begin
                         if (!found && pending[slot]) begin
                             found=1; pending[slot]=0;
                             lanes[l].rsp_valid <= 1;
@@ -162,7 +166,7 @@ module tb_VX_naive_weight_executor;
         repeat(5) @(negedge clk);
         if(accepted!=8 || captured!=8 || installed!=8*GROUPS || completions!=8 || !quiescent)
             $fatal(1,"nonquiescent or lost command");
-        $display("TEST PASSED: Weight executor MXU=%0d prepared activation full microtiles held completion repeated jobs",`MXU_ROW);
+        $display("TEST PASSED: Weight executor MXU=%0d prepared activation full microtiles held completion repeated jobs response_slots=%0d",`MXU_ROW,RESPONSE_SLOTS);
         $finish;
     end
 endmodule

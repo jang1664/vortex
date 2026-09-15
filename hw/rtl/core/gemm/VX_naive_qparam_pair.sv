@@ -6,7 +6,9 @@
 module VX_naive_qparam_pair import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter int DATA_BYTES = `GEMM_SCALE_ZERO_DATA_SIZE,
-    parameter bit SEPARATE_LANES = 0
+    parameter bit SEPARATE_LANES = 0,
+    parameter int RESPONSE_SLOTS = `GEMM_NAIVE_QPARAM_RESPONSE_SLOTS,
+    parameter int LANE_FIFO_DEPTH = `GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH
 ) (
     input wire clk,
     input wire reset,
@@ -32,7 +34,8 @@ module VX_naive_qparam_pair import VX_gpu_pkg::*; #(
     for (genvar e=0;e<2;++e) begin : g_engine
         VX_mem_bus_if #(.DATA_SIZE(8), .TAG_WIDTH(ENGINE_TAG_WIDTH)) source_if[LANES]();
         VX_naive_qparam_executor #(.INSTANCE_ID(INSTANCE_ID), .IS_ZERO(e==1),
-            .DATA_BYTES(DATA_BYTES), .TAG_WIDTH(ENGINE_TAG_WIDTH)) executor (
+            .DATA_BYTES(DATA_BYTES), .TAG_WIDTH(ENGINE_TAG_WIDTH),
+            .RESPONSE_SLOTS(RESPONSE_SLOTS), .LANE_FIFO_DEPTH(LANE_FIFO_DEPTH)) executor (
             .clk(clk), .reset(reset), .cmd(cmd[e]), .cmd_valid(cmd_valid[e]), .cmd_ready(cmd_ready[e]),
             .prepare_valid(prepare_valid[e]), .prepare_ready(prepare_ready[e]),
             .done_valid(done_valid[e]), .done_ready(done_ready[e]), .done_work_seq(done_work_seq[e]),

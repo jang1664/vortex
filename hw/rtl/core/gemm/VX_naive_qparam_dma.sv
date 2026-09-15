@@ -369,7 +369,7 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
         assert ($bits(naive_qparam_desc_t) == 235 && `MEM_ADDR_WIDTH == 34);
         assert ((DATA_BYTES == 32 || DATA_BYTES == 64) && TAG_WIDTH >= 3);
         assert ((RESPONSE_SLOTS == 8 || RESPONSE_SLOTS == 16)
-             && (LANE_FIFO_DEPTH == 4 || LANE_FIFO_DEPTH == 8)
+             && (LANE_FIFO_DEPTH == 4 || LANE_FIFO_DEPTH == 8 || LANE_FIFO_DEPTH == 16)
              && TAG_WIDTH >= SLOT_BITS);
     end
     always @(posedge clk) begin
@@ -403,7 +403,7 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
             end
             for (int lane = 0; lane < LANES; ++lane) begin
                 if (response_valid[lane]) begin
-                    assert (response_tag[lane] < TAG_WIDTH'(SLOTS)
+                    assert ((TAG_WIDTH+1)'(response_tag[lane]) < (TAG_WIDTH+1)'(SLOTS)
                          && slot_valid_r[SLOT_BITS'(response_tag[lane])]
                          && !arrived_r[SLOT_BITS'(response_tag[lane])][lane]
                          && slot_sequence_r[SLOT_BITS'(response_tag[lane])]

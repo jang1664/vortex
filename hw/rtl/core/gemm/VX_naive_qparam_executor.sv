@@ -8,7 +8,9 @@ module VX_naive_qparam_executor import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter bit IS_ZERO = 0,
     parameter int DATA_BYTES = `GEMM_SCALE_ZERO_DATA_SIZE,
-    parameter int TAG_WIDTH = GEMM_BASE_TAG_WIDTH
+    parameter int TAG_WIDTH = GEMM_BASE_TAG_WIDTH,
+    parameter int RESPONSE_SLOTS = `GEMM_NAIVE_QPARAM_RESPONSE_SLOTS,
+    parameter int LANE_FIFO_DEPTH = `GEMM_NAIVE_QPARAM_LANE_FIFO_DEPTH
 ) (
     input wire clk,
     input wire reset,
@@ -36,7 +38,7 @@ module VX_naive_qparam_executor import VX_gpu_pkg::*; #(
     wire writer_head_valid;
     logic writer_release;
     wire [2:0] command_occupancy;
-    wire [3:0] slot_occupancy;
+    wire [$clog2(RESPONSE_SLOTS+1)-1:0] slot_occupancy;
     wire [15:0] install_addr;
     wire [DATA_BYTES*8-1:0] install_data;
     wire [DATA_BYTES-1:0] install_byteen;
@@ -77,7 +79,8 @@ module VX_naive_qparam_executor import VX_gpu_pkg::*; #(
     assign install_bus_if.req_data.tag = '0;
     assign install_bus_if.req_data.flags = '0;
     assign install_bus_if.rsp_ready = 1'b1;
-    VX_naive_qparam_dma #(.INSTANCE_ID(INSTANCE_ID), .DATA_BYTES(DATA_BYTES), .TAG_WIDTH(TAG_WIDTH)) dma (
+    VX_naive_qparam_dma #(.INSTANCE_ID(INSTANCE_ID), .DATA_BYTES(DATA_BYTES), .TAG_WIDTH(TAG_WIDTH),
+        .RESPONSE_SLOTS(RESPONSE_SLOTS), .LANE_FIFO_DEPTH(LANE_FIFO_DEPTH)) dma (
         .clk(clk), .reset(reset), .cmd_valid_i(admit_valid), .cmd_ready_o(admit_ready),
         .cmd_id_i(cmd.work_seq), .cmd_payload_i(descriptor),
         .activate_valid_i(cmd_valid), .activate_id_i(cmd.work_seq), .activate_ready_o(activate_ready),
