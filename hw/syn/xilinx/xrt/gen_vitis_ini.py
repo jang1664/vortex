@@ -60,6 +60,8 @@ def build_ini(args):
             not args.disable_congestion_fail_fast or args.gemm_slr_floorplan
         ):
             hooks.insert(2, ("PLACE_DESIGN", "POST", "post_place_hook.tcl"))
+        if args.target == "hw":
+            hooks.insert(0, ("INIT_DESIGN", "PRE", "pre_init_hook.tcl"))
         for step, when, tcl in hooks:
             vivado.append(f"prop=run.impl_1.STEPS.{step}.TCL.{when}={args.hook_dir}/{tcl}")
     if args.target == "hw":
