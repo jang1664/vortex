@@ -80,6 +80,8 @@ simv.vdb/
 # Raw source-build, synthesis, routing, and simulation outputs for the U55C
 # SLR pipeline experiment. Keep its task status and Markdown result summaries.
 /agent-tasks/u55c-slr-floorplan-pipeline/results/
+# Local PnR launchers, clock API probes, and server-specific run evidence.
+/agent-tasks/naive-acc-pnr-100m-20260915/
 
 # Agent-task execution evidence can contain multi-gigabyte VCS logs, waveform
 # databases, and machine-generated metric dumps. Keep task plans and written
