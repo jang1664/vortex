@@ -1,6 +1,7 @@
 # Reuse the established Vivado mock API and run its improve regressions first.
 source [file join [file dirname [info script]] .. test_slr_floorplan.tcl]
 set ::env(VORTEX_GEMM_BACKEND) naive
+set ::env(VORTEX_GEMM_NAIVE_USE_ACC_MEM) 0
 foreach {field value} {MXU_ROW 16 MXU_COL 16 MXU_COL_TILE 16 LMEM_PORTS 16 LMEM_BANKS 16 LMEM_LOG_SIZE 20 LSU_BLOCKS 1} {
     set ::env(VORTEX_GEMM_$field) $value
 }
@@ -16,7 +17,7 @@ proc naive_fixture {} {
         lappend local "gemm_node_naive/u_VX_gemm_compute_core/g_slr_mxu_input_$half.data_q_reg"
     }
     set prefixes {u_naive_dma_slr/u_global}
-    for {set i 0} {$i < 16} {incr i} {lappend prefixes [format {u_naive_dma_slr/g_lmem[%d].u_transport} $i]}
+    for {set i 0} {$i < $::env(VORTEX_GEMM_LMEM_PORTS)} {incr i} {lappend prefixes [format {u_naive_dma_slr/g_lmem[%d].u_transport} $i]}
     for {set i 0} {$i < 2} {incr i} {lappend prefixes [format {u_naive_dma_slr/g_mmio[%d]} $i]}
     foreach prefix $prefixes {
         foreach direction {request response} {
@@ -38,6 +39,18 @@ set ::mock_marked $complete
 equal [dict size $::vortex::slr::owners] [expr {[llength $complete]-1}] naive_owned_coverage
 equal [dict exists $::vortex::slr::owners top/core/execute/state_reg] 0 unassigned_core
 ::vortex::slr::require_marked_groups
+set ::env(VORTEX_GEMM_NAIVE_USE_ACC_MEM) 1
+fails {::vortex::slr::inventory} {*naive gemm_node_naive/u_acc_internal*}
+set ::mock_cells [string map {u_VX_gemm_acc_lmem u_acc_internal} $complete]
+set ::mock_marked $::mock_cells
+::vortex::slr::inventory
+::vortex::slr::require_marked_groups
+equal [dict get $::vortex::slr::owners top/core/gemm_node_naive/u_acc_internal/state_reg] 1 acc_internal_slr1
+set ::env(VORTEX_GEMM_NAIVE_USE_ACC_MEM) 0
+fails {::vortex::slr::inventory} {*naive gemm_node_naive/u_VX_gemm_acc_lmem*}
+set ::mock_cells $complete
+set ::mock_marked $complete
+::vortex::slr::inventory
 foreach {path expected} {
     u_VX_dma_node/u_job_frontend/state_reg 0
     mem_unit/local_mem/bank/ram_reg 1
@@ -67,6 +80,19 @@ fails {::vortex::slr::inventory} {*naive MXU input data rx*}
 set ::env(VORTEX_GEMM_LMEM_BANKS) 8
 fails {::vortex::slr::geometry} {*ports == banks*}
 set ::env(VORTEX_GEMM_LMEM_BANKS) 16
+set ::env(VORTEX_GEMM_LMEM_PORTS) 32
+fails {::vortex::slr::geometry} {*ports == banks*}
+set ::env(VORTEX_GEMM_LMEM_BANKS) 32
+set ::mock_cells [naive_fixture]
+set ::mock_marked $::mock_cells
+::vortex::slr::inventory
+::vortex::slr::require_marked_groups
+set ::mock_cells [lsearch -all -inline -not -glob $::mock_cells {*g_lmem\[31\]*}]
+fails {::vortex::slr::inventory} {*g_lmem*31*}
+set ::env(VORTEX_GEMM_LMEM_PORTS) 16
+set ::env(VORTEX_GEMM_LMEM_BANKS) 16
+set ::mock_cells $complete
+set ::mock_marked $complete
 set ::env(VORTEX_GEMM_MXU_COL_TILE) 8
 fails {::vortex::slr::geometry} {*one column tile*}
 set ::env(VORTEX_GEMM_MXU_COL_TILE) 16

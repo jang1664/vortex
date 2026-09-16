@@ -15,8 +15,8 @@ proc ::vortex::slr::naive_geometry {} {
     if {$row ni {16 32} || $row != $col || $col != [dict get $result MXU_COL_TILE]} {
         error "naive SLR requires square MXU16/MXU32 with one column tile"
     }
-    if {$lanes != $col || $lanes != [dict get $result LMEM_BANKS]} {
-        error "naive SLR requires LMEM ports == banks == MXU_COL"
+    if {$lanes != [dict get $result LMEM_BANKS] || !($lanes == $col || ($col == 16 && $lanes == 32))} {
+        error "naive SLR requires LMEM ports == banks, with MXU-matched lanes or MXU16/LMEM32"
     }
     puts "INFO: naive SLR source geometry: $result"
     return $result
@@ -64,9 +64,16 @@ proc ::vortex::slr::naive_require_groups {local geometry marked} {
     set local $normalized
     unset normalized
     if {!$marked} {
-        foreach hierarchy {u_VX_dma_node mem_unit/local_mem gemm_node_naive/u_VX_gemm_compute_core/u_mxu gemm_node_naive/u_VX_gemm_acc_lmem} {
+        foreach hierarchy {u_VX_dma_node mem_unit/local_mem gemm_node_naive/u_VX_gemm_compute_core/u_mxu} {
             naive_need_match $local "^$hierarchy/" "naive $hierarchy"
         }
+        set acc_mem 0
+        if {[info exists ::env(VORTEX_GEMM_NAIVE_USE_ACC_MEM)]} {
+            set acc_mem $::env(VORTEX_GEMM_NAIVE_USE_ACC_MEM)
+        }
+        if {$acc_mem ni {0 1}} {error "VORTEX_GEMM_NAIVE_USE_ACC_MEM must be 0 or 1"}
+        set accumulator [expr {$acc_mem ? "u_acc_internal" : "u_VX_gemm_acc_lmem"}]
+        naive_need_match $local "^gemm_node_naive/$accumulator/" "naive gemm_node_naive/$accumulator"
         naive_need_match $local {/g_slr_mxu_local_ownership[/.]} "naive MXU local ownership"
     }
     foreach group {input_tx input_rx weight_tx weight_rx output_tx output_rx} {

@@ -151,6 +151,7 @@ LINK_CONFIG_FINGERPRINT = FAST_MODE=$(FAST_MODE) VPP_OPTIMIZE=$(VPP_OPTIMIZE) CO
 # post_init_hook.tcl reads this setting while sourcing floorplan.tcl.
 export VORTEX_GEMM_SLR_FLOORPLAN := $(GEMM_SLR_FLOORPLAN)
 export VORTEX_GEMM_BACKEND := $(if $(filter -DGEMM_NAIVE -DGEMM_NAIVE=%,$(CONFIGS)),naive,improve)
+export VORTEX_GEMM_NAIVE_USE_ACC_MEM := $(if $(filter -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_NAIVE_USE_ACC_MEM=%,$(CONFIGS)),1,0)
 export VORTEX_CONGESTION_FAIL_FAST := $(CONGESTION_FAIL_FAST)
 # The floorplan validates the source-selected geometry, not an inferred guess
 # from whatever hierarchy happened to survive synthesis.
