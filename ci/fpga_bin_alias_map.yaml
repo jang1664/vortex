@@ -23,6 +23,10 @@ aliases:
   tcu_th32_c1_rev2: &C1_
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin
     configs: configs/tcu_th32_c1_rev2.sh
+
+  tcu_th16_c1_v2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_296f1c41bb/bin
+    configs: configs/tcu_th16_c1.sh
   
   C1: *C1_
 
