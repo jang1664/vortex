@@ -38,6 +38,10 @@ aliases:
   naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16_perf: &C2_ # naive tcu + mxu
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin
     configs: configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_3051772acc/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh
   
   C2: *C2_
 
@@ -66,6 +70,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin
     configs: configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_c26f196986/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh
+  
   C3: *C3_
 
   C3_v2: *naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_
@@ -108,10 +116,6 @@ aliases:
   improve_th16_tcol16_m16_t8_bigmem_all_bram_spread:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_051cabe511/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh
-
-  temp:
-    path: /home/jaeyongjang/project.local/vortex_base/build_mxu16_timing_pnr_c2/hw/syn/xilinx/xrt/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem_timing_c2_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin
-    configs: configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh
 
   C4: *C4_
 
