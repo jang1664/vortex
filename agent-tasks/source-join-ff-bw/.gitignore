@@ -1,0 +1,7 @@
+# Retain local execution evidence; commit scripts and interpreted summaries.
+/after/
+/before/
+/baseline/
+/pnr/
+/verification/improve-identity/
+/verification/unittests/

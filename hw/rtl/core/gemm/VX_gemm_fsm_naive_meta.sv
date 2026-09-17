@@ -30,7 +30,13 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     localparam int NT = `GEMM_FSM_NT;
     localparam int MK = `GEMM_FSM_MXU_KT;
     localparam int MN = `GEMM_FSM_MXU_NT;
-    localparam int MAX_MICROS = (KT / MK) * (NT / MN);
+    localparam int MAX_K_MICROS = KT / MK;
+    localparam int MAX_N_MICROS = NT / MN;
+    localparam int K_COUNT_BITS = $clog2(MAX_K_MICROS + 1);
+    localparam int N_COUNT_BITS = $clog2(MAX_N_MICROS + 1);
+    localparam int K_INDEX_BITS = `MAX(1, $clog2(MAX_K_MICROS));
+    localparam int N_INDEX_BITS = `MAX(1, $clog2(MAX_N_MICROS));
+    localparam int MAX_MICROS = MAX_K_MICROS * MAX_N_MICROS;
     localparam int MICRO_BITS = $clog2(MAX_MICROS + 1);
     localparam int QREG_BYTES = `MAX(`MXU_ROW, `MXU_COL) * 2;
     localparam logic [3:0] OP_LOAD=4'd1, OP_STORE=4'd2, OP_WEIGHT=4'd5,
@@ -62,7 +68,8 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     logic [31:0] tile_q, load_tile_q, ordinal_q, owner_q;
     logic [31:0] mt_q, nt_q, kt_q;
     logic [31:0] load_mt_q, load_nt_q, load_kt_q;
-    logic [MICRO_BITS-1:0] kb_q, nb_q;
+    logic [K_INDEX_BITS-1:0] kb_q;
+    logic [N_INDEX_BITS-1:0] nb_q;
     wire [31:0] mdim = (job_q.m + MT - 1) >> $clog2(MT);
     wire [31:0] ndim = (job_q.n + NT - 1) >> $clog2(NT);
     wire [31:0] kdim = (job_q.k + KT - 1) >> $clog2(KT);
@@ -97,8 +104,9 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     wire [31:0] rows = lesser(MT, job_q.m - mt_q * MT);
     wire [31:0] cols = lesser(NT, job_q.n - nt_q * NT);
     wire [31:0] kval = lesser(KT, job_q.k - kt_q * KT);
-    wire [31:0] knum = kval / MK;
-    wire [31:0] nnum = (cols + MN - 1) / MN;
+    wire [K_COUNT_BITS-1:0] knum = K_COUNT_BITS'(kval / MK);
+    wire [N_COUNT_BITS-1:0] nnum = N_COUNT_BITS'((cols + MN - 1) / MN);
+    wire [MICRO_BITS-1:0] micro_count = knum * nnum;
     wire [31:0] k0 = 32'(kb_q) * MK;
     wire [31:0] n0 = 32'(nb_q) * MN;
     wire [31:0] valid_cols = lesser(MN, cols - n0);
@@ -132,7 +140,7 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     assign source_closed_valid_o = command_fire && state_q == S_INPUT && last_micro;
     assign source_closed_buffer_o = source_bank;
     assign source_closed_generation_o = source_generation;
-    assign source_closed_count_o = knum * nnum;
+    assign source_closed_count_o = 32'(micro_count);
 
     always_comb begin : make_command
         logic [63:0] address;

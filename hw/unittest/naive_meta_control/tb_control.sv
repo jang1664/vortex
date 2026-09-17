@@ -15,7 +15,7 @@ module tb_control import VX_gpu_pkg::*; ();
     wire [3:0] source_read_done_valid;
     wire [31:0] source_read_done_work_seq[4];
     int cycle=0,m=4,k=512,n=512,qrow=0,wtrans=0;
-    int delivery_delay=5, store_delay=0;
+    int delivery_delay=5, store_delay=0, source_done_at_retire=0;
     int cfg_edge=-1, last_store_edge=-1, valid_edge=-1, handshake_edge=-1;
     int actual_stores=0;
     wire store_retired=child.done_valid[4] && child.done_ready[4]
@@ -31,7 +31,13 @@ module tb_control import VX_gpu_pkg::*; ();
         if(store_retired) begin last_store_edge=cycle;actual_stores++;end
         if(done_valid && valid_edge<0) valid_edge=cycle;
         if(done_valid && done_ready) handshake_edge=cycle;
-        if(done_valid) assert(!( |busy)) else $fatal(1,"Done with owned executor work");
+        if(done_valid) begin
+            assert(!( |busy)) else $fatal(1,"Done with owned executor work");
+            assert(dut.source_quiescent) else $fatal(1,"Done with pending source events or ownership");
+        end
+        if(dut.source_join.closed_valid_q || (|dut.source_join.read_done_valid_q))
+            assert(!dut.source_quiescent && !idle)
+                else $fatal(1,"Pending source event incorrectly reported drained control");
     end
     int input_count=0,load_count=0,store_count=0,close_count=0;
     VX_naive_gemm_control dut (
@@ -64,8 +70,11 @@ module tb_control import VX_gpu_pkg::*; ();
         assign child.done_valid[c]=busy[c] && remaining[c]==0;
         assign child.done_work_seq[c]=owned[c].work_seq;
         if(c<4)begin
-            assign source_read_done_valid[c]=child.cmd_valid[c]&&child.cmd_ready[c];
-            assign source_read_done_work_seq[c]=child.cmd[c].work_seq;
+            assign source_read_done_valid[c]=source_done_at_retire
+                ? child.done_valid[c]&&child.done_ready[c]
+                : child.cmd_valid[c]&&child.cmd_ready[c];
+            assign source_read_done_work_seq[c]=source_done_at_retire
+                ? owned[c].work_seq : child.cmd[c].work_seq;
         end
         always @(posedge clk)begin
             if(reset)begin busy[c]<=0;remaining[c]<=0;owned[c]<='0;end
@@ -135,6 +144,8 @@ module tb_control import VX_gpu_pkg::*; ();
         void'($value$plusargs("WTRANS=%d",wtrans));
         void'($value$plusargs("DELIVERY_DELAY=%d",delivery_delay));
         void'($value$plusargs("STORE_DELAY=%d",store_delay));
+        void'($value$plusargs("SOURCE_DONE_AT_RETIRE=%d",source_done_at_retire));
+        assert(source_done_at_retire inside {0,1})else $fatal(1,"Invalid source completion mode");
         assert(delivery_delay>=0 && store_delay>=0)else $fatal(1,"Negative test delay");
         done_ready=(delivery_delay==0);
         cfg.regs = '0; cfg.valid = 0; cfg.entry_id = 7;

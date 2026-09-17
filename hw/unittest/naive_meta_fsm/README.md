@@ -31,3 +31,17 @@ installed payload, actual memory visibility, source-read completion, or
 integrated numerical/latency behavior. Producer closure is explicitly not a
 SRC_FREE event. The staged FSM remains disconnected from the legacy node until
 the metadata executors and owned source/physical completion joins are wired.
+
+The geometry-width regression asserts knum/nnum/product/index widths of
+4/4/7/3/3 for MXU16 and 3/3/5/2/2 for MXU32. Run minimum-count shapes
+(M=1, K=MXU, N=1), a full macro tile (M=4, K=N=128), N=129 tails,
+and multi-macro-tile K/N=256 or 512 cases through the independent oracle.
+These exercise count extrema, ceiling division and both index rollovers
+without changing the frozen command-stream reference.
+
+For `GEMM_NAIVE_USE_ACC_MEM`, use
+`agent-tasks/source-join-ff-bw/verification/check_acc_stream.py --acc` with the
+same arguments. It validates ACC Input offsets and final stride against the
+frozen microtile geometry, then translates those three fields to the legacy
+LMEM representation for the unchanged oracle. The raw transcript is retained;
+all other fields pass through unchanged.

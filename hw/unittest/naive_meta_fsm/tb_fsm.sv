@@ -70,6 +70,15 @@ module tb_fsm import VX_gpu_pkg::*; ();
         void'($value$plusargs("M=%d",m)); void'($value$plusargs("K=%d",k));
         void'($value$plusargs("N=%d",n)); void'($value$plusargs("QROW=%d",qrow));
         void'($value$plusargs("WTRANS=%d",wtrans));
+        assert($bits(dut.knum)==$clog2(`GEMM_FSM_KT/`GEMM_FSM_MXU_KT+1)
+            && $bits(dut.nnum)==$clog2(`GEMM_FSM_NT/`GEMM_FSM_MXU_NT+1)
+            && $bits(dut.kb_q)==$clog2(`GEMM_FSM_KT/`GEMM_FSM_MXU_KT)
+            && $bits(dut.nb_q)==$clog2(`GEMM_FSM_NT/`GEMM_FSM_MXU_NT)
+            && $bits(dut.micro_count)==$clog2(
+                (`GEMM_FSM_KT/`GEMM_FSM_MXU_KT)*(`GEMM_FSM_NT/`GEMM_FSM_MXU_NT)+1))
+            else $fatal(1,"Geometry-derived count/index widths mismatch");
+        $display("WIDTH_CHECK knum=%0d nnum=%0d product=%0d kb=%0d nb=%0d",
+            $bits(dut.knum),$bits(dut.nnum),$bits(dut.micro_count),$bits(dut.kb_q),$bits(dut.nb_q));
         cfg.regs = '0; cfg.valid = 0; cfg.entry_id = 17;
         repeat (3) @(negedge clk);
         reset = 0;

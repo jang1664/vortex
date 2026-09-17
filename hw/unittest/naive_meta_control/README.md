@@ -22,3 +22,8 @@ The initial fixture expected entry ID17 despite the configured four-bit entry
 interface. Corrected the fixture to legal entry ID7; production code was
 unchanged. Source-join iteration2 also removes an invalid completion-order
 assumption discovered by inspecting the actual stream DMA response-owner path.
+
+`+SOURCE_DONE_AT_RETIRE=1` delays source read-completion events until the fake
+executor retires each command (default 0 reports them on acceptance). Both
+modes must preserve the command transcript and drain before completion.
+Assertions reject idle/done while the source event register is pending.
