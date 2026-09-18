@@ -344,27 +344,238 @@ module VX_dp_ram_compiled #(
                 .CENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
             );
         end
-    end else begin : g_unsupported
-        localparam WSELW = DATAW / WRENW;
-        reg [DATAW-1:0] ram [0:SIZE-1];
-        reg [DATAW-1:0] rdata_r;
-        if (WRENW != 1) begin : g_wren
-            always @(posedge clk) begin
-                if (write) begin
-                    for (integer i = 0; i < WRENW; ++i) begin
-                        if (wren[i]) ram[waddr][i*WSELW +: WSELW] <= wdata[i*WSELW +: WSELW];
-                    end
-                end
+    end else if (SIZE == 1024 && DATAW == 18 && WRENW == 1) begin : g_1024x18
+        // L2 tag (multi-bank point) — 1 × cmos28lpp_ra2_hd_1024x18m16
+        `UNUSED_VAR (wren)
+        cmos28lpp_ra2_hd_1024x18m16 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(18'h0), .QA(rdata),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(18'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(18'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+    end else if (SIZE == 32 && DATAW == 23 && WRENW == 1) begin : g_32x23
+        // DCACHE tag (default-size point) — 1 × cmos28lpp_ra2_hd_64x23m4,
+        // depth-padded (same precedent as the SP g_32x512 arm).
+        `UNUSED_VAR (wren)
+        cmos28lpp_ra2_hd_64x23m4 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA({1'b0, raddr}), .DA(23'h0), .QA(rdata),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB({1'b0, waddr}), .DB(wdata), .QB(),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(6'h0), .TDA(23'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(6'h0), .TDB(23'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+    end else if (SIZE == 64 && DATAW == 22 && WRENW == 1) begin : g_64x22
+        // DCACHE tag (2-bank point) — 1 × cmos28lpp_ra2_hd_64x23m4 with the
+        // top bit tied off; no 22-bit-wide macro exists in the 28LPP set.
+        `UNUSED_VAR (wren)
+        wire [22:0] q;
+        cmos28lpp_ra2_hd_64x23m4 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(23'h0), .QA(q),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB({1'b0, wdata}), .QB(),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(6'h0), .TDA(23'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(6'h0), .TDB(23'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+        assign rdata = q[21:0];
+    end else if (SIZE == 128 && DATAW == 22 && WRENW == 1) begin : g_128x22
+        // ICACHE tag (32KB point) — 2 × cmos28lpp_ra2_hd_64x23m4,
+        // depth-stacked on raddr[6]/waddr[6] (same Q-delayed mux as g_2048x18).
+        `UNUSED_VAR (wren)
+        wire ra_top = raddr[6];
+        wire wa_top = waddr[6];
+        wire [5:0] ra_low = raddr[5:0];
+        wire [5:0] wa_low = waddr[5:0];
+
+        wire [22:0] q_lo, q_hi;
+
+        cmos28lpp_ra2_hd_64x23m4 u_lo (
+            .CLKA(clk), .CENA(~(read & ~ra_top)), .WENA(1'b1), .AA(ra_low), .DA(23'h0), .QA(q_lo),
+            .CLKB(clk), .CENB(~(write & ~wa_top)), .WENB(1'b0), .AB(wa_low), .DB({1'b0, wdata}), .QB(),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(6'h0), .TDA(23'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(6'h0), .TDB(23'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+        cmos28lpp_ra2_hd_64x23m4 u_hi (
+            .CLKA(clk), .CENA(~(read & ra_top)), .WENA(1'b1), .AA(ra_low), .DA(23'h0), .QA(q_hi),
+            .CLKB(clk), .CENB(~(write & wa_top)), .WENB(1'b0), .AB(wa_low), .DB({1'b0, wdata}), .QB(),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(6'h0), .TDA(23'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(6'h0), .TDB(23'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+
+        reg ra_top_r;
+        always @(posedge clk) if (read) ra_top_r <= ra_top;
+        assign rdata = ra_top_r ? q_hi[21:0] : q_lo[21:0];
+    end else if (SIZE == 64 && DATAW == 1024 && WRENW == 128) begin : g_64x1024_bwe128
+        // GPR opc (TH16, 16 lanes) — 8 × cmos28lpp_rf2w_hd_64x128m1
+        // (1R1W with bit-WE on port B), width-tiled like g_64x512_bwe8.
+        for (genvar t = 0; t < 8; t++) begin : g_tile
+            wire [127:0] wen_n;
+            for (genvar i = 0; i < 16; i++) begin : g_byte_wen
+                assign wen_n[i*8 +: 8] = {8{~(write & wren[t*16 + i])}};
             end
-        end else begin : g_no_wren
-            `UNUSED_VAR (wren)
-            always @(posedge clk) begin
-                if (write) ram[waddr] <= wdata;
-            end
+            cmos28lpp_rf2w_hd_64x128m1 u_macro (
+                .CLKA(clk), .CENA(~read), .AA(raddr),
+                .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[t*128 +: 128]), .WENB(wen_n),
+                .QA(rdata[t*128 +: 128]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(6'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(6'h0), .TDB(128'h0), .TWENB(128'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+            );
         end
-        always @(posedge clk) if (read) rdata_r <= ram[raddr];
-        assign rdata = rdata_r;
+    end else if (SIZE == 32 && DATAW == 1024 && WRENW == 1) begin : g_32x1024
+        // DMA response RAM (naive misaligned path) — 2 × g_16x1024 tile sets
+        // (6 × 16x160 + 1 × 16x64 each), depth-stacked on raddr[4]/waddr[4].
+        `UNUSED_VAR (wren)
+        wire ra_top = raddr[4];
+        wire wa_top = waddr[4];
+        wire [3:0] ra_low = raddr[3:0];
+        wire [3:0] wa_low = waddr[3:0];
+
+        wire [159:0] q160_lo [0:5];
+        wire [159:0] q160_hi [0:5];
+        wire [63:0] q64_lo, q64_hi;
+
+        for (genvar t = 0; t < 6; t++) begin : g_tile
+            cmos28lpp_rf2_hd_16x160m1 u_lo (
+                .CLKA(clk), .CENA(~(read & ~ra_top)), .AA(ra_low),
+                .CLKB(clk), .CENB(~(write & ~wa_top)), .AB(wa_low), .DB(wdata[t*160 +: 160]),
+                .QA(q160_lo[t]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(160'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+            cmos28lpp_rf2_hd_16x160m1 u_hi (
+                .CLKA(clk), .CENA(~(read & ra_top)), .AA(ra_low),
+                .CLKB(clk), .CENB(~(write & wa_top)), .AB(wa_low), .DB(wdata[t*160 +: 160]),
+                .QA(q160_hi[t]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(160'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+        cmos28lpp_rf2_hd_16x64m1 u_tail_lo (
+            .CLKA(clk), .CENA(~(read & ~ra_top)), .AA(ra_low),
+            .CLKB(clk), .CENB(~(write & ~wa_top)), .AB(wa_low), .DB(wdata[960 +: 64]),
+            .QA(q64_lo),
+            .EMAA(3'b100), .EMAB(3'b100),
+            .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(64'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+        );
+        cmos28lpp_rf2_hd_16x64m1 u_tail_hi (
+            .CLKA(clk), .CENA(~(read & ra_top)), .AA(ra_low),
+            .CLKB(clk), .CENB(~(write & wa_top)), .AB(wa_low), .DB(wdata[960 +: 64]),
+            .QA(q64_hi),
+            .EMAA(3'b100), .EMAB(3'b100),
+            .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(64'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+        );
+
+        reg ra_top_r;
+        always @(posedge clk) if (read) ra_top_r <= ra_top;
+        for (genvar t = 0; t < 6; t++) begin : g_mux
+            assign rdata[t*160 +: 160] = ra_top_r ? q160_hi[t] : q160_lo[t];
+        end
+        assign rdata[960 +: 64] = ra_top_r ? q64_hi : q64_lo;
+    end else if (SIZE == 16 && DATAW == 64 && WRENW == 1) begin : g_16x64
+        // Naive GEMM lane-response RAM — 1 × cmos28lpp_rf2_hd_16x64m1
+        `UNUSED_VAR (wren)
+        cmos28lpp_rf2_hd_16x64m1 u_macro (
+            .CLKA(clk), .CENA(~read), .AA(raddr),
+            .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata),
+            .QA(rdata),
+            .EMAA(3'b100), .EMAB(3'b100),
+            .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(64'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+        );
+    end else if (SIZE == 16 && DATAW == 256 && WRENW == 1) begin : g_16x256
+        // Naive GEMM weight/output response RAM — 4 × cmos28lpp_rf2_hd_16x64m1.
+        `UNUSED_VAR (wren)
+        for (genvar t = 0; t < 4; t++) begin : g_tile
+            cmos28lpp_rf2_hd_16x64m1 u_macro (
+                .CLKA(clk), .CENA(~read), .AA(raddr),
+                .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[t*64 +: 64]),
+                .QA(rdata[t*64 +: 64]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(4'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(4'h0), .TDB(64'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+    end else if (SIZE == 8 && DATAW == 512 && WRENW == 1) begin : g_8x512
+        // Improve HBM-DMA response RAM — 8 × cmos28lpp_rf2_hd_8x64m1.
+        `UNUSED_VAR (wren)
+        for (genvar t = 0; t < 8; t++) begin : g_tile
+            cmos28lpp_rf2_hd_8x64m1 u_macro (
+                .CLKA(clk), .CENA(~read), .AA(raddr),
+                .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[t*64 +: 64]),
+                .QA(rdata[t*64 +: 64]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(3'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(3'h0), .TDB(64'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+    end else if (SIZE == 8 && DATAW == 256 && WRENW == 1) begin : g_8x256
+        // Improve TMEM-DMA response RAM — 4 × cmos28lpp_rf2_hd_8x64m1.
+        `UNUSED_VAR (wren)
+        for (genvar t = 0; t < 4; t++) begin : g_tile
+            cmos28lpp_rf2_hd_8x64m1 u_macro (
+                .CLKA(clk), .CENA(~read), .AA(raddr),
+                .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[t*64 +: 64]),
+                .QA(rdata[t*64 +: 64]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(3'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(3'h0), .TDB(64'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+    end else begin : g_unsupported
+        // Unsupported compiled-SRAM shapes must not turn into standard-cell storage.
+        `UNUSED_VAR ({clk, reset, read, write, wren, waddr, wdata, raddr})
+        assign rdata = 'x;
         `VX_STATIC_ASSERT(0, ("VX_dp_ram_compiled: no 28LPP macro for (DEPTH, DATAW, WRENW); add an arm in VX_dp_ram_compiled.sv"))
+        VX_dp_ram_compiled_unsupported_shape u_unsupported_shape ();
     end
 endmodule
 `TRACING_ON

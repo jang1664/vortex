@@ -490,6 +490,99 @@ module VX_sp_ram_compiled #(
                 );
             end
         end
+    end else if (SIZE == 1024 && DATAW == 512 && WRENW == 1) begin : g_1024x512
+        // GEMM accumulator (MXU_COL=16) — half width of g_1024x1024.
+        `UNUSED_VAR (wren)
+        if (SRAM_TYPE == "HS") begin : g_hs
+            for (genvar t = 0; t < 4; t++) begin : g_tile
+                cmos28lpp_ra1w_hs_1024x128m8 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN({128{gwen_n}}), .GWEN(gwen_n),
+                    .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                    .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(10'h0), .TD(128'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end else begin : g_hd
+            for (genvar t = 0; t < 8; t++) begin : g_tile
+                cmos28lpp_ra1w_hd_1024x64m8 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN({64{gwen_n}}), .GWEN(gwen_n),
+                    .A(addr), .D(wdata[t*64 +: 64]), .Q(rdata[t*64 +: 64]),
+                    .EMA(3'b100), .EMAW(2'b00),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(10'h0), .TD(64'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end
+    end else if (SIZE == 2048 && DATAW == 256 && WRENW == 32) begin : g_2048x256_bwe8
+        // TMEM bank (MXU_ROW=16, 32B physical word) — 2 × native 2048x128 macros.
+        if (SRAM_TYPE == "HS") begin : g_hs
+            for (genvar t = 0; t < 2; t++) begin : g_tile
+                wire [127:0] wen_n;
+                for (genvar i = 0; i < 16; i++) begin : g_byte_wen
+                    assign wen_n[i*8 +: 8] = {8{~(write & wren[t*16 + i])}};
+                end
+                cmos28lpp_ra1w_hs_2048x128m8 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                    .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                    .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(11'h0), .TD(128'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end else begin : g_hd
+            for (genvar t = 0; t < 4; t++) begin : g_tile
+                wire [63:0] wen_n;
+                for (genvar i = 0; i < 8; i++) begin : g_byte_wen
+                    assign wen_n[i*8 +: 8] = {8{~(write & wren[t*8 + i])}};
+                end
+                cmos28lpp_ra1w_hd_2048x64m16 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                    .A(addr), .D(wdata[t*64 +: 64]), .Q(rdata[t*64 +: 64]),
+                    .EMA(3'b100), .EMAW(2'b00),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(11'h0), .TD(64'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end
+    end else if (SIZE == 64 && DATAW == 512 && WRENW == 64) begin : g_64x512_bwe8
+        // DCACHE data (2-bank point) — rf1 macros lack per-bit WE, so tile
+        // ra1w macros with zero-padded depth (same precedent as g_32x512).
+        if (SRAM_TYPE == "HS") begin : g_hs
+            for (genvar t = 0; t < 4; t++) begin : g_tile
+                wire [127:0] wen_n;
+                for (genvar i = 0; i < 16; i++) begin : g_byte_wen
+                    assign wen_n[i*8 +: 8] = {8{~(write & wren[t*16 + i])}};
+                end
+                cmos28lpp_ra1w_hs_256x128m8 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                    .A({2'b0, addr}), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                    .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(8'h0), .TD(128'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end else begin : g_hd
+            for (genvar t = 0; t < 8; t++) begin : g_tile
+                wire [63:0] wen_n;
+                for (genvar i = 0; i < 8; i++) begin : g_byte_wen
+                    assign wen_n[i*8 +: 8] = {8{~(write & wren[t*8 + i])}};
+                end
+                cmos28lpp_ra1w_hd_1024x64m8 u_macro (
+                    .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                    .A({4'b0, addr}), .D(wdata[t*64 +: 64]), .Q(rdata[t*64 +: 64]),
+                    .EMA(3'b100), .EMAW(2'b00),
+                    .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(10'h0), .TD(64'h0), .TGWEN(1'b1),
+                    .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                    .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+                );
+            end
+        end
     end else begin : g_unsupported
         // Unsupported compiled-SRAM shapes must not turn into standard-cell storage.
         `UNUSED_VAR ({clk, ce_n, gwen_n, wren, addr, wdata})
