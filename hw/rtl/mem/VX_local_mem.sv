@@ -341,7 +341,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             ) decode_request (
                 .write_fire(mem_bus_if[i].req_data.rw),
                 .tag(mem_bus_if[i].req_data.tag), .port_id(REQ_SEL_WIDTH'(i)),
-                .word_addr(mem_bus_if[i].req_data.addr), .commit(write_class)
+                // Bus addr is a full word address; the decoder takes the LMEM
+                // word offset (low ADDR_WIDTH bits). Explicit slice: VCS
+                // truncates implicitly (PCWM) but DC rejects the width
+                // mismatch (ELAB-327).
+                .word_addr(mem_bus_if[i].req_data.addr[ADDR_WIDTH-1:0]), .commit(write_class)
             );
             assign psum_write[i] = write_class[2:1] == 2'b01;
             assign psum_read[i] = !mem_bus_if[i].req_data.rw

@@ -175,6 +175,7 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
         assign lane_bus_if[lane].req_data.tag = TAG_WIDTH'(fetch_slot_r);
         assign request_fire[lane] = lane_bus_if[lane].req_valid && lane_bus_if[lane].req_ready;
         // FIFO payload accounting: LANE_FIFO_DEPTH x 8 B RAM + one 8 B head per lane.
+        wire response_empty, response_full;
         VX_fifo_queue #(.DATAW(64 + TAG_WIDTH), .DEPTH(LANE_FIFO_DEPTH), .OUT_REG(1)) response_fifo (
             .clk(clk), .reset(reset),
             .push(lane_bus_if[lane].rsp_valid && lane_bus_if[lane].rsp_ready),
@@ -184,7 +185,6 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
             .empty(response_empty), .full(response_full),
             .alm_empty(), .alm_full(), .size()
         );
-        wire response_empty, response_full;
         assign response_valid[lane] = !response_empty;
         assign lane_bus_if[lane].rsp_ready = !response_full;
         // Each physical lane writes its own bank of the reserved wide slot.

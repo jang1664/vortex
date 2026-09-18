@@ -524,7 +524,15 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         .TAG_WIDTH(PSUM_ARB_TAG_WIDTH)
       ) wr_out_if[1]();
 
-`ifndef GEMM_NAIVE_USE_ACC_MEM
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      // ACC_MEM path: lanes are statically tied off. Keep a constant-false
+      // generate-if so the else branch stays a proper if-else in both
+      // configurations (a dangling `begin : label` trips DC VER-946).
+      if (0) begin : g_lower_lane
+        `ASSIGN_VX_MEM_BUS_IF(rd_in_if[0], psum_rd_lane_mem_if[i]);
+        `ASSIGN_VX_MEM_BUS_IF(wr_in_if[0], psum_wr_lane_mem_if[i]);
+      end else
+`else
       if (i < GEMM_PSUM_LANES) begin : g_lower_lane
         `ASSIGN_VX_MEM_BUS_IF(rd_in_if[0], psum_rd_lane_mem_if[i]);
         `ASSIGN_VX_MEM_BUS_IF(wr_in_if[0], psum_wr_lane_mem_if[i]);
@@ -538,7 +546,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         assign wr_in_if[0].req_data  = '0;
         assign wr_in_if[0].rsp_ready = 1'b1;
       end
-`ifndef GEMM_NAIVE_USE_ACC_MEM
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+      if (0) begin : g_upper_lane
+        `ASSIGN_VX_MEM_BUS_IF(rd_in_if[1], psum_rd_lane_mem_if[i + `LMEM_NUM_PORTS]);
+        `ASSIGN_VX_MEM_BUS_IF(wr_in_if[1], psum_wr_lane_mem_if[i + `LMEM_NUM_PORTS]);
+      end else
+`else
       if ((i + `LMEM_NUM_PORTS) < GEMM_PSUM_LANES) begin : g_upper_lane
         `ASSIGN_VX_MEM_BUS_IF(rd_in_if[1], psum_rd_lane_mem_if[i + `LMEM_NUM_PORTS]);
         `ASSIGN_VX_MEM_BUS_IF(wr_in_if[1], psum_wr_lane_mem_if[i + `LMEM_NUM_PORTS]);
