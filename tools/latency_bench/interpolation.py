@@ -33,6 +33,13 @@ from .suite import (
 from .yaml_io import safe_dump
 
 
+RECOVERY_TYPE = "vortex-latency-interpolation-recovery"
+RECOVERY_SCHEMA_VERSION = 1
+TERMINAL_OUTCOMES = {
+    "converged", "no_candidates", "budget_exhausted", "unbracketed",
+}
+
+
 @dataclass(frozen=True)
 class InterpolationError:
     case_id: str
@@ -614,6 +621,8 @@ def _load_suite_for_raw(suite_path: Path, raw_db: Path) -> BenchSuite:
         warmup_override=warmup,
         iterations_override=iterations,
     )
+    if suite.experiment:
+        return suite
     xclbin_counts: Counter[str] = Counter()
     if raw_db.exists():
         with raw_db.open(newline="") as fp:
@@ -645,7 +654,6 @@ def promote_probe_rows(
         if key in existing_values or key not in probe_rows:
             continue
         row = {column: probe_rows[key].get(column, "") for column in RAW_DB_COLUMNS}
-        row["run_id"] = "interpolation_refine"
         rows.append(row)
         added_keys.append(key)
         added += 1
@@ -664,6 +672,294 @@ def p95(errors: list[InterpolationError]) -> float:
         return math.inf
     values = sorted(error.relative_error for error in errors)
     return values[min(len(values) - 1, math.ceil(0.95 * len(values)) - 1)]
+
+
+def _json_digest(value: Any) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str,
+        allow_nan=False,
+    )
+    return stable_hash(encoded, n=64)
+
+
+def _suite_identity(suite: BenchSuite) -> str:
+    return _json_digest(suite_to_expanded_yaml(suite))
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as output:
+            json.dump(payload, output, indent=2, sort_keys=True, allow_nan=False)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _load_recovery_checkpoint(path: Path) -> dict[str, Any] | None:
+    try:
+        with path.open(encoding="utf-8") as source:
+            payload = json.load(source)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid refinement recovery checkpoint {path}: {error}") from error
+    if payload.get("type") != RECOVERY_TYPE:
+        raise ValueError(f"unsupported refinement recovery checkpoint type in {path}")
+    if payload.get("schema_version") != RECOVERY_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported refinement recovery checkpoint schema in {path}: "
+            f"{payload.get('schema_version')!r}"
+        )
+    return payload
+
+
+def _save_recovery_checkpoint(path: Path, checkpoint: dict[str, Any]) -> None:
+    checkpoint["updated_at"] = datetime.now(timezone.utc).isoformat()
+    checkpoint["completed_budget"] = sum(
+        int(state.get("completed_iterations", 0))
+        for state in checkpoint["kernels"].values()
+    )
+    checkpoint["terminal_outcomes"] = {
+        key: state.get("terminal_outcome")
+        for key, state in checkpoint["kernels"].items()
+        if state.get("terminal_outcome")
+    }
+    active = [
+        state["active_iteration"]
+        for state in checkpoint["kernels"].values()
+        if state.get("active_iteration") is not None
+    ]
+    checkpoint["active_iteration"] = active[0] if len(active) == 1 else None
+    _atomic_write_json(path, checkpoint)
+
+
+def _recovery_identity(
+    suite: BenchSuite,
+    args: argparse.Namespace,
+    kernel_types: list[str],
+) -> dict[str, Any]:
+    return {
+        "suite_identity": _suite_identity(suite),
+        "metric": args.metric,
+        "sampling_strategy": args.sampling_strategy,
+        "seed": args.seed,
+        "validation_samples": args.validation_samples,
+        "kernel_types": kernel_types,
+    }
+
+
+def _relevant_values(
+    suite: BenchSuite,
+    raw_values: dict[str, float],
+    kernel_types: set[str],
+) -> dict[str, float]:
+    relevant_keys = {
+        case.exec_key for case in suite.cases if kernel_type(case) in kernel_types
+    }
+    return {
+        key: raw_values[key] for key in sorted(relevant_keys & set(raw_values))
+    }
+
+
+def _self_observation_values(checkpoint: dict[str, Any]) -> dict[str, float]:
+    values = {
+        key: float(value)
+        for key, value in checkpoint.get("accepted_post_state", {}).items()
+    }
+    for kernel_state in checkpoint.get("kernels", {}).values():
+        active = kernel_state.get("active_iteration") or {}
+        values.update({
+            key: float(value)
+            for key, value in active.get("actual_values", {}).items()
+        })
+    return values
+
+
+def _external_anchor_values(
+    suite: BenchSuite,
+    raw_values: dict[str, float],
+    kernel_types: set[str],
+    self_values: dict[str, float],
+) -> dict[str, float]:
+    return {
+        key: value
+        for key, value in _relevant_values(suite, raw_values, kernel_types).items()
+        if key not in self_values or value != self_values[key]
+    }
+
+
+def _new_recovery_checkpoint(
+    suite: BenchSuite,
+    args: argparse.Namespace,
+    kernel_types: list[str],
+    raw_values: dict[str, float],
+    grouped_candidates: dict[str, list[BenchCase]],
+    *,
+    archived_epochs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    rng = random.Random(args.seed)
+    kernels: dict[str, dict[str, Any]] = {}
+    for key in kernel_types:
+        random_order = [
+            case.exec_key for case in grouped_candidates.get(key, [])
+            if case.exec_key not in raw_values
+        ]
+        rng.shuffle(random_order)
+        kernels[key] = {
+            "physical_kernel": key,
+            "completed_iterations": 0,
+            "terminal_outcome": None,
+            "random_order": random_order,
+            "remaining_order": list(random_order),
+            "active_iteration": None,
+        }
+    identity = _recovery_identity(suite, args, kernel_types)
+    return {
+        "type": RECOVERY_TYPE,
+        "schema_version": RECOVERY_SCHEMA_VERSION,
+        "epoch_id": _json_digest({
+            "identity": identity,
+            "external_anchors": _external_anchor_values(
+                suite, raw_values, set(kernel_types), {}
+            ),
+        })[:16],
+        "epoch_identity": identity,
+        "external_anchor_values": _external_anchor_values(
+            suite, raw_values, set(kernel_types), {}
+        ),
+        "policy": {
+            "target_error": args.target_error,
+            "max_iterations": args.max_iterations,
+            "require_convergence": bool(getattr(args, "require_convergence", False)),
+        },
+        "phase": "ready",
+        "kernels": kernels,
+        "history": [],
+        "errors": [],
+        "selections": [],
+        "accepted_post_state": {},
+        "completed_budget": 0,
+        "terminal_outcomes": {},
+        "active_iteration": None,
+        "archived_epochs": archived_epochs or [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _archive_epoch(checkpoint: dict[str, Any], reason: str) -> list[dict[str, Any]]:
+    archived = list(checkpoint.get("archived_epochs", []))
+    archived.append({
+        "epoch_id": checkpoint.get("epoch_id"),
+        "epoch_identity": checkpoint.get("epoch_identity"),
+        "external_anchor_values": checkpoint.get("external_anchor_values", {}),
+        "history": checkpoint.get("history", []),
+        "errors": checkpoint.get("errors", []),
+        "selections": checkpoint.get("selections", []),
+        "accepted_post_state": checkpoint.get("accepted_post_state", {}),
+        "completed_budget": checkpoint.get("completed_budget", 0),
+        "terminal_outcomes": checkpoint.get("terminal_outcomes", {}),
+        "superseded_reason": reason,
+    })
+    return archived
+
+
+def _restore_or_create_checkpoint(
+    path: Path,
+    suite: BenchSuite,
+    args: argparse.Namespace,
+    kernel_types: list[str],
+    raw_values: dict[str, float],
+    grouped_candidates: dict[str, list[BenchCase]],
+) -> dict[str, Any]:
+    checkpoint = _load_recovery_checkpoint(path)
+    if checkpoint is None:
+        checkpoint = _new_recovery_checkpoint(
+            suite, args, kernel_types, raw_values, grouped_candidates
+        )
+        _save_recovery_checkpoint(path, checkpoint)
+        return checkpoint
+
+    identity = _recovery_identity(suite, args, kernel_types)
+    reason = ""
+    if checkpoint.get("epoch_identity") != identity:
+        reason = "suite or sampling identity changed"
+    else:
+        current_external = _external_anchor_values(
+            suite,
+            raw_values,
+            set(kernel_types),
+            _self_observation_values(checkpoint),
+        )
+        if current_external != checkpoint.get("external_anchor_values", {}):
+            reason = "relevant external anchors changed"
+    if reason:
+        checkpoint = _new_recovery_checkpoint(
+            suite,
+            args,
+            kernel_types,
+            raw_values,
+            grouped_candidates,
+            archived_epochs=_archive_epoch(checkpoint, reason),
+        )
+    checkpoint["policy"] = {
+        "target_error": args.target_error,
+        "max_iterations": args.max_iterations,
+        "require_convergence": bool(getattr(args, "require_convergence", False)),
+    }
+    _save_recovery_checkpoint(path, checkpoint)
+    return checkpoint
+
+
+def _error_payload(error: InterpolationError, *, iteration_id: str) -> dict[str, Any]:
+    return {
+        **error.__dict__,
+        "absolute_error": error.absolute_error,
+        "relative_error": error.relative_error,
+        "iteration_id": iteration_id,
+    }
+
+
+def _errors_from_active(active: dict[str, Any]) -> list[InterpolationError]:
+    return [
+        InterpolationError(
+            case_id=row["case_id"],
+            kernel_type=row["kernel_type"],
+            logical_cache_length=int(row["logical_cache_length"]),
+            predicted=float(row["predicted"]),
+            actual=float(row["actual"]),
+        )
+        for row in active.get("errors", [])
+    ]
+
+
+def _probe_references(
+    rows: dict[str, dict[str, str]],
+    keys: set[str],
+    probe_raw: Path,
+) -> dict[str, dict[str, str]]:
+    references: dict[str, dict[str, str]] = {}
+    for key in sorted(keys & set(rows)):
+        row = rows[key]
+        references[key] = {
+            "run_id": row.get("run_id", ""),
+            "raw_db": str(probe_raw.resolve()),
+            "raw_csv": row.get("raw_csv", ""),
+            "log_file": row.get("log_file", ""),
+        }
+    return references
 
 
 def _midpoint_counts(
@@ -701,6 +997,7 @@ def write_refinement_progress(
     history: list[dict[str, Any]],
     selections: list[dict[str, Any]],
     status: str,
+    checkpoint: dict[str, Any] | None = None,
 ) -> None:
     kernel_type_filter = _kernel_type_filter(args)
     iteration_columns = [
@@ -728,6 +1025,14 @@ def write_refinement_progress(
     pd.DataFrame(selections, columns=selection_columns).to_csv(
         out / "selections.csv", index=False
     )
+    error_columns = [
+        "iteration_id", "case_id", "kernel_type", "logical_cache_length",
+        "predicted", "actual", "absolute_error", "relative_error",
+    ]
+    pd.DataFrame(
+        checkpoint.get("errors", []) if checkpoint else [],
+        columns=error_columns,
+    ).to_csv(out / "errors.csv", index=False)
     write_current_cases(
         suite, main_raw, out / "cases.csv", args.metric, raw_values=raw_values
     )
@@ -757,13 +1062,20 @@ def write_refinement_progress(
         "promoted_measurements": sum(
             int(item.get("promoted_measurements", 0)) for item in history
         ),
+        "completed_budget": (
+            int(checkpoint.get("completed_budget", 0)) if checkpoint else len(history)
+        ),
+        "terminal_outcomes": (
+            checkpoint.get("terminal_outcomes", {}) if checkpoint else {}
+        ),
+        "recovery_checkpoint": str((out / "recovery.json").resolve()),
         "status": status,
     }, indent=2) + "\n")
     publish_latest(
         out,
         output_root,
         "refinement",
-        ["iterations.csv", "selections.csv", "state.json"],
+        ["iterations.csv", "selections.csv", "errors.csv", "state.json", "recovery.json"],
     )
 
 
@@ -884,44 +1196,13 @@ def evaluate_command(args: argparse.Namespace) -> int:
 def refine_command(args: argparse.Namespace) -> int:
     started = time.monotonic()
     output_root, out = _artifact_dir(
-        args, "refinements", args.refinement_id
+        args, "refinements", args.refinement_id or "default"
     )
     main_raw = _main_raw_db(args, output_root)
-    print(
-        f"[refine] start metric={args.metric} target_p95={args.target_error:.2%} "
-        f"max_iterations={args.max_iterations} validation_samples={args.validation_samples} "
-        f"sampling_strategy={args.sampling_strategy}",
-        flush=True,
-    )
-    print(f"[refine] artifacts={out.resolve()}", flush=True)
-    if args.measure_command:
-        print(
-            f"[refine] case_logs={out.resolve()}/validation_run/runs/<run_id>/logs",
-            flush=True,
-        )
-    elif args.probe_raw_db:
-        print(
-            f"[refine] probe_raw_db={Path(args.probe_raw_db).resolve()}",
-            flush=True,
-        )
-    load_started = time.monotonic()
-    print(
-        f"[refine] loading suite={Path(args.suite).resolve()} "
-        f"raw_db={main_raw.resolve()}",
-        flush=True,
-    )
+    out.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = out / "recovery.json"
     suite = _load_suite_for_raw(Path(args.suite), main_raw)
     raw_values, raw_rows = _raw_metric(main_raw, args.metric)
-    print(
-        f"[refine] loaded cases={len(suite.cases)} "
-        f"elapsed={time.monotonic() - load_started:.1f}s",
-        flush=True,
-    )
-    probe_raw = Path(args.probe_raw_db) if args.probe_raw_db else None
-    out.mkdir(parents=True, exist_ok=True)
-    grouped: dict[str, list[BenchCase]] = defaultdict(list)
-    scan_started = time.monotonic()
-    print("[refine] scanning unresolved interpolation cases", flush=True)
     candidates = interpolation_candidates(suite)
     kernel_type_filter = _kernel_type_filter(args)
     available_kernel_types = {kernel_type(case) for case in candidates}
@@ -932,71 +1213,131 @@ def refine_command(args: argparse.Namespace) -> int:
             f"{', '.join(sorted(unknown_kernel_types))}; available: "
             f"{', '.join(sorted(available_kernel_types))}"
         )
+    ordered_groups = sorted(kernel_type_filter or available_kernel_types)
+    grouped_candidates: dict[str, list[BenchCase]] = defaultdict(list)
+    for case in candidates:
+        if kernel_type(case) in ordered_groups:
+            grouped_candidates[kernel_type(case)].append(case)
+
+    # Restore recovery state before discovering which candidates remain.  A
+    # promoted row is therefore interpreted through its saved iteration first.
+    checkpoint = _restore_or_create_checkpoint(
+        checkpoint_path,
+        suite,
+        args,
+        ordered_groups,
+        raw_values,
+        grouped_candidates,
+    )
+    history = checkpoint["history"]
+    selections = checkpoint["selections"]
+    probe_raw = Path(args.probe_raw_db) if args.probe_raw_db else None
     unresolved = [
         case for case in candidates
-        if case.exec_key not in raw_values
-        and (not kernel_type_filter or kernel_type(case) in kernel_type_filter)
+        if kernel_type(case) in ordered_groups and case.exec_key not in raw_values
     ]
-    for case in unresolved:
-        grouped[kernel_type(case)].append(case)
-    print(
-        f"[refine] scan complete unresolved={len(unresolved)} "
-        f"kernel_types={len(grouped)} elapsed={time.monotonic() - scan_started:.1f}s",
-        flush=True,
-    )
-    if grouped and not args.probe_raw_db and not args.measure_command:
+    if unresolved and not args.probe_raw_db and not args.measure_command:
         raise ValueError("refine requires --probe-raw-db or --measure-command")
-    rng = random.Random(args.seed)
-    history: list[dict[str, Any]] = []
-    selections: list[dict[str, Any]] = []
-    snapshot_started = time.monotonic()
-    print(f"[refine] writing initial snapshot to {out}", flush=True)
-    write_refinement_progress(
-        suite=suite,
-        main_raw=main_raw,
-        probe_raw=probe_raw,
-        output_root=output_root,
-        out=out,
-        args=args,
-        grouped=grouped,
-        unresolved=unresolved,
-        raw_values=raw_values,
-        history=history,
-        selections=selections,
-        status="no_candidates" if not unresolved else "running",
-    )
+
     print(
-        f"[refine] initial snapshot ready "
-        f"elapsed={time.monotonic() - snapshot_started:.1f}s",
+        f"[refine] start metric={args.metric} target_p95={args.target_error:.2%} "
+        f"max_iterations={args.max_iterations} validation_samples={args.validation_samples} "
+        f"sampling_strategy={args.sampling_strategy} epoch={checkpoint['epoch_id']}",
         flush=True,
     )
-    ordered_groups = sorted(grouped)
-    for kernel_index, key in enumerate(ordered_groups, start=1):
-        random_remaining = list(grouped[key])
-        rng.shuffle(random_remaining)
-        print(
-            f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
-            f"type={key} candidates={len(random_remaining)}",
-            flush=True,
+    print(f"[refine] artifacts={out.resolve()}", flush=True)
+
+    case_by_id = {case.case_id: case for case in suite.cases}
+    case_by_exec: dict[str, BenchCase] = {}
+    for case in candidates:
+        case_by_exec.setdefault(case.exec_key, case)
+    curve_groups: dict[str, list[BenchCase]] = defaultdict(list)
+    for case in suite.cases:
+        curve_groups[interpolation_group_key(case)].append(case)
+
+    def save(phase: str) -> None:
+        checkpoint["phase"] = phase
+        _save_recovery_checkpoint(checkpoint_path, checkpoint)
+
+    def report(status: str) -> None:
+        write_refinement_progress(
+            suite=suite,
+            main_raw=main_raw,
+            probe_raw=probe_raw,
+            output_root=output_root,
+            out=out,
+            args=args,
+            grouped=grouped_candidates,
+            unresolved=unresolved,
+            raw_values=raw_values,
+            history=history,
+            selections=selections,
+            status=status,
+            checkpoint=checkpoint,
         )
-        for iteration in range(args.max_iterations):
-            intervals, unbracketed = bracketed_intervals(
-                suite, raw_values, physical_kernel=key
-            )
-            bracketed_count = len({
-                case.exec_key
-                for interval in intervals for case in interval.candidates
-            })
-            unbracketed_count = len({case.exec_key for case in unbracketed})
-            if args.sampling_strategy == "midpoint":
-                midpoint_selections = select_midpoint_candidates(
-                    intervals, args.validation_samples
+
+    # Mutable policy parameters do not create an epoch.  Reevaluate saved
+    # evidence and budget before selecting any further probes.
+    for key in ordered_groups:
+        kernel_state = checkpoint["kernels"][key]
+        kernel_history = [row for row in history if row["kernel_type"] == key]
+        latest = kernel_history[-1] if kernel_history else None
+        completed = int(kernel_state["completed_iterations"])
+        if latest and float(latest["p95_relative_error"]) <= args.target_error:
+            if kernel_state.get("active_iteration") is not None:
+                kernel_state["deferred_iteration"] = kernel_state.pop(
+                    "active_iteration"
                 )
-                validation = [item.case for item in midpoint_selections]
-                for item in midpoint_selections:
-                    selections.append({
+            kernel_state["terminal_outcome"] = "converged"
+        elif kernel_state.get("terminal_outcome") == "no_candidates":
+            pass
+        elif kernel_state.get("terminal_outcome") == "unbracketed":
+            pass
+        elif completed >= args.max_iterations:
+            if kernel_state.get("active_iteration") is not None:
+                kernel_state["deferred_iteration"] = kernel_state.pop(
+                    "active_iteration"
+                )
+            kernel_state["terminal_outcome"] = "budget_exhausted"
+        else:
+            if (
+                kernel_state.get("active_iteration") is None
+                and kernel_state.get("deferred_iteration") is not None
+            ):
+                kernel_state["active_iteration"] = kernel_state.pop(
+                    "deferred_iteration"
+                )
+            kernel_state["terminal_outcome"] = None
+    save("ready")
+    report("running")
+
+    for kernel_index, key in enumerate(ordered_groups, start=1):
+        kernel_state = checkpoint["kernels"][key]
+        while kernel_state.get("terminal_outcome") is None:
+            active = kernel_state.get("active_iteration")
+            if active is None:
+                completed = int(kernel_state["completed_iterations"])
+                if completed >= args.max_iterations:
+                    kernel_state["terminal_outcome"] = "budget_exhausted"
+                    save("committed")
+                    break
+                intervals, unbracketed = bracketed_intervals(
+                    suite, raw_values, physical_kernel=key
+                )
+                bracketed_count = len({
+                    case.exec_key
+                    for interval in intervals for case in interval.candidates
+                })
+                unbracketed_count = len({case.exec_key for case in unbracketed})
+                midpoint_selections: list[MidpointSelection] = []
+                if args.sampling_strategy == "midpoint":
+                    midpoint_selections = select_midpoint_candidates(
+                        intervals, args.validation_samples
+                    )
+                    validation = [item.case for item in midpoint_selections]
+                    selection_rows = [{
                         "kernel_type": key,
-                        "iteration": iteration,
+                        "iteration": completed,
                         "stable_group_id": item.interval.stable_group_id,
                         "case_id": item.case.case_id,
                         "exec_key": item.case.exec_key,
@@ -1008,14 +1349,18 @@ def refine_command(args: argparse.Namespace) -> int:
                         "midpoint_relative_position": item.midpoint_relative_position,
                         "selection_rank": item.rank,
                         "selection_reason": item.reason,
-                    })
-            else:
-                validation = random_remaining[:args.validation_samples]
-                random_remaining = random_remaining[args.validation_samples:]
-                for rank, case in enumerate(validation, start=1):
-                    selections.append({
+                    } for item in midpoint_selections]
+                else:
+                    remaining = [
+                        exec_key for exec_key in kernel_state["remaining_order"]
+                        if exec_key not in raw_values
+                    ]
+                    selected_keys = remaining[:args.validation_samples]
+                    validation = [case_by_exec[exec_key] for exec_key in selected_keys]
+                    kernel_state["remaining_order"] = remaining[len(selected_keys):]
+                    selection_rows = [{
                         "kernel_type": key,
-                        "iteration": iteration,
+                        "iteration": completed,
                         "stable_group_id": stable_hash(interpolation_group_key(case)),
                         "case_id": case.case_id,
                         "exec_key": case.exec_key,
@@ -1027,208 +1372,241 @@ def refine_command(args: argparse.Namespace) -> int:
                         "midpoint_relative_position": "",
                         "selection_rank": rank,
                         "selection_reason": "random_seed",
-                    })
-            if not validation:
-                if args.sampling_strategy == "midpoint" and any(
-                    case.exec_key not in raw_values for case in grouped[key]
-                ):
-                    history.append({
-                        "kernel_type": key,
-                        "iteration": iteration,
-                        "sampling_strategy": args.sampling_strategy,
-                        "bracketed_intervals": len(intervals),
-                        "bracketed_candidates": bracketed_count,
-                        "unbracketed_candidates": unbracketed_count,
-                        "validation_samples": 0,
-                        "p95_relative_error": math.inf,
-                        "target_error": args.target_error,
-                        "status": "no_bracketed_candidates",
-                        "promoted_measurements": 0,
-                    })
-                print(
-                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
-                    f"bracketed_intervals={len(intervals)} "
-                    f"bracketed_candidates={bracketed_count} "
-                    f"unbracketed_candidates={unbracketed_count} "
-                    + (
-                        "status=no_bracketed_candidates"
-                        if args.sampling_strategy == "midpoint" and unbracketed_count
-                        else "exhausted candidates"
-                    ),
-                    flush=True,
+                    } for rank, case in enumerate(validation, start=1)]
+                if not validation:
+                    has_unresolved = any(
+                        case.exec_key not in raw_values
+                        for case in grouped_candidates[key]
+                    )
+                    kernel_state["terminal_outcome"] = (
+                        "unbracketed" if has_unresolved else "no_candidates"
+                    )
+                    save("committed")
+                    break
+
+                baseline_values = dict(raw_values)
+                predictions = {
+                    case.exec_key: predict_case(
+                        case,
+                        curve_groups[interpolation_group_key(case)],
+                        baseline_values,
+                    )
+                    for case in validation
+                }
+                iteration_id = f"{checkpoint['epoch_id']}-{key}-{completed}"
+                iteration_id = stable_hash(iteration_id, n=16)
+                selected_keys = {case.exec_key for case in validation}
+                anchor_evidence = [{
+                    "exec_key": exec_key,
+                    "value": baseline_values[exec_key],
+                    "run_id": raw_rows.get(exec_key, {}).get("run_id", ""),
+                    "raw_db": str(main_raw.resolve()),
+                } for exec_key in sorted(baseline_values) if exec_key not in selected_keys]
+                iteration_probe = (
+                    Path(args.probe_raw_db)
+                    if args.probe_raw_db
+                    else out / "validation_runs" / iteration_id / "raw_db.csv"
                 )
-                break
-            iteration_started = time.monotonic()
-            ranges = ",".join(
-                f"{item.interval.lower_anchor}-{item.interval.upper_anchor}"
-                f"@{_case_cache_length(item.case)}"
-                for item in midpoint_selections
-            ) if args.sampling_strategy == "midpoint" else "random"
-            print(
-                f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
-                f"iteration {iteration + 1}/{args.max_iterations} "
-                f"bracketed_intervals={len(intervals)} "
-                f"bracketed_candidates={bracketed_count} "
-                f"unbracketed_candidates={unbracketed_count} "
-                f"selected_ranges={ranges} measuring={len(validation)}",
-                flush=True,
-            )
-            baseline_values = dict(raw_values)
-            if args.measure_command:
-                validation_suite = out / f"validate_{len(history):04d}.yaml"
-                write_candidate_suite(suite, validation, validation_suite)
-                validation_run = out / "validation_run"
+                active = {
+                    "iteration_id": iteration_id,
+                    "iteration": completed,
+                    "physical_kernel": key,
+                    "selected_case_ids": [case.case_id for case in validation],
+                    "selected_exec_keys": [case.exec_key for case in validation],
+                    "selection_rows": selection_rows,
+                    "frozen_predictions": predictions,
+                    "anchor_evidence": anchor_evidence,
+                    "probe_db": str(iteration_probe.resolve()),
+                    "original_run_refs": {},
+                    "actual_values": {},
+                    "errors": [],
+                    "phase": "selected",
+                }
+                kernel_state["active_iteration"] = active
+                selections.extend(selection_rows)
+                save("selected")
+            else:
+                validation = [case_by_id[case_id] for case_id in active["selected_case_ids"]]
+
+            selected_keys = set(active["selected_exec_keys"])
+            iteration_probe = Path(active["probe_db"])
+            probe_values, probe_rows = _raw_metric(iteration_probe, args.metric)
+            recovered_values = {
+                key_: probe_values[key_] for key_ in selected_keys & set(probe_values)
+            }
+            for key_ in selected_keys - set(recovered_values):
+                if key_ in raw_values and (
+                    key_ in checkpoint["accepted_post_state"]
+                    or active.get("phase") in {"evaluated", "promoted"}
+                ):
+                    recovered_values[key_] = raw_values[key_]
+                    if key_ in raw_rows:
+                        probe_rows[key_] = raw_rows[key_]
+            missing_keys = selected_keys - set(recovered_values)
+            if missing_keys and args.measure_command:
+                missing_cases = [case for case in validation if case.exec_key in missing_keys]
+                validation_suite = out / f"validate_{active['iteration_id']}.yaml"
+                write_candidate_suite(suite, missing_cases, validation_suite)
                 try:
                     probe_raw = run_measurement_command(
-                        args.measure_command, validation_suite, validation_run
+                        args.measure_command, validation_suite, iteration_probe.parent
                     )
+                    active["probe_db"] = str(probe_raw.resolve())
+                    iteration_probe = probe_raw
                 except (KeyboardInterrupt, subprocess.CalledProcessError):
-                    partial_raw = validation_run / "raw_db.csv"
-                    partial_values, _ = (
-                        _raw_metric(partial_raw, args.metric)
-                        if partial_raw.exists() else ({}, {})
-                    )
-                    partial_errors = evaluate_cases_from_values(
-                        suite, validation, baseline_values, partial_values
-                    )
-                    added = (
-                        promote_probe_rows(
-                            main_raw,
-                            partial_raw,
-                            {case.exec_key for case in validation},
-                            args.metric,
-                            existing_values=raw_values,
-                            existing_rows=raw_rows,
-                        )
-                        if partial_raw.exists() else 0
-                    )
-                    history.append({
-                        "kernel_type": key,
-                        "iteration": iteration,
-                        "sampling_strategy": args.sampling_strategy,
-                        "bracketed_intervals": len(intervals),
-                        "bracketed_candidates": bracketed_count,
-                        "unbracketed_candidates": unbracketed_count,
-                        "validation_samples": len(partial_errors),
-                        "p95_relative_error": p95(partial_errors),
-                        "target_error": args.target_error,
-                        "status": "interrupted",
-                        "promoted_measurements": added,
+                    partial_values, partial_rows = _raw_metric(iteration_probe, args.metric)
+                    active["actual_values"].update({
+                        key_: partial_values[key_]
+                        for key_ in selected_keys & set(partial_values)
                     })
-                    write_refinement_progress(
-                        suite=suite,
-                        main_raw=main_raw,
-                        probe_raw=partial_raw if partial_raw.exists() else None,
-                        output_root=output_root,
-                        out=out,
-                        args=args,
-                        grouped=grouped,
-                        unresolved=unresolved,
-                        raw_values=raw_values,
-                        history=history,
-                        selections=selections,
-                        status="interrupted",
+                    active["original_run_refs"].update(
+                        _probe_references(partial_rows, selected_keys, iteration_probe)
                     )
+                    active["phase"] = "interrupted"
+                    save("interrupted")
+                    report("interrupted")
                     raise
-            assert probe_raw is not None
-            actual_values, _ = _raw_metric(probe_raw, args.metric)
-            errors = evaluate_cases_from_values(
-                suite, validation, baseline_values, actual_values
+                probe_values, probe_rows = _raw_metric(iteration_probe, args.metric)
+                recovered_values.update({
+                    key_: probe_values[key_]
+                    for key_ in selected_keys & set(probe_values)
+                })
+            probe_raw = iteration_probe
+            missing_keys = selected_keys - set(recovered_values)
+            if missing_keys:
+                active["actual_values"] = recovered_values
+                active["original_run_refs"].update(
+                    _probe_references(probe_rows, selected_keys, iteration_probe)
+                )
+                active["phase"] = "failed"
+                active["missing_exec_keys"] = sorted(missing_keys)
+                save("failed")
+                report("failed")
+                print(
+                    f"[refine] failed iteration={active['iteration_id']} "
+                    f"missing_probes={len(missing_keys)}",
+                    flush=True,
+                )
+                return 1
+
+            active["actual_values"] = recovered_values
+            active["original_run_refs"].update(
+                _probe_references(probe_rows, selected_keys, iteration_probe)
             )
-            current_p95 = p95(errors)
-            selected_exec_keys = {case.exec_key for case in validation}
-            all_succeeded = (
-                selected_exec_keys <= set(actual_values)
-                and len(errors) == len(validation)
-            )
-            added = promote_probe_rows(
+            active["phase"] = "probed"
+            save("probed")
+
+            if not active.get("errors"):
+                active["errors"] = []
+                for case in validation:
+                    predicted = active["frozen_predictions"].get(case.exec_key)
+                    if predicted is None:
+                        continue
+                    error = InterpolationError(
+                        case_id=case.case_id,
+                        kernel_type=key,
+                        logical_cache_length=_case_cache_length(case),
+                        predicted=float(predicted),
+                        actual=float(recovered_values[case.exec_key]),
+                    )
+                    payload = _error_payload(
+                        error, iteration_id=active["iteration_id"]
+                    )
+                    payload["exec_key"] = case.exec_key
+                    active["errors"].append(payload)
+            errors = _errors_from_active(active)
+            if len(errors) != len(validation):
+                active["phase"] = "failed"
+                active["missing_predictions"] = sorted(
+                    selected_keys - {row["exec_key"] for row in active["errors"]}
+                )
+                save("failed")
+                report("failed")
+                return 1
+            active["phase"] = "evaluated"
+            save("evaluated")
+
+            promote_probe_rows(
                 main_raw,
-                probe_raw,
-                selected_exec_keys,
+                iteration_probe,
+                selected_keys,
                 args.metric,
                 existing_values=raw_values,
                 existing_rows=raw_rows,
             )
-            converged = all_succeeded and current_p95 <= args.target_error
-            history.append({
+            checkpoint["accepted_post_state"].update({
+                key_: recovered_values[key_] for key_ in sorted(selected_keys)
+            })
+            active["phase"] = "promoted"
+            save("promoted")
+
+            current_p95 = p95(errors)
+            converged = current_p95 <= args.target_error
+            history_row = {
                 "kernel_type": key,
-                "iteration": iteration,
+                "iteration": int(active["iteration"]),
+                "iteration_id": active["iteration_id"],
                 "sampling_strategy": args.sampling_strategy,
-                "bracketed_intervals": len(intervals),
-                "bracketed_candidates": bracketed_count,
-                "unbracketed_candidates": unbracketed_count,
+                "bracketed_intervals": len(bracketed_intervals(
+                    suite,
+                    {item["exec_key"]: float(item["value"])
+                     for item in active["anchor_evidence"]},
+                    physical_kernel=key,
+                )[0]),
+                "bracketed_candidates": len(active["selected_exec_keys"]),
+                "unbracketed_candidates": 0,
                 "validation_samples": len(errors),
                 "p95_relative_error": current_p95,
                 "target_error": args.target_error,
                 "status": "converged" if converged else "refining",
-                "promoted_measurements": added,
-            })
-            error_text = "unavailable" if not errors else f"{current_p95:.2%}"
-            iteration_status = (
-                "unavailable"
-                if not errors
-                else "converged"
-                if converged
-                else "refining"
-            )
+                "promoted_measurements": len(selected_keys),
+                "selected_exec_keys": list(active["selected_exec_keys"]),
+                "frozen_predictions": dict(active["frozen_predictions"]),
+                "anchor_evidence": list(active["anchor_evidence"]),
+                "probe_db": active["probe_db"],
+                "original_run_refs": dict(active["original_run_refs"]),
+                "phase": "committed",
+            }
+            if not any(
+                row.get("iteration_id") == active["iteration_id"] for row in history
+            ):
+                history.append(history_row)
+                checkpoint["errors"].extend(active["errors"])
+                kernel_state["completed_iterations"] = (
+                    int(kernel_state["completed_iterations"]) + 1
+                )
+            kernel_state["terminal_outcome"] = "converged" if converged else None
+            kernel_state["active_iteration"] = None
+            save("committed")
+            report("running")
             print(
                 f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
-                f"iteration {iteration + 1}/{args.max_iterations} "
-                f"validation_p95_error={error_text} "
-                f"target={args.target_error:.2%} status={iteration_status} "
-                f"promoted={added} "
-                f"elapsed={time.monotonic() - iteration_started:.1f}s",
+                f"iteration={history_row['iteration'] + 1} "
+                f"p95={current_p95:.2%} promoted={len(selected_keys)}",
                 flush=True,
             )
-            write_refinement_progress(
-                suite=suite,
-                main_raw=main_raw,
-                probe_raw=probe_raw,
-                output_root=output_root,
-                out=out,
-                args=args,
-                grouped=grouped,
-                unresolved=unresolved,
-                raw_values=raw_values,
-                history=history,
-                selections=selections,
-                status="running",
-            )
-            if converged:
-                print(
-                    f"[refine] kernel {kernel_index}/{len(ordered_groups)} "
-                    f"converged target={args.target_error:.2%}",
-                    flush=True,
-                )
-                break
-    print("[refine] writing final snapshot", flush=True)
-    write_refinement_progress(
-        suite=suite,
-        main_raw=main_raw,
-        probe_raw=probe_raw,
-        output_root=output_root,
-        out=out,
-        args=args,
-        grouped=grouped,
-        unresolved=unresolved,
-        raw_values=raw_values,
-        history=history,
-        selections=selections,
-        status="no_candidates" if not unresolved else "completed",
-    )
-    if unresolved:
-        print(
-            f"[refine] complete kernel_types={len(grouped)} "
-            f"elapsed={time.monotonic() - started:.1f}s "
-            f"iterations={out / 'iterations.csv'}",
-            flush=True,
-        )
+
+    outcomes = {
+        key: checkpoint["kernels"][key].get("terminal_outcome")
+        for key in ordered_groups
+    }
+    if not ordered_groups:
+        overall_status = "no_candidates"
+    elif all(outcome in TERMINAL_OUTCOMES for outcome in outcomes.values()):
+        overall_status = "completed"
     else:
-        print(
-            f"[refine] complete no unresolved interpolation cases "
-            f"elapsed={time.monotonic() - started:.1f}s",
-            flush=True,
-        )
+        overall_status = "failed"
+    save("terminal")
+    report(overall_status)
+    print(
+        f"[refine] complete outcomes={outcomes} completed_budget="
+        f"{checkpoint['completed_budget']} elapsed={time.monotonic() - started:.1f}s",
+        flush=True,
+    )
+    if getattr(args, "require_convergence", False):
+        acceptable = {"converged", "no_candidates"}
+        if any(outcome not in acceptable for outcome in outcomes.values()):
+            return 2
     return 0
 
 
@@ -1291,3 +1669,11 @@ def add_cli_parsers(sub: argparse._SubParsersAction) -> None:
     )
     refine.add_argument("--seed", type=int, default=0)
     refine.add_argument("--metric", default="p50_us")
+    refine.add_argument(
+        "--require-convergence",
+        action="store_true",
+        help=(
+            "Return a nonzero downstream gate result for budget-exhausted or "
+            "unbracketed outcomes without launching additional probes."
+        ),
+    )
