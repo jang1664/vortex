@@ -7,11 +7,18 @@ import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from tools.latency_bench.runner import (
+    ExecutionUnit,
+    MeasurementReuseState,
     RAW_DB_COLUMNS,
     RunOptions,
+    StrictMeasurementPolicy,
+    evaluate_measurement_coverage,
+    measurement_acquisition_settings,
     normalize_skip_existing_columns,
     run_suite,
 )
@@ -373,6 +380,269 @@ esac
             if write_header:
                 writer.writeheader()
             writer.writerow(row)
+
+    def _strict_unit(self, root: Path) -> ExecutionUnit:
+        return ExecutionUnit(
+            "strict-exec", "fpint_gemm_ffn_hw",
+            "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0", 1, 2,
+            root / "raw.csv", root / "power.csv", root / "power.summary.csv",
+            root / "run.log",
+        )
+
+    def _strict_policy(self, *, measure_power: bool = True, power_min_samples: int = 5,
+                       adopt_legacy: bool = False, **overrides: object) -> StrictMeasurementPolicy:
+        values = {
+            "fpga_bin_label": "C1", "xclbin_sha256": "xsha",
+            "config_sha256": "csha", "fpga_period_s": 4e-9,
+            "application_source_identity": "app-source-v1",
+            "measure_latency": True, "measure_power": measure_power,
+            "power_min_samples": power_min_samples,
+            "acquisition_settings": {"platform": "xrt", **({"power_mode": "separate"} if measure_power else {})},
+            "adopt_legacy": adopt_legacy,
+        }
+        values.update(overrides)
+        return StrictMeasurementPolicy(**values)
+
+    def _strict_manifest(self, root: Path, *, source: object = "app-source-v1",
+                         config_sha: str = "csha", period: float = 4e-9,
+                         settings: object = None) -> tuple[dict[str, object], Path]:
+        return ({
+            "run_id": "existing_run",
+            "blackbox_timeout": "changed-scheduling-only",
+            "stream_case_logs": True,
+            "measurement_compatibility": {
+                "xclbin_sha256": "xsha", "config_sha256": config_sha,
+                "fpga_period_s": period, "application_source_identity": source,
+                "acquisition_settings": settings if settings is not None else {
+                    "platform": "xrt", "power_mode": "separate"
+                },
+            },
+        }, root / "runs" / "existing_run" / "manifest.json")
+
+    def _write_strict_row(self, raw_db: Path, **overrides: object) -> None:
+        values = {
+            "run_id": "existing_run", "fpga_bin_label": "C1",
+            "xclbin_sha256": "xsha", "warmup": "1", "iterations": "2",
+            "measure_latency": "1", "measure_power": "1", "power_samples": "8",
+            "power_avg_w": "4", "power_vcc_avg_w": "3", "power_pcie_avg_w": "1",
+            "power_dynamic_avg_w": "-0.25",
+        }
+        values.update(overrides)
+        self._write_raw_db_row(raw_db, **values)
+
+    def test_strict_measurement_reuse_is_capability_based_and_ignores_scheduling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_db = root / "raw_db.csv"
+            self._write_strict_row(raw_db, power_samples="4")
+            unit = self._strict_unit(root)
+            manifest = self._strict_manifest(root)
+            manifest[0]["selection_digest"] = "changed-only-because-unused-C2-moved"
+            manifest[0]["experiment"] = {"candidates": {"C2": {"xclbin_sha256": "other"}}}
+
+            latency_only = evaluate_measurement_coverage(
+                raw_db, [unit], self._strict_policy(measure_power=False),
+                manifests={"existing_run": manifest},
+            )
+            lower_threshold = evaluate_measurement_coverage(
+                raw_db, [unit], self._strict_policy(power_min_samples=3),
+                manifests={"existing_run": manifest},
+            )
+
+            self.assertTrue(latency_only.complete)
+            self.assertTrue(lower_threshold.complete)
+            self.assertEqual((unit.exec_key,), lower_threshold.reusable_exec_keys)
+
+    def test_strict_measurement_coverage_preserves_bucket_order_and_normalizes_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_db = root / "raw_db.csv"
+            first = self._strict_unit(root)
+            second = replace(first, exec_key="strict-exec-2", args="-m 2 -n 128")
+            self._write_strict_row(
+                raw_db,
+                run_id="first_reusable",
+                args="  -m  1  -n 128 -k 128 -q 32 -t 0 -d 0  ",
+            )
+            self._write_strict_row(
+                raw_db,
+                run_id="first_newer_pending",
+                xclbin_sha256="other",
+            )
+            self._write_strict_row(
+                raw_db,
+                run_id="second_blocked",
+                args=" -m  2   -n 128 ",
+                xclbin_sha256="",
+            )
+            self._write_strict_row(
+                raw_db,
+                run_id="second_newer_pending",
+                args="-m 2 -n 128",
+                xclbin_sha256="other",
+            )
+            manifests = {
+                run_id: self._strict_manifest(root)
+                for run_id in (
+                    "first_reusable",
+                    "first_newer_pending",
+                    "second_blocked",
+                    "second_newer_pending",
+                )
+            }
+
+            coverage = evaluate_measurement_coverage(
+                raw_db,
+                [first, second],
+                self._strict_policy(),
+                manifests=manifests,
+            )
+
+            self.assertEqual(MeasurementReuseState.REUSE, coverage.evidence[0].state)
+            self.assertEqual("first_reusable", coverage.evidence[0].run_id)
+            self.assertEqual(MeasurementReuseState.BLOCKED_METADATA, coverage.evidence[1].state)
+            self.assertEqual("second_blocked", coverage.evidence[1].run_id)
+
+    def test_strict_measurement_reuse_rejects_incomplete_metrics_and_capabilities(self) -> None:
+        cases = (
+            ({"measure_power": "0"}, "power capability"),
+            ({"power_samples": "4"}, "power samples"),
+            ({"power_avg_w": ""}, "power metric power_avg_w"),
+            ({"power_dynamic_avg_w": "nan"}, "power metric power_dynamic_avg_w"),
+            ({"avg_us": "inf"}, "latency metric avg_us"),
+        )
+        for changes, reason in cases:
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                raw_db = root / "raw_db.csv"
+                self._write_strict_row(raw_db, **changes)
+                coverage = evaluate_measurement_coverage(
+                    raw_db, [self._strict_unit(root)], self._strict_policy(),
+                    manifests={"existing_run": self._strict_manifest(root)},
+                )
+                self.assertFalse(coverage.complete)
+                self.assertEqual(MeasurementReuseState.PENDING, coverage.evidence[0].state)
+                self.assertTrue(any(reason in item for item in coverage.evidence[0].reasons))
+
+    def test_strict_measurement_reuse_rejects_physical_and_acquisition_mismatches(self) -> None:
+        cases = (
+            ({"warmup": "9"}, self._strict_manifest, {}, "warmup differs"),
+            ({"iterations": "9"}, self._strict_manifest, {}, "iterations differs"),
+            ({}, self._strict_manifest, {"config_sha": "other"}, "config_sha256 differs"),
+            ({}, self._strict_manifest, {"period": 5e-9}, "fpga_period_s differs"),
+            ({}, self._strict_manifest, {"settings": {"platform": "xrt", "power_mode": "inline"}}, "power_mode differs"),
+        )
+        for row_changes, manifest_factory, manifest_changes, reason in cases:
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                raw_db = root / "raw_db.csv"
+                self._write_strict_row(raw_db, **row_changes)
+                coverage = evaluate_measurement_coverage(
+                    raw_db, [self._strict_unit(root)], self._strict_policy(),
+                    manifests={"existing_run": manifest_factory(root, **manifest_changes)},
+                )
+                self.assertEqual(MeasurementReuseState.PENDING, coverage.evidence[0].state)
+                self.assertTrue(any(reason in item for item in coverage.evidence[0].reasons))
+
+    def test_adopt_legacy_only_waives_missing_application_source_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_db = root / "raw_db.csv"
+            self._write_strict_row(raw_db)
+            unit = self._strict_unit(root)
+            legacy = self._strict_manifest(root, source=None)
+            blocked = evaluate_measurement_coverage(
+                raw_db, [unit], self._strict_policy(), manifests={"existing_run": legacy}
+            )
+            adopted = evaluate_measurement_coverage(
+                raw_db, [unit], self._strict_policy(adopt_legacy=True),
+                manifests={"existing_run": legacy},
+            )
+            self.assertEqual(MeasurementReuseState.BLOCKED_METADATA, blocked.evidence[0].state)
+            self.assertTrue(adopted.complete)
+            self.assertTrue(adopted.evidence[0].legacy_provenance)
+
+            raw_db.unlink()
+            self._write_strict_row(raw_db, xclbin_sha256="wrong", power_avg_w="")
+            contradicted = evaluate_measurement_coverage(
+                raw_db, [unit], self._strict_policy(adopt_legacy=True),
+                manifests={"existing_run": legacy},
+            )
+            self.assertFalse(contradicted.complete)
+
+    def test_strict_all_reusable_bypasses_build_hardware_and_live_map_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_root = root / "out"
+            fpga_dir = root / "missing-fpga-image"
+            config = root / "missing-config.sh"
+            candidates = {
+                label: {
+                    "alias": f"alias-{label}", "bin_dir": str(fpga_dir.resolve()),
+                    "xclbin": str((fpga_dir / "vortex_afu.xclbin").resolve()),
+                    "xclbin_sha256": "xsha", "config": str(config),
+                    "config_sha256": "csha", "manifest": str(fpga_dir / "manifest.json"),
+                    "manifest_sha256": "msha", "fpga_period_s": 4e-9,
+                    "fpga_clock_source": str(fpga_dir / "xclbin.info"),
+                }
+                for label in ("C1", "C2", "C3", "C4")
+            }
+            digest = hashlib.sha256(
+                json.dumps(candidates, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            experiment = {
+                "schema_version": 1, "candidate_map": str(root / "missing-map.yaml"),
+                "selection_digest": digest, "candidates": candidates,
+            }
+            case = BenchCase(
+                "strict", "fpint_gemm_ffn_hw",
+                "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0", warmup=1, iterations=2,
+            )
+            suite = BenchSuite("strict-suite", BenchDefaults(warmup=1, iterations=2), [case], experiment=experiment)
+            options = RunOptions(
+                build_dir=root / "missing-build", fpga_bin_dir=fpga_dir,
+                fpga_bin_label="C1", configs=config, out_dir=out_root, platform="xrt",
+                srun=False, run_id="all-reused", skip_existing=True,
+                strict_measurement_reuse=True, application_source_identity="app-source-v1",
+            )
+            self._write_strict_row(out_root / "raw_db.csv")
+            manifest, _ = self._strict_manifest(
+                root,
+                settings=measurement_acquisition_settings(options),
+            )
+            manifest_dir = out_root / "runs" / "existing_run"
+            manifest_dir.mkdir(parents=True)
+            (manifest_dir / "manifest.json").write_text(json.dumps(manifest))
+
+            with mock.patch("tools.latency_bench.runner.subprocess.call") as call:
+                rc = run_suite(suite, options)
+
+            self.assertEqual(0, rc)
+            call.assert_not_called()
+
+    def test_strict_zero_exit_without_complete_rows_returns_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_dir = root / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_dir = root / "fpga"
+            self._write_fake_fpga_bin(fpga_dir)
+            config = root / "config.sh"
+            config.write_text("CONFIGS=-DSTRICT\n")
+            case = BenchCase("strict", "fpint_gemm_ffn_hw", "-n 128", warmup=1, iterations=2)
+            suite = BenchSuite("strict-suite", BenchDefaults(warmup=1, iterations=2), [case])
+            options = RunOptions(
+                build_dir=build_dir, fpga_bin_dir=fpga_dir, fpga_bin_label="C1",
+                configs=config, out_dir=root / "out", platform="xrt", srun=False,
+                program_fpga=False, run_id="zero-exit", skip_existing=True,
+                strict_measurement_reuse=True, application_source_identity="app-source-v1",
+                provenance={"fpga_period_s": 4e-9},
+            )
+
+            with mock.patch("tools.latency_bench.runner.subprocess.call", return_value=0):
+                rc = run_suite(suite, options)
+
+            self.assertEqual(1, rc)
 
     def test_run_appends_results_to_top_level_raw_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

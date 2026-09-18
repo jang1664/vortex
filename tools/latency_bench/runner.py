@@ -10,8 +10,10 @@ import shlex
 import subprocess
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
+from enum import Enum
 from pathlib import Path
+from typing import Mapping
 
 import pandas as pd
 
@@ -35,6 +37,8 @@ from .suite import (
     suite_to_rows,
 )
 from .yaml_io import safe_dump
+from .suite_io import write_suite_payload
+from .candidate_map import measurement_provenance, validate_run_selection, validate_snapshot
 
 
 DEFAULT_SRUN_ARGS = (
@@ -91,6 +95,97 @@ CASE_COLUMNS = [
     "source",
 ]
 
+LATENCY_REUSE_METRICS = ("samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us")
+POWER_REUSE_METRICS = (
+    "power_avg_w",
+    "power_vcc_avg_w",
+    "power_pcie_avg_w",
+    "power_dynamic_avg_w",
+)
+POWER_ACQUISITION_FIELDS = (
+    "power_mode",
+    "power_auto_duration",
+    "power_min_run_sec",
+    "power_max_run_sec",
+    "power_max_iterations",
+    "power_target_samples",
+    "power_latency_interval",
+    "power_min_interval",
+    "power_max_interval",
+    "power_idle_stability_policy",
+    "power_kernel_iterations",
+    "power_kernel_iterations_auto",
+    "power_target_sec",
+    "power_fpga_freq_mhz",
+    "power_fpga_freq_mhz_auto",
+    "power_xclbin_info",
+)
+
+
+class MeasurementReuseState(str, Enum):
+    REUSE = "reuse"
+    PENDING = "pending"
+    BLOCKED_METADATA = "blocked_metadata"
+
+
+@dataclass(frozen=True)
+class StrictMeasurementPolicy:
+    """Opt-in physical measurement contract used by pipeline-owned runs."""
+
+    fpga_bin_label: str
+    xclbin_sha256: str
+    config_sha256: str
+    fpga_period_s: float
+    application_source_identity: str
+    measure_latency: bool = True
+    measure_power: bool = True
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
+    acquisition_settings: Mapping[str, object] = field(default_factory=dict)
+    adopt_legacy: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.xclbin_sha256:
+            raise ValueError("strict measurement reuse requires an expected xclbin SHA-256")
+        if not self.config_sha256:
+            raise ValueError("strict measurement reuse requires an expected config SHA-256")
+        if not math.isfinite(self.fpga_period_s) or self.fpga_period_s <= 0:
+            raise ValueError("strict measurement reuse requires a finite positive FPGA period")
+        if not self.application_source_identity:
+            raise ValueError("strict measurement reuse requires an application source identity")
+        if self.power_min_samples < 0:
+            raise ValueError("power_min_samples must be >= 0")
+
+
+@dataclass(frozen=True)
+class MeasurementEvidence:
+    exec_key: str
+    state: MeasurementReuseState
+    reasons: tuple[str, ...]
+    run_id: str = ""
+    manifest: str = ""
+    legacy_provenance: bool = False
+
+
+@dataclass(frozen=True)
+class MeasurementCoverage:
+    evidence: tuple[MeasurementEvidence, ...]
+
+    @property
+    def reusable_exec_keys(self) -> tuple[str, ...]:
+        return tuple(item.exec_key for item in self.evidence if item.state is MeasurementReuseState.REUSE)
+
+    @property
+    def pending_exec_keys(self) -> tuple[str, ...]:
+        return tuple(item.exec_key for item in self.evidence if item.state is MeasurementReuseState.PENDING)
+
+    @property
+    def blocked_exec_keys(self) -> tuple[str, ...]:
+        return tuple(item.exec_key for item in self.evidence if item.state is MeasurementReuseState.BLOCKED_METADATA)
+
+    @property
+    def complete(self) -> bool:
+        return all(item.state is MeasurementReuseState.REUSE for item in self.evidence)
+
 
 @dataclass(frozen=True)
 class ExecutionUnit:
@@ -114,6 +209,7 @@ class RunOptions:
     xrt_device_index: int | None = None
     xrt_device_bdf: str = ""
     fpga_bin_label: str = ""
+    provenance: dict = field(default_factory=dict)
     configs: Path | None = None
     configs_extra: str = ""
     blackbox_args: tuple[str, ...] = ()
@@ -128,6 +224,9 @@ class RunOptions:
     run_id: str | None = None
     skip_existing: bool = False
     skip_existing_columns: tuple[str, ...] = DEFAULT_SKIP_EXISTING_COLUMNS
+    strict_measurement_reuse: bool = False
+    adopt_legacy: bool = False
+    application_source_identity: str = ""
     prebuild: bool = True
     program_fpga: bool = True
     measure_latency: bool = True
@@ -356,6 +455,301 @@ def find_existing_pass_exec_keys(
     return tuple(unit.exec_key for unit in units if unit.exec_key in matched)
 
 
+def _finite_number(value: object) -> bool:
+    if value is None or isinstance(value, bool) or str(value).strip() == "":
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _manifest_measurement_evidence(
+    manifest: Mapping[str, object], fpga_bin_label: str
+) -> dict[str, object]:
+    compatibility = manifest.get("measurement_compatibility")
+    if not isinstance(compatibility, dict):
+        compatibility = {}
+    experiment = manifest.get("experiment")
+    candidate: Mapping[str, object] = {}
+    if isinstance(experiment, dict):
+        candidates = experiment.get("candidates")
+        if isinstance(candidates, dict) and isinstance(candidates.get(fpga_bin_label), dict):
+            candidate = candidates[fpga_bin_label]
+    settings = compatibility.get("acquisition_settings")
+    if not isinstance(settings, dict):
+        settings = {
+            name: manifest[name]
+            for name in (
+                "platform",
+                "xrt_device_index_request",
+                "xrt_device_bdf",
+                "configs_extra",
+                "blackbox_args",
+                *POWER_ACQUISITION_FIELDS,
+            )
+            if name in manifest
+        }
+    return {
+        "xclbin_sha256": compatibility.get("xclbin_sha256")
+        or manifest.get("xclbin_sha256")
+        or candidate.get("xclbin_sha256"),
+        "config_sha256": compatibility.get("config_sha256") or candidate.get("config_sha256"),
+        "fpga_period_s": compatibility.get("fpga_period_s")
+        or manifest.get("fpga_period_s")
+        or candidate.get("fpga_period_s"),
+        "application_source_identity": compatibility.get("application_source_identity")
+        or manifest.get("application_source_identity"),
+        "acquisition_settings": settings,
+    }
+
+
+def load_measurement_manifests(raw_db: Path) -> dict[str, tuple[dict[str, object], Path]]:
+    """Inventory immutable run manifests adjacent to a raw database."""
+
+    manifests: dict[str, tuple[dict[str, object], Path]] = {}
+    runs = raw_db.parent / "runs"
+    if not runs.is_dir():
+        return manifests
+    for path in sorted(runs.glob("*/manifest.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            manifests[run_id] = (payload, path)
+    return manifests
+
+
+def _strict_row_decision(
+    row: Mapping[str, object],
+    unit: ExecutionUnit,
+    policy: StrictMeasurementPolicy,
+    manifest_record: tuple[Mapping[str, object], Path] | None,
+) -> MeasurementEvidence:
+    run_id = str(row.get("run_id", "")).strip()
+    manifest_path = str(manifest_record[1]) if manifest_record is not None else ""
+    pending: list[str] = []
+    blocked: list[str] = []
+    legacy_provenance = False
+
+    if row.get("status") != "pass":
+        pending.append("status is not pass")
+    if str(row.get("fpga_bin_label", "")).strip() != policy.fpga_bin_label:
+        pending.append("FPGA label differs")
+    recorded_sha = str(row.get("xclbin_sha256", "")).strip()
+    if not recorded_sha:
+        blocked.append("row is missing xclbin SHA-256")
+    elif recorded_sha != policy.xclbin_sha256:
+        pending.append("xclbin SHA-256 differs")
+    for name, expected in (("warmup", unit.warmup), ("iterations", unit.iterations)):
+        value = str(row.get(name, "")).strip()
+        if not value:
+            blocked.append(f"row is missing {name}")
+        else:
+            try:
+                matches = int(float(value)) == expected
+            except ValueError:
+                matches = False
+            if not matches:
+                pending.append(f"{name} differs")
+
+    for capability, required in (
+        ("measure_latency", policy.measure_latency),
+        ("measure_power", policy.measure_power),
+    ):
+        if not required:
+            continue
+        value = str(row.get(capability, "")).strip()
+        if not value:
+            blocked.append(f"row is missing {capability}")
+        elif not _parse_bool_cell(value, default=False):
+            pending.append(f"row lacks required {capability.removeprefix('measure_')} capability")
+
+    if policy.measure_latency:
+        for metric in LATENCY_REUSE_METRICS:
+            if not _finite_number(row.get(metric)):
+                pending.append(f"latency metric {metric} is missing or nonfinite")
+        if _finite_number(row.get("samples")) and float(row["samples"]) <= 0:
+            pending.append("latency samples must be positive")
+    if policy.measure_power:
+        if power_samples_below_threshold(dict(row), policy.power_min_samples):
+            pending.append(f"power samples are below {policy.power_min_samples}")
+        for metric in POWER_REUSE_METRICS:
+            if not _finite_number(row.get(metric)):
+                pending.append(f"power metric {metric} is missing or nonfinite")
+
+    if manifest_record is None:
+        blocked.append(f"run manifest is unavailable for run_id={run_id!r}")
+    else:
+        recorded = _manifest_measurement_evidence(manifest_record[0], policy.fpga_bin_label)
+        for name, expected in (
+            ("xclbin_sha256", policy.xclbin_sha256),
+            ("config_sha256", policy.config_sha256),
+        ):
+            value = recorded.get(name)
+            if value in (None, ""):
+                blocked.append(f"run manifest is missing {name}")
+            elif str(value) != str(expected):
+                pending.append(f"run manifest {name} differs")
+        period = recorded.get("fpga_period_s")
+        if not _finite_number(period):
+            blocked.append("run manifest is missing fpga_period_s")
+        elif not math.isclose(float(period), policy.fpga_period_s, rel_tol=1e-12, abs_tol=0.0):
+            pending.append("run manifest fpga_period_s differs")
+        source_identity = recorded.get("application_source_identity")
+        if source_identity in (None, ""):
+            legacy_provenance = True
+            if not policy.adopt_legacy:
+                blocked.append("historical application-source identity is unavailable; use --adopt-legacy")
+        elif str(source_identity) != policy.application_source_identity:
+            pending.append("application-source identity differs")
+        recorded_settings = recorded.get("acquisition_settings")
+        if not isinstance(recorded_settings, dict):
+            blocked.append("run manifest acquisition settings are unavailable")
+        else:
+            for name, expected in policy.acquisition_settings.items():
+                if name not in recorded_settings:
+                    blocked.append(f"run manifest is missing acquisition setting {name}")
+                elif recorded_settings[name] != expected:
+                    pending.append(f"acquisition setting {name} differs")
+
+    reasons = tuple(dict.fromkeys((*pending, *blocked)))
+    if pending:
+        state = MeasurementReuseState.PENDING
+    elif blocked:
+        state = MeasurementReuseState.BLOCKED_METADATA
+    else:
+        state = MeasurementReuseState.REUSE
+    return MeasurementEvidence(
+        exec_key=unit.exec_key,
+        state=state,
+        reasons=reasons or ("complete compatible measurement",),
+        run_id=run_id,
+        manifest=manifest_path,
+        legacy_provenance=legacy_provenance,
+    )
+
+
+def evaluate_measurement_coverage(
+    raw_db: Path,
+    units: list[ExecutionUnit],
+    policy: StrictMeasurementPolicy,
+    *,
+    manifests: Mapping[str, tuple[Mapping[str, object], Path]] | None = None,
+) -> MeasurementCoverage:
+    """Resolve exact reusable coverage with the pipeline's strict predicate."""
+
+    manifest_records = dict(manifests) if manifests is not None else load_measurement_manifests(raw_db)
+    rows_by_workload: dict[tuple[str, str], list[dict[str, str]]] = {}
+    if raw_db.exists():
+        with raw_db.open(newline="") as source:
+            for row in csv.DictReader(source):
+                key = (row.get("app", ""), _normalize_args(row.get("args", "")))
+                rows_by_workload.setdefault(key, []).append(row)
+    evidence: list[MeasurementEvidence] = []
+    for unit in units:
+        candidates = rows_by_workload.get((unit.app, _normalize_args(unit.args)), ())
+        decisions = [
+            _strict_row_decision(row, unit, policy, manifest_records.get(row.get("run_id", "")))
+            for row in candidates
+        ]
+        reusable = next((item for item in reversed(decisions) if item.state is MeasurementReuseState.REUSE), None)
+        if reusable is not None:
+            evidence.append(reusable)
+            continue
+        blocked = next(
+            (item for item in reversed(decisions) if item.state is MeasurementReuseState.BLOCKED_METADATA),
+            None,
+        )
+        if blocked is not None:
+            evidence.append(blocked)
+            continue
+        if decisions:
+            evidence.append(decisions[-1])
+        else:
+            evidence.append(
+                MeasurementEvidence(
+                    unit.exec_key,
+                    MeasurementReuseState.PENDING,
+                    ("no recorded measurement matches app and normalized arguments",),
+                )
+            )
+    return MeasurementCoverage(tuple(evidence))
+
+
+def measurement_acquisition_settings(options: RunOptions) -> dict[str, object]:
+    settings: dict[str, object] = {
+        "platform": options.platform,
+        "xrt_device_index_request": (
+            "auto" if options.xrt_device_index is None else str(options.xrt_device_index)
+        ),
+        "xrt_device_bdf": options.xrt_device_bdf,
+        "configs_extra": options.configs_extra,
+        "blackbox_args": list(options.blackbox_args),
+    }
+    if options.measure_power:
+        settings.update({
+            "power_mode": "separate",
+            "power_auto_duration": options.power_auto_duration,
+            "power_min_run_sec": options.power_min_run_sec,
+            "power_max_run_sec": options.power_max_run_sec,
+            "power_max_iterations": options.power_max_iterations,
+            "power_target_samples": options.power_target_samples,
+            "power_latency_interval": options.power_latency_interval,
+            "power_min_interval": options.power_min_interval,
+            "power_max_interval": options.power_max_interval,
+            "power_idle_stability_policy": (
+                str(options.power_idle_stability_policy)
+                if options.power_idle_stability_policy is not None
+                else ""
+            ),
+            "power_kernel_iterations": options.power_kernel_iterations,
+            "power_kernel_iterations_auto": options.power_kernel_iterations_auto,
+            "power_target_sec": options.power_target_sec,
+            "power_fpga_freq_mhz": options.power_fpga_freq_mhz,
+            "power_fpga_freq_mhz_auto": options.power_fpga_freq_mhz_auto,
+            "power_xclbin_info": options.power_xclbin_info,
+        })
+    return settings
+
+
+def strict_measurement_policy(
+    suite: BenchSuite,
+    options: RunOptions,
+    *,
+    xclbin_sha256: str,
+) -> StrictMeasurementPolicy:
+    config_sha256 = ""
+    fpga_period_s: object = None
+    if suite.experiment:
+        validate_snapshot(suite.experiment)
+        candidate = suite.experiment["candidates"].get(options.fpga_bin_label)
+        if not isinstance(candidate, dict):
+            raise ValueError(f"captured FPGA selection has no {options.fpga_bin_label!r} candidate")
+        config_sha256 = str(candidate.get("config_sha256", ""))
+        fpga_period_s = candidate.get("fpga_period_s")
+        xclbin_sha256 = str(candidate.get("xclbin_sha256", xclbin_sha256))
+    elif options.configs is not None and options.configs.is_file():
+        config_sha256 = sha256_file(options.configs)
+        fpga_period_s = options.provenance.get("fpga_period_s")
+    return StrictMeasurementPolicy(
+        fpga_bin_label=options.fpga_bin_label,
+        xclbin_sha256=xclbin_sha256,
+        config_sha256=config_sha256,
+        fpga_period_s=float(fpga_period_s) if _finite_number(fpga_period_s) else math.nan,
+        application_source_identity=options.application_source_identity,
+        measure_latency=options.measure_latency,
+        measure_power=options.measure_power,
+        power_min_samples=options.power_min_samples,
+        acquisition_settings=measurement_acquisition_settings(options),
+        adopt_legacy=options.adopt_legacy,
+    )
+
+
 def raw_db_update_mode(options: RunOptions) -> str:
     if options.skip_existing or options.retry:
         return "replace"
@@ -422,6 +816,7 @@ def seed_raw_db_cases(
             "run_id": options.run_id or "",
             "timestamp_utc": timestamp,
             "fpga_bin_label": options.fpga_bin_label,
+            **options.provenance,
             "git_commit": git.commit,
             "git_branch": git.branch,
             "git_dirty": git.dirty,
@@ -534,6 +929,10 @@ def _copy_explicit_suite_snapshot(suite: BenchSuite, destination: Path) -> str:
 
 
 def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> str:
+    if suite.source_path and suite.source_path.suffix == ".pkl":
+        shutil.copy2(suite.source_path, out_dir / "suite.pkl")
+        write_suite_payload(out_dir / "suite.expanded.pkl", suite_to_expanded_yaml(suite))
+        return "serialized_pkl"
     if suite.source_path:
         shutil.copy2(suite.source_path, out_dir / "suite.yaml")
     if suite.source_path and suite.source_expanded_snapshot_reusable:
@@ -1011,6 +1410,8 @@ def write_run_script(
         "PY",
         "}",
     ]
+    if suite.experiment:
+        lines.append(f'"${{PYTHON:-python3}}" -m tools.latency_bench.candidate_map --run-manifest {_q(options.out_dir / "manifest.json")} || exit 1')
     if options.configs:
         lines.extend([
             f"if [[ ! -f {_q(options.configs)} ]]; then",
@@ -1035,6 +1436,13 @@ def write_run_script(
     quiet_redirect = "" if options.stream_case_logs else " >/dev/null"
     blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
     blackbox_args = f"{blackbox_args} " if blackbox_args else ""
+    blackbox_entry = "./ci/blackbox.sh"
+    driver_arg = "--driver=xrt "
+    if suite.experiment:
+        alias = suite.experiment["candidates"][options.fpga_bin_label]["alias"]
+        driver_arg = ""
+        frozen_aliases = options.out_dir / "resolved_fpga_aliases.yaml"
+        blackbox_entry = f"env VORTEX_FPGA_BIN_ALIAS_MAP={_q(frozen_aliases)} {_q(repo_root() / 'ci/run_black.sh')} hw --fpga-bin {_q(alias)} --no-srun"
     lines.extend([
         "declare -A LATENCY_BENCH_BUILD_RC",
         "declare -A LATENCY_BENCH_BUILD_LOG",
@@ -1044,7 +1452,7 @@ def write_run_script(
         for idx, app in enumerate(apps, start=1):
             build_log = options.out_dir / "logs" / f"build_{_safe_filename(app)}.log"
             build_cmd = (
-                f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench --build-only "
+                f"{blackbox_entry} {blackbox_args}{driver_arg}--bench --build-only "
                 f"--app={_q(app)}"
             )
             lines.extend([
@@ -1144,7 +1552,7 @@ def write_run_script(
             raw_db_power_args = progress_power_args
         run_only_arg = "--run-only " if options.prebuild else ""
         blackbox_cmd = (
-            f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench {run_only_arg}"
+            f"{blackbox_entry} {blackbox_args}{driver_arg}--bench {run_only_arg}"
             f"--app={_q(unit.app)} --args={_q(bench_args)} --log={_q(unit.log_file.with_suffix(unit.log_file.suffix + '.blackbox'))}"
         )
         if options.retry:
@@ -1288,6 +1696,7 @@ def write_run_script(
                 f"--cases-csv {_q(options.out_dir / 'cases.csv')} "
                 f"--exec-key {_q(unit.exec_key)} "
                 f"--run-id \"$LATENCY_BENCH_RUN_ID\" "
+                f"--provenance-json {_q(json.dumps(options.provenance))} "
                 f"--fpga-bin-label {_q(options.fpga_bin_label)} "
                 f"--fpga-bin-dir {_q(options.fpga_bin_dir)} "
                 f"--xclbin-sha256 {_q(xclbin_sha256)} "
@@ -1381,8 +1790,32 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     (run_dir / "power").mkdir(exist_ok=True)
     (run_dir / "logs").mkdir(exist_ok=True)
 
-    validate_inputs(run_options)
-    xclbin_sha256 = _current_xclbin_sha(run_options.fpga_bin_dir)
+    if run_options.strict_measurement_reuse and not run_options.skip_existing:
+        raise ValueError("strict measurement reuse requires --skip-existing")
+    if run_options.adopt_legacy and not run_options.strict_measurement_reuse:
+        raise ValueError("--adopt-legacy requires strict measurement reuse")
+
+    if suite.experiment:
+        if not run_options.strict_measurement_reuse:
+            validate_run_selection(suite.experiment)
+        validate_snapshot(suite.experiment)
+        expected = suite.experiment["candidates"][run_options.fpga_bin_label]
+        if str(run_options.fpga_bin_dir.resolve()) != expected["bin_dir"] or str(run_options.configs) != expected["config"]:
+            raise ValueError("run options do not match the captured FPGA selection")
+        if "xclbin_sha256" not in run_options.skip_existing_columns:
+            raise ValueError("mapped runs require SHA-256 in skip-existing columns")
+        run_options = replace(run_options, provenance=measurement_provenance(suite.experiment, run_options.fpga_bin_label))
+        write_suite_payload(run_dir / "resolved_fpga_aliases.yaml", {"aliases": {
+            spec["alias"]: {"path": spec["bin_dir"], "configs": spec["config"]}
+            for spec in suite.experiment["candidates"].values()
+        }})
+    if not run_options.strict_measurement_reuse:
+        validate_inputs(run_options)
+    xclbin_sha256 = (
+        str(suite.experiment["candidates"][run_options.fpga_bin_label]["xclbin_sha256"])
+        if run_options.strict_measurement_reuse and suite.experiment
+        else _current_xclbin_sha(run_options.fpga_bin_dir)
+    )
     suite = bind_suite_xclbin_sha256(suite, xclbin_sha256)
     print(f"[prepare] building execution map for {len(suite.cases)} cases...", flush=True)
     phase_started = time.monotonic()
@@ -1390,19 +1823,37 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     print(f"[prepare] built {len(units)} unique executions in {time.monotonic() - phase_started:.1f}s", flush=True)
     skipped_existing_exec_keys: tuple[str, ...] = ()
     units_to_run = units
+    strict_policy: StrictMeasurementPolicy | None = None
+    strict_coverage: MeasurementCoverage | None = None
     if options.skip_existing:
         print("[prepare] resolving skip-existing...", flush=True)
         phase_started = time.monotonic()
-        skipped_existing_exec_keys = find_existing_pass_exec_keys(
-            out_root / "raw_db.csv",
-            units,
-            fpga_bin_label=run_options.fpga_bin_label,
-            xclbin_sha256=xclbin_sha256,
-            measure_latency=run_options.measure_latency,
-            measure_power=run_options.measure_power,
-            power_min_samples=run_options.power_min_samples,
-            skip_existing_columns=run_options.skip_existing_columns,
-        )
+        if run_options.strict_measurement_reuse:
+            strict_policy = strict_measurement_policy(
+                suite, run_options, xclbin_sha256=xclbin_sha256
+            )
+            strict_coverage = evaluate_measurement_coverage(
+                out_root / "raw_db.csv", units, strict_policy
+            )
+            if strict_coverage.blocked_exec_keys:
+                details = "; ".join(
+                    f"{item.exec_key}: {', '.join(item.reasons)}"
+                    for item in strict_coverage.evidence
+                    if item.state is MeasurementReuseState.BLOCKED_METADATA
+                )
+                raise ValueError(f"strict measurement reuse is blocked by metadata: {details}")
+            skipped_existing_exec_keys = strict_coverage.reusable_exec_keys
+        else:
+            skipped_existing_exec_keys = find_existing_pass_exec_keys(
+                out_root / "raw_db.csv",
+                units,
+                fpga_bin_label=run_options.fpga_bin_label,
+                xclbin_sha256=xclbin_sha256,
+                measure_latency=run_options.measure_latency,
+                measure_power=run_options.measure_power,
+                power_min_samples=run_options.power_min_samples,
+                skip_existing_columns=run_options.skip_existing_columns,
+            )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
         print(
@@ -1410,6 +1861,10 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             f"{len(units_to_run)} remain ({time.monotonic() - phase_started:.1f}s)",
             flush=True,
         )
+    if units_to_run and run_options.strict_measurement_reuse:
+        if suite.experiment:
+            validate_run_selection(suite.experiment)
+        validate_inputs(run_options)
     print(f"[prepare] writing cases.csv ({len(suite.cases)} rows)...", flush=True)
     phase_started = time.monotonic()
     write_cases_csv(suite, run_dir)
@@ -1440,6 +1895,9 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "attempt_status_csv": str(run_dir / "attempt_status.csv"),
         "build_dir": str(run_options.build_dir),
         "fpga_bin_label": run_options.fpga_bin_label,
+        "experiment": suite.experiment,
+        "xclbin_sha256": xclbin_sha256,
+        **run_options.provenance,
         "fpga_bin_dir": str(run_options.fpga_bin_dir),
         "git_commit": git.commit,
         "git_branch": git.branch,
@@ -1508,6 +1966,17 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "retry_reset_add_device": tuple(shlex.split(options.retry_reset_cmd)) == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)),
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
+        **({
+            "measurement_compatibility": {
+                "schema_version": 1,
+                "xclbin_sha256": strict_policy.xclbin_sha256,
+                "config_sha256": strict_policy.config_sha256,
+                "fpga_period_s": strict_policy.fpga_period_s,
+                "application_source_identity": strict_policy.application_source_identity,
+                "acquisition_settings": dict(strict_policy.acquisition_settings),
+            },
+            "adopt_legacy": strict_policy.adopt_legacy,
+        } if strict_policy is not None else {}),
         "script": str(script),
         "dry_run": options.dry_run,
         "append_raw_csv": str(options.append_raw_csv) if options.append_raw_csv else "",
@@ -1519,6 +1988,9 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             "cases.csv",
             "suite.yaml",
             "suite.expanded.yaml",
+            "suite.pkl",
+            "suite.expanded.pkl",
+            "resolved_fpga_aliases.yaml",
             "manifest.json",
             "run_fpga_bench.sh",
         ),
@@ -1545,29 +2017,48 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     if seeded_rows:
         print(f"pre-seeded {seeded_rows} row(s) in {out_root / 'raw_db.csv'}", flush=True)
 
-    cmd = run_script_command(script, options)
-    print("+ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
-    try:
-        rc = subprocess.call(cmd, env=os.environ.copy())
-    except KeyboardInterrupt:
-        publish_run_latest(
-            run_dir,
-            out_root,
-            (
-                "cases.csv",
-                "manifest.json",
-                "run_status.csv",
-                "progress.csv",
-                "attempt_status.csv",
-            ),
-            run_id=run_id,
-            status="interrupted",
+    if strict_policy is not None and not units_to_run:
+        print("all required measurements are reusable; hardware runner bypassed", flush=True)
+        rc = 0
+    else:
+        cmd = run_script_command(script, options)
+        print("+ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
+        try:
+            rc = subprocess.call(cmd, env=os.environ.copy())
+        except KeyboardInterrupt:
+            publish_run_latest(
+                run_dir,
+                out_root,
+                (
+                    "cases.csv",
+                    "manifest.json",
+                    "run_status.csv",
+                    "progress.csv",
+                    "attempt_status.csv",
+                ),
+                run_id=run_id,
+                status="interrupted",
+            )
+            publish_current_cases(suite, run_dir, out_root)
+            raise
+
+    if rc == 0 and strict_policy is not None:
+        strict_coverage = evaluate_measurement_coverage(
+            out_root / "raw_db.csv", units, strict_policy
         )
-        publish_current_cases(suite, run_dir, out_root)
-        raise
+        if not strict_coverage.complete:
+            details = "; ".join(
+                f"{item.exec_key}: {', '.join(item.reasons)}"
+                for item in strict_coverage.evidence
+                if item.state is not MeasurementReuseState.REUSE
+            )
+            print(f"strict measurement coverage failed after runner success: {details}", flush=True)
+            rc = 1
 
     results = build_results(suite, run_dir, options.fpga_bin_dir, power_min_samples=run_options.power_min_samples)
     results = add_git_metadata(results, git)
+    for column, value in run_options.provenance.items():
+        results[column] = value
     summary = build_summary(results)
     results.to_csv(run_dir / "results.csv", index=False)
     summary.to_csv(run_dir / "summary.csv", index=False)
@@ -1578,6 +2069,9 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             "cases.csv",
             "suite.yaml",
             "suite.expanded.yaml",
+            "suite.pkl",
+            "suite.expanded.pkl",
+            "resolved_fpga_aliases.yaml",
             "manifest.json",
             "run_fpga_bench.sh",
             "run_status.csv",

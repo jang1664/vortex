@@ -3,13 +3,13 @@ from __future__ import annotations
 import glob
 import json
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .generate_suites import resolve_case_fpga_bin
 from .suite import BenchCase, BenchDefaults, BenchSuite, find_repo_root, load_suite, sanitize_id, suite_to_expanded_yaml
-from .yaml_io import safe_dump
+from .suite_io import SUITE_SUFFIXES, indexed_suites, write_suite_payload
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,7 @@ class MergeSuitesOptions:
     group_by_fpga_bin: bool = False
     overwrite: bool = False
     repo_root: Path | None = None
+    output_format: str = "yaml"
 
 
 def _expand_suite_globs(patterns: tuple[str, ...]) -> list[Path]:
@@ -29,8 +30,11 @@ def _expand_suite_globs(patterns: tuple[str, ...]) -> list[Path]:
         for match in expanded:
             path = Path(match).expanduser().resolve()
             if path.name == "index.yaml":
+                if Path(pattern).name == "index.yaml":
+                    for _, indexed in indexed_suites(path):
+                        paths[indexed] = None
                 continue
-            if path.suffix not in (".yaml", ".yml"):
+            if path.suffix not in SUITE_SUFFIXES:
                 continue
             paths[path] = None
     out = sorted(paths)
@@ -109,11 +113,12 @@ def _write_suite(path: Path, suite: BenchSuite, *, overwrite: bool) -> None:
     if path.exists() and not overwrite:
         raise FileExistsError(f"merged suite output already exists; use --overwrite: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as fp:
-        safe_dump(suite_to_expanded_yaml(suite), fp, sort_keys=False)
+    write_suite_payload(path, suite_to_expanded_yaml(suite))
 
 
 def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
+    if options.output_format not in ("yaml", "pkl"):
+        raise ValueError("output format must be yaml or pkl")
     if not options.suite_globs:
         raise ValueError("at least one --suite-glob is required")
 
@@ -121,8 +126,11 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
     suite_paths = _expand_suite_globs(options.suite_globs)
     loaded = [(path, load_suite(path, repo_root=repo_root)) for path in suite_paths]
     base_defaults = loaded[0][1].defaults
+    experiment = loaded[0][1].experiment
     for path, suite in loaded[1:]:
         _check_compatible_defaults(base_defaults, suite, path)
+        if suite.experiment != experiment:
+            raise ValueError(f"cannot merge different FPGA selections: {path}")
 
     groups: dict[str, list[tuple[Path, BenchCase]]] = {}
     seen_logical_cases: set[tuple[str, str]] = set()
@@ -152,6 +160,7 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
         ]
         suite = _merged_suite(name=base_name, defaults=base_defaults, fpga_bin=fpga_bin, cases=cases)
         out = options.out.expanduser().resolve()
+        suite = replace(suite, experiment=experiment)
         _write_suite(out, suite, overwrite=options.overwrite)
         return {
             "suite": out,
@@ -182,7 +191,8 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
         ]
         suite_name = sanitize_id(f"{base_name}__{fpga_bin}")
         suite = _merged_suite(name=suite_name, defaults=base_defaults, fpga_bin=fpga_bin, cases=cases)
-        suite_path = out_dir / f"{suite_name}.yaml"
+        suite = replace(suite, experiment=experiment)
+        suite_path = out_dir / f"{suite_name}.{options.output_format}"
         _write_suite(suite_path, suite, overwrite=options.overwrite)
         generated.append({
             "suite": str(suite_path),
@@ -205,7 +215,8 @@ def merge_suites(options: MergeSuitesOptions) -> dict[str, Any]:
         "dropped_duplicate_count": logical_duplicate_count,
         "execution_count": len(execution_keys),
         "generated": generated,
+        "output_format": options.output_format,
+        "experiment": experiment,
     }
-    with index_path.open("w") as fp:
-        safe_dump(index, fp, sort_keys=False)
+    write_suite_payload(index_path, index)
     return {"index": index_path, **index}
