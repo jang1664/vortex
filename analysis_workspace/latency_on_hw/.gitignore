@@ -24,4 +24,7 @@ power_measure_suites_generated/
 power_measure_suites_outputs/
 
 composed_results*/
+figure_prepare*/
+figure_output*/
+pipeline_state*/
 backups/

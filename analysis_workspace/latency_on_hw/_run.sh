@@ -2,10 +2,11 @@
 
 set -euo pipefail
 
-# Edit these three values when changing FPGA versions.
-suite_postfix="C3_C4_v3"
-output_postfix="C3_C4_v3"
-fpga_bins="${FPGA_BINS:-C1 C3 C4_v3}"
+# Select a fresh tag when the candidate map changes.
+suite_postfix="${EXPERIMENT_TAG:-th16_20260917}"
+output_postfix="${suite_postfix}"
+suite_size="${SUITE_SIZE:-full}"
+fpga_bins="${FPGA_BINS:-}"
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "Usage: $0 <llama2|llama3|llama3p2_1b|llama3p2_3b> [prefill|decode|generation|all]" >&2
@@ -53,13 +54,13 @@ esac
 case "${model}" in
   llama2)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama2"
-    input_dir="generated_suites/llama2_7b_main_full_v2.${suite_postfix}"
-    output_dir="outputs_llama2_main.${output_postfix}.run2"
+    input_dir="generated_suites/llama2_7b_main_${suite_size}.${suite_postfix}"
+    output_dir="outputs_llama2_main.${output_postfix}"
     ;;
   llama3)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama3"
-    input_dir="generated_suites/llama3_8b_main_full_v2.${suite_postfix}"
-    output_dir="outputs_llama3_main.${output_postfix}.run2"
+    input_dir="generated_suites/llama3_8b_main_${suite_size}.${suite_postfix}"
+    output_dir="outputs_llama3_main.${output_postfix}"
     ;;
   llama3p2_1b)
     build_dir="${SCRIPT_DIR}/../../build_latency_llama3p2_1b"
@@ -78,7 +79,7 @@ case "${model}" in
 esac
 
 if [[ "${RERUN_UNSTABLE_POWER:-0}" == "1" ]]; then
-  if [[ "${fpga_bins}" == *" "* ]]; then
+  if [[ -z "${fpga_bins}" || "${fpga_bins}" == *" "* ]]; then
     echo "Error: RERUN_UNSTABLE_POWER=1 requires exactly one FPGA_BINS label" >&2
     exit 1
   fi
@@ -136,7 +137,7 @@ fi
 
 FPGA_BINS="${fpga_bins}" \
 STAGES="${stages}" \
-BUILD_DIR="${build_dir}" \
+BUILD_DIR="${BUILD_DIR:-${build_dir}}" \
 SKIP_EXISTING="${skip_existing}" \
 BLACKBOX_TIMEOUT=24h ./run_hw.sh \
     --input "${input_dir}" \

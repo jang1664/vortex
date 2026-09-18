@@ -40,7 +40,9 @@ ITERATIONS="${ITERATIONS:-1}"
 BLACKBOX_TIMEOUT="${BLACKBOX_TIMEOUT:-24h}"
 BUILD_DIR="${BUILD_DIR:-../../build}"
 OUT_DIR="${OUT_DIR:-outputs/${FPGA_BIN}}"
-SUITE="${SUITE:-generated_suites/${STAGE}_merged/${STAGE}_merged_${FPGA_BIN}.yaml}"
+if [[ -z "${SUITE:-}" ]]; then
+  SUITE="$("${PYTHON_BIN}" "${SCRIPT_DIR}/workflow.py" suite --input "${INPUT_DIR:-generated_suites}" --stage "${STAGE}" --label "${FPGA_BIN}")"
+fi
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 NO_SRUN="${NO_SRUN:-0}"
 
@@ -71,6 +73,8 @@ fi
 if [[ -n "${RUN_ID:-}" ]]; then
   cmd+=(--run-id "${RUN_ID}")
 fi
+
+if [[ -n "${CANDIDATE_MAP:-}" ]]; then cmd+=(--candidate-map "${CANDIDATE_MAP}"); fi
 
 cmd+=("$@")
 
