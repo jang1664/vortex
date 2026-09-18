@@ -1,0 +1,62 @@
+task: latency_on_hw-refine
+state: pipeline_complete_power_review_pending
+job_id: '4935'
+successor_job_id: '4936'
+pipeline_retry_job_id: '4937'
+monitor_unit: vortex-latency-th16-monitor-4937.service
+experiment_tag: th16_20260917
+report: verification.md
+pipeline_design: pipeline-resume-plan.md
+pipeline_review: pipeline-plan-review.json
+campaign_status: campaign_status.json
+decisions:
+  - Keep C2 reuse from C1/C3/C4; register C2 without scheduling measurements.
+  - Keep source YAML and small indexes; use PKL for expanded artifacts.
+  - Use workflow.py pipeline for run, refine, compose, prepare, and plot; resume by validated task receipt and observed evidence.
+  - Keep the successor pending behind an afterany dependency while the legacy job has an active run_state writer.
+log:
+  - timestamp: '2026-09-18 13:45'
+    action: Recovered the final plotting stage after Slurm job 4937 failed.
+    learned: Job 4937 completed refinement, composition, and preparation, then failed because direct plot.py execution could not import tools. Adding the repository root to sys.path passed 48 regressions; a plot-only workflow resume completed all seven render tasks and published 30 files with seven manifests.
+  - timestamp: '2026-09-18 13:20'
+    action: Audited all raw databases, fixed the refinement checkpoint path, and submitted pipeline retry job 4937.
+    learned: All 2,124 raw rows pass and exactly match their latency CSV, cycle log, and power summary sources. Seven long C1 TCU runs have truncated raw power traces. Job 4936 failed because the pipeline omitted interpolation/ from the recovery path; the localized fix passed 47 tests, and job 4937 is running refinement.
+  - timestamp: '2026-09-17 21:19'
+    action: Scheduled and started autonomous continuation monitoring.
+    learned: Slurm job 4936 is pending on afterany:4935 with the same FPGA resource request. It will run workflow.py pipeline --adopt-legacy after job 4935 terminates. A transient user service records both states every 3600 seconds and exits after job 4936 becomes terminal.
+  - timestamp: '2026-09-17 20:51'
+    action: Completed code review follow-up and final fixture regression verification.
+    learned: Five confirmed findings were fixed, including exact single-model plot inputs, excluded-refinement receipt compatibility, legacy YAML suite fallback, pinned measurement acquisition settings, and indexed strict raw-row lookup. A 220-test fixture-only regression passed; job 4935 remained running and untouched.
+  - timestamp: '2026-09-17 19:41'
+    action: Completed the pipeline implementation and audited legacy job 4935 without mutation.
+    learned: The job is still running Llama2 C4. C1 and C3 each have 30 complete latency-plus-power rows; C4 had 167 of 177 complete rows at the audit instant. A successor must wait for quiescence, then use status or dry-run before strict adoption.
+  - timestamp: '2026-09-17 18:00'
+    action: Reviewed and updated the pipeline plan through ce-plan and four document-review personas.
+    learned: Specified strict reuse, durable refinement recovery, dependency-scoped invalidation, and output validation; removed the C2 execution exception. No unresolved review items. Cross-model review was unavailable because Claude CLI rejected --safe-mode. Implementation and campaign processes were unchanged.
+  - timestamp: '2026-09-17 17:34'
+    action: Audited restart behavior for the proposed workflow.py pipeline and documented pipeline-resume-plan.md.
+    learned: A synthetic skip-helper check reused both latency-only and missing-metric passing rows; refinement restores promoted data but not convergence or iteration state. No campaign process was changed.
+  - timestamp: '2026-09-17 13:52'
+    action: Started the approved plan; inspected suite, merge, runner, and result helpers.
+    learned: Existing SHA-based resume can be preserved; composition needs an identity filter before deduplication.
+  - timestamp: '2026-09-17 14:00'
+    action: Added candidate snapshots, PKL suite storage, index-based wrappers, and result provenance.
+    learned: Core focused tests passed; generation wrapper needed an explicit repository PYTHONPATH.
+  - timestamp: '2026-09-17 14:07'
+    action: Measured YAML/PKL parity and completed TCU, naive, improve, and vector hardware smoke cases.
+    learned: Full C3 storage write improved from 17.154 s to 0.589 s; read improved from 25.139 s to 0.354 s.
+  - timestamp: '2026-09-17 14:12'
+    action: Completed fused-vector smoke, generated both full workloads, and passed 89 focused tests.
+    learned: All full case/execution counts match the previous campaign; old HEAD has existing broad-suite failures.
+  - timestamp: '2026-09-17 14:13'
+    action: Submitted campaign job 4934; corrected Slurm script relocation failure and resubmitted as job 4935.
+    learned: Use SLURM_SUBMIT_DIR because Slurm executes a copied script from its spool directory.
+remaining:
+  - Decide whether to remeasure the seven long C1 TCU rows whose raw power CSV reached the 1 MiB capture limit.
+pitfalls:
+  - Refinement modifies the measurement raw DB, so whole-file run-output fingerprints would invalidate valid base measurements.
+  - Source C2 routes by app; remapping candidate defaults must not replace that routing.
+  - Global C1-C4 aliases refer to historical images and must remain unchanged.
+  - Broad historical tests include stale fixtures and device-dependent failures; compare against HEAD before attributing failures to this change.
+  - Slurm relocates batch scripts; BASH_SOURCE alone cannot locate the repository in a submitted job.
+  - Job 4935 uses the copied pre-pipeline wrapper; checkout edits do not change its already-running sequence.
