@@ -109,6 +109,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
 
         with (
             patch.object(prepare, "TARGET_MODELS", ("llama2_7b",)),
+            patch.object(prepare, "FIGURE_OUTPUT_ROOT", Path("/tmp")),
             patch.object(prepare, "LATENCY_SCALE_RULES", []),
             patch.object(prepare, "ENERGY_POWER_METRICS", ()),
             patch.object(prepare, "BUILD_LLAMA_COMPARE", False),
@@ -127,6 +128,16 @@ class NoAreaNormE2ETests(unittest.TestCase):
             ) as derive_mock,
             patch.object(prepare, "figure_data_path", return_value=Path("/tmp")),
             patch.object(prepare, "total_data_path", return_value=Path("/tmp")),
+            patch.object(
+                prepare,
+                "prepared_model_output_paths",
+                return_value=(
+                    Path("/tmp"),
+                    Path("/tmp/prepare_manifest.llama2_7b.json"),
+                ),
+            ),
+            patch.object(prepare, "sha256_file", return_value="digest"),
+            patch.object(Path, "write_text"),
         ):
             self.assertEqual(
                 prepare.main(["--composed-csv", "input.csv", "--out-tokens", "128"]),
@@ -165,6 +176,7 @@ class NoAreaNormE2ETests(unittest.TestCase):
 
         with (
             patch.object(prepare, "TARGET_MODELS", ("llama2_7b",)),
+            patch.object(prepare, "FIGURE_OUTPUT_ROOT", Path("/tmp")),
             patch.object(prepare, "LATENCY_SCALE_RULES", []),
             patch.object(prepare, "ENERGY_POWER_METRICS", ()),
             patch.object(prepare, "BUILD_LLAMA_COMPARE", False),
@@ -187,6 +199,16 @@ class NoAreaNormE2ETests(unittest.TestCase):
             patch.object(prepare, "export_no_area_norm_figure_data") as derive_mock,
             patch.object(prepare, "figure_data_path", return_value=Path("/tmp")),
             patch.object(prepare, "total_data_path", return_value=Path("/tmp")),
+            patch.object(
+                prepare,
+                "prepared_model_output_paths",
+                return_value=(
+                    Path("/tmp"),
+                    Path("/tmp/prepare_manifest.llama2_7b.json"),
+                ),
+            ),
+            patch.object(prepare, "sha256_file", return_value="digest"),
+            patch.object(Path, "write_text"),
         ):
             self.assertEqual(
                 prepare.main(["--composed-csv", "input.csv", "--out-tokens", "128"]),

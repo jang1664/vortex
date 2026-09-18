@@ -125,6 +125,10 @@ def _raw_db_paths(
     model: ModelInput,
     raw_db_subdirs: tuple[str, ...],
 ) -> tuple[Path, ...]:
+    if not raw_db_subdirs:
+        from tools.latency_bench.suite_io import indexed_suites
+        raw_db_subdirs = tuple(sorted({label for stage in GENERATED_SUITE_STAGES
+            for label, _ in indexed_suites(model.suite_dir / f"{stage}_merged" / "index.yaml")}))
     return tuple(
         model.results_root / subdir / "raw_db.csv"
         for subdir in raw_db_subdirs
@@ -344,6 +348,8 @@ def compose_model(
     model_out = out_root / model.key
     composed_path, summary_path = write_compose_outputs(combined, model_out)
     manifest = {
+        "type": "vortex-latency-compose-model",
+        "schema_version": 1,
         "model": model.key,
         "suite_dir": str(model.suite_dir.resolve()),
         "results_root": str(model.results_root.resolve()),
@@ -382,6 +388,81 @@ def compose_model(
     return combined, manifest
 
 
+MODEL_KEYS = ("llama2_7b", "llama3_8b")
+
+
+def _selected_model_keys(value: str | tuple[str, ...]) -> tuple[str, ...]:
+    keys = _csv_names(value) if isinstance(value, str) else tuple(value)
+    unknown = sorted(set(keys) - set(MODEL_KEYS))
+    if not keys or unknown:
+        raise ValueError(
+            f"invalid model selection {keys}; expected values from {MODEL_KEYS}"
+        )
+    return tuple(dict.fromkeys(keys))
+
+
+def combine_model_artifacts(
+    model_keys: tuple[str, ...],
+    *,
+    out_root: Path,
+    metric: str,
+    select: str,
+    missing: str,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Aggregate only the explicitly selected, already validated model CSVs."""
+
+    frames: list[pd.DataFrame] = []
+    model_artifacts: list[dict[str, object]] = []
+    for model_key in model_keys:
+        composed_path = out_root / model_key / "composed.csv"
+        if not composed_path.is_file():
+            raise FileNotFoundError(composed_path)
+        frame = pd.read_csv(composed_path)
+        observed = sorted(frame["model"].dropna().astype(str).unique())
+        if observed != [model_key]:
+            raise ValueError(
+                f"{composed_path} contains models {observed}, expected [{model_key!r}]"
+            )
+        completeness = _validate_complete_composed(frame, label=model_key)
+        frames.append(frame)
+        manifest_path = out_root / model_key / "manifest.json"
+        if manifest_path.is_file():
+            model_manifest = json.loads(manifest_path.read_text())
+            if model_manifest.get("model") != model_key:
+                raise ValueError(
+                    f"{manifest_path} belongs to {model_manifest.get('model')!r}, "
+                    f"expected {model_key!r}"
+                )
+            model_artifacts.append(model_manifest)
+        else:
+            model_artifacts.append({
+                "model": model_key,
+                "composed_csv": str(composed_path.resolve()),
+                "manifest": "",
+                "completeness": completeness,
+            })
+    combined = pd.concat(frames, ignore_index=True)
+    combined_completeness = _validate_complete_composed(combined, label="combined")
+    composed_path, summary_path = write_compose_outputs(combined, out_root / "combined")
+    top_manifest: dict[str, object] = {
+        "type": "vortex-latency-compose-aggregate",
+        "schema_version": 1,
+        "model_keys": list(model_keys),
+        "models": model_artifacts,
+        "metric": metric,
+        "select": select,
+        "missing": missing,
+        "row_count": len(combined),
+        "completeness": combined_completeness,
+        "composed_csv": str(composed_path.resolve()),
+        "summary_csv": str(summary_path.resolve()) if summary_path else "",
+    }
+    (out_root / "manifest.json").write_text(
+        json.dumps(top_manifest, indent=2, default=str) + "\n"
+    )
+    return combined, top_manifest
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -392,6 +473,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--llama2-results", required=True, type=Path)
     parser.add_argument("--llama3-results", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--models",
+        default=",".join(MODEL_KEYS),
+        help="Comma-separated model keys to compose or aggregate.",
+    )
+    parser.add_argument(
+        "--aggregate-only",
+        action="store_true",
+        help="Rebuild only the combined artifact from selected model outputs.",
+    )
+    parser.add_argument(
+        "--no-combine",
+        action="store_true",
+        help="Compose selected model outputs without rebuilding combined outputs.",
+    )
     parser.add_argument(
         "--generated-suite-root",
         "--suite-root",
@@ -418,8 +514,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--raw-db-subdirs",
         type=_csv_names,
-        default=DEFAULT_RAW_DB_SUBDIRS,
-        help="Comma-separated result subdirectories containing raw_db.csv.",
+        default=(),
+        help="Comma-separated result subdirectories; default discovers execution bins from merged indexes.",
     )
     parser.add_argument(
         "--metric", choices=METRIC_COLUMNS, default="fpga_cycle_latency"
@@ -444,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     args = build_parser().parse_args(argv)
-    models = (
+    all_models = (
         ModelInput(
             "llama2_7b",
             args.llama2_suites or args.generated_suite_root / "llama2_7b_main",
@@ -456,50 +552,44 @@ def main(argv: list[str] | None = None) -> int:
             args.llama3_results,
         ),
     )
+    selected_keys = _selected_model_keys(args.models)
+    models = tuple(model for model in all_models if model.key in selected_keys)
+    if args.aggregate_only and args.no_combine:
+        raise ValueError("--aggregate-only and --no-combine cannot be combined")
     args.out.mkdir(parents=True, exist_ok=True)
 
-    frames = []
-    manifests = []
-    for model in models:
-        composed, manifest = compose_model(
-            model,
-            raw_db_subdirs=args.raw_db_subdirs,
+    if not args.aggregate_only:
+        for model in models:
+            composed, _ = compose_model(
+                model,
+                raw_db_subdirs=args.raw_db_subdirs,
+                out_root=args.out,
+                metric=args.metric,
+                select=args.select,
+                missing=args.missing,
+                warmup=args.warmup,
+                iterations=args.iterations,
+            )
+            print(
+                f"{model.key}: wrote {args.out / model.key / 'composed.csv'} "
+                f"({len(composed)} rows)",
+                flush=True,
+            )
+
+    if not args.no_combine:
+        combined, top_manifest = combine_model_artifacts(
+            selected_keys,
             out_root=args.out,
             metric=args.metric,
             select=args.select,
             missing=args.missing,
-            warmup=args.warmup,
-            iterations=args.iterations,
         )
-        frames.append(composed)
-        manifests.append(manifest)
+        composed_path = Path(str(top_manifest["composed_csv"]))
         print(
-            f"{model.key}: wrote {args.out / model.key / 'composed.csv'} "
-            f"({len(composed)} rows)",
+            f"combined: wrote {composed_path} ({len(combined)} rows, "
+            f"{time.monotonic() - started:.1f}s total)",
             flush=True,
         )
-
-    combined = pd.concat(frames, ignore_index=True)
-    combined_completeness = _validate_complete_composed(combined, label="combined")
-    composed_path, summary_path = write_compose_outputs(combined, args.out / "combined")
-    top_manifest = {
-        "models": manifests,
-        "metric": args.metric,
-        "select": args.select,
-        "missing": args.missing,
-        "row_count": len(combined),
-        "completeness": combined_completeness,
-        "composed_csv": str(composed_path.resolve()),
-        "summary_csv": str(summary_path.resolve()) if summary_path else "",
-    }
-    (args.out / "manifest.json").write_text(
-        json.dumps(top_manifest, indent=2, default=str) + "\n"
-    )
-    print(
-        f"combined: wrote {composed_path} ({len(combined)} rows, "
-        f"{time.monotonic() - started:.1f}s total)",
-        flush=True,
-    )
     return 0
 
 

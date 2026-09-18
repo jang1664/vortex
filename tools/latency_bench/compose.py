@@ -10,6 +10,8 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from .candidate_map import filter_snapshot_rows
+
 from .fpga_clock import DEFAULT_FPGA_PERIOD_S, resolve_fpga_period_s
 from .suite import BenchCase, BenchSuite, make_exec_key, resolve_case_fpga_bin, suite_to_rows
 from .interpolation import interpolation_group_key
@@ -363,6 +365,8 @@ def _raw_selection_row(
             "source_run_ids": _unique_join(matches["run_id"]) if "run_id" in matches.columns else "",
             "source_fpga_bin_labels": _unique_join(matches["fpga_bin_label"]) if "fpga_bin_label" in matches.columns else "",
             "source_xclbin_sha256s": _unique_join(matches["xclbin_sha256"]) if "xclbin_sha256" in matches.columns else "",
+            "source_fpga_bin_aliases": _unique_join(matches["fpga_bin_alias"]) if "fpga_bin_alias" in matches.columns else "",
+            "source_fpga_bin_dirs": _unique_join(matches["fpga_bin_dir"]) if "fpga_bin_dir" in matches.columns else "",
         }
     )
     for supplemental_metric in ("fpga_cycle", "fpga_cycle_latency", "fpga_period_s"):
@@ -526,6 +530,8 @@ def _compose_rows_from_merge(
                 "source_run_ids": _safe_str(row.get("source_run_ids")),
                 "source_fpga_bin_labels": _safe_str(row.get("source_fpga_bin_labels")),
                 "source_xclbin_sha256s": _safe_str(row.get("source_xclbin_sha256s")),
+                "source_fpga_bin_aliases": _safe_str(row.get("source_fpga_bin_aliases")),
+                "source_fpga_bin_dirs": _safe_str(row.get("source_fpga_bin_dirs")),
                 "selected_run_id": _safe_str(row.get("selected_run_id")),
                 "selected_timestamp_utc": _safe_str(row.get("selected_timestamp_utc")),
                 "latency_resolution_kind": resolution_kind,
@@ -580,6 +586,8 @@ def _resolve_decode_reuse(
         "source_run_ids",
         "source_fpga_bin_labels",
         "source_xclbin_sha256s",
+        "source_fpga_bin_aliases",
+        "source_fpga_bin_dirs",
         "selected_run_id",
         "selected_timestamp_utc",
         "source_latency_scale_rules",
@@ -733,6 +741,9 @@ def _resolve_decode_interpolation(
                 out.at[lo_pos, "source_run_ids"],
                 out.at[hi_pos, "source_run_ids"],
             ]))
+            for column in ("source_fpga_bin_labels", "source_xclbin_sha256s", "source_fpga_bin_aliases", "source_fpga_bin_dirs"):
+                if column in out:
+                    out.at[position, column] = _unique_join(pd.Series([out.at[lo_pos, column], out.at[hi_pos, column]]))
 
         for power_metric in POWER_METRIC_COLUMNS:
             power_anchors = [
@@ -863,7 +874,12 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     if options.missing not in MISSING_POLICIES:
         raise ValueError(f"missing must be one of {', '.join(MISSING_POLICIES)}")
 
-    raw = _read_raw_dbs(options.raw_dbs)
+    if suite.experiment and not options.match_fpga_bin:
+        raise ValueError("mapped composition requires FPGA-source matching")
+    raw = filter_snapshot_rows(_read_raw_dbs(options.raw_dbs), suite.experiment)
+    if suite.experiment:
+        periods = {label: spec["fpga_period_s"] for label, spec in suite.experiment["candidates"].items()}
+        raw["fpga_period_s"] = raw["fpga_bin_label"].map(periods)
     _require_columns(raw, ["exec_key", "app", "args", "status"])
     raw = _require_xclbin_sha256(raw)
     raw = _add_fpga_cycle_latency(raw)
@@ -901,7 +917,15 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     )
     composed = _resolve_decode_reuse(composed, suite)
     composed = _resolve_decode_interpolation(composed, suite)
+    if suite.experiment:
+        composed["fpga_period_s"] = composed["expected_fpga_bin_label"].map(periods)
     composed = _synchronize_fpga_cycle_metrics(composed)
+    if suite.experiment:
+        targets = suite.experiment["candidates"]
+        labels = composed["expected_fpga_bin_label"]
+        composed["selection_digest"] = suite.experiment["selection_digest"]
+        for column, key in (("expected_xclbin_sha256", "xclbin_sha256"), ("expected_fpga_bin_alias", "alias")):
+            composed[column] = labels.map({label: spec[key] for label, spec in targets.items()})
     return _apply_missing_policy(composed, options.missing)
 
 

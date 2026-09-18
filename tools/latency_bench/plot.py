@@ -258,6 +258,9 @@ def _combine_suites(suites: list[BenchSuite], *, match_fpga_bin: bool = True) ->
     if not suites:
         raise ValueError("at least one suite is required")
 
+    experiment = suites[0].experiment
+    if any(suite.experiment != experiment for suite in suites):
+        raise ValueError("cannot combine suites from different FPGA selections")
     cases: list[BenchCase] = []
     seen: set[tuple[object, ...]] = set()
     source_suites: dict[str, list[str]] = {}
@@ -279,7 +282,7 @@ def _combine_suites(suites: list[BenchSuite], *, match_fpga_bin: bool = True) ->
         case_id: _unique_join(names)
         for case_id, names in source_suites.items()
     }
-    return BenchSuite(name=name, defaults=BenchDefaults(), cases=cases), source_map
+    return BenchSuite(name=name, defaults=BenchDefaults(), cases=cases, experiment=experiment), source_map
 
 
 def _shape_from_row(row: pd.Series) -> dict[str, object]:

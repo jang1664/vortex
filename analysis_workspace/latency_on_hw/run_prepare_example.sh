@@ -1,18 +1,12 @@
 #!/bin/bash
-# python prepare.py \
-#   --composed-csv composed_results.old_c3_c4/combined/composed.csv \
-#   --out-tokens 128 \
-#   --workers 4 \
-#   --output-root figure_prepare.old_c3_c4
-
-# python prepare.py \
-#   --composed-csv composed_results.new_c4/combined/composed.csv \
-#   --out-tokens 128 \
-#   --workers 4 \
-#   --output-root figure_prepare.new_c4
-
-python prepare.py \
-  --composed-csv composed_results.C3_v3_C4_v3/combined/composed.csv \
-  --out-tokens 128 \
-  --workers 4 \
-  --output-root figure_prepare.C3_v3_C4_v3
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+tag="${EXPERIMENT_TAG:-th16_20260917}"
+python_bin="${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}"
+for model in llama2_7b llama3_8b; do
+  "${python_bin}" prepare.py \
+    --composed-csv "composed_results.${tag}/${model}/composed.csv" \
+    --models "${model}" --workers 1 --exact-model-input \
+    --out-tokens 128 --output-root "figure_prepare.${tag}" "$@"
+done

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import json
 import math
 import os
 import subprocess
@@ -25,6 +26,12 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Literal, Sequence
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 DEFAULT_OUT_BASE = "output_figure"
@@ -62,6 +69,76 @@ ALL_PLOTS = (
     "llama_gemm_only",
     "llama_gemm_only_no_area_norm",
 )
+
+_PLOT_IMAGE_OUTPUTS = {
+    "llama_e2e_gemm_layout_vector_stacked": (
+        "llama_e2e_gemm_layout_vector_stacked",
+        "llama_e2e_gemm_layout_vector_latency_stacked",
+    ),
+    "llama_e2e_no_area_norm_stacked": (
+        "llama_e2e_no_area_norm_stacked",
+        "llama_e2e_latency_no_area_norm_stacked",
+    ),
+    "llama_gemm_only": (
+        "llama_gemm_only",
+        "llama_gemm_only_latency",
+    ),
+    "llama_gemm_only_no_area_norm": (
+        "llama_gemm_only_no_area_norm",
+        "llama_gemm_only_latency_no_area_norm",
+    ),
+}
+
+
+def expected_plot_outputs(
+    plot_name: str,
+    *,
+    formats: Sequence[str],
+    power_metric: str | None,
+) -> tuple[Path, ...]:
+    """Return the complete fresh-output contract for one render task."""
+
+    normalized_formats = tuple(dict.fromkeys(str(value).lower() for value in formats))
+    invalid = set(normalized_formats) - {"png", "pdf", "svg"}
+    if not normalized_formats or invalid:
+        raise ValueError(f"invalid plot formats: {sorted(invalid)}")
+    if plot_name == "kernel_dynamic_power":
+        directory = "kernel_dynamic_power"
+        stem = "kernel_dynamic_power_by_kind"
+        files = [
+            Path(directory) / f"{stem}.{extension}"
+            for extension in normalized_formats
+        ]
+        files.extend(
+            (
+                Path(directory) / "kernel_dynamic_power_by_kind.csv",
+                Path(directory) / "kernel_dynamic_power_inputs.json",
+            )
+        )
+        files.append(Path(directory) / "render_manifest.json")
+        return tuple(files)
+    if plot_name == "llama_energy_no_area_norm_gemm_layout_vector_stacked":
+        if power_metric not in ENERGY_POWER_METRICS:
+            raise ValueError(f"{plot_name} requires one supported power metric")
+        directory = plot_name
+        stem = (
+            f"llama_energy_per_token_{power_metric}_no_area_norm_"
+            "gemm_layout_vector_stacked"
+        )
+    else:
+        try:
+            directory, stem = _PLOT_IMAGE_OUTPUTS[plot_name]
+        except KeyError as error:
+            raise ValueError(f"plot family has no output contract: {plot_name}") from error
+    images = tuple(
+        Path(directory) / f"{stem}.{extension}"
+        for extension in normalized_formats
+    )
+    manifest_name = (
+        f"render_manifest.{power_metric}.json"
+        if power_metric is not None else "render_manifest.json"
+    )
+    return (*images, Path(directory) / manifest_name)
 EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
 REQUESTED_OUT_TOKENS: int | None = None
 REQUESTED_POWER_METRIC: str | None = None
@@ -211,6 +288,20 @@ LLAMA_E2E_ROW_ORDER = tuple(
     for stage in STAGE_ORDER
     for _model_key, model_label in LLAMA_E2E_MODELS
 )
+REQUESTED_LLAMA_MODELS: tuple[tuple[str, str], ...] | None = None
+REQUESTED_MODEL_DATA: dict[str, str] = {}
+
+
+def requested_llama_models() -> tuple[tuple[str, str], ...]:
+    return REQUESTED_LLAMA_MODELS or LLAMA_E2E_MODELS
+
+
+def requested_llama_row_order() -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (model_label, stage)
+        for stage in STAGE_ORDER
+        for _model_key, model_label in requested_llama_models()
+    )
 
 BAR_PALETTE = (
     "#08306B",
@@ -628,6 +719,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="parallel figure processes; 0 selects up to four workers",
     )
     parser.add_argument(
+        "--models",
+        default=",".join(TARGET_MODELS),
+        help="comma-separated Llama model keys to include in combined plots",
+    )
+    parser.add_argument(
+        "--model-data",
+        action="append",
+        default=None,
+        metavar="MODEL=PATH",
+        help="exact prepared input for one selected model; repeat for each model",
+    )
+    parser.add_argument(
         "--formats",
         default="png,pdf,svg",
         help="comma-separated output formats: png,pdf,svg",
@@ -647,6 +750,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--prepared-root",
         default=DEFAULT_PREPARED_ROOT,
         help="directory containing prepared figure subdirectories. Relative paths are resolved under --latency-dir.",
+    )
+    parser.add_argument(
+        "--kernel-raw-db",
+        action="append",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit current raw_db.csv input for kernel_dynamic_power; "
+            "repeat for each execution root. Requires --candidate-snapshot."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-snapshot",
+        type=Path,
+        default=None,
+        help=(
+            "Captured candidate selection JSON used to filter kernel power "
+            "rows before provenance columns are removed."
+        ),
     )
     parser.add_argument(
         "--out-dir",
@@ -2798,7 +2920,7 @@ def plot_model_wide_candidate_bars(
         knobs.relative_baseline_candidate,
     )
 
-    row_specs = list(LLAMA_E2E_ROW_ORDER)
+    row_specs = list(requested_llama_row_order())
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
     x_axis_rows = _share_model_x_axes_by_stage(axes_list, row_specs)
@@ -2999,7 +3121,7 @@ def plot_model_stacked_bars(
             knobs.relative_baseline_candidate,
         )
 
-    row_specs = list(LLAMA_E2E_ROW_ORDER)
+    row_specs = list(requested_llama_row_order())
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
     x_axis_rows = _share_model_x_axes_by_stage(axes_list, row_specs)
@@ -3560,8 +3682,9 @@ def collect_model_csvs(
     kind: str,
     label: str,
 ) -> list[tuple[str, str, Path]]:
+    explicit_by_model = {**explicit_by_model, **REQUESTED_MODEL_DATA}
     model_csvs: list[tuple[str, str, Path]] = []
-    for model_key, model_label in LLAMA_E2E_MODELS:
+    for model_key, model_label in requested_llama_models():
         csv_path = model_csv_path(
             explicit=explicit_by_model.get(model_key),
             prepared_root=prepared_root,
@@ -3621,6 +3744,7 @@ def collect_model_energy_csv_groups(
     latency_dir: Path,
     kind: str = "energy",
 ) -> list[tuple[str, list[tuple[str, str, Path]]]]:
+    explicit_by_model = {**explicit_by_model, **REQUESTED_MODEL_DATA}
     if any(explicit_by_model.values()):
         explicit_paths: dict[str, Path] = {}
         explicit_metrics: set[str] = set()
@@ -3646,7 +3770,7 @@ def collect_model_energy_csv_groups(
                 f"requested metric {REQUESTED_POWER_METRIC!r}"
             )
         model_csvs = []
-        for model_key, model_label in LLAMA_E2E_MODELS:
+        for model_key, model_label in requested_llama_models():
             csv_path = explicit_paths.get(model_key)
             if csv_path is None:
                 csv_path = model_energy_csv_path(
@@ -3670,7 +3794,7 @@ def collect_model_energy_csv_groups(
     for power_metric in requested_metrics:
         model_csvs: list[tuple[str, str, Path]] = []
         try:
-            for model_key, model_label in LLAMA_E2E_MODELS:
+            for model_key, model_label in requested_llama_models():
                 csv_path = model_energy_csv_path(
                     explicit=None,
                     prepared_root=prepared_root,
@@ -3704,7 +3828,7 @@ def run_auto_discovered_energy_plot(
 ) -> None:
     explicit_by_model = {
         model_key: None
-        for model_key, _model_label in LLAMA_E2E_MODELS
+        for model_key, _model_label in requested_llama_models()
     }
     try:
         model_csv_groups = collect_model_energy_csv_groups(
@@ -3745,20 +3869,40 @@ def configured_raw_db_paths(latency_dir: Path) -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def plot_kernel_dynamic_power_by_kind(
+def _read_candidate_snapshot(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    snapshot = payload.get("experiment", payload) if isinstance(payload, dict) else payload
+    from tools.latency_bench.candidate_map import validate_snapshot
+
+    validate_snapshot(snapshot)
+    return snapshot
+
+
+def kernel_dynamic_power_summary(
     raw_db_paths: Sequence[Path],
-    out_dir: Path,
     *,
-    knobs: WideBarKnobs,
-) -> None:
-    pd, plt = _import_plot_modules()
+    snapshot: dict[str, Any] | None,
+) -> tuple[Any, dict[str, Any]]:
+    """Select current-image power rows before reducing their provenance."""
+
+    pd, _ = _import_plot_modules()
+    if not raw_db_paths:
+        raise ValueError("kernel dynamic power requires at least one raw DB")
+    if snapshot is not None:
+        from tools.latency_bench.candidate_map import filter_snapshot_rows
+
     frames = []
+    selected_by_raw_db: dict[str, int] = {}
     required = {"app", "power_dynamic_avg_w", "status"}
     for path in raw_db_paths:
+        path = Path(path).expanduser().resolve()
         frame = pd.read_csv(path, low_memory=False)
         missing = required - set(frame.columns)
         if missing:
             raise ValueError(f"{path} missing columns: {sorted(missing)}")
+        if snapshot is not None:
+            frame = filter_snapshot_rows(frame, snapshot)
+        selected_by_raw_db[str(path)] = 0
         app = frame["app"].fillna("").astype(str).str.strip()
         inferred_kind = app.map(KERNEL_KIND_BY_APP)
         if "kind" not in frame.columns:
@@ -3791,6 +3935,12 @@ def plot_kernel_dynamic_power_by_kind(
     combined = combined[combined["kind"].ne("layout")].copy()
     if combined.empty:
         raise ValueError("configured raw DBs contain no valid dynamic power rows")
+    selected_by_raw_db.update(
+        {
+            str(path): int(count)
+            for path, count in combined["source_raw_db"].value_counts().items()
+        }
+    )
 
     combined["app"] = combined["app"].fillna("").astype(str).str.strip()
     combined["kernel_group"] = combined["kind"]
@@ -3842,9 +3992,39 @@ def plot_kernel_dynamic_power_by_kind(
     summary["_group_rank"] = summary["kernel_group"].map(group_rank)
     summary = summary.sort_values("_group_rank").drop(columns="_group_rank")
     summary = summary.reset_index(drop=True)
+    provenance = {
+        "type": "vortex-kernel-dynamic-power-inputs",
+        "schema_version": 1,
+        "raw_dbs": [str(Path(path).expanduser().resolve()) for path in raw_db_paths],
+        "selection_digest": snapshot.get("selection_digest", "") if snapshot else "",
+        "selected_images": {
+            label: spec["xclbin_sha256"]
+            for label, spec in sorted(snapshot.get("candidates", {}).items())
+        } if snapshot else {},
+        "selected_rows_by_raw_db": selected_by_raw_db,
+        "selected_row_count": int(sum(selected_by_raw_db.values())),
+    }
+    return summary, provenance
+
+
+def plot_kernel_dynamic_power_by_kind(
+    raw_db_paths: Sequence[Path],
+    out_dir: Path,
+    *,
+    knobs: WideBarKnobs,
+    snapshot: dict[str, Any] | None = None,
+) -> None:
+    _, plt = _import_plot_modules()
+    summary, provenance = kernel_dynamic_power_summary(
+        raw_db_paths,
+        snapshot=snapshot,
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     summary.to_csv(out_dir / "kernel_dynamic_power_by_kind.csv", index=False)
+    (out_dir / "kernel_dynamic_power_inputs.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n"
+    )
 
     positions = list(range(len(summary)))
     means = summary["mean_dynamic_power_w"].tolist()
@@ -3901,12 +4081,33 @@ def run_selected_plots(args: argparse.Namespace) -> None:
     knobs = _plot_knobs_from_args(args)
 
     if "kernel_dynamic_power" in selected_plots:
-        raw_db_paths = configured_raw_db_paths(latency_dir)
+        explicit_raw_dbs = tuple(args.kernel_raw_db or ())
+        if bool(explicit_raw_dbs) != bool(args.candidate_snapshot):
+            raise ValueError(
+                "kernel_dynamic_power requires both --kernel-raw-db and "
+                "--candidate-snapshot when either is specified"
+            )
+        if explicit_raw_dbs:
+            raw_db_paths = tuple(
+                path.expanduser().resolve() for path in explicit_raw_dbs
+            )
+            missing = [path for path in raw_db_paths if not path.is_file()]
+            if missing:
+                raise FileNotFoundError(
+                    f"kernel dynamic power raw DBs are missing: {missing}"
+                )
+            snapshot = _read_candidate_snapshot(
+                args.candidate_snapshot.expanduser().resolve()
+            )
+        else:
+            raw_db_paths = configured_raw_db_paths(latency_dir)
+            snapshot = None
         print(f"kernel dynamic power raw DBs: {len(raw_db_paths)}")
         plot_kernel_dynamic_power_by_kind(
             raw_db_paths,
             output_root / "kernel_dynamic_power",
             knobs=knobs.kernel_dynamic_power,
+            snapshot=snapshot,
         )
 
     if "main_all" in selected_plots or "latency" in selected_plots:
@@ -4340,6 +4541,27 @@ PARALLEL_ENERGY_PLOTS = {
     "llama_energy_gemm_layout_vector_stacked",
     "llama_energy_no_area_norm_gemm_layout_vector_stacked",
 }
+
+
+def selected_plot_jobs(
+    plot_name: str, power_metric: str | None = None,
+) -> tuple[tuple[str, str | None], ...]:
+    """Expand a plot selection into the renderer's family/metric task units."""
+
+    selected = ALL_PLOTS if plot_name == "all" else (plot_name,)
+    jobs: list[tuple[str, str | None]] = []
+    for selected_name in selected:
+        metrics = (
+            (power_metric,)
+            if selected_name in PARALLEL_ENERGY_PLOTS and power_metric is not None
+            else ENERGY_POWER_METRICS
+            if selected_name in PARALLEL_ENERGY_PLOTS
+            else (None,)
+        )
+        jobs.extend((selected_name, metric) for metric in metrics)
+    return tuple(jobs)
+
+
 def _replace_parallel_plot_args(
     raw_args: Sequence[str],
     *,
@@ -4370,33 +4592,88 @@ def _run_plot_process(arguments: list[str]) -> None:
     )
 
 
+def _write_render_manifests(args: argparse.Namespace) -> None:
+    repo_root = find_repo_root()
+    latency_dir = (
+        Path(args.latency_dir).expanduser().resolve()
+        if args.latency_dir else repo_root / "analysis_workspace" / "latency_on_hw"
+    )
+    output_root = resolve_under_latency_dir(args.out_dir, latency_dir)
+    formats = tuple(
+        value.strip().lower()
+        for value in str(args.formats).split(",")
+        if value.strip()
+    )
+    for plot_name, power_metric in selected_plot_jobs(
+        args.plot, args.power_metric
+    ):
+        if plot_name not in ALL_PLOTS:
+            continue
+        outputs = expected_plot_outputs(
+            plot_name,
+            formats=formats,
+            power_metric=power_metric,
+        )
+        manifest_relative = outputs[-1]
+        artifact_paths = [output_root / relative for relative in outputs[:-1]]
+        missing = [
+            path for path in artifact_paths
+            if not path.is_file() or path.stat().st_size == 0
+        ]
+        if missing:
+            raise FileNotFoundError(
+                f"render task {plot_name} is missing outputs: {missing}"
+            )
+        manifest = {
+            "type": "vortex-latency-render-artifacts",
+            "schema_version": 1,
+            "plot": plot_name,
+            "power_metric": power_metric,
+            "formats": list(formats),
+            "outputs": [str(path.resolve()) for path in artifact_paths],
+        }
+        manifest_path = output_root / manifest_relative
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    global REQUESTED_LLAMA_MODELS, REQUESTED_MODEL_DATA
     global REQUESTED_OUT_TOKENS, REQUESTED_POWER_METRIC
     raw_args = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(raw_args)
     if args.out_tokens < 1:
         raise ValueError(f"--out-tokens must be >= 1, got {args.out_tokens}")
+    selected_models = tuple(
+        model.strip() for model in str(args.models).split(",") if model.strip()
+    )
+    unknown_models = sorted(set(selected_models) - set(LLAMA_MODEL_LABELS))
+    if not selected_models or unknown_models or len(set(selected_models)) != len(selected_models):
+        raise ValueError(
+            f"invalid --models selection {selected_models}; "
+            f"available models: {tuple(LLAMA_MODEL_LABELS)}"
+        )
+    model_data: dict[str, str] = {}
+    for item in args.model_data or ():
+        model_key, separator, path = str(item).partition("=")
+        if not separator or not model_key or not path or model_key in model_data:
+            raise ValueError(f"invalid --model-data value: {item!r}")
+        model_data[model_key] = path
+    if model_data and set(model_data) != set(selected_models):
+        raise ValueError(
+            "--model-data must provide exactly one input for every --models value"
+        )
     workers = min(os.cpu_count() or 1, 4) if args.workers == 0 else args.workers
     if workers < 1:
         raise ValueError(f"--workers must be >= 0, got {args.workers}")
     parallel_jobs: list[tuple[str, str | None]] = []
     if args.plot == "all" and workers > 1:
-        for plot_name in ALL_PLOTS:
-            metrics = (
-                ENERGY_POWER_METRICS
-                if plot_name in PARALLEL_ENERGY_PLOTS
-                else (None,)
-            )
-            parallel_jobs.extend((plot_name, metric) for metric in metrics)
+        parallel_jobs.extend(selected_plot_jobs(args.plot))
     elif (
         args.plot in PARALLEL_ENERGY_PLOTS
         and args.power_metric is None
         and workers > 1
     ):
-        parallel_jobs.extend(
-            (args.plot, power_metric)
-            for power_metric in ENERGY_POWER_METRICS
-        )
+        parallel_jobs.extend(selected_plot_jobs(args.plot))
     if parallel_jobs:
         commands = [
             _replace_parallel_plot_args(
@@ -4413,7 +4690,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     REQUESTED_OUT_TOKENS = args.out_tokens
     REQUESTED_POWER_METRIC = args.power_metric
+    REQUESTED_LLAMA_MODELS = tuple(
+        (model, LLAMA_MODEL_LABELS[model]) for model in selected_models
+    )
+    REQUESTED_MODEL_DATA = model_data
     run_selected_plots(args)
+    _write_render_manifests(args)
     return 0
 
 

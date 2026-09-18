@@ -111,7 +111,17 @@ class PowerResolver:
         fpga_bin_label = _target_fpga_bin_label(row)
         app = _text(row.get("app"))
         args = _text(row.get("args"))
-        exact = self._by_exact.get((fpga_bin_label, app, args), ())
+        def eligible(candidates):
+            digest = _text(row.get("selection_digest"))
+            if not digest:
+                return candidates
+            expected_sha = _text(row.get("expected_xclbin_sha256"))
+            return [candidate for candidate in candidates
+                    if _text(candidate.row.get("selection_digest")) == digest
+                    and (candidate.fpga_bin_label != fpga_bin_label
+                         or _text(candidate.row.get("xclbin_sha256")) == expected_sha)]
+
+        exact = eligible(self._by_exact.get((fpga_bin_label, app, args), ()))
         if exact:
             return PowerResolution(
                 candidate=_best_exact_candidate(exact),
@@ -123,10 +133,10 @@ class PowerResolver:
         target_shape = _shape_for_row(row)
         target_numeric, target_categorical = _split_shape(target_shape)
         target_stage = _stage(row)
-        scoped_candidates = self._by_fpga_app.get((fpga_bin_label, app), ())
+        scoped_candidates = eligible(self._by_fpga_app.get((fpga_bin_label, app), ()))
         scope = "same_fpga_app"
         if not scoped_candidates:
-            scoped_candidates = self._by_app.get(app, ())
+            scoped_candidates = eligible(self._by_app.get(app, ()))
             scope = "same_app"
         if not scoped_candidates:
             return PowerResolution(
@@ -278,6 +288,8 @@ def energy_row_from_record(
             "power_distance": resolution.distance,
             "power_source_case_id": candidate.row.get("case_id", "") if candidate else "",
             "power_source_fpga_bin_label": candidate.fpga_bin_label if candidate else "",
+            "power_source_fpga_bin_alias": _text(candidate.row.get("fpga_bin_alias")) if candidate else "",
+            "power_source_xclbin_sha256": _text(candidate.row.get("xclbin_sha256")) if candidate else "",
             "power_source_app": candidate.app if candidate else "",
             "power_source_args": candidate.args if candidate else "",
             "power_source_shape_json": candidate.row.get("shape_json", "") if candidate else "",

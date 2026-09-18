@@ -1,24 +1,13 @@
 #!/bin/bash
-
-# python run_compose.py \
-#   --llama2-results outputs_llama2_main \
-#   --llama3-results outputs_llama3_main \
-#   --llama2-suites generated_suites/llama2_7b_main_full \
-#   --llama3-suites generated_suites/llama3_8b_main_full \
-#   --out composed_results.old_c3_c4 
-
-# python run_compose.py \
-#   --llama2-results outputs_llama2_main.new_c4 \
-#   --llama3-results outputs_llama3_main.new_c4 \
-#   --llama2-suites generated_suites/llama2_7b_main_full.new_c4 \
-#   --llama3-suites generated_suites/llama3_8b_main_full.new_c4 \
-#   --raw-db-subdirs C1,C3,C4_2  \
-#   --out composed_results.new_c4 
-
-python run_compose.py \
-  --llama2-results outputs_llama2_main.C3_v3_C4_v3 \
-  --llama3-results outputs_llama3_main.C3_v3_C4_v3 \
-  --llama2-suites generated_suites/llama2_7b_main_full.C3_v3_C4_v3 \
-  --llama3-suites generated_suites/llama3_8b_main_full.C3_v3_C4_v3 \
-  --raw-db-subdirs C1,C3_v3,C4_v3  \
-  --out composed_results.C3_v3_C4_v3 
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+tag="${EXPERIMENT_TAG:-th16_20260917}"
+size="${SUITE_SIZE:-full}"
+"${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}" run_compose.py \
+  --llama2-results "outputs_llama2_main.${tag}" \
+  --llama3-results "outputs_llama3_main.${tag}" \
+  --llama2-suites "generated_suites/llama2_7b_main_${size}.${tag}" \
+  --llama3-suites "generated_suites/llama3_8b_main_${size}.${tag}" \
+  --models llama2_7b,llama3_8b --metric fpga_cycle_latency \
+  --select latest --missing error --out "composed_results.${tag}" "$@"
