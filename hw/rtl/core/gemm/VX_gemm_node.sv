@@ -20,6 +20,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter N_CHILDREN  = 6,
     parameter NUM_TMEM_BANKS = `NUM_TMEM_BANKS,
     parameter NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS,
+    parameter int INPUT_SLOTS = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
         `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
@@ -180,7 +181,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire [31:0] sched_source_request_beats [4];
     wire [31:0] sched_source_response_beats [4];
     wire [31:0] sched_source_writer_beats [4];
-    wire [3:0] sched_input_slot_occupancy;
+    wire [$clog2(INPUT_SLOTS + 1)-1:0] sched_input_slot_occupancy;
     wire [3:0] sched_fetch_complete;
     wire [31:0] sched_fetch_complete_work_seq [4];
 
@@ -1450,7 +1451,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .WEIGHT_DATA_SIZE (`GEMM_WEIGHT_DATA_SIZE),
       .SCALE_ZERO_DATA_SIZE (`GEMM_SCALE_ZERO_DATA_SIZE),
       .OUTPUT_DATA_SIZE (`GEMM_OUTPUT_DATA_SIZE),
-      .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)
+      .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH),
+      .I_RD_OUTSTANDING(INPUT_SLOTS)
     ) u_tmem_subsystem (
       .clk            (clk),
       .reset          (reset),
@@ -1573,6 +1575,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_CHILDREN(N_CHILDREN),
       .N_NODE(N_NODE),
+      .INPUT_SLOTS(INPUT_SLOTS),
       .DMA_STORE_MAX_CHUNK_BEATS(DMA_STORE_MAX_CHUNK_BEATS)
     ) u_VX_gemm_ctrl (
       .clk(clk),

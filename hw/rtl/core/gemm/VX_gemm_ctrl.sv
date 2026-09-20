@@ -6,6 +6,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     parameter int N_NODE     = 6,
     parameter int CHILD_QUEUE_DEPTH = 4,
     parameter int DMA_CHILD_QUEUE_DEPTH = 8,
+    parameter int INPUT_SLOTS = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int DMA_STORE_MAX_CHUNK_BEATS =
         `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
@@ -38,7 +39,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     input wire [31:0]             sched_source_request_beats_i [4],
     input wire [31:0]             sched_source_response_beats_i [4],
     input wire [31:0]             sched_source_writer_beats_i [4],
-    input wire [3:0]              sched_input_slot_occupancy_i,
+    input wire [$clog2(INPUT_SLOTS + 1)-1:0]
+                                   sched_input_slot_occupancy_i,
     input wire                    sched_input_ahead_credit_i,
     input wire                    sched_input_admit_valid_i,
     input wire [31:0]             sched_input_admit_work_seq_i,
@@ -363,7 +365,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_microtile_readiness_scheduler #(
       .INSTANCE_ID({INSTANCE_ID, ":readiness"}),
       .DEPTH(4),
-      .INPUT_SLOTS(8)
+      .INPUT_SLOTS(INPUT_SLOTS)
     ) u_microtile_readiness_scheduler (
       .clk(clk),
       .reset(reset || cfg_fire),

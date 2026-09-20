@@ -96,7 +96,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     output wire [31:0] sched_source_request_beats_o [4],
     output wire [31:0] sched_source_response_beats_o [4],
     output wire [31:0] sched_source_writer_beats_o [4],
-    output wire [3:0] sched_input_slot_occupancy_o,
+    output wire [$clog2(I_RD_OUTSTANDING + 1)-1:0]
+        sched_input_slot_occupancy_o,
     output wire [3:0] sched_fetch_complete_o,
     output wire [31:0] sched_fetch_complete_work_seq_o [4],
 

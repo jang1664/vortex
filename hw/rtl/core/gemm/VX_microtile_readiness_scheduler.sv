@@ -45,7 +45,7 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
     input wire [31:0] source_request_beats_i [4],
     input wire [31:0] source_response_beats_i [4],
     input wire [31:0] source_writer_beats_i [4],
-    input wire [3:0] input_slot_occupancy_i,
+    input wire [$clog2(INPUT_SLOTS + 1)-1:0] input_slot_occupancy_i,
     input wire input_ahead_credit_i,
     input wire input_admit_valid_i,
     input wire [31:0] input_admit_work_seq_i,
@@ -61,6 +61,7 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
 );
     localparam int PTRW = $clog2(DEPTH);
     localparam int COUNTW = $clog2(DEPTH + 1);
+    localparam int INPUT_SLOT_COUNTW = $clog2(INPUT_SLOTS + 1);
     localparam int INPUT_SMALL_BUDGET = (INPUT_SLOTS > 1)
         ? (INPUT_SLOTS / 2) : INPUT_SLOTS;
     localparam int INPUT_MEDIUM_BUDGET = (INPUT_SLOTS > 3)
@@ -241,7 +242,7 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         logic earliest_acc_ready;
         logic earliest_all_operands;
         logic earliest_all_buffered;
-        logic [3:0] input_budget;
+        logic [INPUT_SLOT_COUNTW-1:0] input_budget;
         logic weight_fetch_pending;
         logic weight_input_admitted;
         logic [33:0] weight_consumer_slack;
@@ -271,18 +272,21 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
         earliest_all_buffered = entries_r[head_r].valid
             && (&entries_r[head_r].buffered[3:1]);
 
-        // The operand-state bucket bounds data held in the eight response
+        // The operand-state bucket bounds data held in the response
         // slots.  Registered capacity beyond the DMA may extend that bucket
         // below, while actual admission remains governed by local GEMM ready.
-        input_budget = earliest_all_operands ? 4'(INPUT_SLOTS)
-                     : earliest_all_buffered ? 4'(INPUT_MEDIUM_BUDGET)
-                     : 4'(INPUT_SMALL_BUDGET);
+        input_budget = earliest_all_operands
+                     ? INPUT_SLOT_COUNTW'(INPUT_SLOTS)
+                     : earliest_all_buffered
+                     ? INPUT_SLOT_COUNTW'(INPUT_MEDIUM_BUDGET)
+                     : INPUT_SLOT_COUNTW'(INPUT_SMALL_BUDGET);
         // The response-slot occupancy alone misses capacity that is
         // available beyond the DMA.  Consume at most one registered credit
         // from the GEMM elastic/tree boundary, while retaining the operand
         // state bucket and the physical response-slot bound.
-        if (input_ahead_credit_i && (input_budget < 4'(INPUT_SLOTS)))
-            input_budget = input_budget + 4'd1;
+        if (input_ahead_credit_i
+         && (input_budget < INPUT_SLOT_COUNTW'(INPUT_SLOTS)))
+            input_budget = input_budget + INPUT_SLOT_COUNTW'(1);
         input_source_enable_o = !source_valid_i[GEMM_SCHED_RESOURCE_INPUT]
                              || (input_slot_occupancy_i < input_budget);
 
@@ -323,7 +327,8 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
             weight_deadline_class = WEIGHT_DEADLINE_NEAR;
             if ((source_match_distance[GEMM_SCHED_RESOURCE_WEIGHT] == 0)
              || weight_input_admitted
-             || ((input_slot_occupancy_i >= 4'(INPUT_MIN_READY))
+             || ((input_slot_occupancy_i
+                  >= INPUT_SLOT_COUNTW'(INPUT_MIN_READY))
               && (weight_ready_eta >= weight_consumer_slack))) begin
                 weight_deadline_class = WEIGHT_DEADLINE_CRITICAL;
                 weight_critical_now = 1'b1;
@@ -345,7 +350,8 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
 
         if (input_slot_occupancy_i == 0)
             input_service_class = INPUT_SERVICE_STARVATION;
-        else if (input_slot_occupancy_i < 4'(INPUT_MIN_READY))
+        else if (input_slot_occupancy_i
+                 < INPUT_SLOT_COUNTW'(INPUT_MIN_READY))
             input_service_class = INPUT_SERVICE_MINIMUM;
         else if (weight_issue_deadline_guard)
             input_service_class = INPUT_SERVICE_AHEAD_THROTTLED;
@@ -634,7 +640,8 @@ module VX_microtile_readiness_scheduler import VX_gpu_pkg::*; #(
             end
 
             if (weight_issue_deadline_guard
-             && (input_slot_occupancy_i >= 4'(INPUT_MIN_READY))
+             && (input_slot_occupancy_i
+                 >= INPUT_SLOT_COUNTW'(INPUT_MIN_READY))
              && source_valid_i[GEMM_SCHED_RESOURCE_INPUT]) begin
                 assert (source_priority_o[GEMM_SCHED_RESOURCE_INPUT]
                      <= GEMM_SCHED_PRIORITY_NEAR)
