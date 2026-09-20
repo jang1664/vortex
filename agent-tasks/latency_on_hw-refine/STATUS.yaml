@@ -9,12 +9,33 @@ report: verification.md
 pipeline_design: pipeline-resume-plan.md
 pipeline_review: pipeline-plan-review.json
 campaign_status: campaign_status.json
+input_slot16_pnr:
+  service: vortex-input-slot16-pnr-v2r2.service
+  postfix: spread_slots16_v2r1
+  status: complete
+  returncode: 0
+  timing_wns_ns: 0.003
+  timing_whs_ns: 0.005
+  route_errors: 0
+  xclbin_sha256: 4c33d07cfd486251fd39682dc090066fcbff2e37643be3e1a3d0c9b8b5b95af0
+  state_file: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_v2_spread_slots16_v2r1/state.json
+  log: build_timing_cuts_pnr_artifacts/th16_tcol16_m16_t8_bigmem_all_bram_v2_spread_slots16_v2r1/build.log
+  results: input-slot16-results.md
 decisions:
   - Keep C2 reuse from C1/C3/C4; register C2 without scheduling measurements.
   - Keep source YAML and small indexes; use PKL for expanded artifacts.
   - Use workflow.py pipeline for run, refine, compose, prepare, and plot; resume by validated task receipt and observed evidence.
   - Keep the successor pending behind an afterany dependency while the legacy job has an active run_state writer.
 log:
+  - timestamp: '2026-09-20 05:53'
+    action: Completed and verified the source-based 16-slot improve PnR.
+    learned: The 100 MHz build returned zero, met timing with WNS +0.003 ns and WHS +0.005 ns, had zero routing errors, and produced the recorded xclbin.
+  - timestamp: '2026-09-20 01:14'
+    action: Verified 16-slot cycle reduction and launched fresh improve PnR.
+    learned: M256 GEMM/core cycles fell from 306946/312726 to 274171/279951; the valid 100 MHz source PnR uses postfix spread_slots16_v2r1 with Verilator and Xilinx tools explicitly present in the service environment.
+  - timestamp: '2026-09-20 00:55'
+    action: Parameterized improve GEMM Input slots and completed RTL verification iteration 1.
+    learned: The scheduler and focused 16-slot GEMM-node VCS tests pass after propagating I_LMEM_DMA_RD_OUTSTANDING_SLOTS through the node, TMEM subsystem, controller, and readiness scheduler; blackbox cycle comparison is next.
   - timestamp: '2026-09-18 13:45'
     action: Recovered the final plotting stage after Slurm job 4937 failed.
     learned: Job 4937 completed refinement, composition, and preparation, then failed because direct plot.py execution could not import tools. Adding the repository root to sys.path passed 48 regressions; a plot-only workflow resume completed all seven render tasks and published 30 files with seven manifests.
