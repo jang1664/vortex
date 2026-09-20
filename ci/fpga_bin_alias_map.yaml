@@ -121,6 +121,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_051cabe511/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh
 
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_v2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_4f7285d4f5/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh
+
   C4: *C4_
 
   C4_2: *C4_2_
