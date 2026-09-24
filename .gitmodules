@@ -22,3 +22,6 @@
 [submodule "third_party/hwexplorer"]
 	path = third_party/hwexplorer
 	url = git@github.com:SNU-VLSI/hwexplorer.git
+[submodule "paper/overleaf_hpca"]
+	path = paper/overleaf_hpca
+	url = https://git@git.overleaf.com/69f2b336ec9a1166d028e2fd
