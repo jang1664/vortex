@@ -1,0 +1,5 @@
+# Local reproducibility snapshots and raw execution artifacts.
+snapshot/
+runs/
+verify/*.log
+__pycache__/

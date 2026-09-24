@@ -1,0 +1,3 @@
+# Keep curated reproduction metadata; raw evidence remains ignored.
+!/cycle-manifest.json
+!/baseline-rtl-sha256.json

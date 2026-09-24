@@ -65,6 +65,52 @@ csrc/
 simv
 simv.daidir/
 simv.vdb/
+# Locally named VCS binaries produced by GEMM node experiments.
+**/compile_fpnew
+**/simv_fpnew
+**/simv_fpnew.daidir/
+# Waveform databases and their tool-generated sidecars are reproducible task
+# evidence; retain derived summaries rather than committing binary captures.
+/agent-tasks/**/*.fsdb*
+# Raw synthesis and simulation run directories. Durable task specifications,
+# status files, and interpreted result summaries live outside these paths.
+/agent-tasks/dma-bound21-native-product/results/
+/agent-tasks/gemm-command-stage-timing/results/
+/agent-tasks/gemm-response-ram-default-w4/results/
+# Raw source-build, synthesis, routing, and simulation outputs for the U55C
+# SLR pipeline experiment. Keep its task status and Markdown result summaries.
+/agent-tasks/u55c-slr-floorplan-pipeline/results/
+# Local PnR launchers, clock API probes, and server-specific run evidence.
+/agent-tasks/naive-acc-pnr-100m-20260915/
+
+# Agent-task execution evidence can contain multi-gigabyte VCS logs, waveform
+# databases, and machine-generated metric dumps. Keep task plans and written
+# summaries trackable, but never add reproducible raw execution artifacts.
+/agent-tasks/**/execution/
+/agent-tasks/**/results/
+/agent-tasks/**/logs/
+# Raw simulation evidence (ooc workspaces are covered by agent-tasks/.gitignore).
+/agent-tasks/**/evidence/
+/agent-tasks/**/*.fsdb*
+/agent-tasks/**/*.vcd
+/agent-tasks/**/*.vpd
+/agent-tasks/**/*.wdb
+/agent-tasks/**/*.wlf
+/agent-tasks/**/*.fst
+/agent-tasks/**/*.stderr
+/agent-tasks/**/*.json
+# Reviewed U55C calibration profiles and compact verification evidence.
+!/agent-tasks/u55c-hbm-performance-calibration/*.json
+!/agent-tasks/u55c-hbm-performance-calibration/profiles/*.json
+/agent-tasks/latency_on_hw-refine/slurm_monitor*.pid
+/agent-tasks/latency_on_hw-refine/slurm_monitor*.unit
+/agent-tasks/latency_on_hw-refine/slurm_monitor*.lock
+/agent-tasks/**/*.csv
+/agent-tasks/**/*.tsv
+/agent-tasks/**/*.rpt
+/agent-tasks/**/*.jou
+/agent-tasks/**/*.dcp
+/agent-tasks/**/*.xpr
 ucli.key
 work.lib++/
 .vcs/
@@ -91,6 +137,12 @@ vivado*.jou
 
 /hw/syn/xilinx/xrt/tests/**/*.rpt
 
+# SLR inventory diagnostics written in the working directory by floorplan.tcl.
+# Build/task outputs are already ignored; cover fixtures launched at repo root.
+/slr_recovered_leaves.tsv
+/slr_recovered_lut_cones.tsv
+/slr_unclassified_leaves.tsv
+
 # ---- documentation DMA experiment artifacts ----
 docs/future_optim/dma_experiments/**/before/
 docs/future_optim/dma_experiments/**/project/
@@ -113,3 +165,9 @@ docs/future_optim/dma_experiments/**/*.csv
 !docs/future_optim/dma_experiments/**/*.md
 
 docs/**/ooc/
+
+# Hardware-analysis captures and simulator logs are reproducible evidence.
+# Keep the Markdown reports and extraction scripts, but exclude raw FSDB trees
+# and their generated log bundles regardless of the analysis name.
+/docs/hw_analysis/**/fsdb*/
+/docs/hw_analysis/**/logs/
