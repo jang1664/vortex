@@ -11,7 +11,13 @@ from typing import Dict, Mapping
 
 import torch
 
-from .specs import DecodeConfig, LayerConfig, LLAMA3_MODEL, StackConfig
+from .specs import (
+    ALL_ASYMMETRIC_WKV4,
+    DecodeConfig,
+    LayerConfig,
+    LLAMA3_MODEL,
+    StackConfig,
+)
 from .tensor_io import pack_signed_int4, tensor_sha256
 
 
@@ -45,7 +51,11 @@ LAYER_TENSOR_NAMES = {
     *(
         name
         for projection in PROJECTION_DIMS
-        for name in (f"{projection}.qweight", f"{projection}.scales")
+        for name in (
+            f"{projection}.qweight",
+            f"{projection}.scales",
+            f"{projection}.zeros",
+        )
     ),
 }
 
@@ -87,8 +97,12 @@ def _projection_shape(config: LayerConfig, projection: str) -> tuple[int, int]:
 
 def graph_version(config: LayerConfig, *, decode: bool = False) -> str:
     if config.model == LLAMA3_MODEL:
-        return LLAMA3_DECODE_GRAPH_VERSION if decode else LLAMA3_GRAPH_VERSION
-    return DECODE_GRAPH_VERSION if decode else GRAPH_VERSION
+        version = LLAMA3_DECODE_GRAPH_VERSION if decode else LLAMA3_GRAPH_VERSION
+    else:
+        version = DECODE_GRAPH_VERSION if decode else GRAPH_VERSION
+    if config.quantization_policy == ALL_ASYMMETRIC_WKV4:
+        version += ":signed_all_asymmetric_wkv4_v1"
+    return version
 
 
 def stack_graph_version(config: StackConfig) -> str:
@@ -100,14 +114,34 @@ def _quantize_random_weight(
     out_features: int,
     group_size: int,
     generator: torch.Generator,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    mode: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     weight = torch.randn(in_features, out_features, generator=generator, dtype=torch.float32)
     weight.mul_(1.0 / math.sqrt(in_features))
     groups = weight.reshape(in_features // group_size, group_size, out_features)
-    scales = groups.abs().amax(dim=1).clamp_min_(1e-8).div_(7.0)
-    quantized = torch.round(groups / scales.unsqueeze(1)).clamp_(-8, 7).to(torch.int8)
+    if mode == "sym":
+        scales = groups.abs().amax(dim=1).clamp_min_(1e-8).div_(7.0)
+        zeros = None
+    elif mode == "asym":
+        minimum = torch.minimum(groups.amin(dim=1), torch.zeros_like(groups[:, 0]))
+        maximum = torch.maximum(groups.amax(dim=1), torch.zeros_like(groups[:, 0]))
+        scales = (maximum - minimum) / 15.0
+        constant = scales == 0
+        scales = torch.where(constant, torch.ones_like(scales), scales)
+        zeros = torch.where(
+            constant,
+            torch.zeros_like(scales),
+            (torch.round(-minimum / scales) - 8.0).clamp(-8, 7),
+        ).to(torch.int16)
+    else:
+        raise ValueError(f"unsupported weight quantization mode {mode!r}")
+    scales = scales.to(torch.float16)
+    quantized = torch.round(groups / scales.float().unsqueeze(1))
+    if zeros is not None:
+        quantized = quantized + zeros.float().unsqueeze(1)
+    quantized = quantized.clamp_(-8, 7).to(torch.int8)
     quantized = quantized.reshape(in_features, out_features)
-    return pack_signed_int4(quantized), scales.to(torch.float16)
+    return pack_signed_int4(quantized), scales, zeros
 
 
 def _rope_tables(config: LayerConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -156,10 +190,11 @@ def _build_manifest(
         "weight_quantization": {
             "bits": 4,
             "signed": True,
-            "mode": "sym",
+            "mode": config.weight_quant_mode,
             "group_size": config.weight_group_size,
             "group_axis": "input",
             "scale_dtype": "float16",
+            "zero_dtype": "int16",
             "nibble_order": "low_first",
         },
         "kv_quantization": {
@@ -167,10 +202,10 @@ def _build_manifest(
             "signed": True,
             "group_size": config.kv_group_size,
             "group_axis": "head_dim",
-            "key_mode": "asym",
-            "value_mode": "sym",
+            "key_mode": config.key_quant_mode,
+            "value_mode": config.value_quant_mode,
             "scale_dtype": "float16",
-            "zero_dtype": "float16",
+            "zero_dtype": "int16",
             "nibble_order": "low_first",
         },
         "rotation_contract": {
@@ -242,11 +277,17 @@ def _create_random_layer_tensors(
     }
     for projection in PROJECTION_DIMS:
         in_features, out_features = _projection_shape(config, projection)
-        packed, scales = _quantize_random_weight(
-            in_features, out_features, config.weight_group_size, generator
+        packed, scales, zeros = _quantize_random_weight(
+            in_features,
+            out_features,
+            config.weight_group_size,
+            generator,
+            config.weight_quant_mode,
         )
         tensors[f"{projection}.qweight"] = packed
         tensors[f"{projection}.scales"] = scales
+        if zeros is not None:
+            tensors[f"{projection}.zeros"] = zeros
     return tensors
 
 
@@ -386,6 +427,11 @@ def _required_checkpoint_tensors(config: LayerConfig, layer_index: int) -> dict[
             (in_features // config.weight_group_size, out_features),
             torch.float16,
         )
+        if config.weight_quant_mode == "asym":
+            required[f"{prefix}{checkpoint_name}.zeros"] = (
+                (in_features // config.weight_group_size, out_features),
+                torch.int16,
+            )
     return required
 
 
@@ -435,6 +481,8 @@ def _layer_tensors_from_state(
         base = rename[projection]
         tensors[f"{projection}.qweight"] = state[f"{base}.qweight"].contiguous()
         tensors[f"{projection}.scales"] = state[f"{base}.scales"].contiguous()
+        if config.weight_quant_mode == "asym":
+            tensors[f"{projection}.zeros"] = state[f"{base}.zeros"].contiguous()
     return tensors
 
 
@@ -784,6 +832,11 @@ def _validate_stack_case(case: StackCase) -> None:
                 (in_features // config.weight_group_size, out_features),
                 torch.float16,
             )
+            if config.weight_quant_mode == "asym":
+                expected[f"{projection}.zeros"] = (
+                    (in_features // config.weight_group_size, out_features),
+                    torch.int16,
+                )
     _validate_tensor_contract(
         case.tensors, expected, manifest, contract_name="decoder-stack"
     )
@@ -838,6 +891,11 @@ def _validate_decode_case(case: DecodeCase) -> None:
             (in_features // layer.weight_group_size, out_features),
             torch.float16,
         )
+        if layer.weight_quant_mode == "asym":
+            expected[f"{projection}.zeros"] = (
+                (in_features // layer.weight_group_size, out_features),
+                torch.int16,
+            )
     _validate_tensor_contract(
         case.tensors, expected, case.manifest, contract_name="decode-layer"
     )
@@ -895,6 +953,11 @@ def _validate_case(case: LayerCase) -> None:
             (in_features // config.weight_group_size, out_features),
             torch.float16,
         )
+        if config.weight_quant_mode == "asym":
+            expected[f"{projection}.zeros"] = (
+                (in_features // config.weight_group_size, out_features),
+                torch.int16,
+            )
     _validate_tensor_contract(
         case.tensors, expected, case.manifest, contract_name="decoder-layer"
     )

@@ -1,0 +1,94 @@
+task: gemv-gemm-unit-v2
+status: complete
+spec: agent-tasks/gemv-gemm-unit-v2/gemm-unit-v2-spec.md
+plan: docs/future_optim/gemv/gemm_improve/plan.md
+current_phase: done
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    test: gemm_unit_v2
+    status: sim_fail
+    error_summary: "QROW/reg1 non-zero load and accumulate produced zero data on multiple lanes, and the TB observed too few last_write pulses."
+    root_cause: "TB request/reset drivers changed signals in the same posedge active region sampled by the DUT, so scale/zero/packet values raced. The reset branch also cleared the lifetime last_write counter immediately before its final check."
+    fix_applied: "Moved request data/valid changes and reset deassertion to negedges, kept back-to-back packets stable across each accepting posedge, retained last_write_count across reset, and strengthened the expected completion count to exactly eight."
+    lesson: "Clocked DUT stimulus must be stable before the accepting edge; lifetime counters used to validate reset behavior must not clear on the reset under test."
+  - iteration: 2
+    test: gemm_unit_v2
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required after the iteration 1 testbench fix."
+    lesson: "The standalone V2 pipeline, scheduler boundary cases, arithmetic modes, metadata alignment, reset behavior, and fixed-latency completion all pass the formal VCS unittest."
+  - iteration: 3
+    test: gemm_node_improve
+    status: compile_fail
+    error_summary: "The node testbench still referenced the removed V1 instance hierarchy u_VX_gemm_unit.acc_mem_wr_en and u_VX_gemm_unit.in_pipe_valid_out."
+    root_cause: "VX_gemm_node migrated to u_VX_gemm_unit_v2, but the node testbench's write/input monitors and optional dual-bank checker still observed the V1 instance. VCS stopped after ten XMREs, masking additional stale references to the removed V1 FIFO, credit, and scheduler signals."
+    fix_applied: "Mapped ACC write and input-pipe probes to the equivalent V2 hierarchy. Replaced the V1 FIFO-specific optional checker with a four-physical-bank V2 checker that balances nominal/early read requests, one-cycle SRAM responses, and accumulator consumes while retaining collision, early-hold underflow, pending-response, and pipeline-drain checks."
+    lesson: "Hierarchical verification probes are part of an RTL interface migration. When an architecture intentionally removes a FIFO scheduler, its checker must be translated to the new request/response/consume invariants rather than only renaming the instance or deleting coverage."
+  - iteration: 4
+    test: gemm_unit_v1_regression
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No change required."
+    lesson: "The preserved V1 implementation and its original unittest still pass under formal VCS verification."
+  - iteration: 5
+    test: gemm_node_improve
+    status: compile_fail
+    error_summary: "Host DPI compilation could not find generated VX_config.h."
+    root_cause: "The formal command targeted the source-tree unittest. Its Makefile derives ROOT_DIR for configured-build placement, so the source-tree invocation produced an invalid include root and could not see the existing generated build/hw/VX_config.h."
+    fix_applied: "No RTL or source Makefile change is required. Refresh the configured build tree so the V2 unittest Makefiles/directories are generated, then run verification against build/hw/unittest/gemm_node_improve."
+    lesson: "Vortex RTL unittests depend on configure-generated headers and Makefiles; verify_rtl must target the configured build-tree unittest rather than its source template."
+  - iteration: 6
+    test: gemm_node_improve_configured_build
+    status: sim_fail
+    error_summary: "The configured-build simulation produced no error text or log output before verify_rtl.py's 600-second run timeout."
+    root_cause: "The parameter-free runner selected the large default M=256/N=1024/K=256 workload. A retained successful log for that exact shape records 4770 seconds of wall time, far beyond verify_rtl.py's 600-second limit; the timeout was workload-driven rather than a V2 deadlock."
+    fix_applied: "No RTL change. Re-ran the configured build with explicit minimum legal M=32/N=32/K=32 parameters and +NO_WAVE; it completed in three seconds and exposed the separate iteration 8 numerical baseline issue."
+    lesson: "Focused node smoke tests must specify a legal small shape and disable wave dumping; the parameter-free defaults are a long regression workload, not a 600-second smoke test."
+  - iteration: 7
+    test: gemm_unit_v2_scoreboard_random
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required after adding the independent fixed-latency/read-scheduling scoreboard and deterministic constrained-random sequence."
+    lesson: "Per-packet timing, address, bank, enable, completion, nominal/early scheduling, no-backpressure, reset flush, and constrained-random ACC reference behavior all pass in the configured-build VCS unittest."
+  - iteration: 8
+    test: gemm_node_improve_min_v2
+    status: sim_fail
+    error_summary: "The minimum 32x32x32 full node case completed but all 1024 outputs were zero; the first expected value was -0.046875."
+    root_cause: "The all-zero M32/N32/K32 failure is a documented pre-V2 gemm_node_improve baseline defect that reproduced with the former improve unit; it is not causally attributable to V2."
+    fix_applied: "No production change. Use the historically green M32/N32/K128 strict accumulation case to assess V2 node integration."
+    lesson: "A pre-existing failing workload cannot identify a regression; integration must be judged against a known-green numerical baseline."
+  - iteration: 9
+    test: gemm_node_improve_v2_strict_k128
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "No additional change required."
+    lesson: "The configured-build V2 node path passes the historically green 32x32x128 numerical accumulation case with strict four-bank nominal/early request-response-consume checking."
+pitfalls: []
+notes:
+  - "2026-08-04 01:10: Scope confirmed from the user-authored plan and the explicit V2 file-separation decision."
+  - "2026-08-04 01:10: Verification scope is unittest only; top simulation, blackbox, and synthesis are deferred."
+  - "2026-08-04 01:10: Preserve V1 RTL/interface/unittest and keep GEMM_NAIVE on V1."
+  - "2026-08-04 01:35: RTL implementation handoff complete with independent V2 RTL/interface, node integration, documentation, and dedicated unittest."
+  - "2026-08-04 01:35: V2 constants for MXU_COL_TILE=32 are L_PRE=15, L_R=1, L_A=1, L_P=0, K=2, nominal read delay=14, early delay=13, and write delay=16."
+  - "2026-08-04 01:37: Verification iteration 1 compiled but failed simulation in QROW/reg1 arithmetic and completion-pulse coverage."
+  - "2026-08-04 01:43: Iteration 1 root cause was isolated to TB active-region races and reset-local pulse accounting; numerical and scheduler coverage were preserved."
+  - "2026-08-04: Verification iteration 2 passed the formal VCS gemm_unit_v2 unittest."
+  - "2026-08-04: Verification iteration 3 found stale V1 hierarchical probes in the gemm_node_improve testbench after node migration to V2."
+  - "2026-08-04: Iteration 3 updated all node-level hierarchical probes to V2 semantics, including the optional four-bank stateless read-scheduler checker; formal rerun is pending."
+  - "2026-08-04: Verification iteration 4 passed the existing gemm_unit V1 regression unittest."
+  - "2026-08-04: Verification iteration 5 reached host DPI compilation but stopped because the configured VX_config.h include path was unavailable."
+  - "2026-08-04: Iteration 5 was diagnosed as a source-tree versus configured-build invocation error; build/hw/VX_config.h already exists, so no RTL/CFLAGS workaround is appropriate."
+  - "2026-08-04: Iteration 6 implementation added an independent admission-cycle write/read scheduler scoreboard and a fixed-seed constrained-random zero-arithmetic ACC reference test to gemm_unit_v2. Verification has not yet been run; the test request remains /usr/bin/python3 tools/verify_rtl.py unittest --path hw/unittest/gemm_unit_v2 --sim vcs."
+  - "2026-08-04: Verification iteration 6 compiled gemm_node_improve in the configured build, then reached the formal runner's 600-second timeout with an empty simulation log."
+  - "2026-08-04: Verification iteration 7 passed the configured-build gemm_unit_v2 scoreboard and constrained-random VCS unittest."
+  - "2026-08-04: Verification iteration 8 exposed a real node integration failure: the minimum numerical GEMM produced all-zero output."
+  - "2026-08-04: Iteration 8 was reclassified as a known pre-V2 M32/N32/K32 baseline failure after repository evidence and a known-green comparison were identified."
+  - "2026-08-04: Verification iteration 9 passed the configured-build M32/N32/K128 strict V2 node integration VCS unittest."
+  - "2026-08-04: Iteration 6 timeout was classified as workload-driven: the default M256/N1024/K256 case historically needs 4770 seconds, while the explicit M32/N32/K32 +NO_WAVE run completed in three seconds."
+  - "2026-08-04: Final audit confirmed no V2 FSM, credit, round-robin, or deep prefetch FIFO; input ready is constant one; V1/interface/naive sources remain unchanged; git diff whitespace checks pass."
+  - "2026-08-04: Task complete within unittest scope. Top simulation, blackbox, synthesis, and FPGA verification remain intentionally deferred."

@@ -1,0 +1,62 @@
+task: dma-padding-optional-direct-path
+spec: agent-tasks/dma-padding-optional-direct-path/dma-padding-optional-direct-path-spec.md
+current_phase: complete
+status: pass
+started: "2026-08-29 17:27 KST"
+iterations:
+  - iteration: 1
+    timestamp: "2026-08-29 17:39 KST"
+    phase: verification
+    status: sim_fail
+    error_summary: "The four-case focused regression did not produce an overall pass; the report included the expected unequal-width fatal and a VX_dp_ram_compiled macro diagnostic."
+    root_cause: "The focused VCS make fragment compiled multiple testbench/library files without selecting TOP_MODULE, so the width-invalid TB and VX_dp_ram_compiled were elaborated as unintended roots in every positive run."
+    fix_applied: "Added `-top $(TOP_MODULE)` to the focused VCS compile command; RTL and test intent are unchanged."
+    lesson: "A multi-top negative-test source list must constrain the simulator root explicitly or unrelated initial assertions execute in positive cases."
+  - iteration: 2
+    timestamp: "2026-08-29 17:42 KST"
+    phase: verification
+    status: sim_fail
+    error_summary: "Both 32-byte and 64-byte parity simulations passed and both negative assertions emitted their expected fatal signatures, but the regression harness returned nonzero."
+    root_cause: "VCS emitted each required `$fatal` signature but returned status zero, while the harness rejected zero status before examining the captured log."
+    fix_applied: "Changed `run_expected_failure` to capture the command status and accept only the exact required signature, independent of the simulator's fatal exit convention."
+    lesson: "An expected-failure harness must key off the required diagnostic as well as simulator exit status because simulator fatal-exit conventions can vary."
+  - iteration: 3
+    timestamp: "2026-08-29 17:44 KST"
+    phase: focused_verification
+    status: pass
+    error_summary: "None; all four focused tests passed."
+    root_cause: "The prior failures were confined to multi-top elaboration and VCS expected-fatal exit handling in the new harness."
+    fix_applied: "Explicit VCS top selection and exact-signature expected-failure handling."
+    lesson: "Padding-disabled parity is preserved for 32-byte and 64-byte equal-width buses under response reordering, backpressure, and four-slot overlap; both guards fire with their intended signatures."
+  - iteration: 4
+    timestamp: "2026-08-29 17:44 KST"
+    phase: padding_compatibility_verification
+    status: pass
+    error_summary: "None; the existing dma_engine VCS regression passed with explicit ENABLE_PADDING=1."
+    root_cause: "Not applicable."
+    fix_applied: "No compatibility fix was required."
+    lesson: "Default-enabled partial padding and padding-only zero-fill behavior remains compatible with the existing engine suite."
+  - iteration: 5
+    timestamp: "2026-08-29 17:49 KST"
+    phase: ooc_baseline
+    status: sim_fail
+    error_summary: "Vivado synthesis completed, but the OOC hierarchy retained only 2228 LUTs and 8 RAMB18s and eliminated all eight response_payload_ram instances, making the comparison invalid. Report parsing also lacked the optional hwexplorer Python dependency."
+    root_cause: "VX_dma_engine_ooc did not drive the newer lookahead data_release/data_max_beats inputs, so Vivado constant-propagated away the destination payload path."
+    fix_applied: "Drove data_release=1 and data_max_beats=0 in VX_dma_engine_ooc; utilization will be regenerated and parsed directly from Vivado's hierarchy report if hwexplorer remains unavailable."
+    lesson: "OOC wrappers must track every protocol input; a successful synth is not meaningful when the target hierarchy has been optimized dead."
+  - iteration: 6
+    timestamp: "2026-08-29 18:04 KST"
+    phase: ooc_comparison
+    status: pass
+    error_summary: "None in Vivado synthesis or raw report generation; the optional hwexplorer CSV post-parser is unavailable in the current Python environment."
+    root_cause: "Not applicable to the RTL result."
+    fix_applied: "Parsed the completed Vivado hierarchy and timing reports directly and inspected both synthesized checkpoints with inspect_ooc_nets.tcl."
+    lesson: "Disabling padding reduced u_dma_engine LUTs by 9171 (17.85%) and the eight response payload hierarchies by 10700 LUTs (83.20%) with unchanged BRAM/DSP and improved OOC WNS."
+pitfalls:
+  - "Preserve unrelated untracked work under agent-tasks and hw/unittest."
+  - "Do not enable the optimization for misaligned, node, or local DMA users."
+notes:
+  - timestamp: "2026-08-29 17:27 KST"
+    entry: "Confirmed the supplied implementation plan as the user-approved specification and started the rtl-improve loop."
+  - timestamp: "2026-08-29 18:04 KST"
+    entry: "All focused and compatibility simulations passed. The controlled OOC comparison met the retention gate, so the production opt-in remains enabled."

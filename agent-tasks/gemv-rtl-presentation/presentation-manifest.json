@@ -1,0 +1,110 @@
+[
+  {
+    "slide": 1,
+    "title": "GEMV RTL Architecture Evolution",
+    "svg": "slides/01.svg",
+    "notes": "범위는 fpint 기준 구조에서 feat/gemv까지의 RTL 변화이다. 발표 흐름은 병목, 아키텍처 해결책, 최종 하드웨어 순서이며 IMPROVE를 먼저 설명하고 NAIVE와 공유 구현은 뒤에서 다룬다."
+  },
+  {
+    "slide": 2,
+    "title": "IMPROVE 기준 구조: TMEM 기반 타일 우선 GEMM",
+    "svg": "slides/02.svg",
+    "notes": "기존 IMPROVE 노드의 명령 진행, 피연산자 이동, compute/ACC, 출력 drain 경계를 보여준다. 주요 RTL 경로는 hw/rtl/core/gemm/VX_gemm_node.sv의 기존 IMPROVE 구조이다."
+  },
+  {
+    "slide": 3,
+    "title": "기존 구조에서 처리량을 충분히 활용하지 못한 이유",
+    "svg": "slides/03.svg",
+    "notes": "ACC read/write count를 microtile 전체에 걸쳐 중앙 관리하면서 Input에서 ACC memory까지의 가변 latency가 공유 counter와 pipeline_empty 제약으로 전파됐다. 분석한 improve_th32 실행에서는 약 25 compute cycle 뒤 약 14 cycle의 명령·동기화·preload 공백이 관찰됐다."
+  },
+  {
+    "slide": 4,
+    "title": "해결책 1: ACC 제어 정보를 데이터와 함께 전달",
+    "svg": "slides/04.svg",
+    "notes": "기존에는 중앙 ACC RD/WR counter와 pipeline_empty가 여러 microtile 진행을 해석했다. 변경 후 accept된 packet이 ACC 주소, R/W, work_seq, 정확한 generation과 last를 데이터와 같은 pipeline register로 운반한다. 관련 RTL은 VX_gemm_unit_v2.sv, VX_gemm_compute_core.sv, VX_gemm_acc_internal.sv이다."
+  },
+  {
+    "slide": 5,
+    "title": "해결책 2: 로컬 역압으로 피연산자 준비 지연 숨기기",
+    "svg": "slides/05.svg",
+    "notes": "backpressure-ready 구조 전에는 GEMM unit 입구에서 Weight, Scale, Zero-point ready를 먼저 확인해야 해 unit-to-tree latency가 그대로 노출됐다. 구현은 elastic PRE/POST와 고정 latency MXU 영역으로 나누고 실제 consumer에서 정확한 W/S/Z bank와 generation을 확인한다. 5-cycle tree와 1-cycle feedback을 위해 depth-6 merged-result FIFO와 등록된 credit 반환을 사용한다. 근거는 gemm-unit-backpressure-opt spec과 VX_gemm_compute_core.sv이다."
+  },
+  {
+    "slide": 6,
+    "title": "해결책 3: ACC hazard를 로컬하고 파이프라인에 안전하게 처리",
+    "svg": "slides/06.svg",
+    "notes": "중앙 count 기반 dependency 대신 transaction과 microtile local 상태를 사용한다. ACC read를 미리 scheduling하고 짧은 RAW dependency는 forwarding하며 credit, ownership, backpressure를 해당 흐름에만 적용한다."
+  },
+  {
+    "slide": 7,
+    "title": "해결책 4: ACC 이중 버퍼링으로 연산과 출력 중첩",
+    "svg": "slides/07.svg",
+    "notes": "물리 ACC bank를 두 실행 group으로 나누고 한 group을 compute하는 동안 다른 group을 drain한다. 출력 read는 전역 pipeline_empty가 아니라 같은 group 충돌에서만 차단한다."
+  },
+  {
+    "slide": 8,
+    "title": "해결책 5: FSM에서 WAIT / NOTIFY 제거",
+    "svg": "slides/08.svg",
+    "notes": "독립 WAIT와 NOTIFY opcode를 제거하고 writer-wait, 완료 notify, generation, work_seq metadata를 DMA와 compute 명령에 포함한다. 각 실행 block이 자신의 dependency를 확인하고 완료를 보고한다."
+  },
+  {
+    "slide": 9,
+    "title": "해결책 6: 명령 사이의 DMA 작업 중첩",
+    "svg": "slides/09.svg",
+    "notes": "tag가 있는 다중 명령 HBM DMA queue와 look-ahead chaining으로 N이 retire되기 전에 N+1을 시작한다. Scale과 ZP Local DMA를 분리하고 최종 실제 destination write에서 순서와 retire를 보장한다."
+  },
+  {
+    "slide": 10,
+    "title": "해결책 7: 가장 먼저 실행 가능한 microtile 기준 TMEM 스케줄링",
+    "svg": "slides/10.svg",
+    "notes": "VX_microtile_readiness_scheduler가 가장 먼저 실행 가능해질 microtile을 기준으로 부족한 I/W/S/Z traffic을 우선 처리한다. look-ahead는 제한하며 feedback은 register하고 local ready와 정확한 generation/fence를 최종 조건으로 유지한다."
+  },
+  {
+    "slide": 11,
+    "title": "정확성 조건: 중첩 실행이 바꾸면 안 되는 것",
+    "svg": "slides/11.svg",
+    "notes": "source 응답은 순서가 바뀔 수 있지만 destination write, notify, retire는 명령 순서를 유지한다. prefetch는 정확한 generation과 writer fence로 제한하며 stall 중 valid, payload, priority를 안정적으로 유지한다. 완료는 마지막 실제 write이다."
+  },
+  {
+    "slide": 12,
+    "title": "IMPROVE 최종 아키텍처와 실행 흐름",
+    "svg": "slides/12.svg",
+    "notes": "최종 IMPROVE 흐름은 metadata admission, overlap된 operand 이동, elastic compute/ACC, 동시 output drain이다. 정확한 generation, 제한된 look-ahead, local ACC ownership과 순서 보장 final write가 정확성 fence가 된다."
+  },
+  {
+    "slide": 13,
+    "title": "NAIVE 기준 구조: LMEM 기반 행 우선 GEMM",
+    "svg": "slides/13.svg",
+    "notes": "NAIVE 노드는 row-major 주소식과 LMEM 중심 operand/ACC 이동, 외부 output DMA를 사용한다. IMPROVE와 다른 memory 특성을 가진 독립 아키텍처로 소개한다. 주요 RTL은 VX_gemm_node_naive.sv이다."
+  },
+  {
+    "slide": 14,
+    "title": "NAIVE 연산 경로를 변경해야 했던 이유",
+    "svg": "slides/14.svg",
+    "notes": "기존 NAIVE compute 경로는 ready/valid가 아니라 고정 timing에 control과 completion을 맞췄다. backpressure와 가변 ACC latency에 강하게 만들되 row-major 주소식, LMEM mapping, output DMA는 유지한다."
+  },
+  {
+    "slide": 15,
+    "title": "NAIVE 최종 아키텍처와 실행 흐름",
+    "svg": "slides/15.svg",
+    "notes": "accept된 Input packet을 안정적인 data+control record로 만들고 정확한 W/S/Z generation과 tag가 있는 LMEM ACC 요청을 사용한다. 명령 완료는 마지막 물리 LMEM write 이후에만 발생한다. 관련 RTL은 VX_gemm_node_naive.sv와 VX_gemm_acc_lmem.sv이다."
+  },
+  {
+    "slide": 16,
+    "title": "최종 비교: IMPROVE와 NAIVE 하드웨어 아키텍처",
+    "svg": "slides/16.svg",
+    "notes": "두 아키텍처는 같은 elastic compute contract를 사용하지만 memory system이 다르다. IMPROVE는 TMEM scheduling과 내부 double-buffered ACC를, NAIVE는 row-major LMEM과 기존 외부 출력 경로를 사용한다."
+  },
+  {
+    "slide": 17,
+    "title": "핵심 요약과 검증 근거",
+    "svg": "slides/17.svg",
+    "notes": "집중 RTL test는 RAW forwarding, 가변 ACC latency, scheduler, DMA ordering, node integration을 포함한다. IMPROVE XRT-VCS integration 7개 case가 통과했으며 최종 성능·utilization 수치는 benchmark configuration 확정 후 입력한다."
+  },
+  {
+    "slide": 18,
+    "title": "부록: 공유 연산 경로 구현",
+    "svg": "slides/18.svg",
+    "notes": "VX_gemm_compute_core가 공유 elastic 연산과 packet-control contract를 제공한다. IMPROVE는 VX_gemm_acc_internal을, NAIVE는 VX_gemm_acc_lmem adapter를 연결해 각 memory 의미를 유지한다."
+  }
+]

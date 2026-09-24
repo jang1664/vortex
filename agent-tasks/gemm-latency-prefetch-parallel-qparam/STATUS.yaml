@@ -1,0 +1,111 @@
+task: gemm-latency-prefetch-parallel-qparam
+status: completed
+spec: agent-tasks/gemm-latency-prefetch-parallel-qparam/gemm-latency-prefetch-parallel-qparam-spec.md
+plan: docs/future_optim/gemv/gemm_improve/latency_opt.md
+current_phase: completed
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    timestamp: "2026-08-10 19:57"
+    scope: "Priority 1 independent scale/ZP LDMA paths and logical completion join"
+    result: pass
+    tests:
+      - "gemm_ctrl VCS: six-child routing and SC-first/ZP-first/same-cycle RID_SZ join PASS"
+      - "gemm_unit_v2 VCS: simultaneous 64-byte SC/ZP writes, REG0/REG1, independent backpressure PASS"
+      - "gemm_sync VCS: six-child routing, legacy physical-to-logical join, same-cycle WAIT visibility PASS"
+      - "gemm_node_improve VCS QCOL M4/N32/K64/QBLK32 PASS"
+      - "gemm_node_improve VCS QROW M4/N32/K64/QBLK32 PASS"
+    production_rtl_failure: false
+    hard_rule_blocker: false
+    notes:
+      - "python alias was unavailable; the mandated verifier was run as /usr/bin/python3 tools/verify_rtl.py."
+      - "Intermediate failures were testbench stimulus/interface drift and passed after test-only corrections with unchanged production RTL."
+  - iteration: 2
+    timestamp: "2026-08-10 20:22"
+    scope: "Priority 2 scheduler matrix followed by local DMA prepare/release datapath"
+    result: sim_fail
+    tests:
+      - "gemm_ctrl VCS: pure-load prepare/release matrix and prohibited-command checks PASS"
+      - "lmem_dma_misal VCS: FAIL at 45,000 ps before directed stimulus"
+    production_rtl_failure: true
+    hard_rule_blocker: false
+    failure:
+      file: "hw/rtl/core/gemm/VX_lmem_dma_misal.sv"
+      evidence: "Unsupported ENABLE_MISALIGN=1 path observed data_release=0 after reset, triggering VX_dma_unit.sv assertion."
+      classification: "Minor compatibility tie-off bug; confirmed prepare/release concept remains valid."
+    next_action: "Force normal-release semantics for unsupported/misaligned DMA and rerun the same verifier request."
+  - iteration: 3
+    timestamp: "2026-08-10 20:35"
+    scope: "Priority 2 local/tile DMA datapath, node integration, and interface regressions"
+    result: pass
+    tests:
+      - "lmem_dma_misal VCS default ENABLE_MISALIGN=1 compatibility PASS"
+      - "lmem_dma_misal VCS aligned DIR0: buffered/pending release, one-beat credit, no early destination/completion, exact descriptor, reset invalidation PASS"
+      - "gemm_tmem_dma_ctrl VCS: DMA LD rd=0..3 exact release/tag/credit/gate/reset plus legacy scheduling PASS"
+      - "gemm_node_improve VCS QCOL M4/N32/K64/QBLK32 with prefetch contract PASS"
+      - "gemm_node_improve VCS QROW M4/N32/K64/QBLK32 with prefetch contract PASS"
+      - "gemm_unit_v2 and gemm_sync VCS smoke PASS"
+    production_rtl_failure: false
+    hard_rule_blocker: false
+    notes:
+      - "The M4 single-tile node cases naturally exercised local input prepare/release twice but no tile-DMA prepare; multi-tile XRT tests will cover the latter."
+  - iteration: 4
+    timestamp: "2026-08-10 20:43"
+    scope: "XRT-VCS functional regression matrix"
+    result: pass
+    tests:
+      - "fpint_gemm_ffn_hw M4/N256/K256/QBLK32/QCOL/WTRANS0/WLOAD8 PASS"
+      - "fpint_gemm_ffn_hw M4/N256/K256/QBLK32/QROW/WTRANS0/WLOAD8 PASS"
+      - "fpint_gemm_ffn_hw M256/N256/K256/QBLK32/QCOL/WTRANS0/WLOAD8 PASS"
+      - "fpint_gemm_ffn_hw M256/N256/K256/QBLK32/QROW/WTRANS0/WLOAD8 PASS"
+    production_rtl_failure: false
+    hard_rule_blocker: false
+    artifacts:
+      - "build/run_logs/target_gemm/20260810-203621_run_wload8_m4_n256_k256_q32_t0_d0_pid3639026"
+      - "build/run_logs/target_gemm/20260810-203756_run_wload8_m4_n256_k256_q32_t0_d1_pid3672777"
+      - "build/run_logs/target_gemm/20260810-203813_run_wload8_m256_n256_k256_q32_t0_d0_pid3698499"
+      - "build/run_logs/target_gemm/20260810-204041_run_wload8_m256_n256_k256_q32_t0_d1_pid3803532"
+  - iteration: 5
+    timestamp: "2026-08-10 20:56"
+    scope: "M4 QCOL/QROW FSDB latency and ordering acceptance"
+    result: pass
+    tests:
+      - "tools/fsdb_cli: baseline input release-to-first-request was 5 cycles; new QCOL/QROW distributions are 1 cycle x6, 2 cycles x52, and 3 cycles x6, with no 5-cycle startup"
+      - "tools/fsdb_cli: baseline steady burst gap was 14 idle cycles; new QCOL/QROW steady gap is 8 idle cycles at 59/63 boundaries"
+      - "tools/fsdb_cli: all 64 paired SC/ZP active windows overlap; 63 start same-cycle and 1 adjacent-cycle; 61 finish same-cycle and 3 adjacent-cycle"
+      - "tools/fsdb_cli: RID_SZ0 and RID_SZ1 each changed 32 times, always on the same stored-state edge as a physical RID_SC/RID_ZP change and always equaled their minimum"
+      - "tools/fsdb_cli: all 64 input prepares issue the first TMEM source request at +2 cycles and receive the response at +3 cycles; all six responses buffered before release produce first req_valid at +1 cycle"
+    production_rtl_failure: false
+    hard_rule_blocker: false
+    artifacts:
+      - "build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+      - "build/run_logs/target_gemm/20260810-204344_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid3887037/target_gemm.fsdb"
+      - "build/run_logs/target_gemm/20260810-204517_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d1_pid3922000/target_gemm.fsdb"
+    notes:
+      - "The four non-steady boundaries are dependency-bound: weight register completion coincides with input release. Their idle gaps are 13, 24, 9, and 13 cycles; they are not the eliminated fixed input-LDMA startup latency."
+      - "SC and ZP share a TMEM bank color, so their one-beat source requests are normally adjacent rather than simultaneous, while their independent DMA active windows remain overlapped."
+  - iteration: 6
+    timestamp: "2026-08-10 20:59"
+    scope: "Final stale-interface audit and GEMM FSM regression"
+    result: pass
+    tests:
+      - "gemm_fsm VCS: six-child readiness, separate SC/ZP opcode and physical-RID metadata matrix, final drain, and invocation reset PASS"
+      - "git diff --check PASS"
+    production_rtl_failure: false
+    hard_rule_blocker: false
+    notes:
+      - "The first gemm_fsm rerun timed out because its legacy TB drove only five child-ready bits and decoded a single SZ opcode. This was testbench interface drift; updating the TB to six children and separate SC/ZP metadata made the unchanged production RTL pass."
+notes:
+  - "2026-08-10 19:18: Captured the user-confirmed parallel scale/ZP and generalized prepare/release prefetch design."
+  - "2026-08-10 19:18: Recorded the hard stop boundary between minor implementation/test infrastructure changes and core RTL concept changes."
+  - "2026-08-10 19:57: Priority 1 completed deterministic VCS verification for controller, unit, sync, QCOL, and QROW paths."
+  - "2026-08-10 20:18: Priority 2 command-compatible pure-load prepare/release prefetch implementation completed; no Hard Rule architectural blocker was found."
+  - "2026-08-10 20:18: Local and tile DMA reuse bounded aligned-DMA response slots, cap pre-release source reads to one beat, and gate all destination commit/completion until exact-command release."
+  - "2026-08-10 20:22: Iteration 2 stopped on the first production sim failure; scheduler coverage passed and the failure is a minor unsupported-path tie-off bug, not a design-plan blocker."
+  - "2026-08-10 20:35: Iteration 3 passed all directed Priority 2 VCS tests after the compatibility tie-off fix."
+  - "2026-08-10 20:43: All four requested M/QDIR XRT-VCS functional combinations passed without timeout or numerical mismatch."
+  - "2026-08-10 20:56: QCOL and QROW FSDB acceptance passed; the common M4 idle burst gap fell from 14 to 8 cycles and the fixed 5-cycle input startup disappeared."
+  - "2026-08-10 20:59: Final GEMM FSM regression and diff audit passed; no Hard Rule architectural blocker was encountered."
+pitfalls:
+  - "The existing scale/ZP tile-major layout maps their bases to the same TMEM bank color. Independent LDMA pipelines overlap, but one-beat source requests are serialized on adjacent cycles by the bank arbiter."
+  - "With max_beats=1, the common response arrives on the release cycle and first req_valid follows in 2 cycles; only responses buffered strictly before release achieve the 1-cycle path. The prior fixed 5-cycle startup is nevertheless removed."

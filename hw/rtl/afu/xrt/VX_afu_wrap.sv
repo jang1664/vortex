@@ -21,14 +21,14 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
 	parameter C_M_AXI_MEM_DATA_WIDTH  = `PLATFORM_MEMORY_DATA_SIZE * 8,
 	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-	parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_DMA_CHANNELS
+	parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_HBM_PORTS
 ) (
     // System signals
     input wire clk,
     input wire reset,
 
     // AXI4 master interface
-	`REPEAT (`NUM_DMA_CHANNELS, GEN_AXI_MEM, REPEAT_COMMA),
+		`REPEAT (`NUM_HBM_PORTS, GEN_AXI_MEM, REPEAT_COMMA),
     // AXI4-Lite slave interface
     input  wire                                 s_axi_ctrl_awvalid,
     output wire                                 s_axi_ctrl_awready,
@@ -52,8 +52,14 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     input  wire                                 s_axi_ctrl_bready,
     output wire [1:0]                           s_axi_ctrl_bresp,
 
-    output wire                                 interrupt
+	output wire                                 interrupt
 );
+
+	initial begin
+		if (C_M_AXI_MEM_NUM_PORTS != `NUM_HBM_PORTS)
+			$fatal(1, "C_M_AXI_MEM_NUM_PORTS(%0d) must match NUM_HBM_PORTS(%0d)",
+			       C_M_AXI_MEM_NUM_PORTS, `NUM_HBM_PORTS);
+	end
 	localparam M_AXI_MEM_ADDR_WIDTH = `PLATFORM_MEMORY_ADDR_WIDTH;
 
 	typedef enum logic [1:0] {
@@ -112,7 +118,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     wire [1:0]                           m_axi_mem_rresp_a [C_M_AXI_MEM_NUM_PORTS];
 
 	// convert memory interface to array
-	`REPEAT (`NUM_DMA_CHANNELS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
+	`REPEAT (`NUM_HBM_PORTS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
 	wire [PENDING_WR_SIZEW-1:0] vx_pending_writes;

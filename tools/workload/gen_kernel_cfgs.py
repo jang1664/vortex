@@ -119,7 +119,16 @@ SPINQUANT_VARIANT_SUFFIX = "_spinquant"
 SPINQUANT_WORKLOAD_VARIANTS = tuple(
     f"{variant}{SPINQUANT_VARIANT_SUFFIX}" for variant in BASE_WORKLOAD_VARIANTS
 )
-WORKLOAD_VARIANTS = BASE_WORKLOAD_VARIANTS + SPINQUANT_WORKLOAD_VARIANTS
+ALL_ASYMMETRIC_WKV4_SUFFIX = "_all_asym_wkv4"
+ALL_ASYMMETRIC_WKV4_VARIANTS = tuple(
+    f"{variant}{SPINQUANT_VARIANT_SUFFIX}{ALL_ASYMMETRIC_WKV4_SUFFIX}"
+    for variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT)
+)
+WORKLOAD_VARIANTS = (
+    BASE_WORKLOAD_VARIANTS
+    + SPINQUANT_WORKLOAD_VARIANTS
+    + ALL_ASYMMETRIC_WKV4_VARIANTS
+)
 DEFAULT_WORKLOAD_VARIANT = ALL_FPINT_GEMM_IMPROVE_VARIANT
 ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
 STANDARD_KV_CACHE_QUANT_VARIANTS = frozenset((
@@ -200,6 +209,8 @@ def _llm_kernel(name: str,
 def _base_workload_variant(variant: str) -> str:
     if variant in BASE_WORKLOAD_VARIANTS:
         return variant
+    if variant.endswith(ALL_ASYMMETRIC_WKV4_SUFFIX):
+        variant = variant[:-len(ALL_ASYMMETRIC_WKV4_SUFFIX)]
     if variant.endswith(SPINQUANT_VARIANT_SUFFIX):
         base = variant[:-len(SPINQUANT_VARIANT_SUFFIX)]
         if base in BASE_WORKLOAD_VARIANTS:
@@ -208,10 +219,45 @@ def _base_workload_variant(variant: str) -> str:
 
 
 def _is_spinquant_variant(variant: str) -> bool:
+    if variant.endswith(ALL_ASYMMETRIC_WKV4_SUFFIX):
+        variant = variant[:-len(ALL_ASYMMETRIC_WKV4_SUFFIX)]
     return (
         variant.endswith(SPINQUANT_VARIANT_SUFFIX)
         and _base_workload_variant(variant) in BASE_WORKLOAD_VARIANTS
     )
+
+
+def _is_all_asymmetric_wkv4_variant(variant: str) -> bool:
+    return variant in ALL_ASYMMETRIC_WKV4_VARIANTS
+
+
+def _quantization_policy(variant: str, qblk: int) -> dict:
+    if _is_all_asymmetric_wkv4_variant(variant):
+        return {
+            "name": "signed_all_asymmetric_wkv4_v1",
+            "weight": {
+                "scheme": "signed_asymmetric_int4",
+                "group_size": qblk,
+                "scale_dtype": "float16",
+                "zero_point_dtype": "int16",
+            },
+            "key": {
+                "scheme": "signed_asymmetric_int4",
+                "group_size": 128,
+                "scale_dtype": "float16",
+                "zero_point_dtype": "int16",
+            },
+            "value": {
+                "scheme": "signed_asymmetric_int4",
+                "group_size": 128,
+                "scale_dtype": "float16",
+                "zero_point_dtype": "int16",
+            },
+        }
+    return {
+        "name": "historical_spinquant_w4kv4_v1" if _is_spinquant_variant(variant)
+                else "legacy_w4a16_v1",
+    }
 
 
 def _gemm_backend(op: str, variant: str) -> str:
@@ -1853,9 +1899,14 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if name == "kv_cache_quant_v_cache_to_attn_pv":
-            args = str(kernel["args"]) + " --quant-mode spinquant_signed_symmetric"
+            value_quant_mode = (
+                "spinquant_signed_asymmetric"
+                if _is_all_asymmetric_wkv4_variant(variant)
+                else "spinquant_signed_symmetric"
+            )
+            args = str(kernel["args"]) + f" --quant-mode {value_quant_mode}"
             shape_update = {
-                "quant_mode": "spinquant_signed_symmetric",
+                "quant_mode": value_quant_mode,
             }
             if base_variant == LAYOUT_FUSED_VARIANT:
                 args += (
@@ -2433,9 +2484,25 @@ def build_llm_kernels(model_name: str,
             "qblk": qblk,
             "variant": variant,
             "hadamard_variant": hadamard_variant,
+            "quantization_policy": _quantization_policy(variant, qblk),
         },
         "kernels": kernels,
     }
+    quantization = payload["config"]["quantization_policy"]
+    if quantization["name"] == "signed_all_asymmetric_wkv4_v1":
+        weight_ops = {
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj", "lm_head",
+        }
+        for kernel in payload["kernels"]:
+            name = kernel["name"]
+            shape = kernel["shape"]
+            if name in weight_ops:
+                shape["operand_quantization"] = dict(quantization["weight"])
+            elif name in ("kv_cache_quant_rope_k_to_attn_qkT", "attn_qkT"):
+                shape["operand_quantization"] = dict(quantization["key"])
+            elif name in ("kv_cache_quant_v_cache_to_attn_pv", "attn_pv"):
+                shape["operand_quantization"] = dict(quantization["value"])
     annotate_kernel_flow(payload["kernels"])
     return payload
 

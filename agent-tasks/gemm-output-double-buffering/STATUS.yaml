@@ -1,0 +1,235 @@
+task: gemm-output-double-buffering
+state: complete
+spec: agent-tasks/gemm-output-double-buffering/gemm-output-double-buffering-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/output_double_buf.md
+updated: "2026-08-07 02:49"
+iterations:
+  - feature: "Phase 1 FSM metadata"
+    iteration: 1
+    timestamp: "2026-08-07 00:57"
+    status: sim_fail
+    error_summary: "The generic test oracle rejected ARM waits[3] when optional prior-G waits[2] was invalid."
+    root_cause: "Pending RTL-implementation audit; the source plan assigns the ACC release dependency specifically to waits[3], so the legacy contiguous-wait-slot invariant appears incompatible with the confirmed command layout."
+    fix_applied: "None after the verification run; report returned to the RTL implementation role."
+    lesson: "Wait-slot validity must be checked according to per-opcode semantics, not assumed contiguous globally."
+    log: build/hw/unittest/gemm_fsm/logs/sim.log
+  - feature: "Phase 1 controller dependencies"
+    iteration: 1
+    timestamp: "2026-08-07 00:57"
+    status: compile_error
+    error_summary: "Verification runner did not launch because the command invoked a non-executable `python` path."
+    root_cause: "Runner command selection error; VCS compilation was not reached."
+    fix_applied: "None after the verification run; iteration 2 will invoke /usr/bin/python3 explicitly."
+    lesson: "Use the verified system Python executable for tools/verify_rtl.py in this environment."
+  - feature: "Phase 1 FSM metadata"
+    iteration: 2
+    timestamp: "2026-08-07 00:58"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 1 was a legacy generic-oracle error: independent wait slots permit ARM waits[3] while optional waits[2] is invalid."
+    fix_applied: "Removed only the generic contiguous-slot check; retained RID bounds and opcode-specific slot placement checks."
+    lesson: "The confirmed ARM dependency stays in waits[3]; do not compact it into the optional prior-G slot."
+    coverage: "Two invocations; first emitted DMA_ST/ACC2LMEM=9/9 with acc_copy={5,4}, >=3 output tiles, group-0 reuse, edge slices, and multi-K. Second proved invocation reset with DMA_ST/ACC2LMEM=1/1 and acc_copy={1,0}. Final-drain hold/release at exact equality passed."
+    markers: "FSM_FULL_METADATA_MATRIX_PASS; FSM_OUTPUT_DOUBLE_BUFFER_METADATA_PASS; TEST PASSED"
+    log: build/hw/unittest/gemm_fsm/logs/sim.log
+  - feature: "Phase 1 controller dependencies"
+    iteration: 2
+    timestamp: "2026-08-07 00:58"
+    status: compile_error
+    error_summary: "VCS elaborated VX_gemm_sync as an unintended top and reported its interface ports unconnected."
+    root_cause: "Pending RTL-implementation/build audit."
+    fix_applied: "None after the verification run; report returned to the RTL implementation role."
+    lesson: "Confirm the unittest's explicit top selection before treating unconnected ports on an unrelated module as an RTL regression."
+    log: build/hw/unittest/gemm_ctrl/logs/compile.log
+  - feature: "Phase 1 controller dependencies"
+    iteration: 3
+    timestamp: "2026-08-07 01:00"
+    status: sim_fail
+    error_summary: "Directed oracle reported that opposite-group ARM did not overlap delayed ACC2LMEM."
+    root_cause: "Pending RTL-implementation audit of the directed stimulus/oracle at tb_VX_gemm_ctrl.sv:1037-1040."
+    fix_applied: "Refreshed the configured build before this run; VX_gemm_sync.sv was absent and VCS reached simulation. No post-run fix applied."
+    lesson: "The refreshed build removed the stale-top error and exposed the first behavioral directed check."
+    log: build/hw/unittest/gemm_ctrl/logs/sim.log
+  - feature: "Phase 1 controller dependencies"
+    iteration: 4
+    timestamp: "2026-08-07 01:01"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 3 was an inverted directed-test predicate that treated the intended occupied child-3 inflight slot as a failure."
+    fix_applied: "Corrected the predicate only; RTL and dependency semantics were unchanged."
+    lesson: "A delayed active executor is represented by a non-empty inflight metadata queue."
+    coverage: "Opposite-group ARM progress during delayed ACC2LMEM; same-group ARM block; same-cycle RID_ACC_FREE SET release; delayed DMA_ST independence from ACC reuse; next ACC2LMEM RID_O block/release; RID 9/10; strict quiescence; exact final drain; implicit clear and back-to-back invocations. Natural 256x256x256 lifecycle also passed."
+    markers: "SCHED_DIRECTED_ACC_OWNERSHIP_PASS; SCHED_DIRECTED_EXACT_FINAL_DRAIN_PASS; SCHED_DIRECTED_STRICT_QUIESCENCE_PASS; TEST PASSED"
+    log: build/hw/unittest/gemm_ctrl/logs/sim.log
+  - feature: "Phase 2 node overlap"
+    iteration: 1
+    timestamp: "2026-08-07 01:12"
+    status: compile_error
+    error_summary: "New node test instrumentation referenced undeclared tb_cycle."
+    root_cause: "Pending implementation-role confirmation; VCS did not reach RTL simulation."
+    fix_applied: "None after the verification run."
+    lesson: "Keep overlap instrumentation counters self-contained and declared before use."
+    log: build/hw/unittest/gemm_node_improve/logs/compile.log
+  - feature: "Phase 2 unit arbitration"
+    iteration: 1
+    timestamp: "2026-08-07 01:13"
+    status: sim_fail
+    error_summary: "The second response in the new two-request backpressure/order sequence had unexpected lane data although converter debug showed the expected FP16 conversion."
+    root_cause: "Pending RTL-implementation audit of output-read bank/tag/converter timing versus test initialization and sampling."
+    fix_applied: "None after the verification run."
+    lesson: "Separate converter-value evidence from response sampling/scoreboard timing before attributing an ordering mismatch to arbitration RTL."
+    log: build/hw/unittest/gemm_unit_v2/logs/sim.log
+  - feature: "Phase 2 node overlap"
+    iteration: 2
+    timestamp: "2026-08-07 01:14"
+    status: compile_error
+    error_summary: "Directed test used an automatic task variable in a force assignment, which VCS forbids."
+    root_cause: "Pending implementation-role confirmation; RTL simulation was not reached."
+    fix_applied: "Moved tb_cycle declaration before use from iteration 1; no post-run fix applied for this new error."
+    lesson: "Force RHS values must have stable module-scope or otherwise legal static storage in VCS."
+    log: build/hw/unittest/gemm_node_improve/logs/compile.log
+  - feature: "Phase 2 unit arbitration"
+    iteration: 2
+    timestamp: "2026-08-07 01:19"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 1 indexed the flat response bus by lane as a single bit; converter, tag, and response timing were correct."
+    fix_applied: "Captured the flat response into an FP16-lane packed variable before lane comparisons. RTL was unchanged."
+    lesson: "VX_mem_bus_if response data is flat; reshape it before element-wise lane checks."
+    coverage: "Same-group blocking across 15 pipeline stages for both groups/bank offsets; six different-group incoming/mid/final-writeback probes; physical read/write bank exclusion; one-outstanding response; four-cycle backpressure; two-response data/tag ordering."
+    markers: "GEMM_UNIT_V2_GROUP_ARBITRATION_PASS; VX_gemm_unit_v2 unittest PASSED"
+    log: build/hw/unittest/gemm_unit_v2/logs/sim.log
+  - feature: "Phase 2 node overlap"
+    iteration: 3
+    timestamp: "2026-08-07 01:24"
+    status: sim_fail
+    error_summary: "Aligned local-DMA assertion fired: response wrote slot 1 in state 2."
+    root_cause: "Invalid TB backpressure injection. It forced only the GEMM producer-side ready copy while the DMA sink remained hardwired ready, so DMA accepted the held response twice and the second acceptance found the slot already READY. This is not a Phase 2 design contradiction."
+    fix_applied: "Moved force RHS to module-scope static storage from iteration 2; no post-run RTL or test fix applied."
+    lesson: "Backpressure injection must override the actual sink handshake so producer and receiver observe the same ready value; forcing an intermediate one-way interface copy creates duplicate acceptance."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M130_N160_K256.log
+  - feature: "Phase 2 node overlap"
+    iteration: 4
+    timestamp: "2026-08-07 01:35"
+    status: sim_fail
+    error_summary: "The focused node simulation exceeded tools/verify_rtl.py's fixed 600-second make-run timeout; no fatal or buffered log excerpt was produced."
+    root_cause: "Verification workload/runtime sizing, pending confirmation of a smaller shape with identical requirement coverage."
+    fix_applied: "Corrected iteration-3 backpressure injection to force the actual DMA sink; no RTL failure occurred before the runner timeout."
+    lesson: "Choose the minimum shape that still provides >=3 output tiles, group-0 reuse, multi-K, and both M/N edges so deterministic RTL verification fits the runner timeout."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M130_N160_K256.log
+  - feature: "Phase 2 node overlap"
+    iteration: 5
+    timestamp: "2026-08-07 01:48"
+    status: sim_fail
+    error_summary: "Minimum legal coverage shape M=1,N=288,K=256 also exceeded verify_rtl.py's fixed 600-second unittest run timeout; no fatal or markers were emitted."
+    root_cause: "Verification runner limit, not observed RTL behavior."
+    fix_applied: "Reduced the workload from 4 to the minimum 3 output tiles while preserving group sequence 0,1,0, two K tiles, and both M/N edge coverage."
+    lesson: "The minimum faithful node test still needs a configurable unittest timeout above 600 seconds."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M1_N288_K256.log
+  - feature: "Phase 2 node overlap"
+    iteration: 6
+    timestamp: "2026-08-07 01:59"
+    status: sim_fail
+    error_summary: "The true minimum faithful shape M=1,N=288,K=160 also reached the fixed 600-second runner timeout with no fatal or markers."
+    root_cause: "Verification runner limit; K=160 already minimizes the two-K-tile accumulation case to 128+32."
+    fix_applied: "No RTL/test change. Added an optional positive unittest `--timeout` to tools/verify_rtl.py, preserving the 600-second default and applying the override only to make run/sim. Syntax/help validation passed."
+    lesson: "Long focused VCS cases need a per-run timeout override rather than weaker coverage or a higher global default."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M1_N288_K160.log
+  - feature: "Phase 2 node overlap"
+    iteration: 7
+    timestamp: "2026-08-07 02:18"
+    status: sim_fail
+    error_summary: "The minimum combined-coverage workload reached the testbench's internal 1,000,000-poll job timeout at 130001245ns with CONTROL=0x00000087 and no completion markers."
+    root_cause: "Pending RTL-state audit. The outer 1800-second override worked, and VCS reached the testbench timeout after 1030 seconds; current evidence does not yet distinguish RTL deadlock from an undersized internal simulation-cycle bound."
+    fix_applied: "No post-run change. Reported the non-pass to the RTL implementation role and paused implementation under the source-plan hard-rule audit."
+    lesson: "A longer wall-clock allowance cannot compensate for a fixed internal simulated-cycle timeout; inspect progress/FSM state before changing either RTL or coverage partitioning."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M1_N288_K160.log
+  - feature: "Phase 2 node overlap"
+    iteration: 8
+    timestamp: "2026-08-07 02:20"
+    status: pass
+    error_summary: "None; diagnostic run intentionally omitted the output-stall force and Phase-2 coverage checker."
+    root_cause: "Iteration 7 is isolated to the hierarchical output backpressure injection: the identical RTL workload without that force completed normally."
+    fix_applied: "No RTL or test change before this diagnostic run."
+    lesson: "M=1,N=288,K=160 is not intrinsically too large and the new ownership dependencies do not deadlock it; the no-stall job completed at 17555ns and numerical comparison completed at 27555ns. Audit the testbench force path rather than enlarging timeouts."
+    coverage: "Identical >=3-output-tile, group-0-reuse, M/N-edge, and multi-K shape; 288-element numerical parity. This diagnostic does not claim the Phase-2 overlap/backpressure markers."
+    markers: "JOB DONE detected; TILED OUTPUT CHECK PASSED; CONFIG GEMM PASSED; TB completed"
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_DIAG_NO_STALL.log
+  - feature: "Phase 2 node overlap"
+    iteration: 9
+    timestamp: "2026-08-07 02:25"
+    status: sim_fail
+    error_summary: "The corrected periodic ready stimulus completed the job and numerical comparison, then the coverage oracle rejected zero natural different-group MXU/ACC2LMEM overlap."
+    root_cause: "Confirmed out-of-scope single-DMA serialization: after ACC2LMEM, DMA_ST occupies the sole global DMA engine and prevents the following output tile's input DMA_LD; that compute therefore cannot become active before the ACC copy window closes. This matches the user's pre-run architectural warning, not a group-aware arbitration defect."
+    fix_applied: "Replaced iteration-7 release/open behavior with an explicit forced-one open window on the always_comb-driven DMA ready. The valid stimulus completed at 17685ns, produced 288-element numerical parity, and exercised response stalls. No production RTL change."
+    lesson: "Integrated natural overlap cannot be a pass criterion until the independent single-DMA scheduling bottleneck is removed. Preserve zero same-group conflict and prove the arbitration allow/block decision directly; record natural overlap as zero rather than claiming it."
+    coverage: "Job lifecycle, group sequence/reuse setup, multi-K, M/N edges, response backpressure, final writeback lifetime, output ordering, and 288-element numerical parity reached the final checker. Natural different-group overlap count was zero."
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M1_N288_K160.log
+  - feature: "Phase 2 node overlap"
+    iteration: 10
+    timestamp: "2026-08-07 02:28"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 9's sole failure was an obsolete natural-overlap requirement contradicted by the user-confirmed single-global-DMA schedule; the arbiter itself had already passed directed admission/blocking coverage."
+    fix_applied: "Made natural integrated overlap a labeled observation rather than a fatal requirement. Retained hard same-group exclusion and every correctness, lifecycle, ordering, backpressure, numerical, and directed-arbitration check. No production RTL changed."
+    lesson: "Distinguish arbiter capability from whether upstream scheduling presents concurrent demand. Current node scheduling exposes five active-overlap observation cycles but zero different-group output request fires because DMA_ST serializes the next tile's input DMA_LD."
+    coverage: "M=1,N=288,K=160: >=3 output tiles with group episodes {2,1}; multi-K and M/N edges; req/rsp 9/9 with empty tag queue; 14 held-response stall cycles; 45 final-writeback busy cycles; same-group overlap 0; directed incoming same-group block and different-group fire; job drain; 288-element numerical parity. Natural overlap fire/active={0,5}, labeled KNOWN_SINGLE_DMA_LIMITATION."
+    markers: "JOB DONE detected; TILED OUTPUT CHECK PASSED; OUTPUT_DBUF_NATURAL_OVERLAP; OUTPUT_DOUBLE_BUFFER_PASSED; TB completed"
+    log: build/hw/unittest/gemm_node_improve/logs/sim_OUTPUT_DBUF_M1_N288_K160.log
+  - feature: "XRT-VCS WLOAD8 functional regression"
+    iteration: 1
+    timestamp: "2026-08-07 02:30"
+    status: pass
+    error_summary: "None."
+    coverage: "Configured WLOAD8 baseline M=4,N=256,K=256,QBLK=32 completed with host numerical references 0x4405/0x400a and PERF cycles=8528."
+    markers: "PERF; PASSED"
+    log: agent-tasks/gemm-output-double-buffering/evidence/simv_baseline_wload8_m4_n256_k256.log
+  - feature: "XRT-VCS stalled edge/reuse FSDB"
+    iteration: 1
+    timestamp: "2026-08-07 02:42"
+    status: evidence_incomplete
+    error_summary: "The host numerical test passed, but blackbox cleanup sent SIGTERM to simv before its SHUTDOWN handler could flush and finish, truncating terminal FSDB state."
+    root_cause: "ci/blackbox.sh killed VCS immediately after the client returned even though the client had already sent CMD_SHUTDOWN."
+    fix_applied: "Added an FSDB flush before testbench $finish and a bounded five-second natural-exit grace period in the source blackbox template/current configured copy. No RTL behavior changed."
+    lesson: "A host PASS alone does not guarantee terminal waveform state is durable; allow the simulator to process its shutdown command before fallback termination."
+    log: agent-tasks/gemm-output-double-buffering/evidence/simv_stall_flush_m1_n288_k160.log
+  - feature: "XRT-VCS stalled edge/reuse FSDB"
+    iteration: 2
+    timestamp: "2026-08-07 02:49"
+    status: pass
+    error_summary: "None."
+    coverage: "Configured WLOAD8 M=1,N=288,K=160,QBLK=32 with 70/30 request/response Markov stalls: three output tiles, group-0 reuse, M/N edge, multi-K, nine output slices, numerical host PASS, and complete 0..96.640us FSDB. MXU/ACC2LMEM overlap=44/99 cycles, different-group opportunity/accept=5/5, same-group accept=0, RID_O wait=262 cycles, final RID_O/store issue=9/9, ACC release issue/complete={5,4}/{5,4}, all child queues/inflight empty."
+    markers: "PERF cycles=8928; PASSED; FSDB status=finished"
+    log: agent-tasks/gemm-output-double-buffering/evidence/simv_stall_final_m1_n288_k160.log
+    evidence: agent-tasks/gemm-output-double-buffering/evidence/fsdb_metrics.json
+log:
+  - timestamp: "2026-08-07 00:38"
+    action: "Loaded the project-context and rtl-improve procedures, read the authoritative plan, and confirmed its Phase 1/Phase 2 scope and hard-stop rule."
+    result: "Created the confirmed implementation specification and began current-state inspection."
+    learned: "The current RTL still uses the global pipeline_empty output-read gate and the legacy RID_O SET/PLUS sequencing; RID 9 and 10 are currently unused."
+  - timestamp: "2026-08-07 00:43"
+    action: "Inspected the Phase 1 final-drain requirement before applying RTL changes."
+    result: "Stopped implementation under the source plan's hard rule. No GEMM RTL or unittest files were changed."
+    failed_because: "The plan requires S_O_WAIT_LMEM2DRAM_FINAL to wait until RID_O >= o_store_issue_q. RID_O/effective_sync is private to VX_gemm_ctrl, while o_store_issue_q is private to VX_gemm_fsm, and VX_gemm_fsm_if.flag exposes only idle, done, and child_ready. The planned comparison therefore has no existing implementation path."
+    learned: "The existing controller's scheduler_quiescent completion gate indirectly ensures all issued stores retire, but it does not implement or directly prove the plan's explicit RID_O versus issued-store-count final-drain condition. Treating that indirect gate as the requested comparison would narrow the confirmed design."
+  - timestamp: "2026-08-07 00:43"
+    action: "Resolved the reported design gap before resuming implementation."
+    result: "Confirmed a dedicated controller-to-FSM completed-store-count input. The FSM will compare the effective RID_O value directly with o_store_issue_q in the final-drain state; scheduler quiescence remains a separate completion condition."
+    learned: "A narrow direct module input preserves the explicit dependency without widening the shared command metadata or exposing all sync registers."
+  - timestamp: "2026-08-07 01:06"
+    action: "Implemented Phase 2 group-aware ACC read arbitration."
+    result: "VX_gemm_unit_v2 now derives a two-bit compute-group busy vector from current-cycle accepted input and every valid control-pipeline stage through final writeback. Output reads block only on the requested group and retain the existing single-outstanding response/tag path."
+    learned: "The FP32-to-FP16 output converters are dedicated output resources and do not share compute datapath state; VX_gemm_node already supplies all incoming group metadata, so no node RTL change was required."
+  - timestamp: "2026-08-07 02:07"
+    action: "Recorded the confirmed single-DMA-engine limitation for verification interpretation."
+    result: "Output DMA_ST serializes the following output tile's input DMA_LD, so DMA_ST cannot overlap that tile's input load or compute. This is an independent follow-up problem and does not change the current ACC double-buffering scope."
+    learned: "Judge this task on different-group MXU/ACC2LMEM overlap and ownership correctness. Record MXU/DMA_ST overlap only as an observation, not as a required success metric or evidence against the ACC arbitration change."
+  - timestamp: "2026-08-07 02:49"
+    action: "Completed the configured WLOAD8 XRT-VCS functional/stalled runs and extracted the requested metrics from a cleanly finished FSDB."
+    result: "All completion criteria are covered: numerical PASS, explicit third-tile ownership dependency in directed tests, nonzero different-group MXU/ACC2LMEM overlap in full-flow FSDB, zero same-group accepted access, and exact terminal counter equality with empty queues/inflight."
+    learned: "The focused node schedule naturally produced no accepted overlap because of the known single-DMA ordering, while the full XRT schedule under HBM stalls exposed five legal different-group output-read accepts and 44 overlap cycles. This does not demonstrate output-store/next-input-load overlap or remove the independent DMA bottleneck."
+pitfalls:
+  - "Preserve unrelated pre-existing worktree changes, including files under agent-tasks/gemm-command-schedule-opt, analysis_workspace, docs, shared RTL packages, and runtime/stub."
+  - "Do not continue with a modified design if evidence contradicts the source plan; stop and report immediately."
+  - "Resolve the missing final-drain visibility/handshake in the confirmed design before resuming Phase 1."
+  - "Do not interpret observed MXU/DMA_ST overlap as output-store/next-input-load overlap: the single DMA engine still serializes those DMA commands. Keep that bottleneck as an independent follow-up."

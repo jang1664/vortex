@@ -6,11 +6,12 @@ include $(ROOT_DIR)/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_fsm
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+TB_DMA_STORE_MAX_CHUNK_BEATS ?=
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_fsm
@@ -29,6 +30,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -40,7 +43,14 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS := 
+PARAMS :=
+ifneq ($(strip $(TB_DMA_STORE_MAX_CHUNK_BEATS)),)
+ifeq ($(SIM_EXEC),vcs)
+PARAMS += -pvalue+$(TOP_MODULE).TB_DMA_STORE_MAX_CHUNK_BEATS=$(TB_DMA_STORE_MAX_CHUNK_BEATS)
+else
+PARAMS += -GTB_DMA_STORE_MAX_CHUNK_BEATS=$(TB_DMA_STORE_MAX_CHUNK_BEATS)
+endif
+endif
 
 setup:
 	mkdir -p logs reports

@@ -1,0 +1,313 @@
+task: improve-th16-tmem-dma-timing-loop
+status: complete
+spec: agent-tasks/improve-th16-tmem-dma-timing-loop/tmem-dma-timing-loop-spec.md
+baseline:
+  config: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8
+  workload: "M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD8"
+  qcol:
+    total_cycles: 609
+    dma_mxu_overlap: "64.007% (345/539)"
+  qrow:
+    total_cycles: 607
+    dma_mxu_overlap: "64.595% (343/531)"
+iterations:
+  - id: timing-loop-spec-confirmed-1
+    timestamp: "2026-08-28 22:37"
+    status: confirmed
+    action: "Converted the agreed problem analysis into an implementation and verification specification."
+    result: "Scope is limited to ready-independent Global DMA chaining, one-cycle registered Output completion, assertions, loop checks, and M4 XRT-VCS comparison."
+    hard_rule: "No fence, partial activation, test-only timing exception, or Global DMA chaining bubble."
+  - id: rtl-state-owned-ready-output-done-2
+    timestamp: "2026-08-28 22:55"
+    status: implemented
+    action: "Implemented the confirmed Global DMA chaining and Output completion timing cuts in production RTL without changing data paths, descriptor formats, counters, or TMEM arbitration."
+    files:
+      - hw/rtl/core/VX_dma_unit_align.sv
+      - hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+      - hw/rtl/core/gemm/VX_gemm_node.sv
+    implementation:
+      global_dma: "Channel cfg ready is now a registered-state/done-ready capability independent of ACTIVATE. The controller drives chained cfg valid and ACTIVATE from the selected registered candidate independent of ready, and uses the all-channel fire only for candidate retirement/foreground ownership updates. A held offer remains in S_WAIT_DONE and same-cycle chaining still enters the new command directly without S_IDLE/S_PROG."
+      output_done: "The raw Output final destination write_done remains inside the DMA boundary and feeds all raw physical accounting unchanged. VX_gemm_node registers that pulse once for controller-visible done, treats the registered completion as logical ownership release, and gives a coincident new start priority over the prior delayed completion."
+      assertions: "Added cfg/ACTIVATE hold stability and direct channel-state transition checks; controller all-old-done/all-new-ready, exact active mask, full atomic fire, no partial activation, candidate/descriptor hold, and direct WAIT_DONE ownership checks; and exact raw+1 Output completion, active ownership, and non-overlap checks. Existing tensor-bank and DMA destination assertions retain physical Output request stability under backpressure."
+    static_checks:
+      - "Configured a fresh build/timing_loop_th16_static tree after sourcing configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh and generated VX_config.h/VX_types.h."
+      - "Focused hw/unittest/gemm_tmem_dma_ctrl VCS compile/elaboration: PASS, exit 0, 8 modules."
+      - "Full hw/unittest/gemm_node_improve TH16/TMEM16/WLOAD8 VCS compile/elaboration: PASS, exit 0."
+      - "Full hw/unittest/gemm_node_improve Verilator --lint-only: PASS, exit 0, 163 modules. No cfg/ACTIVATE/Global-DMA UNOPTFLAT remains. The reported output_write_flag SCC is the pre-existing idle/control path; controller-visible Output done now originates only from output_write_done_q, so the targeted raw write_done feedback edge is absent. Other reported Input/DMA/arithmetic/FP SCC warnings are pre-existing and out of scope."
+      - "git diff --check and targeted stale-expression searches: PASS. No simulation or blackbox was run by RTL Implementation."
+    hard_rule: "None. No fence, accepted bitmap, partial activation, descriptor staging, TMEM arbiter change, or Global chaining cycle was added."
+    test_requests:
+      - test_type: unittest
+        test_path: hw/unittest/gemm_tmem_dma_ctrl
+        test_params: "TH16/TMEM16/WLOAD8 config; stagger active-channel done, prepared high and fallback candidates, changed active masks, and cfg backpressure"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv]
+        notes: "Prove all active old channels hold done until the last completion; chained cfg/ACTIVATE is exact-mask and atomic; the new descriptor fires on the old done edge; no S_IDLE/S_PROG bubble, partial accept, payload/ID change, drop, or duplicate completion occurs."
+      - test_type: unittest
+        test_path: hw/unittest/gemm_node_improve
+        test_params: "TH16/TMEM16/WLOAD8; directed Output destination backpressure plus back-to-back Output ownership; then the existing exact node matrix"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/rtl/core/gemm/VX_gemm_node.sv]
+        notes: "Check raw final destination write fire at cycle N, controller output done exactly at N+1, exactly one child retirement, no early dependency release, stable held Output request, safe start+delayed-done turnover, exact request/descriptor/completion counts, and all production assertions."
+      - test_type: blackbox
+        test_path: tests/regression/fpint_gemm_ffn_hw
+        test_params: "fpint_gemm M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD8, IMPROVE TH16/TMEM16, QCOL and QROW, xrt-vcs-sim perf class 3"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/rtl/core/gemm/VX_gemm_node.sv]
+        notes: "Use run-bb-common/ci wrapper from a configured build. Require numerical PASS and exact Input/Weight/Output traffic; compare QCOL against 609 cycles and 64.007% overlap and QROW against 607 cycles and 64.595% overlap. Then rerun the U55C post-init methodology/DRC and confirm the two target TIMING-23 paths and related LUTLP-1 SCC are gone."
+  - id: verification-th16-tmem16-stop-first-3
+    timestamp: "2026-08-28 23:01"
+    status: sim_fail
+    role: Verification
+    verification_iteration: 1
+    verification_input: rtl-state-owned-ready-output-done-2
+    action: "Ran the first ordered deterministic VCS gate only. The focused gemm_tmem_dma_ctrl simulation failed, so stop-first prevented gemm_ctrl, both gemm_node_improve cases, XRT and waveform work. Verification did not interpret the failure or edit RTL/TB."
+    config:
+      build_dir: build/timing_loop_th16_static
+      source: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      effective: "Exactly one NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8 and NUM_HBM_PORTS=8 define; exactly one GEMM_IMPROVE and no GEMM_NAIVE. TMEM16/NUM_HBM_PORTS were made explicit after sourcing with `CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=16 -DNUM_HBM_PORTS=8\"`. PATH used /usr/bin first and CC/CXX were /usr/bin/gcc and /usr/bin/g++."
+      simulator: "VCS W-2024.09-SP1_Full64 through /usr/bin/python3 tools/verify_rtl.py only"
+    command: "After recoverably archiving prior simv/simv.daidir/csrc/compile/sim logs, `timeout --signal=TERM --kill-after=30s 1200s /usr/bin/python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 900`."
+    result:
+      gate1_gemm_tmem_dma_ctrl: "SIM_FAIL. verify_rtl.py returned status=sim_fail and test_name=gemm_tmem_dma_ctrl at simulation time 1345000 ps. The required TMEM_DMA_PHASE6_CHAIN_PASS and final TEST PASSED markers were not reached."
+      gate2_gemm_ctrl: "NOT RUN due to stop-first."
+      gate3_node_qcol: "NOT RUN due to stop-first; no numerical, raw+1 Output completion, ownership, time or count result was captured."
+      gate3_node_qrow: "NOT RUN due to stop-first; no numerical, raw+1 Output completion, ownership, time or count result was captured."
+      blackbox: "NOT RUN as required for this verification turn."
+    first_failure:
+      classification: sim_fail
+      error_log_verbatim: |-
+        "/home/jaeyongjang/project.local/vortex_fpint/hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv", 1330: tb_VX_gemm_tmem_dma_ctrl_misalign.dut.unnamed$$_58.unnamed$$_59: started at 1345000ps failed at 1345000ps
+                Offending 'done_or_inactive[ch]'
+        Fatal: "/home/jaeyongjang/project.local/vortex_fpint/hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv", 1330: tb_VX_gemm_tmem_dma_ctrl_misalign.dut.unnamed$$_58.unnamed$$_59: at time 1345000 ps
+        tb_misalign: old channel 0 was not done before chaining
+        $finish called from file "/home/jaeyongjang/project.local/vortex_fpint/hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv", line 1330.
+      root_cause: "Not analyzed by Verification."
+    freshness_and_hashes:
+      freshness: "Fresh compile/link produced simv at 2026-08-28 23:00:51 +0900 after the three changed production files and focused TB; relevant source-newer count is zero."
+      simv_sha256: 57c956f7a343472f9f38986c4d5ce3e2f31a3ce0c06b24528c5edef4c5511d97
+      compile_log_sha256: cb6e330333ca1760508c16d9871611f51315da69f4f6bc4b080e6466a20d0629
+      sim_log_sha256: e129d8eb76a43718e3cffb245ab1cacfb58188ec217934bbd648d5f48fa88994
+      verify_rtl_log_sha256: 3f2214676b4de5933d22053e025312f3855609fd0225a1a77534cf9f311554ee
+      config_sha256: 4a9be97501882fe20198e8593e3200a161d95acbd22125aa510916d667050ec8
+      VX_dma_unit_align_sha256: c54a95f928eee896f91409ee1d9845cb2104f7a8c2f0aa2869485895a5a7cf23
+      VX_gemm_tmem_dma_ctrl_sha256: 637799ffc8ea4caaaf540001fcc5fe1dd44621494d050d5ccd9f39584923e65b
+      VX_gemm_node_sha256: 96b64c8e89610af7ea3770138bf3bc2de832398f28a1f8a697aba64b2ca80575
+      focused_tb_sha256: 81d94304af00f3a692e9ef240d059541bba8a136cf225c41295c17e4fa42a794
+    artifacts:
+      root: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl
+      verify_rtl: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl/verify_rtl.log
+      compile: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl/compile.log
+      simulation: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl/sim.log
+      binary: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl/simv
+      prebuild: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration1/gate1_tmem_dma_ctrl/prebuild
+    hard_rule: "Stop-first honored. No production RTL, testbench, config, plan, XRT binary or waveform was modified or analyzed by Verification."
+    test_requests:
+      - test_type: unittest
+        test_path: hw/unittest/gemm_tmem_dma_ctrl
+        test_params: "After an RTL implementation handoff, rerun the same fresh TH16/WLOAD8/TMEM16/HBM8 full directed VCS suite first. Require TMEM_DMA_PHASE6_CHAIN_PASS, staggered completion, exact active masks, atomic cfg/ACTIVATE, held descriptor/backpressure, exact completion counts and TEST PASSED."
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv]
+        notes: "Use verify_rtl.py and stop first. Only after Gate 1 passes may Verification run gemm_ctrl +SCHED_DIRECTED and M4 QCOL/QROW node gates."
+  - id: rtl-sticky-done-assertion-fix-4
+    timestamp: "2026-08-28 23:04"
+    status: implemented
+    role: RTL Implementation
+    verification_iteration: 2
+    fixes_verification: verification-th16-tmem16-stop-first-3
+    action: "Corrected the Global chaining all-old-done assertion to use the controller's authoritative accumulated completion condition. No functional scheduling, ready/valid, descriptor, Output completion, or testbench logic changed."
+    root_cause: "The controller intentionally accumulates staggered channel completion in done_sticky_q and defines done_all_valid as the reduction of `done_sticky_q | done_or_inactive`. The directed TB pulses early-channel done and clears it before the last channel. At 1345000 ps channel 0 was therefore authoritatively complete via done_sticky_q[0], all eight chained cfg fires occurred atomically, but the new assertion checked only current-cycle done_or_inactive[0] and falsely failed."
+    fix: "Changed the per-old-channel assertion from `done_or_inactive[ch]` to `done_sticky_q[ch] || done_or_inactive[ch]`. This exactly mirrors each bit of done_all_valid, retains the all-channel completion requirement, and does not weaken the independent all-new-active-channel ready, exact-mask, full-fire, no-partial-activation, ownership, or direct-transition assertions."
+    files:
+      - hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+    hashes:
+      VX_gemm_tmem_dma_ctrl_sha256: 56674ef74e7e7f2b9fce9709181a5e2723cea3e86fa7be2fdcd9217103d02425
+      focused_compile_log_sha256: 4e90d8544e6a45ddc12f90ea021de42b7240fdc93cfdb709e906ce387af65c74
+      focused_lint_log_sha256: 7d77a5714bfc6480e8ace1d6e27d066aac55be24e32dfb381b763164424cc404
+    static_checks:
+      - "Focused TH16/WLOAD8/TMEM16/HBM8 gemm_tmem_dma_ctrl VCS compile/elaboration PASS, exit 0; VCS recompiled the changed production module and elaborated the eight-module hierarchy."
+      - "Focused Verilator --lint-only PASS, exit 0, with the existing TB mixed blocking/nonblocking diagnostic explicitly demoted; no Error, UNOPTFLAT, or circular-combinational warning remained."
+      - "git diff --check PASS. No simulation, blackbox, testbench edit, fence, accepted bitmap, or scheduling change was performed."
+    hard_rule: "None. The fix restores the intended assertion against the pre-existing authoritative sticky-or-current completion contract and preserves the confirmed no-fence atomic chaining design."
+    test_requests:
+      - test_type: unittest
+        test_path: hw/unittest/gemm_tmem_dma_ctrl
+        test_params: "Fresh TH16/WLOAD8/TMEM16/HBM8 full directed VCS suite; stagger early completion pulses, prepared high/fallback chaining, active-mask changes, cfg backpressure, and exact counts"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv]
+        notes: "Use tools/verify_rtl.py and stop first. Require TMEM_DMA_PHASE6_CHAIN_PASS and TEST PASSED, prove early channels complete through sticky ownership while the last channel completes currently, and retain exact all-ready/active-mask/atomic cfg+ACTIVATE/no-partial/direct-transition checks. If Gate 1 passes, resume the previously ordered gemm_ctrl, M4 QCOL/QROW node, and later XRT gates without changing their contracts."
+  - id: verification-th16-tmem16-unit-gates-pass-5
+    timestamp: "2026-08-28 23:09"
+    status: pass
+    role: Verification
+    verification_iteration: 2
+    verification_input: rtl-sticky-done-assertion-fix-4
+    action: "Reran the complete ordered deterministic TH16/TMEM16 VCS gates after the sticky-completion assertion correction. Gate 1, Gate 2, QCOL and QROW all passed, so no stop-first condition occurred. Verification made no RTL, testbench, config or waveform change and did not run XRT."
+    config:
+      build_dir: build/timing_loop_th16_static
+      source: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      effective: "Exactly one NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8 and GEMM_IMPROVE; no GEMM_NAIVE. TMEM16/HBM8 were appended after sourcing with `CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=16 -DNUM_HBM_PORTS=8\"`. PATH selected /usr/bin first and CC/CXX were /usr/bin/gcc and /usr/bin/g++."
+      simulator: "VCS W-2024.09-SP1_Full64 through /usr/bin/python3 tools/verify_rtl.py only"
+    commands:
+      gate1_gemm_tmem_dma_ctrl: "After recoverably archiving prior generated build products, `timeout --signal=TERM --kill-after=30s 1200s /usr/bin/python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 900`."
+      gate2_gemm_ctrl: "After recoverably archiving prior generated build products, `timeout --signal=TERM --kill-after=30s 1200s /usr/bin/python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args '+SCHED_DIRECTED' --timeout 900`."
+      gate3_node_qcol: "After recoverably archiving prior generated build products, `timeout --signal=TERM --kill-after=30s 1800s /usr/bin/python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER2_TH16_TMEM16_M4_Q32_QCOL M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=0' --extra-sim-args '+REQUIRE_INPUT_METADATA +NO_WAVE' --timeout 1500`."
+      gate3_node_qrow: "Reused the exact fresh QCOL simv and ran `timeout --signal=TERM --kill-after=30s 1800s /usr/bin/python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER2_TH16_TMEM16_M4_Q32_QROW M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1' --extra-sim-args '+REQUIRE_INPUT_METADATA +NO_WAVE' --timeout 1500`."
+    result:
+      gate1_gemm_tmem_dma_ctrl: "PASS. TMEM_DMA_PHASE6_CHAIN_PASS reported completion_to_activate=0, cache=hit, id=0, early_channels=7, last_channel=7 and atomic_cfg=1. The full misaligned/directed suite also passed forbidden/current-cycle prepare, depth4, cache-miss, skew priority, max-channel 4/8/16/32, prepared-table, changed-mask, descriptor-hold/backpressure and exact completion cases. Scheduler summary: accepted=37, descriptors=69, stores=47, logical=37, pending_max=4, switches=1, latency_count/sum/max=1/7/7, final_idle=1. Exact completion: dma_done_pulses=37, store_done_pulses=15. Final TEST PASSED; no production assertion or fatal occurred."
+      gate2_gemm_ctrl: "PASS. +SCHED_DIRECTED completed scoreboard-full, ordered retire/recycle, dependency tier, input source/admission split, input depth4, wait-all-ready, blocked/same-cycle set, retention handshake, four Weight in-flight, ACC ownership, strict quiescence, exact cfg-ready/final drain and back-to-back implicit-clear contracts. Final marker: `TEST PASSED: GEMM scheduler directed dependency checks completed`; no assertion or fatal occurred."
+      gate3_node_qcol: "PASS at exactly 17285 ns. Numerical output compared 1024 elements. INPUT_METADATA: commands=64, packets=256, last_admission=64, last_write=64, done=64, nonfinal_done=62, final_done=2, scheduler_retire=64, prior_raw_during_final=6, bubbles=64, stalled_valid_cycles=0. CONFIG GEMM PASSED and TB completed."
+      gate3_node_qrow: "PASS at exactly 17285 ns. Numerical output compared 1024 elements. INPUT_METADATA: commands=64, packets=256, last_admission=64, last_write=64, done=64, nonfinal_done=62, final_done=2, scheduler_retire=64, prior_raw_during_final=6, bubbles=70, stalled_valid_cycles=4. CONFIG GEMM PASSED and TB completed."
+      output_done_contract: "PASS in both node cases. The unconditional production assertions in VX_gemm_node exercised real Output traffic and completed without failure: controller-visible Output done equals the previous-cycle raw Output write_done exactly, raw and logical completion retain active ownership, and start/delayed-done turnover does not overlap ownership. Terminal numerical/config/TB completion markers were reached in both directions."
+      blackbox: "NOT RUN as required for this deterministic verification turn."
+    freshness_and_hashes:
+      gate1_freshness: "Fresh compile/link produced simv at 2026-08-28 23:05:59 +0900; relevant source-newer count is zero."
+      gate1_simv_sha256: 5f696e67e6725b5d5f876a18912c7352e2760888bd1a6f0b0150ff5134e94bf6
+      gate1_compile_log_sha256: 8d9a7b08f00275501859bd6b5f5e4e9a43eeed4c7507dbd7eb92ae64acfae1f7
+      gate1_sim_log_sha256: a45b78824869309e946271b9ad4698ab76de4d5cf1a088429ab59b126ae4b29c
+      gate1_verify_rtl_log_sha256: c502fdfd368893bdb334c3ea048b7a74203f2609c29722df7b6bd98d60520500
+      gate2_freshness: "Fresh compile/link produced simv at 2026-08-28 23:06:25 +0900; relevant source-newer count is zero."
+      gate2_simv_sha256: 1f5d2978459b8facf10a30c6c210ce5bd02d5f95047e60ca51b94c72c43df98b
+      gate2_compile_log_sha256: c96bc5a33636ed63959dfdef1934b49d3e0e7c366488b25bb608fd15736a5f4a
+      gate2_sim_log_sha256: 98f55654dcd8fbe524b2b7e8f65957ba57d02f4b996b8cbe1c639749b31fed94
+      gate2_verify_rtl_log_sha256: 51224e5313c8279d4d8aefd094aca4b4ba84507f2cc0c394e139b932b9384808
+      gate3_freshness: "Fresh QCOL compile/link produced simv_fpnew at 2026-08-28 23:07:12 +0900; QROW reused that exact binary; relevant source-newer count is zero."
+      gate3_simv_sha256: a7d16a8efcb036e442b1bfeb1f1397df3ae97ab38bab7a7eb594b6de1e603cfd
+      gate3_compile_log_sha256: 06f808da2008a7f63c745ef073f97c9f765017d8e57f2ce44ca73cd425621cff
+      gate3_qcol_sim_log_sha256: 4fc5a1ec78b5256af4cb3efd4bbf1a48ff71cbe83aaf55ce4fe17fab2034c02b
+      gate3_qcol_verify_rtl_log_sha256: 470a21b609bc7afd9c8fb976d8f34165197bc9b49adff794c727eb145049cef7
+      gate3_qrow_sim_log_sha256: f013addb98e8a5192e7b5cb01aead55e312f9bf92c656681befb1615c911f849
+      gate3_qrow_verify_rtl_log_sha256: 62dda2c1b804d4f43b30684e9095f937d2f3b0c4bb5d6b6af0718c4c2114bec6
+      config_sha256: 4a9be97501882fe20198e8593e3200a161d95acbd22125aa510916d667050ec8
+      VX_dma_unit_align_sha256: c54a95f928eee896f91409ee1d9845cb2104f7a8c2f0aa2869485895a5a7cf23
+      VX_gemm_tmem_dma_ctrl_sha256: 56674ef74e7e7f2b9fce9709181a5e2723cea3e86fa7be2fdcd9217103d02425
+      VX_gemm_node_sha256: 96b64c8e89610af7ea3770138bf3bc2de832398f28a1f8a697aba64b2ca80575
+    artifacts:
+      root: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2
+      gate1: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2/gate1_tmem_dma_ctrl
+      gate2: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2/gate2_gemm_ctrl
+      gate3_qcol: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2/gate3_node/qcol
+      gate3_qrow: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2/gate3_node/qrow
+      gate3_binary: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration2/gate3_node/simv_fpnew
+    hard_rule: "Stop-first and test ordering honored. Verification performed no production RTL/TB/config edit, waveform analysis or XRT run."
+    test_requests:
+      - test_type: blackbox
+        test_path: tests/regression/fpint_gemm_ffn_hw
+        test_params: "Force-fresh IMPROVE NUM_THREADS16/TMEM16/DMA8/HBM8/COL32/WLOAD8 XRT-VCS build; M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=0 then QDIR=1, perf class 3"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/rtl/core/gemm/VX_gemm_node.sv]
+        notes: "Use the configured-build ci/run_black.sh xrt-vcs-sim wrapper only and stop first. Require numerical PASS, clean shutdown, exact Input/Weight/Output traffic, zero DMA stalls, no cfg/ACTIVATE/Output-done assertion or ownership failure, and current ACC/scaler/output counts. Compare QCOL against 609 cycles and overlap 64.007% (345/539), and QROW against 607 cycles and overlap 64.595% (343/531). Preserve artifacts and record exact simv config/hash/freshness. Do not begin Vivado timing/DRC until this blackbox gate passes."
+  - id: verification-th16-tmem16-blackbox-pass-6
+    timestamp: "2026-08-28 23:17"
+    status: pass
+    role: Verification
+    verification_iteration: 3
+    verification_input: verification-th16-tmem16-unit-gates-pass-5
+    action: "Ran only the ordered M4 QCOL then QROW xrt-vcs-sim blackbox cases through the configured-build ci/run_black.sh wrapper. Both numerical, traffic, performance-counter, error-signature and clean-shutdown gates passed. The wrapper mandates FSDB_DUMP=1, so each generated FSDB was preserved but not analyzed. Vivado/P&R was not run."
+    config:
+      build_dir: build
+      wrapper: build/ci/run_black.sh
+      source: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      effective: "The wrapper CONFIGS line for both cases contains exactly one GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, MXU_COL_TILE=32, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8 and PERF_ENABLE; GEMM_NAIVE count is zero. TMEM16/HBM8 were appended after sourcing with `CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=16 -DNUM_HBM_PORTS=8\"`. PATH selected /usr/bin first and CC/CXX were /usr/bin/gcc and /usr/bin/g++."
+      workload: "fpint_gemm_ffn_hw M=4 N=256 K=256 QBLK=32 WTRANS=0, perf class 3, QCOL then QROW"
+    fresh_build:
+      method: "Recoverably moved the prior simv, simv.daidir, csrc, simv/applib configuration stamps and prior logs/FSDB into iteration3_blackbox/prebuild. The QCOL wrapper then compiled all 167 RTL modules and linked a new simv; no destructive clean command was used."
+      old_simv: "mtime 2026-08-28 19:50:35 +0900, SHA256 9f1eac23c10360e6e639b45144da7270d91ccfdf86bb1de75ddf745580751e9d; it predated all three changed RTL files."
+      new_simv: "mtime 2026-08-28 23:14:36 +0900, size 1783832 bytes, SHA256 2a9cd6aecffb03f11c7f3ab4bf8ab9019ed9c26f712a8895604e0ee69dd1f837. It is newer than the three changed RTL sources; relevant hw/rtl and sim/xrtsim_vcs source-newer count is zero. QROW reused the exact same SHA."
+    commands:
+      qcol: "From build after sourcing the exact config and appending TMEM16/HBM8: `timeout --signal=TERM --kill-after=60s 3600s ./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 0\" --perf 3`."
+      qrow: "From the same configured build and exact environment: `timeout --signal=TERM --kill-after=60s 1800s ./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args \"-m 4 -n 256 -k 256 -q 32 -t 0 -d 1\" --perf 3`."
+    result:
+      qcol:
+        status: pass
+        numerical: "PASSED; 4*256=1024 output elements covered by the application comparison."
+        cycles: "total_cycles=599, busy_cycles=6280"
+        overlap: "64.870% (349/538)"
+        traffic: "Input fire/stall=256/0, Weight fire/stall=256/0, PSUM fire/stall=0/0, Output fire/stall=32/0."
+        accum: "rd_accept=186, wr_fire=256, scaler_valid=256, acc_output_valid=256, psum_underflow=0, rd_wr_conflict=0."
+        baseline_comparison: "599 versus 609: 10 cycles lower (-1.642%). Overlap 64.870% versus 64.007%: +0.863 percentage point; numerator/denominator changed from 345/539 to 349/538."
+        shutdown: "Wrapper exit 0; exactly one PASSED marker; VCS received SHUTDOWN and called $finish at 70530000 ps. No Fatal, Error-, FAILED, assertion-failed, ownership-failed or stale-failed signature."
+      qrow:
+        status: pass
+        numerical: "PASSED; 4*256=1024 output elements covered by the application comparison."
+        cycles: "total_cycles=603, busy_cycles=6280"
+        overlap: "64.607% (345/534)"
+        traffic: "Input fire/stall=256/0, Weight fire/stall=256/0, PSUM fire/stall=0/0, Output fire/stall=32/0."
+        accum: "rd_accept=188, wr_fire=256, scaler_valid=256, acc_output_valid=256, psum_underflow=0, rd_wr_conflict=0."
+        baseline_comparison: "603 versus 607: 4 cycles lower (-0.659%). Overlap 64.607% versus 64.595%: +0.012 percentage point; numerator/denominator changed from 343/531 to 345/534."
+        shutdown: "Wrapper exit 0; exactly one PASSED marker; VCS received SHUTDOWN and called $finish at 71520000 ps. No Fatal, Error-, FAILED, assertion-failed, ownership-failed or stale-failed signature."
+    freshness_and_hashes:
+      config_sha256: 4a9be97501882fe20198e8593e3200a161d95acbd22125aa510916d667050ec8
+      VX_dma_unit_align_sha256: c54a95f928eee896f91409ee1d9845cb2104f7a8c2f0aa2869485895a5a7cf23
+      VX_gemm_tmem_dma_ctrl_sha256: 56674ef74e7e7f2b9fce9709181a5e2723cea3e86fa7be2fdcd9217103d02425
+      VX_gemm_node_sha256: 96b64c8e89610af7ea3770138bf3bc2de832398f28a1f8a697aba64b2ca80575
+      simv_sha256: 2a9cd6aecffb03f11c7f3ab4bf8ab9019ed9c26f712a8895604e0ee69dd1f837
+      simv_config_stamp_sha256: 880fd18812cd19818eade0bdcd1f39a8a7a3fd6c42a0ec69cf382d0dae9bdcf6
+      compile_log_sha256: 7a3cfc7d3d484c7b25536b171ca60bdfe326c52339fae4a04984c79a35d0bd3f
+      vlogan_log_sha256: 95b174a7c371df6c54f2ed856a01eb0faedde2321b85df99166c233ee98f465a
+      qcol_wrapper_log_sha256: 8b84a484c35e81730191684339f5e8201ec2378b8b431dfcd1bd69c15fc39bc6
+      qcol_sim_log_sha256: 1b28522027eedcb1ffc8999bc61dd678d2b45d8d44c675235ae8a0ffeb785744
+      qcol_fsdb: "size 13719261 bytes, SHA256 c65e976fefd8975fe7b857275ea53c49758a98ef29bdbb2227475c7d963f92fe; preserved only because the authoritative wrapper mandates FSDB_DUMP=1, not analyzed."
+      qrow_wrapper_log_sha256: e5a65903fed99ef641e829104a71e5443013fe5516605d4256770d35f95a20f3
+      qrow_sim_log_sha256: 0b4f5502b2ecac5525308b5581152acccad1168845dce1eadb2f12f2e2afafa8
+      qrow_fsdb: "size 14370101 bytes, SHA256 e100401f7b060bb4e5c81f2243bb7e8d386d139decbe86ea1e34c0f9dd9cfc56; preserved only because the authoritative wrapper mandates FSDB_DUMP=1, not analyzed."
+    artifacts:
+      root: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox
+      prebuild: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/prebuild
+      qcol_wrapper: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qcol/wrapper.log
+      qcol_simulation: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qcol/simv.log
+      qcol_compile: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qcol/compile.log
+      qcol_fsdb: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qcol/vcs_cosim.fsdb
+      qrow_wrapper: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qrow/wrapper.log
+      qrow_simulation: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qrow/simv.log
+      qrow_compile: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qrow/compile.log
+      qrow_fsdb: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qrow/vcs_cosim.fsdb
+      binary: build/run_logs/improve-th16-tmem-dma-timing-loop/iteration3_blackbox/qcol/simv
+    hard_rule: "Wrapper-only xrt-vcs-sim, order and stop-first contracts were honored. No RTL/TB/config/spec edit, FSDB analysis, Vivado, P&R or unrelated matrix was performed by Verification."
+    test_requests:
+      - test_type: implementation_timing
+        test_path: hw/syn/xilinx/xrt
+        test_params: "IMPROVE TH16/TMEM16/DMA8/HBM8/COL32/WLOAD8 U55C post-init methodology/DRC using the established synthesis flow"
+        sim_tool: vivado
+        changed_files: [hw/rtl/core/VX_dma_unit_align.sv, hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/rtl/core/gemm/VX_gemm_node.sv]
+        notes: "Only after explicit authorization, rerun the prior post-init methodology/DRC and loop-report procedure. Confirm the two target TIMING-23 paths and related LUTLP-1 SCC are absent, record any remaining SCC separately without reinterpreting it as either target loop, and preserve exact reports/config/source hashes."
+  - id: vivado-post-synth-loop-closure-7
+    timestamp: "2026-08-29 00:08"
+    status: pass
+    role: RTL Implementation
+    action: "Generated a fresh TH16/TMEM16/DMA8/HBM8/WLOAD8 IMPROVE U55C kernel package and ran standalone Vivado 2025.1 synthesis plus methodology, LUTLP-1 DRC, and verbose check_timing reports on the current production RTL."
+    config:
+      source: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      effective: "GEMM_IMPROVE, NUM_THREADS=16, MXU_COL_TILE=32, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8 and NUM_HBM_PORTS=8; no GEMM_NAIVE. Target part xcu55c-fsvh2892-2L-e."
+      synthesis_prefix: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_timingloopfix
+      scope: "Standalone vortex_afu post-synthesis kernel netlist. Full U55C placement and routing was not run. Both prior TIMING-23 paths are kernel-internal and therefore present in this synthesis scope if they still exist."
+    result:
+      synthesis: "PASS. Vivado reported `Synthesis finished with 0 errors, 0 critical warnings` and `synth_design completed successfully`; batch exit status was 0."
+      old_methodology: "The retained failed U55C post-init methodology report contains TIMING-23 count 2: one loop under gemm_node/u_tmem_dma_ctrl and one under gemm_node/u_tmem_subsystem/u_ldma_output/dma_core/.../full_r_reg0_i_1."
+      new_methodology: "PASS. Fresh post-synthesis methodology contains no TIMING-23 entry."
+      lutlp: "PASS. `report_drc -checks LUTLP-1` reports Checks found: 0."
+      check_timing: "PASS. Verbose check_timing reports `checking loops (0)` and `There are 0 combinational loops in the design`; latch loops are also 0."
+      performance: "PASS. Fresh XRT-VCS results from iteration 6 are QCOL 599 cycles and 64.870% overlap versus 609 and 64.007% before; QROW 603 and 64.607% versus 607 and 64.595% before. Both directions passed numerical, traffic, counter, assertion and shutdown gates."
+    tooling_note: "The first standalone attempt found missing generated floating-point IP products. The final script generated all IP targets and their OOC products before top synthesis; every IP synthesis and the top synthesis completed without error. This was a build preparation issue, not an RTL failure."
+    hashes:
+      post_synth_methodology_sha256: b3ce85cdd015f0f58b45b01982a78a241bdf9d99cf89370cc0dcfabb0ab4be95
+      post_synth_lutlp_sha256: 6c3adc84a619764d6e134df8a5fc3e96f920ece73e0deebd10b2d36412312af4
+      post_synth_check_timing_sha256: df50fcb600865e4d8eab85fe82998350bd34e406964a14cad1797a7f958948d2
+      post_synth_dcp_sha256: ef2fddf9668ef6b9d108be13860491cdfb36f9e7c6d891f4d3d9395305f0d22f
+      vivado_log_sha256: 2566b9ee930ff7e55ca4f3ffc90beec428dd65f9b5c938a86717499b2519b5d6
+      gen_xo_log_sha256: 0e4e6637d3f51534f6a12d6f9dba4e0a4534ae2b9661e874a320db5d5379b091
+    artifacts:
+      result: agent-tasks/improve-th16-tmem-dma-timing-loop/result.md
+      script: agent-tasks/improve-th16-tmem-dma-timing-loop/check_synth_loops.tcl
+      root: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check
+      methodology: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/post_synth_methodology.rpt
+      lutlp: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/post_synth_lutlp.rpt
+      check_timing: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/post_synth_check_timing.rpt
+      checkpoint: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/vortex_afu_post_synth.dcp
+      vivado_log: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/vivado_synth_retry.log
+      gen_xo_log: build/run_logs/improve-th16-tmem-dma-timing-loop/vivado_loop_check/gen_xo.log
+    hard_rule: "None. The no-fence requirement and same-cycle Global DMA chaining behavior were preserved. The only intentional timing change is the agreed one-cycle controller-visible Output completion delay."
+pitfalls:
+  - "Do not infer the second loop from the synthesized cell name alone; the LUT output is Output write_done and its input includes TMEM req_ready."
+  - "Do not gate chaining valid/activate with the all-ready reduction; all-ready may only qualify state updates."
+  - "Do not clear new Output ownership when delayed completion from the previous command coincides with a new start."

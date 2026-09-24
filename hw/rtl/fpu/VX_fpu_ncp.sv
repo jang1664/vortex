@@ -121,7 +121,7 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
 `ifdef SIMULATION
     always @(negedge clk) begin
-        if (!reset && !$isunknown({
+        if ((reset === 1'b0) && !$isunknown({
             pe_issue_h, pe_issue_s, pe_enable_h, pe_enable_s,
             pe_inflight_h, pe_inflight_s
         })) begin
@@ -198,11 +198,15 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         end
 
         always @(posedge clk) begin
-            if (pe_enable_h) begin
+            if (reset === 1'b1) begin
+                fmv_h_x_valid_pipe <= '0;
+                fmv_h_x_expected_pipe <= '0;
+            end else if ((reset === 1'b0) && (pe_enable_h === 1'b1)) begin
                 fmv_h_x_valid_pipe <= {
                     fmv_h_x_valid_pipe[`LATENCY_FNCP-2:0],
-                    pe_issue_h && is_half_fmv_in
-                    && (pe_data_in[0][64 +: INST_FRM_BITS] == 3'd5)
+                    (pe_issue_h === 1'b1)
+                 && (is_half_fmv_in === 1'b1)
+                 && (pe_data_in[0][64 +: INST_FRM_BITS] === 3'd5)
                 };
                 fmv_h_x_expected_pipe[0] <= {
                     16'hffff, pe_data_in[i][15:0]
@@ -214,7 +218,8 @@ module VX_fpu_ncp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         end
 
         always @(negedge clk) begin
-            if (fmv_h_x_valid_pipe[`LATENCY_FNCP-1]) begin
+            if ((reset === 1'b0)
+             && (fmv_h_x_valid_pipe[`LATENCY_FNCP-1] === 1'b1)) begin
                 assert (result_h == fmv_h_x_expected_pipe[`LATENCY_FNCP-1])
                     else $fatal(1,
                         "FP16 FMV.H.X result mismatch: src=%h expected=%h actual=%h latency=%0d",

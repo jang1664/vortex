@@ -1,0 +1,39 @@
+{
+  "cycle_ps": 10000,
+  "cycles": {
+    "acc2lmem": 99,
+    "different_group_accepted": 5,
+    "different_group_opportunity": 5,
+    "dma_st": 1020,
+    "invocation": 1841,
+    "mxu": 720,
+    "mxu_acc2lmem_overlap": 44,
+    "mxu_dma_st_overlap": 315,
+    "output_read_fire": 9,
+    "rid_acc_free_wait": 0,
+    "rid_o_wait": 262,
+    "same_group_accepted": 0,
+    "same_group_conflict_block": 0
+  },
+  "different_group_accepted_windows": [
+    {"compute_group_busy": "10", "output_group": 0, "time_ps": 72645000},
+    {"compute_group_busy": "10", "output_group": 0, "time_ps": 72945000},
+    {"compute_group_busy": "01", "output_group": 1, "time_ps": 79055000},
+    {"compute_group_busy": "01", "output_group": 1, "time_ps": 79365000},
+    {"compute_group_busy": "01", "output_group": 1, "time_ps": 79655000}
+  ],
+  "ratios_percent": {
+    "acc_drain_hidden_by_mxu": 44.444,
+    "dma_hidden_by_mxu": 30.882
+  },
+  "terminal_quiescent_snapshot": {
+    "acc_copy_issued": [5, 4],
+    "child_inflight_empty_mask": "11111",
+    "child_queue_empty_mask": "11111",
+    "compute_group_busy": "00",
+    "dma_st_issued": 9,
+    "rid_acc_free_completed": [5, 4],
+    "rid_o_completed": 9,
+    "time_ps": 81875000
+  }
+}

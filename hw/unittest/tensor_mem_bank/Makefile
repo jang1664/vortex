@@ -40,7 +40,12 @@ empty :=
 space := $(empty) $(empty)
 DEFINES := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS :=
+TB_ENABLE_URGENCY ?= 1
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).TB_ENABLE_URGENCY=$(TB_ENABLE_URGENCY)
+else
+PARAMS := -GTB_ENABLE_URGENCY=$(TB_ENABLE_URGENCY)
+endif
 
 setup:
 	mkdir -p logs reports

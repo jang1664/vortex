@@ -126,11 +126,13 @@ set chipscope 0
 set hw_debug_module 0
 set num_banks 1
 set merged_mem_if 0
-# Top-level AXI master port count at vortex_afu.v — matches NUM_DMA_CHANNELS in VX_config.vh.
+# Top-level AXI master port count at vortex_afu.v — matches NUM_HBM_PORTS in VX_config.vh.
 # This is independent of PLATFORM_MEMORY_NUM_BANKS (HBM bank count) and of
 # PLATFORM_MERGED_MEMORY_INTERFACE (which only affects VX_axi_adapter internals).
-# Default mirrors the VX_config.vh value; can be overridden via +define+NUM_DMA_CHANNELS=N.
-set num_ports 8
+# When NUM_HBM_PORTS is omitted, VX_config.vh aliases it to NUM_DMA_CHANNELS.
+set num_dma_channels 8
+set num_hbm_ports ""
+set legacy_num_ports ""
 set platform_mem_id_width 32
 set dcr_addr_width 12
 set dcr_data_width 32
@@ -163,7 +165,13 @@ foreach def $vdefines_list {
         set merged_mem_if 1
     }
     if { $name == "NUM_DMA_CHANNELS" && $value ne "" } {
-        set num_ports $value
+        set num_dma_channels $value
+    }
+    if { $name == "NUM_HBM_PORTS" && $value ne "" } {
+        set num_hbm_ports $value
+    }
+    if { $name == "PLATFORM_MEMORY_NUM_PORTS" && $value ne "" } {
+        set legacy_num_ports $value
     }
     if { $name == "PLATFORM_MEMORY_ID_WIDTH" && $value ne "" } {
         set platform_mem_id_width $value
@@ -180,6 +188,19 @@ foreach def $vdefines_list {
     if { $name == "C_S_AXI_CTRL_DATA_WIDTH" && $value ne "" } {
         set s_axi_ctrl_data_width $value
     }
+}
+
+if { $num_hbm_ports ne "" } {
+    set num_ports $num_hbm_ports
+} elseif { $legacy_num_ports ne "" } {
+    set num_ports $legacy_num_ports
+} else {
+    set num_ports $num_dma_channels
+}
+if { $num_hbm_ports ne "" && $legacy_num_ports ne ""
+  && $legacy_num_ports != $num_hbm_ports } {
+    puts "ERROR: PLATFORM_MEMORY_NUM_PORTS=${legacy_num_ports} must match NUM_HBM_PORTS=${num_ports}"
+    exit 1
 }
 
 # VX_afu_wrap.sv: ila_afu width model
@@ -422,6 +443,7 @@ set core [ipx::current_core]
 # groups. Add new entries here when similar drops occur.
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
+    VX_dma_lookahead_if.sv
     VX_dma_unit_align.sv
     VX_dma_gearbox.sv
     VX_dma_lane_aligner.sv
@@ -494,7 +516,7 @@ foreach up [ipx::get_user_parameters] {
 
 ipx::associate_bus_interfaces -busif s_axi_ctrl -clock ap_clk $core
 
-# vortex_afu.v exposes NUM_DMA_CHANNELS top-level AXI masters regardless of merged/bank config.
+# vortex_afu.v exposes NUM_HBM_PORTS top-level AXI masters.
 for {set i 0} {$i < $num_ports} {incr i} {
     ipx::associate_bus_interfaces -busif m_axi_mem_$i -clock ap_clk $core
 }

@@ -1,0 +1,53 @@
+task: wload4-response-slots-ab
+status: complete
+updated: "2026-09-03 10:49"
+goal: >-
+  Measure whether eight Weight response slots reduce WLOAD4 FPINT GEMM
+  performance relative to sixteen slots under the requested TH16 config.
+configuration:
+  base: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+  response_data_ram: 1
+  mxu_wload_num: 4
+  variants:
+    - response_slots: 8
+      build: build_gemm_response_ram_w4
+    - response_slots: 16
+      build: build_gemm_response_ram_w4_slots16
+workloads:
+  - {m: 4, n: 256, k: 256, qblk: 32, qdir: 0, wtrans: 0}
+  - {m: 4, n: 256, k: 256, qblk: 32, qdir: 1, wtrans: 0}
+  - {m: 256, n: 256, k: 256, qblk: 32, qdir: 0, wtrans: 0}
+  - {m: 256, n: 256, k: 256, qblk: 32, qdir: 1, wtrans: 0}
+results:
+  status: pass
+  measurements:
+    - workload: M4_QCOL
+      slots8_cycles: 6471
+      slots16_cycles: 6470
+      slots8_delta_percent: 0.0155
+    - workload: M4_QROW
+      slots8_cycles: 6471
+      slots16_cycles: 6472
+      slots8_delta_percent: -0.0155
+    - workload: M256_QCOL
+      slots8_cycles: 23436
+      slots16_cycles: 23436
+      slots8_delta_percent: 0.0
+    - workload: M256_QROW
+      slots8_cycles: 23435
+      slots16_cycles: 23437
+      slots8_delta_percent: -0.0085
+  conclusion: >-
+    Eight slots caused no meaningful WLOAD4 throughput regression.  The worst
+    measured slowdown was one cycle (0.0155%), while the long QCOL workload
+    was identical and the other two cases were one or two cycles faster.
+    Registered slot recycle is sufficient because completed beats drain and
+    free capacity while the following Weight command streams into the queue.
+pitfalls:
+  - >-
+    WLOAD4 uses eight beats per Weight command. Eight response slots cannot
+    retain two complete commands, but same-cycle slot recycle can still permit
+    streaming overlap as the older command drains.
+  - >-
+    The slots16 comparison must replace, not append, the config's slots8 macro
+    to avoid ambiguous macro redefinition ordering.

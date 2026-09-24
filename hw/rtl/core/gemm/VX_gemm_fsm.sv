@@ -1,14 +1,39 @@
 `include "VX_define.vh"
 
 module VX_gemm_fsm import VX_gpu_pkg::*; #(
-    parameter `STRING INSTANCE_ID = ""
+  parameter `STRING INSTANCE_ID = "",
+  parameter int DMA_STORE_MAX_CHUNK_BEATS =
+      `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     input  wire              clk,
     input  wire              reset,
+    input  wire [31:0]       completed_output_store_count_i,
 
     VX_config_reg_if.slave   cfg_reg_if,
     VX_gemm_fsm_if.master    gemm_fsm_if,
-    output logic gemm_start_o
+    output logic             gemm_start_o,
+    output logic             fsm_idle_o,
+    output logic             pending_work_o,
+    output logic [2:0]       pending_child_o,
+    output logic             pending_scheduler_work_o,
+    output logic [31:0]      pending_work_seq_o
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+    ,output logic            dbg_cmd_meta_valid_o
+    ,output logic [7:0]      dbg_cmd_meta_state_o
+    ,output logic [3:0]      dbg_cmd_meta_phase_o
+    ,output logic [31:0]     dbg_cmd_meta_tile_o
+    ,output logic [31:0]     dbg_cmd_meta_nt_o
+    ,output logic [31:0]     dbg_cmd_meta_mt_o
+    ,output logic [31:0]     dbg_cmd_meta_kt_o
+    ,output logic [31:0]     dbg_cmd_meta_mxu_nt_o
+    ,output logic [31:0]     dbg_cmd_meta_mxu_kt_o
+    ,output logic            dbg_cmd_meta_tile_buf_o
+    ,output logic            dbg_cmd_meta_mxu_buf_o
+    ,output logic            dbg_cmd_meta_acc_group_o
+    ,output logic [31:0]     dbg_cmd_meta_generation_o
+`endif
+`endif
 );
 
   /*
@@ -219,7 +244,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   typedef logic [31:0] u32_t;
   localparam int MM_DIM_W           = `MM_MAX_LOG_DIM + 1;
   localparam int MM_TILE_SZ_W       = `MM_MAX_LOG_TILEDIM + 1;
-  localparam int MM_RID_W           = 4;
+  localparam int MM_RID_W           = GEMM_SYNC_REG_ID_WIDTH;
   localparam int MM_MXU_NT_DIM_MAX  = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
   localparam int MM_MXU_KT_DIM_MAX  = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_KT - 1) >> `CLOG2(MXU_KT);
   localparam int MM_MXU_DIM_W       = `CLOG2(`MAX(MM_MXU_NT_DIM_MAX, MM_MXU_KT_DIM_MAX) + 1);
@@ -320,21 +345,35 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   localparam logic [3:0] OP_DMA_LD        = 4'd1;
   localparam logic [3:0] OP_DMA_ST        = 4'd2;
-  localparam logic [3:0] OP_NOTIFY        = 4'd3;
-  localparam logic [3:0] OP_WAIT          = 4'd4;
+  localparam logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
+      DMA_STORE_MAX_CHUNK_LOG2P1
+          = GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH'(
+              $clog2(DMA_STORE_MAX_CHUNK_BEATS) + 1);
   localparam logic [3:0] OP_W_LDMA_MXU    = 4'd5;
-  localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
-  localparam logic [3:0] OP_SC_LDMA_MXU   = OP_SZ_LDMA_MXU;
-  localparam logic [3:0] OP_ZP_LDMA_MXU   = OP_SZ_LDMA_MXU;
+  localparam logic [3:0] OP_SC_LDMA_MXU   = GEMM_OP_SC_LDMA_MXU;
+  localparam logic [3:0] OP_ZP_LDMA_MXU   = GEMM_OP_ZP_LDMA_MXU;
   localparam logic [3:0] OP_I_LDMA_ARM    = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM    = 4'd8;
-  localparam logic [3:0] OP_CLEAR         = 4'd9;
 
   // --------------------------------------------------------------------------
   // Sync register assignment
   // --------------------------------------------------------------------------
-  localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
-  localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
+  localparam int NUM_SYNC_REGS = GEMM_NUM_SYNC_REGS;
+  localparam int RID_T0 = GEMM_RID_T0, RID_W0 = GEMM_RID_W0;
+  localparam int RID_SZ0 = GEMM_RID_SZ0, RID_G0 = GEMM_RID_G0;
+  localparam int RID_O = GEMM_RID_O, RID_T1 = GEMM_RID_T1;
+  localparam int RID_W1 = GEMM_RID_W1, RID_SZ1 = GEMM_RID_SZ1;
+  localparam int RID_G1 = GEMM_RID_G1;
+  localparam int RID_ACC_FREE0 = GEMM_RID_ACC_FREE0;
+  localparam int RID_ACC_FREE1 = GEMM_RID_ACC_FREE1;
+  localparam int RID_SC0 = GEMM_RID_SC0, RID_ZP0 = GEMM_RID_ZP0;
+  localparam int RID_SC1 = GEMM_RID_SC1, RID_ZP1 = GEMM_RID_ZP1;
+  localparam int RID_W_CONSUME0 = GEMM_RID_W_CONSUME0;
+  localparam int RID_W_CONSUME1 = GEMM_RID_W_CONSUME1;
+  localparam int RID_SC_CONSUME0 = GEMM_RID_SC_CONSUME0;
+  localparam int RID_SC_CONSUME1 = GEMM_RID_SC_CONSUME1;
+  localparam int RID_ZP_CONSUME0 = GEMM_RID_ZP_CONSUME0;
+  localparam int RID_ZP_CONSUME1 = GEMM_RID_ZP_CONSUME1;
   // Global sync sequence stride per DMA tile.
   // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
   localparam int MXU_N_PER_TILE_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
@@ -342,12 +381,37 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int MXU_PER_TILE_MAX   = MXU_N_PER_TILE_MAX * MXU_K_PER_TILE_MAX;
 
   function automatic mm_rid_t rid_tile   (input logic buf_sel);  return mm_rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
-  function automatic mm_rid_t rid_w_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
-  function automatic mm_rid_t rid_sz_mxu (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_SZ1 : RID_SZ0); endfunction
-  function automatic mm_rid_t rid_g_mxu  (input logic mxu_buf);  return mm_rid_t'(mxu_buf ? RID_G1  : RID_G0);  endfunction
+  function automatic mm_rid_t rid_w_mxu(input gemm_wreg_idx_t w_buf);
+    return mm_rid_t'(w_buf ? RID_W1 : RID_W0);
+  endfunction
+  function automatic mm_rid_t rid_sc_mxu(input gemm_qreg_idx_t s_buf);
+    return mm_rid_t'(s_buf ? RID_SC1 : RID_SC0);
+  endfunction
+  function automatic mm_rid_t rid_zp_mxu(input gemm_qreg_idx_t z_buf);
+    return mm_rid_t'(z_buf ? RID_ZP1 : RID_ZP0);
+  endfunction
+  function automatic mm_rid_t rid_g_mxu(input logic g_buf);
+    return mm_rid_t'(g_buf ? RID_G1 : RID_G0);
+  endfunction
+  function automatic mm_rid_t rid_w_consume(input gemm_wreg_idx_t w_buf);
+    return mm_rid_t'(w_buf ? RID_W_CONSUME1 : RID_W_CONSUME0);
+  endfunction
+  function automatic mm_rid_t rid_sc_consume(input gemm_qreg_idx_t s_buf);
+    return mm_rid_t'(s_buf ? RID_SC_CONSUME1 : RID_SC_CONSUME0);
+  endfunction
+  function automatic mm_rid_t rid_zp_consume(input gemm_qreg_idx_t z_buf);
+    return mm_rid_t'(z_buf ? RID_ZP_CONSUME1 : RID_ZP_CONSUME0);
+  endfunction
+  function automatic mm_rid_t rid_acc_free(input logic acc_group);
+    return mm_rid_t'(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0);
+  endfunction
 
-  mm_rid_t rid_o = mm_rid_t'(RID_O);  // output sequencing (local to store stage only)
+  mm_rid_t rid_o = mm_rid_t'(RID_O);  // completed output DMA store count
   u32_t o_store_issue_q, o_store_issue_d;
+  u32_t acc_copy_issue_q [2];
+  u32_t acc_copy_issue_d [2];
+  logic tile_acc_group_q, tile_acc_group_d;
+  u32_t tile_acc_reuse_target_q, tile_acc_reuse_target_d;
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
@@ -362,24 +426,55 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     make_instr = {size_bytes[27:0], op};
   endfunction
 
-  function automatic gemm_unified_cmd_t make_wait_cmd(input mm_rid_t reg_id, input u32_t target);
-    gemm_unified_cmd_t t;
+  function automatic gemm_wait_meta_t make_wait_meta(input mm_rid_t reg_id, input u32_t target);
+    gemm_wait_meta_t t;
     begin
       t = '0;
-      t.instr    = {24'd0, OP_WAIT};
-      t.rs1_data  = {{(`XLEN-MM_RID_W){1'b0}}, reg_id};
-      t.rs2_data  = {{(`XLEN-32){1'b0}}, target[31:0]};
+      t.valid  = 1'b1;
+      t.reg_id = GEMM_SYNC_REG_ID_WIDTH'(reg_id);
+      t.target = target;
       return t;
     end
   endfunction
 
-  function automatic gemm_unified_cmd_t make_notify_cmd(input mm_rid_t reg_id, input u32_t value, input logic set_mode);
-    gemm_unified_cmd_t t;
+  function automatic gemm_prepare_meta_t make_source_prepare(
+    input int unsigned max_beats
+  );
+    gemm_prepare_meta_t t;
     begin
       t = '0;
-      t.instr   = {24'd0, OP_NOTIFY};
-      t.rs1_data = {{(`XLEN-MM_RID_W){1'b0}}, reg_id};
-      t.rs2_data = {{(`XLEN-32){1'b0}}, set_mode, value[30:0]};
+      t.valid = 1'b1;
+      t.mode = GEMM_PREPARE_SOURCE_READ;
+      t.max_beats = GEMM_PREFETCH_MAX_BEATS_WIDTH'(max_beats);
+      return t;
+    end
+  endfunction
+
+  function automatic gemm_prepare_meta_t make_source_prepare_wait(
+    input mm_rid_t reg_id,
+    input u32_t target,
+    input int unsigned max_beats
+  );
+    gemm_prepare_meta_t t;
+    begin
+      t = make_source_prepare(max_beats);
+      t.waits[0] = make_wait_meta(reg_id, target);
+      return t;
+    end
+  endfunction
+
+  function automatic gemm_notify_meta_t make_notify_meta(
+    input mm_rid_t reg_id,
+    input u32_t value,
+    input logic set_mode
+  );
+    gemm_notify_meta_t t;
+    begin
+      t = '0;
+      t.valid    = 1'b1;
+      t.reg_id   = GEMM_SYNC_REG_ID_WIDTH'(reg_id);
+      t.set_mode = set_mode;
+      t.value    = value;
       return t;
     end
   endfunction
@@ -402,6 +497,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.rs2_data = dram_src;
       c.bound    = 16'd1;
       c.stride   = '0;
+      c.dma_priority = 1'b1;
+      c.dma_max_chunk_log2p1 = '0;
+      c.prepare = make_source_prepare(GEMM_TILE_DMA_PREFETCH_MAX_BEATS);
       return c;
     end
   endfunction
@@ -424,6 +522,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.rs2_data = lmem_src;
       c.bound    = 16'd1;
       c.stride   = '0;
+      c.dma_priority = 1'b0;
+      c.dma_max_chunk_log2p1 = DMA_STORE_MAX_CHUNK_LOG2P1;
       return c;
     end
   endfunction
@@ -660,6 +760,36 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   state_t state_q, state_d;
 
+  function automatic logic [2:0] state_child(input state_t state);
+    unique case (state)
+      S_MXU_PRE_CUR_W,
+      S_MXU_PRE_NEXT_W: state_child = 3'd1;
+      S_MXU_PRE_CUR_SC,
+      S_MXU_PRE_NEXT_SC: state_child = 3'd2;
+      S_MXU_PRE_CUR_ZP,
+      S_MXU_PRE_NEXT_ZP: state_child = 3'd3;
+      S_MXU_ARM_GEMM: state_child = 3'd0;
+      S_O_ACC2LMEM: state_child = 3'd4;
+      default: state_child = 3'd5;
+    endcase
+  endfunction
+
+  function automatic logic state_emits_work(input state_t state);
+    unique case (state)
+      S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP,
+      S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP,
+      S_MXU_PRE_CUR_W, S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP,
+      S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP,
+      S_MXU_ARM_GEMM, S_O_ACC2LMEM, S_O_LMEM2DRAM,
+      S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W,
+      S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP: state_emits_work = 1'b1;
+      default: state_emits_work = 1'b0;
+    endcase
+  endfunction
+
+  wire state_child_ready
+      = gemm_fsm_if.flag.child_ready[state_child(state_q)];
+
   // tile pipeline registers
   u32_t tile_cur_q, tile_cur_d;
   u32_t tile_pre_q, tile_pre_d;   // next tile being/been preloaded
@@ -674,13 +804,175 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // mxu loop regs for current tile
   mm_mxu_dim_t nt_mxu_q, nt_mxu_d;
   mm_mxu_dim_t kt_mxu_q, kt_mxu_d;
-  logic        mxu_buf_q, mxu_buf_d;
+  gemm_wreg_idx_t w_buf_q, w_buf_d;
+  gemm_qreg_idx_t s_buf_q, s_buf_d;
+  gemm_qreg_idx_t z_buf_q, z_buf_d;
+  logic        g_buf_q, g_buf_d;
+  logic [31:0] gemm_expected_count_q [2];
+  logic [31:0] w_consume_issued_q [2];
+  logic [31:0] sc_consume_issued_q [2];
+  logic [31:0] zp_consume_issued_q [2];
+  logic        prior_g_wait_valid_q;
+  mm_rid_t     prior_g_wait_rid_q;
+  logic [31:0] prior_g_wait_target_q;
   mm_mxu_dim_t o_nt_mxu_q, o_nt_mxu_d;
+  logic [63:0] output_tile_row_base_q, output_tile_row_base_d;
+  logic [63:0] output_lmem_base_q, output_lmem_base_d;
+  u32_t output_global_nt_base_q, output_global_nt_base_d;
+  u32_t output_nb_stride_q, output_nb_stride_d;
+  u32_t output_nb_bytes_q, output_nb_bytes_d;
+  mm_mxu_dim_t output_nt_mxu_dim_q, output_nt_mxu_dim_d;
+  logic [63:0] output_dram_addr_q, output_dram_addr_d;
+  logic [63:0] output_lmem_addr_q, output_lmem_addr_d;
+
+`ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM_CMD_PERF
+  // Normalized command context is captured at the exact FSM-to-child FIFO
+  // handshake.  Keep it beside the synthesized command instead of encoding
+  // debug-only state in gemm_unified_cmd_t.
+  always_comb begin
+    logic [31:0] meta_kt_eff;
+    logic [31:0] meta_kt_mxu_dim;
+
+    dbg_cmd_meta_valid_o = out_start_d && state_child_ready;
+    dbg_cmd_meta_state_o = state_q;
+    dbg_cmd_meta_phase_o = 4'd1;
+    dbg_cmd_meta_tile_o = tile_cur_q;
+    dbg_cmd_meta_nt_o = 32'(tile_cur_nt_q);
+    dbg_cmd_meta_mt_o = 32'(tile_cur_mt_q);
+    dbg_cmd_meta_kt_o = 32'(tile_cur_kt_q);
+    dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q);
+    dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q);
+    dbg_cmd_meta_tile_buf_o = tile_cur_q[0];
+    dbg_cmd_meta_mxu_buf_o = w_buf_q[0];
+    dbg_cmd_meta_acc_group_o = tile_acc_group_q;
+    dbg_cmd_meta_generation_o = buf_gen(tile_cur_q);
+
+    unique case (state_q)
+      S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = 32'd0;
+        dbg_cmd_meta_nt_o = 32'd0;
+        dbg_cmd_meta_mt_o = 32'd0;
+        dbg_cmd_meta_kt_o = 32'd0;
+        dbg_cmd_meta_tile_buf_o = 1'b0;
+        dbg_cmd_meta_generation_o = 32'd1;
+      end
+      S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = 32'd1;
+        dbg_cmd_meta_nt_o = 32'(tile_pre_nt_q);
+        dbg_cmd_meta_mt_o = 32'(tile_pre_mt_q);
+        dbg_cmd_meta_kt_o = 32'(tile_pre_kt_q);
+        dbg_cmd_meta_tile_buf_o = 1'b1;
+        dbg_cmd_meta_generation_o = 32'd1;
+      end
+      S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W,
+      S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP: begin
+        dbg_cmd_meta_phase_o = 4'd0;
+        dbg_cmd_meta_tile_o = tile_pre_q;
+        dbg_cmd_meta_nt_o = 32'(tile_pre_nt_q);
+        dbg_cmd_meta_mt_o = 32'(tile_pre_mt_q);
+        dbg_cmd_meta_kt_o = 32'(tile_pre_kt_q);
+        dbg_cmd_meta_tile_buf_o = tile_pre_q[0];
+        dbg_cmd_meta_generation_o = buf_gen(tile_pre_q);
+      end
+      S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
+        meta_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
+        meta_kt_mxu_dim = ceil_div_log2(meta_kt_eff, $clog2(MXU_KT));
+        dbg_cmd_meta_mxu_buf_o = ~w_buf_q[0];
+        if (32'(kt_mxu_q) + 1 < meta_kt_mxu_dim) begin
+          dbg_cmd_meta_mxu_kt_o = 32'(kt_mxu_q) + 1;
+        end else begin
+          dbg_cmd_meta_mxu_nt_o = 32'(nt_mxu_q) + 1;
+          dbg_cmd_meta_mxu_kt_o = 32'd0;
+        end
+      end
+      S_MXU_ARM_GEMM: dbg_cmd_meta_phase_o = 4'd2;
+      S_O_ACC2LMEM: begin
+        dbg_cmd_meta_phase_o = 4'd3;
+        dbg_cmd_meta_mxu_nt_o = 32'(o_nt_mxu_q);
+      end
+      S_O_LMEM2DRAM: begin
+        dbg_cmd_meta_phase_o = 4'd4;
+        dbg_cmd_meta_mxu_nt_o = 32'(o_nt_mxu_q);
+      end
+      default: begin
+      end
+    endcase
+  end
+`endif
+`endif
 
   // cfg only in idle
   always_comb begin
-    cfg_reg_if.ready = (state_q == S_IDLE);
+    fsm_idle_o = (state_q == S_IDLE);
+    pending_work_o = state_emits_work(state_q);
+    pending_child_o = state_child(state_q);
+    cfg_reg_if.ready = fsm_idle_o && gemm_fsm_if.flag.done;
   end
+
+  // The scoreboard admission probe must be independent of child_ready.
+  // Keep this predecode outside the command-construction always_comb block;
+  // otherwise tools conservatively form child_ready -> FSM -> probe_ready ->
+  // child_ready even though the mathematical sequence uses registered state
+  // only.
+  always_comb begin
+    mm_tile_sz_t sched_kt_eff;
+    mm_mxu_dim_t sched_kt_mxu_dim;
+    mm_mxu_dim_t sched_next_nt_mxu;
+    mm_mxu_dim_t sched_next_kt_mxu;
+    mm_mxu_linear_t sched_mxu_linear;
+    mm_mxu_linear_t sched_next_mxu_linear;
+    logic sched_has_next_mxu;
+    u32_t sched_tile_mxu_base;
+
+    sched_kt_eff = (tile_cur_kt_q == kt_dim_q - 1) ? k_last_q : KT_q;
+    sched_kt_mxu_dim = mm_mxu_dim_t'(
+        div_log2(u32_t'(sched_kt_eff), $clog2(MXU_KT)));
+    sched_mxu_linear = mm_mxu_linear_t'(
+        mm_mxu_linear_t'(nt_mxu_q) * mm_mxu_linear_t'(sched_kt_mxu_dim)
+      + mm_mxu_linear_t'(kt_mxu_q));
+    sched_next_kt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
+                      ? '0 : (kt_mxu_q + 1);
+    sched_next_nt_mxu = (kt_mxu_q + 1 == sched_kt_mxu_dim)
+                      ? (nt_mxu_q + 1) : nt_mxu_q;
+    sched_has_next_mxu = sched_next_nt_mxu < mm_mxu_dim_t'(
+        ceil_div_log2(u32_t'((tile_cur_nt_q == nt_dim_q - 1)
+                           ? n_last_q : NT_q), $clog2(MXU_NT)));
+    sched_next_mxu_linear = mm_mxu_linear_t'(
+        mm_mxu_linear_t'(sched_next_nt_mxu)
+          * mm_mxu_linear_t'(sched_kt_mxu_dim)
+      + mm_mxu_linear_t'(sched_next_kt_mxu));
+    sched_tile_mxu_base = tile_cur_q * u32_t'(MXU_PER_TILE_MAX);
+
+    pending_scheduler_work_o = 1'b0;
+    pending_work_seq_o = '0;
+    unique case (state_q)
+      S_MXU_PRE_CUR_W, S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP,
+      S_MXU_ARM_GEMM: begin
+        pending_scheduler_work_o = 1'b1;
+        pending_work_seq_o = sched_tile_mxu_base
+                           + u32_t'(sched_mxu_linear) + 32'd1;
+      end
+      S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP: begin
+        pending_scheduler_work_o = sched_has_next_mxu;
+        pending_work_seq_o = sched_tile_mxu_base
+                           + u32_t'(sched_next_mxu_linear) + 32'd1;
+      end
+      default:;
+    endcase
+  end
+
+  wire gemm_invocation_accept
+      = (state_q == S_IDLE)
+     && cfg_reg_if.regs[CFG_R_CONTROL][0]
+     && cfg_reg_if.valid
+     && cfg_reg_if.ready;
+  wire gemm_arm_parent_accept
+      = (state_q == S_MXU_ARM_GEMM)
+     && out_start_d
+     && gemm_fsm_if.flag.child_ready[0];
 
   // --------------------------------------------------------------------------
   // sequential
@@ -713,9 +1005,24 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       nt_mxu_q <= 0;
       kt_mxu_q <= 0;
-      mxu_buf_q <= 1'b0;
+      w_buf_q <= '0;
+      s_buf_q <= '0;
+      z_buf_q <= '0;
+      g_buf_q <= 1'b0;
       o_nt_mxu_q <= 0;
       o_store_issue_q <= '0;
+      acc_copy_issue_q[0] <= '0;
+      acc_copy_issue_q[1] <= '0;
+      tile_acc_group_q <= 1'b0;
+      tile_acc_reuse_target_q <= '0;
+      output_tile_row_base_q <= '0;
+      output_lmem_base_q <= '0;
+      output_global_nt_base_q <= '0;
+      output_nb_stride_q <= '0;
+      output_nb_bytes_q <= '0;
+      output_nt_mxu_dim_q <= '0;
+      output_dram_addr_q <= '0;
+      output_lmem_addr_q <= '0;
 
       mt_base_q <= '0;
       nt_base_q <= '0;
@@ -747,9 +1054,32 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       nt_mxu_q  <= nt_mxu_d;
       kt_mxu_q  <= kt_mxu_d;
-      mxu_buf_q <= mxu_buf_d;
+      w_buf_q <= w_buf_d;
+      s_buf_q <= s_buf_d;
+      z_buf_q <= z_buf_d;
+      g_buf_q <= g_buf_d;
       o_nt_mxu_q <= o_nt_mxu_d;
-      o_store_issue_q <= o_store_issue_d;
+      output_tile_row_base_q <= output_tile_row_base_d;
+      output_lmem_base_q <= output_lmem_base_d;
+      output_global_nt_base_q <= output_global_nt_base_d;
+      output_nb_stride_q <= output_nb_stride_d;
+      output_nb_bytes_q <= output_nb_bytes_d;
+      output_nt_mxu_dim_q <= output_nt_mxu_dim_d;
+      output_dram_addr_q <= output_dram_addr_d;
+      output_lmem_addr_q <= output_lmem_addr_d;
+      if (gemm_invocation_accept) begin
+        o_store_issue_q <= '0;
+        acc_copy_issue_q[0] <= '0;
+        acc_copy_issue_q[1] <= '0;
+        tile_acc_group_q <= 1'b0;
+        tile_acc_reuse_target_q <= '0;
+      end else begin
+        o_store_issue_q <= o_store_issue_d;
+        acc_copy_issue_q[0] <= acc_copy_issue_d[0];
+        acc_copy_issue_q[1] <= acc_copy_issue_d[1];
+        tile_acc_group_q <= tile_acc_group_d;
+        tile_acc_reuse_target_q <= tile_acc_reuse_target_d;
+      end
 
       if (state_q == S_IDLE && cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
         mm_dim_t mt_dim_n;
@@ -834,6 +1164,35 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   end
 
   always_ff @(posedge clk) begin
+    if (reset || gemm_invocation_accept) begin
+      gemm_expected_count_q[0] <= 32'd0;
+      gemm_expected_count_q[1] <= 32'd0;
+      for (int bank = 0; bank < 2; ++bank)
+        w_consume_issued_q[bank] <= 32'd0;
+      sc_consume_issued_q[0] <= 32'd0;
+      sc_consume_issued_q[1] <= 32'd0;
+      zp_consume_issued_q[0] <= 32'd0;
+      zp_consume_issued_q[1] <= 32'd0;
+      prior_g_wait_valid_q <= 1'b0;
+      prior_g_wait_rid_q <= '0;
+      prior_g_wait_target_q <= '0;
+    end else if (gemm_arm_parent_accept) begin
+      gemm_expected_count_q[g_buf_q]
+          <= gemm_expected_count_q[g_buf_q] + 32'd1;
+      w_consume_issued_q[w_buf_q]
+          <= w_consume_issued_q[w_buf_q] + 32'd1;
+      sc_consume_issued_q[s_buf_q]
+          <= sc_consume_issued_q[s_buf_q] + 32'd1;
+      zp_consume_issued_q[z_buf_q]
+          <= zp_consume_issued_q[z_buf_q] + 32'd1;
+      prior_g_wait_valid_q <= 1'b1;
+      prior_g_wait_rid_q <= rid_g_mxu(g_buf_q);
+      prior_g_wait_target_q
+          <= gemm_expected_count_q[g_buf_q] + 32'd1;
+    end
+  end
+
+  always_ff @(posedge clk) begin
     if (reset) begin
       M_orig <= 32'd0;
       N_orig <= 32'd0;
@@ -892,8 +1251,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // gemm control
     u32_t global_k;
     logic is_accum, is_last;   // per microtile
+    logic notify_on_writeback;
     logic last_kt_tile;        // per DMA tile (kt_cur)
-    u32_t gemm_done_target;
 
     // LMEM addresses
     logic [63:0] lmem_in_mxu, lmem_out_slice;
@@ -923,13 +1282,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t dma_nt_mxu_dim;
     u32_t acc_nb_stride;
     u32_t acc_group_base;
+    logic acc_group;
     u32_t acc_base_nb;
-    u32_t output_nb_bytes;
-    u32_t output_nb_stride_bytes;
-    u32_t global_mt;
-    u32_t global_nt_mxu;
-    logic [63:0] lmem_obuf_nb;
-    logic [63:0] dram_out_nb;
+    u32_t output_global_nt_mxu;
+    logic [63:0] output_lmem_addr;
+    logic [63:0] output_dram_addr;
 
     groups_tile = mm_group_t'(ceil_div_log2(u32_t'(KT_q), job_q.orig_qblk[5:0]));
     groups_mxu  = mm_group_t'(ceil_div_log2(MXU_KT, job_q.orig_qblk[5:0]));
@@ -951,14 +1308,29 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     nt_mxu_d  = nt_mxu_q;
     kt_mxu_d  = kt_mxu_q;
-    mxu_buf_d = mxu_buf_q;
+    w_buf_d = w_buf_q;
+    s_buf_d = s_buf_q;
+    z_buf_d = z_buf_q;
+    g_buf_d = g_buf_q;
     o_nt_mxu_d = o_nt_mxu_q;
+    acc_copy_issue_d[0] = acc_copy_issue_q[0];
+    acc_copy_issue_d[1] = acc_copy_issue_q[1];
+    tile_acc_group_d = tile_acc_group_q;
+    tile_acc_reuse_target_d = tile_acc_reuse_target_q;
+    output_tile_row_base_d = output_tile_row_base_q;
+    output_lmem_base_d = output_lmem_base_q;
+    output_global_nt_base_d = output_global_nt_base_q;
+    output_nb_stride_d = output_nb_stride_q;
+    output_nb_bytes_d = output_nb_bytes_q;
+    output_nt_mxu_dim_d = output_nt_mxu_dim_q;
+    output_dram_addr_d = output_dram_addr_q;
+    output_lmem_addr_d = output_lmem_addr_q;
 
     out_cmd_d   = '0;
     out_start_d = 1'b0;
     o_store_issue_d = o_store_issue_q;
 
-    can_emit = gemm_fsm_if.flag.idle;
+    can_emit = state_child_ready;
 
     // tile totals (after start latch mt_dim_q/.. valid)
     tile_total = mt_dim_q * nt_dim_q * kt_dim_q;
@@ -1003,6 +1375,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     global_k = (u32_t'(kt_cur) << LOG2_KT_q) + kt_mxu_q * MXU_KT;
     is_accum = (global_k != 0);
     is_last  = (global_k + MXU_KT >= job_q.target_K);
+    notify_on_writeback = !has_next_mxu && last_kt_tile;
 
     // ------------------------------------------------------------------------
     // LMEM offsets for current microtile (ROW-MAJOR within each DMA tile buffer)
@@ -1046,8 +1419,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     dma_nt_mxu_dim   = u32_t'(NT_q) >> `CLOG2(MXU_NT);
     acc_nb_stride    = u32_t'(ACC_DBUF_STRIDE) >> (LOG2_NT_q - `CLOG2(MXU_NT));
-    acc_group_base   = ((u32_t'(tile_cur_nt_q) + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1)
-                     ? u32_t'(ACC_DBUF_STRIDE) : 32'd0;
+    acc_group = (u32_t'(tile_cur_nt_q)
+               + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1;
+    acc_group_base = acc_group ? u32_t'(ACC_DBUF_STRIDE) : 32'd0;
     acc_base_nb      = acc_group_base + (u32_t'(nt_mxu_q) * acc_nb_stride);
 
     // Accum/output slice base. Each 32-wide N microtile accumulates in its own
@@ -1108,20 +1482,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
 
 
-    gemm_done_target = global_mxu_seq;
 
     out_bytes_acc  = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
     out_bytes_fp16 = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
     output_nt_mxu_dim = nt_mxu_dim;
-    output_nb_bytes = u32_t'(mt_eff_cur) * u32_t'(MXU_NT * FP16_BYTES);
-    output_nb_stride_bytes = align8_u32(u32_t'(mt_eff_cur)) * u32_t'(MXU_NT * FP16_BYTES);
-    global_mt = mt_base_q + u32_t'(mt_cur);
-    global_nt_mxu = (nt_base_q + u32_t'(nt_cur)) * dma_nt_mxu_dim
-                  + u32_t'(o_nt_mxu_q);
-    lmem_obuf_nb = job_q.lmem_obuf_base + 64'(o_nt_mxu_q) * 64'(output_nb_stride_bytes);
-    dram_out_nb = job_q.output_base
-                + 64'(global_mt) * 64'(MT_q) * 64'(job_q.orig_N) * FP16_BYTES
-                + 64'(global_nt_mxu) * 64'(output_nb_stride_bytes);
+    output_global_nt_mxu = output_global_nt_base_q
+                         + u32_t'(o_nt_mxu_q);
+    output_lmem_addr = output_lmem_base_q
+                     + 64'(o_nt_mxu_q) * 64'(output_nb_stride_q);
+    output_dram_addr = output_tile_row_base_q
+                     + 64'(output_global_nt_mxu)
+                     * 64'(output_nb_stride_q);
 
     gemm_start_o = 1'b0;
 
@@ -1142,9 +1513,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         pre_valid_d = 1'b0;
         nt_mxu_d    = 0;
         kt_mxu_d    = 0;
-        mxu_buf_d   = 1'b0;
+        w_buf_d     = '0;
+        s_buf_d     = '0;
+        z_buf_d     = '0;
+        g_buf_d     = 1'b0;
         o_nt_mxu_d  = 0;
         o_store_issue_d = 0;
+        acc_copy_issue_d[0] = 0;
+        acc_copy_issue_d[1] = 0;
+        tile_acc_group_d = 1'b0;
+        tile_acc_reuse_target_d = 0;
 
         if (cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
           job_d.input_base  = cfg_get_u64(CFG_R_INPUT_BASE_LO,  CFG_R_INPUT_BASE_HI);
@@ -1201,135 +1579,127 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // Warmup preload tile0 (buf0): I/W/SC/ZP then notify rid_tile(buf0)
       // ----------------------------------------------------------------------
       S_PRE0_LD_I: begin
-        if (can_emit) begin
-          mm_dim_t nt0, mt0, kt0;
-          mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          nt0 = '0;
-          mt0 = '0;
-          kt0 = '0;
-          tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        mm_dim_t nt0, mt0, kt0;
+        mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+        nt0 = '0;
+        mt0 = '0;
+        kt0 = '0;
+        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
-          out_cmd_d   = make_dma_ld(job_q.lmem_ibuf0_base,
-                                   input_tile_addr(job_q, mt0, kt0),
-                                   (mt_eff0*kt_eff0*FP16_BYTES),
-                                   1'b0, 1);
-          out_cmd_d.rs1 = mt0;
-          out_cmd_d.rs2 = kt0;
-          out_cmd_d.rd  = 0;
-          out_start_d = 1'b1;
+        out_cmd_d   = make_dma_ld(job_q.lmem_ibuf0_base,
+                                 input_tile_addr(job_q, mt0, kt0),
+                                 (mt_eff0*kt_eff0*FP16_BYTES),
+                                 1'b0, 1);
+        out_cmd_d.rs1 = mt0;
+        out_cmd_d.rs2 = kt0;
+        out_cmd_d.rd  = 0;
+        out_start_d = 1'b1;
+        if (can_emit)
           state_d     = S_PRE0_LD_W;
-        end
       end
 
       S_PRE0_LD_W: begin
-        if (can_emit) begin
-          mm_dim_t nt0, mt0, kt0;
-          mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          nt0 = '0;
-          mt0 = '0;
-          kt0 = '0;
-          tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        mm_dim_t nt0, mt0, kt0;
+        mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+        nt0 = '0;
+        mt0 = '0;
+        kt0 = '0;
+        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
-          out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
-                                   weight_tile_addr(job_q, nt0, kt0),
-                                   (kt_eff0 * ceil_div_log2(nt_eff0, `CLOG2(INT4_BYTES))),
-                                   1'b0, 1);
-          out_cmd_d.rs1 = kt0;
-          out_cmd_d.rs2 = nt0;
-          out_cmd_d.rd  = 1;
-          out_start_d = 1'b1;
+        out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
+                                 weight_tile_addr(job_q, nt0, kt0),
+                                 (kt_eff0 * ceil_div_log2(nt_eff0, `CLOG2(INT4_BYTES))),
+                                 1'b0, 1);
+        out_cmd_d.rs1 = kt0;
+        out_cmd_d.rs2 = nt0;
+        out_cmd_d.rd  = 1;
+        out_start_d = 1'b1;
+        if (can_emit)
           state_d     = S_PRE0_LD_SC;
-        end
       end
 
       S_PRE0_LD_SC: begin
-        if (can_emit) begin
-          mm_dim_t nt0, mt0, kt0;
-          mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          mm_group_t groups_eff;
-          nt0 = '0;
-          mt0 = '0;
-          kt0 = '0;
-          tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        mm_dim_t nt0, mt0, kt0;
+        mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+        mm_group_t groups_eff;
+        nt0 = '0;
+        mt0 = '0;
+        kt0 = '0;
+        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
-                                    scale_tile_addr(job_q, nt0, kt0),
-                                    (groups_eff*nt_eff0*FP16_BYTES),
-                                    1'b0, 1);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
-                                    scale_tile_addr(job_q, nt0, kt0),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_eff0), u32_t'(nt_eff0), FP16_BYTES),
-                                    1'b0, 1);
-            out_cmd_d.groups_eff = kt_eff0;
-          end
-          out_cmd_d.rs2 = nt0;
-          out_cmd_d.rd  = 2;
-          out_start_d = 1'b1;
-          state_d     = S_PRE0_LD_ZP;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
+                                  scale_tile_addr(job_q, nt0, kt0),
+                                  (groups_eff*nt_eff0*FP16_BYTES),
+                                  1'b0, 1);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
+                                  scale_tile_addr(job_q, nt0, kt0),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_eff0), u32_t'(nt_eff0), FP16_BYTES),
+                                  1'b0, 1);
+          out_cmd_d.groups_eff = kt_eff0;
         end
+        out_cmd_d.rs2 = nt0;
+        out_cmd_d.rd  = 2;
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE0_LD_ZP;
       end
 
       S_PRE0_LD_ZP: begin
-        if (can_emit) begin
-          mm_dim_t nt0, mt0, kt0;
-          mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          mm_group_t groups_eff, groups_full;
+        mm_dim_t nt0, mt0, kt0;
+        mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+        mm_group_t groups_eff;
 
-          nt0 = '0;
-          mt0 = '0;
-          kt0 = '0;
-          tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        nt0 = '0;
+        mt0 = '0;
+        kt0 = '0;
+        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
-          groups_full = ceil_div_log2(u32_t'(KT_q), job_q.orig_qblk[5:0]);
-
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
-                                    zp_tile_addr(job_q, nt0, kt0),
-                                    (groups_eff*nt_eff0*INT16_BYTES),
-                                    1'b0, 1);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
-                                    zp_tile_addr(job_q, nt0, kt0),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_eff0), u32_t'(nt_eff0), INT16_BYTES),
-                                    1'b0, 1);
-            out_cmd_d.groups_eff = kt_eff0;
-          end
-          out_cmd_d.rs2 = nt0;
-          out_cmd_d.rd  = 3;
-          out_start_d = 1'b1;
-          state_d     = S_PRE0_LD_DONE_NTF;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
+                                  zp_tile_addr(job_q, nt0, kt0),
+                                  (groups_eff*nt_eff0*INT16_BYTES),
+                                  1'b0, 1);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
+                                  zp_tile_addr(job_q, nt0, kt0),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_eff0), u32_t'(nt_eff0), INT16_BYTES),
+                                  1'b0, 1);
+          out_cmd_d.groups_eff = kt_eff0;
         end
+        out_cmd_d.rs2 = nt0;
+        out_cmd_d.rd  = 3;
+        out_cmd_d.notify = make_notify_meta(rid_tile(1'b0),
+                                             (4*1 + 4), 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE0_LD_DONE_NTF;
       end
 
       S_PRE0_LD_DONE_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_tile(1'b0), (4*1 + 4), 1'b1);
-          out_start_d = 1'b1;
-          tile_cur_d  = 0;
-          tile_cur_nt_d = '0;
-          tile_cur_mt_d = '0;
-          tile_cur_kt_d = '0;
-          if (has_tile1_init && (tile_total > 1)) begin
-            tile_pre_d  = 1;
-            tile_pre_nt_d = nt1_init;
-            tile_pre_mt_d = mt1_init;
-            tile_pre_kt_d = kt1_init;
-            pre_valid_d = 1'b1;
-            state_d     = S_PRE1_LD_I;
-          end else begin
-            tile_pre_d  = 0;
-            tile_pre_nt_d = '0;
-            tile_pre_mt_d = '0;
-            tile_pre_kt_d = '0;
-            pre_valid_d = 1'b0;
-            state_d     = S_WAIT_CUR_TILE_READY;
-          end
+        tile_cur_d  = 0;
+        tile_cur_nt_d = '0;
+        tile_cur_mt_d = '0;
+        tile_cur_kt_d = '0;
+        if (has_tile1_init && (tile_total > 1)) begin
+          tile_pre_d  = 1;
+          tile_pre_nt_d = nt1_init;
+          tile_pre_mt_d = mt1_init;
+          tile_pre_kt_d = kt1_init;
+          pre_valid_d = 1'b1;
+          state_d     = S_PRE1_LD_I;
+        end else begin
+          tile_pre_d  = 0;
+          tile_pre_nt_d = '0;
+          tile_pre_mt_d = '0;
+          tile_pre_kt_d = '0;
+          pre_valid_d = 1'b0;
+          state_d     = S_WAIT_CUR_TILE_READY;
         end
       end
 
@@ -1337,507 +1707,577 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // Warmup preload tile1 (buf1)
       // ----------------------------------------------------------------------
       S_PRE1_LD_I: begin
-        if (can_emit) begin
-          mm_dim_t nt1, mt1, kt1;
-          mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          nt1 = nt1_init;
-          mt1 = mt1_init;
-          kt1 = kt1_init;
-          tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        mm_dim_t nt1, mt1, kt1;
+        mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+        nt1 = nt1_init;
+        mt1 = mt1_init;
+        kt1 = kt1_init;
+        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
-          out_cmd_d   = make_dma_ld(job_q.lmem_ibuf1_base,
-                                   input_tile_addr(job_q, mt1, kt1),
-                                   (mt_eff1*kt_eff1*FP16_BYTES),
-                                   1'b1, 1);
-          out_cmd_d.rs1 = mt1;
-          out_cmd_d.rs2 = kt1;
-          out_cmd_d.rd  = 0;
-          out_start_d = 1'b1;
+        out_cmd_d   = make_dma_ld(job_q.lmem_ibuf1_base,
+                                 input_tile_addr(job_q, mt1, kt1),
+                                 (mt_eff1*kt_eff1*FP16_BYTES),
+                                 1'b1, 1);
+        out_cmd_d.rs1 = mt1;
+        out_cmd_d.rs2 = kt1;
+        out_cmd_d.rd  = 0;
+        out_start_d = 1'b1;
+        if (can_emit)
           state_d     = S_PRE1_LD_W;
-        end
       end
 
       S_PRE1_LD_W: begin
-        if (can_emit) begin
-          mm_dim_t nt1, mt1, kt1;
-          mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          nt1 = nt1_init;
-          mt1 = mt1_init;
-          kt1 = kt1_init;
-          tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        mm_dim_t nt1, mt1, kt1;
+        mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+        nt1 = nt1_init;
+        mt1 = mt1_init;
+        kt1 = kt1_init;
+        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
-          out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
-                                   weight_tile_addr(job_q, nt1, kt1),
-                                   (kt_eff1 * ceil_div_log2(nt_eff1, `CLOG2(INT4_BYTES))),
-                                   1'b1, 1);
-          out_cmd_d.rs1 = kt1;
-          out_cmd_d.rs2 = nt1;
-          out_cmd_d.rd  = 1;
-          out_start_d = 1'b1;
+        out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
+                                 weight_tile_addr(job_q, nt1, kt1),
+                                 (kt_eff1 * ceil_div_log2(nt_eff1, `CLOG2(INT4_BYTES))),
+                                 1'b1, 1);
+        out_cmd_d.rs1 = kt1;
+        out_cmd_d.rs2 = nt1;
+        out_cmd_d.rd  = 1;
+        out_start_d = 1'b1;
+        if (can_emit)
           state_d     = S_PRE1_LD_SC;
-        end
       end
 
       S_PRE1_LD_SC: begin
-        if (can_emit) begin
-          mm_dim_t nt1, mt1, kt1;
-          mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          mm_group_t groups_eff;
-          nt1 = nt1_init;
-          mt1 = mt1_init;
-          kt1 = kt1_init;
-          tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        mm_dim_t nt1, mt1, kt1;
+        mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+        mm_group_t groups_eff;
+        nt1 = nt1_init;
+        mt1 = mt1_init;
+        kt1 = kt1_init;
+        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
-                                    scale_tile_addr(job_q, nt1, kt1),
-                                    (groups_eff*nt_eff1*FP16_BYTES),
-                                    1'b1, 1);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
-                                    scale_tile_addr(job_q, nt1, kt1),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_eff1), u32_t'(nt_eff1), FP16_BYTES),
-                                    1'b1, 1);
-            out_cmd_d.groups_eff = kt_eff1;
-          end
-          out_cmd_d.rs2 = nt1;
-          out_cmd_d.rd  = 2;
-          out_start_d = 1'b1;
-          state_d     = S_PRE1_LD_ZP;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
+                                  scale_tile_addr(job_q, nt1, kt1),
+                                  (groups_eff*nt_eff1*FP16_BYTES),
+                                  1'b1, 1);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
+                                  scale_tile_addr(job_q, nt1, kt1),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_eff1), u32_t'(nt_eff1), FP16_BYTES),
+                                  1'b1, 1);
+          out_cmd_d.groups_eff = kt_eff1;
         end
+        out_cmd_d.rs2 = nt1;
+        out_cmd_d.rd  = 2;
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE1_LD_ZP;
       end
 
       S_PRE1_LD_ZP: begin
-        if (can_emit) begin
-          mm_dim_t nt1, mt1, kt1;
-          mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          mm_group_t groups_eff, groups_full;
+        mm_dim_t nt1, mt1, kt1;
+        mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+        mm_group_t groups_eff;
 
-          nt1 = nt1_init;
-          mt1 = mt1_init;
-          kt1 = kt1_init;
-          tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        nt1 = nt1_init;
+        mt1 = mt1_init;
+        kt1 = kt1_init;
+        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
-          groups_full = ceil_div_log2(u32_t'(KT_q), job_q.orig_qblk[5:0]);
-
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
-                                    zp_tile_addr(job_q, nt1, kt1),
-                                    (groups_eff*nt_eff1*INT16_BYTES),
-                                    1'b1, 1);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
-                                    zp_tile_addr(job_q, nt1, kt1),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_eff1), u32_t'(nt_eff1), INT16_BYTES),
-                                    1'b1, 1);
-            out_cmd_d.groups_eff = kt_eff1;
-          end
-          out_cmd_d.rs2 = nt1;
-          out_cmd_d.rd  = 3;
-          out_start_d = 1'b1;
-          state_d     = S_PRE1_LD_DONE_NTF;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
+                                  zp_tile_addr(job_q, nt1, kt1),
+                                  (groups_eff*nt_eff1*INT16_BYTES),
+                                  1'b1, 1);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
+                                  zp_tile_addr(job_q, nt1, kt1),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_eff1), u32_t'(nt_eff1), INT16_BYTES),
+                                  1'b1, 1);
+          out_cmd_d.groups_eff = kt_eff1;
         end
+        out_cmd_d.rs2 = nt1;
+        out_cmd_d.rd  = 3;
+        out_cmd_d.notify = make_notify_meta(rid_tile(1'b1),
+                                             (4*1 + 4), 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE1_LD_DONE_NTF;
       end
 
       S_PRE1_LD_DONE_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_tile(1'b1), (4*1 + 4), 1'b1);
-          out_start_d = 1'b1;
-
-          tile_cur_d  = 0;
-          tile_cur_nt_d = '0;
-          tile_cur_mt_d = '0;
-          tile_cur_kt_d = '0;
-          if (has_tile1_init) begin
-            tile_pre_d  = 1;
-            tile_pre_nt_d = nt1_init;
-            tile_pre_mt_d = mt1_init;
-            tile_pre_kt_d = kt1_init;
-            pre_valid_d = 1'b1;
-          end else begin
-            tile_pre_d  = 0;
-            tile_pre_nt_d = '0;
-            tile_pre_mt_d = '0;
-            tile_pre_kt_d = '0;
-            pre_valid_d = 1'b0;
-          end
-
-          state_d     = S_WAIT_CUR_TILE_READY;
+        tile_cur_d  = 0;
+        tile_cur_nt_d = '0;
+        tile_cur_mt_d = '0;
+        tile_cur_kt_d = '0;
+        if (has_tile1_init) begin
+          tile_pre_d  = 1;
+          tile_pre_nt_d = nt1_init;
+          tile_pre_mt_d = mt1_init;
+          tile_pre_kt_d = kt1_init;
+          pre_valid_d = 1'b1;
+        end else begin
+          tile_pre_d  = 0;
+          tile_pre_nt_d = '0;
+          tile_pre_mt_d = '0;
+          tile_pre_kt_d = '0;
+          pre_valid_d = 1'b0;
         end
+        state_d = S_WAIT_CUR_TILE_READY;
       end
 
       // ----------------------------------------------------------------------
       // Wait current tile preload complete (rid_o reuse wait 제거)
       // ----------------------------------------------------------------------
       S_WAIT_CUR_TILE_READY: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_tile(buf_cur), in_ready_target_cur);
-          out_start_d = 1'b1;
-
-          nt_mxu_d  = 0;
-          kt_mxu_d  = 0;
-          mxu_buf_d = 1'b0;
-          o_nt_mxu_d = 0;
-
-          state_d   = S_MXU_PRE_CUR_W;
+        nt_mxu_d  = 0;
+        kt_mxu_d  = 0;
+        w_buf_d = '0;
+        s_buf_d = '0;
+        z_buf_d = '0;
+        g_buf_d = 1'b0;
+        o_nt_mxu_d = 0;
+        if (tile_cur_kt_q == 0) begin
+          tile_acc_group_d = acc_group;
+          tile_acc_reuse_target_d = acc_copy_issue_q[acc_group];
         end
+        state_d   = S_MXU_PRE_CUR_W;
       end
 
       // ----------------------------------------------------------------------
       // MXU preload current W
       // ----------------------------------------------------------------------
       S_MXU_PRE_CUR_W: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-          c = '0;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        c = '0;
 
-          // VX_gemm_node maps weight flags[1:0] to {load_dir, wr_idx}.
-          flags      = {6'd0, job_q.wtrans, mxu_buf_q};
-          c.flags    = flags;
-          c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
-          c.rs1_data = {63'd0, mxu_buf_q};
-          c.rs2_data = lmem_w_mxu;
-          c.bound    = 16'd1;
+        // VX_gemm_node maps weight flags[1:0] to
+        // {load_dir, wreg_idx}.
+        flags      = {6'd0, job_q.wtrans, w_buf_q};
+        c.flags    = flags;
+        c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
+        c.rs1_data = {62'd0, w_buf_q};
+        c.rs2_data = lmem_w_mxu;
+        c.bound    = 16'd1;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_CUR_W_NTF;
+        out_cmd_d   = c;
+        out_cmd_d.work_seq = global_mxu_seq;
+        out_cmd_d.prepare = make_source_prepare_wait(
+            rid_tile(buf_cur), in_ready_target_cur,
+            GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
+        out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                             in_ready_target_cur);
+        if (w_consume_issued_q[w_buf_q] != 0) begin
+          out_cmd_d.writer_wait
+              = make_wait_meta(rid_w_consume(w_buf_q),
+                               w_consume_issued_q[w_buf_q]);
         end
+        out_cmd_d.notify = make_notify_meta(rid_w_mxu(w_buf_q),
+                                             global_mxu_seq, 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_MXU_PRE_CUR_SC;
       end
 
       S_MXU_PRE_CUR_W_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w_mxu(mxu_buf_q), global_mxu_seq, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_CUR_SC;
-        end
+        state_d = S_MXU_PRE_CUR_SC;
       end
 
       // ----------------------------------------------------------------------
       // CUR SZ split: SC then ZP
       // ----------------------------------------------------------------------
       S_MXU_PRE_CUR_SC: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-          mm_bytecnt_t sc_bytes;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        mm_bytecnt_t sc_bytes;
 
-          c = '0;
-          sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
-                                : (groups_mxu * MXU_NT * FP16_BYTES);
+        c = '0;
+        sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
+                              : (groups_mxu * MXU_NT * FP16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, mxu_buf_q, buf_cur};
-          c.flags    = flags;
-          c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-          c.rs1_data  = mxu_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
-          c.rs2_data  = lmem_sc_mxu;
-          c.bound     = 16'd1;
+        flags      = {5'd0, job_q.qdir, s_buf_q, buf_cur};
+        c.flags    = flags;
+        c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
+        c.rs1_data  = s_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
+        c.rs2_data  = lmem_sc_mxu;
+        c.bound     = 16'd1;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_CUR_ZP;
+        out_cmd_d   = c;
+        out_cmd_d.work_seq = global_mxu_seq;
+        out_cmd_d.prepare = make_source_prepare_wait(
+            rid_tile(buf_cur), in_ready_target_cur,
+            GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
+        out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                             in_ready_target_cur);
+        if (sc_consume_issued_q[s_buf_q] != 0) begin
+          out_cmd_d.writer_wait
+              = make_wait_meta(rid_sc_consume(s_buf_q),
+                               sc_consume_issued_q[s_buf_q]);
         end
+        out_cmd_d.notify = make_notify_meta(rid_sc_mxu(s_buf_q),
+                                             global_mxu_seq, 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_MXU_PRE_CUR_ZP;
       end
 
       S_MXU_PRE_CUR_ZP: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-          mm_bytecnt_t zp_bytes;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        mm_bytecnt_t zp_bytes;
 
-          c = '0;
-          zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
-                                : (groups_mxu * MXU_NT * INT16_BYTES);
+        c = '0;
+        zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
+                              : (groups_mxu * MXU_NT * INT16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, mxu_buf_q, buf_cur};
-          c.flags    = flags;
-          c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = mxu_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
-          c.rs2_data  = lmem_zp_mxu;
-          c.bound     = 16'd1;
+        flags      = {5'd0, job_q.qdir, z_buf_q, buf_cur};
+        c.flags    = flags;
+        c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
+        c.rs1_data  = z_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
+        c.rs2_data  = lmem_zp_mxu;
+        c.bound     = 16'd1;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_CUR_SZ_NTF;
+        out_cmd_d   = c;
+        out_cmd_d.work_seq = global_mxu_seq;
+        out_cmd_d.prepare = make_source_prepare_wait(
+            rid_tile(buf_cur), in_ready_target_cur,
+            GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
+        out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                             in_ready_target_cur);
+        if (zp_consume_issued_q[z_buf_q] != 0) begin
+          out_cmd_d.writer_wait
+              = make_wait_meta(rid_zp_consume(z_buf_q),
+                               zp_consume_issued_q[z_buf_q]);
         end
+        out_cmd_d.notify = make_notify_meta(rid_zp_mxu(z_buf_q),
+                                             global_mxu_seq, 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_MXU_PRE_NEXT_W;
       end
 
       S_MXU_PRE_CUR_SZ_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_sz_mxu(mxu_buf_q), global_mxu_seq, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_WAIT_CUR_W;
-        end
+        state_d = S_MXU_PRE_NEXT_W;
       end
 
       S_MXU_WAIT_CUR_W: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_w_mxu(mxu_buf_q), global_mxu_seq);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_WAIT_CUR_SZ;
-        end
+        state_d = S_MXU_PRE_NEXT_W;
       end
 
       S_MXU_WAIT_CUR_SZ: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_sz_mxu(mxu_buf_q), global_mxu_seq);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_NEXT_W;
-        end
+        state_d = S_MXU_PRE_NEXT_W;
       end
 
       // ----------------------------------------------------------------------
       // NEXT W preload into next mxu_buf
       // ----------------------------------------------------------------------
       S_MXU_PRE_NEXT_W: begin
-        if (can_emit) begin
-          if (has_next_mxu) begin
-            logic next_mxu_buf;
-            gemm_unified_cmd_t c;
-            logic [7:0] flags;
+        if (has_next_mxu) begin
+          gemm_wreg_idx_t next_w_buf;
+          gemm_unified_cmd_t c;
+          logic [7:0] flags;
 
-            next_mxu_buf = ~mxu_buf_q;
-            c = '0;
+          next_w_buf = ~w_buf_q;
+          c = '0;
 
-            // VX_gemm_node maps weight flags[1:0] to {load_dir, wr_idx}.
-            flags      = {6'd0, job_q.wtrans, next_mxu_buf};
-            c.flags    = flags;
-            c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
-            c.rs1_data  = {63'd0, next_mxu_buf};
-            c.rs2_data  = lmem_w_mxu_next;
-            c.bound     = 16'd1;
+          // VX_gemm_node maps weight flags[1:0] to
+          // {load_dir, wreg_idx}.
+          flags      = {6'd0, job_q.wtrans, next_w_buf};
+          c.flags    = flags;
+          c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
+          c.rs1_data  = {62'd0, next_w_buf};
+          c.rs2_data  = lmem_w_mxu_next;
+          c.bound     = 16'd1;
 
-            out_cmd_d   = c;
-            out_start_d = 1'b1;
-            state_d     = S_MXU_PRE_NEXT_W_NTF;
-          end else begin
-            state_d     = S_MXU_ARM_GEMM;
+          out_cmd_d   = c;
+          out_cmd_d.work_seq = next_global_mxu_seq;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS);
+          out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                               in_ready_target_cur);
+          if (w_consume_issued_q[next_w_buf] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_w_consume(next_w_buf),
+                                 w_consume_issued_q[next_w_buf]);
           end
+          out_cmd_d.notify = make_notify_meta(
+              rid_w_mxu(next_w_buf), next_global_mxu_seq, 1'b1);
+          out_start_d = 1'b1;
+          if (can_emit)
+            state_d     = S_MXU_PRE_NEXT_SC;
+        end else if (can_emit) begin
+          state_d     = S_MXU_ARM_GEMM;
         end
       end
 
       S_MXU_PRE_NEXT_W_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w_mxu(~mxu_buf_q), next_global_mxu_seq, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_NEXT_SC;
-        end
+        state_d = S_MXU_PRE_NEXT_SC;
       end
 
       // ----------------------------------------------------------------------
       // NEXT SZ split: SC then ZP
       // ----------------------------------------------------------------------
       S_MXU_PRE_NEXT_SC: begin
-        if (can_emit) begin
-          if (has_next_mxu) begin
-            logic next_mxu_buf;
-            gemm_unified_cmd_t c;
-            logic [7:0] flags;
-            mm_bytecnt_t sc_bytes;
+        if (has_next_mxu) begin
+          gemm_qreg_idx_t next_s_buf;
+          gemm_unified_cmd_t c;
+          logic [7:0] flags;
+          mm_bytecnt_t sc_bytes;
 
-            next_mxu_buf = ~mxu_buf_q;
-            c = '0;
-            sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
-                                  : (groups_mxu * MXU_NT * FP16_BYTES);
+          next_s_buf = ~s_buf_q;
+          c = '0;
+          sc_bytes = job_q.qdir ? (MXU_KT * ng_mxu * FP16_BYTES)
+                                : (groups_mxu * MXU_NT * FP16_BYTES);
 
-            flags      = {5'd0, job_q.qdir, next_mxu_buf, buf_cur};
-            c.flags    = flags;
-            c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-            c.rs1_data  = next_mxu_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
-            c.rs2_data  = lmem_sc_mxu_next;
-            c.bound     = 16'd1;
+          flags      = {5'd0, job_q.qdir, next_s_buf, buf_cur};
+          c.flags    = flags;
+          c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
+          c.rs1_data  = next_s_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
+          c.rs2_data  = lmem_sc_mxu_next;
+          c.bound     = 16'd1;
 
-            out_cmd_d   = c;
-            out_start_d = 1'b1;
-            state_d     = S_MXU_PRE_NEXT_ZP;
-          end else begin
-            state_d = S_MXU_ARM_GEMM;
+          out_cmd_d   = c;
+          out_cmd_d.work_seq = next_global_mxu_seq;
+          out_cmd_d.prepare = make_source_prepare_wait(
+              rid_tile(buf_cur), in_ready_target_cur,
+              GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS);
+          out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                               in_ready_target_cur);
+          if (sc_consume_issued_q[next_s_buf] != 0) begin
+            out_cmd_d.writer_wait
+                = make_wait_meta(rid_sc_consume(next_s_buf),
+                                 sc_consume_issued_q[next_s_buf]);
           end
+          out_cmd_d.notify = make_notify_meta(
+              rid_sc_mxu(next_s_buf), next_global_mxu_seq, 1'b1);
+          out_start_d = 1'b1;
+          if (can_emit)
+            state_d     = S_MXU_PRE_NEXT_ZP;
+        end else if (can_emit) begin
+          state_d = S_MXU_ARM_GEMM;
         end
       end
 
       S_MXU_PRE_NEXT_ZP: begin
-        if (can_emit) begin
-          logic next_mxu_buf;
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-          mm_bytecnt_t zp_bytes;
+        gemm_qreg_idx_t next_z_buf;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        mm_bytecnt_t zp_bytes;
 
-          next_mxu_buf = ~mxu_buf_q;
-          c = '0;
-          zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
-                                : (groups_mxu * MXU_NT * INT16_BYTES);
+        next_z_buf = ~z_buf_q;
+        c = '0;
+        zp_bytes = job_q.qdir ? (MXU_KT * ng_mxu * INT16_BYTES)
+                              : (groups_mxu * MXU_NT * INT16_BYTES);
 
-          flags      = {5'd0, job_q.qdir, next_mxu_buf, buf_cur};
-          c.flags    = flags;
-          c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = next_mxu_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
-          c.rs2_data  = lmem_zp_mxu_next;
-          c.bound     = 16'd1;
+        flags      = {5'd0, job_q.qdir, next_z_buf, buf_cur};
+        c.flags    = flags;
+        c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
+        c.rs1_data  = next_z_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
+        c.rs2_data  = lmem_zp_mxu_next;
+        c.bound     = 16'd1;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_MXU_PRE_NEXT_SZ_NTF;
+        out_cmd_d   = c;
+        out_cmd_d.work_seq = next_global_mxu_seq;
+        out_cmd_d.prepare = make_source_prepare_wait(
+            rid_tile(buf_cur), in_ready_target_cur,
+            GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS);
+        out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                             in_ready_target_cur);
+        if (zp_consume_issued_q[next_z_buf] != 0) begin
+          out_cmd_d.writer_wait
+              = make_wait_meta(rid_zp_consume(next_z_buf),
+                               zp_consume_issued_q[next_z_buf]);
         end
+        out_cmd_d.notify = make_notify_meta(
+            rid_zp_mxu(next_z_buf), next_global_mxu_seq, 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_MXU_ARM_GEMM;
       end
 
       S_MXU_PRE_NEXT_SZ_NTF: begin
-        if (can_emit) begin
-          if (has_next_mxu) begin
-            out_cmd_d   = make_notify_cmd(rid_sz_mxu(~mxu_buf_q), next_global_mxu_seq, 1'b1);
-            out_start_d = 1'b1;
-          end
-          state_d     = S_MXU_ARM_GEMM;
-        end
+        state_d = S_MXU_ARM_GEMM;
       end
 
       // ----------------------------------------------------------------------
       // ARM: Input LDMA triggers GEMM
       // ----------------------------------------------------------------------
       S_MXU_ARM_GEMM: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
-          mm_bytecnt_t in_bytes;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        mm_bytecnt_t in_bytes;
 
-          c = '0;
+        c = '0;
 
-          // VX_gemm_node consumes:
-          //   flags[5]=quant_dir, flags[3]=!is_load, flags[2:0]=w/s/z reg idx.
-          flags     = {2'd0, job_q.qdir, 1'b0, is_accum, mxu_buf_q, mxu_buf_q, mxu_buf_q};
-          in_bytes  = mt_eff_cur * MXU_KT * FP16_BYTES;
+        // VX_gemm_node consumes flags[6]=quant_dir,
+        // flags[5]=notify_on_writeback, flags[4]=is_accum, and
+        // flags[3] is reserved; flags[2:0] carry independent W/S/Z banks.
+        flags     = {1'b0, job_q.qdir, notify_on_writeback,
+                     is_accum, 1'b0, w_buf_q, s_buf_q, z_buf_q};
+        in_bytes  = mt_eff_cur * MXU_KT * FP16_BYTES;
 
-          c.flags   = flags;
-          // VX_gemm_unit interprets instr[31:4] as acc_cnt, not byte count.
-          // The input LDMA byte count is carried by bound * fixed seg_size in VX_gemm_node.
-          c.instr   = make_instr(OP_I_LDMA_ARM, mt_eff_cur);
-          c.rs1_data = lmem_out_slice;
-          c.rs2_data = lmem_in_mxu;
-          c.eff_mt   = mt_eff_cur;
-          c.bound    = mt_eff_cur;
-          c.stride   = MXU_KT * FP16_BYTES;
+        c.flags   = flags;
+        // VX_gemm_unit interprets instr[31:4] as acc_cnt, not byte count.
+        // The input LDMA byte count is carried by bound * fixed seg_size in VX_gemm_node.
+        c.instr   = make_instr(OP_I_LDMA_ARM, mt_eff_cur);
+        c.rs1_data = lmem_out_slice;
+        c.rs2_data = lmem_in_mxu;
+        c.eff_mt   = mt_eff_cur;
+        c.bound    = mt_eff_cur;
+        c.stride   = MXU_KT * FP16_BYTES;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
+        out_cmd_d   = c;
+        out_cmd_d.work_seq = global_mxu_seq;
+        out_cmd_d.prepare = make_source_prepare_wait(
+            rid_tile(buf_cur), in_ready_target_cur,
+            GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS);
+        // Source issue waits only for the producer tile.  Accumulator
+        // ownership is checked at ordered GEMM admission; exact W/S/Z
+        // versions travel as metadata and stall only at their consumers.
+        out_cmd_d.waits[0] = make_wait_meta(rid_tile(buf_cur),
+                                             in_ready_target_cur);
+        out_cmd_d.input_admit_waits[0]
+            = make_wait_meta(rid_w_mxu(w_buf_q), global_mxu_seq);
+        out_cmd_d.input_admit_waits[1]
+            = make_wait_meta(rid_sc_mxu(s_buf_q), global_mxu_seq);
+        out_cmd_d.input_admit_waits[2]
+            = make_wait_meta(rid_zp_mxu(z_buf_q), global_mxu_seq);
+        out_cmd_d.input_admit_waits[3]
+            = make_wait_meta(rid_acc_free(tile_acc_group_q),
+                             tile_acc_reuse_target_q);
+        out_cmd_d.notify = make_notify_meta(rid_g_mxu(g_buf_q),
+                                             32'd1, 1'b0);
+        out_start_d = 1'b1;
 
-          state_d     = S_MXU_ARM_GEMM_NTF;
-        end
+        if (can_emit)
+          state_d     = S_MXU_WAIT_GEMM_DONE;
       end
 
       S_MXU_ARM_GEMM_NTF: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_g_mxu(mxu_buf_q), gemm_done_target, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_MXU_WAIT_GEMM_DONE;
-        end
+        state_d = S_MXU_WAIT_GEMM_DONE;
       end
 
       S_MXU_WAIT_GEMM_DONE: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_g_mxu(mxu_buf_q), gemm_done_target);
-          out_start_d = 1'b1;
-
-          if (has_next_mxu) begin
-            nt_mxu_d  = n_nt_mxu;
-            kt_mxu_d  = n_kt_mxu;
-            mxu_buf_d = ~mxu_buf_q;
-            state_d   = S_MXU_WAIT_CUR_W;
+        if (has_next_mxu) begin
+          nt_mxu_d  = n_nt_mxu;
+          kt_mxu_d  = n_kt_mxu;
+          w_buf_d = ~w_buf_q;
+          s_buf_d = ~s_buf_q;
+          z_buf_d = ~z_buf_q;
+          g_buf_d = ~g_buf_q;
+          state_d   = S_MXU_PRE_NEXT_W;
+        end else begin
+          // Completion ordering is now carried by the next work command.
+          if (last_kt_tile) begin
+            o_nt_mxu_d = 0;
+            // Boundary A: isolate per-output-tile geometry from the command
+            // construction path.  O_MT_STRIDE_q already contains MT*N*2, so
+            // the row-base destination has only one dynamic multiply here.
+            output_tile_row_base_d = job_q.output_base
+                + 64'(mt_base_q + u32_t'(mt_cur)) * O_MT_STRIDE_q;
+            output_lmem_base_d = job_q.lmem_obuf_base;
+            output_global_nt_base_d
+                = (nt_base_q + u32_t'(nt_cur)) * dma_nt_mxu_dim;
+            output_nb_stride_d = align8_u32(u32_t'(mt_eff_cur))
+                               * u32_t'(MXU_NT * FP16_BYTES);
+            output_nb_bytes_d = u32_t'(mt_eff_cur)
+                              * u32_t'(MXU_NT * FP16_BYTES);
+            output_nt_mxu_dim_d = output_nt_mxu_dim;
+            state_d = S_O_ACC2LMEM;
           end else begin
-            // MXU loop done for this DMA tile
-            // 마지막 kt tile에서만 STORE
-            if (last_kt_tile) begin
-              o_nt_mxu_d = 0;
-              state_d = S_O_WAIT_LMEM2DRAM_DONE;
-            end else begin
-              state_d = S_ADVANCE_TILES;
-            end
+            state_d = S_ADVANCE_TILES;
           end
         end
       end
 
       // ----------------------------------------------------------------------
       // Output (only at last-kt tile): acc->lmem then lmem->dram
-      // rid_o는 "이 store 2단계 순서"만 보장하는 용도로만 사용
+      // RID_O tracks completed DMA stores. RID_ACC_FREE tracks completed
+      // ACC2LMEM copies independently for each physical accumulator group.
       // ----------------------------------------------------------------------
       S_O_WAIT_LMEM2DRAM_DONE: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
-          out_start_d = 1'b1;
-          state_d     = S_O_ACC2LMEM;
-        end
+        state_d = S_O_ACC2LMEM;
       end
       
       S_O_ACC2LMEM: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          logic [7:0] flags;
+        gemm_unified_cmd_t c;
+        logic [7:0] flags;
+        u32_t copy_target;
 
-          c = '0;
-          flags      = {7'd0, buf_cur};
+        c = '0;
+        flags      = {7'd0, buf_cur};
+        copy_target = acc_copy_issue_q[tile_acc_group_q] + 32'd1;
 
-          c.flags    = flags;
-          c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes);
-          c.rs1_data  = lmem_obuf_nb;              // dst
-          c.rs2_data  = 64'(acc_group_base + (u32_t'(o_nt_mxu_q) * acc_nb_stride)) >> 1; // src
-          c.bound     = mt_eff_cur;
-          c.eff_mt    = mt_eff_cur;
-          c.groups_eff = MXU_NT;
+        c.flags    = flags;
+        c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes_q);
+        c.rs1_data  = output_lmem_addr;              // dst
+        c.rs2_data  = 64'(acc_group_base + (u32_t'(o_nt_mxu_q) * acc_nb_stride)) >> 1; // src
+        c.bound     = mt_eff_cur;
+        c.eff_mt    = mt_eff_cur;
+        c.groups_eff = MXU_NT;
 
-          out_cmd_d   = c;
-          out_start_d = 1'b1;
-          state_d     = S_O_ACC2LMEM_NTF;
+        out_cmd_d   = c;
+        out_cmd_d.waits[0] = make_wait_meta(rid_o,
+                                             o_store_issue_q);
+        if (prior_g_wait_valid_q) begin
+          out_cmd_d.waits[1]
+              = make_wait_meta(prior_g_wait_rid_q,
+                               prior_g_wait_target_q);
         end
-      end
-
-      S_O_ACC2LMEM_NTF: begin
+        out_cmd_d.notify = make_notify_meta(
+            rid_acc_free(tile_acc_group_q), copy_target, 1'b1);
+        out_start_d = 1'b1;
         if (can_emit) begin
-          // stage1 완료 마커: rid_o = 1 (set)
-          out_cmd_d   = make_notify_cmd(rid_o, 2*o_store_issue_q + 1, 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_O_WAIT_ACC2LMEM_DONE;
-        end
-      end
-
-      S_O_WAIT_ACC2LMEM_DONE: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q + 1);
-          out_start_d = 1'b1;
+          // Boundary B: the accepted ACC2LMEM command selects the exact N
+          // microtile whose final LMEM/DRAM addresses the following store
+          // consumes.  A stalled ACC2LMEM leaves both registers unchanged.
+          output_dram_addr_d = output_dram_addr;
+          output_lmem_addr_d = output_lmem_addr;
+          acc_copy_issue_d[tile_acc_group_q] = copy_target;
           state_d     = S_O_LMEM2DRAM;
         end
       end
 
-      S_O_LMEM2DRAM: begin
-        if (can_emit) begin
-          out_cmd_d   = make_dma_st(dram_out_nb,
-                                    lmem_obuf_nb,
-                                    output_nb_bytes,
-                                    buf_cur, gen_cur);
-          out_cmd_d.rs1 = mt_cur;
-          out_cmd_d.rs2 = o_nt_mxu_q;
-          out_cmd_d.rd  = 4;
-          out_start_d = 1'b1;
-          state_d     = S_O_LMEM2DRAM_NTF;
-        end
+      S_O_ACC2LMEM_NTF: begin
+        state_d = S_O_LMEM2DRAM;
       end
 
-      S_O_LMEM2DRAM_NTF: begin
+      S_O_WAIT_ACC2LMEM_DONE: begin
+        state_d = S_O_LMEM2DRAM;
+      end
+
+      S_O_LMEM2DRAM: begin
+        out_cmd_d   = make_dma_st(output_dram_addr_q,
+                                  output_lmem_addr_q,
+                                  output_nb_bytes_q,
+                                  buf_cur, gen_cur);
+        out_cmd_d.rs1 = mt_cur;
+        out_cmd_d.rs2 = o_nt_mxu_q;
+        out_cmd_d.rd  = 4;
+        out_cmd_d.waits[0]
+            = make_wait_meta(rid_acc_free(tile_acc_group_q),
+                             acc_copy_issue_q[tile_acc_group_q]);
+        out_cmd_d.notify = make_notify_meta(rid_o, 32'd1, 1'b0);
+        out_start_d = 1'b1;
         if (can_emit) begin
-          // stage2 완료 마커: rid_o += 1 (=> 2)
-          out_cmd_d   = make_notify_cmd(rid_o, 1, 1'b0);
-          out_start_d = 1'b1;
           o_store_issue_d = o_store_issue_q + 1;
-          if (o_nt_mxu_q + 1 < output_nt_mxu_dim) begin
+          if (o_nt_mxu_q + 1 < output_nt_mxu_dim_q) begin
             o_nt_mxu_d = o_nt_mxu_q + 1;
-            state_d = S_O_WAIT_LMEM2DRAM_DONE;
+            state_d = S_O_ACC2LMEM;
           end else begin
             state_d = S_ADVANCE_TILES;
           end
         end
+      end
+
+      S_O_LMEM2DRAM_NTF: begin
+        state_d = S_ADVANCE_TILES;
       end
 
       // ----------------------------------------------------------------------
@@ -1846,7 +2286,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_ADVANCE_TILES: begin
         nt_mxu_d  = 0;
         kt_mxu_d  = 0;
-        mxu_buf_d = 1'b0;
+        w_buf_d = '0;
+        s_buf_d = '0;
+        z_buf_d = '0;
+        g_buf_d = 1'b0;
         o_nt_mxu_d = 0;
 
         if (pre_valid_q) begin
@@ -1880,170 +2323,524 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
 
       S_O_WAIT_LMEM2DRAM_FINAL: begin
-        if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
-          out_start_d = 1'b1;
-          state_d     = S_FINAL_CLEAR;
+        if (completed_output_store_count_i >= o_store_issue_q) begin
+          state_d = S_FINAL_CLEAR;
         end
       end
 
       S_FINAL_CLEAR: begin
-        if (can_emit) begin
-          gemm_unified_cmd_t c;
-          c = '0;
-          c.instr = make_instr(OP_CLEAR, 0);
-          out_cmd_d = c;
-          out_start_d = 1'b1;
-          state_d = S_IDLE;
-        end
+        state_d = S_IDLE;
       end
       // ----------------------------------------------------------------------
       // Preload next tile into freed buffer (single notify after ZP)
       // ----------------------------------------------------------------------
       S_PRE_NEXT_LD_I: begin
-        if (can_emit) begin
-          mm_dim_t ntp, mtp, ktp;
-          mm_tile_sz_t mt_effp, nt_effp, kt_effp;
-          logic buf_pre;
-          u32_t gen_pre;
+        mm_dim_t ntp, mtp, ktp;
+        mm_tile_sz_t mt_effp, nt_effp, kt_effp;
+        logic buf_pre;
+        u32_t gen_pre;
 
-          ntp = tile_pre_nt_q;
-          mtp = tile_pre_mt_q;
-          ktp = tile_pre_kt_q;
-          tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_q[0];
-          gen_pre = buf_gen(tile_pre_q);
+        ntp = tile_pre_nt_q;
+        mtp = tile_pre_mt_q;
+        ktp = tile_pre_kt_q;
+        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        buf_pre = tile_pre_q[0];
+        gen_pre = buf_gen(tile_pre_q);
 
-          out_cmd_d   = make_dma_ld(ibuf_base(buf_pre),
-                                    input_tile_addr(job_q, mtp, ktp),
-                                    (mt_effp*kt_effp*FP16_BYTES),
-                                    buf_pre, gen_pre);
-          out_cmd_d.rs1 = mtp;
-          out_cmd_d.rs2 = ktp;
-          out_cmd_d.rd  = 0;
-          out_start_d = 1'b1;
-          state_d     = S_PRE_NEXT_LD_W;
+        out_cmd_d   = make_dma_ld(ibuf_base(buf_pre),
+                                  input_tile_addr(job_q, mtp, ktp),
+                                  (mt_effp*kt_effp*FP16_BYTES),
+                                  buf_pre, gen_pre);
+        out_cmd_d.rs1 = mtp;
+        out_cmd_d.rs2 = ktp;
+        out_cmd_d.rd  = 0;
+        if (prior_g_wait_valid_q) begin
+          out_cmd_d.waits[0]
+              = make_wait_meta(prior_g_wait_rid_q,
+                               prior_g_wait_target_q);
         end
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE_NEXT_LD_W;
       end
 
       S_PRE_NEXT_LD_W: begin
-        if (can_emit) begin
-          mm_dim_t ntp, mtp, ktp;
-          mm_tile_sz_t mt_effp, nt_effp, kt_effp;
-          logic buf_pre;
-          u32_t gen_pre;
+        mm_dim_t ntp, mtp, ktp;
+        mm_tile_sz_t mt_effp, nt_effp, kt_effp;
+        logic buf_pre;
+        u32_t gen_pre;
 
-          ntp = tile_pre_nt_q;
-          mtp = tile_pre_mt_q;
-          ktp = tile_pre_kt_q;
-          tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_q[0];
-          gen_pre = buf_gen(tile_pre_q);
+        ntp = tile_pre_nt_q;
+        mtp = tile_pre_mt_q;
+        ktp = tile_pre_kt_q;
+        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        buf_pre = tile_pre_q[0];
+        gen_pre = buf_gen(tile_pre_q);
 
-          out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
-                                    weight_tile_addr(job_q, ntp, ktp),
-                                    (kt_effp * ceil_div_log2(nt_effp, `CLOG2(INT4_BYTES))),
-                                    buf_pre, gen_pre);
-          out_cmd_d.rs1 = ktp;
-          out_cmd_d.rs2 = ntp;
-          out_cmd_d.rd  = 1;
-          out_start_d = 1'b1;
+        out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
+                                  weight_tile_addr(job_q, ntp, ktp),
+                                  (kt_effp * ceil_div_log2(nt_effp, `CLOG2(INT4_BYTES))),
+                                  buf_pre, gen_pre);
+        out_cmd_d.rs1 = ktp;
+        out_cmd_d.rs2 = ntp;
+        out_cmd_d.rd  = 1;
+        out_start_d = 1'b1;
+        if (can_emit)
           state_d     = S_PRE_NEXT_LD_SC;
-        end
       end
 
       S_PRE_NEXT_LD_SC: begin
-        if (can_emit) begin
-          mm_dim_t ntp, mtp, ktp;
-          mm_tile_sz_t mt_effp, nt_effp, kt_effp;
-          logic buf_pre;
-          u32_t gen_pre;
-          mm_group_t groups_eff;
+        mm_dim_t ntp, mtp, ktp;
+        mm_tile_sz_t mt_effp, nt_effp, kt_effp;
+        logic buf_pre;
+        u32_t gen_pre;
+        mm_group_t groups_eff;
 
-          ntp = tile_pre_nt_q;
-          mtp = tile_pre_mt_q;
-          ktp = tile_pre_kt_q;
-          tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_q[0];
-          gen_pre = buf_gen(tile_pre_q);
+        ntp = tile_pre_nt_q;
+        mtp = tile_pre_mt_q;
+        ktp = tile_pre_kt_q;
+        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        buf_pre = tile_pre_q[0];
+        gen_pre = buf_gen(tile_pre_q);
 
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_effp), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
-                                    scale_tile_addr(job_q, ntp, ktp),
-                                    (groups_eff*nt_effp*FP16_BYTES),
-                                    buf_pre, gen_pre);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
-                                    scale_tile_addr(job_q, ntp, ktp),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_effp), u32_t'(nt_effp), FP16_BYTES),
-                                    buf_pre, gen_pre);
-            out_cmd_d.groups_eff = kt_effp;
-          end
-          out_cmd_d.rs2 = ntp;
-          out_cmd_d.rd  = 2;
-          out_start_d = 1'b1;
-          state_d     = S_PRE_NEXT_LD_ZP;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_effp), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
+                                  scale_tile_addr(job_q, ntp, ktp),
+                                  (groups_eff*nt_effp*FP16_BYTES),
+                                  buf_pre, gen_pre);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
+                                  scale_tile_addr(job_q, ntp, ktp),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_effp), u32_t'(nt_effp), FP16_BYTES),
+                                  buf_pre, gen_pre);
+          out_cmd_d.groups_eff = kt_effp;
         end
+        out_cmd_d.rs2 = ntp;
+        out_cmd_d.rd  = 2;
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_PRE_NEXT_LD_ZP;
       end
 
       S_PRE_NEXT_LD_ZP: begin
-        if (can_emit) begin
-          mm_dim_t ntp, mtp, ktp;
-          mm_tile_sz_t mt_effp, nt_effp, kt_effp;
-          logic buf_pre;
-          u32_t gen_pre;
-          mm_group_t groups_eff, groups_full;
+        mm_dim_t ntp, mtp, ktp;
+        mm_tile_sz_t mt_effp, nt_effp, kt_effp;
+        logic buf_pre;
+        u32_t gen_pre;
+        mm_group_t groups_eff;
 
-          ntp = tile_pre_nt_q;
-          mtp = tile_pre_mt_q;
-          ktp = tile_pre_kt_q;
-          tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_q[0];
-          gen_pre = buf_gen(tile_pre_q);
+        ntp = tile_pre_nt_q;
+        mtp = tile_pre_mt_q;
+        ktp = tile_pre_kt_q;
+        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        buf_pre = tile_pre_q[0];
+        gen_pre = buf_gen(tile_pre_q);
 
-          groups_full = ceil_div_log2(u32_t'(KT_q), job_q.orig_qblk[5:0]);
-
-          if (!job_q.qdir) begin
-            groups_eff = ceil_div_log2(u32_t'(kt_effp), job_q.orig_qblk[5:0]);
-            out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
-                                    zp_tile_addr(job_q, ntp, ktp),
-                                    (groups_eff*nt_effp*INT16_BYTES),
-                                    buf_pre, gen_pre);
-            out_cmd_d.groups_eff = groups_eff;
-          end else begin
-            out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
-                                    zp_tile_addr(job_q, ntp, ktp),
-                                    qrow_qparam_tile_bytes(u32_t'(kt_effp), u32_t'(nt_effp), INT16_BYTES),
-                                    buf_pre, gen_pre);
-            out_cmd_d.groups_eff = kt_effp;
-          end
-          out_cmd_d.rs2 = ntp;
-          out_cmd_d.rd  = 3;
-          out_start_d = 1'b1;
-          state_d     = S_PRE_NEXT_LD_DONE_NTF;
+        if (!job_q.qdir) begin
+          groups_eff = ceil_div_log2(u32_t'(kt_effp), job_q.orig_qblk[5:0]);
+          out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
+                                  zp_tile_addr(job_q, ntp, ktp),
+                                  (groups_eff*nt_effp*INT16_BYTES),
+                                  buf_pre, gen_pre);
+          out_cmd_d.groups_eff = groups_eff;
+        end else begin
+          out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
+                                  zp_tile_addr(job_q, ntp, ktp),
+                                  qrow_qparam_tile_bytes(u32_t'(kt_effp), u32_t'(nt_effp), INT16_BYTES),
+                                  buf_pre, gen_pre);
+          out_cmd_d.groups_eff = kt_effp;
         end
+        out_cmd_d.rs2 = ntp;
+        out_cmd_d.rd  = 3;
+        out_cmd_d.notify = make_notify_meta(rid_tile(buf_pre),
+                                             (4*gen_pre + 4), 1'b1);
+        out_start_d = 1'b1;
+        if (can_emit)
+          state_d     = S_WAIT_CUR_TILE_READY;
       end
 
       S_PRE_NEXT_LD_DONE_NTF: begin
-        if (can_emit) begin
-          logic buf_pre;
-          u32_t gen_pre;
-
-          buf_pre = tile_pre_q[0];
-          gen_pre = buf_gen(tile_pre_q);
-
-          out_cmd_d   = make_notify_cmd(rid_tile(buf_pre), (4*gen_pre + 4), 1'b1);
-          out_start_d = 1'b1;
-          state_d     = S_WAIT_CUR_TILE_READY;
-        end
+        state_d = S_WAIT_CUR_TILE_READY;
       end
 
       default: state_d = S_IDLE;
     endcase
 
   end
+
+`ifndef SYNTHESIS
+  logic        expected_count_shadow_valid_q;
+  logic        expected_count_prev_arm_accept_q;
+  logic        expected_count_prev_arm_g_buf_q;
+  logic        expected_count_prev_invocation_accept_q;
+  logic [31:0] expected_count_prev_q [2];
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      expected_count_shadow_valid_q <= 1'b0;
+      expected_count_prev_arm_accept_q <= 1'b0;
+      expected_count_prev_arm_g_buf_q <= 1'b0;
+      expected_count_prev_invocation_accept_q <= 1'b0;
+      expected_count_prev_q[0] <= 32'd0;
+      expected_count_prev_q[1] <= 32'd0;
+    end else begin
+      if (expected_count_shadow_valid_q) begin
+        if (expected_count_prev_invocation_accept_q) begin
+          assert (gemm_expected_count_q[0] == 32'd0
+               && gemm_expected_count_q[1] == 32'd0)
+            else $fatal(1, "GEMM expected count did not reset on invocation accept");
+          assert (o_store_issue_q == 32'd0
+               && acc_copy_issue_q[0] == 32'd0
+               && acc_copy_issue_q[1] == 32'd0
+               && tile_acc_group_q == 1'b0
+               && tile_acc_reuse_target_q == 32'd0)
+            else $fatal(1, "GEMM output dependency state did not reset on invocation accept");
+        end else begin
+          assert (gemm_expected_count_q[0]
+               == expected_count_prev_q[0]
+                + ((expected_count_prev_arm_accept_q
+                 && !expected_count_prev_arm_g_buf_q) ? 32'd1 : 32'd0))
+            else $fatal(1, "GEMM buffer-0 expected count changed outside one ARM acceptance");
+          assert (gemm_expected_count_q[1]
+               == expected_count_prev_q[1]
+                + ((expected_count_prev_arm_accept_q
+                 && expected_count_prev_arm_g_buf_q) ? 32'd1 : 32'd0))
+            else $fatal(1, "GEMM buffer-1 expected count changed outside one ARM acceptance");
+        end
+      end
+
+      expected_count_shadow_valid_q <= 1'b1;
+      expected_count_prev_arm_accept_q <= gemm_arm_parent_accept;
+      expected_count_prev_arm_g_buf_q <= g_buf_q;
+      expected_count_prev_invocation_accept_q <= gemm_invocation_accept;
+      expected_count_prev_q[0] <= gemm_expected_count_q[0];
+      expected_count_prev_q[1] <= gemm_expected_count_q[1];
+    end
+  end
+
+  always @(posedge clk) begin
+    if (reset === 1'b0) begin
+      if (gemm_arm_parent_accept) begin
+        assert (gemm_expected_count_q[g_buf_q] != 32'hffff_ffff)
+          else $fatal(1, "GEMM expected completion count overflow");
+        assert ((w_consume_issued_q[w_buf_q] != 32'hffff_ffff)
+             && (sc_consume_issued_q[s_buf_q] != 32'hffff_ffff)
+             && (zp_consume_issued_q[z_buf_q] != 32'hffff_ffff))
+          else $fatal(1, "GEMM resource consume target overflow");
+        assert (!out_cmd_d.flags[3]
+             && (out_cmd_d.flags[2] == w_buf_q)
+             && (out_cmd_d.flags[1] == s_buf_q)
+             && (out_cmd_d.flags[0] == z_buf_q))
+          else $fatal(1, "GEMM ARM independent W/S/Z index encoding failed");
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_MXU_ARM_GEMM) begin
+        assert (out_cmd_d.notify.valid
+             && !out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.value == 32'd1)
+          else $fatal(1, "GEMM input completion must be a PLUS-1 event");
+        assert (out_cmd_d.waits[0].valid
+             && ((out_cmd_d.waits[0].reg_id
+                  == GEMM_SYNC_REG_ID_WIDTH'(RID_T0))
+              || (out_cmd_d.waits[0].reg_id
+                  == GEMM_SYNC_REG_ID_WIDTH'(RID_T1)))
+             && (out_cmd_d.waits[0].target != 0)
+             && !out_cmd_d.waits[1].valid
+             && !out_cmd_d.waits[2].valid
+             && !out_cmd_d.waits[3].valid
+             && !out_cmd_d.waits[4].valid)
+          else $fatal(1, "GEMM ARM source issue is not tile-ready-only");
+        assert (out_cmd_d.input_admit_waits[0].valid
+             && out_cmd_d.input_admit_waits[1].valid
+             && out_cmd_d.input_admit_waits[2].valid
+             && (out_cmd_d.input_admit_waits[0].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_w_mxu(w_buf_q)))
+             && (out_cmd_d.input_admit_waits[1].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_mxu(s_buf_q)))
+             && (out_cmd_d.input_admit_waits[2].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_mxu(z_buf_q)))
+             && (out_cmd_d.input_admit_waits[0].target != 0)
+             && (out_cmd_d.input_admit_waits[0].target
+                 == out_cmd_d.input_admit_waits[1].target)
+             && (out_cmd_d.input_admit_waits[0].target
+                 == out_cmd_d.input_admit_waits[2].target))
+          else $fatal(1, "GEMM ARM lacks independent W/SC/Z admission fences");
+        assert (out_cmd_d.input_admit_waits[3].valid
+             && out_cmd_d.input_admit_waits[3].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.input_admit_waits[3].target
+                == tile_acc_reuse_target_q)
+          else $fatal(1, "GEMM ARM lacks accumulator admission fence");
+        assert (tile_acc_group_q
+             == (out_cmd_d.rs1_data >= 64'(ACC_DBUF_STRIDE)))
+          else $fatal(1, "GEMM ARM accumulator address/group mismatch");
+        if ((u32_t'(tile_cur_nt_q)
+           + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) < 32'd2) begin
+          assert (tile_acc_reuse_target_q == 32'd0)
+            else $fatal(1, "GEMM first accumulator-group owner has nonzero reuse target");
+        end
+        if (prior_g_wait_valid_q)
+          assert (!out_cmd_d.waits[3].valid)
+            else $fatal(1, "GEMM ARM retained prior-GEMM issue dependency");
+      end
+
+      if (out_start_d && state_child_ready) begin
+        unique case (state_q)
+          S_MXU_PRE_CUR_W: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (w_consume_issued_q[w_buf_q] != 0))
+              else $fatal(1, "Current W LOAD writer-wait validity mismatch");
+            if (w_consume_issued_q[w_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_w_consume(w_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == w_consume_issued_q[w_buf_q]))
+                else $fatal(1, "Current W LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current W LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_CUR_SC: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (sc_consume_issued_q[s_buf_q] != 0))
+              else $fatal(1, "Current SC LOAD writer-wait validity mismatch");
+            if (sc_consume_issued_q[s_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_consume(s_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == sc_consume_issued_q[s_buf_q]))
+                else $fatal(1, "Current SC LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current SC LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_CUR_ZP: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (zp_consume_issued_q[z_buf_q] != 0))
+              else $fatal(1, "Current ZP LOAD writer-wait validity mismatch");
+            if (zp_consume_issued_q[z_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_consume(z_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == zp_consume_issued_q[z_buf_q]))
+                else $fatal(1, "Current ZP LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Current ZP LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_W: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (w_consume_issued_q[~w_buf_q] != 0))
+              else $fatal(1, "Next W LOAD writer-wait validity mismatch");
+            if (w_consume_issued_q[~w_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(
+                            rid_w_consume(~w_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == w_consume_issued_q[~w_buf_q]))
+                else $fatal(1, "Next W LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next W LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_SC: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (sc_consume_issued_q[~s_buf_q] != 0))
+              else $fatal(1, "Next SC LOAD writer-wait validity mismatch");
+            if (sc_consume_issued_q[~s_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_sc_consume(~s_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == sc_consume_issued_q[~s_buf_q]))
+                else $fatal(1, "Next SC LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next SC LOAD consume leaked into issue waits");
+          end
+          S_MXU_PRE_NEXT_ZP: begin
+            assert (out_cmd_d.writer_wait.valid
+                 == (zp_consume_issued_q[~z_buf_q] != 0))
+              else $fatal(1, "Next ZP LOAD writer-wait validity mismatch");
+            if (zp_consume_issued_q[~z_buf_q] != 0) begin
+              assert ((out_cmd_d.writer_wait.reg_id
+                       == GEMM_SYNC_REG_ID_WIDTH'(rid_zp_consume(~z_buf_q)))
+                   && (out_cmd_d.writer_wait.target
+                       == zp_consume_issued_q[~z_buf_q]))
+                else $fatal(1, "Next ZP LOAD writer-wait mismatch");
+            end
+            assert (!out_cmd_d.waits[1].valid
+                 && !out_cmd_d.waits[2].valid
+                 && !out_cmd_d.waits[3].valid
+                 && !out_cmd_d.waits[4].valid)
+              else $fatal(1, "Next ZP LOAD consume leaked into issue waits");
+          end
+          default: begin
+          end
+        endcase
+      end
+
+      if (state_q == S_WAIT_CUR_TILE_READY && tile_cur_kt_q == 0) begin
+        assert (tile_acc_group_d
+             == ((u32_t'(tile_cur_nt_q)
+                + (u32_t'(nt_dim_q) * u32_t'(tile_cur_mt_q))) & 32'd1))
+          else $fatal(1, "GEMM tile-local accumulator group capture mismatch");
+        assert (tile_acc_reuse_target_d
+             == acc_copy_issue_q[tile_acc_group_d])
+          else $fatal(1, "GEMM tile-local accumulator reuse target capture mismatch");
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_O_ACC2LMEM) begin
+        assert (acc_copy_issue_q[tile_acc_group_q] != 32'hffff_ffff)
+          else $fatal(1, "GEMM accumulator copy issue count overflow");
+        assert (out_cmd_d.waits[0].valid
+             && out_cmd_d.waits[0].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(RID_O)
+             && out_cmd_d.waits[0].target == o_store_issue_q)
+          else $fatal(1, "GEMM ACC2LMEM lacks output-store reuse dependency");
+        assert (out_cmd_d.notify.valid
+             && out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.notify.value
+                == acc_copy_issue_q[tile_acc_group_q] + 32'd1
+             && out_cmd_d.notify.value
+                > acc_copy_issue_q[tile_acc_group_q])
+          else $fatal(1, "GEMM ACC2LMEM copy target is not strictly increasing");
+        assert (acc_copy_issue_d[tile_acc_group_q]
+             == out_cmd_d.notify.value)
+          else $fatal(1, "GEMM accumulator copy issue count/notify mismatch");
+        assert (tile_acc_group_q
+             == (out_cmd_d.rs2_data >= (64'(ACC_DBUF_STRIDE) >> 1)))
+          else $fatal(1, "GEMM ACC2LMEM accumulator address/group mismatch");
+        if (prior_g_wait_valid_q) begin
+          assert (out_cmd_d.waits[1].valid
+               && (out_cmd_d.waits[1].reg_id
+                   == GEMM_SYNC_REG_ID_WIDTH'(prior_g_wait_rid_q))
+               && (out_cmd_d.waits[1].target
+                   == prior_g_wait_target_q))
+            else $fatal(1, "GEMM ACC2LMEM lost prior-GEMM dependency");
+        end
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_PRE_NEXT_LD_I
+       && prior_g_wait_valid_q) begin
+        assert (out_cmd_d.waits[0].valid
+             && (out_cmd_d.waits[0].reg_id
+                 == GEMM_SYNC_REG_ID_WIDTH'(prior_g_wait_rid_q))
+             && (out_cmd_d.waits[0].target == prior_g_wait_target_q))
+          else $fatal(1, "Next-tile input LOAD lost prior-GEMM dependency");
+      end
+
+      if (out_start_d && state_child_ready
+       && state_q == S_O_LMEM2DRAM) begin
+        assert (o_store_issue_q != 32'hffff_ffff)
+          else $fatal(1, "GEMM output store issue count overflow");
+        assert (out_cmd_d.waits[0].valid
+             && out_cmd_d.waits[0].reg_id
+                == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
+             && out_cmd_d.waits[0].target
+                == acc_copy_issue_q[tile_acc_group_q])
+          else $fatal(1, "GEMM DMA store lacks paired ACC2LMEM dependency");
+        assert (out_cmd_d.notify.valid
+             && !out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.reg_id == GEMM_SYNC_REG_ID_WIDTH'(RID_O)
+             && out_cmd_d.notify.value == 32'd1
+             && o_store_issue_d == o_store_issue_q + 32'd1)
+          else $fatal(1, "GEMM DMA store count/notify mismatch");
+      end
+
+      if (state_q == S_O_WAIT_LMEM2DRAM_FINAL) begin
+        assert ((completed_output_store_count_i >= o_store_issue_q)
+             == (state_d == S_FINAL_CLEAR))
+          else $fatal(1, "GEMM final output-store drain comparison mismatch");
+        if (state_d == S_FINAL_CLEAR) begin
+          assert (completed_output_store_count_i == o_store_issue_q)
+            else $fatal(1, "GEMM final output-store drain over-completed");
+        end
+      end
+
+      if (state_q != S_IDLE) begin
+        assert (completed_output_store_count_i <= o_store_issue_q)
+          else $fatal(1, "GEMM completed output-store count exceeded issued count");
+      end
+
+      if (out_start_d && state_child_ready) begin
+        assert (out_cmd_d.instr[3:0] == OP_DMA_LD
+             || out_cmd_d.instr[3:0] == OP_DMA_ST
+             || out_cmd_d.instr[3:0] == OP_W_LDMA_MXU
+             || out_cmd_d.instr[3:0] == OP_SC_LDMA_MXU
+             || out_cmd_d.instr[3:0] == OP_ZP_LDMA_MXU
+             || out_cmd_d.instr[3:0] == OP_I_LDMA_ARM
+             || out_cmd_d.instr[3:0] == OP_O_ACC2LMEM)
+          else $fatal(1, "GEMM FSM emitted a removed sync opcode");
+        if (out_cmd_d.notify.valid) begin
+          assert (out_cmd_d.notify.reg_id < NUM_SYNC_REGS)
+            else $fatal(1, "GEMM notify register id out of range");
+        end
+        for (int dep = 0; dep < GEMM_MAX_WAIT_DEPS; ++dep) begin
+          if (out_cmd_d.waits[dep].valid) begin
+            assert (out_cmd_d.waits[dep].reg_id < NUM_SYNC_REGS)
+              else $fatal(1, "GEMM wait register id out of range");
+          end
+        end
+        for (int dep = 0; dep < 4; ++dep) begin
+          if (out_cmd_d.input_admit_waits[dep].valid) begin
+            assert ((out_cmd_d.instr[3:0] == OP_I_LDMA_ARM)
+                 && (out_cmd_d.input_admit_waits[dep].reg_id < NUM_SYNC_REGS))
+              else $fatal(1, "GEMM invalid/non-Input admission wait metadata");
+          end
+        end
+        if (out_cmd_d.writer_wait.valid) begin
+          assert ((((out_cmd_d.instr[3:0] == OP_W_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_W_CONSUME1))
+                  ))
+                || ((out_cmd_d.instr[3:0] == OP_SC_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_SC_CONSUME1))))
+                || ((out_cmd_d.instr[3:0] == OP_ZP_LDMA_MXU)
+                 && ((out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME0))
+                  || (out_cmd_d.writer_wait.reg_id
+                     == GEMM_SYNC_REG_ID_WIDTH'(RID_ZP_CONSUME1)))))
+               && (out_cmd_d.writer_wait.target != 0))
+            else $fatal(1, "GEMM invalid resource writer wait metadata");
+        end
+      end
+    end
+  end
+
+  always @(posedge reset) begin
+    if ($time > 0) begin
+      assert (state_q == S_IDLE)
+        else $fatal(1, "Reset asserted during an active GEMM invocation");
+    end
+  end
+`endif
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
@@ -2085,7 +2882,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       gemm_fsm_if.flag.idle,
       gemm_fsm_if.flag.done,
       pre_valid_q,
-      mxu_buf_q,
+      w_buf_q[0],
       state_q,
       state_d,
       out_cmd_d.instr[7:0],
@@ -2173,15 +2970,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   function automatic string op_to_str(input logic [3:0] op);
     case (op)
-      OP_WAIT:          return "WAIT";
-      OP_NOTIFY:        return "NOTIFY";
       OP_DMA_LD:        return "DMA_LD";
       OP_DMA_ST:        return "DMA_ST";
       OP_W_LDMA_MXU:    return "W_LDMA_MXU";
-      OP_SZ_LDMA_MXU:   return "SZ_LDMA_MXU";
+      OP_SC_LDMA_MXU:   return "SC_LDMA_MXU";
+      OP_ZP_LDMA_MXU:   return "ZP_LDMA_MXU";
       OP_I_LDMA_ARM:    return "I_LDMA_ARM";
       OP_O_ACC2LMEM:    return "O_ACC2LMEM";
-      OP_CLEAR:         return "CLEAR";
       default:          return "UNKNOWN";
     endcase
   endfunction
@@ -2200,7 +2995,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   logic [3:0]  dbg_issue_op;
   logic [7:0]  dbg_issue_state;
 
-  assign dbg_issue_pulse = out_start_d && gemm_fsm_if.flag.idle;
+  assign dbg_issue_pulse = out_start_d && state_child_ready;
   assign dbg_issue_cyc   = dbg_cyc_q;
   assign dbg_issue_op    = out_cmd_d.instr[3:0];
   assign dbg_issue_state = state_q;
@@ -2225,16 +3020,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                 $time, INSTANCE_ID, state_i, op_to_str(op), op, size_bytes, cmd_i.flags, cmd_i.rd, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.eff_mt, cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
 
       unique case (op)
-        OP_WAIT: begin
-          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_WAIT | {inst=%s, state=%0d, reg_id=%0d, target=%0d}\n",
-                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data[MM_RID_W-1:0], cmd_i.rs2_data[31:0]))
-        end
-
-        OP_NOTIFY: begin
-          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_NOTIFY | {inst=%s, state=%0d, reg_id=%0d, set_mode=%0d, value=%0d}\n",
-                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data[MM_RID_W-1:0], cmd_i.rs2_data[31], cmd_i.rs2_data[30:0]))
-        end
-
         OP_DMA_LD: begin
           `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_DMA_LD | {inst=%s, state=%0d, lmem_dst=0x%0h, dram_src=0x%0h, tile_buf=%0d, gen=%0d, dbg_rs1=%0d, dbg_rs2=%0d, dbg_rd=%0d}\n",
                     $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0], cmd_i.flags[7:1], cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
@@ -2245,14 +3030,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                     $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0], cmd_i.flags[7:1], cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
         end
 
-        OP_W_LDMA_MXU, OP_SZ_LDMA_MXU: begin
+        OP_W_LDMA_MXU, OP_SC_LDMA_MXU, OP_ZP_LDMA_MXU: begin
           `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_MXU_LD | {inst=%s, state=%0d, op=%s, lmem_src=0x%0h, data_sel=0x%0h, qdir=%0d, wtrans=%0d, mxu_buf=%0d, tile_buf=%0d}\n",
                     $time, INSTANCE_ID, state_i, op_to_str(op), cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[2], cmd_i.flags[1], cmd_i.flags[0]))
         end
 
         OP_I_LDMA_ARM: begin
-          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_I_ARM | {inst=%s, state=%0d, accum_dst=0x%0h, input_src=0x%0h, qdir=%0d, is_last=%0d, is_accum=%0d, mxu_buf=%0d, tile_buf=%0d, eff_mt=%0d}\n",
-                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[3], cmd_i.flags[2], cmd_i.flags[1], cmd_i.flags[0], cmd_i.eff_mt))
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_I_ARM | {inst=%s, state=%0d, accum_dst=0x%0h, input_src=0x%0h, qdir=%0d, notify_on_writeback=%0d, is_accum=%0d, mxu_buf=%0d, eff_mt=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data,
+                    cmd_i.flags[5], cmd_i.flags[4], cmd_i.flags[3],
+                    cmd_i.flags[2], cmd_i.eff_mt))
         end
 
         OP_O_ACC2LMEM: begin
@@ -2271,7 +3058,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 `ifdef DBG_TRACE_GEMM_FSM
   always_ff @(posedge clk) begin
     if (!reset) begin
-      if (out_start_d && gemm_fsm_if.flag.idle) begin
+      if (out_start_d && state_child_ready) begin
         log_gemm_cmd_handshake(state_q, out_cmd_d);
       end
 
@@ -2296,5 +3083,55 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   end
 `endif
 `endif
+
+  `VX_STATIC_ASSERT(DMA_STORE_MAX_CHUNK_BEATS > 0,
+    ("DMA store chunk size must be positive"));
+  `VX_STATIC_ASSERT(`IS_POW2(DMA_STORE_MAX_CHUNK_BEATS),
+    ("DMA store chunk size must be a power of two"));
+  `VX_STATIC_ASSERT((GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Input local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Weight local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Scale local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Zero-point local-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT((GEMM_TILE_DMA_PREFETCH_MAX_BEATS > 0)
+                 && (GEMM_TILE_DMA_PREFETCH_MAX_BEATS
+                     < (1 << GEMM_PREFETCH_MAX_BEATS_WIDTH)),
+    ("Tile-DMA prefetch credit is out of range"));
+  `VX_STATIC_ASSERT(GEMM_SYNC_REG_ID_WIDTH >= $clog2(GEMM_NUM_SYNC_REGS),
+    ("GEMM sync RID width is too small"));
+  `VX_STATIC_ASSERT((RID_T0 == 0) && (RID_W0 == 1) && (RID_SZ0 == 2)
+                 && (RID_G0 == 3) && (RID_O == 4) && (RID_T1 == 5)
+                 && (RID_W1 == 6) && (RID_SZ1 == 7) && (RID_G1 == 8)
+                 && (RID_ACC_FREE0 == 9) && (RID_ACC_FREE1 == 10)
+                 && (RID_SC0 == 11) && (RID_ZP0 == 12)
+                 && (RID_SC1 == 13) && (RID_ZP1 == 14)
+                 && (RID_W_CONSUME0 == 15) && (RID_W_CONSUME1 == 16)
+                 && (RID_SC_CONSUME0 == 17) && (RID_SC_CONSUME1 == 18)
+                 && (RID_ZP_CONSUME0 == 19) && (RID_ZP_CONSUME1 == 20),
+    ("GEMM sync RID encoding changed"));
+  `VX_STATIC_ASSERT((RID_W_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_W_CONSUME1 < NUM_SYNC_REGS)
+                 && (RID_SC_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_SC_CONSUME1 < NUM_SYNC_REGS)
+                 && (RID_ZP_CONSUME0 < NUM_SYNC_REGS)
+                 && (RID_ZP_CONSUME1 < NUM_SYNC_REGS),
+    ("GEMM consume RID is out of range"));
+  `VX_STATIC_ASSERT((RID_W_CONSUME0 != RID_W_CONSUME1)
+                 && (RID_W_CONSUME1 != RID_SC_CONSUME0)
+                 && (RID_SC_CONSUME0 != RID_SC_CONSUME1)
+                 && (RID_SC_CONSUME1 != RID_ZP_CONSUME0)
+                 && (RID_ZP_CONSUME0 != RID_ZP_CONSUME1),
+    ("GEMM consume RIDs must be unique"));
 
 endmodule

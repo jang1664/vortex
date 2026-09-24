@@ -1,0 +1,71 @@
+task: diagnose-th16-vitis-routing-failure
+state: DONE
+updated: "2026-08-30 12:13"
+summary: >-
+  Diagnosed why the current th16 Vitis build failed while the th32 build
+  completed. The comparison was not thread-count-only: the th32 build reused a
+  stale generated RTL snapshot from July 30, while the th16 build generated its
+  XO from the current August 30 RTL. The th16 implementation then failed in
+  route_design at global congestion level 7.
+log:
+  - timestamp: "2026-08-30 12:07"
+    action: >-
+      Located the exact th16 build directory and scanned the Vitis, Vivado, and
+      implementation logs for the first fatal implementation condition.
+    result: >-
+      Synthesis and placement completed, but route_design stopped with Route
+      35-3 because estimated global congestion reached level 7. Initial routing
+      reported 1,002,378 failed nets (753,589 unrouted and 248,789 partially
+      routed).
+  - timestamp: "2026-08-30 12:12"
+    action: >-
+      Compared the th16 and th32 configuration fingerprints, generated source
+      sets, XO inputs, placed utilization, SLR distribution, routing congestion,
+      and timing reports.
+    result: >-
+      The fingerprints differ only in NUM_THREADS, but the RTL snapshots differ
+      substantially. The th32 packaged source has no VX_gemm_compute_core.sv,
+      uses the old 7,961-byte VX_gemm_ctrl.sv, and shares 65 changed same-name
+      source files with the current th16 snapshot. The th16 snapshot includes
+      the new compute core and a 29,682-byte VX_gemm_ctrl.sv.
+  - timestamp: "2026-08-30 12:13"
+    action: >-
+      Audited the XRT Makefile dependency chain and distinguished shared Vivado
+      warnings from the actual failure.
+    result: >-
+      sources.txt depends on the XRT Makefile, platforms.mk, and the config
+      fingerprint, but not on RTL source files. An unchanged th32 config can
+      therefore reuse stale generated src/sources.txt after RTL changes. The
+      Invalid-part and AsyncBRAM warnings also occur in the successful th32 run
+      and are not the differentiating failure.
+evidence:
+  th16_failure: >-
+    route_design failed with global congestion level 7; placed SLR0 CLB usage
+    was 94.03% even though whole-device CLB usage was 72.85%.
+  th16_timing: >-
+    Placed WNS was -15.682 ns. The worst setup path ran from
+    u_compute_core/acc_launch_ctrl_q_reg[is_load] to DMA channel stride_bound_r,
+    with 73 logic levels and 25.271 ns data-path delay.
+  th32_success: >-
+    The reused older design reached global congestion level 6 and routed
+    successfully. Its placed setup WNS was +0.003 ns.
+  related_current_rtl_evidence: >-
+    The preceding descriptor-shadow physical-design task reached the same
+    level-7 congestion on the current TH16 architecture. Its placement analysis
+    found the replacement hotspots in vortex_axi, u_tmem_subsystem,
+    u_switch_weight, Weight LDMA stream queues, per-channel DMA units, and HBM
+    entry connectivity rather than in the optimized descriptor controller.
+  build_cache_cause: >-
+    hw/syn/xilinx/xrt/Makefile lines 308-312 do not list RTL files as
+    prerequisites of generated sources.txt.
+pitfalls:
+  - >-
+    Do not compare thread-count effects across persistent XRT build directories
+    unless both generated src trees and XO files were freshly rebuilt from the
+    same Git revision.
+  - >-
+    Whole-device utilization can hide local congestion; the failed th16 design
+    concentrated 94.03% of SLR0 CLBs while leaving SLR2 at 51.68%.
+  - >-
+    The Vivado Invalid part string Project message is emitted by both runs and
+    did not prevent the th32 route from completing.

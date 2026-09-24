@@ -1,0 +1,295 @@
+task: weight-tmem-arb-opt
+status: hard_rule_stopped_performance_target
+spec: agent-tasks/weight-tmem-arb-opt/weight-tmem-arb-opt-spec.md
+plan: docs/future_optim/gemv/gemm_improve/weight_tmem_arb_opt.md
+current_phase: blocked_awaiting_design_discussion
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    timestamp: "2026-08-16 03:01"
+    status: compile_error
+    test: hw/unittest/tensor_mem_bank
+    error_summary: "VCS elaborated VX_sp_ram_compiled_unsupported_shape as an unintended top."
+    root_cause: "The unittest VCS harness lacked an explicit top-module restriction while wildcard library sources included the compiled-SRAM dispatcher."
+    fix_applied: "Added -top $(TOP_MODULE) plus explicit RTL/TB/harness dependencies and a compile stamp to the tensor_mem_bank VCS harness; synchronized the current configured build copy. No production RTL or TB semantics changed."
+    lesson: "Standalone interface/module unittests must pass -top TOP_MODULE when library source discovery can expose uninstantiated roots."
+  - iteration: 2
+    timestamp: "2026-08-16 03:04"
+    status: sim_fail
+    test: hw/unittest/tensor_mem_bank
+    error_summary: "Held-request stability assertion failed on port 1 at 475 ns."
+    root_cause: "Confirmed TB protocol error in both persistent-source loops: after aggregate coverage became true, the next exit-check posedge still granted one source, then the blanket negedge cleanup deasserted every source, including unselected ports whose previous cycle was valid&&!ready."
+    fix_applied: "Changed urgent-RR and normal-fairness stimuli so every persistent source deasserts only on the negedge after its own final valid&&ready handshake; the urgent source remains asserted until its own post-coverage handshake. Production RTL and the stability assertion are unchanged."
+    lesson: "Persistent arbitration stimuli must retire each asserted source only after that source's own final valid/ready handshake."
+  - iteration: 3
+    timestamp: "2026-08-16 03:09"
+    status: sim_fail
+    test: hw/unittest/lmem_dma_input_overlap
+    passed_before_failure: "tensor_mem_bank passed urgent/normal class RR, bounded fairness, reset, and response checks."
+    error_summary: "Input overlap timed out after 16 source requests but only the first 8 destination beats drained."
+    root_cause: "The directed TB response model disabled response_release after the initial eight slots and never returned responses for seq2/seq3 requests issued into recycled slots."
+    fix_applied: "After the initial reverse/nonconsecutive/threshold checkpoint, re-enabled continuous lowest-tag response servicing on a negedge. Added request/response/pending accounting and an explicit stale/duplicate-tag guard. Production RTL and the directed READY-ahead checks are unchanged."
+    lesson: "An overlap TB that recycles response slots must service later tagged requests after the initial occupancy/ordering checkpoint."
+  - iteration: 4
+    timestamp: "2026-08-16 03:12"
+    status: sim_fail
+    test: hw/unittest/tmem_wide_read_switch
+    passed_before_failure: "tensor_mem_bank preserved PASS; Input and Weight overlap VCS suites passed ready-ahead, recycling, fence, ordering, and reset coverage."
+    error_summary: "Wide-switch held-input assertion failed in case_wload32 at 95 ns."
+    root_cause: "The full-depth directed check held one extra request for a stalled edge, then deasserted valid/urgency on the next negedge without an acceptance handshake."
+    fix_applied: "Split full-depth coverage into a dedicated probe: the one-extra request remains data/urgency-stable across the stalled edge and is canceled only while a case-local DUT reset is asserted. Functional batches then restart from empty state with their original OUTSTANDING counts/order. Production RTL and the held-input assertion are unchanged."
+    lesson: "A FIFO-full check cannot withdraw a valid request after observing ready low; it must hold until handshake or cancel only through reset."
+  - iteration: 5
+    timestamp: "2026-08-16 03:18"
+    status: compile_error
+    test: hw/unittest/gemm_unit_v2_backpressure
+    passed_before_failure: "Wide switch, actual Scale and ZP builds, lmem_dma_misal, and legacy gemm_unit_v2 passed; prior tensor/Input/Weight PASSes remain valid."
+    error_summary: "Make could not find the focused backpressure TB under build/hw/unittest."
+    root_cause: "The configured-build Makefile overrides SRC_DIR to its build directory, but configure does not copy this focused TB there; the authoritative TB remains in source hw/unittest."
+    fix_applied: "Changed the focused wrapper to resolve its TB through deferred VORTEX_HOME source-tree expansion in both the authoritative and configured Makefiles, and made the shared GEMM VCS recipe honor TOP_MODULE explicitly. The compile target now depends on the existing source TB and selects tb_VX_gemm_unit_v2_backpressure. Production RTL and TB semantics are unchanged."
+    lesson: "Configured-build unittest wrappers must resolve specialized TB sources from VORTEX_HOME when configure does not generate a local copy."
+  - iteration: 6
+    timestamp: "2026-08-16 04:00"
+    status: pass
+    test: "full VCS unittest and node integration matrix"
+    passed:
+      - "tensor_mem_bank: urgent/normal class arbitration, independent RR, bounded fairness, reset"
+      - "lmem_dma_input_overlap: READY-ahead thresholds, WAIT_RSP exclusion, recycled-slot responses"
+      - "lmem_dma_weight_overlap: four descriptors/eight slots, READY-ahead, writer fence, ordering, reset"
+      - "tmem_wide_read_switch: 8/8/2/1 contexts, full-depth reset cancellation, all-lane urgency"
+      - "lmem_dma_qparam_overlap: separately rebuilt Scale TEST_ZP=0 and ZP TEST_ZP=1"
+      - "lmem_dma_misal, gemm_unit_v2, gemm_unit_v2_backpressure, gemm_fsm, gemm_ctrl, gemm_sync"
+      - "gemm_node_improve M=4/256 x QDIR=0/1 numerical and metadata lifecycle"
+    node_results:
+      m4_qdir0: "1024 outputs; commands=64 packets=256 scheduler_retire=64"
+      m4_qdir1: "1024 outputs; commands=64 packets=256 scheduler_retire=64"
+      m256_qdir0: "65536 outputs; commands=128 packets=16384 scheduler_retire=128"
+      m256_qdir1: "65536 outputs; commands=128 packets=16384 scheduler_retire=128"
+    hard_rule_blocker: false
+    next: "XRT-VCS baseline/skew-only/priority-only/skew+priority comparison, then QCOL-first FSDB gate"
+notes:
+  - "2026-08-16: Confirmed ready-ahead TMEM urgency arbitration plus resource-aware allocation skew plan."
+  - "2026-08-16: Weight skew is measured in GEMM_WEIGHT_DATA_SIZE wide-bank groups, not fixed 64 B units."
+  - "2026-08-16: Eight TMEM banks are retained; bank-count expansion is out of initial scope."
+  - "2026-08-16: RTL implementation is ready for verification; no Hard Rule blocker was found."
+pitfalls:
+  - "A shared RR cursor across urgency classes is not starvation-bounded: urgent grants can repeatedly perturb the normal rotation. The implementation uses independent urgent and normal cursors."
+implementation_readiness:
+  date: "2026-08-16"
+  status: ready_for_verification
+  hard_rule_blocker: false
+  changed_files:
+    - hw/rtl/VX_config.vh
+    - hw/rtl/core/gemm/VX_lmem_dma_misal.sv
+    - hw/rtl/mem/VX_tensor_mem_bank.sv
+    - hw/rtl/mem/VX_tmem_subsystem.sv
+    - hw/rtl/mem/VX_tmem_switch.sv
+    - hw/rtl/mem/VX_tmem_wide_read_switch.sv
+    - hw/unittest/lmem_dma_input_overlap/tb_VX_lmem_dma_input_overlap.sv
+    - hw/unittest/lmem_dma_weight_overlap/tb_VX_lmem_dma_weight_overlap.sv
+    - hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv
+    - hw/unittest/tmem_wide_read_switch/tb_VX_tmem_wide_read_switch.sv
+    - kernel/src/fi_gemm.c
+    - docs/rtl/VX_tmem_subsystem.md
+    - docs/future_optim/gemv/gemm_improve/weight_tmem_arb_opt.md
+    - agent-tasks/weight-tmem-arb-opt/STATUS.yaml
+    - hw/unittest/tensor_mem_bank/vcs.mk
+  static_checks:
+    - "git diff --check: pass"
+    - "Verilator targeted lint: Input overlap, Weight overlap, tensor bank, and wide-read case pass (warnings only)"
+    - "Verilator VX_tmem_subsystem elaboration: default and WLOAD8+urgency pass (warnings only)"
+    - "GCC C11 syntax: default and legal WLOAD8/skew configuration pass (pre-existing implicit-intrinsic warnings only)"
+  verification_request:
+    order:
+      - hw/unittest/tensor_mem_bank
+      - hw/unittest/lmem_dma_input_overlap
+      - hw/unittest/lmem_dma_weight_overlap
+      - hw/unittest/tmem_wide_read_switch
+      - hw/unittest/lmem_dma_qparam_overlap
+      - hw/unittest/lmem_dma_misal
+      - hw/unittest/gemm_node_improve
+    node_matrix: "M={4,256} N=256 K=256 QBLK=32 QDIR={0,1} WTRANS=0 MXU_WLOAD_NUM=8"
+    expected_markers:
+      - "PASS marker: urgent-over-normal and independent normal RR progress"
+      - "PASS marker: Input ready-ahead covers 0/1/threshold-1/threshold/full and excludes WAIT_RSP"
+      - "PASS marker: Weight ready-ahead covers 0/1/threshold/full and excludes WAIT_RSP"
+      - "context urgency stayed identical across every partial bank lane"
+      - "TEST PASSED"
+iteration_1_fix_readiness:
+  date: "2026-08-16"
+  status: ready_for_iteration_2
+  scope: vcs_harness_only
+  source_file: hw/unittest/tensor_mem_bank/vcs.mk
+  configured_build_copy: build/hw/unittest/tensor_mem_bank/vcs.mk
+  production_rtl_changed: false
+  test_semantics_changed: false
+  static_checks:
+    - "source and configured-build vcs.mk copies match"
+    - "make -n compile emits -top tb_VX_tensor_mem_bank"
+    - "compile stamp is absent and make -q reports rebuild required"
+    - "compile target depends on TB, RTLS, Makefile, and vcs.mk"
+    - "git diff --check: pass"
+  iteration_2_request:
+    test_type: unittest
+    test_path: build/hw/unittest/tensor_mem_bank
+    test_params: ""
+    sim_tool: vcs
+    expected_markers:
+      - "PASS marker: urgent-over-normal and independent normal RR progress"
+      - "PASS marker: urgent class RR progress"
+      - "PASS marker: priority state reset emitted no stale response"
+      - "TEST PASSED"
+iteration_2_fix_readiness:
+  date: "2026-08-16"
+  status: ready_for_iteration_3
+  scope: directed_tb_protocol_only
+  changed_file: hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv
+  production_rtl_changed: false
+  stability_assertion_changed: false
+  test_intent_changed: false
+  audit:
+    urgent_rr_loop: "each urgent source retires only after its own second handshake"
+    normal_fairness_loop: "each normal source retires after its own second handshake; urgent retires after both coverage targets and its own handshake"
+  static_checks:
+    - "Verilator tensor_mem_bank directed-TB lint: pass (warnings only)"
+    - "make -q reports the newer TB requires a VCS rebuild"
+    - "make -n compile retains -top tb_VX_tensor_mem_bank"
+    - "git diff --check: pass"
+  iteration_3_request:
+    test_type: unittest
+    test_path: build/hw/unittest/tensor_mem_bank
+    test_params: ""
+    sim_tool: vcs
+    expected_markers:
+      - "PASS marker: urgent-over-normal and independent normal RR progress"
+      - "PASS marker: urgent class RR progress"
+      - "PASS marker: priority state reset emitted no stale response"
+      - "TEST PASSED"
+iteration_3_fix_readiness:
+  date: "2026-08-16"
+  status: ready_for_iteration_4
+  scope: input_overlap_tb_response_model_only
+  changed_file: hw/unittest/lmem_dma_input_overlap/tb_VX_lmem_dma_input_overlap.sv
+  production_rtl_changed: false
+  ready_ahead_checks_changed: false
+  response_model:
+    controlled_phase: "initial eight responses retain reverse/nonconsecutive and 0/1/threshold-1/threshold/full checks"
+    continuous_phase: "after the checkpoint, every recycled-slot request is serviced lowest-tag-first"
+    safety: "response_count/pending_count equality plus live pending tag guard reject stale, duplicate, or stranded responses"
+    scheduling: "response enable/disable changes occur on negedges, away from DUT response sampling"
+  static_checks:
+    - "Verilator Input overlap directed-TB lint: pass (warnings only)"
+    - "make -q reports the newer source TB requires a VCS rebuild"
+    - "make -n compile retains -top tb_VX_lmem_dma_input_overlap"
+    - "git diff --check: pass"
+  iteration_4_request:
+    test_type: unittest
+    test_path: build/hw/unittest/lmem_dma_input_overlap
+    test_params: ""
+    sim_tool: vcs
+    expected_markers:
+      - "PASS marker: Input ready-ahead covers 0/1/threshold-1/threshold/full and excludes WAIT_RSP"
+      - "PASS marker: Input recycled slots received one response per later tagged request"
+      - "VX_lmem_dma_input_overlap unittest PASSED"
+iteration_4_fix_readiness:
+  date: "2026-08-16"
+  status: ready_for_iteration_5
+  scope: wide_switch_tb_protocol_only
+  changed_file: hw/unittest/tmem_wide_read_switch/tb_VX_tmem_wide_read_switch.sv
+  production_rtl_changed: false
+  stability_assertion_changed: false
+  response_order_expectations_changed: false
+  full_depth_probe:
+    coverage: "accept exactly OUTSTANDING requests, observe ready low for a stable one-extra request"
+    cancellation: "assert case-local DUT reset while extra valid/data/urgency remain held; deassert stimulus only under reset"
+    isolation: "reset empties probe contexts before the original batch-0/batch-1 issue/response/order tests"
+  static_checks:
+    - "Verilator wide-read case lint: pass (warnings only)"
+    - "make -q reports the newer source TB requires a VCS rebuild"
+    - "make -n compile retains -top tb_VX_tmem_wide_read_switch"
+    - "git diff --check: pass"
+  iteration_5_request:
+    test_type: unittest
+    test_path: build/hw/unittest/tmem_wide_read_switch
+    test_params: ""
+    sim_tool: vcs
+    expected_markers:
+      - "PASS: full-depth blocked request remained stable until reset cancellation"
+      - "PASS: context urgency stayed identical across every partial bank lane"
+      - "PASSED: TMEM wide-read multi-outstanding 8/8/2/1 cases"
+iteration_5_fix_readiness:
+  date: "2026-08-16"
+  status: ready_for_iteration_6
+  scope: configured_unittest_harness_only
+  changed_files:
+    - hw/unittest/gemm_unit_v2_backpressure/Makefile
+    - hw/unittest/gemm_unit_v2/vcs.mk
+  configured_build_copies:
+    - build/hw/unittest/gemm_unit_v2_backpressure/Makefile
+    - build/hw/unittest/gemm_unit_v2/vcs.mk
+  production_rtl_changed: false
+  tb_semantics_changed: false
+  root_fix:
+    tb_resolution: "deferred VORTEX_HOME path resolves the authoritative source TB from either source or configured build invocation"
+    dependency: "compile explicitly depends on the resolved source TB; the configured compile stamp is absent and make -q requests a rebuild"
+    top: "VCS now receives -top tb_VX_gemm_unit_v2_backpressure through TOP_MODULE"
+  static_checks:
+    - "source and configured focused Makefiles match"
+    - "source and configured parent vcs.mk copies match"
+    - "make -pn compile lists the authoritative source TB as a prerequisite"
+    - "make -n compile emits the authoritative source TB and -top tb_VX_gemm_unit_v2_backpressure"
+    - "make -q compile returns 1 because no configured compile stamp exists"
+    - "git diff --check: pass"
+  iteration_6_request:
+    test_type: unittest
+    test_path: build/hw/unittest/gemm_unit_v2_backpressure
+    test_params: ""
+    sim_tool: vcs
+    exact_command: "python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_unit_v2_backpressure --sim vcs"
+    expected_markers:
+      - "VX_gemm_unit_v2 backpressure unittest PASSED stalls=1,2,6,7,random reset=occupied"
+blackbox_verification:
+  date: "2026-08-16"
+  status: pass
+  matrices:
+    baseline: "M=4/256 x QDIR=0/1: 4/4 PASS"
+    priority_only: "M=4/256 x QDIR=0/1: 4/4 PASS"
+    selected_skew_i0_w1: "M=4/256 x QDIR=0/1: 4/4 PASS"
+    combined_priority_skew_i0_w1: "M=4/256 x QDIR=0/1: 4/4 PASS"
+  priority_only_cycles:
+    m4_qdir0: 609
+    m4_qdir1: 608
+    m256_qdir0: 17769
+    m256_qdir1: 17769
+  baseline_cycles:
+    m4_qdir0: 635
+    m4_qdir1: 618
+    m256_qdir0: 19425
+    m256_qdir1: 19421
+  safety: "All manifests exit_status=0; numerical/runner PASS; Input/Weight/Output stalls=0; ACC underflow/conflict=0."
+skew_sweep:
+  date: "2026-08-16"
+  status: pass_no_material_gain
+  matrix: "Input skew 0..7 x Weight group skew 0..3, urgency disabled, M4 QCOL"
+  results: "32/32 numerical PASS with unique forced-rebuild fingerprints"
+  baseline_cycles: 635
+  best_cycles: 633
+  best_count: 17
+  conclusion: "At most 2 cycles (0.315%) improvement; i0/w1 worsened M4 QROW 618->621 and had no M256 gain. Keep skew default zero."
+fsdb_verification:
+  date: "2026-08-16"
+  status: strict_performance_fail
+  config: "priority-only, M4 QCOL, skew defaults zero"
+  artifact: "build/run_logs/weight_tmem_arb_opt/fsdb_priority/20260816-051645_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid2144481/target_gemm.fsdb"
+  numerical_status: pass
+  metrics:
+    arbitration_loss: "112->79"
+    input_caused_weight_loss: "92->59 (not near zero)"
+    continuous_weight_commands: "25/64->34/64 (target 64/64)"
+    weight_internal_bubbles: "71->57 (target 0)"
+    input_internal_gaps: "103->68; source-valid-low 4->0; remaining consumer-ready-low 68"
+    max_weight_starvation_cycles: 3
+    ordering: "64 commands and 256 beats ordered; each command beat list 0,1,2,3"
+  representative_failure: "Weight seq0 writes at 57185000/57205000/57225000/57245000 ps, spanning 7 cycles with 3 bubbles."
+  hard_rule_action: "Stopped immediately after QCOL strict failure; QROW FSDB not run; no additional RTL concept proposed."
+  correctness: "Numerical PASS; source req/rsp/write counts all 256; no observed loss, duplicate, reorder, production assertion, Error, or Fatal."

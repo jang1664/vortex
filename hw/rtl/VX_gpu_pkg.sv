@@ -902,6 +902,9 @@ package VX_gpu_pkg;
         dma_perf_t                lmem_dma_sz;
         dma_perf_t                lmem_dma_output;
         logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
+        // Union of CPU DMA, HBM DMA, and all LMEM DMA busy predicates.
+        // Concurrent DMA engines count once per cycle.
+        logic [PERF_CTR_BITS-1:0] dma_union_active_cycles;
         // Cycles where the Vortex core is busy (active kernel duration).
         // Common denominator for utilization metrics; exposed in every
         // ACCEL_* MPM class at CSR slot B03.
@@ -909,6 +912,93 @@ package VX_gpu_pkg;
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////
+   localparam int GEMM_MAX_WAIT_DEPS     = 5;
+   localparam int GEMM_MAX_PREPARE_WAIT_DEPS = 1;
+   localparam int GEMM_SYNC_REG_ID_WIDTH = 5;
+   localparam int GEMM_DMA_TAG_WIDTH     = 3;
+   localparam int GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH = 4;
+   localparam int GEMM_NUM_SYNC_REGS     = 21;
+   localparam int GEMM_PREFETCH_MAX_BEATS_WIDTH = 8;
+   localparam int GEMM_SCHED_PRIORITY_WIDTH = 2;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_BACKGROUND = 2'd0;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_NEAR = 2'd1;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_EARLIEST = 2'd2;
+   localparam logic [GEMM_SCHED_PRIORITY_WIDTH-1:0]
+       GEMM_SCHED_PRIORITY_BLOCKED = 2'd3;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_INPUT  = 2'd0;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_WEIGHT = 2'd1;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_SCALE  = 2'd2;
+   localparam logic [1:0] GEMM_SCHED_RESOURCE_ZP     = 2'd3;
+   localparam int GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_INPUT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_WEIGHT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_SCALE_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS =
+       `GEMM_ZERO_POINT_LDMA_PREFETCH_MAX_BEATS;
+   localparam int GEMM_TILE_DMA_PREFETCH_MAX_BEATS =
+       `GEMM_TILE_DMA_PREFETCH_MAX_BEATS;
+
+   localparam logic GEMM_PREPARE_NONE = 1'b0;
+   localparam logic GEMM_PREPARE_SOURCE_READ = 1'b1;
+
+   localparam logic [3:0] GEMM_OP_SC_LDMA_MXU = 4'd6;
+   localparam logic [3:0] GEMM_OP_ZP_LDMA_MXU = 4'd10;
+
+   // RID_SZ remains the logical dependency consumed by input commands.  The
+   // scheduler derives it from the two physical completion sequences.
+   localparam int GEMM_RID_T0 = 0;
+   localparam int GEMM_RID_W0 = 1;
+   localparam int GEMM_RID_SZ0 = 2;
+   localparam int GEMM_RID_G0 = 3;
+   localparam int GEMM_RID_O = 4;
+   localparam int GEMM_RID_T1 = 5;
+   localparam int GEMM_RID_W1 = 6;
+   localparam int GEMM_RID_SZ1 = 7;
+   localparam int GEMM_RID_G1 = 8;
+   localparam int GEMM_RID_ACC_FREE0 = 9;
+   localparam int GEMM_RID_ACC_FREE1 = 10;
+   localparam int GEMM_RID_SC0 = 11;
+   localparam int GEMM_RID_ZP0 = 12;
+   localparam int GEMM_RID_SC1 = 13;
+   localparam int GEMM_RID_ZP1 = 14;
+   localparam int GEMM_RID_W_CONSUME0  = 15;
+   localparam int GEMM_RID_W_CONSUME1  = 16;
+   localparam int GEMM_RID_SC_CONSUME0 = 17;
+   localparam int GEMM_RID_SC_CONSUME1 = 18;
+   localparam int GEMM_RID_ZP_CONSUME0 = 19;
+   localparam int GEMM_RID_ZP_CONSUME1 = 20;
+   // Keep every surviving RID value stable.  IDs 21-24, which were appended
+   // solely for the temporary four-bank Weight scheme, are intentionally
+   // removed when Weight returns to two-bank double buffering.
+
+   typedef logic       gemm_wreg_idx_t;
+   typedef logic       gemm_qreg_idx_t;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic [GEMM_SYNC_REG_ID_WIDTH-1:0]         reg_id;
+       logic [31:0]                               target;
+   } gemm_wait_meta_t;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic                                      mode;
+       logic [GEMM_PREFETCH_MAX_BEATS_WIDTH-1:0] max_beats;
+       gemm_wait_meta_t [GEMM_MAX_PREPARE_WAIT_DEPS-1:0] waits;
+   } gemm_prepare_meta_t;
+
+   typedef struct packed {
+       logic                                      valid;
+       logic [GEMM_SYNC_REG_ID_WIDTH-1:0]         reg_id;
+       logic                                      set_mode;
+       logic [31:0]                               value;
+   } gemm_notify_meta_t;
+
    typedef struct packed {
        logic [UUID_WIDTH-1:0]    uuid;
        logic [NW_WIDTH-1:0]      wid;
@@ -922,8 +1012,29 @@ package VX_gpu_pkg;
        logic [31:0]              stride;
        logic [15:0]              bound;
        logic [7:0]               flags;
+       logic                     dma_priority;
+       logic [GEMM_DMA_MAX_CHUNK_LOG2P1_WIDTH-1:0]
+                                 dma_max_chunk_log2p1;
        logic [20:0]              eff_mt;
        logic [31:0]              groups_eff;
+       // Monotonic micro-tile identity used only by the readiness scheduler.
+       // All W/S/Z/Input commands belonging to one micro-tile carry the same
+       // value.  It does not participate in architectural dependency checks.
+       logic [31:0]              work_seq;
+       gemm_wait_meta_t [GEMM_MAX_WAIT_DEPS-1:0] waits;
+       // Input-only resource metadata.  These waits are intentionally
+       // excluded from child issue eligibility so the pure source-read phase
+       // can execute early.  The node gates admission only on ACC ownership;
+       // exact W/S/Z bank/generation targets travel to their true consumers.
+       gemm_wait_meta_t [3:0] input_admit_waits;
+       // Resource-local destination commit fence for Weight, Scale, and
+       // Zero-point LOADs.  Unlike waits[], this metadata does not participate
+       // in child issue eligibility: the pure source phase may execute early,
+       // while the selected executor holds destination writes until this exact
+       // resource-consume target is reached.
+       gemm_wait_meta_t          writer_wait;
+       gemm_prepare_meta_t       prepare;
+       gemm_notify_meta_t        notify;
    } gemm_unified_cmd_t; // it can be union
 
    typedef struct packed {
@@ -933,13 +1044,45 @@ package VX_gpu_pkg;
       logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] output_mem_stride;
       logic [`GEMM_ACC_MAX_CNT-1:0] acc_cnt;
 
-      logic wreg_use_idx;
-      logic sreg_use_idx;
-      logic zreg_use_idx;
+      gemm_wreg_idx_t wreg_use_idx;
+      gemm_qreg_idx_t sreg_use_idx;
+      gemm_qreg_idx_t zreg_use_idx;
 
       logic is_load;
       logic is_last;
    } gemm_unit_ctrl_t;
+
+   // Per-input control carried alongside the fixed-latency GEMM v2 datapath.
+   // ACC addresses are byte addresses in the internal accumulation memory.
+   typedef struct packed {
+      logic valid;
+      logic acc_rd_en;
+      logic acc_wr_en;
+      // Backend-opaque byte addresses.  The internal ACC adapter consumes
+      // only GEMM_ACC_MEM_ADDR_WIDTH low bits, while the NAIVE LMEM adapter
+      // must retain the complete LMEM address.
+      logic [`MEM_ADDR_WIDTH-1:0] acc_rd_addr;
+      logic [`MEM_ADDR_WIDTH-1:0] acc_wr_addr;
+      logic quant_dir;
+      gemm_wreg_idx_t wreg_use_idx;
+      gemm_qreg_idx_t sreg_use_idx;
+      gemm_qreg_idx_t zreg_use_idx;
+      // Exact registered LOAD generations required by this transaction.
+      // Values, unlike bank/generation metadata, are never snapshotted into
+      // the GEMM pipeline.
+      logic [31:0] w_load_target;
+      logic [31:0] s_load_target;
+      logic [31:0] z_load_target;
+      // Core-local packet identity used only to join variable-latency ACC
+      // channels.  work_seq identifies a logical microtile and may repeat
+      // across many simultaneously in-flight packets, so it is not a legal
+      // ready/valid transaction tag.
+      logic [31:0] acc_txn_tag;
+      logic [31:0] work_seq;
+      logic is_load;
+      logic notify_on_writeback;
+      logic last;
+   } gemm_input_ctrl_t;
 
     function automatic int get_pipe_stage_bitmask(input int row_size, input int PIPE_INTERVAL);
       /*
@@ -1002,7 +1145,7 @@ package VX_gpu_pkg;
     // Shared local-DMA tags must hold the largest independently configured
     // input/weight/scale-zero/output response-slot index.
     localparam LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS = `MAX(
-        `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RD_OUTSTANDING_SLOTS),
+        `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RESPONSE_SLOTS),
         `MAX(`SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS, `O_LMEM_DMA_RD_OUTSTANDING_SLOTS));
     localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS);
     localparam LMEM_TAG_WIDTH = `MAX(

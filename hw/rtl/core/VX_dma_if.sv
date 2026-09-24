@@ -8,7 +8,8 @@
 `include "VX_define.vh"
 
 interface VX_dma_if import VX_gpu_pkg::*; #(
-  parameter NDIM = 3
+  parameter NDIM = 3,
+  parameter BOUND_WIDTH = `DMA_BOUND_WIDTH
 ) ();
 
   // Control signals (master -> slave)
@@ -17,7 +18,7 @@ interface VX_dma_if import VX_gpu_pkg::*; #(
   logic [31:0] dst_base_addr;
   logic [31:0] src_strides [NDIM];
   logic [31:0] dst_strides [NDIM];
-  logic [31:0] bounds      [NDIM];
+  logic [BOUND_WIDTH-1:0] bounds [NDIM];
   logic [31:0] seg_size;
 
   // Status signals (slave -> master)

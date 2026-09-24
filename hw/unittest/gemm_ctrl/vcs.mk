@@ -15,4 +15,4 @@ compile: setup
 	$(PARAMS)
 
 sim: compile
-	./simv -reportstats -l $(SIM_LOG)
+	./simv -reportstats $(EXTRA_SIM_ARGS) -l $(SIM_LOG)

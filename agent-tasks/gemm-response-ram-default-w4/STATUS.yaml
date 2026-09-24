@@ -1,0 +1,56 @@
+task: gemm-response-ram-default-w4
+status: complete
+updated: "2026-09-03 10:23"
+goal: >-
+  Default all GEMM overlap response payload storage to registered-read RAM and
+  validate the resulting design with MXU_WLOAD_NUM=4.
+iterations:
+  - iteration: 1
+    status: pass
+    objective: >-
+      Make RTL/config/test defaults RAM-on, make helper validation WLOAD4, and
+      update current-policy documentation without rewriting historical data.
+    implementation: >-
+      Set queue, overlap-wrapper, wide-switch, and configuration macro defaults
+      to RAM-on; set focused defaults and OOC helper policy to WLOAD4.  Weight
+      focused verification uses eight command beats.  Explicit RAM=0 fallback
+      and the named W8 config remain available.
+verification:
+  focused_vcs:
+    status: pass
+    cases:
+      - gemm_stream_dma_queue
+      - lmem_dma_input_overlap_wload4_ram
+      - lmem_dma_weight_overlap_wload4_ram_cmd_beats8
+      - lmem_dma_qparam_scale_wload4_ram
+      - lmem_dma_qparam_zero_point_wload4_ram
+      - tmem_wide_read_switch_ram_including_wload4
+    evidence: >-
+      All six VCS invocations passed without fatal, assertion, syntax, or
+      elaboration errors.  Compile logs confirm RAM=1, MXU_WLOAD_NUM=4, and
+      W_LMEM_DMA_CMD_BEATS=8 where applicable.
+  xrt_vcs_sim_w4:
+    status: pass
+    build: build_gemm_response_ram_w4
+    config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
+    qcol_cycles: 5873
+    qrow_cycles: 5873
+    evidence: >-
+      Both M=N=K=32, QBLK=32 FPINT GEMM directions passed using the freshly
+      compiled WLOAD4/RAM-default RTL binary.
+  ooc_helper_dry_run:
+    status: pass
+    evidence: >-
+      Script syntax passed and the generated manifest selected the non-_w8
+      WLOAD4 config without invoking Vivado.
+pitfalls:
+  - >-
+    Changing only VX_gemm_stream_dma_queue does not affect IMPROVE production
+    instances because upper wrappers and VX_config macros explicitly override
+    the parameter.
+  - >-
+    Historical WLOAD8 resource and timing measurements must remain labeled as
+    WLOAD8 even after the current default policy changes to WLOAD4.
+  - >-
+    The explicitly named _w8 config remains a supported opt-in and must not be
+    silently changed to WLOAD4.

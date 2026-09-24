@@ -1,0 +1,64 @@
+task: dma-bound21-native-product
+status: complete
+spec: dma-bound21-native-product-spec.md
+plan: dma-bound21-native-product-plan.md
+iterations:
+  - iteration: 1
+    stage: focused_vcs
+    result: partial_fail
+    evidence:
+      - "build_verify_dma_bound21_i1/verify-results: all six local overlap DMA FF/RAM configurations passed"
+      - "aligned MAX_DIMS=1/2 and misaligned MAX_DIMS=1/2 generic tests did not execute the intended dimension stimulus"
+      - "build_verify_dma_parity_i1: aligned 32B/64B MAX_DIMS=1/2 parity passed and all negative assertions fired as expected"
+    diagnosis:
+      - "dma_mem_unit Makefile did not forward OBJ/MAX_DIMS into VCS elaboration"
+      - "misaligned testbench left lookahead data_release unknown"
+      - "dma_padding_optional Makefile omitted misalignment helper RTL sources"
+    action: "Correct the three test harness defects and rerun failed VCS cases as iteration 2"
+  - iteration: 2
+    stage: focused_vcs
+    result: pass
+    evidence:
+      - "build_verify_dma_parity_i1: 32B/64B baseline parity passed"
+      - "aligned and misaligned MAX_DIMS=1/2 versus MAX_DIMS=3 dual-DUT parity passed"
+      - "all 13 padding/dimension regression cases passed, including seven expected-failure contracts"
+      - "each positive case checked the maximum and 127 random 32x21 multiplier products"
+      - "build_verify_dma_bound21_i1: all local overlap FF/RAM modes and misaligned standalone MAX_DIMS=1/2 passed"
+    action: "Continue broad legacy regression, xrt-vcs integration, and OOC checks"
+  - iteration: 3
+    stage: broad_vcs_and_xrt_vcs
+    result: pass
+    evidence:
+      - "build_verify_dma_regression_i2: dma_engine, dma_node, lmem_dma, lmem_dma_misal, lmem_weight_gather_dma, gemm_dma_ctrl, gemm_dma_ctrl_naive_pipeline, and gemm_tmem_dma_ctrl passed"
+      - "gemm_node_improve regression passed 55/55 cases"
+      - "build_dma_bound21 xrt-vcs FPINT GEMM QDIR=0 and QDIR=1 both passed bit-exact at 5873 cycles"
+    diagnosis:
+      - "gemm_dma_ctrl initially failed because its TB used removed scalar interface fields; the TB was updated to the current direct-command ABI and passed"
+    action: "Finish standalone aligned unequal-width diagnostics and GEMM node 7ns OOC synthesis"
+  - iteration: 4
+    stage: standalone_dimension_vcs
+    result: pass
+    evidence:
+      - "build_verify_dma_bound21_i3_a1: aligned MAX_DIMS=1 G2L/L2G and memory compare passed"
+      - "build_verify_dma_bound21_i3_a2: aligned MAX_DIMS=2 G2L/L2G and memory compare passed"
+      - "misaligned MAX_DIMS=1/2 standalone cases passed"
+    diagnosis:
+      - "earlier hangs came from an undriven lookahead data_release TB input"
+      - "earlier done assertion came from the TB treating S_DONE chain-ready as IDLE"
+    action: "No RTL fix required; align the legacy TB with the current lookahead and completion protocol"
+  - iteration: 5
+    stage: ooc_synthesis
+    result: target_pass_global_timing_followup
+    evidence:
+      - "aligned engine MAX_DIMS=1/2/3 and misaligned unit MAX_DIMS=1/2/3 synthesized with expected inactive-state and DSP removal"
+      - "aligned MAX3 to MAX1: LUT -30.3%, FF -36.2%, DSP -128, BRAM unchanged"
+      - "output local DMA versus prior r3: LUT -43.5%, FF -50.2%, DSP -93.8%, BRAM unchanged"
+      - "prior output DMA write_bytes_remaining worst path disappeared from the top 100 setup paths"
+      - "GEMM node 7ns WNS improved from -4.247ns to -1.917ns"
+    diagnosis:
+      - "remaining 7ns worst path is GEMM FSM kt_dim_q to child command queue BRAM, outside DMA bound/native-product scope"
+    action: "Keep the DMA specialization and split the remaining control/decode setup path into a separate optimization"
+notes:
+  - "2026-09-02: confirmed plan promoted to rtl-improve implementation spec"
+  - "Existing response-DPRAM worktree changes must be preserved"
+  - "Detailed evidence: dma-bound21-native-product-results.md"

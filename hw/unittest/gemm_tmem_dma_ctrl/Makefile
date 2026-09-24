@@ -10,12 +10,15 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
+EXTRA_SIM_ARGS ?=
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_tmem_dma_ctrl_misalign
+TB_PENDING_DEPTH ?= 4
 
 TB   := $(SRC_DIR)/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/core/VX_dma_lookahead_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
@@ -24,6 +27,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM PLATFORM_MEMORY_NUM_BANKS=32
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -35,7 +40,11 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS :=
+ifeq ($(SIM_EXEC),vcs)
+PARAMS := -pvalue+$(TOP_MODULE).TB_PENDING_DEPTH=$(TB_PENDING_DEPTH)
+else
+PARAMS := -GTB_PENDING_DEPTH=$(TB_PENDING_DEPTH)
+endif
 
 setup:
 	mkdir -p logs reports

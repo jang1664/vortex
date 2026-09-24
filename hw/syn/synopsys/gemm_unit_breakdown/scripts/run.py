@@ -246,7 +246,6 @@ SKIP_FILENAMES = {
     # in rtl/core/ alongside it. They contain `string`-typed display
     # statements that DC rejects, so we exclude them rather than patch.
     "VX_gemm_dma_ctrl_with_dma.sv",
-    "VX_gemm_ctrl_with_ldma.sv",
 }
 
 # Keep the synthesis driver aligned with the current GEMM patch.  These

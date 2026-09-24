@@ -20,6 +20,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   parameter string FILE_POSTFIX = "func";
   parameter int    DCACHE_BYTES_P = 32;
   parameter int    LMEM_BYTES_P   = 16;
+  parameter int    MAX_DIMS_P     = 3;
+  parameter bit    DIMS_ONLY_P    = 1'b0;
 
   // -----------------------------
   // Params
@@ -74,6 +76,26 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   VX_config_reg_if #(.NUM(CFG_NUM), .DW(CFG_DW)) cfg_reg_if();
   VX_node_done_if done_if();
+  VX_dma_lookahead_if dma_lookahead_if();
+
+  logic dma_prepare_valid_s;
+  logic dma_prepare_id_s;
+  logic [1:0][31:0] dma_prepare_src_stride_s;
+  logic [1:0][31:0] dma_prepare_dst_stride_s;
+  logic [1:0][`DMA_BOUND_WIDTH-1:0] dma_prepare_bound_s;
+  logic dma_activate_s;
+  logic dma_activate_id_s;
+  logic dma_done_ready_s;
+
+  assign dma_lookahead_if.prepare_valid = dma_prepare_valid_s;
+  assign dma_lookahead_if.prepare_id = dma_prepare_id_s;
+  assign dma_lookahead_if.src_stride = dma_prepare_src_stride_s;
+  assign dma_lookahead_if.dst_stride = dma_prepare_dst_stride_s;
+  assign dma_lookahead_if.bound = dma_prepare_bound_s;
+  assign dma_lookahead_if.activate = dma_activate_s;
+  assign dma_lookahead_if.activate_id = dma_activate_id_s;
+  assign dma_lookahead_if.data_release = 1'b1;
+  assign dma_lookahead_if.data_max_beats = '0;
 
   VX_mem_bus_if #(
     .DATA_SIZE(DCACHE_BYTES),
@@ -96,17 +118,19 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     .DCACHE_ADDR_WIDTH(`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES)),
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH (TAG_WIDTH),
-    .LMEM_TAG_WIDTH   (TAG_WIDTH)
+    .LMEM_TAG_WIDTH   (TAG_WIDTH),
+    .MAX_DIMS         (MAX_DIMS_P)
   ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
+    .lookahead_if (dma_lookahead_if),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_bus_ifs[0]),
     .done_if      (done_if)
   );
 
-  assign done_if.ready = 1'b1;
+  assign done_if.ready = dma_done_ready_s;
 
   // -----------------------------
   // Real LMEM (banked) instance
@@ -361,10 +385,411 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     cfg_reg_if.valid = 1'b0;
   endtask
 
-  // done detect: ready deassert -> assert
+  // Observe and consume DONE explicitly; ready is also high in S_DONE to
+  // support prepared-command chaining, so it no longer identifies IDLE alone.
   task automatic wait_dma_done();
     do @(posedge clk); while (cfg_reg_if.ready);   // left IDLE
+    do @(posedge clk); while (!done_if.valid);     // completion is visible
+    @(posedge clk);                                // consume DONE handshake
     do @(posedge clk); while (!cfg_reg_if.ready);  // back to IDLE
+  endtask
+
+  task automatic prepare_phase5_slot(input logic prep_id);
+    int wait_cycles;
+    begin
+      @(negedge clk);
+      dma_prepare_id_s = prep_id;
+      dma_prepare_src_stride_s[0] = 32'd32;
+      dma_prepare_dst_stride_s[0] = 32'd16;
+      dma_prepare_src_stride_s[1] = 32'd64;
+      dma_prepare_dst_stride_s[1] = 32'd32;
+      dma_prepare_bound_s[0] = 32'd2;
+      dma_prepare_bound_s[1] = 32'd2;
+      dma_prepare_valid_s = 1'b1;
+      do @(posedge clk); while (!dma_lookahead_if.prepare_ready);
+      @(negedge clk);
+      dma_prepare_valid_s = 1'b0;
+
+      wait_cycles = 0;
+      while ((dma_lookahead_if.result_ready != 2'b11)
+          && (wait_cycles < 20)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (dma_lookahead_if.result_ready != 2'b11)
+        $fatal(1, "phase5 prep_id %0d result timeout", prep_id);
+    end
+  endtask
+
+  task automatic activate_phase5_slot(input logic prep_id,
+                                      input logic [31:0] entry_id);
+    logic [31:0] d [0:CFG_NUM-1];
+    begin
+      for (int r = 0; r < CFG_NUM; ++r)
+        d[r] = '0;
+      d[0]  = 32'd1;
+      d[1]  = 32'h0000_2000;
+      d[3]  = 32'h0000_1000;
+      d[5]  = 32'd32;
+      d[6]  = 32'd16;
+      d[7]  = 32'd64;
+      d[8]  = 32'd32;
+      d[11] = 32'd2;
+      d[12] = 32'd2;
+      d[13] = 32'd1;
+      d[14] = 32'd16;
+      d[15] = 32'd0;
+      d[16] = 32'd0;
+
+      @(negedge clk);
+      cfg_reg_if.entry_id = entry_id;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      dma_activate_id_s = prep_id;
+      dma_activate_s = 1'b1;
+      cfg_reg_if.valid = 1'b1;
+      #1;
+      if (!cfg_reg_if.ready || !dut.activate_cache_hit)
+        $fatal(1, "phase5 prep_id %0d did not produce a cache hit", prep_id);
+      @(posedge clk);
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      dma_activate_s = 1'b0;
+      wait_dma_done();
+      if (dut.prep_owner_valid_r[prep_id])
+        $fatal(1, "phase5 prep_id %0d was not retired", prep_id);
+    end
+  endtask
+
+  task automatic run_phase5_cache_smoke();
+    begin
+      prepare_phase5_slot(1'b0);
+      prepare_phase5_slot(1'b1);
+      activate_phase5_slot(1'b1, 32'h51);
+      activate_phase5_slot(1'b0, 32'h50);
+      $display("DMA_PHASE5_CACHE_PASS slots=2 slot1_before_slot0=1 tagged=1 cache_hit=2 retired=2");
+    end
+  endtask
+
+  task automatic run_phase6_chain_smoke();
+    logic [31:0] d [0:CFG_NUM-1];
+    logic [31:0] old_entry;
+    int wait_cycles;
+    begin
+      for (int r = 0; r < CFG_NUM; ++r)
+        d[r] = '0;
+      d[0]  = 32'd1;
+      d[1]  = 32'h0000_2400;
+      d[3]  = 32'h0000_1400;
+      d[5]  = 32'd32;
+      d[6]  = 32'd16;
+      d[7]  = 32'd64;
+      d[8]  = 32'd32;
+      d[11] = 32'd2;
+      d[12] = 32'd2;
+      d[13] = 32'd4;
+      d[14] = 32'd16;
+      d[15] = 32'd0;
+      d[16] = 32'd0;
+
+      // Hold the old completion so the next descriptor can be prepared while
+      // the transfer is active and then presented before S_DONE.
+      dma_done_ready_s = 1'b0;
+      cfg_send_desc(d, 32'h0000_00a0);
+      if (cfg_reg_if.ready || done_if.valid)
+        $fatal(1, "phase6 PREPARE did not overlap an active descriptor");
+      prepare_phase5_slot(1'b0);
+
+      @(negedge clk);
+      cfg_reg_if.entry_id = 32'h0000_00b0;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      dma_activate_id_s = 1'b0;
+      dma_activate_s = 1'b1;
+      cfg_reg_if.valid = 1'b1;
+
+      wait_cycles = 0;
+      while (!done_if.valid && (wait_cycles < 200)) begin
+        @(posedge clk);
+        wait_cycles++;
+      end
+      if (!done_if.valid)
+        $fatal(1, "phase6 old completion timeout");
+      old_entry = done_if.entry_id;
+      if (old_entry != 32'h0000_00a0 || cfg_reg_if.ready)
+        $fatal(1, "phase6 old completion visibility/readiness mismatch");
+
+      @(negedge clk);
+      dma_done_ready_s = 1'b1;
+      #1;
+      if (!done_if.valid || !cfg_reg_if.ready || !dut.activate_cache_hit)
+        $fatal(1, "phase6 completion and prepared ACTIVATE did not pair");
+      @(posedge clk);
+      #1;
+      if (done_if.valid || !dut.dcache_req_valid_w)
+        $fatal(1, "phase6 next internal request was not asserted after ACTIVATE");
+      @(posedge clk);
+      #1;
+      if (!dcache_bus_if.req_valid)
+        $fatal(1, "phase6 buffered request did not reach the memory interface");
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      dma_activate_s = 1'b0;
+      wait_dma_done();
+      if (dut.prep_owner_valid_r[0])
+        $fatal(1, "phase6 chained cache owner was not retired");
+      $display("DMA_PHASE6_CHAIN_PASS completion_to_activate=0 activate_to_first_request=1 cache=hit id=0 old_entry=0x%0h new_entry=0x%0h",
+               old_entry, 32'h0000_00b0);
+
+      // An ACTIVATE without a prepared owner remains legal through the Phase-1
+      // overlap path and must never consume stale slot contents.
+      @(negedge clk);
+      cfg_reg_if.entry_id = 32'h0000_00c0;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      dma_activate_id_s = 1'b1;
+      dma_activate_s = 1'b1;
+      cfg_reg_if.valid = 1'b1;
+      #1;
+      if (!cfg_reg_if.ready || dut.activate_cache_hit)
+        $fatal(1, "phase6 unprepared ACTIVATE did not select cache miss path");
+      @(posedge clk);
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      dma_activate_s = 1'b0;
+      wait_dma_done();
+      $display("DMA_PHASE6_CACHE_MISS_PASS cache=miss id=1 phase1_overlap=1 stale_result_use=0");
+    end
+  endtask
+
+  task automatic run_phase7_rollover_case(
+    input bit direction_l2g,
+    input bit carry_d1_to_d2
+  );
+    logic [31:0] d [0:CFG_NUM-1];
+    logic [3:0] expected_needed;
+    int rd_set_count;
+    int wr_set_count;
+    int rd_release_count;
+    int wr_release_count;
+    int wait_cycles;
+    begin
+      for (int r = 0; r < CFG_NUM; ++r)
+        d[r] = '0;
+      d[0] = 32'd1;
+      d[1] = direction_l2g ? 32'h0000_3800 : 32'h0000_1800;
+      d[3] = direction_l2g ? 32'h0000_1800 : 32'h0000_1000;
+      d[5] = 32'd32; d[6] = direction_l2g ? 32'd32 : 32'd16;
+      d[7] = 32'd64; d[8] = 32'd32;
+      d[9] = 32'd128; d[10] = 32'd64;
+      d[11] = carry_d1_to_d2 ? 32'd1 : 32'd2;
+      d[12] = 32'd2;
+      d[13] = carry_d1_to_d2 ? 32'd2 : 32'd1;
+      d[14] = 32'd16;
+      d[16] = direction_l2g;
+      expected_needed = carry_d1_to_d2 ? 4'b1100 : 4'b0011;
+
+      @(negedge clk);
+      cfg_reg_if.entry_id = {30'd0, carry_d1_to_d2, direction_l2g};
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      cfg_reg_if.valid = 1'b1;
+      @(posedge clk);
+      if (carry_d1_to_d2)
+        force dut.precalc_ready_now = 4'b0011;
+      else
+        force dut.precalc_ready_now = 4'b1100;
+      #1;
+      if (dut.precalc_needed_r !== expected_needed)
+        $fatal(1, "phase7 dependency mask mismatch dir=%0d d1d2=%0d got=%b exp=%b",
+               direction_l2g, carry_d1_to_d2,
+               dut.precalc_needed_r, expected_needed);
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+
+      rd_set_count = 0;
+      wr_set_count = 0;
+      rd_release_count = 0;
+      wr_release_count = 0;
+      wait_cycles = 0;
+      while (((rd_set_count == 0) || (wr_set_count == 0))
+          && (wait_cycles < 300)) begin
+        @(posedge clk);
+        if (dut.rd_rollover_set) rd_set_count++;
+        if (dut.wr_rollover_set) wr_set_count++;
+        if (dut.rd_rollover_release) rd_release_count++;
+        if (dut.wr_rollover_release) wr_release_count++;
+        wait_cycles++;
+      end
+      if ((rd_set_count != 1) || (wr_set_count != 1)) begin
+        release dut.precalc_ready_now;
+        $fatal(1, "phase7 pending rollover not independently observed dir=%0d d1d2=%0d rd=%0d wr=%0d",
+               direction_l2g, carry_d1_to_d2,
+               rd_set_count, wr_set_count);
+      end
+      release dut.precalc_ready_now;
+
+      wait_cycles = 0;
+      while (!cfg_reg_if.ready && (wait_cycles < 500)) begin
+        @(posedge clk);
+        if (dut.rd_rollover_set) rd_set_count++;
+        if (dut.wr_rollover_set) wr_set_count++;
+        if (dut.rd_rollover_release) rd_release_count++;
+        if (dut.wr_rollover_release) wr_release_count++;
+        wait_cycles++;
+      end
+      if (!cfg_reg_if.ready)
+        $fatal(1, "phase7 rollover descriptor timeout");
+      if ((rd_set_count != 1) || (wr_set_count != 1)
+       || (rd_release_count != 1) || (wr_release_count != 1))
+        $fatal(1, "phase7 rollover exactly-once mismatch dir=%0d d1d2=%0d set=%0d/%0d release=%0d/%0d",
+               direction_l2g, carry_d1_to_d2, rd_set_count, wr_set_count,
+               rd_release_count, wr_release_count);
+    end
+  endtask
+
+  task automatic run_phase7_known_zero_cases();
+    logic [31:0] d [0:CFG_NUM-1];
+    begin
+      for (int dir = 0; dir < 2; ++dir) begin
+        for (int r = 0; r < CFG_NUM; ++r)
+          d[r] = '0;
+        d[0] = 32'd1;
+        d[1] = dir ? 32'h0000_3c00 : 32'h0000_1c00;
+        d[3] = dir ? 32'h0000_1c00 : 32'h0000_1000;
+        d[5] = 32'd32; d[6] = dir ? 32'd32 : 32'd16;
+        d[11] = 32'd4; d[12] = 32'd1; d[13] = 32'd1;
+        d[14] = 32'd16; d[16] = 32'(dir);
+        @(negedge clk);
+        cfg_reg_if.entry_id = 32'h700 + dir;
+        for (int r = 0; r < CFG_NUM; ++r)
+          cfg_reg_if.regs[r] = d[r];
+        cfg_reg_if.valid = 1'b1;
+        @(posedge clk);
+        #1;
+        if (dut.precalc_needed_r != 4'b0000)
+          $fatal(1, "phase7 pure-1D unexpectedly depended on corrections dir=%0d mask=%b",
+                 dir, dut.precalc_needed_r);
+        @(negedge clk);
+        cfg_reg_if.valid = 1'b0;
+        wait_dma_done();
+      end
+
+      // A consumed D0 with a zero source stride must suppress only that
+      // product; the destination correction remains required.
+      for (int r = 0; r < CFG_NUM; ++r)
+        d[r] = '0;
+      d[0] = 32'd1; d[1] = 32'h0000_2000; d[3] = 32'h0000_1000;
+      d[5] = 32'd0; d[6] = 32'd16;
+      d[11] = 32'd2; d[12] = 32'd2; d[13] = 32'd1;
+      d[14] = 32'd16;
+      @(negedge clk);
+      cfg_reg_if.entry_id = 32'h702;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      cfg_reg_if.valid = 1'b1;
+      @(posedge clk);
+      #1;
+      if (dut.precalc_needed_r !== 4'b0010)
+        $fatal(1, "phase7 zero-stride mask mismatch got=%b exp=0010",
+               dut.precalc_needed_r);
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      wait_dma_done();
+      $display("DMA_PHASE7_KNOWN_ZERO_PASS pure_1d=2 bound_one=1 zero_stride=1 correction_dependency=0");
+    end
+  endtask
+
+  task automatic run_phase7_prepare_isolation();
+    logic [31:0] d [0:CFG_NUM-1];
+    logic [31:0] active_entry;
+    logic [CFG_NUM-1:0][31:0] active_regs;
+    int wait_cycles;
+    begin
+      for (int r = 0; r < CFG_NUM; ++r)
+        d[r] = '0;
+      d[0] = 32'd1; d[1] = 32'h0000_2800; d[3] = 32'h0000_1000;
+      d[5] = 32'd32; d[6] = 32'd16; d[7] = 32'd64; d[8] = 32'd32;
+      d[11] = 32'd2; d[12] = 32'd2; d[13] = 32'd2; d[14] = 32'd16;
+
+      dma_done_ready_s = 1'b0;
+      cfg_send_desc(d, 32'h710);
+      active_entry = dut.entry_id_latched;
+      active_regs = dut.regs_latched;
+
+      @(negedge clk);
+      dma_prepare_id_s = 1'b1;
+      dma_prepare_src_stride_s[0] = 32'd32;
+      dma_prepare_dst_stride_s[0] = 32'd16;
+      dma_prepare_src_stride_s[1] = 32'd64;
+      dma_prepare_dst_stride_s[1] = 32'd32;
+      dma_prepare_bound_s[0] = 32'd2;
+      dma_prepare_bound_s[1] = 32'd2;
+      dma_prepare_valid_s = 1'b1;
+      do @(posedge clk); while (!dma_lookahead_if.prepare_ready);
+      #1;
+      if (dut.cfg_fire || dut.entry_id_latched != active_entry
+       || dut.regs_latched !== active_regs)
+        $fatal(1, "phase7 PREPARE changed active descriptor/bookkeeping");
+      if (dma_lookahead_if.prepare_ready)
+        $fatal(1, "phase7 prep_id reused on acceptance edge");
+
+      // Mutate every live operand after acceptance.  The slot result must use
+      // its captured snapshot, not these bus values.
+      @(negedge clk);
+      dma_prepare_src_stride_s = '{32'd320, 32'd640};
+      dma_prepare_dst_stride_s = '{32'd160, 32'd320};
+      dma_prepare_bound_s = '{32'd3, 32'd3};
+      wait_cycles = 0;
+      while ((dma_lookahead_if.result_ready != 2'b11)
+          && (wait_cycles < 30)) begin
+        @(posedge clk);
+        if (dma_lookahead_if.prepare_ready)
+          $fatal(1, "phase7 prep_id released before late results arrived");
+        wait_cycles++;
+      end
+      if (dma_lookahead_if.result_ready != 2'b11)
+        $fatal(1, "phase7 snapshot result timeout");
+      #1;
+      if ((dut.prep_result_r[1][0] != 64'd32)
+       || (dut.prep_result_r[1][1] != 64'd16)
+       || (dut.prep_result_r[1][2] != 64'd64)
+       || (dut.prep_result_r[1][3] != 64'd32))
+        $fatal(1, "phase7 PREPARE operands were not snapshotted");
+      @(negedge clk);
+      dma_prepare_valid_s = 1'b0;
+      dma_done_ready_s = 1'b1;
+      wait_dma_done();
+
+      // Retire slot1 by ACTIVATE and keep a same-ID PREPARE asserted across
+      // that edge.  It is not reusable on the retirement edge, but is ready
+      // exactly once on the following cycle; deassert before accepting it.
+      @(negedge clk);
+      cfg_reg_if.entry_id = 32'h711;
+      for (int r = 0; r < CFG_NUM; ++r)
+        cfg_reg_if.regs[r] = d[r];
+      dma_activate_id_s = 1'b1;
+      dma_activate_s = 1'b1;
+      dma_prepare_id_s = 1'b1;
+      dma_prepare_valid_s = 1'b1;
+      cfg_reg_if.valid = 1'b1;
+      #1;
+      if (!cfg_reg_if.ready || !dut.activate_cache_hit
+       || dma_lookahead_if.prepare_ready)
+        $fatal(1, "phase7 slot reuse/ACTIVATE edge contract mismatch");
+      @(posedge clk);
+      #1;
+      if (!dma_lookahead_if.prepare_ready)
+        $fatal(1, "phase7 retired prep_id was not released next cycle");
+      @(negedge clk);
+      cfg_reg_if.valid = 1'b0;
+      dma_activate_s = 1'b0;
+      dma_prepare_valid_s = 1'b0;
+      wait_dma_done();
+      if (dut.prep_owner_valid_r[1])
+        $fatal(1, "phase7 prep_id owner survived retirement");
+      $display("DMA_PHASE7_PREPARE_ISOLATION_PASS operand_snapshot=1 cfg_fire=0 active_bookkeeping_change=0 same_cycle_reuse=0 late_stale_write=0 release_next_cycle=1");
+    end
   endtask
 
   // -----------------------------
@@ -475,6 +900,16 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
     repeat (5) @(posedge clk);
 
+    run_phase5_cache_smoke();
+    run_phase6_chain_smoke();
+    run_phase7_known_zero_cases();
+    run_phase7_rollover_case(1'b0, 1'b0);
+    run_phase7_rollover_case(1'b1, 1'b0);
+    run_phase7_rollover_case(1'b0, 1'b1);
+    run_phase7_rollover_case(1'b1, 1'b1);
+    $display("DMA_PHASE7_ROLLOVER_PASS d0_to_d1=2 d1_to_d2=2 directions=2 rd_wr_independent=1 release_once=1 backpressure=1");
+    run_phase7_prepare_isolation();
+
     if (SEG_SIZE_1 >= MAX_BUS_BYTES) begin
       run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
       run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
@@ -527,23 +962,50 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     $fdisplay(rpt_fd, "[POWER] DONE");
   endtask
 
+  task sim_dims();
+    int unsigned dim1;
+    int unsigned dim2;
+    begin
+      dim1 = (MAX_DIMS_P >= 2) ? 3 : 1;
+      dim2 = 1;
+      cfg_reg_if.valid = 1'b0;
+      cfg_reg_if.entry_id = '0;
+      for (int r = 0; r < CFG_NUM; r++)
+        cfg_reg_if.regs[r] = '0;
+      repeat (5) @(posedge clk);
+      run_case(SEG_SIZE_2, 3, dim1, dim2, 0);
+      $display("DMA_DIMS_PASS max_dims=%0d bnd=(3,%0d,%0d)",
+               MAX_DIMS_P, dim1, dim2);
+    end
+  endtask
+
   // -----------------------------
   // Top-level objective runner
   // -----------------------------
   generate
     localparam string OBJ_ = OBJ;
     initial begin
+      dma_prepare_valid_s = 1'b0;
+      dma_prepare_id_s = 1'b0;
+      dma_prepare_src_stride_s = '0;
+      dma_prepare_dst_stride_s = '0;
+      dma_prepare_bound_s = '0;
+      dma_activate_s = 1'b0;
+      dma_activate_id_s = 1'b0;
+      dma_done_ready_s = 1'b1;
       @(negedge reset);
       repeat (5) @(posedge clk);
 
-      if (OBJ_ == "power") begin
+      if (DIMS_ONLY_P) begin
+        sim_dims();
+      end else if (OBJ_ == "power") begin
         sim_power();
       end else if (OBJ_ == "func") begin
         sim_func();
       end else begin
         $display("please set proper objective of the simulation");
       end
-      if (OBJ_ == "func") begin
+      if ((OBJ_ == "func") || DIMS_ONLY_P) begin
         $display("TEST PASSED");
       end
 

@@ -22,7 +22,7 @@
 `endif
 
 module VX_hw_debug import VX_gpu_pkg::*; #(
-    parameter NUM_AXI_PORTS    = `NUM_DMA_CHANNELS,
+    parameter NUM_AXI_PORTS    = `NUM_HBM_PORTS,
     parameter AXI_ADDR_WIDTH   = 64,
     parameter AXI_ID_WIDTH     = `PLATFORM_MEMORY_ID_WIDTH,
     parameter PENDING_WR_SIZEW = 12,

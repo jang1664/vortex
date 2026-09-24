@@ -56,6 +56,11 @@ module tb_VX_gemm_tmem_dma_ctrl;
   ) cfg_reg_if [NUM_CHANNELS] ();
 
   VX_node_done_if done_if [NUM_CHANNELS] ();
+  VX_dma_lookahead_if dma_lookahead_if [NUM_CHANNELS] ();
+  for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_lookahead_tieoff
+    assign dma_lookahead_if[ch].prepare_ready = 1'b0;
+    assign dma_lookahead_if[ch].result_ready = '0;
+  end
 
   VX_gemm_tmem_dma_ctrl #(
     .INSTANCE_ID("tb"),
@@ -67,6 +72,7 @@ module tb_VX_gemm_tmem_dma_ctrl;
     .store_done(),
     .gemm_sync_if(gemm_sync_if),
     .cfg_reg_if(cfg_reg_if),
+    .lookahead_if(dma_lookahead_if),
     .done_if(done_if)
   );
 

@@ -1,0 +1,283 @@
+task: improve-th16-tmem-dma-descriptor-shadow
+status: performance_fail
+spec: agent-tasks/improve-th16-tmem-dma-descriptor-shadow/tmem-dma-descriptor-shadow-spec.md
+plan: agent-tasks/improve-th16-tmem-dma-descriptor-shadow/plan.md
+baseline:
+  config: improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8
+  effective: "GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8"
+  qcol: "599 cycles, DMA/MXU overlap 64.870% (349/538)"
+  qrow: "603 cycles, DMA/MXU overlap 64.607% (345/534)"
+iterations:
+  - id: rtl-compact-candidates-single-shadow-1
+    timestamp: "2026-08-29 00:56 KST"
+    status: implemented
+    role: RTL Implementation
+    action: "Replaced candidate-indexed expanded descriptor storage with compact high/fallback ownership plus exactly one decoded descriptor/PREPARE shadow. Updated the focused TB's internal observability contract to reference the single shadow and compact store cursor. No simulation or blackbox was run in this implementation iteration."
+    changed_files:
+      - hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+      - hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
+    implementation:
+      candidate_storage: "Removed candidate_desc_q[2][NUM_CHANNELS], candidate_store_desc_q[2][NUM_CHANNELS], and candidate-indexed PREPARE/result arrays. Each logical slot retains only command/tag ownership, generation, load/store and store-new classification, chunkability, cursor, and remaining beats."
+      single_shadow: "Added one shadow_desc_q[NUM_CHANNELS] with owner ID/generation, chunk size, PREPARE accept/result state, and prepared state. Generation matching makes stale slot reuse ineligible for chaining."
+      priority: "The decoder first prepares the visible high candidate. A fallback shadow cannot chain while a high command is visible. An outstanding fallback PREPARE is allowed to quiesce; afterward the fallback is either overwritten by a high shadow in S_WAIT_DONE or explicitly invalidated without retiring its compact owner."
+      store_continuation: "The original store descriptor and each chunk are regenerated from the compact store command plus committed/speculative cursor and remaining count. No second shadow or candidate-indexed full store descriptor is retained."
+      foreground_fallback: "An unprepared authoritative candidate uses S_CAPTURE/S_BUILD/S_PROG. A prepared authoritative shadow still drives same-edge cfg/ACTIVATE and transfers directly into S_WAIT_DONE with no added chaining bubble."
+      protocol: "Chained cfg valid/payload and ACTIVATE remain source-owned by chain_candidate_offer and shadow_desc_q; ready qualifies only the atomic chain fire. Existing sticky old-channel completion and all-active-channel-ready assertions remain in force."
+      assertions: "Added owner-generation liveness, high-over-fallback replacement/invalidation, compact-owner preservation, single-shadow stability, chained shadow-to-foreground equality, PREPARE ownership, active-mask, all-ready, atomic fire, and no-partial activation checks."
+    structural_checks:
+      - "Targeted rg confirms candidate_desc_q and candidate_store_desc_q are absent from production RTL."
+      - "Exactly one channel-indexed next-command descriptor array, shadow_desc_q[NUM_CHANNELS], remains; issue_desc_q is the foreground descriptor as required."
+      - "git diff --check PASS."
+    static_checks:
+      - "Focused TH16/WLOAD8/TMEM16/DMA8/HBM8 VCS compile/elaboration PASS, exit 0, eight modules; final compile recompiled VX_gemm_tmem_dma_ctrl and linked simv."
+      - "Focused Verilator --lint-only PASS, exit 0, after demoting the pre-existing focused-TB BLKANDNBLK diagnostic. No Error, controller LATCH, controller UNOPTFLAT, or circular-combinational diagnostic was reported."
+      - "Full gemm_node_improve Verilator --lint-only PASS, exit 0, 163 modules, using the same effective config on the implementation candidate. The final priority-only cleanup was then rechecked by focused VCS compile and focused lint. Existing unrelated repository warnings remain."
+    hashes:
+      VX_gemm_tmem_dma_ctrl_sha256: 1d09c6b981f6ddb9a0e18350952b256a21352659218cfe854a7503e9a4703423
+      focused_tb_sha256: f89530d6dd8deeb4ba9ce1de4939dd8d9d4c8d9007928ac54764ff45873f6e1e
+      focused_compile_log_sha256: 115df670d3ef28a778dd92af44ec77d99847e0645e0cce7ae787b4e5d4beb3c1
+      integration_lint_log_sha256: ba7180a3b5a88990aec6620b4a8f31bb6092554d6b67da7157cb3d51bf1f46b4
+      focused_lint_log_sha256: 93084dae58778fa040c1052ec139aaa4144d29489618bc5ecef6ca7a9fac2afa
+    hard_rule: "None. The timing-loop baseline files/behavior were preserved; no fence, partial activation, ready-dependent chain offer, TMEM topology/address/data-path change, extra authoritative-shadow chaining cycle, or fallback priority bypass was added."
+    test_requests:
+      - test_type: unittest
+        test_path: hw/unittest/gemm_tmem_dma_ctrl
+        test_params: "Fresh TH16/WLOAD8/TMEM16/DMA8/HBM8 full directed suite; high-only/fallback-only shadow, fallback invalidation by late high, delayed/skewed PREPARE, changed masks, staggered done, cfg backpressure, store continuation, candidate reuse/reset, and exact counts"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv]
+        notes: "Use tools/verify_rtl.py from build/timing_loop_th16_static and stop first. Require exact compact ownership, no stale generation/result, no partial activation, stable ready-independent shadow offer, high-over-fallback priority, same-edge zero-bubble chain when the authoritative shadow is prepared, and exact command/descriptor/completion counts."
+      - test_type: unittest
+        test_path: hw/unittest/gemm_node_improve
+        test_params: "TH16/TMEM16/WLOAD8 M=4 N=256 K=256 QBLK=32 WTRANS=0; QCOL then QROW with exact numerical/traffic/ownership counters"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv]
+        notes: "Run only after the focused gate passes. Require 1024/1024 numerical PASS, exact DMA command/packet/write/done/retire counts, raw-to-logical Output completion assertions, no stale shadow/PREPARE ownership, and clean idle drain."
+      - test_type: blackbox
+        test_path: tests/regression/fpint_gemm_ffn_hw
+        test_params: "Fresh IMPROVE TH16/TMEM16/DMA8/HBM8/WLOAD8 xrt-vcs-sim; M=4 N=256 K=256 QBLK=32 WTRANS=0, QCOL then QROW, perf class 3"
+        sim_tool: vcs
+        changed_files: [hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv]
+        notes: "Use run-bb-common/ci/run_black.sh from a configured build. Require numerical and exact traffic PASS; compare QCOL with 599 cycles and QROW with 603 cycles under the +/-2% gate, repeating an out-of-band result with the same binary. Only afterward run fresh Vivado loop/fanout/congestion comparison."
+  - id: verification-focused-vcs-2
+    timestamp: "2026-08-29 00:59 KST"
+    status: sim_fail
+    role: Verification
+    test_name: gemm_tmem_dma_ctrl
+    iteration: "2 / 10"
+    test_request: "Fresh configured IMPROVE TH16/WLOAD8/TMEM16/DMA8/HBM8 full focused VCS directed suite, including scheduler and descriptor-shadow coverage."
+    command: "python3 tools/verify_rtl.py unittest --path build/verify_descriptor_shadow_th16/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 1200"
+    effective_config: "GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8"
+    error_summary: "Focused VCS simulation stopped in run_priority_pause_case with a fatal speculative-store cursor/descriptor mismatch."
+    error_log: |-
+      Fatal: "/home/jaeyongjang/project.local/vortex_fpint/hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv", 1013: tb_VX_gemm_tmem_dma_ctrl_misalign.run_priority_pause_case: at time 3781000 ps
+      [priority_pause] speculative store cursor committed early or descriptor mismatch
+      $finish called from file "/home/jaeyongjang/project.local/vortex_fpint/hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv", line 1013.
+      $finish at simulation time 3781000
+    stop_first: "Stopped after the first functional failure. gemm_node_improve QCOL/QROW and xrt-vcs-sim were not run. No failure interpretation or RTL/test modification was performed by Verification."
+    artifacts:
+      build_dir: build/verify_descriptor_shadow_th16
+      compile_log: build/verify_descriptor_shadow_th16/hw/unittest/gemm_tmem_dma_ctrl/logs/compile.log
+      sim_log: build/verify_descriptor_shadow_th16/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+      simv_mtime: "2026-08-29 00:59:32.948152365 +0900"
+      rtl_mtime: "2026-08-29 00:55:26.799255360 +0900"
+      tb_mtime: "2026-08-29 00:48:38.156477452 +0900"
+      simv_sha256: 8707c07ec0591e940279fe527e604da57ddbf6731c8fc0779fbe6259c3ea0576
+      compile_log_sha256: 7d435f3ef9f90af0f7357b42319e0b4b36c7b0cd96966a817c06d8d0c9f111e5
+      sim_log_sha256: 3bc46f53778d95e8ab45a2085dfd911126a63f589f0d81d5ac80c1dd0bd348fe
+      VX_gemm_tmem_dma_ctrl_sha256: 1d09c6b981f6ddb9a0e18350952b256a21352659218cfe854a7503e9a4703423
+      focused_tb_sha256: f89530d6dd8deeb4ba9ce1de4939dd8d9d4c8d9007928ac54764ff45873f6e1e
+  - id: rtl-fix-compact-store-cursor-unit-3
+    timestamp: "2026-08-29 01:08 KST"
+    status: implemented
+    role: RTL Implementation
+    fixes_verification: verification-focused-vcs-2
+    action: "Corrected the focused TB's compact store cursor unit check. Production RTL, scheduling, descriptor construction, shadow ownership, and the original verification request were not changed. No simulation or blackbox was run in this fix iteration."
+    root_cause: "The pre-refactor assertion observed candidate_desc_q[1][0] byte addresses: SRC_BASE_LO=512 and DST_BASE_LO=0x00402000. Iteration 1 translated the source-byte offset directly into candidate_store_cursor_q==512, but candidate_store_cursor_q is a bank-local beat index, not a byte offset. Under PLATFORM_MEMORY_NUM_BANKS=32, NUM_CHANNELS=8, and MEM_BLOCK_SIZE=64, the store TMEM/HBM beat strides are 256/2048 bytes. The first chunk is two bank beats, so the correct compact candidate state is cursor=2 and remaining=2; this reconstructs 2*256=512 and 0x00401000+2*2048=0x00402000 exactly."
+    diagnosis:
+      committed_cursor: "store_bank_beat_cursor_q remains 0 while the active first store chunk and paused fallback coexist; speculative progress is not committed into foreground owner state."
+      compact_fallback: "candidate_store_cursor_q[1]=2 and candidate_store_remaining_q[1]=2 represent the next paused-store chunk in beat units. candidate_owner_q[1] retains the original store command/tag."
+      priority_lifecycle: "The prepared high owner remains authoritative. The compact fallback owner is retained even when its decoded shadow is invalidated or replaced; no fallback retirement or cursor commit occurs."
+      test_objectivity: "The test was objectively wrong because it compared quantities with different units. The corrected assertion still proves the exact legacy descriptor addresses by multiplying the compact beat cursor by the configuration-derived TMEM/HBM strides."
+    fix:
+      file: hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
+      change: "Added configuration-derived STORE_TMEM_BEAT_STRIDE/STORE_HBM_BEAT_STRIDE constants and changed the priority-pause check to require cursor=2, remaining=2, unchanged compact owner bases, reconstructed source offset=512, reconstructed destination base=0x00402000, and committed cursor=0."
+    changed_files:
+      - hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
+      - agent-tasks/improve-th16-tmem-dma-descriptor-shadow/STATUS.yaml
+    static_checks:
+      - "Fresh configured TH16/WLOAD8/TMEM16/DMA8/HBM8 focused VCS compile/elaboration PASS, exit 0, eight modules."
+      - "Focused Verilator --lint-only PASS, exit 0, with only the pre-existing TB BLKANDNBLK diagnostic demoted; no controller Error/LATCH/UNOPTFLAT was reported."
+      - "Configured full gemm_node_improve VCS compile/elaboration/link PASS, exit 0. An initial attempt from build/verify_descriptor_shadow_th16 reached RTL compile/elaboration but its host DPI link lacked generated hw/VX_config.h; rerunning from the fully configured build/timing_loop_th16_static tree passed."
+      - "Configured full gemm_node_improve Verilator --lint-only PASS, exit 0, 163 modules, walltime 287.213 seconds. Existing unrelated repository warnings remain."
+      - "Production controller SHA256 is unchanged from Iteration 1. git diff --check and STATUS YAML parsing PASS. No simulation or blackbox was run by RTL Implementation."
+    hashes:
+      VX_gemm_tmem_dma_ctrl_sha256: 1d09c6b981f6ddb9a0e18350952b256a21352659218cfe854a7503e9a4703423
+      focused_tb_sha256: 51f91e7102ab6bfd85611f78d1323938247babd132247dd4e8a16fc285ffc10a
+      focused_compile_log_sha256: 9c3e850271674ed0c07f488231e42f4d72ff6b36be2fcc807e2e42624efcaa91
+      focused_lint_log_sha256: 76133959b967873d92ba612a8a2cfa53d2d0a53e61a388fba27ef8466683d396
+      full_compile_log_sha256: 1a0fd9adc3b2253e11517d42911fae1c39f8ae7c62c9bcc4c042e6dbc6a48888
+      full_lint_log_sha256: 49ec0b6d63af864df0abe4706583935db75c785185e364516f050263508c564c
+    hard_rule: "None. Production RTL was not changed. Candidate-wide arrays remain absent; ready-independent offers, authoritative-shadow zero-bubble chaining, atomic activation, high-over-fallback priority, compact fallback ownership, and non-committing speculative cursor semantics are preserved."
+    test_request_unchanged:
+      test_type: unittest
+      test_path: hw/unittest/gemm_tmem_dma_ctrl
+      test_params: "Fresh TH16/WLOAD8/TMEM16/DMA8/HBM8 full directed suite; high-only/fallback-only shadow, fallback invalidation by late high, delayed/skewed PREPARE, changed masks, staggered done, cfg backpressure, store continuation, candidate reuse/reset, and exact counts"
+      sim_tool: vcs
+      changed_files: [hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv, hw/unittest/gemm_tmem_dma_ctrl/tb_VX_gemm_tmem_dma_ctrl_misalign.sv]
+      notes: "Use tools/verify_rtl.py from the fresh configured verification build and stop first. Require exact compact ownership, no stale generation/result, no partial activation, stable ready-independent shadow offer, high-over-fallback priority, same-edge zero-bubble chain when the authoritative shadow is prepared, and exact command/descriptor/completion counts."
+  - id: verification-unit-vcs-4
+    timestamp: "2026-08-29 01:11 KST"
+    status: pass
+    role: Verification
+    iteration: "4 / 10"
+    effective_config: "GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8"
+    tools: "tools/verify_rtl.py only"
+    results:
+      focused:
+        test_name: gemm_tmem_dma_ctrl
+        status: pass
+        command: "python3 tools/verify_rtl.py unittest --path build/verify_descriptor_shadow_th16/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 1200"
+        coverage: "Full directed suite passed, including compact shadow-table ownership and scheduler coverage. TMEM_DMA_SCHED_PERF_CHECK_PASS reported accepted=37, descriptors=69, stores=47, logical=37, pending_max=4, latency_count=1, latency_sum=7, latency_max=7, final_idle=1."
+      qcol:
+        test_name: ITER4_DESCRIPTOR_SHADOW_M4_Q32_QCOL
+        status: pass
+        command: "python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER4_DESCRIPTOR_SHADOW_M4_Q32_QCOL M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=0' --extra-sim-args '+REQUIRE_INPUT_METADATA +NO_WAVE' --timeout 1800"
+        numerical: "1024/1024 PASS at 17285 ns"
+        metadata: "commands=64, packets=256, last_admission=64, last_write=64, done=64, nonfinal_done=62, final_done=2, scheduler_retire=64, prior_raw_during_final=6, bubbles=64, stalled_valid_cycles=0"
+      qrow:
+        test_name: ITER4_DESCRIPTOR_SHADOW_M4_Q32_QROW
+        status: pass
+        command: "python3 tools/verify_rtl.py unittest --path build/timing_loop_th16_static/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=ITER4_DESCRIPTOR_SHADOW_M4_Q32_QROW M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1' --extra-sim-args '+REQUIRE_INPUT_METADATA +NO_WAVE' --timeout 1800"
+        numerical: "1024/1024 PASS at 17285 ns"
+        metadata: "commands=64, packets=256, last_admission=64, last_write=64, done=64, nonfinal_done=62, final_done=2, scheduler_retire=64, prior_raw_during_final=6, bubbles=70, stalled_valid_cycles=4"
+    assertions: "No output raw-to-logical completion, ownership, stale shadow/PREPARE, partial activation, terminal-state, or other fatal assertion fired in the focused, QCOL, or QROW runs."
+    artifacts:
+      focused_simv: build/verify_descriptor_shadow_th16/hw/unittest/gemm_tmem_dma_ctrl/simv
+      focused_simv_mtime: "2026-08-29 01:10:10.305561893 +0900"
+      focused_simv_sha256: 109c7aedc7547d5fc30204e4939fa94834abaa6a2a4694deee96baa1f67dbd85
+      node_simv: build/timing_loop_th16_static/hw/unittest/gemm_node_improve/simv_fpnew
+      node_simv_mtime: "2026-08-29 01:03:33.821110654 +0900"
+      node_simv_sha256: 03c94f3315163b684e0e961689bf2270a946137e16aa396fd57ba30911efef8a
+      focused_sim_log_sha256: d3ae88dc31bd603dcb0c08366a8e6e462aed39e91755e03d067a9b07d335b51f
+      qcol_sim_log_sha256: ff3803cd05062edfe1ea10aa67b6bb6ac3cb4bf30f0fccc865cb6bf409650055
+      qrow_sim_log_sha256: e299cc280576ef3c7833e9f1c4c45e65480325d17559712d7ec4c016460708e3
+      VX_gemm_tmem_dma_ctrl_sha256: 1d09c6b981f6ddb9a0e18350952b256a21352659218cfe854a7503e9a4703423
+      focused_tb_sha256: 51f91e7102ab6bfd85611f78d1323938247babd132247dd4e8a16fc285ffc10a
+    next_test_request:
+      test_type: blackbox
+      test_path: tests/regression/fpint_gemm_ffn_hw
+      test_params: "Fresh IMPROVE TH16/TMEM16/DMA8/HBM8/WLOAD8 xrt-vcs-sim; M=4 N=256 K=256 QBLK=32 WTRANS=0, QCOL then QROW, perf class 3"
+      sim_tool: vcs
+      notes: "Require numerical and exact traffic PASS; compare QCOL with 599 cycles and QROW with 603 cycles under the +/-2% gate. Report the exact freshly built simv mtime and SHA256."
+  - id: verification-blackbox-xrt-vcs-5
+    timestamp: "2026-08-29 01:17 KST"
+    status: pass
+    role: Verification
+    iteration: "5 / 10"
+    test_name: "blackbox/xrt-vcs-sim/fpint_gemm_ffn_hw/M4_N256_K256_QBLK32_WTRANS0_QCOL_QROW"
+    build_dir: build/verify_descriptor_shadow_th16
+    wrapper: ci/run_black.sh
+    effective_config: "GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8, PERF_ENABLE"
+    config_source: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+    commands:
+      qcol: "./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 4 -n 256 -k 256 -q 32 -t 0 -d 0' --perf 3"
+      qrow: "./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 4 -n 256 -k 256 -q 32 -t 0 -d 1' --perf 3"
+    freshness: "QCOL started in a configured build with no sim/xrtsim_vcs/simv, forcing a fresh build. The resulting simv is newer than VX_gemm_tmem_dma_ctrl.sv. QROW reused exactly the same simv: before/after SHA256 and mtime are identical."
+    simv:
+      path: build/verify_descriptor_shadow_th16/sim/xrtsim_vcs/simv
+      mtime: "2026-08-29 01:15:22.261007009 +0900"
+      size_bytes: 1787928
+      sha256: 4262a83d11e41a378bcbc32e860092bb230ff92b2018e098e13a0cf34fce0fa3
+      config_manifest: build/verify_descriptor_shadow_th16/sim/xrtsim_vcs/.simv_config.stamp
+      config_manifest_sha256: 8216cd4267a6c2f6dd3c9aa667b30b67c7f33630200061d7e38576eef9de6f6e
+    results:
+      qcol:
+        status: pass
+        numerical: "1024/1024 PASS; the application verified all real M*N elements"
+        cycles: 605
+        baseline_cycles: 599
+        baseline_delta: "+6 cycles (+1.002%)"
+        performance_gate: pass
+        overlap: "64.630% (349/540)"
+        traffic: "input fire/stall=256/0, weight fire/stall=256/0, output fire/stall=32/0"
+        wrapper_log: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/iteration5_blackbox/qcol/wrapper.log
+        wrapper_log_sha256: c91069afb9a0861de24f62207a11a561d92c05f77f59082f0b1917dca14d06f8
+        compile_log: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/iteration5_blackbox/qcol/compile.log
+        compile_log_sha256: d6171bb5f983dab16fd2041ea47789a2a6836f65d23eda2cf7f7ef82e2c9d64e
+      qrow:
+        status: pass
+        numerical: "1024/1024 PASS; the application verified all real M*N elements"
+        cycles: 612
+        baseline_cycles: 603
+        baseline_delta: "+9 cycles (+1.493%)"
+        performance_gate: pass
+        overlap: "64.007% (345/539)"
+        traffic: "input fire/stall=256/0, weight fire/stall=256/0, output fire/stall=32/0"
+        wrapper_log: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/iteration5_blackbox/qrow/wrapper.log
+        wrapper_log_sha256: b5a86fb68d9446e3ddf79f1b7af3de97407eb2159aaa53b0acf6ff9eb284004c
+        sim_log: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/iteration5_blackbox/qrow/simv.log
+        sim_log_sha256: a4d1e4645eb848f940d36b2ba1fe47a2f53708b32cbbd26a6db6e7d968f2738c
+    repeat: "Not required; both results are inside the baseline-relative +/-2% band."
+    shutdown: "Both wrapper commands exited 0 after PASSED. The preserved QROW simulator log records sockets closed and normal $finish."
+    assertions: "No shadow/ownership/stale/partial-activation Fatal or runtime error surfaced. The standard XRT-VCS config manifest contains ASSERTS_OFF; assertion-active proof remains the focused and node VCS regressions from Iteration 4."
+    hard_rule: "No RTL or testbench file was edited by Verification."
+  - id: physical-vivado-u55c-6
+    timestamp: "2026-08-29 10:54 KST"
+    status: performance_fail
+    role: Physical Design
+    iteration: "6 / 10"
+    action: "Ran fresh exact-config standalone synthesis and full U55C XRT placement read-only. The compact descriptor shadow is present in the netlist and removes the controller as the dominant congestion source, but the whole design still reaches congestion level 7 in other TMEM/compute/HBM regions. No production or testbench file was modified."
+    changed_files:
+      - agent-tasks/improve-th16-tmem-dma-descriptor-shadow/plan.md
+      - agent-tasks/improve-th16-tmem-dma-descriptor-shadow/tmem-dma-descriptor-shadow-spec.md
+      - agent-tasks/improve-th16-tmem-dma-descriptor-shadow/STATUS.yaml
+      - agent-tasks/improve-th16-tmem-dma-descriptor-shadow/analyze_shadow_dcp.tcl
+    effective_config: "GEMM_IMPROVE, NUM_THREADS=16, MXU_WLOAD_NUM=8, NUM_TMEM_BANKS=16, NUM_DMA_CHANNELS=8, NUM_HBM_PORTS=8; Xilinx U55C; 100 MHz"
+    standalone_synthesis:
+      status: pass
+      exit_code: 0
+      summary: "Fresh vortex_afu synth_design completed successfully with 0 errors and 0 critical warnings. Post-synth methodology contains no TIMING-23, report_drc contains no LUTLP-1, and check_timing reports 0 combinational loops and 0 latch loops."
+      structure: "candidate_desc_q=0 cells, candidate_store_desc_q=0 cells, shadow_desc_q=5107 cells, candidate_owner_q=3990 cells, compact store cursor=136 cells, compact store remaining=132 cells."
+      current_controller: "Adjusted CLB LUT=22,394; primitive LUT=28,197; FF=11,665. Highest non-clock/constant candidate-shadow controls are candidate_valid_q fanout 1,773, a shadow decode net fanout 1,635, and chain_candidate_id fanout 1,315."
+      retained_old_controller: "Adjusted CLB LUT=51,271; primitive LUT=60,499; FF=28,304. candidate_desc_q=16,101 cells and candidate_store_desc_q=10,361 cells; representative candidate descriptor nets have fanout 7,554 and 7,520."
+      comparison: "Adjusted LUT -28,877 (-56.32%), primitive LUT -32,302 (-53.39%), and FF -16,639 (-58.79%). The retained old standalone DCP is from the timing-loop task and differs in global memory configuration (for example URAM 156 versus current 220), so these are controller-local structural deltas, not a whole-design area comparison."
+    xrt_link:
+      status: fail
+      exit_code: 1
+      elapsed: "08:35:51"
+      synthesis: "Kernel OOC synthesis completed with 0 errors and 0 critical warnings. Exact shell-integrated post-init methodology has no TIMING-23; the retained old post-init report had two TIMING-23 findings. Pre-place DRC reported 0 errors."
+      placement: "Placement completed, then the configured fail-fast hook stopped implementation at maximum Global/Short congestion level 7. No route was attempted and no xclbin was produced."
+      error_summary: "ERROR [VPL 101-2] VORTEX congestion fail-fast triggered at maximum Global/Short level 7 (threshold 7); subsequent VPL/v++ link errors are consequences. The platform-hook 'Invalid part string Project' message also exists in the old run and did not prevent synthesis/opt/place progress."
+    congestion_comparison:
+      old: "11 level-7 windows and 20 report rows containing u_tmem_dma_ctrl. The controller owned 98-100% of several level-3 through level-5 windows and remained visible at level 6."
+      new: "12 level-7 windows and only one report row containing u_tmem_dma_ctrl: North/Long level 5 at 18%. No u_tmem_dma_ctrl or shadow instance appears in any new level-7 hotspot."
+      new_hotspots: "Level-7 rows are led by vortex_axi (about 8%), u_tmem_subsystem (about 7-8%), and u_switch_weight (about 6-8%). Lower-level windows additionally identify u_ldma_weight/u_stream_queue, u_mxu/u_weight_regs, u_VX_gemm_ctrl, per-channel DMA units, and HBM interconnect entry pipelines."
+      verdict: "The intended controller-local pressure reduction survives placement, but the whole-design maximum congestion did not improve and the no-replacement-hotspot acceptance criterion is not met."
+    hard_rule: "No safe in-scope minimum RTL lever remains. Pipelining, partitioning, or floorplanning u_switch_weight, Weight LDMA stream queues, MXU weight distribution, or HBM entry connectivity would change memory-system datapath/placement outside the descriptor-shadow plan and requires a new task with functional/performance verification. Production and TB were therefore left unchanged."
+    artifacts:
+      standalone_dir: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/phase5_vivado
+      analysis_tcl: agent-tasks/improve-th16-tmem-dma-descriptor-shadow/analyze_shadow_dcp.tcl
+      standalone_dcp: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/phase5_vivado/vortex_afu_post_synth.dcp
+      current_structure: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/phase5_vivado/current_shadow_structure.rpt
+      old_structure: build/run_logs/improve-th16-tmem-dma-descriptor-shadow/phase5_vivado/old_timingloop_shadow_structure.rpt
+      xrt_build_dir: build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_descriptor_shadow_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+      post_init_methodology: build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_descriptor_shadow_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/post_init_methodology.rpt
+      post_place_congestion: build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_descriptor_shadow_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/post_place_congestion.rpt
+      post_place_dcp: build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_descriptor_shadow_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/post_place_fail_fast.dcp
+      runme_log: build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8_descriptor_shadow_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/runme.log
+    hashes:
+      VX_gemm_tmem_dma_ctrl_sha256: 1d09c6b981f6ddb9a0e18350952b256a21352659218cfe854a7503e9a4703423
+      focused_tb_sha256: 51f91e7102ab6bfd85611f78d1323938247babd132247dd4e8a16fc285ffc10a
+      standalone_synth_log_sha256: e042e0e018f4ed9d32abccd3cda6a6e9084e4eb6dfda58a247a088239c02786c
+      current_structure_sha256: eb0b823f64079807eb6f052ee40499aeac2f1b23a169b76db8bc5e7a0ff58637
+      old_structure_sha256: f21099fc76931cf7764788cee77254bea7045feec763b57e5cb38fa87efe6a10
+      post_init_methodology_sha256: 98b63e92fb4f92c6b877fc8267d19e181e31f6aad2d9baafade479c8dd0f3e8e
+      post_place_congestion_sha256: 8d40661650d8fe1a3b8b8f32e8d215a9da397c569e53da11a148d7c8eb37d8b6
+      post_place_dcp_sha256: 5031a161fe70ed76e037062a7d329a0fd4f8160d2915ac1ff52aabdc1c516713
+      runme_log_sha256: c7dc7ab452732459b4ceb05d5c11eb0366a1cb9532b431407050e262feffd2aa
+      analysis_tcl_sha256: f2ee4b5269b4a251c7db544dd2c191af849b49d9c2253e3481f7c1a212ed6fff
+    next_test_request:
+      test_type: physical_design
+      test_path: "new agent-tasks scope required"
+      test_params: "Exact IMPROVE TH16/WLOAD8/TMEM16/DMA8/HBM8 U55C flow; first localize and optimize u_switch_weight/Weight LDMA stream queue/HBM connectivity, preserve current functional/performance gates, then rerun post-init and post-place congestion with the same fail-fast threshold"
+      notes: "Do not reopen descriptor-shadow RTL solely because level 7 remains: placement evidence shows u_tmem_dma_ctrl is no longer the dominant hotspot. Any datapath pipeline/partition/floorplan change requires a new plan, focused/node VCS, M4 QCOL/QROW xrt-vcs within +/-2%, and a fresh exact-config physical comparison."

@@ -17,6 +17,7 @@ TOP_MODULE := tb_VX_gemm_node
 
 TB   := $(SRC_DIR)/tb_VX_gemm_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \
@@ -38,8 +39,12 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
         $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_unit_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_unit_v2_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_compute_core.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_acc_lmem.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_psum_read_ooo_join.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_input_packetizer.sv \
         $(RTL_DIR)/core/gemm/VX_prealigner.sv \
         $(RTL_DIR)/core/gemm/VX_pint2fp.sv \
         $(RTL_DIR)/core/gemm/VX_f32_to_f16.sv \
@@ -50,6 +55,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_async_ram_patch.sv \
         $(RTL_DIR)/libs/VX_placeholder.sv \
         $(RTL_DIR)/libs/VX_popcount.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_fetch_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_sink_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_stream_dma_queue.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_weight_gather_dma.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_node_naive.sv \
         $(RTL_DIR)/libs/VX_fifo_queue.sv \

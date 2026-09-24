@@ -39,6 +39,7 @@ from spinquant_inference.layer_accuracy.run_artifacts import (  # noqa: E402
     save_run,
 )
 from spinquant_inference.layer_accuracy.specs import (  # noqa: E402
+    ALL_ASYMMETRIC_WKV4,
     LayerConfig,
     PhysicalSpec,
     QuantSpec,
@@ -64,6 +65,15 @@ def tiny_config() -> LayerConfig:
         sequence_length=4,
         weight_group_size=4,
         kv_group_size=8,
+    )
+
+
+def all_asymmetric_tiny_config() -> LayerConfig:
+    return LayerConfig(
+        **{
+            **tiny_config().to_dict(),
+            "quantization_policy": ALL_ASYMMETRIC_WKV4,
+        }
     )
 
 
@@ -97,6 +107,33 @@ def gqa_tiny_config(*, sequence_length: int = 4) -> LayerConfig:
 
 
 class TensorContractTests(unittest.TestCase):
+    def test_all_asymmetric_random_case_retains_int16_weight_zero_points(self):
+        case = create_random_case(all_asymmetric_tiny_config(), seed=41)
+        self.assertEqual(
+            ALL_ASYMMETRIC_WKV4,
+            case.config.quantization_policy,
+        )
+        self.assertEqual("asym", case.manifest["weight_quantization"]["mode"])
+        self.assertEqual("asym", case.manifest["kv_quantization"]["key_mode"])
+        self.assertEqual("asym", case.manifest["kv_quantization"]["value_mode"])
+        for projection in (
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ):
+            zero = case.tensors[f"{projection}.zeros"]
+            self.assertEqual(torch.int16, zero.dtype)
+            self.assertEqual(
+                case.tensors[f"{projection}.scales"].shape,
+                zero.shape,
+            )
+        self.assertGreater(
+            sum(
+                torch.count_nonzero(case.tensors[f"{name}.zeros"]).item()
+                for name in ("q_proj", "k_proj", "v_proj")
+            ),
+            0,
+        )
+
     def test_llama3_r4_uses_exact_orthogonal_28_base(self):
         matrix, base = get_hadK(14336)
         self.assertEqual(base, 28)

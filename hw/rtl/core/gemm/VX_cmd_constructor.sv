@@ -18,10 +18,11 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
   localparam logic [3:0] RAW_OP_NOTIFY           = 4'd3;
   localparam logic [3:0] RAW_OP_WAIT             = 4'd4;
   localparam logic [3:0] RAW_OP_MXU_LOAD_WEIGHT  = 4'd5;
-  localparam logic [3:0] RAW_OP_MXU_LOAD_QPARAM  = 4'd6;
+  localparam logic [3:0] RAW_OP_MXU_LOAD_QPARAM  = GEMM_OP_SC_LDMA_MXU;
   localparam logic [3:0] RAW_OP_MXU_LOAD_INPUT   = 4'd7;
   localparam logic [3:0] RAW_OP_MXU_STORE_OUTPUT = 4'd8;
   localparam logic [3:0] RAW_OP_CLEAR            = 4'd9;
+  localparam logic [3:0] RAW_OP_MXU_LOAD_ZP      = GEMM_OP_ZP_LDMA_MXU;
   // Raw opcodes are forwarded downstream in cmd.instr[3:0].
 
   typedef enum logic [1:0] {
@@ -56,6 +57,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
         RAW_OP_MXU_LOAD_WEIGHT,
         RAW_OP_CLEAR:            cmd_word_count = 2'd1;
         RAW_OP_MXU_LOAD_QPARAM,
+        RAW_OP_MXU_LOAD_ZP,
         RAW_OP_MXU_LOAD_INPUT,
         RAW_OP_MXU_STORE_OUTPUT: cmd_word_count = 2'd2;
         default:                 cmd_word_count = 2'd0;
@@ -179,7 +181,8 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
           c.bound     = bound16;
         end
 
-        RAW_OP_MXU_LOAD_QPARAM: begin
+        RAW_OP_MXU_LOAD_QPARAM,
+        RAW_OP_MXU_LOAD_ZP: begin
           // <mxu_sz_base_addr[24], tmem_base_addr[24], opcode[4]>
           // <tmem_stride0[16], mxu_stride0[16], bound0[16]>
           mxu_base24    = w0[51:28];
@@ -188,7 +191,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
           mxu_stride16  = w1[31:16];
           bound16       = w1[15:0];
 
-          c.instr       = {28'd0, RAW_OP_MXU_LOAD_QPARAM};
+          c.instr       = {28'd0, raw_op};
           c.flags[0]    = reg_idx;
           c.rs1_data    = `XLEN'(mxu_base24);
           c.rs2_data    = `XLEN'(tmem_base24);
@@ -352,10 +355,11 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
         RAW_OP_NOTIFY:           raw_op_to_str = "NOTIFY";
         RAW_OP_WAIT:             raw_op_to_str = "WAIT";
         RAW_OP_MXU_LOAD_WEIGHT:  raw_op_to_str = "MXU_LOAD_WEIGHT";
-        RAW_OP_MXU_LOAD_QPARAM:  raw_op_to_str = "MXU_LOAD_QPARAM";
+        RAW_OP_MXU_LOAD_QPARAM:  raw_op_to_str = "MXU_LOAD_SCALE";
         RAW_OP_MXU_LOAD_INPUT:   raw_op_to_str = "MXU_LOAD_INPUT";
         RAW_OP_MXU_STORE_OUTPUT: raw_op_to_str = "MXU_STORE_OUTPUT";
         RAW_OP_CLEAR:            raw_op_to_str = "CLEAR";
+        RAW_OP_MXU_LOAD_ZP:      raw_op_to_str = "MXU_LOAD_ZP";
         default:                 raw_op_to_str = "UNKNOWN";
       endcase
     end

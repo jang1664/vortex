@@ -6,9 +6,9 @@ include $(ROOT_DIR)/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_ctrl
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 
@@ -23,13 +23,13 @@ TOP_MODULE := tb_VX_gemm_ctrl
 TB   := $(SRC_DIR)/tb_VX_gemm_ctrl.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
+				$(RTL_DIR)/core/gemm/VX_microtile_readiness_scheduler.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
-				$(RTL_DIR)/core/gemm/VX_gemm_sync.sv \
 				$(RTL_DIR)/libs/VX_fifo_queue.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv 
@@ -37,6 +37,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -49,6 +51,7 @@ space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
 PARAMS := 
+EXTRA_SIM_ARGS ?=
 
 setup:
 	mkdir -p logs reports

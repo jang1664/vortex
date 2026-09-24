@@ -12,6 +12,9 @@
 module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_MISALIGN = 1'b0,
+  parameter bit ENABLE_PADDING = 1'b1,
+  parameter int BOUND_WIDTH = `DMA_BOUND_WIDTH,
+  parameter int MAX_DIMS = 3,
   // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
   parameter int DCACHE_ADDR_WIDTH = 1,
@@ -20,6 +23,9 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter int LMEM_TAG_WIDTH   = 1,
   parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
   parameter int RD_OUTSTANDING = 2,
+  // Use descriptor-time beat/final-byte state for a fixed-direction,
+  // same-width one-dimensional aligned writer.
+  parameter bit ENABLE_1D_WRITE_COUNTER = 1'b0,
   // -1: use descriptor direction, 0/1: compile-time fixed direction.
   parameter int FIXED_DIR = -1
 ) (
@@ -27,6 +33,7 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   input wire reset,
 
   VX_config_reg_if.slave cfg_reg_if,
+  VX_dma_lookahead_if.slave lookahead_if,
 
   VX_mem_bus_if.master   dcache_bus_if,
   VX_mem_bus_if.master   lmem_bus_if,
@@ -38,8 +45,25 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
 );
 
   if (ENABLE_MISALIGN) begin : g_misaligned
+    assign lookahead_if.prepare_ready = 1'b0;
+    assign lookahead_if.result_ready = '0;
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+      if (!reset && lookahead_if.prepare_valid)
+        assert (!lookahead_if.prepare_ready)
+          else $fatal(1, "%s: misaligned DMA accepted PREPARE", INSTANCE_ID);
+      if (!reset)
+        assert (lookahead_if.data_release)
+          else $fatal(1, "%s: misaligned DMA does not support data prepare",
+                      INSTANCE_ID);
+    end
+`endif
+
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .BOUND_WIDTH      (BOUND_WIDTH),
+      .MAX_DIMS         (MAX_DIMS),
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
@@ -61,16 +85,21 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   end else begin : g_aligned
     VX_dma_unit_align #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .ENABLE_PADDING   (ENABLE_PADDING),
+      .BOUND_WIDTH      (BOUND_WIDTH),
+      .MAX_DIMS         (MAX_DIMS),
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
       .RD_OUTSTANDING   (RD_OUTSTANDING),
+      .ENABLE_1D_WRITE_COUNTER(ENABLE_1D_WRITE_COUNTER),
       .FIXED_DIR        (FIXED_DIR)
     ) u_impl (
       .clk            (clk),
       .reset          (reset),
       .cfg_reg_if     (cfg_reg_if),
+      .lookahead_if   (lookahead_if),
       .dcache_bus_if  (dcache_bus_if),
       .lmem_bus_if    (lmem_bus_if),
       .done_if        (done_if)

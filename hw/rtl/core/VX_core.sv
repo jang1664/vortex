@@ -20,7 +20,10 @@
 module VX_core import VX_gpu_pkg::*; #(
     parameter CORE_ID = 0,
     parameter `STRING INSTANCE_ID = "",
-    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS
+    parameter NUM_TMEM_BANKS = `NUM_TMEM_BANKS,
+    parameter NUM_DMA_CHANNELS = `NUM_DMA_CHANNELS,
+    parameter int DMA_STORE_MAX_CHUNK_BEATS =
+        `GEMM_DMA_STORE_MAX_CHUNK_BEATS
 ) (
     `SCOPE_IO_DECL
 
@@ -39,7 +42,7 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    icache_bus_if,
 
     // DMA AXI ports (from GEMM node's TMEM subsystem)
-    AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS],
+    AXI_BUS.Master          dma_axi_m [NUM_DMA_CHANNELS],
 
 `ifdef GBAR_ENABLE
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -315,6 +318,7 @@ module VX_core import VX_gpu_pkg::*; #(
       .LMEM_NUM_LANES_P(`LMEM_NUM_PORTS),
       .DCACHE_NUM_LANES_P(`DMA_DCACHE_PORTS),
       .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
+      .MAX_DIMS(3),
       .ENABLE_MISALIGN(1'b1),
       .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (
@@ -373,7 +377,7 @@ module VX_core import VX_gpu_pkg::*; #(
        ,.psum_wr_lmem_bus_if(gemm_psum_wr_if)
     );
 
-    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_naive_gemm_dma_axi
+    for (genvar i = 0; i < NUM_DMA_CHANNELS; ++i) begin : g_naive_gemm_dma_axi
         assign dma_axi_m[i].aw_id     = '0;
         assign dma_axi_m[i].aw_addr   = '0;
         assign dma_axi_m[i].aw_len    = '0;
@@ -442,7 +446,9 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
         .N_MASTER (`NUM_LSU_BLOCKS),
-        .NUM_TMEM_BANKS (NUM_TMEM_BANKS)
+        .NUM_TMEM_BANKS (NUM_TMEM_BANKS),
+        .NUM_DMA_CHANNELS (NUM_DMA_CHANNELS),
+        .DMA_STORE_MAX_CHUNK_BEATS (DMA_STORE_MAX_CHUNK_BEATS)
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),
@@ -487,7 +493,7 @@ module VX_core import VX_gpu_pkg::*; #(
     end
 `endif
 
-    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_disabled_gemm_dma_axi
+    for (genvar i = 0; i < NUM_DMA_CHANNELS; ++i) begin : g_disabled_gemm_dma_axi
         assign dma_axi_m[i].aw_id     = '0;
         assign dma_axi_m[i].aw_addr   = '0;
         assign dma_axi_m[i].aw_len    = '0;
@@ -815,8 +821,8 @@ module VX_core import VX_gpu_pkg::*; #(
     assign pipeline_perf.ifetch_latency = perf_icache_lat;
     assign pipeline_perf.load_latency = perf_dcache_lat;
 
-    // Overlap counter: cycles where any DMA is busy AND the GEMM unit is computing.
-    // OR across cpu_dma + hbm_dma aggregate + all 4 per-LDMA busy bits.
+    // DMA union-active and overlap counters share the exact same union
+    // predicate. Concurrent DMA engines therefore count once per cycle.
     wire any_dma_busy = accel_perf.cpu_dma.busy
                       | accel_perf.hbm_dma.aggregate.busy
                       | accel_perf.lmem_dma_input.busy
@@ -824,13 +830,31 @@ module VX_core import VX_gpu_pkg::*; #(
                       | accel_perf.lmem_dma_sz.busy
                       | accel_perf.lmem_dma_output.busy;
     reg [PERF_CTR_BITS-1:0] perf_overlap_r;
+    reg [PERF_CTR_BITS-1:0] perf_dma_union_active_r;
     always @(posedge clk) begin
-        if (reset)
+        if (reset) begin
             perf_overlap_r <= '0;
-        else if (any_dma_busy && accel_perf.gemm_unit.computing)
-            perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
+            perf_dma_union_active_r <= '0;
+        end else begin
+            if (any_dma_busy)
+                perf_dma_union_active_r
+                    <= perf_dma_union_active_r + PERF_CTR_BITS'(1);
+            if (any_dma_busy && accel_perf.gemm_unit.computing)
+                perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
+        end
     end
     assign accel_perf.overlap_dma_mxu = perf_overlap_r;
+    assign accel_perf.dma_union_active_cycles = perf_dma_union_active_r;
+
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!reset) begin
+            assert (perf_overlap_r <= perf_dma_union_active_r)
+                else $fatal(1, "%s: DMA+MXU overlap exceeds DMA union-active cycles",
+                            INSTANCE_ID);
+        end
+    end
+`endif
 
     // Busy counter: cycles where this core has an active kernel
     // (active warps or pending instructions — VX_core.busy = VX_schedule.busy).

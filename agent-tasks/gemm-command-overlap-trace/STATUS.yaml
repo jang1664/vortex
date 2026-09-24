@@ -1,0 +1,84 @@
+task: gemm-command-overlap-trace
+state: complete
+source_spec: docs/future_optim/gemv/gemm_improve/fsm_command_overlap_trace_plan.md
+confirmed_spec: agent-tasks/gemm-command-overlap-trace/gemm-command-overlap-trace-spec.md
+updated_at: "2026-08-07"
+phase: complete
+iterations:
+  - iteration: 1
+    status: sim_fail
+    error_summary: "Parser, gemm_ctrl, TMEM-DMA, and all command-accounting invariants passed, but gemm_node_improve reported numerical mismatches for M=4/M=256/M=384."
+    root_cause: "The default nonuniform node vectors fail before and independently of command tracing: trace-disabled M=4/M=256/M=384 fail with 101/128, 90/8192, and 180/12288 mismatches. Substituting the repository's block-floating QCOL reference model leaves the M=4 mismatch unchanged, while uniform deterministic vectors pass all shapes with tracing both disabled and enabled. This isolates a pre-existing lane/data-layout correctness defect in the dirty functional RTL path, not an instrumentation or reference-arithmetic regression."
+    fix_applied: "Corrected the instrumentation test request to use the node testbench's deterministic uniform vectors (INPUT/WEIGHT/SCALE/ZP_RANDOM_TYPE=0) for trace-on/off numerical acceptance. No functional scheduler, datapath, or checker relaxation was made; the unsuccessful reference-model experiment was fully reverted."
+    lesson: "M=384 directly exposes 184 cycles of output-store versus later-tile-load logical overlap while descriptor execution remains serialized. Trace verification must use a numerically passing baseline when an unrelated dirty functional branch already fails nonuniform lane patterns."
+    commands:
+      - "CONFIGS='-DDBG_TRACE_GEMM_CMD_PERF -DDISABLE_FSDB' python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_ctrl --sim vcs --timeout 600 => pass"
+      - "CONFIGS='-DDBG_TRACE_GEMM_CMD_PERF -DDISABLE_FSDB' TB_PENDING_DEPTH=4 python3 tools/verify_rtl.py unittest --path build_cmd_schedule/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --timeout 600 => pass"
+      - "gemm_node_improve M=4/M=256/M=384 => sim_fail with 98/128, 81/8192, and 162/12288 numerical mismatches; lifecycle accounting passed with 22/44/66 commands and incomplete=0"
+  - iteration: 2
+    status: pass
+    error_summary: "None on the corrected instrumentation acceptance baseline. Parser, controller, scheduler, and trace-on/off M=4/M=256/M=384 uniform-vector node runs all passed."
+    root_cause: "Iteration 1 used the dirty branch's pre-existing failing nonuniform lane/data-layout path. Trace-disabled parity and the unchanged hardware-aware reference experiment proved the trace was not causal."
+    fix_applied: "Revised only the verification request to use deterministic uniform vectors for the instrumentation acceptance matrix; no RTL, scheduler, datapath, or checker tolerance was changed."
+    lesson: "Trace-on and trace-off job completion times match exactly at 4945/20285/27955 ns for M=4/256/384, demonstrating zero functional or scheduling perturbation from the guarded instrumentation."
+    commands:
+      - "python3 -m unittest tools.test_gemm_command_overlap_summary => pass (2/2)"
+      - "Trace-enabled gemm_ctrl and gemm_tmem_dma_ctrl through tools/verify_rtl.py => pass"
+      - "Trace-on uniform M=4/M=256/M=384 through tools/verify_rtl.py => pass; 22/44/66 commands, incomplete=0"
+      - "Trace-off uniform M=4/M=256/M=384 through tools/verify_rtl.py => pass; identical completion times and output counts"
+      - "tools/gemm_command_overlap_summary.py => pass; 132 command, 761 overlap-pair, and 30 DMA records"
+log:
+  - timestamp: "2026-08-07"
+    attempted: "Converted the user-approved command-overlap plan into a confirmed rtl-improve specification."
+    result: "Implementation may proceed with simulation-only RTL observability and no PERF CSR ABI changes."
+    learned: "M=256 has two DMA tiles, so M=384 is required only as the direct store-to-later-load diagnostic control."
+  - timestamp: "2026-08-07"
+    attempted: "Implemented command emit/issue/done tracking, overlap accounting, tile-level double-buffer metrics, DMA command timing, structured end-of-invocation dumps, assertions, and an offline parser."
+    result: "Trace-enabled VCS controller and TMEM-DMA directed suites pass; trace-enabled and SYNTHESIS compile checks pass; parser unit tests pass. M=4 and M=256 node runs emit complete lifecycle reports with zero incomplete commands."
+    learned: "M=256 reports 104 cycles of next-tile preload hidden by current compute and 54 cycles of tile-0 output store hidden by tile-1 compute. Direct store-to-next-load overlap is zero for two tiles by schedule construction. The node output checker currently also fails with tracing disabled (M=4: 101/128 mismatches), so that functional failure predates and is independent of this simulation-only instrumentation."
+  - timestamp: "2026-08-07"
+    attempted: "Ran rtl-improve verification iteration 1 through tools/verify_rtl.py with VCS for parser, controller, scheduler, and M=4/M=256/M=384 node workloads."
+    result: "Controller and scheduler passed; every workload emitted a fully drained lifecycle trace. The node numerical checker failed all three shapes, so the iteration remains open for trace-off parity and model diagnosis."
+    learned: "The three-tile M=384 control measured store-0 versus later-load logical overlap at 184 cycles; M=256 correctly measured zero because it has no tile-2 load."
+  - timestamp: "2026-08-07"
+    attempted: "Diagnosed iteration-1 numerical failures with forced trace-disabled rebuilds, the alternative hardware-aware QCOL model, and deterministic uniform-vector trace-on/off runs through tools/verify_rtl.py."
+    result: "Default nonuniform failures reproduce without instrumentation and are unchanged by the QCOL model. Uniform vectors pass numerical comparison for M=4/M=256/M=384 both trace-off and trace-on; trace-on reports 22/44/66 completed commands with zero incomplete records, and the parser accepts all three logs."
+    learned: "The iteration-1 numerical failure belongs to the pre-existing nonuniform-lane functional path. The scoped trace acceptance matrix can remain numerically strict by selecting an already-passing deterministic data pattern rather than changing scheduling or weakening the checker."
+  - timestamp: "2026-08-07"
+    attempted: "Ran rtl-improve verification iteration 2 with forced trace-on and trace-off VCS rebuilds and deterministic uniform-vector M=4/M=256/M=384 workloads."
+    result: "PASS. Numerical comparison and job completion time match exactly between modes; every trace is fully drained and the offline summarizer validates all records."
+    learned: "M=256 shows 104 preload/compute and 55 store/next-compute overlap cycles; M=384 shows 184 store/later-load overlap cycles, while M=4 correctly has no later-tile overlap."
+  - timestamp: "2026-08-07"
+    attempted: "Ran M=4/M=256/M=384 XRT-VCS application workloads through ci/run_black.sh xrt-vcs-sim with the established improve configuration and command-overlap trace macros."
+    result: "PASS. All normal numerical comparisons passed. M=4/M=256/M=384 completed in 273/1809/2527 command-ledger cycles with 22/44/66 fully drained commands. The parser generated durable command, pair, DMA, and Markdown reports."
+    learned: "The integrated M=256 run hides 117 preload cycles behind compute and 58 store cycles behind next-tile compute. The M=384 control shows 181 store/later-load logical-overlap cycles; the same store has 52 descriptor-active and 148 paused cycles with a four-cycle store-to-load switch."
+blackbox_verification:
+  status: pass
+  build_dir: build_multi_cmd_dma
+  config: configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+  driver: xrt-vcs-sim
+  app: fpint_gemm_ffn_hw
+  common_args: "N=32 K=128 QBLK=32 WTRANS=0 QDIR=0"
+  configs_extra: "-DDBG_TRACE_GEMM_CMD_PERF -DDBG_TRACE_GEMM -DDBG_TRACE_GEMM_FSM -DDISABLE_FSDB"
+  results:
+    - "M=4: numerical PASS; cycles=273; commands=22; max_concurrent=4; final_store_drain=37"
+    - "M=256: numerical PASS; cycles=1809; commands=44; preload/compute=117; store/next-compute=58; store/later-load=0; final_store_drain=324"
+    - "M=384: numerical PASS; cycles=2527; commands=66; tile0 preload/compute=121; store/next-compute=209; store/later-load=181; store paused=148; switch latency=4"
+  report: agent-tasks/gemm-command-overlap-trace/results/xrt_vcs_command_overlap_summary.md
+  raw_logs: /tmp/gemm-command-overlap-xrt-logs-20260807
+test_request:
+  status: fulfilled
+  test_type: unittest
+  test_path: "hw/unittest/gemm_node_improve"
+  test_params: "Compile with DBG_TRACE_GEMM_CMD_PERF and run M=4, M=256, and M=384 with N=32 K=128 QBLK=32 WTRANS=0 QDIR=0 plus runtime arguments INPUT_RANDOM_TYPE=0 WEIGHT_RANDOM_TYPE=0 SCALE_RANDOM_TYPE=0 ZP_RANDOM_TYPE=0. Repeat the three node workloads after a forced trace-disabled rebuild. Also run hw/unittest/gemm_ctrl and hw/unittest/gemm_tmem_dma_ctrl with the trace define."
+  sim_tool: vcs
+  changed_files:
+    - hw/rtl/core/gemm/VX_gemm_fsm.sv
+    - hw/rtl/core/gemm/VX_gemm_ctrl.sv
+    - hw/rtl/core/gemm/VX_gemm_node.sv
+    - hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+    - hw/unittest/gemm_ctrl/tb_VX_gemm_ctrl.sv
+    - tools/gemm_command_overlap_summary.py
+    - tools/test_gemm_command_overlap_summary.py
+    - agent-tasks/gemm-command-overlap-trace/STATUS.yaml
+  notes: "Use build_cmd_schedule after sourcing configs/naive_gemm.sh. Force rebuilds when toggling DBG_TRACE_GEMM_CMD_PERF because CONFIGS changes are not tracked by the unittest make dependency. First run python3 -m unittest tools.test_gemm_command_overlap_summary. Invoke tools/verify_rtl.py with --extra-sim-args '+INPUT_RANDOM_TYPE=0 +WEIGHT_RANDOM_TYPE=0 +SCALE_RANDOM_TYPE=0 +ZP_RANDOM_TYPE=0'. Validate numerical PASS in both modes, emitted=issued=completed, incomplete=0, monotonic emit<=issue<=done, interval bounds, and no assertion failures. Parse trace-on logs with tools/gemm_command_overlap_summary.py. Keep the default nonuniform-vector failures as a separate pre-existing functional diagnostic; they reproduce trace-disabled and are outside this instrumentation-only change. M=384 is the diagnostic control for direct output-store versus a later tile load. No blackbox is requested."

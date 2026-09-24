@@ -24,6 +24,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   parameter bit    ENABLE_MISALIGN_P = 1'b1;
   parameter bit    THROUGHPUT_P = 1'b0;
   parameter bit    NO_BACKPRESSURE_P = 1'b0;
+  parameter int    MAX_DIMS_P = 3;
+  parameter bit    DIMS_ONLY_P = 1'b0;
 
   // -----------------------------
   // Params
@@ -95,6 +97,17 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   ) lmem_bus_ifs [LMEM_PORTS](); // [0]=DMA only
 
   VX_node_done_if done_if();
+  VX_dma_lookahead_if dma_lookahead_if();
+
+  assign dma_lookahead_if.prepare_valid = 1'b0;
+  assign dma_lookahead_if.prepare_id = '0;
+  assign dma_lookahead_if.src_stride = '0;
+  assign dma_lookahead_if.dst_stride = '0;
+  assign dma_lookahead_if.bound = '0;
+  assign dma_lookahead_if.activate = 1'b0;
+  assign dma_lookahead_if.activate_id = '0;
+  assign dma_lookahead_if.data_release = 1'b1;
+  assign dma_lookahead_if.data_max_beats = '0;
   // -----------------------------
   // DUT
   // -----------------------------
@@ -107,12 +120,14 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
     .LMEM_TAG_WIDTH  (TAG_WIDTH),
+    .MAX_DIMS        (MAX_DIMS_P),
     .MISALIGN_PACK_BYTES(PACK_BYTES_P),
     .RD_OUTSTANDING(`DMA_NODE_RD_OUTSTANDING_SLOT)
   ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
+    .lookahead_if (dma_lookahead_if),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_bus_ifs[0]),
     .done_if      (done_if)
@@ -745,6 +760,20 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     $fdisplay(rpt_fd, "[POWER] DONE");
   endtask
 
+  task automatic sim_dims();
+    int unsigned dim1;
+    begin
+      dim1 = (MAX_DIMS_P >= 2) ? 3 : 1;
+      cfg_reg_if.valid = 1'b0;
+      cfg_reg_if.entry_id = '0;
+      for (int r = 0; r < CFG_NUM; r++)
+        cfg_reg_if.regs[r] = '0;
+      run_case(SEG_SIZE_2, 3, dim1, 1, PADDING_1, 3, 5, 7);
+      $display("DMA_MISAL_DIMS_PASS max_dims=%0d bnd=(3,%0d,1)",
+               MAX_DIMS_P, dim1);
+    end
+  endtask
+
   // -----------------------------
   // Top-level objective runner
   // -----------------------------
@@ -756,7 +785,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       case_total_count = 0;
       case_pass_count  = 0;
 
-      if (OBJ_ == "power") begin
+      if (DIMS_ONLY_P) begin
+        sim_dims();
+      end else if (OBJ_ == "power") begin
         sim_power();
       end else if (OBJ_ == "func") begin
         sim_func();
@@ -771,7 +802,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       end
 
       print_summary();
-      if (OBJ_ == "func") begin
+      if ((OBJ_ == "func") || DIMS_ONLY_P) begin
         $display("TEST PASSED");
       end
 

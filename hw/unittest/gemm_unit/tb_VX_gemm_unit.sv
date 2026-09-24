@@ -147,6 +147,80 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         .TAG_WIDTH(1)
     ) o_lmem_bus_if();
 
+    typedef logic [MXU_COL-1:0][FP32_WIDTH-1:0] psum_row_t;
+
+`ifdef GEMM_NAIVE
+    // The legacy NAIVE unit owns external PSUM/final LMEM ports. Keep this
+    // focused unit test self-contained with a one-cycle held-response PSUM
+    // model and always-ready write destinations.
+    VX_mem_bus_if #(
+        .DATA_SIZE(`GEMM_PSUM_DATA_SIZE),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) psum_rd_lmem_bus_if(), psum_wr_lmem_bus_if();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE(GEMM_OUTPUT_DATA_SIZE),
+        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) final_lmem_bus_if();
+
+    typedef logic [MXU_COL-1:0][FP16_WIDTH-1:0] final_row_t;
+    psum_row_t psum_lmem_model [longint unsigned];
+    final_row_t final_lmem_model [longint unsigned];
+
+    logic psum_rsp_valid_r;
+    psum_row_t psum_rsp_data_r;
+    logic [$bits(psum_rd_lmem_bus_if.rsp_data.tag)-1:0] psum_rsp_tag_r;
+
+    assign psum_rd_lmem_bus_if.req_ready
+        = !psum_rsp_valid_r || psum_rd_lmem_bus_if.rsp_ready;
+    assign psum_rd_lmem_bus_if.rsp_valid = psum_rsp_valid_r;
+    assign psum_rd_lmem_bus_if.rsp_data.data = psum_rsp_data_r;
+    assign psum_rd_lmem_bus_if.rsp_data.tag = psum_rsp_tag_r;
+
+    assign psum_wr_lmem_bus_if.req_ready = 1'b1;
+    assign psum_wr_lmem_bus_if.rsp_valid = 1'b0;
+    assign psum_wr_lmem_bus_if.rsp_data = '0;
+
+    assign final_lmem_bus_if.req_ready = 1'b1;
+    assign final_lmem_bus_if.rsp_valid = 1'b0;
+    assign final_lmem_bus_if.rsp_data = '0;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            psum_rsp_valid_r <= 1'b0;
+            psum_rsp_data_r <= '0;
+            psum_rsp_tag_r <= '0;
+            psum_lmem_model.delete();
+            final_lmem_model.delete();
+        end else begin
+            if (psum_rsp_valid_r && psum_rd_lmem_bus_if.rsp_ready)
+                psum_rsp_valid_r <= 1'b0;
+
+            if (psum_rd_lmem_bus_if.req_valid
+             && psum_rd_lmem_bus_if.req_ready) begin
+                psum_rsp_valid_r <= 1'b1;
+                psum_rsp_data_r <= psum_lmem_model.exists(
+                    psum_rd_lmem_bus_if.req_data.addr)
+                    ? psum_lmem_model[psum_rd_lmem_bus_if.req_data.addr]
+                    : '0;
+                psum_rsp_tag_r <= psum_rd_lmem_bus_if.req_data.tag;
+            end
+
+            if (psum_wr_lmem_bus_if.req_valid
+             && psum_wr_lmem_bus_if.req_ready) begin
+                psum_lmem_model[psum_wr_lmem_bus_if.req_data.addr]
+                    <= psum_wr_lmem_bus_if.req_data.data;
+            end
+
+            if (final_lmem_bus_if.req_valid
+             && final_lmem_bus_if.req_ready) begin
+                final_lmem_model[final_lmem_bus_if.req_data.addr]
+                    <= final_lmem_bus_if.req_data.data;
+            end
+        end
+    end
+`endif
+
     // Control interface
     VX_gemm_unit_if gemm_unit_if();
 
@@ -166,6 +240,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         .w_lmem_bus_if (w_lmem_bus_if),
         .sz_lmem_bus_if(sz_lmem_bus_if),
         .o_lmem_bus_if (o_lmem_bus_if),
+`ifdef GEMM_NAIVE
+        .psum_rd_lmem_bus_if(psum_rd_lmem_bus_if),
+        .psum_wr_lmem_bus_if(psum_wr_lmem_bus_if),
+        .final_lmem_bus_if(final_lmem_bus_if),
+`endif
         .gemm_unit_if  (gemm_unit_if)
 `ifdef ENABLE_HW_DEBUG_MODULE
        ,.debug         (debug_dummy)
@@ -1082,6 +1161,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     // =========================================================================
     task start_gemm(
         input logic is_load,
+        input logic is_last,
         input logic quant_dir,
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr,
         input logic [`GEMM_ACC_MAX_CNT-1:0] acc_cnt,
@@ -1091,9 +1171,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     );
         gemm_unit_ctrl_t ctrl;
 
+        ctrl = '0;
         ctrl.is_load = is_load;
+        ctrl.is_last = is_last;
         ctrl.quant_dir = quant_dir;
         ctrl.acc_mem_base_addr = acc_mem_base_addr;
+        ctrl.output_mem_base_addr = acc_mem_base_addr;
+        ctrl.output_mem_stride = ACC_ROW_STRIDE_BYTES;
         ctrl.acc_cnt = acc_cnt;
         ctrl.wreg_use_idx = wreg_use_idx;
         ctrl.sreg_use_idx = sreg_use_idx;
@@ -1133,12 +1217,56 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     endfunction
 
     // =========================================================================
+    // Accumulator/final memory model access
+    // =========================================================================
+    task initialize_acc_mem_tb(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] base_addr,
+        input int size,
+        input psum_row_t init_value
+    );
+`ifdef GEMM_NAIVE
+        for (int i = 0; i < size; ++i) begin
+            automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] byte_addr;
+            byte_addr = base_addr + i * ACC_ROW_STRIDE_BYTES;
+            psum_lmem_model[byte_addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE)]
+                = init_value;
+        end
+`else
+        u_dut.initialize_acc_mem(base_addr, size, init_value);
+`endif
+    endtask
+
+    task read_acc_mem_tb(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr,
+        output psum_row_t data
+    );
+`ifdef GEMM_NAIVE
+        automatic longint unsigned word_addr
+            = addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+        data = psum_lmem_model.exists(word_addr)
+             ? psum_lmem_model[word_addr] : '0;
+`else
+        u_dut.read_acc_mem(addr, data);
+`endif
+    endtask
+
+    // =========================================================================
     // Read Output from Accumulator Memory
     // =========================================================================
     task read_output(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr,
         output logic [MXU_COL-1:0][FP16_WIDTH-1:0] output_data
     );
+`ifdef GEMM_NAIVE
+        automatic longint unsigned word_addr
+            = addr >> `CLOG2(`GEMM_OUTPUT_DATA_SIZE);
+        if (!final_lmem_model.exists(word_addr)) begin
+            $fatal(1, "[%0t] legacy NAIVE final LMEM row is missing addr=0x%0h word=0x%0h",
+                   $time, addr, word_addr);
+        end
+        output_data = final_lmem_model[word_addr];
+        @(posedge clk);
+`else
         @(posedge clk);
         o_lmem_bus_if.req_valid = 1'b1;
         o_lmem_bus_if.req_data.addr = addr >> `CLOG2(OUTPUT_ADDR_STRIDE_BYTES);
@@ -1153,6 +1281,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         end
         output_data = o_lmem_bus_if.rsp_data.data;
         @(posedge clk);
+`endif
     endtask
 
     // =========================================================================
@@ -1496,6 +1625,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         // Use large acc_cnt to keep inflight=1 for a while
         start_gemm(
             .is_load(1'b1),
+            .is_last(1'b0),
             .quant_dir(`QDIR_COL),
             .acc_mem_base_addr('0),
             .acc_cnt(10),            // Large count to stay in COMPUTE state
@@ -1720,7 +1850,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
                   ref_psum[j]       = 32'h3F800000; // 1.0 in FP32
                 end
             end
-            u_dut.initialize_acc_mem(acc_mem_base_addr, 4, acc_init_value);
+            initialize_acc_mem_tb(acc_mem_base_addr, 4, acc_init_value);
             repeat(5) @(posedge clk);
         end
 
@@ -1761,6 +1891,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
         start_gemm(
             .is_load(is_load),
+            .is_last(1'b1),
             .quant_dir(quant_dir),
             .acc_mem_base_addr(acc_mem_base_addr),
             .acc_cnt(1),
@@ -1968,7 +2099,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
                         ref_psum[k * MXU_COL + j] = 32'h3F800000; // 1.0 in FP32 for each row
                     end
                 end
-                u_dut.initialize_acc_mem(acc_mem_base_addr + k * ACC_ROW_STRIDE_BYTES, 1, acc_init_value);
+                initialize_acc_mem_tb(
+                    acc_mem_base_addr + k * ACC_ROW_STRIDE_BYTES,
+                    1,
+                    acc_init_value
+                );
             end
             repeat(5) @(posedge clk);
         end
@@ -2023,6 +2158,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
         start_gemm(
             .is_load(is_load),
+            .is_last(1'b1),
             .quant_dir(quant_dir),
             .acc_mem_base_addr(acc_mem_base_addr),
             .acc_cnt(num_inputs),
@@ -2240,6 +2376,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         wait_for_idle();
         start_gemm(
             .is_load(1'b1),
+            .is_last(1'b0),
             .quant_dir(quant_dir),
             .acc_mem_base_addr(acc_mem_base_addr),
             .acc_cnt(num_inputs),
@@ -2259,7 +2396,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         repeat(5) @(posedge clk);
 
         for (k = 0; k < num_inputs; k++) begin
-            u_dut.read_acc_mem(acc_mem_base_addr + k * ACC_ROW_STRIDE_BYTES, acc_row_fp32);
+            read_acc_mem_tb(
+                acc_mem_base_addr + k * ACC_ROW_STRIDE_BYTES,
+                acc_row_fp32
+            );
             for (j = 0; j < MXU_COL; j++) begin
                 ref_psum[k * MXU_COL + j] = acc_row_fp32[j];
             end
@@ -2305,6 +2445,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         wait_for_idle();
         start_gemm(
             .is_load(1'b0),
+            .is_last(1'b1),
             .quant_dir(quant_dir),
             .acc_mem_base_addr(acc_mem_base_addr),
             .acc_cnt(num_inputs),
@@ -2503,6 +2644,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             wait_for_idle();
             start_gemm(
                 .is_load((iter == 0) ? 1'b1 : 1'b0),
+                .is_last(iter + 1 == k_iters),
                 .quant_dir(quant_dir),
                 .acc_mem_base_addr(acc_mem_base_addr),
                 .acc_cnt(num_inputs),
@@ -2543,7 +2685,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
                 if (iter + 1 < k_iters) begin
                     for (m = 0; m < num_inputs; m++) begin
-                        u_dut.read_acc_mem(acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES, acc_row_fp32);
+                        read_acc_mem_tb(
+                            acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES,
+                            acc_row_fp32
+                        );
                         for (j = 0; j < MXU_COL; j++) begin
                             ref_psum[m * MXU_COL + j] = acc_row_fp32[j];
                         end

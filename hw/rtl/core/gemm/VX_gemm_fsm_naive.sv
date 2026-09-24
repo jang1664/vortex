@@ -1256,6 +1256,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
           c.rs1_data = {63'd0, mxu_buf_q};
           c.rs2_data = lmem_w_mxu;
+          c.work_seq = global_mxu_seq;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1289,6 +1290,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
           c.rs1_data  = mxu_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
           c.rs2_data  = lmem_sc_mxu;
+          c.work_seq  = global_mxu_seq;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1311,6 +1313,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
           c.rs1_data  = mxu_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu;
+          c.work_seq  = global_mxu_seq;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1360,6 +1363,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
             c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
             c.rs1_data  = {63'd0, next_mxu_buf};
             c.rs2_data  = lmem_w_mxu_next;
+            c.work_seq  = next_global_mxu_seq;
 
             out_cmd_d   = c;
             out_start_d = 1'b1;
@@ -1399,6 +1403,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
             c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
             c.rs1_data  = next_mxu_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
             c.rs2_data  = lmem_sc_mxu_next;
+            c.work_seq  = next_global_mxu_seq;
 
             out_cmd_d   = c;
             out_start_d = 1'b1;
@@ -1426,6 +1431,7 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
           c.rs1_data  = next_mxu_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu_next;
+          c.work_seq  = next_global_mxu_seq;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1464,6 +1470,16 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
           c.stride   = job_q.lmem_obuf_base + 64'(n0_out) * FP16_BYTES;
           c.groups_eff = nt_eff_cur;
           c.eff_mt   = mt_eff_cur;
+          c.work_seq = global_mxu_seq;
+          c.input_admit_waits[0].valid = 1'b1;
+          c.input_admit_waits[0].reg_id = GEMM_SCHED_RESOURCE_WEIGHT;
+          c.input_admit_waits[0].target = global_mxu_seq;
+          c.input_admit_waits[1].valid = 1'b1;
+          c.input_admit_waits[1].reg_id = GEMM_SCHED_RESOURCE_SCALE;
+          c.input_admit_waits[1].target = global_mxu_seq;
+          c.input_admit_waits[2].valid = 1'b1;
+          c.input_admit_waits[2].reg_id = GEMM_SCHED_RESOURCE_ZP;
+          c.input_admit_waits[2].target = global_mxu_seq;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;

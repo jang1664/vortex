@@ -62,6 +62,9 @@ public:
     case VX_CAPS_NUM_WARPS:
       _value = NUM_WARPS;
       break;
+    case VX_CAPS_NUM_BARRIERS:
+      _value = NUM_BARRIERS;
+      break;
     case VX_CAPS_NUM_CORES:
       _value = NUM_CORES * NUM_CLUSTERS;
       break;

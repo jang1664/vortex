@@ -1,0 +1,221 @@
+task: gemm-cmd-finish-opt
+status: completed
+spec: agent-tasks/gemm-cmd-finish-opt/gemm-cmd-finish-opt-spec.md
+plan: docs/future_optim/gemv/gemm_improve/gemm_cmd_finish_opt.md
+current_phase: completed
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    status: fail
+    passed:
+      - gemm_unit_v2
+    failed: gemm_fsm
+    failure_type: compile_error
+    error: "tb_VX_gemm_fsm.sv used reserved token 'buf' as a block-local variable name"
+    logs:
+      - build/hw/unittest/gemm_unit_v2/logs/sim.log
+      - build/hw/unittest/gemm_fsm/logs/compile.log
+  - iteration: 2
+    status: fail
+    passed: []
+    failed: gemm_fsm
+    failure_type: verification_harness
+    error: "verify_rtl.py invoked make run, but gemm_fsm/vcs.mk exposes compile and sim targets"
+    logs:
+      - build/hw/unittest/gemm_fsm/logs/compile.log
+  - iteration: 3
+    status: fail
+    passed: []
+    failed: gemm_fsm
+    failure_type: pass_marker
+    error: "simulation completed without RTL/test assertion failure, but the testbench emitted no verify_rtl PASS marker"
+    logs:
+      - build/hw/unittest/gemm_fsm/logs/sim.log
+  - iteration: 4
+    status: fail
+    passed:
+      - gemm_fsm
+    failed: gemm_ctrl
+    failure_type: pass_marker_and_stale_tb_opcode_model
+    error: "controller simulation ended without a PASS marker; static audit also found its behavioral model still decoded obsolete F0/F1/10-style opcodes, so it never reached the input-child coverage"
+    logs:
+      - build/hw/unittest/gemm_fsm/logs/sim.log
+      - build/hw/unittest/gemm_ctrl/logs/sim.log
+  - iteration: 5
+    status: pass
+    passed:
+      - gemm_ctrl
+      - gemm_node_improve
+    failed: null
+    coverage:
+      - "input child normal start -> explicit done -> paired NOTIFY lifecycle"
+      - "non-final qualified-idle completion"
+      - "final tagged-writeback completion"
+      - "prior raw writeback cannot release final command"
+      - "paired NOTIFY direct/atomic handshake"
+      - "32 output elements matched"
+    logs:
+      - build/hw/unittest/gemm_ctrl/logs/sim.log
+      - build/hw/unittest/gemm_node_improve/logs/sim.log
+  - iteration: 6
+    status: fail
+    passed:
+      - gemm_sync
+      - gemm_fsm
+      - gemm_ctrl
+    failed: gemm_node_improve
+    failure_type: nondeterministic_coverage_and_runner_false_positive
+    error: "output values passed, but prior-raw/final-command overlap was not covered; verify_rtl incorrectly returned pass because it saw an earlier output PASS marker before the VCS Fatal"
+    logs:
+      - build/hw/unittest/gemm_sync/logs/sim.log
+      - build/hw/unittest/gemm_fsm/logs/sim.log
+      - build/hw/unittest/gemm_ctrl/logs/sim.log
+      - build/hw/unittest/gemm_node_improve/logs/sim.log
+  - iteration: 7
+    status: fail
+    passed: []
+    failed: gemm_node_improve_m2
+    failure_type: planned_coverage_premise
+    error: "M=2/N=32/K=64 produced correct 64-element output, but the prior non-final raw writeback did not overlap an active final command; prior_raw_during_final remained 0"
+    logs:
+      - build/hw/unittest/gemm_node_improve/logs/sim_I7_M2_N32_K64.log
+  - iteration: 8
+    status: pass
+    passed:
+      - gemm_node_improve_m2_timing_diagnostic
+    failed: null
+    coverage:
+      - "M=2/N=32/K=64 output 64/64 matched"
+      - "commands=2 packets=4 nonfinal_done=1 final_done=1 notify=2"
+      - "natural prior-raw/final-active overlap remained 0"
+    logs:
+      - build/hw/unittest/gemm_node_improve/logs/sim_I8_M2_TIMING.log
+  - iteration: 9
+    status: fail
+    passed: []
+    failed: gemm_node_improve_target_shape
+    failure_type: functional_output_mismatch
+    error: "M=4/N=256/K=256/QDIR=1 produced 1013 mismatches out of 1024 outputs; stopped immediately under the hard rule"
+    logs:
+      - build/hw/unittest/gemm_node_improve/logs/sim_I9_TARGET_M4_N256_K256.log
+  - iteration: 10
+    status: fail
+    passed: []
+    failed: baseline_ab_compile
+    failure_type: baseline_build_setup
+    error: "detached HEAD baseline could not compile float_dpi.cpp because generated VX_config.h was absent; simulation did not start"
+    logs:
+      - /tmp/vortex_fpint_cmdfinish_baseline_23e42457/build/hw/unittest/gemm_node_improve/logs/compile.log
+notes:
+  - "2026-08-06: User confirmed execution of the single-NOTIFY completion plan."
+  - "2026-08-06: Hard rule: stop and report immediately if implementation contradicts the agreed architecture."
+  - "2026-08-06: Scope is improved/V2 RTL plus configured VCS unittests; naive/legacy and blackbox are excluded for now."
+  - "2026-08-06: Hard-rule stop after iteration 7: the planned natural prior-raw/final-active overlap was not reproducible for M=1 or M=2 K=64 despite correct outputs; solution must be discussed before further edits."
+  - "2026-08-06: FSDB timing evidence: non-final done=2645ns, NOTIFY=2655ns, raw writeback=2745ns, final start=2815ns; W/SZ readiness waits make final start seven cycles later than raw writeback."
+  - "2026-08-06: Hard-rule stop reinforced at iteration 9: actual target-shape node unittest failed functionally with 1013/1024 mismatches; no further runs or edits performed."
+  - "2026-08-06: Iteration 10 baseline A/B was inconclusive because the isolated baseline build lacked generated VX_config.h; rtl-improve 10-iteration limit reached."
+  - "2026-08-06: User resumed baseline A/B with the required setup: fresh build, ../configure, then make -C hw config."
+  - "2026-08-06: Resumed verification iteration 1 reproduced the exact target-shape failure on pre-change commit 23e4245777b4: 1013/1024 mismatches and the same first got/expected value. The M4/N256/K256/QDIR=1 failure predates command-finish changes."
+  - "2026-08-06: User chose to fix the pre-existing QDIR=1 target failure first and requested commit-by-commit regression localization."
+  - "2026-08-06: First observable bad M=4 support commit is 51a99040; its M=32/QDIR=1 case passes 8192/8192, isolating the bug to partial-M layout."
+  - "2026-08-06: Root cause proven: node unittest packs real M rows while the FSM/app use align8(M) input/output slots. For M4/K256, the TB places kt1 input at +1024B but the FSM reads +2048B, which is the TB weight base; output checker similarly uses 256B instead of 512B per N microtile."
+resumed_iterations:
+  - iteration: 1
+    status: fail
+    passed: []
+    failed: baseline_target_shape
+    failure_type: confirmed_pre_existing_functional_failure
+    error: "pre-change baseline reproduced 1013/1024 mismatches; first got=-0.046875 expected=-0.054688"
+    logs:
+      - /tmp/vortex_fpint_cmdfinish_baseline_23e42457/build_cmdfinish_ab/hw/unittest/gemm_node_improve/logs/sim_BASELINE_AB_M4_N256_K256.log
+  - iteration: 2
+    status: skip
+    passed: []
+    failed: null
+    failure_type: reproducer_not_supported
+    error: "commit 08121831 testbench rejects M=4 before datapath execution; M=4 support restriction is removed later by 51a99040"
+    logs:
+      - /tmp/vortex_fpint_cmdfinish_baseline_23e42457/build_bisect_08121831/hw/unittest/gemm_node_improve/logs/sim_BISECT_08121831.log
+  - iteration: 3
+    status: fail
+    passed: []
+    failed: candidate_51a99040_target_shape
+    failure_type: first_observable_bad_m4_support_commit
+    error: "51a99040 is the first commit that permits M=4 and it reproduces the exact 1013/1024 mismatch and first output value"
+    logs:
+      - /tmp/vortex_fpint_cmdfinish_baseline_23e42457/build_bisect_51a99040/hw/unittest/gemm_node_improve/logs/sim_BISECT_51A99040.log
+  - iteration: 4
+    status: pass
+    passed:
+      - candidate_51a99040_m32_qdir1
+    failed: null
+    coverage:
+      - "M=32/N=256/K=256/QDIR=1 output 8192/8192 matched"
+      - "commands=64 packets=2048 last_admission=64 last_write=64 done=64"
+    logs:
+      - /tmp/vortex_fpint_cmdfinish_baseline_23e42457/build_bisect_51a99040/hw/unittest/gemm_node_improve/logs/sim_DISCRIM_51A_M32_QDIR1.log
+  - iteration: 5
+    status: pass
+    passed:
+      - partial_m_input_padding_m4_n32_k256
+      - partial_m_output_padding_m4_n64_k128
+      - target_m4_n256_k256_qdir1
+      - command_finish_m1_n32_k64
+    failed: null
+    coverage:
+      - "M4/N32/K256 output 128/128 matched"
+      - "M4/N64/K128 output 256/256 matched"
+      - "M4/N256/K256/QDIR1 original target output 1024/1024 matched"
+      - "M1 command-finish: commands=2, nonfinal_done=1, final_done=1, notify=2"
+    logs:
+      - build/hw/unittest/gemm_node_improve/logs/sim_I5_INPUT_PAD_M4_N32_K256.log
+      - build/hw/unittest/gemm_node_improve/logs/sim_I5_OUTPUT_PAD_M4_N64_K128.log
+      - build/hw/unittest/gemm_node_improve/logs/sim_I5_TARGET_M4_N256_K256.log
+      - build/hw/unittest/gemm_node_improve/logs/sim_I5_CMD_FINISH_M1_N32_K64.log
+  - iteration: 6
+    status: pass
+    passed:
+      - gemm_unit_v2
+      - gemm_sync
+      - gemm_fsm
+      - gemm_ctrl
+    failed: null
+    coverage:
+      - "gemm_unit_v2 ACC latency=1 forwarding d=1/2/3, command-boundary 0/1, and d=1 chain passed"
+      - "gemm_sync ADD/SET ordering, five-port update, registered WAIT, wrap, and CLEAR passed"
+      - "gemm_fsm total_cmds=358, ARM(I)=32, WAIT=107, NOTIFY=106"
+      - "gemm_ctrl input_normal=128, explicit_done=128, paired_notify=128, node0_sync_event=128"
+    logs:
+      - build/hw/unittest/gemm_unit_v2/logs/sim.log
+      - build/hw/unittest/gemm_sync/logs/sim.log
+      - build/hw/unittest/gemm_fsm/logs/sim.log
+      - build/hw/unittest/gemm_ctrl/logs/sim.log
+xrt_vcs_followup:
+  date: 2026-08-06
+  status: pass
+  workload: "M=4 N=256 K=256 QBLK=32 WTRANS=0 QDIR=1"
+  config: improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8
+  functional:
+    wload_4: pass
+    wload_8: pass
+    wload_16: pass
+    wload_32: pass
+  performance:
+    wload_8_total_cycles_before: 3339
+    wload_8_total_cycles_after: 3131
+    wload_8_total_cycles_change_percent: -6.23
+    wload_8_app_cycles_before: 9655
+    wload_8_app_cycles_after: 9429
+    wload_8_app_cycles_change_percent: -2.34
+  trace_findings:
+    - "62 non-final commands completed 10 cycles before raw ACC writeback"
+    - "2 final commands completed exactly on their tagged final writeback"
+    - "final tagged writeback -> NOTIFY sync update -> WAIT satisfied -> actual ACC2LMEM child execution ordering passed"
+    - "next input start before previous raw writeback was 0/63; W/SZ readiness remained the limiting dependency"
+    - "no FSDB was needed because text trace exposed all completion and child execution events"
+  artifacts:
+    - build/run_logs/target_gemm/20260806-121946_run_wload8_m4_n256_k256_q32_t0_d1_pid573073
+    - build/run_logs/target_gemm/20260806-122119_run_wload4_m4_n256_k256_q32_t0_d1_pid590100
+    - build/run_logs/target_gemm/20260806-122249_run_wload16_m4_n256_k256_q32_t0_d1_pid606610
+    - build/run_logs/target_gemm/20260806-122417_run_wload32_m4_n256_k256_q32_t0_d1_pid623065
+    - build/run_logs/target_gemm/20260806-122550_trace_wload8_m4_n256_k256_q32_t0_d1_pid640256

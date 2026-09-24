@@ -1,0 +1,38 @@
+task: gemv-gemm-unit-v2-forwarding-window
+status: complete
+spec: agent-tasks/gemv-gemm-unit-v2-forwarding-window/gemm-unit-v2-forwarding-window-spec.md
+current_phase: done
+iteration_limit: 10
+iterations:
+  - iteration: 1
+    test: gemm_unit_v2_forwarding_window
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "Directed d=1/2/3, boundary, chain, and same-bank/different-address tests plus fixed-latency d=2 history forwarding."
+    lesson: "With L_R/L_A/L_P=1/1/0, d=1 uses concurrent writeback, d=2 needs one-cycle writeback history, and d=3 reads updated SRAM."
+  - iteration: 2
+    test: gemm_unit_v2_m2_seamless_micro_k
+    status: pass
+    error_summary: ""
+    root_cause: ""
+    fix_applied: "Added row0,row1,row0,row1 continuous traffic so each row recurs at d=2 with an intervening writer. RTL was unchanged."
+    lesson: "The one-cycle history value is consumed before the intervening row's concurrent writeback replaces the history register."
+notes:
+  - "2026-08-05: Scope confirmed by user: GEMM unit unittest first; cover d=1/2/3 and varied fixed-latency dependency patterns; accumulator latency remains one cycle."
+  - "2026-08-05: RTL implementation prepared after directed tests: exact-address d=2 suppresses early/nominal SRAM reads and consumes a one-cycle-old writeback-history value; d=1 current writeback retains priority."
+  - "2026-08-05: Verification is intentionally delegated; no unittest, node test, blackbox, or synthesis was run by the RTL implementation role."
+  - "2026-08-05: Main-review follow-up added the missing M=2 seamless micro-K pattern row0,row1,row0,row1: two different-bank addresses each recur at d=2 with an intervening write."
+  - "2026-08-05: Verification iteration 1 passed the configured-build VCS gemm_unit_v2 unittest with all initial directed forwarding-window cases."
+  - "2026-08-05: Verification iteration 2 passed after adding the M=2 seamless micro-K case; no event, final-value, Fatal, Error, or mismatch was reported."
+test_request:
+  test_type: unittest
+  test_path: hw/unittest/gemm_unit_v2
+  test_params: "L_R=1 L_A=1 L_P=0; same-address d=1/2/3 intra-command and across last, d=1 chain, same-bank/different-address d=2, M=2 seamless micro-K row0/row1/row0/row1"
+  sim_tool: vcs
+  changed_files:
+    - hw/unittest/gemm_unit_v2/tb_VX_gemm_unit_v2.sv
+    - hw/rtl/core/gemm/VX_gemm_unit_v2.sv
+    - docs/rtl/core/VX_gemm_unit_v2.md
+    - agent-tasks/gemv-gemm-unit-v2-forwarding-window/STATUS.yaml
+  notes: "Run python tools/verify_rtl.py for the configured-build gemm_unit_v2 unittest only. Do not run node tests, blackbox, or synthesis."

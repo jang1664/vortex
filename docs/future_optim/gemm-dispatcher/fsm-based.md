@@ -343,7 +343,7 @@ infra hacks). See §4.4 for the directive.
 | 1 | TMEM/buffer sizing under runtime MT/KT/NT       | Host-side `compute_tmem_layout()` sizes TMEM exactly per (MT,KT,NT). HW does no bounds check. SW guarantees no overflow. |
 | 2 | MT/KT/NT encoding in MMIO                       | Programmer writes `log2(MT)`, `log2(KT)`, `log2(NT)`. MT/KT/NT are pow2 only. HW reconstructs via `<< log2_X`.            |
 | 3 | QDIR / WTRANS runtime coverage                  | Inherit fpint FSM as-is; QDIR and WTRANS are already cfg-driven. No FSM-side extension.                                  |
-| 4 | Migration strategy                              | Wholesale: replace cmd-stream path with FSM path on the active datapath. **Cmd-stream RTL stays in tree** (cmd_constructor, VX_gemm_job_frontend, gemm_ctrl_with_ldma) — see §4.5 "no deletion" policy. They become orphaned but preserved.        |
+| 4 | Migration strategy                              | Wholesale: replace the cmd-stream path with the FSM path on the active datapath. Orphaned legacy RTL is not required to remain in tree; remove it only after auditing active instantiations, source manifests, synthesis scripts, and dedicated tests as described in §4.5. |
 | 5 | MXU_KT / MXU_NT                                 | Stay as compile-time `define`s (datapath width is fixed).                                                                |
 | 6 | Modification scope                              | **RTL** (`hw/rtl/**`) and **kernel/test apps** (`tests/regression/<app>/**`, `kernel/**`) **only**. Sim TB harness, XRT runtime, sim wrappers, `.envrc`, etc. are off-limits. See §4.1.                                                                |
 | 7 | DMA misalignment policy                         | **`ENABLE_MISALIGN = 0` is forced for every DMA / LDMA instance.** The HW alignment assertions (e.g. `VX_lmem_dma_misal.sv:165` 64-byte check) must NOT be relaxed. Any misalignment failure is a real bug — fix at the source (FSM stride/base computation or kernel-side TMEM layout), never by enabling misaligned mode. |
@@ -408,9 +408,9 @@ modules are off-limits.
 | `hw/rtl/core/gemm/VX_gemm_dma_ctrl.sv`        | CMD consumer — DRAM ↔ LMEM DMA executor.                      |
 | `hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv`   | CMD consumer — DRAM ↔ TMEM DMA executor (asserts `bound==1`). |
 | `hw/rtl/core/gemm/VX_lmem_dma_misal.sv`       | CMD consumer — LMEM/TMEM DMA with `ENABLE_MISALIGN=0` check.  |
-| `hw/rtl/core/gemm/VX_cmd_constructor.sv`      | Orphaned in FSM-based design but preserved per §4.5.          |
-| `hw/rtl/core/gemm/VX_gemm_job_frontend.sv`    | Cmd-stream legacy frontend; orphaned per §4.5.                |
-| `hw/rtl/core/gemm/VX_gemm_ctrl_with_ldma.sv`  | Legacy monolithic variant; orphaned per §4.5.                 |
+| `hw/rtl/core/gemm/VX_cmd_constructor.sv`      | Legacy command decoder; outside this CMD-generation implementation scope. Cleanup is governed by §4.5. |
+| `hw/rtl/core/gemm/VX_gemm_job_frontend.sv`    | Legacy cmd-stream frontend; outside this CMD-generation implementation scope. Cleanup is governed by §4.5. |
+| `hw/rtl/core/gemm/VX_gemm_ctrl_with_ldma.sv`  | Orphaned legacy monolithic variant; eligible for the cleanup procedure in §4.5. |
 | MXU LDMA modules, DMA engine, TMEM subsystem, tensor-mem banks, MXU datapaths, FPU, cache hierarchy, etc. | Outside the CMD-generation boundary. |
 | All `*_if.sv` interfaces consumed by the above (`VX_gemm_ctrl_if`, `VX_gemm_sync_if`, `VX_lmem_dma_ctrl_if`, etc., **except** `VX_gemm_fsm_if`) | These are stable contracts; field set/widths are fixed. |
 
@@ -451,17 +451,25 @@ The current `fpint_gemm_ffn_hw/main.cpp` uses 64B alignment + naive row-major sc
 The `_improve` test app itself is **read-only** (per §4.1). We copy/adapt its layout patterns into `fpint_gemm_ffn_hw/`, but we never modify files under `tests/regression/fpint_gemm_ffn_hw_improve/`.
 
 
-### 4.5 No-deletion policy
+### 4.5 Legacy cleanup policy
 
-The cmd-stream RTL is **kept in tree** after migration:
+There is no blanket requirement to retain orphaned cmd-stream RTL after the
+FSM migration. A legacy module and its dedicated test may be removed when all
+of the following are true:
 
-- `hw/rtl/core/gemm/VX_cmd_constructor.sv` — preserved.
-- `hw/rtl/core/gemm/VX_gemm_job_frontend.sv` — preserved.
-- `hw/rtl/core/gemm/VX_gemm_ctrl_with_ldma.sv` — preserved.
-- `hw/unittest/cmd_constructor/` and other cmd-stream TBs — preserved.
-- `RAW_OP_*` constants — preserved.
+- no active production hierarchy instantiates the module;
+- RTL, unittest, synthesis, and packaging source manifests no longer require it;
+- any dedicated test being removed covers only that orphaned module, not a
+  shared interface or active primitive;
+- remaining active GEMM unit, node, and XRT regressions pass after cleanup.
 
-These modules become orphaned (no consumer in the active datapath) but remain available for fall-back debug or future re-use. Removal is deferred to a separate, explicit cleanup task once the FSM-based path has soaked through silicon validation.
+Apply this audit independently to `VX_cmd_constructor.sv`,
+`VX_gemm_job_frontend.sv`, `VX_gemm_ctrl_with_ldma.sv`, their dedicated tests,
+and legacy-only constants. Do not delete a shared dependency merely because it
+was originally introduced by the cmd-stream path. In particular,
+`VX_gemm_ctrl_with_ldma.sv` and `hw/unittest/gemm_ctrl_with_ldma/` may be
+removed together once their stale synthesis/source-list references are
+cleaned and the active FSM hierarchy is confirmed independent of them.
 
 # Verification Constraints
 - First, succeed unittest verification if you change rtl. find proper folder at hw/unittest and if there is not, make new one.

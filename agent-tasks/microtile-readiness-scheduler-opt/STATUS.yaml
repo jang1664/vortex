@@ -1,0 +1,555 @@
+task: microtile-readiness-scheduler-opt
+spec: agent-tasks/microtile-readiness-scheduler-opt/microtile-readiness-scheduler-opt-spec.md
+plan: docs/future_optim/gemv/gemm_improve/microtile_readiness_scheduler_opt.md
+current_phase: strict_fsdb_structural_stop
+status: blocked
+fixed_topology:
+  num_tmem_banks: 8
+  num_dma_channels: 8
+  num_hbm_ports: 8
+iterations:
+  - id: revised-plan-resume-9
+    status: completed
+    time: "2026-08-19 11:28 +0900"
+    reason: "The user revised and reconfirmed the plan after the FSDB failure, identifying excessive W/S/Z fetch service as a possible cause of Input starvation."
+    scope:
+      - "Replace coarse last-request/buffered-only eligibility with authoritative per-command total/request/response progress from the LDMA descriptor path."
+      - "Remove fetched/buffered/installing W/S/Z from elevated TMEM source priority even when the target generation is not installed."
+      - "Apply consumer-block P3 only while matching fetch work remains; retain fetched-but-not-installed accounting without completion forwarding."
+      - "Retune tier/budget behavior so bounded lookahead W/S/Z cannot starve earliest/current Input, while preserving fairness and stalled-request stability."
+    implementation:
+      - "Propagated the LDMA descriptor's authoritative total/request/response/writer beat progress for Input, Weight, Scale, and ZP through the TMEM subsystem and GEMM controller."
+      - "Changed source priority eligibility to require actual remaining request and response work; fetched/buffered/installing resources are P0 even before their registered target generation becomes visible."
+      - "Restricted W/S/Z lookahead to earliest P2 and next P1; distance two or greater is P0, and tracked P0 requests cannot be re-promoted by legacy ready-ahead urgency."
+      - "Made registered consumer feedback P3 only while source fetch remains and added separate fetch-missing versus fetched-not-installed debug accounting."
+      - "Raised bounded Input response-slot budgets from 2/4/8 to descriptor-independent 4/6/8 and promoted an empty earliest Input stream to P3, otherwise P2."
+      - "Generalized Weight command progress to descriptor-derived logical beat totals while preserving wide-lane completion semantics and fixed priority under stall."
+    safety:
+      - "No register-write data bypass or final-write completion forwarding was added."
+      - "No scheduler output drives GEMM architectural ready/backpressure."
+      - "Existing valid-and-not-ready payload/priority hold and bank fairness escape remain in place."
+    static_verification:
+      - "Focused scheduler Verilator lint passed without warnings or errors."
+      - "Full fixed 8/8/8 gemm_node_improve hierarchy lint passed without a new scheduler/progress UNOPTFLAT path."
+      - "git diff --check passed."
+    next: "Verification subagent is adapting directed tests to the progress interface and running the ordered focused VCS gates."
+  - id: revised-vcs-verification-10
+    status: pass
+    time: "2026-08-20 13:08 +0900"
+    topology: "T/D/H=8/8/8"
+    passed:
+      - "microtile_readiness_scheduler"
+      - "lmem_dma_input_overlap"
+      - "lmem_dma_weight_overlap"
+      - "lmem_dma_qparam_overlap TEST_ZP=0 and TEST_ZP=1 with separate VCS parameterized rebuild evidence"
+      - "tmem_wide_read_switch"
+      - "tensor_mem_bank"
+      - "gemm_ctrl +SCHED_DIRECTED"
+      - "git diff --check"
+    directed_coverage:
+      - "Descriptor totals 1, 2, 4, 8, and 9."
+      - "response_beats equal to total_beats forces P0 despite a missing installed generation."
+      - "Consumer blocker gives P3 only while descriptor fetch work remains."
+      - "W/S/Z distance zero, one, and two-or-more maps to P2, P1, and P0."
+      - "Earliest Input occupancy zero and one maps to P3 and P2; budgets are 4/6/8."
+      - "Tracked P0 Weight is not re-promoted by legacy urgency."
+      - "Wide Weight response remains invalid until every 2/4/8-lane group completes."
+      - "Input valid-and-not-ready holds payload, priority, identity, and progress stable."
+    tb_only_adjustments:
+      - "Updated the obsolete tracked-Weight urgency expectation to require P0."
+      - "Updated the controller recycled distance-three Weight expectation from P1 to P0."
+    next: "Run gemm_node_improve VCS numerical and metadata matrix for M={4,256}, QDIR={0,1}."
+  - id: revised-node-verification-11
+    status: pass
+    time: "2026-08-20 13:50 +0900"
+    topology: "T/D/H=8/8/8"
+    binary_fingerprint: "dbacc82babdcaa089e73fc7ecda61f056f0bc26d9e167ba8d6bd03eb3c73dbc1"
+    results:
+      - "M4 QCOL: numerical 1024/1024, commands=64, packets=256, scheduler_retire=64, bubbles=99, stalled_valid=76; PASS."
+      - "M4 QROW: numerical 1024/1024, commands=64, packets=256, scheduler_retire=64, bubbles=99, stalled_valid=62; PASS."
+      - "M256 QCOL: numerical 65536/65536, commands=128, packets=16384, scheduler_retire=128, bubbles=1682, stalled_valid=5; PASS."
+      - "M256 QROW: numerical 65536/65536, commands=128, packets=16384, scheduler_retire=128, bubbles=1682, stalled_valid=3; PASS."
+    evidence: "Every case printed TILED OUTPUT CHECK PASSED, CONFIG GEMM PASSED, and INPUT_METADATA_PASSED; no Fatal, mismatch, metadata loss, or retirement mismatch. The first case forced a rebuild and the remaining cases reused the exact matching binary fingerprint."
+    next: "Run the matching fixed 8/8/8 XRT-VCS run_target_gemm matrix through ci/run_black.sh, rebuilding the first case."
+  - id: revised-blackbox-verification-12
+    status: pass
+    time: "2026-08-20 13:59 +0900"
+    topology: "T/D/H=8/8/8"
+    procedure: "run-bb-common via ci/run_target_gemm.sh and configured build/ci/run_black.sh xrt-vcs-sim; first case rebuilt and the remaining cases reused only the matching fingerprint."
+    fingerprint: "d190755b4461f7d357f975992088a464115719248645befb812125b5276e6f97"
+    results:
+      - "M4 QCOL: total_cycles=627, overlap=69.929% (393/562), Input/Weight fire=256/256 with stall=0; numerical and runner PASS."
+      - "M4 QROW: total_cycles=625, overlap=69.604% (387/556), Input/Weight fire=256/256 with stall=0; numerical and runner PASS."
+      - "M256 QCOL: total_cycles=19426, overlap=93.261% (18046/19350), Input/Weight fire=16384/512 with stall=0; numerical and runner PASS."
+      - "M256 QROW: total_cycles=19429, overlap=93.252% (18047/19353), Input/Weight fire=16384/512 with stall=0; numerical and runner PASS."
+    comparison:
+      - "M4 QCOL improved from the prior scheduler result 654 to 627 cycles (-27) and from the compatible pre-scheduler baseline 633 to 627 (-6)."
+      - "M4 QROW improved from 651 to 625 cycles (-26)."
+      - "M256 QCOL/QROW improved slightly from 19431/19432 to 19426/19429."
+    artifacts: "build/run_logs/microtile_readiness_scheduler_opt/revised_blackbox_888"
+    next: "Capture a rebuilt M4 QCOL GEMM-only FSDB and apply the strict bubble, arbitration, readiness, blocker, and safety criteria."
+  - id: revised-fsdb-verification-13
+    status: performance_fail
+    time: "2026-08-20 14:14 +0900"
+    topology: "T/D/H=8/8/8"
+    case: "M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=QCOL"
+    artifact: "build/run_logs/microtile_readiness_scheduler_opt/revised_fsdb_888/20260820-135800_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid950105/target_gemm.fsdb"
+    generation: "Rebuilt GEMM-only XRT-VCS FSDB; fingerprint 3cf152d44e80479d718c38252683a37cac65fa4b8b3374d102b556707f05e610; numerical PASS; clean finished FSDB; total_cycles=628."
+    improvements:
+      - "Total cycles improved from the prior scheduler FSDB 654 to 628 (-26) and the compatible baseline 633 to 628 (-5)."
+      - "Input internal source starvation with admission_ready=1 and source_valid=0 improved from 73 cycles to 25."
+      - "Input command-boundary bubbles improved from 135 to 87 cycles."
+      - "Weight bank loss improved from 131 to 113 cycles, and Input never lost a bank arbitration to Weight."
+      - "fetch_missing blocker counter remained zero; already-fetched resources were not incorrectly raised to P3."
+    strict_failures:
+      - "Input internal bubbles are 94 cycles across 49/192 intervals, max gap 5. Of these, 25 are source-empty and 69 are held-valid/ready-low while operand admission is ready."
+      - "The Input source budget disabled reads for 55 active cycles, all at occupancy four; 28 internal bubble cycles coincide with this disable. The current scheduler sees response-slot occupancy but not registered elastic/tree credit."
+      - "Weight consumer blocking increased from 29 to 96 cycles across 41 runs, max recovery 6. Registered feedback arrives exactly one cycle later."
+      - "All Weight blockers are fetched/install-visible delays: fetch_missing=0, fetched_not_installed=6 while the matching scoreboard entry remained live, and no Weight P3 request was generated."
+    arbitration:
+      - "Bank loss cycles: Input=37, Weight=113, Scale=15, ZP=29; maximum consecutive loss is 2/3/2/3 respectively."
+      - "Input losses were DMA=16, output=6, Scale=6, ZP=9, Weight=0."
+      - "Logical priority at source acceptance: Input P3/P2/P1=3/77/176; Weight P2/P1/P0=64/61/131; Scale P2/P0=7/57; ZP P2/P0=7/57."
+    correctness_safety:
+      - "Logical source/write counts match I/W/S/Z=256/256/64/64; scoreboard max occupancy is four and final occupancy is zero."
+      - "No numerical, metadata, loss, duplicate, reorder, overwrite, request-stability, or starvation failure was observed."
+    next: "RTL iteration will add plan-conforming registered elastic credit and retune far-lookahead deadline handling without restoring W/S/Z overfetch or adding forbidden forwarding."
+  - id: revised-rtl-recovery-14
+    status: completed
+    time: "2026-08-20 14:32 +0900"
+    topology: "T/D/H=8/8/8"
+    reason: "The revised FSDB showed 55 active Input-disable cycles exclusively at occupancy four and 96 Weight consumer-block cycles, while descriptor accounting proved fetch_missing=0 and no future Weight displaced Input."
+    implementation:
+      - "Added one FF-isolated input_ahead_credit from the GEMM elastic/tree boundary; it is true only when the registered input edge and tree reservation state can accept another transaction."
+      - "Expanded the operand-state Input budget by at most that one registered credit, capped by the physical eight response slots: 4/6/8 without credit and 5/7/8 with credit."
+      - "Promoted only fetch-pending Weight at work distance two from P0 to P1; distance three or greater remains P0, as do fetched/buffered/installing W/S/Z."
+      - "Kept distance-zero/one Input at P2, with P3 only when occupancy is zero, so the lookahead Weight promotion cannot outrank current/near Input."
+      - "The legacy standalone gemm_ctrl_with_ldma wrapper ties the new credit low."
+    safety:
+      - "No write-data or final-write-completion forwarding was added."
+      - "The credit is registered and never drives GEMM local req_ready; no scheduler-ready combinational path was introduced."
+      - "Existing descriptor-derived fetch eligibility, consumer P3-only-while-fetch-remains, fixed valid-and-not-ready context, and eight-slot bound remain unchanged."
+    static_verification:
+      - "Focused scheduler Verilator lint PASS with no warnings or errors."
+      - "Full fixed 8/8/8 gemm_node hierarchy lint PASS, exit zero; no new input-credit/scheduler UNOPTFLAT path."
+      - "git diff --check PASS."
+    next: "Verification subagent will update the focused scheduler TB, run affected VCS gates and the full node matrix, then repeat the fixed 8/8/8 XRT/FSDB measurements."
+  - id: revised-vcs-credit-verification-15
+    status: pass
+    time: "2026-08-20 15:09 +0900"
+    topology: "T/D/H=8/8/8"
+    environment: "Sourced configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh, appended -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8, and used CC=/usr/bin/gcc CXX=/usr/bin/g++."
+    focused_vcs:
+      command: "/usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/<test> --sim vcs --timeout <600|1200>; gemm_ctrl additionally used --extra-sim-args +SCHED_DIRECTED."
+      passed:
+        - "microtile_readiness_scheduler: MICROTILE_READINESS_SCHEDULER PASSED."
+        - "gemm_ctrl +SCHED_DIRECTED: TEST PASSED: GEMM scheduler directed dependency checks completed."
+        - "gemm_unit_v2: VX_gemm_unit_v2 unittest PASSED."
+        - "gemm_unit_v2_backpressure: VX_gemm_unit_v2 backpressure unittest PASSED stalls=1,2,6,7,random reset=occupied."
+        - "lmem_dma_input_overlap: valid-and-not-ready payload/priority hold, next-request gating, and all existing overlap/reset checks PASSED."
+        - "lmem_dma_weight_overlap: logical response only after every composite response, tracked P0 stability, valid-and-not-ready stability, and all existing overlap/reset checks PASSED."
+      logs:
+        - "build/hw/unittest/microtile_readiness_scheduler/logs/sim.log"
+        - "build/hw/unittest/gemm_ctrl/logs/sim.log"
+        - "build/hw/unittest/gemm_unit_v2/logs/sim.log"
+        - "build/hw/unittest/gemm_unit_v2_backpressure/logs/sim.log"
+        - "build/hw/unittest/lmem_dma_input_overlap/logs/sim.log"
+        - "build/hw/unittest/lmem_dma_weight_overlap/logs/sim.log"
+    directed_coverage:
+      - "Input budgets are 4/6/8 with credit zero and 5/7/8 with credit one, capped at the physical eight slots."
+      - "Distance-zero and distance-one Input are P3 when occupancy is zero and P2 when occupancy is one."
+      - "Fetch-pending Weight is P1 at distance two and P0 at distance three; Scale/ZP remain P0 at distance two."
+      - "Concurrent current/near Input P2 outranks future distance-two Weight P1."
+      - "Response-complete W/S/Z remain P0 while writer progress is incomplete, and a matching blocker remains P0 after fetch completion."
+      - "A matching blocker reaches P3 only while request and response work remain."
+      - "Descriptor totals 1/2/4/8/9, full-scoreboard ordered recycle, and valid-and-not-ready stability remain covered."
+    safety_audit:
+      - "The credit source is assigned only by the GEMM-unit always_ff from in_pipe_ready_in and registered tree_credit_q, with reset-to-zero; there is no same-cycle combinational credit path into the scheduler."
+      - "Static connectivity confirms tagged_final_writeback is not an input to input_ahead_credit or the scheduler; no final-register-write completion forwarding was added."
+    node_vcs:
+      command: "/usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_node_improve --sim vcs --params 'TEST=<case> M=<4|256> N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=<0|1>' --extra-sim-args '+REQUIRE_INPUT_METADATA +NO_WAVE' --timeout <1200|2400>"
+      rebuild: "The first M4 QCOL invocation rebuilt the five changed production modules because their timestamps were newer than compile_fpnew; the remaining cases reused the matching compile_fpnew stamp."
+      binary_fingerprint: "cc779c573bd2fd2f052a6c6a9f63224b66f465d103d366e931fc00de304d3207"
+      results:
+        - "MICROTILE_SCHED_CREDIT_M4_QCOL: numerical 1024/1024, commands=64, packets=256, scheduler_retire=64, bubbles=99, stalled_valid=76; PASS."
+        - "MICROTILE_SCHED_CREDIT_M4_QROW: numerical 1024/1024, commands=64, packets=256, scheduler_retire=64, bubbles=99, stalled_valid=62; PASS."
+        - "MICROTILE_SCHED_CREDIT_M256_QCOL: numerical 65536/65536, commands=128, packets=16384, scheduler_retire=128, bubbles=1682, stalled_valid=5; PASS."
+        - "MICROTILE_SCHED_CREDIT_M256_QROW: numerical 65536/65536, commands=128, packets=16384, scheduler_retire=128, bubbles=1682, stalled_valid=3; PASS."
+      evidence: "Every case printed TILED OUTPUT CHECK PASSED, CONFIG GEMM PASSED, and INPUT_METADATA_PASSED; no Fatal, mismatch, metadata loss, or scheduler retirement mismatch was observed."
+    tb_only_adjustments:
+      - "Connected and initialized input_ahead_credit_i in hw/unittest/microtile_readiness_scheduler."
+      - "Updated the obsolete distance-two Weight expectation to P1 and added the focused credit, distance-three, Input-ordering, and response-complete cases above."
+    next: "Repeat the fixed 8/8/8 XRT-VCS numerical/performance matrix and M4 QCOL FSDB measurement for the registered-credit recovery."
+  - id: revised2-blackbox-verification-16
+    status: pass
+    time: "2026-08-20 15:20 +0900"
+    topology: "T/D/H=8/8/8"
+    procedure: "Used run-bb-common through ci/run_target_gemm.sh and configured build/ci/run_black.sh xrt-vcs-sim, with perf class 3 and only -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8 appended to the selected config. The first M4 QCOL case used --rebuild; the remaining successful cases reused the matching simv."
+    fingerprint:
+      value: "e4bcfaf9f917c6f7d5302f30528f4ebe0b4eda5652b12f6ab957dc585f3babfd"
+      semantics: "run_target_gemm compile_fingerprint is a configuration fingerprint over COMPILE_CONFIGS, FSDB_DUMP, the selected config file, VX_config.vh, and tb_vcs_xrtsim.sv; it intentionally does not hash every RTL source, so equality with an older source revision is not stale-binary evidence."
+      freshness: "The first manifest records rebuild_reason=--rebuild requested. simv and compile logs were generated at 2026-08-20 15:11:44 +0900, after the recovery RTL mtimes 14:11:27 and scheduler mtime 14:19:16. The compile log explicitly recompiled VX_gemm_node, VX_gemm_unit_v2_if, VX_gemm_unit_v2, VX_gemm_ctrl, and VX_microtile_readiness_scheduler, plus VX_tmem_wide_read_switch and the XRT TB. Final source-newer-than-simv scan returned none."
+      simv_sha256: "c946d16aa8b526af39223251a5f70f00c815223e32691a019eef87aa2592cdc6"
+    results:
+      - "M4 QCOL: exit_status=0, total_cycles=628, overlap=69.805% (393/563), Input fire/stall=256/0, Weight fire/stall=256/0; numerical PASSED, runner PASSED, clean SHUTDOWN/$finish."
+      - "M4 QROW: exit_status=0, total_cycles=625, overlap=69.604% (387/556), Input fire/stall=256/0, Weight fire/stall=256/0; numerical PASSED, runner PASSED, clean SHUTDOWN/$finish."
+      - "M256 QCOL: exit_status=0, total_cycles=19427, overlap=93.256% (18046/19351), Input fire/stall=16384/0, Weight fire/stall=512/0; numerical PASSED, runner PASSED, clean SHUTDOWN/$finish."
+      - "M256 QROW: exit_status=0, total_cycles=19427, overlap=93.261% (18047/19351), Input fire/stall=16384/0, Weight fire/stall=512/0; numerical PASSED, runner PASSED, clean SHUTDOWN/$finish."
+    artifacts:
+      root: "build/run_logs/microtile_readiness_scheduler_opt/revised2_blackbox_888"
+      successful_runs:
+        - "20260820-151107_run_wload8_m4_n256_k256_q32_t0_d0_pid1721445"
+        - "20260820-151245_run_wload8_m4_n256_k256_q32_t0_d1_pid1742035"
+        - "20260820-151528_run_wload8_m256_n256_k256_q32_t0_d0_pid1773610"
+        - "20260820-151804_run_wload8_m256_n256_k256_q32_t0_d1_pid1803449"
+      excluded_audit_run: "20260820-151318_run_wload8_m256_n256_k256_q32_t0_d0_pid1748561 was deliberately interrupted with exit_status=143 solely to audit fingerprint freshness; it is superseded by the clean 15:15:28 QCOL PASS and is not a test failure."
+    safety: "No production or testbench files were edited during blackbox verification. FSDB capture was not started."
+    next: "Stop before FSDB and await a separate waveform-capture verification request."
+  - id: revised2-fsdb-capture-17
+    status: pass
+    result_scope: "Capture PASS pending strict waveform analysis by the root agent."
+    time: "2026-08-20 15:23 +0900"
+    topology: "T/D/H=8/8/8"
+    case: "M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=QCOL perf=3"
+    procedure: "Used run-bb-common and debug-xrt-vcs capture checks through ci/run_target_gemm.sh fsdb-gemm --rebuild and configured build/ci/run_black.sh xrt-vcs-sim. Sourced configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh and appended only -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8. Timeout was 3600 seconds."
+    manifest:
+      exit_status: 0
+      rebuild_reason: "--rebuild requested"
+      compile_fingerprint: "30f3d33075edaf239a18bdab3f177db99565b344b2702b9e5913d62532a96c6e"
+      simv_sha256: "b3250409745134d52d01a2d9f7f4fb7bcf1582af0cebfddbc0670c246d9e130a"
+      freshness: "GEMM-only simv was rebuilt at 2026-08-20 15:22:46 +0900, after the recovery RTL mtimes. The FSDB configuration recompiled the XRT TB/top wrappers; the unchanged production modules came from the immediately preceding fresh 15:11 build, and the final source-newer-than-simv scan returned none."
+    numerical:
+      total_cycles: 627
+      overlap: "69.929% (393/562)"
+      input_fire_stall: "256/0"
+      weight_fire_stall: "256/0"
+      markers: "Application numerical PASSED and target-gemm runner PASSED."
+    fsdb:
+      path: "/home/jaeyongjang/project.local/vortex_fpint/build/run_logs/microtile_readiness_scheduler_opt/revised2_fsdb_888/20260820-152207_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid1850190/target_gemm.fsdb"
+      size_bytes: 11367476
+      sha256: "a621a1d5866779fbd6495d3030a74f9d57a41e3ec09d93ebf3f916b167a41516"
+      terminal: "FSDB dump enabled for the GEMM node; Received SHUTDOWN; DPI sockets closed; all FSDB files flushed at 77,400,000 ps; normal $finish at 77,400,000 ps."
+    validation:
+      - "Manifest exit_status is zero and the FSDB exists with nonzero size."
+      - "Wrapper, simv, and compile logs contain no Fatal, FAILED, timeout, or compile-error marker."
+      - "No production RTL or testbench file was edited and no waveform signals were analyzed in this capture phase."
+    artifact_dir: "build/run_logs/microtile_readiness_scheduler_opt/revised2_fsdb_888/20260820-152207_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid1850190"
+    next: "Root agent will run strict fsdb_cli waveform metrics against this capture."
+  - id: revised2-fsdb-analysis-18
+    status: performance_fail
+    time: "2026-08-20 15:36 +0900"
+    topology: "T/D/H=8/8/8"
+    strict_verdict: "FAIL; stop for Hard Rule/design discussion because the remaining levers require a capacity/ownership contract expansion outside the confirmed plan."
+    input_metrics:
+      - "All 256 Input beats completed. Internal intervals remain 49/192 non-consecutive, 94 bubble cycles total, maximum gap five; command-boundary gaps remain 9/63, 87 cycles total, maximum 59. These values are exactly unchanged from revised-fsdb-verification-13."
+      - "All 94 internal bubbles occurred while input_admission_ready was true: 25 source-empty and 69 held-valid/req_ready-low. Twenty-eight coincided with scheduler disable."
+      - "The scheduler disabled an active Input source for 55 cycles, all at response-slot occupancy four. input_ahead_credit was zero in every one of those 55 cycles, so the safe 4-to-5 expansion never activated at the failing boundary."
+      - "During the 94 internal bubbles, occupancy was 1/2/3/4 for 10/21/35/28 cycles and registered credit was one for 44 cycles, but those credits occurred outside the occupancy-four disable boundary and could not change admission."
+    priority_and_arbitration:
+      - "Input source acceptance shifted from P3/P2/P1=3/77/176 to P3/P2=4/252; Weight shifted from P2/P1/P0=64/61/131 to 64/186/6, proving the new distance-zero/one Input and distance-two Weight tiers were exercised."
+      - "Despite that redistribution, per-bank offer/grant/loss/max-consecutive-loss was exactly unchanged: Input=293/256/37/2, Weight=625/512/113/3, Scale=79/64/15/2, ZP=93/64/29/3. DMA was 876/736/140/4."
+      - "The unchanged arbitration schedule and XRT totals show that the available tier move did not alter the tested bottleneck."
+    weight_metrics:
+      - "Weight consumer blocking remains exactly 96 cycles across 41 runs with maximum six; run lengths are 1x13, 2x16, 3x4, 4x2, 5x5, 6x1. Registered feedback is an exact one-cycle shift."
+      - "Scheduler debug ends at fetch_missing=0 and fetched_not_installed=6. The remaining misses are ordered writer-fence/install-generation visibility delays, not source-fetch misses."
+    correctness_safety:
+      - "Descriptor totals observed are I/W=4 and S/Z=1; logical request and destination-write counts match I/W/S/Z=256/256/64/64."
+      - "Scoreboard maximum occupancy is four and final occupancy is zero. Numerical output, metadata, retire, valid-and-not-ready stability, bounded bank fairness, and clean shutdown all passed."
+      - "No write-data/final-completion forwarding, unsafe overwrite, duplicate, loss, reorder, stale generation, or new combinational scheduler-ready path was observed."
+    performance_comparison:
+      - "Current non-FSDB XRT cycles M4 QCOL/QROW and M256 QCOL/QROW are 628/625/19427/19427 versus revised-policy 627/625/19426/19429; differences are at most two cycles and show no material recovery."
+      - "Current FSDB QCOL is 627 cycles versus revised-policy 628 and compatible pre-scheduler baseline 633; throughput remains numerically good, but the plan's strict zero-internal-gap and pre-deadline-install criteria are not met."
+    structural_audit:
+      - "At occupancy four, registered elastic/tree credit is genuinely zero. Raising the threshold, forcing credit, or using combinational ready would admit beyond actual capacity or violate the Hard Rule. A safe future token needs a new registered reservation ledger with exact DMA-to-preprocess-to-tree ownership."
+      - "Fetch-complete Weight must remain P0 under the revised contract. Earlier or stronger far-Weight promotion can reintroduce Input/general-DMA starvation and cannot guarantee installation through the ordered writer fence."
+      - "Closing the Weight deadline requires a new safely-owned generation/install slot, explicit lifetime-aware writer reordering, or write/final-completion forwarding; these are structural contract changes excluded from this iteration."
+    required_decision:
+      - "Choose whether to permit free DMA-slot buffering even when GEMM elastic credit is zero, define a registered end-to-end Input reservation ledger, or expand/retime Weight install storage and ownership."
+    next: "Do not make another local scheduler-policy edit under the current contract; resume only after the capacity/install ownership decision is confirmed."
+  - id: rtl-implementation-1
+    status: completed
+    topology: "T/D/H=8/8/8"
+    architecture_lifetime_audit:
+      hard_rule_blocker: false
+      work_identity: "FSM global_mxu_seq is copied into every W/S/Z/Input command, stored in the child/inflight and LDMA descriptor state, and retired only by a matching ordered Input completion at scoreboard head."
+      allocation_rule: "A four-entry controller scoreboard allocates only on the exact FSM-to-child enqueue fire. Existing-sequence W/S/Z/Input updates do not allocate again; a full scoreboard blocks only an unseen fifth sequence."
+      fifth_sequence_progress: "An ordered head Input completion may retire and recycle storage for a fifth W/S/Z command on the same edge; focused assertions and TB cover W-before-Input sequencing."
+      fetch_state: "Per-resource source work_seq, final-request indication, final-response completion, buffered bits, exact installed generations, writer consume fences, and ACC-free waits distinguish fetch-needed, buffered/WAIT_FENCE, and installed/runnable states."
+      consumer_feedback: "Actual GEMM W/QROW-scale/ZP/QCOL-scale missing-generation observations are registered at the GEMM-unit boundary before entering the controller scheduler."
+      no_ready_authority: "Input-ahead gating limits only TMEM source reads to 2/4/8 response slots; GEMM ready/backpressure remains driven exclusively by actual pipeline/resource state."
+      scc_result: "The initial placement of pending scheduler predecode in the FSM command always_comb created a reported child_ready SCC. It was split into a registered-state-only predecode block. Final 8/8/8 full gemm_node hierarchy lint completed without Error and reported zero UNOPTFLAT matches on scheduler/work_seq/pending_scheduler/consumer-block signals; remaining SCC warnings are pre-existing DMA control, ACC/reduction, prealigner, and FP-library paths."
+    implementation:
+      - "Added a bounded four-entry work_seq scoreboard and P0/P1/P2/P3 policy for Input/Weight/Scale/ZP, including earliest-work, final-request completion, registered true-consumer blocker, legacy urgency fallback, and bounded Input-ahead rules."
+      - "Propagated a fixed-at-request two-bit tier through all overlap LDMA executors, TMEM switch/wide-read contexts, and each TMEM bank."
+      - "Extended TMEM bank arbitration to select the highest tier with RR within a tier and an all-requester RR escape after the configured consecutive-priority cap."
+      - "Preserved exact W/S/Z generations, writer fences, same-cycle overwrite, ACC forwarding, request stability, reset cleanup, and existing urgency behavior."
+      - "Added focused scheduler, Input priority-stability, and tier/fairness verification coverage."
+    verification_performed:
+      - command: "Verilator focused scheduler lint and binary simulation at T/D/H=8/8/8"
+        result: "PASS: MICROTILE_READINESS_SCHEDULER_PASS; exact-fire retry, P0-P3 decisions, blocker bank match, 2/4/8 Input budget, buffered state, fifth-sequence full gate, ordered retire, and same-cycle recycle covered."
+      - command: "Verilator Input overlap lint and binary simulation at T/D/H=8/8/8"
+        result: "PASS: held scheduler priority remained stable during TMEM backpressure and the next request sampled the updated tier; all existing overlap/reset checks passed."
+      - command: "Verilator tensor_mem_bank binary simulation at T/D/H=8/8/8"
+        result: "PASS: P3>P2>P1 ordering, legacy urgency behavior, within-class RR, bounded normal progress, and reset checks passed."
+      - command: "Direct Verilator controller hierarchy lint after SCC repair"
+        result: "PASS: no Error and no scheduler UNOPTFLAT; only pre-existing FSM local-variable latch warnings remain."
+      - command: "Final-source Verilator gemm_ctrl TB compile/elaboration at T/D/H=8/8/8"
+        result: "PASS: binary elaboration completed without Error or scheduler UNOPTFLAT after tying every new scheduler input in the directed TB."
+      - command: "Final-source Verilator full gemm_node_improve hierarchy lint/elaboration at T/D/H=8/8/8 (900-second bound)"
+        result: "PASS: completed in 336.696 seconds with exit code 0 and no Error. No scheduler/work_seq/pending_scheduler/consumer-block UNOPTFLAT was reported; known legacy UNOPTFLAT warnings remain on DMA-control, ACC/reduction, prealigner, and CVFPU paths."
+      - command: "Verilator Weight and Scale/ZP overlap interface lint"
+        result: "PASS: new priority/work_seq/fetch-completion interfaces elaborate without Error."
+      - command: "git diff --check"
+        result: "PASS"
+    ordered_verification_request:
+      - "Run hw/unittest/microtile_readiness_scheduler with VCS."
+      - "Run hw/unittest/lmem_dma_input_overlap, lmem_dma_weight_overlap, and lmem_dma_qparam_overlap with VCS."
+      - "Run hw/unittest/tensor_mem_bank and tmem_wide_read_switch with VCS."
+      - "Run hw/unittest/gemm_ctrl with +SCHED_DIRECTED, then gemm_fsm."
+      - "Run hw/unittest/gemm_node_improve at M={4,256}, N=K=256, QBLK=32, WTRANS=0, WLOAD=8, QDIR={QCOL,QROW}, fixed T/D/H=8/8/8."
+      - "Only after every unit/node gate passes, run the matching run_target_gemm.sh numerical/performance matrix at fixed T/D/H=8/8/8."
+  - id: vcs-verification-1
+    status: sim_fail
+    topology: "T/D/H=8/8/8"
+    first_failure:
+      test: "hw/unittest/microtile_readiness_scheduler"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/microtile_readiness_scheduler --sim vcs --timeout 600"
+      log: "build/hw/unittest/microtile_readiness_scheduler/logs/sim.log"
+      time: "2026-08-18 17:42:24-17:42:28 KST"
+      evidence: "VCS reached $finish at 290000 ps without Fatal and printed MICROTILE_READINESS_SCHEDULER_PASS. verify_rtl nevertheless returned sim_fail because it recognizes PASSED/TEST PASSED, not the _PASS suffix."
+      classification: "Focused-TB pass-marker compatibility error; no RTL behavior failure observed."
+    followup: "Emit a verifier-recognized PASSED marker, then restart ordered verification at gate 1."
+  - id: rtl-recovery-2
+    status: completed
+    topology: "T/D/H=8/8/8"
+    scope: "Focused-TB verifier marker compatibility only; RTL and stimulus are unchanged."
+    implementation:
+      - "Changed the final focused scheduler TB marker from MICROTILE_READINESS_SCHEDULER_PASS to the verifier-recognized MICROTILE_READINESS_SCHEDULER PASSED form."
+    verification_performed:
+      - command: "Verilator focused scheduler lint at T/D/H=8/8/8"
+        result: "PASS: lint completed without Error; only the existing warning set remains."
+      - command: "git diff --check and STATUS YAML parse"
+        result: "PASS"
+    exact_rerun_request:
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/microtile_readiness_scheduler --sim vcs --timeout 600"
+      expected_marker: "MICROTILE_READINESS_SCHEDULER PASSED"
+      continuation: "On gate-1 PASS, resume the ordered verification request from rtl-implementation-1 without skipping any remaining gate."
+  - id: vcs-verification-2
+    status: sim_fail
+    topology: "T/D/H=8/8/8"
+    passed_before_failure:
+      - "microtile_readiness_scheduler"
+      - "lmem_dma_input_overlap"
+      - "lmem_dma_weight_overlap"
+      - "lmem_dma_qparam_overlap Scale TEST_ZP=0 and zero-point TEST_ZP=1 with separate compile proof"
+      - "tensor_mem_bank"
+      - "tmem_wide_read_switch"
+    first_failure:
+      test: "gemm_ctrl +SCHED_DIRECTED"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\" --timeout 600"
+      log: "build/hw/unittest/gemm_ctrl/logs/sim.log"
+      time: "2026-08-18 17:46:47-17:46:56 KST"
+      evidence: "At 875000 ps the scheduler rejected cmd_fire without a matching probe_valid/work_seq. The directed TB force-overrode only gemm_fsm_if.ctrl.start/cmd while pending scheduler probe metadata remained driven by the real FSM."
+      classification: "Directed-TB integration contract error; no production scheduler failure demonstrated."
+    followup: "Drive matching pending scheduler probe identity for every directly injected scheduler command and preserve scoreboard/tier coverage."
+  - id: rtl-recovery-3
+    status: completed
+    topology: "T/D/H=8/8/8"
+    scope: "gemm_ctrl directed-TB scheduler integration only; no production RTL change."
+    directed_injection_audit:
+      - "Every child 0-3 direct injection now presents fsm_pending_scheduler_work with the exact command work_seq before asserting the forced FSM start."
+      - "The common injection task checks opcode-to-child decode and scheduler probe readiness, and never asserts start when a new work is blocked by the four-entry scoreboard."
+      - "Zero-work_seq legacy commands receive legal directed micro-tile IDs: W/S/Z join the next Input work, while consecutive producer-free Inputs receive distinct ordered IDs. Explicit work_seq commands remain unchanged."
+      - "Direct non-scheduler children 4-5 keep probe_valid low. The expected-collision directed mode uses the same forced probe path."
+    implementation:
+      - "Added a controller-level full-scoreboard case with four W-before-Input entries, a blocked fifth Weight probe, matching head Input completion, and same-cycle ordered retire/recycle into the fifth Weight work."
+      - "Updated the existing Input depth-four case so its fifth distinct work obeys scoreboard backpressure and is enqueued only on the same edge as ordered head retirement."
+      - "Connected directed source work identity to the controller outputs and retained explicit tier checks for earliest P2 and recycled-tail P1 behavior."
+    required_markers:
+      - "SCHED_DIRECTED_SCOREBOARD_FULL_FIFTH_W_BEFORE_INPUT_PASS"
+      - "SCHED_DIRECTED_SCOREBOARD_ORDERED_RETIRE_RECYCLE_PASS"
+      - "SCHED_DIRECTED_SCOREBOARD_TIER_PASS"
+      - "SCHED_DIRECTED_INPUT_DEPTH4_PASS"
+      - "TEST PASSED: GEMM scheduler directed dependency checks completed"
+    verification_performed:
+      - command: "Verilator gemm_ctrl static lint at T/D/H=8/8/8"
+        result: "PASS: exit 0 with no Error or UNOPTFLAT."
+      - command: "Verilator gemm_ctrl compile/elaboration at T/D/H=8/8/8"
+        result: "PASS: binary elaboration completed without Error."
+      - command: "git diff --check and STATUS YAML parse"
+        result: "PASS"
+    exact_rerun_request:
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\" --timeout 600"
+      continuation: "On PASS with every required marker, continue with gemm_fsm and the remaining ordered 8/8/8 verification gates."
+  - id: vcs-verification-3
+    status: sim_fail
+    topology: "T/D/H=8/8/8"
+    preserved_passes: "Verification-2 gates 1-6 remain PASS."
+    first_failure:
+      test: "gemm_ctrl +SCHED_DIRECTED"
+      command: "touch hw/unittest/gemm_ctrl/tb_VX_gemm_ctrl.sv; source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\" --timeout 600"
+      log: "build/hw/unittest/gemm_ctrl/logs/sim.log"
+      time: "2026-08-18 17:57:20-17:57:29 KST"
+      evidence: "At 231000 ps the fifth W-before-Input check observed child_ready[1] high. Probe valid/work_seq were forced, but fsm_pending_child remained driven by the real FSM, so controller full gating targeted the wrong child."
+      classification: "Directed-TB probe bundle incomplete; production scoreboard correctly rejected the unseen fifth sequence."
+    followup: "Force pending child together with probe valid/work_seq for every direct injection and the same-cycle retire/recycle case."
+  - id: rtl-recovery-4
+    status: completed
+    topology: "T/D/H=8/8/8"
+    scope: "gemm_ctrl directed-TB pending-probe bundle completion only; production RTL and assertions unchanged."
+    implementation:
+      - "Added directed_scheduler_probe_child and continuously forced controller fsm_pending_child alongside pending_scheduler_work and pending_work_seq."
+      - "The common direct-injection task assigns the exact decoded child for every command; direct children 0-3 therefore present a complete {valid, work_seq, child} admission probe before start."
+      - "The Input depth-four full/recycle path explicitly uses child 0; fifth W-before-Input and its same-cycle recycle explicitly use child 1."
+      - "Reset initializes the complete probe bundle to zero. Normal directed exit releases all three forced controller signals together; expected-collision mode installs the same complete bundle."
+      - "Every probe teardown clears valid, work_seq, and child together so reset and back-to-back direct cases cannot retain stale routing metadata."
+    verification_performed:
+      - command: "Verilator gemm_ctrl static lint at T/D/H=8/8/8"
+        result: "PASS: exit 0 with no Error or UNOPTFLAT."
+      - command: "Verilator gemm_ctrl compile/elaboration at T/D/H=8/8/8"
+        result: "PASS: exit 0 with no Error."
+      - command: "Static direct-force/reset/expected-collision bundle audit"
+        result: "PASS: common injection and both manual full/recycle paths assign child; reset clears it; normal exit releases it; expected-collision forces it."
+      - command: "git diff --check and STATUS YAML parse"
+        result: "PASS"
+    exact_rerun_request:
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\" --timeout 600"
+      continuation: "Require all recovery-3 scoreboard/tier markers and final TEST PASSED marker, then continue with gemm_fsm and the remaining ordered 8/8/8 gates."
+  - id: vcs-verification-4
+    status: sim_fail
+    topology: "T/D/H=8/8/8"
+    preserved_passes: "Verification-2 gates 1-6 remain PASS; the full-scoreboard marker passed after recovery-4."
+    first_failure:
+      test: "gemm_ctrl +SCHED_DIRECTED"
+      log: "build/hw/unittest/gemm_ctrl/logs/sim.log"
+      time: "2026-08-18 18:01:23-18:01:32 KST"
+      evidence: "At 255000 ps production assertion Input source issue is not tile-ready-only fired. The new seq401 Input used generic make_directed_cmd, leaving waits[0] invalid and omitting legal W/S/Z/ACC input_admit_waits."
+      classification: "Directed-TB legal-Input construction error; full-scoreboard behavior passed before it."
+    followup: "Construct the head Input with the existing legal Input helper and ready dependency metadata."
+  - id: rtl-recovery-5
+    status: completed
+    topology: "T/D/H=8/8/8"
+    scope: "Controller scoreboard directed-case legal Input construction only; production RTL and assertions unchanged."
+    implementation:
+      - "Replaced the generic seq401 OP_I_LDMA_ARM command with make_directed_input_cmd using buffer group 0."
+      - "The source dependency is exactly one valid tile-ready wait on RID_TILE0 at the current registered target; waits[1..4] remain invalid."
+      - "W0/SC0/ZP0/ACC_FREE0 input_admit_waits are all valid with exact register IDs and targets equal to the current ready controller values."
+      - "Added a directed pre-injection contract check for the tile-only source wait, all four admission metadata records, and their ready targets."
+    input_construction_audit:
+      - "All scheduler-directed Input call sites now use make_directed_input_cmd; no test case directly constructs OP_I_LDMA_ARM with the generic helper."
+      - "The recovery-3 Input depth-four commands already use the legal helper and retain their explicit ordered work_seq values."
+      - "Existing source/admission split, retention, ARM-consume, and ACC-ownership cases already use the same legal helper and were not changed."
+    verification_performed:
+      - command: "Verilator gemm_ctrl static lint at T/D/H=8/8/8"
+        result: "PASS: exit 0 with no Error or UNOPTFLAT."
+      - command: "Verilator gemm_ctrl compile/elaboration at T/D/H=8/8/8"
+        result: "PASS: exit 0 with no Error."
+      - command: "git diff --check and STATUS YAML parse"
+        result: "PASS"
+    exact_rerun_request:
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_ctrl --sim vcs --extra-sim-args \"+SCHED_DIRECTED\" --timeout 600"
+      continuation: "Require the full-scoreboard, ordered-recycle, tier, Input-depth-four, and final TEST PASSED markers, then continue the ordered 8/8/8 gates."
+  - id: vcs-verification-5
+    status: sim_fail
+    topology: "T/D/H=8/8/8"
+    passed_before_failure:
+      - "All focused scheduler, LDMA overlap, qparam, bank, and wide-switch gates"
+      - "gemm_ctrl +SCHED_DIRECTED with all scoreboard/tier markers"
+      - "gemm_fsm, gemm_sync, lmem_dma_misal"
+      - "gemm_unit_v2 and gemm_unit_v2_backpressure"
+    first_failure:
+      test: "gemm_node_improve M4 QCOL"
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_node_improve --sim vcs --params \"TEST=MICROTILE_SCHED_888_M4_QCOL M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=0\" --extra-sim-args \"+REQUIRE_INPUT_METADATA +NO_WAVE\" --timeout 1200"
+      log: "build/hw/unittest/gemm_node_improve/logs/sim_MICROTILE_SCHED_888_M4_QCOL.log"
+      time_ps: 3665000
+      evidence: "VX_tmem_switch asserted that the Input request changed while stalled. sched_source_enable_i directly gated req_valid and could fall after the request had been presented with ready low."
+      classification: "Production Input-LDMA ready/valid stability defect introduced by scheduler source gating."
+    followup: "Apply Input-ahead enable only when starting a new request; hold valid, payload, and priority until the stalled request handshakes."
+  - id: rtl-recovery-6
+    status: completed
+    topology: "T/D/H=8/8/8"
+    scope: "Production Input-overlap TMEM request stability plus focused regression; prior verification-5 PASS gates are preserved."
+    root_cause: "sched_source_enable_i was combinationally included in lmem req_valid, so a scheduler budget reduction could revoke a request already presented while TMEM req_ready was low."
+    implementation:
+      - "Source enable now gates only admission of a new TMEM request. The existing registered stalled-request context, source_urgent_hold_valid_r, overrides the live enable until the held request fires."
+      - "On the first stalled edge, req_valid/ready state captures urgent and fixed priority and sets the hold bit. Descriptor progress, allocation slot, address, and tag advance only on source_req_fire, so the full request remains stable."
+      - "source_req_fire clears the hold bit; if scheduler enable is still low, the next descriptor beat remains gated. Reset clears hold-valid, urgent, and priority state."
+      - "The enable-to-hold path is registered and introduces no combinational priority or ready feedback."
+    sibling_path_audit:
+      - "Weight has no sched_source_enable input: req_valid depends only on registered descriptor/slot state, and its urgent/priority context is already held across stalls."
+      - "Scale/ZP qparam instantiates the shared overlap executor with ENABLE_SCHED_SOURCE_GATE=0 and sched_source_enable_i tied high, so live scheduler gating cannot revoke its request."
+    verification_performed:
+      - command: "Verilator focused lmem_dma_input_overlap static lint at T/D/H=8/8/8"
+        result: "PASS: no Error or UNOPTFLAT."
+      - command: "Verilator focused lmem_dma_input_overlap binary simulation at T/D/H=8/8/8"
+        result: "PASS: enable toggled 1->0 under stall; valid/rw/address/data/byteen/flags/tag/urgent/priority remained stable; held request handshook; subsequent request stayed gated for two cycles and resumed only after re-enable; full legacy suite PASSED."
+      - command: "Verilator Weight direct lint and qparam focused lint at T/D/H=8/8/8"
+        result: "PASS: no Error or new UNOPTFLAT."
+      - command: "Final-source Verilator full gemm_node_improve hierarchy lint at T/D/H=8/8/8"
+        result: "PASS: exit 0 in 340.639 seconds with no Error and no source-enable/scheduler/priority SCC; only the known legacy DMA-control, ACC/reduction, prealigner, and CVFPU UNOPTFLAT set remains."
+      - command: "git diff --check and STATUS YAML parse"
+        result: "PASS"
+    exact_rerun_request:
+      command: "source configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh; export CONFIGS=\"$CONFIGS -DNUM_TMEM_BANKS=8 -DNUM_DMA_CHANNELS=8 -DNUM_HBM_PORTS=8\"; export CC=/usr/bin/gcc CXX=/usr/bin/g++; /usr/bin/python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_node_improve --sim vcs --params \"TEST=MICROTILE_SCHED_888_M4_QCOL M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=0\" --extra-sim-args \"+REQUIRE_INPUT_METADATA +NO_WAVE\" --timeout 1200"
+      continuation: "Preserve all verification-5 passes; restart at the failed M4 QCOL node gate, then continue the remaining ordered 8/8/8 node and run_target_gemm gates."
+  - id: vcs-verification-6
+    status: passed
+    topology: "T/D/H=8/8/8"
+    preserved_passes: "All verification-5 focused, controller, FSM, sync, DMA, gemm_unit_v2, and backpressure gates remain PASS."
+    rebuild_proof: "VX_lmem_dma_misal.sv timestamp 18:19:12.478 KST; simv_fpnew rebuilt at 18:19:36.442 KST before the node matrix."
+    node_results:
+      - "M4 QCOL: numerical 1024/1024 PASS; metadata commands=64 packets=256 scheduler_retire=64."
+      - "M4 QROW: numerical 1024/1024 PASS; metadata commands=64 packets=256 scheduler_retire=64."
+      - "M256 QCOL: numerical 65536/65536 PASS; commands=128 packets=16384 scheduler_retire=128 bubbles=1683 stalled_valid_cycles=0; elapsed 1230s."
+      - "M256 QROW: numerical 65536/65536 PASS; commands=128 packets=16384 scheduler_retire=128 bubbles=1685 stalled_valid_cycles=3; elapsed 1237s."
+    logs:
+      - "build/hw/unittest/gemm_node_improve/logs/sim_MICROTILE_SCHED_888_M4_QCOL.log"
+      - "build/hw/unittest/gemm_node_improve/logs/sim_MICROTILE_SCHED_888_M4_QROW.log"
+      - "build/hw/unittest/gemm_node_improve/logs/sim_MICROTILE_SCHED_888_M256_QCOL.log"
+      - "build/hw/unittest/gemm_node_improve/logs/sim_MICROTILE_SCHED_888_M256_QROW.log"
+    conclusion: "Ordered VCS suite is fully green with no Fatal, numerical mismatch, metadata loss/reorder, or scheduler retirement error."
+    next: "Run fixed 8/8/8 run_target_gemm XRT-VCS matrix M={4,256}, QDIR={0,1}; rebuild first case and reuse only a matching fingerprint thereafter."
+  - id: blackbox-verification-7
+    status: passed
+    topology: "T/D/H=8/8/8"
+    procedure: "run-bb-common; configured build; XRT-VCS; first case rebuilt, remaining cases reused only a matching fingerprint."
+    fingerprint: "e4bcfaf9f917c6f7d5302f30528f4ebe0b4eda5652b12f6ab957dc585f3babfd"
+    results:
+      - "M4 QDIR0: total_cycles=655, overlap=69.558%, Input/Weight=256/256 with stall=0, numerical and runner PASS."
+      - "M4 QDIR1: total_cycles=651, overlap=69.588%, Input/Weight=256/256 with stall=0, numerical and runner PASS."
+      - "M256 QDIR0: total_cycles=19431, overlap=93.258%, Input/Weight=16384/512 with stall=0, numerical and runner PASS."
+      - "M256 QDIR1: total_cycles=19432, overlap=93.253%, Input/Weight=16384/512 with stall=0, numerical and runner PASS."
+    artifacts: "build/run_logs/microtile_readiness_scheduler_opt/blackbox_888"
+    evidence: "All four manifests exit_status=0; numerical PASSED and target-gemm PASSED; no functional Fatal/FAILED/Error/timeout/assertion failure; no FSDB generated."
+    next: "Capture M4 QCOL FSDB at 8/8/8 and apply the plan's strict performance/safety criteria; stop before QROW on first strict failure."
+  - id: fsdb-verification-8
+    status: performance_fail
+    topology: "T/D/H=8/8/8"
+    case: "M=4 N=256 K=256 QBLK=32 WTRANS=0 WLOAD=8 QDIR=QCOL"
+    artifact: "build/run_logs/microtile_readiness_scheduler_opt/fsdb_888/20260818-191414_fsdb-gemm_wload8_m4_n256_k256_q32_t0_d0_pid1115161/target_gemm.fsdb"
+    generation: "XRT-VCS fsdb-gemm, forced rebuild, port pair 56041/56042, fingerprint 30f3d33075edaf239a18bdab3f177db99565b344b2702b9e5913d62532a96c6e. Manifest exit_status=0; numerical and runner PASSED; FSDB size 11866108 bytes."
+    strict_verdict: "FAIL; QROW FSDB was not run under first-failure policy."
+    correctness_safety:
+      - "Scoreboard saw 64 unique ordered work_seq, 64 updates for each I/W/S/Z resource, 64 exact ordered retires, and maximum occupancy 4."
+      - "I/W/S/Z source request=response=destination write counts are 256/256/64/64 with legal responses and zero slot/drain ownership violation."
+      - "No loss, duplicate, reorder, stale generation, or unsafe overwrite was observed; requester starvation maximum was 3 cycles and all requested grants completed."
+    strict_failures:
+      - "Weight consumer deadline missed for 29 cycles across 25 runs: 21 one-cycle and 4 two-cycle runs, maximum recovery 2 cycles. Registered blocker feedback arrived exactly one cycle later."
+      - "Input 64x4 admissions had 45 of 192 non-consecutive internal intervals, 73 internal bubble cycles, and maximum gap 5. All 73 cycles had input_admission_ready=1 but source valid=0."
+      - "Compared with the compatible pre-scheduler 8/8/8 QCOL FSDB, total cycles regressed 633->654 (+21). Internal Input bubbles improved 103->73, but command-boundary bubbles worsened 85->135 (+50), making total Input span about 20 cycles longer."
+    input_root_cause:
+      - "Only 3/73 internal bubble cycles were directly budget-disabled at the instant of the bubble, but the budget disabled Input source for 66 active cycles at occupancy 2 and 17 cycles at occupancy 3; occupancy never exceeded 3, leaving insufficient ready-ahead."
+      - "At the 73 bubble cycles there were 48 WAIT_RSP slot-cycles, 45 READY slot-cycles waiting for the one-cycle READY-to-drain staging boundary, 59 new source requests, 48 responses, and 7 cycles with zero occupied slots."
+      - "Command-boundary source starvation while admission-ready increased from 8 to 58 cycles; the common 77-cycle not-ready/missing region remained."
+    weight_root_cause:
+      - "All 29 blocker cycles had the writer fence released. 27/29 coincided with an actual Weight register write; the remaining two were the staging cycle immediately before write."
+      - "The data was already fetched and draining, so TMEM request priority had no remaining leverage. Registered load generation becomes consumer-visible one cycle after the write; closing this deadline needs write-to-consumer forwarding, another staging/ownership mechanism, or a changed register-visibility contract."
+      - "No P3 Weight TMEM request occurred because the matching source data was already fetched/writing when consumer blocking became visible."
+    arbitration:
+      - "Requester bank-loss cycles baseline->scheduler: Input 28->36, Weight 112->131, Scale 12->11, ZP 13->13; priority did not reduce I/W contention in this workload."
+      - "Input request offers were P2=115 and P1=177 with losses 19/17. Weight offers were P2=11, P1=13, P0=232."
+    structural_conclusion: "The bounded scoreboard and safety contracts work, but the fixed-at-request TMEM priority policy cannot repair a dependency already BUFFERED/WAIT_FENCE or the registered write-to-consumer visibility cycle. Input budget can be retuned, but that alone cannot satisfy the Weight deadline criterion. Stop for design discussion rather than silently adding forwarding/register storage outside the confirmed plan."
+notes:
+  - "Preserve all existing T/D/H parameterization; this scheduler experiment runs only at 8/8/8."
+  - "Preserve existing urgency/ready-ahead, GEMM backpressure, writer fences, and same-cycle overwrite contracts."
+  - "The legacy gemm_ctrl_with_ldma standalone TB still does not elaborate because its pre-existing wrapper references removed gemm_ctrl_if/gemm_dma_ctrl_if fields (qblk_tot, M_tot, N_tot, K_tot, wtrans_tot, entry_id). The new scheduler ports in that wrapper are explicitly tied and produced no additional interface error; this stale wrapper is not instantiated by the production gemm_node hierarchy."

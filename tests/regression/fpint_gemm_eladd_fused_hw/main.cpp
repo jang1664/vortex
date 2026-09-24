@@ -657,7 +657,7 @@ int main(int argc, char *argv[]) {
             << ", warps=" << num_warps
             << ", threads=" << num_threads << std::endl;
 
-  tensor_mem_size = TMEM_BANK_SIZE * NUM_DMA_CHANNELS;
+  tensor_mem_size = TMEM_BANK_SIZE * NUM_TMEM_BANKS;
 
   // ---- Generate test vectors (row-major) ----
   std::vector<uint16_t> h_pre_input_lhs;

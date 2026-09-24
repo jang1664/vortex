@@ -1,0 +1,225 @@
+task: gemm-unit-backpressure-opt
+state: IN_PROGRESS
+updated: "2026-08-15"
+spec: agent-tasks/gemm-unit-backpressure-opt/gemm-unit-backpressure-opt-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/gemm_unit_backpressure_opt.md
+current_phase: phase1_iteration_limit_reached
+iteration_limit: 10
+pitfalls:
+  - "Phase 1 must preserve the current W/S/Z storage and qparam snapshots; do not mix operand-lifetime changes into the backpressure proof."
+  - "Do not propagate combinational ready through VX_gemm_tree_v1; use six reserved result slots and registered credit return."
+  - "Replace the existing merge register with the depth-six FIFO instead of adding the FIFO behind it."
+  - "Preserve immediate/history/early/nominal ACC forwarding, read-response hold, and final-write completion semantics."
+  - "Current worktree contains prior optimization edits and untracked planning files; preserve all unrelated changes."
+  - "Phase 2 removes qparam value pipelines and W2/W3 only after Phase-1 VCS backpressure tests pass."
+iterations:
+  - timestamp: "2026-08-15"
+    iteration: 0
+    phase: specification
+    status: confirmed
+    test: "Phase-1 directed GEMM-unit backpressure VCS, then Phase-2 operand-lifetime VCS, node/XRT-VCS, and FSDB."
+    error_summary: "The current fixed-latency GEMM-unit datapath cannot preserve aligned data/control under downstream stalls, and operand readiness is checked too early to hide tree latency."
+    root_cause: "There is no end-to-end elastic transaction contract, while a combinational ready path through the five-cycle GEMM tree is unacceptable."
+    fix_applied: "Confirmed three regions, a depth-six merged-result FIFO with registered credit, preserved ACC forwarding, followed by consumer-stage exact W/S/Z readiness and independent two-bank resources."
+    verification: "Pending Phase-1 RTL implementation."
+    lesson: "First prove bounded backpressure correctness independently; only then tighten operand lifetime and reduce register banks."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Target-config static lint for the focused gemm_unit_v2_backpressure harness and legacy gemm_unit_v2 harness; VCS execution is delegated to the verification role."
+    error_summary: "The original global fixed-latency control shift could not retain transaction data and metadata under a post-process stall, and a combinational ready path could not cross the five-cycle tree safely."
+    root_cause: "The tree had no reserved result ownership and the merge output provided only one untracked holding slot, while ACC dependency classification was tied to input-admission cycle distance instead of the fixed post-process launch boundary."
+    fix_applied: "Added elastic input/QDIR/prealign stages, one compute_fire for tree and correction, an exact depth-six fall-through merged-result FIFO with modulo-six state and registered credit return, and launch-boundary ACC forwarding classification. Preserved four WREG banks, two S/Z banks, immutable qparam value snapshots, current load overlap interfaces, ACC SRAM forwarding/read-response behavior, and final completion. Added assertions, trace probes, and a standalone directed post-boundary backpressure testbench."
+    verification: "Focused target-config Verilator lint completed with zero errors. Legacy target-config RTL elaboration passed the Phase-1 hierarchy changes but its lint target remains blocked by 15 pre-existing mixed blocking/nonblocking assignments to test_failed in tb_VX_gemm_unit_v2.sv. No VCS, RTL simulation, blackbox, or FSDB run was performed by the implementation role."
+    lesson: "A fall-through FIFO is required to replace rather than follow the old merge register, and opposite-QDIR pre-process branches must be mutually excluded while either branch owns an ordered transaction."
+  - timestamp: "2026-08-15"
+    iteration: 1
+    phase: phase1_verification
+    status: sim_fail
+    test: "Focused hw/unittest/gemm_unit_v2_backpressure VCS directed test."
+    error_summary: "VCS stopped at 85 ns on the testbench address-progression check before exercising the intended post-process backpressure scenario."
+    root_cause: "drive_packets advanced acc_wr_addr for each packet but left acc_rd_addr at zero after clearing packet_ctrl_drive. The legal transaction-address progression expected both ACC address fields to identify the same packet even though acc_rd_en remained disabled."
+    fix_applied: "None in the verification iteration; the failure was classified as testbench-only and production RTL was left unchanged."
+    verification: "Failed at 85 ns before meaningful Phase-1 RTL verification."
+    lesson: "Directed load-only traffic must still initialize every transaction identity field checked by the GEMM control contract."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Static lint and source checks after the minimal focused-testbench correction; VCS rerun delegated to the verification role."
+    error_summary: "The focused testbench generated an inconsistent packet identity by progressing only acc_wr_addr."
+    root_cause: "acc_rd_addr inherited the zero value from packet_ctrl_drive initialization on every packet."
+    fix_applied: "Set acc_rd_addr to the same legal per-packet row address and copy it to acc_wr_addr while keeping acc_rd_en deasserted; no production RTL or directed stall scenario changed."
+    verification: "Focused target-config Verilator lint completed with zero errors; VCS rerun is pending."
+    lesson: "Keep disabled-path metadata legal when common control assertions validate transaction progression independently of the enable bit."
+  - timestamp: "2026-08-15"
+    iteration: 2
+    phase: phase1_verification
+    status: sim_fail
+    test: "Focused hw/unittest/gemm_unit_v2_backpressure VCS rerun after correcting both ACC address fields."
+    error_summary: "The rerun repeated the old 85 ns address-progression failure because tools/verify_rtl.py reused a stale simv that had not compiled the corrected focused testbench."
+    root_cause: "The focused Makefile included the legacy gemm_unit_v2 Makefile before overriding TB. The compile target therefore captured the legacy TB as its prerequisite even though the deferred VCS recipe referenced the focused TB, so a focused TB timestamp change did not invalidate compile."
+    fix_applied: "None during verification; the repeated result was classified as stale-build infrastructure rather than a production RTL or directed-test semantic failure."
+    verification: "Invalid rerun: corrected focused testbench was not recompiled."
+    lesson: "A reused simulator binary is trustworthy only when the selected source file is also present in the compile target prerequisite graph."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Focused Makefile database/dry-run inspection and target-config static lint; VCS rerun delegated to verification."
+    error_summary: "Focused simulator recipes selected the focused TB textually but dependency tracking still selected the legacy TB."
+    root_cause: "TB, TOP_MODULE, SRC_DIR, and UNITTEST_DIR were overridden only after the parent Makefile had parsed the compile target prerequisites."
+    fix_applied: "Moved focused selector definitions before the parent include and marked them override variables, causing both the compile prerequisite list and deferred recipe to select tb_VX_gemm_unit_v2_backpressure.sv. No artifacts were deleted and production RTL/TB behavior was unchanged."
+    verification: "Make database and dry-run show the focused TB as the compile prerequisite and VCS source; focused target-config Verilator lint completed with zero errors. VCS rerun is pending."
+    lesson: "When reusing a parent Makefile, source selectors must be fixed before target parsing because prerequisites expand earlier than recipe variables."
+  - timestamp: "2026-08-15"
+    iteration: 3
+    phase: phase1_verification
+    status: sim_fail
+    test: "Freshly rebuilt focused hw/unittest/gemm_unit_v2_backpressure VCS directed test."
+    error_summary: "VCS reached the production datapath and stopped at 235 ns with GEMM v2 load control/data latency mismatch after a FIFO-induced bubble."
+    root_cause: "The fall-through FIFO drives VX_pint2fp directly, so the FIFO-pop edge is already captured by converter stage 0. The post control indices still added the old registered-merger cycle, leaving INT2FP, QDIR, QCOL scale, scaler, load, and ACC control one cycle later than their data; continuous valid traffic had masked the offset until a bubble appeared."
+    fix_applied: "None during verification; the failure was classified as a production post-boundary retiming defect."
+    verification: "Failed at 235 ns on the load control/data alignment assertion."
+    lesson: "Bubble testing is required to expose fixed-latency skew that full-rate valid streams can hide."
+  - timestamp: "2026-08-15"
+    iteration: 4
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Focused target-config static lint after post-boundary control/metadata retiming; VCS rerun delegated to verification."
+    error_summary: "Post-process data consumed the FIFO-pop launch edge while its control and QCOL metadata retained the removed merge-register delay."
+    root_cause: "INT2FP_CTRL_IDX used the full two-cycle converter delay after ctrl_pipe[MERGER_CTRL_IDX], even though that control register and VX_pint2fp stage 0 capture on the same FIFO-pop edge."
+    fix_applied: "Defined the FIFO-launch-to-INT2FP control delay as INTTOFP_OUT_DLY minus the already-consumed launch capture, shifting INT2FP/scaler/write and ACC read scheduling one cycle earlier while preserving MERGER launch-boundary forwarding distances and the depth-six credit architecture. QCOL scale metadata follows the same corrected indices; QROW uses the correspondingly retimed bypass control. Added exact FIFO/max-exp, INT2FP, scaler, load-result, and accumulator alignment assertions."
+    verification: "Focused target-config Verilator lint completed with zero errors; no VCS run by the implementation role."
+    lesson: "For a fall-through producer feeding a registered consumer, the producer handshake edge is consumer stage 0 and must not be counted again in downstream control delay."
+  - timestamp: "2026-08-15"
+    iteration: 4
+    phase: phase1_verification
+    status: sim_fail
+    test: "Focused gemm_unit_v2_backpressure VCS followed by the legacy gemm_unit_v2 VCS regression."
+    error_summary: "The focused backpressure test passed fully. The legacy regression stopped at 471 ns on QROW zero snapshot changed after overwrite at tb_VX_gemm_unit_v2.sv:1017."
+    root_cause: "The active pre_meta.zero snapshot remained immutable, but legacy qrow_zero_snapshot_pipe and qcol_zero_snapshot_pipe still shifted from input admission on every cycle. Elastic pre-process stalls and bubbles therefore separated those mirrors from ctrl_pipe and from the actual transaction metadata."
+    fix_applied: "None during verification; the failure identified the remaining Phase-1 snapshot compatibility state that was not handshake-aware."
+    verification: "Focused VCS PASS; legacy VCS FAIL at 471 ns before completing its snapshot/ACC regression."
+    lesson: "Compatibility probes are architectural verification state and must obey the same transaction handshakes as the active datapath."
+  - timestamp: "2026-08-15"
+    iteration: 5
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Focused and legacy target-config static lint after handshake-aligning every named qparam snapshot stage; VCS rerun delegated to verification."
+    error_summary: "Named QROW/QCOL qparam snapshot mirrors could advance independently of elastic transaction control."
+    root_cause: "The old unconditional snapshot shifts assumed a globally fixed pipeline, while Phase 1 introduced elastic input, QDIR branch, and prealign boundaries."
+    fix_applied: "Reworked snapshot compatibility state to capture input-pipe, QDIR-branch, prealign, compute/tree, FIFO-pop, and post stages on their matching transaction events. QROW scale remains an admission snapshot and holds the last admitted QROW value; QROW/QCOL zero and QCOL scale probes now mirror the same metadata consumed by the active datapath. Existing input-fire Scale/ZP consume pulses and immediate post-snapshot overwrite lifetime are unchanged."
+    verification: "Focused target-config Verilator lint completed with zero errors. Legacy target-config lint parsed/elaborated the updated RTL and stopped only on its 15 known mixed blocking/nonblocking assignments to test_failed; no new RTL lint error was reported. No VCS run by the implementation role."
+    lesson: "Snapshot value and valid/control ownership must cross each elastic boundary atomically, while fixed regions may shift bubbles and values together."
+  - timestamp: "2026-08-15"
+    iteration: 5
+    phase: phase1_verification
+    status: sim_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS regression after the qparam snapshot-alignment fix."
+    error_summary: "All prior QROW/QCOL snapshot checks passed. The first failure occurred at 1146 ns on same-group fence did not begin at ctrl_pipe[0], followed at 1180 ns by pipeline_empty returning while the admission scoreboard still owned pending control/write state."
+    root_cause: "Phase 1 had changed ctrl_pipe[0] from the admission-edge ownership observation to the one-cycle-later input-buffer output. Separately, pipeline_empty ORed only visible output valids from elastic submodules, so a transaction resident in an opaque scaler/prealigner stage could create a false empty bubble."
+    fix_applied: "None during verification; qparam snapshot compatibility was proven and the new failure was classified as admission-ownership and complete-drain accounting."
+    verification: "Legacy VCS FAIL at 1146 ns; no qparam snapshot regression preceded the failure."
+    lesson: "An elastic datapath needs a transaction-level ownership invariant in addition to visible stage valids, and legacy resource fences require admission ownership to be observable on the accepting edge."
+  - timestamp: "2026-08-15"
+    iteration: 6
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Focused and legacy target-config static lint after restoring admission ownership and complete bounded pipeline-empty accounting; VCS rerun delegated to verification."
+    error_summary: "Admission group ownership was observed one cycle late, and output-valid-only drain detection could transiently report empty across elastic internal bubbles."
+    root_cause: "The active u_in_pipe payload and the legacy ctrl_pipe[0] ownership probe had been conflated, while no accepted-minus-retired counter covered opaque pre-process storage."
+    fix_applied: "Restored ctrl_pipe[0] as an admission-edge copy of admitted_ctrl without feeding it back into the active elastic path. Added a bounded accepted-to-retired ownership counter that retires writes only with acc_write_fire, made ACC-group ownership release at the same retirement boundary, and defined pipeline_empty from that counter plus explicit pre/tree/FIFO/post/ACC/resource state. Added admission, group-fence, counter-bound, underflow, per-resource ownership, and no-false-empty assertions plus an ownership trace probe."
+    verification: "Focused target-config Verilator lint completed with zero errors. Legacy target-config lint parsed/elaborated the updated RTL and stopped only on its 15 known mixed blocking/nonblocking assignments to test_failed; no new RTL lint error was reported. No VCS run by the implementation role."
+    lesson: "Keep the admission ownership/debug plane distinct from the elastic payload plane, and make empty a conservation property from acceptance through actual retirement rather than an OR of externally visible valids."
+  - timestamp: "2026-08-15"
+    iteration: 6
+    phase: phase1_verification
+    status: sim_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS regression after admission ownership and bounded pipeline-empty accounting."
+    error_summary: "The prior ctrl_pipe[0] group-start and false pipeline_empty failures were fixed. The first remaining failure required the same-group directed test to observe ctrl_pipe stages 2 and 3, which are intentional empty indices between elastic branch and prealign boundaries."
+    root_cause: "The legacy resource-fence test still treated ctrl_pipe as one continuous fixed-latency shift register, while Phase 1 deliberately represents only transaction events at elastic boundaries and leaves non-boundary indices invalid."
+    fix_applied: "None during verification; production group ownership remained asserted continuously and the failure was classified as stale fixed-stage test coverage."
+    verification: "Legacy VCS progressed beyond the previous group-start and false-empty failures, then failed only on intentional ctrl_pipe hole coverage."
+    lesson: "Resource lifetime tests should prove continuous ownership and blocking, while stage coverage should name architectural handshakes rather than assume every numerical pipeline index is occupied."
+  - timestamp: "2026-08-15"
+    iteration: 7
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Focused GEMM-unit, legacy GEMM-unit, and GEMM-node target-config static lint after updating architectural-boundary coverage and the input valid/stability contract; VCS rerun delegated to verification."
+    error_summary: "The legacy TB over-required intentional control holes, and packet_ctrl.valid was defined as an acceptance pulse instead of the valid half of a held ready/valid request."
+    root_cause: "Fixed-stage verification had not been converted to elastic ownership semantics. In production, VX_gemm_node drove packet_ctrl.valid from input_packet_fire, so the control interface could not express source-valid during input backpressure even though request data and command context remained held."
+    fix_applied: "Changed the legacy same-group test to require uninterrupted compute_group_busy/output blocking while compute_group_pending_count is nonzero and to cover only named architectural control boundaries. VX_gemm_node and the focused TB now drive packet_ctrl.valid with input request valid. VX_gemm_unit_v2 asserts packet/request valid equivalence, captures request data and full control during a stall, requires both stable until acceptance, and confirms a stalled request produces no input_fire or qparam consume. All architectural state continues to advance only on input_fire."
+    verification: "Focused target-config Verilator lint completed with zero errors. Legacy target-config lint parsed/elaborated the updated production RTL and stopped only on its 15 known mixed blocking/nonblocking test_failed assignments. GEMM-node target-config lint completed with zero errors; only existing unrelated width warnings remain. Diff and STATUS YAML checks passed. No VCS run by the implementation role."
+    lesson: "In a ready/valid interface, valid describes a held source transaction and fire is the sole state-advance event; verification must test both the stability contract and the elastic ownership boundaries."
+  - timestamp: "2026-08-15"
+    iteration: 7
+    phase: phase1_verification
+    status: sim_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS regression after the architectural-boundary and source-valid fixes."
+    error_summary: "The regression progressed to legitimate GEMM-unit input backpressure at 7785 ns. The legacy one-edge packet driver treated ready low as an error, then changed request control on the next edge and triggered the DUT's held-request stability assertion."
+    root_cause: "Legacy stimulus, admission counters, and expected queues still assumed every asserted input request was accepted immediately. They advanced from source valid alone instead of the ready/valid handshake, which is no longer legal after Phase-1 backpressure."
+    fix_applied: "None during verification; the DUT stability fatal correctly detected a source-side protocol violation, so production RTL was left unchanged."
+    verification: "Legacy VCS reached the first real input stall at 7785 ns and failed on stale testbench handshake behavior rather than a datapath result mismatch."
+    lesson: "Once backpressure is architectural, every stimulus path and scoreboard must hold a transaction through ready low and account for it exactly once on valid-and-ready fire."
+  - timestamp: "2026-08-15"
+    iteration: 8
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Legacy GEMM-unit target-config static lint plus ready/valid source, scoreboard, diff, and STATUS-YAML audits; VCS rerun delegated to verification."
+    error_summary: "The legacy testbench drove packet control for one edge and enqueued expectations from req_valid even when req_ready was low."
+    root_cause: "All original input paths predated elastic admission and encoded fixed no-stall timing at request assertion rather than at the acceptance event."
+    fix_applied: "Migrated the common packet driver, direct qparam packet, and ACC arbitration compute-request paths to hold req_valid, request data, and the full packet_ctrl until a real handshake, with race-free deassertion or replacement at a following negedge. Input counts, ACC expectations, admission history, and expected due cycles now advance only on req_valid-and-req_ready. Added a monitor that treats ready low as legal, proves held data/control stability, and rejects input_fire or qparam consume while stalled. Production RTL and all directed scenarios are unchanged."
+    verification: "Legacy target-config lint parsed and elaborated the handshake migration with no new production or testbench syntax errors, then stopped only on the 14 known mixed blocking/nonblocking assignments to legacy test_failed. Source audit found no remaining one-edge input-ready error path; the only direct ready-high check is the intentional post-reset readiness check. Diff and STATUS YAML checks passed. No VCS run by the implementation role."
+    lesson: "No-stall latency remains meaningful only relative to the actual admission edge; elastic testbenches must separate source presentation from accepted transaction ownership."
+  - timestamp: "2026-08-15"
+    iteration: 8
+    phase: phase1_verification
+    status: sim_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS regression after migrating all input sources to held ready/valid."
+    error_summary: "Held-valid, group ownership, qparam snapshots, false-empty, and production stability assertions all passed. After a legitimate elastic input wait, the admission scoreboard reported nominal ACC read and write events one cycle earlier than their actual architectural events, although the actual next-cycle addresses and ordering were correct."
+    root_cause: "The ACC scoreboard still converted input acceptance into absolute accept_cycle-plus-NOMINAL_READ_DLY/WRITE_DLY deadlines. Elastic pre-process waiting invalidates that global fixed-latency assumption even though the post-launch ACC island remains ordered."
+    fix_applied: "None during verification; the mismatch was isolated to legacy cycle-based expectations and production RTL remained unchanged."
+    verification: "Legacy VCS progressed beyond every prior Phase-1 failure and stopped on stale early-cycle scoreboard deadlines rather than an ACC address, ordering, or arithmetic mismatch."
+    lesson: "An elastic pipeline must be verified by transaction conservation at architectural events; fixed offsets are valid only within an explicitly fixed, no-backpressure island."
+  - timestamp: "2026-08-15"
+    iteration: 9
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "Legacy GEMM-unit target-config static lint plus due-cycle removal, event-queue, diff, and STATUS-YAML audits; VCS rerun delegated to verification."
+    error_summary: "ACC read, forwarding, and write expectations were anchored to admission cycles and therefore diagnosed legal elastic delay as an early/missing event."
+    root_cause: "The scoreboard conflated source acceptance with fixed post-process launch timing instead of transferring in-order ownership across the actual merged-result, read-request, scaler, and write boundaries."
+    fix_applied: "Replaced all ACC due-cycle queues with event-driven in-order ownership. Admissions enqueue launch and write identities; merged_fifo_pop checks the next accepted transaction, independently classifies immediate/history/early dependencies from a cycle-shifted post-launch history, and enqueues read/scaler events. Actual nominal/early requests, scaler forwarding/data selection, and write control/fire pop only at their architectural events and check duplicate, reorder, bank, address, enable, routing-data, count, final-write, and tag contracts. pipeline_empty now rejects any residual launch/read/forward/write ownership, while existing arithmetic and memory reference checks are unchanged. Production RTL is unchanged."
+    verification: "Legacy target-config lint parsed and elaborated the event-driven scoreboard with no non-BLKANDNBLK errors, then stopped only on 25 instances of the known legacy mixed blocking/nonblocking test_failed diagnostic. No input-admission due_cycle or NOMINAL/EARLY/WRITE deadline remains; the sole WRITE_DLY reference is a reset-flush observation window. Diff and STATUS YAML checks passed. No VCS run by the implementation role."
+    lesson: "Use the merged-result launch as the ACC dependency-classification boundary, then compare each downstream event in order and rely on queue drain at pipeline_empty to detect a missing final event without imposing a global latency."
+  - timestamp: "2026-08-15"
+    iteration: 9
+    phase: phase1_verification
+    status: compile_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS compile after the event-driven ACC scoreboard migration."
+    error_summary: "VCS stopped during testbench compilation at line 288 because history_entry = '0 attempted an aggregate assignment to the unpacked post_history_t struct."
+    root_cause: "Verilator accepted the generic zero aggregate assignment, but VCS requires this unpacked testbench struct to be initialized by member or by a compatible assignment pattern."
+    fix_applied: "None during verification; no simulation or production RTL behavior was reached."
+    verification: "Compile-only failure in legacy testbench scoreboard initialization."
+    lesson: "Use explicit member initialization for unpacked dynamic-queue records when the directed test must compile consistently in both Verilator and VCS."
+  - timestamp: "2026-08-15"
+    iteration: 10
+    phase: phase1_implementation
+    status: implementation_ready
+    test: "VCS-oriented unpacked-struct source audit, legacy target-config static lint, diff, and STATUS-YAML checks; VCS rerun delegated to verification."
+    error_summary: "The event-driven scoreboard used one VCS-incompatible whole-struct zero assignment."
+    root_cause: "post_history_t is intentionally unpacked, so the scalar unbased unsized literal could not initialize the aggregate in VCS."
+    fix_applied: "Replaced history_entry = '0 with explicit zero assignments to valid, acc_wr_en, write_bank, and write_address. No queue ordering, dependency classification, event comparison, arithmetic reference, directed stimulus, or production RTL changed."
+    verification: "Source audit confirms no remaining aggregate-zero assignment to an expectation/history unpacked record. Legacy target-config lint parsed and elaborated the field-by-field initialization with zero non-BLKANDNBLK errors, then stopped only on the 25 known legacy mixed test_failed assignments. Diff and STATUS YAML checks passed. No VCS run by the implementation role."
+    lesson: "A compiler-portability repair should stay syntactic when the failing representation does not require any architectural or scoreboard semantic change."
+  - timestamp: "2026-08-15"
+    iteration: 10
+    phase: phase1_verification
+    status: coverage_fail
+    test: "Legacy hw/unittest/gemm_unit_v2 VCS regression after the VCS-compatible event-driven scoreboard fix; focused and node gates were not run after the first failure."
+    error_summary: "All functional queues drained with no production assertion, arithmetic, ordering, qparam, group, held-valid, or false-empty failure, but the directed test did not exercise the one-cycle-early ACC read path or a coincident cross-bank nominal/early read."
+    root_cause: "The legacy scheduler stimulus alternates QCOL and QROW. Elastic branch spacing means admission-adjacent requests are no longer guaranteed to arrive at the post-launch classifier with the exact K_LOOKBACK spacing required to select early forwarding."
+    fix_applied: "None because the rtl-improve Phase-1 loop reached its 10-iteration limit. A same-QDIR, full-rate, post-launch-aware bank/address pattern is required to guarantee early and coincident nominal/early coverage."
+    verification: "VCS compiled and ran to final coverage checks. Event-driven launch/read/forward/write queues fully drained; nominal reads=72, writes=131, admissions=143, immediate forwards=4, history forwards=4, early reads=0, coincident reads=0. Focused backpressure and node QDIR gates were not rerun in this iteration."
+    lesson: "After introducing elastic branches, latency-sensitive coverage must constrain transaction spacing at the architectural classification boundary rather than assume source-admission spacing is preserved."

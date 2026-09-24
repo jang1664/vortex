@@ -1,0 +1,663 @@
+# GEMM control timing closure iteration log
+
+status: control_timing_pass_node_timing_fail
+completed_at: "2026-09-01T00:38:00+09:00"
+synthesis_deferred_to_user: false
+spec: gemm-control-timing-closure-spec.md
+baseline_revision: f81d2ec182d74c6a514224960ac6f08c25caf938
+baseline:
+  config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+  simulator: xrt-vcs-sim
+  perf_class: 3
+  note: >-
+    The detached baseline uses the same simulation-only TMEM stalled-read
+    assertion correction as the candidate: read data is don't-care, while
+    write data and all control/address/tag fields remain checked.  This does
+    not alter synthesized RTL.
+  cases:
+    - {m: 4, qdir: 0, gemm_cycles: 602, kernel_cycles: 6250, status: pass}
+    - {m: 4, qdir: 1, gemm_cycles: 612, kernel_cycles: 6325, status: pass}
+    - {m: 256, qdir: 0, gemm_cycles: 17762, kernel_cycles: 23440, status: pass}
+    - {m: 256, qdir: 1, gemm_cycles: 17758, kernel_cycles: 23437, status: pass}
+  logs: /tmp/vortex-gemm-control-baseline-results
+candidate:
+  config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+  simulator: xrt-vcs-sim
+  perf_class: 3
+  performance_gate_metric: kernel_cycles
+  cases:
+    - m: 4
+      qdir: 0
+      gemm_cycles: 627
+      gemm_delta_pct: 4.153
+      kernel_cycles: 6325
+      kernel_delta_pct: 1.200
+      numerical_status: pass
+      performance_status: pass
+    - m: 4
+      qdir: 1
+      gemm_cycles: 629
+      gemm_delta_pct: 2.778
+      kernel_cycles: 6324
+      kernel_delta_pct: -0.016
+      numerical_status: pass
+      performance_status: pass
+    - m: 256
+      qdir: 0
+      gemm_cycles: 17768
+      gemm_delta_pct: 0.034
+      kernel_cycles: 23442
+      kernel_delta_pct: 0.009
+      numerical_status: pass
+      performance_status: pass
+    - m: 256
+      qdir: 1
+      gemm_cycles: 17764
+      gemm_delta_pct: 0.034
+      kernel_cycles: 23439
+      kernel_delta_pct: 0.009
+      numerical_status: pass
+      performance_status: pass
+  note: >-
+    The end-to-end kernel cycle count is the deterministic 2.0% performance
+    gate.  The MXU-local total_cycles counter is retained as diagnostic
+    context; both M4 cases exceed 2.0% on that local counter and are reported
+    rather than hidden.
+  logs: /tmp/vortex-gemm-control-candidate-results
+power_of_two_followup:
+  completed_at: "2026-08-31T21:04:26+09:00"
+  config: configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+  simulator: xrt-vcs-sim
+  perf_class: 3
+  cases:
+    - {m: 4, qdir: 0, gemm_cycles: 628, kernel_cycles: 6325,
+       baseline_delta_pct: 1.200, status: pass}
+    - {m: 4, qdir: 1, gemm_cycles: 626, kernel_cycles: 6325,
+       baseline_delta_pct: 0.000, status: pass}
+    - {m: 256, qdir: 0, gemm_cycles: 17764, kernel_cycles: 23438,
+       baseline_delta_pct: -0.009, status: pass}
+    - {m: 256, qdir: 1, gemm_cycles: 17773, kernel_cycles: 23438,
+       baseline_delta_pct: 0.004, status: pass}
+  logs: /tmp/vortex-gemm-pow2-results
+iterations:
+  - iteration: 1
+    feature: gemm-control-timing-closure
+    status: sim_fail
+    error_summary: >-
+      The focused DMA-controller simulation rejected the existing legal
+      zero-work misaligned store case at the new cursor-delta assertion.
+    root_cause: >-
+      The new assertion required a nonzero issued chunk for every store
+      completion, but a descriptor with BND1=0 legally has remaining=0 and
+      issued=0 and still completes.
+    fix_applied: >-
+      Restricted positive-delta and monotonic-cursor assertions to uniform
+      chunkable stores; nonchunkable/misaligned zero-work descriptors remain
+      legal.
+    lesson: >-
+      Store-progress assertions must distinguish positive chunk progress from
+      legal zero-work descriptor completion.
+  - iteration: 2
+    feature: gemm-control-timing-closure
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      Positive scalar progress assertions apply only to uniform chunkable
+      stores, while all store completions still retire their context.
+    lesson: >-
+      Keep functional retirement independent from diagnostic progress checks.
+    test: >-
+      tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --params
+      TB_PENDING_DEPTH=4 --timeout 600
+    evidence:
+      - TEST PASSED
+      - TMEM_DMA_PHASE6_CHAIN_PASS independent_id1_capture=1 third_owner=1
+      - TMEM_DMA_COMPLETION_CAPTURE_MISS_PASS capture_id0=1 slow_path=1
+    log: build/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+  - iteration: 3
+    feature: tmem-read-request-reservation
+    status: compile_error
+    error_summary: >-
+      The new directed testbench failed to parse at its expected-request
+      structure field named priority.
+    root_cause: >-
+      priority is a SystemVerilog keyword and cannot be used as an unpacked
+      structure member identifier in this VCS parser context.
+    fix_applied: >-
+      Renamed the expected-request structure member to priority_value and
+      updated its capture and comparison references without changing coverage.
+    lesson: >-
+      Avoid bare SystemVerilog control keywords in testbench metadata field
+      names even when they appear after a structure selector.
+    test: >-
+      tools/verify_rtl.py unittest --path
+      build/hw/unittest/tmem_read_req_reservation --sim vcs --timeout 600
+    log: build/hw/unittest/tmem_read_req_reservation/logs/compile.log
+  - iteration: 4
+    feature: tmem-read-request-reservation
+    status: sim_fail
+    error_summary: >-
+      All directed checks completed and the test printed its local PASS line,
+      but verify_rtl.py did not recognize the nonstandard success marker.
+    root_cause: >-
+      The testbench printed "PASS: ..." instead of the repository-standard
+      "TEST PASSED" marker required by the deterministic verifier.
+    fix_applied: >-
+      Changed only the final display to emit "TEST PASSED: tmem read-request
+      reservation directed test"; stimulus and checks are unchanged.
+    lesson: >-
+      New RTL unit tests must emit the verifier's canonical TEST PASSED marker
+      after their final functional check.
+    test: >-
+      tools/verify_rtl.py unittest --path
+      build/hw/unittest/tmem_read_req_reservation --sim vcs --timeout 600
+    evidence:
+      - PASS: tmem read-request reservation directed test
+      - simulation reached $finish at 125000 ps
+    log: build/hw/unittest/tmem_read_req_reservation/logs/sim.log
+  - iteration: 5
+    feature: tmem-read-request-reservation
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      The canonical success marker was retained after every occupancy,
+      backpressure, metadata, ordering, and response-passthrough check passed.
+    lesson: >-
+      The two-entry reservation now has direct executable evidence for both
+      the registered timing cut and one-request-per-cycle primed operation.
+    test: >-
+      tools/verify_rtl.py unittest --path
+      build/hw/unittest/tmem_read_req_reservation --sim vcs --timeout 600
+    evidence:
+      - TEST PASSED: tmem read-request reservation directed test
+    log: build/hw/unittest/tmem_read_req_reservation/logs/sim.log
+  - iteration: 6
+    feature: gemm-node-integration
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: none
+    lesson: >-
+      The registered decoder/capture changes and the four read-request
+      reservations elaborate and execute together under the exact TH16 config.
+    test: >-
+      tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_node_improve --sim vcs --params
+      "TEST=GEMM_CONTROL_TIMING_M4_QCOL M=4 N=256 K=256 QBLK=32
+      WTRANS=0 QDIR=0" --extra-sim-args "+NO_WAVE" --timeout 900
+    evidence:
+      - TILED OUTPUT CHECK PASSED: compared 1024 elements
+      - CONFIG GEMM PASSED: M=4 N=256 K=256 WTRANS=0 QDIR=0
+    log: >-
+      build/hw/unittest/gemm_node_improve/logs/
+      sim_GEMM_CONTROL_TIMING_M4_QCOL.log
+  - iteration: 7
+    feature: power-of-two-tmem-dma-chunk-arithmetic
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      Replaced synthesis-visible runtime multiply, divide, and modulo operators
+      in descriptor decode and chunk construction with exact shifts derived
+      from the structurally power-of-two BND0, BND2, segment, and store-stride
+      encodings.  BND1, cursor, and remaining-beat values remain unrestricted
+      unsigned integers, and unlimited chunking preserves the full descriptor.
+    lesson: >-
+      Carrying the BND0 exponent beside its value exposes the existing hardware
+      invariant to synthesis without restricting general BND1 values or adding
+      a pipeline stage.
+    test: >-
+      python tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --params
+      TB_PENDING_DEPTH=4 --timeout 600
+    evidence:
+      - TEST PASSED
+    log: build/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+  - iteration: 8
+    feature: power-of-two-gemm-node-integration
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: none
+    lesson: >-
+      The shift-encoded descriptor and chunk arithmetic integrates with the
+      complete TH16 GEMM node without changing the tiled numerical result.
+    test: >-
+      python tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_node_improve --sim vcs --params
+      "TEST=GEMM_CONTROL_TIMING_M4_QCOL M=4 N=256 K=256 QBLK=32
+      WTRANS=0 QDIR=0" --extra-sim-args "+NO_WAVE" --timeout 900
+    evidence:
+      - TILED OUTPUT CHECK PASSED: compared 1024 elements
+      - CONFIG GEMM PASSED: M=4 N=256 K=256 WTRANS=0 QDIR=0
+    log: >-
+      build/hw/unittest/gemm_node_improve/logs/
+      sim_GEMM_CONTROL_TIMING_M4_QCOL.log
+  - iteration: 9
+    feature: power-of-two-fpint-xrt-vcs-matrix
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: none
+    lesson: >-
+      Exact shift substitution preserves all four FPINT numerical results and
+      keeps end-to-end kernel cycles within 1.2 percent of the frozen baseline.
+    test: >-
+      ci/run_target_gemm.sh run --config
+      configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      --n 256 --k 256 --qblk 32 --wtrans 0 --wload 8 --perf 3,
+      for M in {4,256} and QDIR in {0,1}
+    evidence:
+      - M4 QCOL PASSED, kernel cycles 6325
+      - M4 QROW PASSED, kernel cycles 6325
+      - M256 QCOL PASSED, kernel cycles 23438
+      - M256 QROW PASSED, kernel cycles 23438
+    log: /tmp/vortex-gemm-pow2-results
+  - iteration: 10
+    feature: power-of-two-gemm-node-ooc
+    status: timing_fail
+    error_summary: >-
+      OOC synthesis completed without errors or critical warnings.  The exact
+      former Problem-A data path now meets the 7.000 ns clock with WNS
+      +0.735 ns, but the full controller endpoint set still has WNS -0.821 ns
+      on a different acc_launch_ctrl_q to work_tag_q clock-enable path, and the
+      complete node remains limited by the unrelated generic output local-DMA
+      descriptor byte-count path at WNS -4.247 ns.
+    root_cause: >-
+      Shift/mask substitution removed the runtime descriptor/chunk DSP chain,
+      exposing the next controller bottleneck: a high-fanout command acceptance
+      and candidate-selection enable cone into work_tag_q.  The absolute node
+      bottleneck is still the unmodified seg_size * bound0 * bound1 calculation
+      in VX_lmem_dma_misal.
+    fix_applied: >-
+      BND0 and BND2 exponents, fixed beat strides, burst-group count, and chunk
+      limit were used to replace synthesis-visible multiply, divide, and modulo
+      operations with exact shifts and masks without adding a cycle.
+    lesson: >-
+      The power-of-two invariant closes the intended decode-to-chunk data path
+      and removes all 68 DSPs from u_tmem_dma_ctrl, but it is not sufficient to
+      close every control endpoint in that hierarchy at 7 ns.
+    evidence:
+      synthesis_status: pass
+      synthesis_errors: 0
+      synthesis_critical_warnings: 0
+      node_setup_wns_ns: -4.247
+      controller_setup_wns_ns: -0.821
+      chunk_register_setup_wns_ns: 0.665
+      chunk_data_setup_wns_ns: 0.735
+      chunk_data_path_delay_ns: 6.247
+      chunk_data_logic_levels: 25
+      chunk_data_source: >-
+        u_gemm_node/u_tmem_dma_ctrl/decode_cmd_q_reg[instr][3]/C
+      chunk_data_destination: >-
+        u_gemm_node/u_tmem_dma_ctrl/
+        issued_chunk_beats_per_bank_q_reg[3]/D
+    log: build/gemm-node-ooc-7ns-r3/controller_timing.log
+  - iteration: 11
+    timestamp: "2026-08-31 23:58"
+    feature: work-tag-ownership-capture-focused-controller
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      Normal foreground ownership is captured as a four-way registered one-hot
+      token with source-local three-bit tag snapshots in S_SELECT, and the
+      canonical work_tag_q is materialized in the existing S_CAPTURE phase.
+      Prepared release and same-edge chain updates remain independent narrow
+      priority terms.
+    lesson: >-
+      The controller can separate ownership selection from canonical tag
+      materialization without adding an FSM state or changing command accept,
+      activation, or completion behavior.
+    test: >-
+      python tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_tmem_dma_ctrl --sim vcs --params
+      TB_PENDING_DEPTH=4 --timeout 600
+    evidence:
+      - TEST PASSED
+      - foreground one-hot/materialization assertions remained quiet
+      - prepared-release and chain stale-tag assertions remained quiet
+    log: build/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+  - iteration: 12
+    timestamp: "2026-09-01 00:00"
+    feature: work-tag-ownership-capture-gemm-node-integration
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: none
+    lesson: >-
+      Registered foreground tag ownership integrates with the complete TH16
+      GEMM node without changing the tiled numerical result.
+    test: >-
+      python tools/verify_rtl.py unittest --path
+      build/hw/unittest/gemm_node_improve --sim vcs --params
+      "TEST=GEMM_CONTROL_TIMING_M4_QCOL M=4 N=256 K=256 QBLK=32
+      WTRANS=0 QDIR=0" --extra-sim-args "+NO_WAVE" --timeout 900
+    evidence:
+      - TILED OUTPUT CHECK PASSED: compared 1024 elements
+      - CONFIG GEMM PASSED: M=4 N=256 K=256 WTRANS=0 QDIR=0
+    log: >-
+      build/hw/unittest/gemm_node_improve/logs/
+      sim_GEMM_CONTROL_TIMING_M4_QCOL.log
+  - iteration: 13
+    timestamp: "2026-09-01 00:08"
+    feature: work-tag-ownership-capture-fpint-xrt-vcs-matrix
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: none
+    lesson: >-
+      Moving normal foreground tag materialization into the existing S_CAPTURE
+      phase preserves all four FPINT numerical results and keeps end-to-end
+      kernel performance within 1.20 percent of the frozen baseline.
+    test: >-
+      ci/run_target_gemm.sh run --config
+      configs/improve_th16_tcol32_hwexp_dcache_sxbar_f16_bigmem_w8.sh
+      --n 256 --k 256 --qblk 32 --wtrans 0 --wload 8 --perf 3,
+      for M in {4,256} and QDIR in {0,1}
+    evidence:
+      - M4 QCOL PASSED, kernel cycles 6325, baseline delta +1.200 percent
+      - M4 QROW PASSED, kernel cycles 6325, baseline delta 0.000 percent
+      - M256 QCOL PASSED, kernel cycles 23438, baseline delta -0.009 percent
+      - M256 QROW PASSED, kernel cycles 23440, baseline delta +0.013 percent
+    log: /tmp/vortex-gemm-worktag-results
+  - iteration: 14
+    timestamp: "2026-09-01 00:38"
+    feature: work-tag-ownership-capture-ooc
+    status: pass
+    error_summary: none
+    root_cause: not_applicable
+    fix_applied: >-
+      Captured normal foreground ownership as registered one-hot metadata and
+      source-local tags, then materialized work_tag_q in the existing
+      S_CAPTURE phase while retaining narrow direct release and chain updates.
+    lesson: >-
+      The same-cycle completion/dependency/command-accept path can be preserved
+      while removing the broad ownership cone from work_tag_q.  The complete
+      controller now meets 7 ns, although the unrelated generic output local
+      DMA still prevents the complete GEMM node timing gate from passing.
+    evidence:
+      synthesis_status: pass
+      synthesis_errors: 0
+      synthesis_critical_warnings: 0
+      clock_period_ns: 7.000
+      node_setup_wns_ns: -4.244
+      controller_setup_wns_ns: 0.053
+      work_tag_setup_wns_ns: 0.814
+      work_tag_data_path_delay_ns: 6.082
+      work_tag_logic_levels: 24
+      work_tag_source: >-
+        u_gemm_node/u_VX_gemm_unit_v2/u_compute_core/
+        acc_launch_ctrl_q_reg[is_load]/C
+      work_tag_destination: u_gemm_node/u_tmem_dma_ctrl/work_tag_q_reg[0]/CE
+      controller_worst_destination: >-
+        u_gemm_node/u_tmem_dma_ctrl/work_is_store_q_reg/D
+    log: build/gemm-node-ooc-7ns-r4/controller_timing.log
+completion_audit:
+  focused_dma_controller: pass
+  focused_request_reservation: pass
+  integrated_gemm_node: pass
+  fpint_matrix_numerical: pass
+  fpint_kernel_cycle_gate: pass
+  reservation_instances: 4
+  output_ldma_reservation: absent
+  reservation_depth: 2
+  reservation_fallthrough: absent
+  downstream_ready_in_upstream_ready: absent
+  legacy_issue_desc_q: absent
+  legacy_shadow_build_request: absent
+  completion_to_decode_request: absent
+  completion_controlled_wide_descriptor_mux: absent
+  timing_exceptions_added: false
+  ooc_manifest_dry_run: pass
+  ooc_manifest_path: /tmp/gemm-node-ooc-check.mqg05o/manifest
+  ooc_define_count: 35
+  ooc_source_count: 129
+  ooc_header_count: 15
+  ooc_ip_count: 9
+  ooc_part: xcu55c-fsvh2892-2L-e
+  ooc_clock_period_ns: 7.000
+  ooc_synthesis_run: true
+  ooc_synthesis_status: pass
+  ooc_timing_gate: fail
+  ooc_controller_timing_gate: pass
+  ooc_setup_wns_ns: -4.244
+  ooc_setup_tns_ns: -28266.230
+  ooc_setup_failing_endpoints: 16784
+  ooc_worst_data_path_delay_ns: 11.179
+  ooc_worst_logic_levels: 39
+  ooc_result_dir: build/gemm-node-ooc-7ns-r4
+  ooc_controller_setup_wns_ns: 0.053
+  ooc_work_tag_setup_wns_ns: 0.814
+  ooc_work_tag_data_path_delay_ns: 6.082
+  ooc_work_tag_logic_levels: 24
+  ooc_chunk_register_setup_wns_ns: 0.665
+  ooc_chunk_data_setup_wns_ns: 0.735
+  ooc_chunk_data_path_delay_ns: 6.247
+  ooc_chunk_data_logic_levels: 25
+  ooc_utilization:
+    total_luts: 298903
+    logic_luts: 298693
+    lutrams: 68
+    ffs: 155275
+    ramb36: 124
+    ramb18: 17
+    uram: 124
+    dsp: 2298
+    tmem_dma_ctrl: {luts: 20761, ffs: 11752, dsp: 0}
+    read_request_reservations: {instances: 4, luts: 566, ffs: 16}
+ooc_iterations:
+  - iteration: 1
+    status: compile_error
+    error_summary: >-
+      Vivado OOC RTL elaboration failed because VX_pe_tree_new imported an
+      undeclared VX_utils_pkg.
+    root_cause: >-
+      The OOC sources.list omitted hw/rtl/verification/VX_utils_pkg.sv or did
+      not place it before VX_pe_tree_new.sv.
+    fix_applied: >-
+      Added cf_math_util_pkg.sv and VX_utils_pkg.sv in dependency order before
+      VX_pe_tree_new.sv in the OOC source manifest.
+    synthesis_log: >-
+      build/gemm-node-ooc-7ns/project/gemm_node_ooc.runs/synth_1/runme.log
+  - iteration: 2
+    status: timing_fail
+    error_summary: >-
+      Vivado OOC synthesis completed with zero errors and zero critical
+      warnings, but the 7.000 ns setup gate failed with WNS -4.253 ns and
+      16,565 failing endpoints (report_timing_summary TNS -31,165.650 ns).
+    root_cause: >-
+      The absolute worst path is the output local-DMA command path from the
+      child command queue through the unpipelined seg_size * bound0 * bound1
+      descriptor byte-count calculation into write_bytes_remaining_r.  The
+      targeted Problem-A family is also still critical: decode_cmd_q feeds
+      channel decode, division/multiplication and chunk arithmetic in one
+      cycle before issued_chunk_beats_per_bank_q/shadow_chunk_beats_q, with
+      42 logic levels and WNS -4.117 ns on the worst reported member.
+    fix_applied: none
+    lesson: >-
+      Registering decode ownership removed the completion-controlled wide
+      selection chain, but it did not pipeline the descriptor/chunk arithmetic
+      itself.  Meeting 7 ns requires a separate arithmetic pipeline boundary;
+      the four depth-two request reservations are not in the top-100 path list
+      and consume only 566 LUTs and 16 FFs in total.
+    evidence:
+      synthesis_status: pass
+      synthesis_errors: 0
+      synthesis_critical_warnings: 0
+      clock_period_ns: 7.000
+      setup_wns_ns: -4.253
+      setup_tns_ns: -31165.650
+      setup_failing_endpoints: 16565
+      worst_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_ctrl/g_child_scheduler[4].u_child_cmd_queue/
+          g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_sync_ram/
+          g_no_wren.g_bram.g_write_first.ram_reg_7/CLKARDCLK
+        destination: >-
+          u_gemm_node/u_tmem_subsystem/u_ldma_output/
+          write_bytes_remaining_r_reg[63]/D
+        data_path_delay_ns: 11.188
+        logic_levels: 39
+      problem_a_path:
+        source: u_gemm_node/u_tmem_dma_ctrl/decode_cmd_q_reg[instr][3]/C
+        destination: >-
+          u_gemm_node/u_tmem_dma_ctrl/
+          issued_chunk_beats_per_bank_q_reg[28]/D
+        setup_wns_ns: -4.117
+        data_path_delay_ns: 11.099
+        logic_levels: 42
+    reports:
+      timing_summary: >-
+        build/gemm-node-ooc-7ns-r2/post_synth_setup_timing_summary.rpt
+      timing_paths: >-
+        build/gemm-node-ooc-7ns-r2/post_synth_setup_timing_paths.rpt
+      utilization: build/gemm-node-ooc-7ns-r2/post_synth_utilization.rpt
+      methodology: build/gemm-node-ooc-7ns-r2/post_synth_methodology.rpt
+      synthesis_log: >-
+        build/gemm-node-ooc-7ns-r2/project/gemm_node_ooc.runs/synth_1/runme.log
+  - iteration: 3
+    status: timing_fail
+    error_summary: >-
+      Exact TH16 U55C OOC synthesis again completed cleanly, but the complete
+      GEMM node setup gate remains negative at 7.000 ns.  The former Problem-A
+      decode/chunk data path itself now has positive slack.
+    root_cause: >-
+      The remaining absolute worst path is unchanged in structure and belongs
+      to the generic output local DMA.  Within u_tmem_dma_ctrl, the new worst
+      path is a command/candidate clock-enable cone into work_tag_q rather than
+      BND0/BND2 descriptor arithmetic.
+    fix_applied: >-
+      Replaced the chunkable GEMM DMA runtime multiply/divide/modulo operations
+      with power-of-two shift and mask equivalents and added simulation/static
+      checks for every assumed invariant.
+    lesson: >-
+      The targeted data path improved from WNS -4.117 ns, 11.099 ns delay, and
+      42 logic levels to WNS +0.735 ns, 6.247 ns delay, and 25 logic levels.
+      Controller DSP usage fell from 68 to zero.  A separate change is required
+      to close the newly exposed work_tag_q enable path.
+    evidence:
+      synthesis_status: pass
+      synthesis_errors: 0
+      synthesis_critical_warnings: 0
+      clock_period_ns: 7.000
+      setup_wns_ns: -4.247
+      setup_tns_ns: -31600.992
+      setup_failing_endpoints: 23804
+      worst_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_ctrl/g_child_scheduler[4].u_child_cmd_queue/
+          g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_sync_ram/
+          g_no_wren.g_bram.g_write_first.ram_reg_7/CLKARDCLK
+        destination: >-
+          u_gemm_node/u_tmem_subsystem/u_ldma_output/
+          write_bytes_remaining_r_reg[63]/D
+        data_path_delay_ns: 11.182
+        logic_levels: 39
+      controller_worst_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_unit_v2/u_compute_core/
+          acc_launch_ctrl_q_reg[is_load]_rep__12/C
+        destination: u_gemm_node/u_tmem_dma_ctrl/work_tag_q_reg[0]/CE
+        setup_wns_ns: -0.821
+        data_path_delay_ns: 7.717
+        logic_levels: 29
+      problem_a_data_path:
+        source: u_gemm_node/u_tmem_dma_ctrl/decode_cmd_q_reg[instr][3]/C
+        destination: >-
+          u_gemm_node/u_tmem_dma_ctrl/
+          issued_chunk_beats_per_bank_q_reg[3]/D
+        setup_wns_ns: 0.735
+        data_path_delay_ns: 6.247
+        logic_levels: 25
+      utilization_delta_vs_iteration_2:
+        node: {luts: 1798, ffs: -1828, dsp: -68}
+        tmem_dma_ctrl: {luts: 225, ffs: -814, dsp: -68}
+    reports:
+      timing_summary: >-
+        build/gemm-node-ooc-7ns-r3/post_synth_setup_timing_summary.rpt
+      timing_paths: >-
+        build/gemm-node-ooc-7ns-r3/post_synth_setup_timing_paths.rpt
+      controller_timing: >-
+        build/gemm-node-ooc-7ns-r3/post_synth_controller_setup_timing_paths.rpt
+      problem_a_timing: >-
+        build/gemm-node-ooc-7ns-r3/post_synth_chunk_data_setup_timing_paths.rpt
+      utilization: build/gemm-node-ooc-7ns-r3/post_synth_utilization.rpt
+      methodology: build/gemm-node-ooc-7ns-r3/post_synth_methodology.rpt
+      synthesis_log: >-
+        build/gemm-node-ooc-7ns-r3/project/gemm_node_ooc.runs/synth_1/runme.log
+  - iteration: 4
+    status: control_timing_pass
+    error_summary: >-
+      Vivado OOC synthesis completed cleanly.  The complete GEMM node gate
+      remains negative on the unrelated generic output local-DMA byte-count
+      path, but every u_tmem_dma_ctrl sequential endpoint now meets the 7 ns
+      setup constraint.
+    root_cause: >-
+      Before this iteration, same-cycle cmd_valid influenced prepare conflict,
+      foreground ownership priority, and every conditional work_tag_q writer
+      in one clock-enable cone.  Source-local tag snapshots and a registered
+      one-hot ownership token remove the final ownership suffix while leaving
+      completion, dependency release, and command acceptance combinational.
+    fix_applied: >-
+      Materialized normal foreground work_tag_q in S_CAPTURE from registered
+      ownership metadata.  Prepared-release and same-edge chain updates remain
+      direct narrow terms, with simulation assertions checking stale tags.
+    lesson: >-
+      work_tag_q improved from WNS -0.821 ns, 7.717 ns delay, and 29 logic
+      levels to WNS +0.814 ns, 6.082 ns delay, and 24 logic levels.  The new
+      controller worst endpoint is work_is_store_q/D at WNS +0.053 ns, so the
+      requested controller setup gate passes without an issue-cycle penalty.
+    evidence:
+      synthesis_status: pass
+      synthesis_errors: 0
+      synthesis_critical_warnings: 0
+      clock_period_ns: 7.000
+      setup_wns_ns: -4.244
+      setup_tns_ns: -28266.230
+      setup_failing_endpoints: 16784
+      worst_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_ctrl/g_child_scheduler[4].u_child_cmd_queue/
+          g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_sync_ram/
+          g_no_wren.g_bram.g_write_first.ram_reg_7/CLKARDCLK
+        destination: >-
+          u_gemm_node/u_tmem_subsystem/u_ldma_output/
+          write_bytes_remaining_r_reg[63]/D
+        data_path_delay_ns: 11.179
+        logic_levels: 39
+      controller_worst_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_unit_v2/u_compute_core/
+          acc_launch_ctrl_q_reg[is_load]/C
+        destination: u_gemm_node/u_tmem_dma_ctrl/work_is_store_q_reg/D
+        setup_wns_ns: 0.053
+        data_path_delay_ns: 6.929
+        logic_levels: 28
+      work_tag_path:
+        source: >-
+          u_gemm_node/u_VX_gemm_unit_v2/u_compute_core/
+          acc_launch_ctrl_q_reg[is_load]/C
+        destination: u_gemm_node/u_tmem_dma_ctrl/work_tag_q_reg[0]/CE
+        setup_wns_ns: 0.814
+        data_path_delay_ns: 6.082
+        logic_levels: 24
+      utilization_delta_vs_iteration_3:
+        node: {luts: -2850, ffs: 127, dsp: 0}
+        tmem_dma_ctrl: {luts: -506, ffs: 73, dsp: 0}
+    reports:
+      timing_summary: >-
+        build/gemm-node-ooc-7ns-r4/post_synth_setup_timing_summary.rpt
+      timing_paths: >-
+        build/gemm-node-ooc-7ns-r4/post_synth_setup_timing_paths.rpt
+      controller_timing: >-
+        build/gemm-node-ooc-7ns-r4/post_synth_controller_setup_timing_paths.rpt
+      work_tag_timing: >-
+        build/gemm-node-ooc-7ns-r4/post_synth_work_tag_setup_timing_paths.rpt
+      utilization: build/gemm-node-ooc-7ns-r4/post_synth_utilization.rpt
+      methodology: build/gemm-node-ooc-7ns-r4/post_synth_methodology.rpt
+      synthesis_log: >-
+        build/gemm-node-ooc-7ns-r4/project/gemm_node_ooc.runs/synth_1/runme.log

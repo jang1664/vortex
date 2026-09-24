@@ -1,0 +1,80 @@
+task: target-gemm-wload8
+status: completed
+spec: agent-tasks/target-gemm-wload8/target-gemm-wload8-spec.md
+current_phase: verification_complete
+iteration_limit: 10
+iterations:
+  - id: 1
+    phase: implementation
+    status: completed
+    changes:
+      - "Guarded MXU_WLOAD_NUM defaults so the config's command-line value 8 is preserved."
+      - "Added GEMM_IMPROVE hierarchy support to FSDB_GEMM_ONLY."
+      - "Implemented ci/run_target_gemm.sh with run/trace/fsdb/fsdb-gemm/fsdb-trace modes, fixed M=4, manifests, timeouts, and simv fingerprinting."
+    static_checks:
+      - "bash -n ci/run_target_gemm.sh: pass"
+      - "all five mode dry-runs: pass"
+      - "git diff --check: pass"
+    test_request: "xrt-vcs blackbox fpint_gemm_ffn_hw -m 4 -n 256 -k 256 -q 32 -t 0 -d 1, perf class 3"
+    blackbox_result:
+      status: failed
+      artifact_dir: "build/run_logs/target_gemm/20260804-164934_run_m4_n256_k256_q32_t0_d1_pid3658083"
+      evidence:
+        - "VCS compile/elaboration preserved -DMXU_WLOAD_NUM=8 and completed."
+        - "Kernel completed without RTL fatal, stall, psum underflow, or read/write conflict."
+        - "Numerical comparison failed 1012/1024; first mismatch got 0x432c versus expected 0x4405."
+        - "Counters: input fire=256, weight fire=512, output fire=32, accum write=256."
+    verifier_result:
+      status: conditional_fail_fixed
+      findings:
+        - "Verifier confirmed preprocessing, five mode policies, FSDB hierarchy, and diff checks."
+        - "Runner now rejects attempts to override fixed M=4 or MXU_WLOAD_NUM=8 through escape-hatch options."
+  - id: 2
+    phase: diagnosis
+    status: completed
+    hypothesis: "The normal TMEM weight DMA path remains 64 bytes wide while GEMM_WEIGHT_DATA_SIZE is 128 bytes at WLOAD8, truncating or zero-extending half of every weight beat."
+    changes:
+      - "Connected the normal weight DMA through a GEMM_WEIGHT_DATA_SIZE-wide destination interface."
+      - "Allowed divisible source/destination widths in VX_lmem_dma_misal, using the existing aligned DMA conversion window."
+    blackbox_result:
+      status: failed_residual
+      artifact_dir: "build/run_logs/target_gemm/20260804-165622_run_m4_n256_k256_q32_t0_d1_pid3758529"
+      evidence:
+        - "Weight fire count fell from 512 to the expected 256."
+        - "Numerical mismatches fell from 1012/1024 to 10/1024."
+        - "All residual mismatches are got=0x2500 versus expected=0x2519 at m={0,3}, n={35,42,49,56,63}."
+        - "No RTL fatal, stall, psum underflow, or accumulator read/write conflict."
+  - id: 3
+    phase: diagnosis
+    status: completed
+    hypothesis: "The ten low-magnitude residual mismatches may be independent FP16 reference/rounding behavior rather than WLOAD8 packing, because payload count/order now matches and all large mismatches disappeared."
+    control_result:
+      status: confirmed
+      artifact: "build/run_logs/target_gemm/wload4_control_m4_n256_k256/wrapper.log"
+      evidence:
+        - "An otherwise identical WLOAD4 M4/N256/K256 run produced the exact same ten indices and 0x2500 versus 0x2519 values."
+        - "Hardware-order QROW modeling rounds activation*scale to FP16 before the dot product and reproduces RTL 0x2500 bit-exactly."
+        - "The old host reference accumulated activation*(weight-zp)*scale in FP32 and produced 0x2519."
+    next_action: "Correct the QROW host reference operation order instead of loosening numerical tolerance."
+    changes:
+      - "Updated only the QDIR_ROW host reference to round activation*scale at the RTL FP16 boundary before the dot product."
+      - "Kept QDIR_COL and generic comparison tolerance unchanged."
+    final_blackbox_result:
+      status: passed
+      artifact_dir: "build/run_logs/target_gemm/20260804-170219_run_m4_n256_k256_q32_t0_d1_pid3845043"
+      evidence:
+        - "M4/N256/K256/Q32/T0/D1 with MXU_WLOAD_NUM=8: PASSED."
+        - "weight fire=256, stall=0; input fire=256, output fire=32."
+        - "psum_underflow=0 and rd_wr_conflict=0."
+    fsdb_smoke_result:
+      status: passed
+      artifact_dir: "build/run_logs/target_gemm/20260804-170403_fsdb-gemm_m4_n32_k32_q32_t0_d1_pid3870929"
+      evidence:
+        - "fsdb-gemm M4/N32/K32: PASSED."
+        - "GEMM-only FSDB created at target_gemm.fsdb (about 1.4 MiB)."
+pitfalls:
+  - "VX_config.vh currently defines MXU_WLOAD_NUM internally without an external-override guard, so a command-line -DMXU_WLOAD_NUM=8 can be redefined back to 4."
+  - "run_black.sh exports FSDB_DUMP=1 for xrt-vcs-sim; DISABLE_FSDB controls runtime dumping, while switching dump-related defines still requires a matching simv rebuild."
+notes:
+  - "2026-08-04: User selected the hwexp dcache sxbar f16 bigmem WLOAD8 config and fixed M=4 as the optimization target."
+  - "2026-08-04: The completed target runner detects mode/config/source changes and external simv configuration changes before reuse."

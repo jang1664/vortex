@@ -1,0 +1,1 @@
+addSignal -h 15 /tb_VX_gemm_unit_v2/u_dut/*

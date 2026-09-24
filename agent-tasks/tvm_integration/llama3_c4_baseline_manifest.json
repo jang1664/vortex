@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-28T19:28:00+09:00",
+  "scope": {
+    "model": "llama3-8b",
+    "hardware_backend": "C4_IMPROVE",
+    "layout_policies": [
+      "alone",
+      "fused"
+    ],
+    "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+    "rtl_changes_allowed": false
+  },
+  "source_baselines": {
+    "vortex": {
+      "path": "/home/jaeyongjang/project.local/vortex_base",
+      "branch": "fpint",
+      "revision": "cdbbbdb57344d80d6b86ee9446322fe492f0d54f"
+    },
+    "tvm": {
+      "path": "/home/jaeyongjang/project.local/tvm",
+      "branch": "fi_system",
+      "revision": "5c52a5efa5081a3ea8e3a7fa0c53c40e6943fe75"
+    }
+  },
+  "target": {
+    "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/vortex_afu.xclbin",
+    "xclbin_sha256": "f661b63a88db967072c1cfdf63373bfa7ad36e87d7002d6eba28d8fa036da6bf",
+    "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/manifest.json",
+    "manifest_sha256": "b98cff1c68e117f2b3696f22b0bd75856c45dbdb3bf4d9848c4a94aa4046734b",
+    "config_stamp_sha256": "d8aa62ce84284d59449d4d392ef7c492f1c92bb046ed6d6ee4e632d18d8c2104",
+    "profile_fingerprint": "62540fb747aa762d5cfab874e36d1daac7119d8cff3e32d659a104b460383256",
+    "clock_mhz": 100,
+    "layout_abi_version": 2,
+    "gemm_abi_version": 2,
+    "gemm_mode": "improve",
+    "tcu_mode": "none",
+    "num_threads": 32,
+    "num_dma_channels": 8,
+    "dma_tiles": {
+      "m": 128,
+      "n": 128,
+      "k": 128
+    },
+    "mxu": {
+      "row": 32,
+      "column": 32,
+      "column_tile": 32
+    },
+    "tmem_bank_size_bytes": 65536,
+    "local_memory_bytes": 1048576,
+    "platform_memory_address_bits": 34,
+    "platform_memory_banks": 32
+  },
+  "model_geometry": {
+    "decoder_layers": 32,
+    "hidden_size": 4096,
+    "intermediate_size": 14336,
+    "query_heads": 32,
+    "key_value_heads": 8,
+    "query_heads_per_key_value_head": 4,
+    "head_dimension": 128,
+    "vocabulary_size": 128256,
+    "maximum_position": 8192,
+    "rms_norm_epsilon": 1e-05,
+    "rope_theta": 500000.0
+  },
+  "quantization": {
+    "weight": {
+      "scheme": "signed_asymmetric_int4",
+      "group_size": 32,
+      "scale_dtype": "float16",
+      "zero_point_dtype": "int16"
+    },
+    "key": {
+      "scheme": "signed_asymmetric_int4",
+      "group_size": 128,
+      "scale_dtype": "float16",
+      "zero_point_dtype": "int16"
+    },
+    "value": {
+      "scheme": "signed_asymmetric_int4",
+      "group_size": 128,
+      "scale_dtype": "float16",
+      "zero_point_dtype": "int16"
+    }
+  },
+  "cases": {
+    "S1": {
+      "batch": 1,
+      "prompt_length": 1,
+      "decode_steps": 3,
+      "cache_capacity": 8,
+      "workload_sha256": {
+        "alone": "2f905dd9b5dd901fd0e44416d7b3bfbffe07c6f41dd94d746f2ec5b37fe8fa27",
+        "fused": "1cd5d1943ec9ce35e05b26ef426a97e7105163a3dbc3da7fc572533179323d3b"
+      }
+    },
+    "S2": {
+      "batch": 1,
+      "prompt_length": 7,
+      "decode_steps": 3,
+      "cache_capacity": 16,
+      "workload_sha256": {
+        "alone": "e083c1714e97e60918ad69a4a6a33258819b5fdd577246632bc0cb27cbc963b4",
+        "fused": "df13658023ba18f62938f6d8990528f0259c40f6b189d66d19852ebbad482151"
+      }
+    },
+    "S3": {
+      "batch": 2,
+      "prompt_length": 1,
+      "decode_steps": 3,
+      "cache_capacity": 8,
+      "workload_sha256": {
+        "alone": "19eb750dcc1984e46d6bdc99240f591eee6133cd972259bc43514f5fce7e9add",
+        "fused": "98e0a9d343c06c63b2a2a2e6391b5b7a0370dde7d4723bd9466009aa621205c5"
+      }
+    },
+    "S4": {
+      "batch": 2,
+      "prompt_length": 7,
+      "decode_steps": 3,
+      "cache_capacity": 16,
+      "workload_sha256": {
+        "alone": "f70cbd46f3ea3a97bac3aab3322a5250bade43402d4f12d00087dac8b7f58097",
+        "fused": "0638488c1c46d1a6d3ff803d5fe6d69592ae1a99bb82ea577073a7ba06f2a3c1"
+      }
+    }
+  },
+  "workload_contract": {
+    "generator": "tools/workload/gen_kernel_cfgs.py",
+    "stages": [
+      "prefill",
+      "generation"
+    ],
+    "qblk": 32,
+    "out_tokens": 3,
+    "alone_variant": "all_fpint_gemm_improve_alone_layout_spinquant_all_asym_wkv4",
+    "fused_variant": "all_fpint_gemm_improve_fused_layout_spinquant_all_asym_wkv4",
+    "alone_kernel_records_per_case": 172,
+    "fused_kernel_records_per_case": 96,
+    "semantic_roles": [
+      "input_layernorm",
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "rope_q",
+      "rope_k",
+      "spinquant_r3_q_hadamard",
+      "spinquant_r3_k_hadamard",
+      "kv_cache_quant_rope_k_to_attn_qkT",
+      "kv_cache_quant_v_cache_to_attn_pv",
+      "attn_qkT",
+      "attn_softmax",
+      "attn_pv",
+      "attn_head_concat",
+      "o_proj",
+      "residual_attn",
+      "post_attention_layernorm",
+      "gate_proj",
+      "up_proj",
+      "mlp_silu",
+      "mlp_elmul",
+      "spinquant_r4_mlp_hadamard",
+      "down_proj",
+      "residual_ffn"
+    ]
+  },
+  "estimated_resident_bytes": {
+    "one_decoder_layer_w4_payload_and_qparams": 136314880,
+    "decoder_stack_w4_payload_and_qparams": 4362076160,
+    "w4_lm_head_payload_and_qparams": 328335360,
+    "fp16_token_embedding": 1050673152,
+    "full_model_parameters": 5741084672,
+    "S1_cache": 278528,
+    "S2_cache": 557056,
+    "S3_cache": 557056,
+    "S4_cache": 1114112
+  },
+  "host_capacity_observation": {
+    "observed_at": "2026-08-28T19:28:00+09:00",
+    "available_memory_bytes_approx": 325343395840,
+    "workspace_filesystem_available_bytes_approx": 140660178944,
+    "result": "sufficient_for_synthetic_parameter_and_cache_artifacts"
+  },
+  "host_baseline_tests": {
+    "workload_generator": "38 passed",
+    "spinquant_layer_decode_stack": "75 passed and 4 subtests passed"
+  }
+}

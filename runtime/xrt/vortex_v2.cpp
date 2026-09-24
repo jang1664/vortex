@@ -446,6 +446,9 @@ public:
     case VX_CAPS_MEM_BANK_SIZE:
       _value = 1ull << (20 + ((dev_caps_ >> 51) & 0x1f));
       break;
+    case VX_CAPS_NUM_BARRIERS:
+      _value = (dev_caps_ >> 56) & 0xff;
+      break;
     default:
       fprintf(stderr, "[VXDRV] Error: invalid caps id: %d\n", caps_id);
       std::abort();

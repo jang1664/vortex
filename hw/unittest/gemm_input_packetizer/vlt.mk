@@ -1,0 +1,14 @@
+compile: setup
+	verilator -Wall --binary --timing -Wno-fatal \
+		$(VL_INCDIRS) $(DEFINES) \
+		--top-module $(TOP_MODULE) $(RTLS) $(TB) $(PARAMS) \
+		2>&1 | tee $(COMPILE_LOG)
+
+lint: setup
+	verilator -Wall --lint-only --timing -Wno-fatal \
+		$(VL_INCDIRS) $(DEFINES) \
+		--top-module $(TOP_MODULE) $(RTLS) $(TB) $(PARAMS) \
+		2>&1 | tee logs/lint.log
+
+sim: compile
+	./obj_dir/V$(TOP_MODULE) 2>&1 | tee $(SIM_LOG)

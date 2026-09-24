@@ -53,6 +53,7 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
 
   VX_dma_node #(
     .INSTANCE_ID(INSTANCE_ID),
+    .MAX_DIMS(1),
     .N_MASTER(1),
     .NUM_ENTRIES(NUM_ENTRIES),
     .LMEM_NUM_LANES_P(1)

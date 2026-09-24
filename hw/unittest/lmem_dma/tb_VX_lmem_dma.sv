@@ -658,6 +658,7 @@ module tb_VX_lmem_dma import VX_gpu_pkg::*; ();
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
     $display("=====================================================================");
+    $display("TEST PASSED");
   endtask
 
   task sim_power();

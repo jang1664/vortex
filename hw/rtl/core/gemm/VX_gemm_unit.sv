@@ -413,7 +413,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     //
     // With WLOAD_AT_ONCE the weight broadcast is 4096 bits wide
     // (u_ldma_weight slot mux -> req_data.data -> u_weight_regs.mem[row][col])
-    // driving a 32x32x2x4 FF array spread across SLR1; post-route showed
+    // driving a 32x32x4x4 FF array spread across SLR1; post-route showed
     // 97% route delay on this path (logic 0.27ns / route 10.55ns ->
     // -1.13ns WNS at 100 MHz). One pipeline stage on the consumer side
     // lets the placer co-locate the registered driver with the destination
@@ -441,7 +441,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .reset     (reset),
         .valid_in  (w_lmem_bus_if.req_valid),
         .ready_in  (w_lmem_bus_if.req_ready),
-        .data_in   ({w_lmem_bus_if.req_data.data, w_lmem_bus_if.req_data.addr[1:0]}),
+        .data_in   ({w_lmem_bus_if.req_data.data,
+                     w_lmem_bus_if.req_data.addr[1:0]}),
         .ready_out (mxu_w_pipe_ready_out),
         .data_out  ({mxu_weight, wreg_load_dir, wreg_wr_idx}),
         .valid_out (mxu_w_pipe_valid_out)
@@ -450,7 +451,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign mxu_ready_weight = mxu_w_pipe_valid_out & mxu_w_pipe_ready_out;
 `else
     assign mxu_weight              = w_lmem_bus_if.req_data.data;
-    assign w_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.wreg_use_idx != w_lmem_bus_if.req_data.addr[0]);
+    assign w_lmem_bus_if.req_ready = ~in_flight
+        | (gemm_unit_ctrl.wreg_use_idx != w_lmem_bus_if.req_data.addr[0]);
     assign mxu_ready_weight        = w_lmem_bus_if.req_valid & w_lmem_bus_if.req_ready;
     assign wreg_wr_idx             = w_lmem_bus_if.req_data.addr[0];
     assign wreg_load_dir           = w_lmem_bus_if.req_data.addr[1];

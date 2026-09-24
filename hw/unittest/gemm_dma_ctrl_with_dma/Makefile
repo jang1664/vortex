@@ -22,6 +22,7 @@ TOP_MODULE := tb_VX_gemm_dma_ctrl_with_dma
 
 TB   := $(SRC_DIR)/tb_VX_gemm_dma_ctrl_with_dma.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_lookahead_if.sv \
 				$(RTL_DIR)/core/VX_gemm_dma_ctrl_with_dma.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_gearbox.sv \

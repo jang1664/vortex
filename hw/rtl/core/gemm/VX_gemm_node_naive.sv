@@ -67,6 +67,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_PSUM_LANES   = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int WEIGHT_ROW_BYTES  = (`MXU_COL * `W_BIT_WIDTH) / 8;
+    localparam int WEIGHT_ROW_LANES  = WEIGHT_ROW_BYTES / LSU_WORD_SIZE;
     localparam int I_LANE_OFFSET     = 0;
     localparam int W_LANE_OFFSET     = 8;
     localparam int SZ_LANE_OFFSET    = 16;
@@ -88,7 +90,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
+    localparam int GEMM_ACC_LMEM_READ_SLOTS = 8;
+    localparam int GEMM_PSUM_PHYS_RESPONSE_SLOTS = 4;
+    localparam int GEMM_PSUM_RESPONSE_FIFO_DEPTH = 2;
     localparam logic [7:0] OP_NOTIFY = 8'hF1;
+    localparam logic [7:0] OP_SC_LDMA_MXU = 8'h21;
+    localparam logic [7:0] OP_ZP_LDMA_MXU = 8'h24;
     // -------------------------------------------------------------------------
     // Data-path interfaces
     // -------------------------------------------------------------------------
@@ -106,6 +113,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
     ) sz_gemm_bus_if ();
     VX_mem_bus_if # (
+      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
+      .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
+    ) scale_gemm_bus_if (), zero_gemm_bus_if ();
+    VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) o_gemm_bus_if ();
@@ -119,8 +130,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) final_wide_bus_if (), final_raw_bus_if ();
 
-    // Each 64-byte tensor path has eight logical 64-bit lanes. The physical
-    // mapping below applies a tensor-specific offset and wraps at LMEM_NUM_PORTS.
+    // Input, quantization, and output paths have eight logical LSU lanes.
+    // Weight has MXU_WLOAD_NUM packed-row lanes. The physical mapping below
+    // applies a tensor-specific offset and wraps at LMEM_NUM_PORTS.
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -187,7 +199,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Control interfaces
     // -------------------------------------------------------------------------
-    VX_gemm_unit_if gemm_unit_if ();
+    VX_gemm_unit_v2_if gemm_unit_v2_if ();
+    VX_gemm_acc_if #(
+      .ADDRW(`MEM_ADDR_WIDTH),
+      .DATAW(`GEMM_PSUM_DATA_SIZE * 8),
+      .TAGW(32)
+    ) gemm_acc_if ();
     VX_gemm_ctrl_naive_if gemm_ctrl_if ();
 
     // LMEM DMA control interfaces (issued by gemm_ctrl)
@@ -232,6 +249,17 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
+    logic [31:0] w_load_value_r [2];
+    logic [31:0] s_load_value_r [2];
+    logic [31:0] z_load_value_r [2];
+    logic weight_install_bank_r;
+    logic [31:0] weight_install_target_r;
+    logic [31:0] weight_install_writes_remaining_r;
+    logic qparam_install_bank_r;
+    logic [31:0] qparam_install_target_r;
+    logic [7:0] qparam_install_opcode_r;
+    logic [31:0] qparam_install_writes_remaining_r;
+
     // Completion/synchronization path from child nodes to gemm_ctrl.
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
@@ -250,23 +278,14 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Control-plane wiring
     // -------------------------------------------------------------------------
 
-    // GEMM unit direct control bridge (temporary/static mapping).
-    // TODO: replace with full command mapping from gemm_ctrl.
-    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
-    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-    assign gemm_unit_if.gemm_unit_ctrl.output_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.stride;
-    // The output DMA describes LMEM as NT-wide padded rows. Keep the direct
-    // final-output writer on that same layout even when the active MXU tile is
-    // narrower, otherwise successive rows overlap and the store DMA samples
-    // every NT/MXU_NT-th row.
-    assign gemm_unit_if.gemm_unit_ctrl.output_mem_stride = NT * 2;
-    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
-    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
-    assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
-    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1];
-    assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
-    assign gemm_unit_if.gemm_unit_ctrl.is_last           = gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
+    wire packetizer_cmd_valid = gemm_ctrl_if.input_read_ctrl.start
+                              && !input_is_notify;
+    wire packetizer_cmd_ready;
+    wire packetizer_active;
+    wire packetizer_ingress_complete;
+    wire packetizer_command_done;
+    wire [31:0] packetizer_active_work_seq;
+    wire common_writeback_drained;
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
@@ -280,14 +299,25 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
     
-    assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
-    assign input_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign input_dma_ctrl_if.bounds[2]       = 32'd1;
+    assign input_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.eff_mt);
+    assign input_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
+    assign input_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
     assign input_dma_ctrl_if.seg_size        = MXU_KT*16/8;
     assign input_dma_ctrl_if.reg_idx         = '0;
     assign input_dma_ctrl_if.reg_value       = '0;
-    assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
+    assign input_dma_ctrl_if.prepare = 1'b0;
+    assign input_dma_ctrl_if.prepare_max_beats = '0;
+    assign input_dma_ctrl_if.scheduler_work_seq
+        = gemm_ctrl_if.input_read_ctrl.cmd.work_seq;
+    // Keep the legacy child serialization: a following NOTIFY may not pass
+    // the active compute command until its physical LMEM lanes have drained.
+    assign gemm_ctrl_if.input_read_flag.idle
+        = !input_notify_pending_r
+       && !packetizer_active
+       && packetizer_cmd_ready
+       && input_dma_ctrl_if.idle;
     logic [`LMEM_NUM_PORTS-1:0] gemm_wr_lane_fire;
     logic [`LMEM_NUM_PORTS-1:0] psum_wr_lane_fire;
     for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire
@@ -297,6 +327,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
                                   && psum_wr_lmem_bus_if[p].req_data.flags[0];
     end
     localparam int PSUM_LANE_BANK_SET_BIT = `CLOG2(GEMM_PSUM_LANES);
+    localparam int GEMM_WR_LANE_COUNT_W = $bits(gemm_wr_lane_pending_r);
     logic [`LMEM_NUM_PORTS-1:0] psum_wr_lane_fire_by_set [2];
     for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire_by_set
       assign psum_wr_lane_fire_by_set[0][p] = psum_wr_lane_fire[p]
@@ -304,15 +335,24 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       assign psum_wr_lane_fire_by_set[1][p] = psum_wr_lane_fire[p]
           && psum_wr_lmem_bus_if[p].req_data.addr[PSUM_LANE_BANK_SET_BIT];
     end
-    wire [6:0] psum_wr_lane_pop_by_set [2];
-    assign psum_wr_lane_pop_by_set[0] = 7'($countones(psum_wr_lane_fire_by_set[0]));
-    assign psum_wr_lane_pop_by_set[1] = 7'($countones(psum_wr_lane_fire_by_set[1]));
-    wire [11:0] gemm_wr_lane_push = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready ? 12'd16 : 12'd0)
-                                       + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready ? 12'd8 : 12'd0);
-    wire [11:0] gemm_wr_lane_pop = 12'($countones(gemm_wr_lane_fire));
+    wire [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_lane_pop_by_set [2];
+    assign psum_wr_lane_pop_by_set[0]
+        = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[0]));
+    assign psum_wr_lane_pop_by_set[1]
+        = GEMM_WR_LANE_COUNT_W'($countones(psum_wr_lane_fire_by_set[1]));
+    wire [GEMM_WR_LANE_COUNT_W-1:0] gemm_wr_lane_push
+        = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready
+            ? GEMM_WR_LANE_COUNT_W'(GEMM_PSUM_LANES) : '0)
+        + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready
+            ? GEMM_WR_LANE_COUNT_W'(GEMM_OUTPUT_LANES) : '0);
+    wire [GEMM_WR_LANE_COUNT_W-1:0] gemm_wr_lane_pop
+        = GEMM_WR_LANE_COUNT_W'($countones(gemm_wr_lane_fire));
     wire gemm_write_queues_empty = (gemm_wr_lane_pending_r == 0);
     wire gemm_done_drained = gemm_done_pending_r && gemm_write_queues_empty;
-    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_done_drained;
+    assign common_writeback_drained = gemm_done_drained;
+    assign gemm_ctrl_if.input_read_flag.done
+        = input_notify_pending_r ? input_notify_fire
+                                 : packetizer_command_done;
 
     assign gemm_sync_if[0].valid   = input_notify_pending_r;
     assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
@@ -328,7 +368,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       end else begin
         gemm_wr_lane_pending_r <= gemm_wr_lane_pending_r
                                 + gemm_wr_lane_push - gemm_wr_lane_pop;
-        if (gemm_unit_if.done)
+        if (gemm_unit_v2_if.tagged_writeback)
           gemm_done_pending_r <= 1'b1;
         else if (gemm_done_drained)
           gemm_done_pending_r <= 1'b0;
@@ -355,13 +395,18 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.bounds[0]      = weight_wtrans ? MXU_NT : MXU_KT;
-    assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
-    assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
+    assign weight_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(weight_wtrans ? MXU_NT : MXU_KT);
+    assign weight_dma_ctrl_if.bounds[1]      = `DMA_BOUND_WIDTH'(1);
+    assign weight_dma_ctrl_if.bounds[2]      = `DMA_BOUND_WIDTH'(1);
     
     assign weight_dma_ctrl_if.seg_size       = weight_wtrans ? ((MXU_KT*4)/8) : ((MXU_NT*4)/8);  //int4, bytes
     assign weight_dma_ctrl_if.reg_idx        = '0;
     assign weight_dma_ctrl_if.reg_value      = '0;
+    assign weight_dma_ctrl_if.prepare = 1'b0;
+    assign weight_dma_ctrl_if.prepare_max_beats = '0;
+    assign weight_dma_ctrl_if.scheduler_work_seq
+        = gemm_ctrl_if.weight_read_ctrl.cmd.work_seq;
     assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
     assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
 
@@ -374,7 +419,35 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         weight_notify_pending_r <= 1'b0;
         weight_notify_reg_idx_r <= '0;
         weight_notify_value_r   <= '0;
+        weight_install_bank_r <= 1'b0;
+        weight_install_target_r <= '0;
+        weight_install_writes_remaining_r <= '0;
+        w_load_value_r[0] <= '0;
+        w_load_value_r[1] <= '0;
       end else begin
+        if (weight_dma_ctrl_if.start && weight_dma_ctrl_if.idle) begin
+          weight_install_bank_r
+              <= gemm_ctrl_if.weight_read_ctrl.cmd.flags[1];
+          weight_install_target_r
+              <= gemm_ctrl_if.weight_read_ctrl.cmd.work_seq;
+          weight_install_writes_remaining_r
+              <= (gemm_ctrl_if.weight_read_ctrl.cmd.instr[31:8]
+                + `GEMM_WEIGHT_DATA_SIZE - 1)
+               / `GEMM_WEIGHT_DATA_SIZE;
+        end
+        if (gemm_unit_v2_if.weight_register_write) begin
+          if (weight_install_writes_remaining_r == 1)
+            w_load_value_r[weight_install_bank_r]
+                <= weight_install_target_r;
+          if (weight_dma_ctrl_if.start && weight_dma_ctrl_if.idle)
+            weight_install_writes_remaining_r
+                <= (gemm_ctrl_if.weight_read_ctrl.cmd.instr[31:8]
+                  + `GEMM_WEIGHT_DATA_SIZE - 1)
+                 / `GEMM_WEIGHT_DATA_SIZE;
+          else if (weight_install_writes_remaining_r != 0)
+            weight_install_writes_remaining_r
+                <= weight_install_writes_remaining_r - 1'b1;
+        end
         if (weight_notify_req) begin
           weight_notify_pending_r <= 1'b1;
           weight_notify_reg_idx_r <= gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data[31:0];
@@ -410,11 +483,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
 
     // QCOL: bounds0 = ceil(MXU_KT/qblk) groups per MXU-K chunk
     // QROW: bounds0 = MXU_KT rows
-    assign quant_param_dma_ctrl_if.bounds[0]       = sz_qdir
-                                                   ? MXU_KT
-                                                   : ceil_div_log2(MXU_KT, gemm_ctrl_if.qblk_orig);
-    assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
-    assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
+    assign quant_param_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(sz_qdir
+                          ? MXU_KT
+                          : ceil_div_log2(MXU_KT,
+                                          gemm_ctrl_if.qblk_orig));
+    assign quant_param_dma_ctrl_if.bounds[1]       = `DMA_BOUND_WIDTH'(1);
+    assign quant_param_dma_ctrl_if.bounds[2]       = `DMA_BOUND_WIDTH'(1);
 
     // QCOL: seg_size = MXU_NT * 2 (one group row, all N columns)
     // QROW: seg_size = NG_mxu * 2 (one K row, NG_mxu group columns)
@@ -422,8 +497,26 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
                                                              : (MXU_NT * 16 / 8);
     assign quant_param_dma_ctrl_if.reg_idx         = '0;
     assign quant_param_dma_ctrl_if.reg_value       = '0;
+    assign quant_param_dma_ctrl_if.prepare = 1'b0;
+    assign quant_param_dma_ctrl_if.prepare_max_beats = '0;
+    assign quant_param_dma_ctrl_if.scheduler_work_seq
+        = gemm_ctrl_if.quant_param_read_ctrl.cmd.work_seq;
     assign gemm_ctrl_if.quant_param_read_flag.idle = sz_notify_pending_r ? 1'b0 : quant_param_dma_ctrl_if.idle;
     assign gemm_ctrl_if.quant_param_read_flag.done = sz_notify_pending_r ? sz_notify_fire : quant_param_dma_ctrl_if.done;
+
+    // One common-core register write is produced per destination segment when
+    // the segment is narrower than the register bus (QROW), or per register
+    // beat when it is at least as wide (QCOL).  Command bytes alone therefore
+    // undercount QROW's byte-enabled sub-beat writes.
+    wire [31:0] qparam_install_cmd_bytes
+        = {8'd0, gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[31:8]};
+    wire [31:0] qparam_install_writes_per_segment
+        = (quant_param_dma_ctrl_if.seg_size
+            + `GEMM_SCALE_ZERO_DATA_SIZE - 1)
+        / `GEMM_SCALE_ZERO_DATA_SIZE;
+    wire [31:0] qparam_install_expected_writes
+        = quant_param_dma_ctrl_if.bounds[0]
+        * qparam_install_writes_per_segment;
 
     assign gemm_sync_if[2].valid   = sz_notify_pending_r;
     assign gemm_sync_if[2].reg_idx = sz_notify_pending_r ? sz_notify_reg_idx_r : 32'd0;
@@ -434,7 +527,51 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         sz_notify_pending_r <= 1'b0;
         sz_notify_reg_idx_r <= '0;
         sz_notify_value_r   <= '0;
+        qparam_install_bank_r <= 1'b0;
+        qparam_install_target_r <= '0;
+        qparam_install_opcode_r <= '0;
+        qparam_install_writes_remaining_r <= '0;
+        s_load_value_r[0] <= '0;
+        s_load_value_r[1] <= '0;
+        z_load_value_r[0] <= '0;
+        z_load_value_r[1] <= '0;
       end else begin
+        if (quant_param_dma_ctrl_if.start
+         && quant_param_dma_ctrl_if.idle) begin
+          qparam_install_bank_r
+              <= gemm_ctrl_if.quant_param_read_ctrl.cmd.flags[1];
+          qparam_install_target_r
+              <= gemm_ctrl_if.quant_param_read_ctrl.cmd.work_seq;
+          qparam_install_opcode_r
+              <= gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0];
+          qparam_install_writes_remaining_r
+              <= qparam_install_expected_writes;
+        end
+        if (output_dma_ctrl_if.start && output_dma_ctrl_if.idle) begin
+          assert ((output_mt_eff >> `DMA_BOUND_WIDTH) == 0)
+            else $fatal(1, "%s: output bound exceeds %0d bits",
+                        INSTANCE_ID, `DMA_BOUND_WIDTH);
+        end
+        if (((qparam_install_opcode_r == OP_SC_LDMA_MXU)
+          && gemm_unit_v2_if.scale_register_write)
+         || ((qparam_install_opcode_r == OP_ZP_LDMA_MXU)
+          && gemm_unit_v2_if.zero_point_register_write)) begin
+          if (qparam_install_writes_remaining_r == 1) begin
+            if (qparam_install_opcode_r == OP_SC_LDMA_MXU)
+              s_load_value_r[qparam_install_bank_r]
+                  <= qparam_install_target_r;
+            else
+              z_load_value_r[qparam_install_bank_r]
+                  <= qparam_install_target_r;
+          end
+          if (quant_param_dma_ctrl_if.start
+           && quant_param_dma_ctrl_if.idle)
+            qparam_install_writes_remaining_r
+                <= qparam_install_expected_writes;
+          else if (qparam_install_writes_remaining_r != 0)
+            qparam_install_writes_remaining_r
+                <= qparam_install_writes_remaining_r - 1'b1;
+        end
         if (sz_notify_req) begin
           sz_notify_pending_r <= 1'b1;
           sz_notify_reg_idx_r <= gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data[31:0];
@@ -463,13 +600,17 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
-    assign output_dma_ctrl_if.bounds[1] = 32'd1;
-    assign output_dma_ctrl_if.bounds[2] = 32'd1;
+    assign output_dma_ctrl_if.bounds[0]
+        = `DMA_BOUND_WIDTH'(output_mt_eff);
+    assign output_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'(1);
+    assign output_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
 
     assign output_dma_ctrl_if.seg_size         = output_nt_eff * 16 / 8;
     assign output_dma_ctrl_if.reg_idx           = '0;
     assign output_dma_ctrl_if.reg_value         = '0;
+    assign output_dma_ctrl_if.prepare = 1'b0;
+    assign output_dma_ctrl_if.prepare_max_beats = '0;
+    assign output_dma_ctrl_if.scheduler_work_seq = '0;
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
 
@@ -537,9 +678,17 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     initial begin
       if (`LMEM_NUM_PORTS < 8)
         $fatal(1, "%s: GEMM_NAIVE requires at least eight LMEM ports", INSTANCE_ID);
-      if (GEMM_INPUT_LANES != 8 || GEMM_WEIGHT_LANES != 8
-       || GEMM_SZ_LANES != 8 || GEMM_OUTPUT_LANES != 8)
-        $fatal(1, "%s: GEMM_NAIVE tensor paths must each be 64 bytes", INSTANCE_ID);
+      if (GEMM_INPUT_LANES != 8 || GEMM_SZ_LANES != 8
+       || GEMM_OUTPUT_LANES != 8)
+        $fatal(1, "%s: GEMM_NAIVE Input/SZ/Output paths must each be 64 bytes", INSTANCE_ID);
+      if ((WEIGHT_ROW_BYTES % LSU_WORD_SIZE) != 0
+       || (GEMM_WEIGHT_LANES != (`MXU_WLOAD_NUM * WEIGHT_ROW_LANES)))
+        $fatal(1, "%s: invalid GEMM_NAIVE Weight shape bytes=%0d lanes=%0d wload=%0d row_lanes=%0d",
+               INSTANCE_ID, `GEMM_WEIGHT_DATA_SIZE, GEMM_WEIGHT_LANES,
+               `MXU_WLOAD_NUM, WEIGHT_ROW_LANES);
+      if (GEMM_WEIGHT_LANES > `LMEM_NUM_PORTS)
+        $fatal(1, "%s: Weight lanes=%0d exceed LMEM ports=%0d",
+               INSTANCE_ID, GEMM_WEIGHT_LANES, `LMEM_NUM_PORTS);
     end
 
     // Tensor logical lane j maps to (tensor_offset + j) % LMEM_NUM_PORTS.
@@ -681,7 +830,14 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       );
 
       `ASSIGN_VX_MEM_BUS_IF(psum_rd_lmem_bus_if[i], rd_out_if[0]);
-      `ASSIGN_VX_MEM_BUS_IF(psum_wr_lmem_bus_if[i], wr_out_if[0]);
+      // The production core keeps the full PSUM_ARB_TAG_WIDTH here, while a
+      // focused hierarchy may expose the narrower PSUM_LMEM_TAG_WIDTH because
+      // writes have no response routing to recover.  Adapt only the tag: a
+      // packed req_data assignment across those widths shifts addr/flags and
+      // destroys both the bank-set bit and the PSUM-write marker.
+      `ASSIGN_VX_MEM_BUS_IF_EX(psum_wr_lmem_bus_if[i], wr_out_if[0],
+          $bits(psum_wr_lmem_bus_if[i].req_data.tag),
+          PSUM_ARB_TAG_WIDTH, UUID_WIDTH);
     end
 
     // -------------------------------------------------------------------------
@@ -726,16 +882,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .lane_bus_if (o_lane_mem_if)
     );
 
-    // Capture no-backpressure GEMM result pulses before per-lane scattering.
-    VX_elastic_buffer #(
-      .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
-    ) psum_wr_queue (
-      .clk(clk), .reset(reset),
-      .valid_in(psum_wr_raw_bus_if.req_valid), .data_in(psum_wr_raw_bus_if.req_data),
-      .ready_in(psum_wr_raw_bus_if.req_ready),
-      .valid_out(psum_wr_wide_bus_if.req_valid), .data_out(psum_wr_wide_bus_if.req_data),
-      .ready_out(psum_wr_wide_bus_if.req_ready)
-    );
+    // The common core already owns a bounded, backpressurable result queue.
+    // Keep no second wide write queue in the node: adapter acceptance now
+    // means the existing lane splitter accepted the destination transaction.
+    assign psum_wr_wide_bus_if.req_valid = psum_wr_raw_bus_if.req_valid;
+    assign psum_wr_wide_bus_if.req_data = psum_wr_raw_bus_if.req_data;
+    assign psum_wr_raw_bus_if.req_ready = psum_wr_wide_bus_if.req_ready;
     assign psum_wr_raw_bus_if.rsp_valid = psum_wr_wide_bus_if.rsp_valid;
     assign psum_wr_raw_bus_if.rsp_data = psum_wr_wide_bus_if.rsp_data;
     assign psum_wr_wide_bus_if.rsp_ready = psum_wr_raw_bus_if.rsp_ready;
@@ -760,14 +912,20 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // current cycle; these counters extend ordering across the write queue.
     // Each write remains pending until all sixteen marked narrow lanes complete
     // their downstream PSUM request handshakes.
-    logic [6:0] psum_wr_pending_by_set [2];
+    // A set may accumulate more than seven complete 16-lane writes while the
+    // downstream LMEM arbiter is busy.  Use the authoritative aggregate
+    // pending-counter width so 8*16 cannot alias to "empty" and admit a stale
+    // PSUM read before those writes reach LMEM.
+    logic [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_pending_by_set [2];
     wire psum_wr_pending_push = psum_wr_raw_bus_if.req_valid
                               && psum_wr_raw_bus_if.req_ready;
-    wire [6:0] psum_wr_lane_push_by_set [2];
+    wire [GEMM_WR_LANE_COUNT_W-1:0] psum_wr_lane_push_by_set [2];
     assign psum_wr_lane_push_by_set[0] = (psum_wr_pending_push
-        && ~psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+        && ~psum_wr_raw_bus_if.req_data.addr[0])
+        ? GEMM_WR_LANE_COUNT_W'(GEMM_PSUM_LANES) : '0;
     assign psum_wr_lane_push_by_set[1] = (psum_wr_pending_push
-        && psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+        && psum_wr_raw_bus_if.req_data.addr[0])
+        ? GEMM_WR_LANE_COUNT_W'(GEMM_PSUM_LANES) : '0;
     wire psum_rd_pending_conflict
         = psum_rd_raw_bus_if.req_valid
        && (psum_wr_pending_by_set[psum_rd_raw_bus_if.req_data.addr[0]] != 0);
@@ -776,18 +934,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
        && psum_wr_raw_bus_if.req_valid
        && (psum_wr_raw_bus_if.req_data.addr[0]
         == psum_rd_raw_bus_if.req_data.addr[0]);
-    // Same-set reads may be outstanding concurrently, but drain them before
-    // switching physical bank sets. Different LMEM banks can return in a
-    // different order across lanes, which cannot form one coherent wide rsp.
-    logic [6:0] psum_rd_outstanding_r;
-    logic psum_rd_active_set_r;
-    wire psum_rd_set_switch_block
-        = psum_rd_raw_bus_if.req_valid
-       && (psum_rd_outstanding_r != 0)
-       && (psum_rd_raw_bus_if.req_data.addr[0] != psum_rd_active_set_r);
     wire psum_rd_order_block = psum_rd_pending_conflict
-                             || psum_rd_current_conflict
-                             || psum_rd_set_switch_block;
+                             || psum_rd_current_conflict;
 
     assign psum_rd_wide_bus_if.req_valid = psum_rd_raw_bus_if.req_valid
                                          && ~psum_rd_order_block;
@@ -798,45 +946,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign psum_rd_raw_bus_if.rsp_data = psum_rd_wide_bus_if.rsp_data;
     assign psum_rd_wide_bus_if.rsp_ready = psum_rd_raw_bus_if.rsp_ready;
 
-    wire psum_rd_wide_req_fire = psum_rd_wide_bus_if.req_valid
-                               && psum_rd_wide_bus_if.req_ready;
-    wire psum_rd_wide_rsp_fire = psum_rd_wide_bus_if.rsp_valid
-                               && psum_rd_wide_bus_if.rsp_ready;
-
     always_ff @(posedge clk) begin
       if (reset) begin
         psum_wr_pending_by_set[0] <= '0;
         psum_wr_pending_by_set[1] <= '0;
-        psum_rd_outstanding_r <= '0;
-        psum_rd_active_set_r <= 1'b0;
       end else begin
-        if (psum_rd_wide_req_fire && (psum_rd_outstanding_r == 0))
-          psum_rd_active_set_r <= psum_rd_wide_bus_if.req_data.addr[0];
-
-        case ({psum_rd_wide_req_fire, psum_rd_wide_rsp_fire})
-          2'b10: begin
-            if (~&psum_rd_outstanding_r)
-              psum_rd_outstanding_r <= psum_rd_outstanding_r + 1'b1;
-          end
-          2'b01: begin
-            if (psum_rd_outstanding_r != 0)
-              psum_rd_outstanding_r <= psum_rd_outstanding_r - 1'b1;
-            else
-              psum_rd_outstanding_r <= '0;
-          end
-          default: psum_rd_outstanding_r <= psum_rd_outstanding_r;
-        endcase
-
-`ifndef SYNTHESIS
-        assert (!(psum_rd_wide_req_fire && ~psum_rd_wide_rsp_fire
-               && (&psum_rd_outstanding_r)))
-          else $fatal(1, "PSUM read outstanding overflow: count=%0d",
-                      psum_rd_outstanding_r);
-        assert (!(psum_rd_wide_rsp_fire && ~psum_rd_wide_req_fire
-               && (psum_rd_outstanding_r == 0)))
-          else $fatal(1, "PSUM read outstanding underflow");
-`endif
-
         for (integer s = 0; s < 2; ++s) begin
           if (psum_wr_lane_pop_by_set[s]
               <= (psum_wr_pending_by_set[s] + psum_wr_lane_push_by_set[s])) begin
@@ -857,15 +971,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       end
     end
 
-    VX_elastic_buffer #(
-      .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
-    ) final_wr_queue (
-      .clk(clk), .reset(reset),
-      .valid_in(final_raw_bus_if.req_valid), .data_in(final_raw_bus_if.req_data),
-      .ready_in(final_raw_bus_if.req_ready),
-      .valid_out(final_wide_bus_if.req_valid), .data_out(final_wide_bus_if.req_data),
-      .ready_out(final_wide_bus_if.req_ready)
-    );
+    assign final_wide_bus_if.req_valid = final_raw_bus_if.req_valid;
+    assign final_wide_bus_if.req_data = final_raw_bus_if.req_data;
+    assign final_raw_bus_if.req_ready = final_wide_bus_if.req_ready;
     assign final_raw_bus_if.rsp_valid = final_wide_bus_if.rsp_valid;
     assign final_raw_bus_if.rsp_data = final_wide_bus_if.rsp_data;
     assign final_wide_bus_if.rsp_ready = final_raw_bus_if.rsp_ready;
@@ -878,9 +986,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .lane_bus_if(final_lane_mem_if)
     );
 
-    VX_mem_bus_split #(
+    VX_gemm_psum_read_ooo_join #(
       .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .PHYS_RESPONSE_SLOTS(GEMM_PSUM_PHYS_RESPONSE_SLOTS),
+      .RESPONSE_FIFO_DEPTH(GEMM_PSUM_RESPONSE_FIFO_DEPTH)
     ) psum_rd_lane_split (
       .clk(clk), .reset(reset), .wide_bus_if(psum_rd_wide_bus_if),
       .lane_bus_if(psum_rd_lane_mem_if)
@@ -894,28 +1004,54 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
 
 `ifndef SYNTHESIS
+    // LMEM consumes only its local word-address bits even though these lane
+    // buses carry the full system word address.  Responses are associated by
+    // the ACC adapter's read-slot tag because different slots may reorder.
     localparam int PSUM_SHADOW_WORDS = (1 << `LMEM_LOG_SIZE) / LSU_WORD_SIZE;
+    localparam int PSUM_SHADOW_ADDRW = `CLOG2(PSUM_SHADOW_WORDS);
+    localparam int PSUM_READ_SLOTW = `LOG2UP(GEMM_ACC_LMEM_READ_SLOTS);
     for (genvar l = 0; l < GEMM_PSUM_LANES; ++l) begin : g_psum_shadow_check
       logic [LSU_WORD_SIZE*8-1:0] psum_shadow [0:PSUM_SHADOW_WORDS-1];
-      logic [$clog2(PSUM_SHADOW_WORDS)-1:0] rd_addr_q[64];
-      integer rd_head, rd_tail;
+      logic [GEMM_ACC_LMEM_READ_SLOTS-1:0] rd_slot_valid;
+      logic [PSUM_SHADOW_ADDRW-1:0] rd_addr_by_slot [GEMM_ACC_LMEM_READ_SLOTS];
+      logic [GEMM_BASE_TAG_WIDTH-1:0] rd_tag_by_slot [GEMM_ACC_LMEM_READ_SLOTS];
+      wire [PSUM_SHADOW_ADDRW-1:0] wr_shadow_addr
+          = PSUM_SHADOW_ADDRW'(psum_wr_lane_mem_if[l].req_data.addr);
+      wire [PSUM_SHADOW_ADDRW-1:0] rd_shadow_addr
+          = PSUM_SHADOW_ADDRW'(psum_rd_lane_mem_if[l].req_data.addr);
+      wire [PSUM_READ_SLOTW-1:0] rd_req_slot
+          = PSUM_READ_SLOTW'(psum_rd_lane_mem_if[l].req_data.tag);
+      wire [PSUM_READ_SLOTW-1:0] rd_rsp_slot
+          = PSUM_READ_SLOTW'(psum_rd_lane_mem_if[l].rsp_data.tag);
       always_ff @(posedge clk) begin
         if (reset) begin
-          rd_head <= 0;
-          rd_tail <= 0;
+          rd_slot_valid <= '0;
+          rd_addr_by_slot <= '{default:'0};
+          rd_tag_by_slot <= '{default:'0};
         end else begin
           if (psum_wr_lane_mem_if[l].req_valid && psum_wr_lane_mem_if[l].req_ready)
-            psum_shadow[psum_wr_lane_mem_if[l].req_data.addr] <= psum_wr_lane_mem_if[l].req_data.data;
+            psum_shadow[wr_shadow_addr] <= psum_wr_lane_mem_if[l].req_data.data;
           if (psum_rd_lane_mem_if[l].req_valid && psum_rd_lane_mem_if[l].req_ready) begin
-            rd_addr_q[rd_tail & 63] <= psum_rd_lane_mem_if[l].req_data.addr;
-            rd_tail <= rd_tail + 1;
+            assert (!rd_slot_valid[rd_req_slot])
+              else $fatal(1, "PSUM LMEM read slot reused while live lane=%0d slot=%0d tag=0x%0h",
+                          l, rd_req_slot, psum_rd_lane_mem_if[l].req_data.tag);
+            rd_slot_valid[rd_req_slot] <= 1'b1;
+            rd_addr_by_slot[rd_req_slot] <= rd_shadow_addr;
+            rd_tag_by_slot[rd_req_slot] <= psum_rd_lane_mem_if[l].req_data.tag;
           end
           if (psum_rd_lane_mem_if[l].rsp_valid && psum_rd_lane_mem_if[l].rsp_ready) begin
-            assert (psum_rd_lane_mem_if[l].rsp_data.data === psum_shadow[rd_addr_q[rd_head & 63]])
+            assert (rd_slot_valid[rd_rsp_slot])
+              else $fatal(1, "PSUM LMEM response has no live read slot lane=%0d slot=%0d tag=0x%0h",
+                          l, rd_rsp_slot, psum_rd_lane_mem_if[l].rsp_data.tag);
+            assert (psum_rd_lane_mem_if[l].rsp_data.tag == rd_tag_by_slot[rd_rsp_slot])
+              else $fatal(1, "PSUM LMEM response tag mismatch lane=%0d slot=%0d got=0x%0h expected=0x%0h",
+                          l, rd_rsp_slot, psum_rd_lane_mem_if[l].rsp_data.tag,
+                          rd_tag_by_slot[rd_rsp_slot]);
+            assert (psum_rd_lane_mem_if[l].rsp_data.data === psum_shadow[rd_addr_by_slot[rd_rsp_slot]])
               else $fatal(1, "PSUM LMEM mismatch lane=%0d addr=0x%0h got=0x%0h expected=0x%0h",
-                          l, rd_addr_q[rd_head & 63], psum_rd_lane_mem_if[l].rsp_data.data,
-                          psum_shadow[rd_addr_q[rd_head & 63]]);
-            rd_head <= rd_head + 1;
+                          l, rd_addr_by_slot[rd_rsp_slot], psum_rd_lane_mem_if[l].rsp_data.data,
+                          psum_shadow[rd_addr_by_slot[rd_rsp_slot]]);
+            rd_slot_valid[rd_rsp_slot] <= 1'b0;
           end
         end
       end
@@ -926,38 +1062,110 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // GEMM compute/control instances
     // -------------------------------------------------------------------------
 
-    // GEMM compute unit
-    VX_gemm_unit #(
-      .INSTANCE_ID(INSTANCE_ID)
-    ) u_VX_gemm_unit (
+    // The packetizer preserves the NAIVE FSM's already-computed row-major
+    // bases/strides as opaque metadata.  Only a real Input handshake advances
+    // the row index; physical LMEM drain is the sole command completion.
+    VX_gemm_input_packetizer #(
+      .INSTANCE_ID({INSTANCE_ID, "_input_packetizer"}),
+      .CONTEXT_DEPTH(4)
+    ) u_input_packetizer (
       .clk(clk),
       .reset(reset),
-      .i_lmem_bus_if(i_gemm_bus_if),
-      .w_lmem_bus_if(w_gemm_bus_if),
-      .sz_lmem_bus_if(sz_gemm_bus_if),
-      .o_lmem_bus_if(o_gemm_bus_if),
-      .psum_rd_lmem_bus_if(psum_rd_raw_bus_if),
-      .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
-      .final_lmem_bus_if(final_raw_bus_if),
-      .gemm_unit_if(gemm_unit_if)
+      .cmd_valid(packetizer_cmd_valid),
+      .cmd_ready(packetizer_cmd_ready),
+      .cmd_packet_count(
+          `GEMM_ACC_MAX_CNT'(gemm_ctrl_if.input_read_ctrl.cmd.eff_mt)),
+      .cmd_acc_rd_base(
+          `MEM_ADDR_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.rs1_data)),
+      .cmd_acc_rd_stride(`MEM_ADDR_WIDTH'(`GEMM_PSUM_DATA_SIZE)),
+      .cmd_acc_wr_base(
+          `MEM_ADDR_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.rs1_data)),
+      .cmd_acc_wr_stride(`MEM_ADDR_WIDTH'(`GEMM_PSUM_DATA_SIZE)),
+      .cmd_final_wr_base(
+          `MEM_ADDR_WIDTH'(gemm_ctrl_if.input_read_ctrl.cmd.stride)),
+      .cmd_final_wr_stride(`MEM_ADDR_WIDTH'(NT * 2)),
+      .cmd_acc_rd_en(gemm_ctrl_if.input_read_ctrl.cmd.flags[2]),
+      .cmd_acc_wr_en(1'b1),
+      .cmd_final_output(gemm_ctrl_if.input_read_ctrl.cmd.flags[3]),
+      .cmd_quant_dir(gemm_ctrl_if.input_read_ctrl.cmd.flags[4]),
+      .cmd_wreg_use_idx(gemm_ctrl_if.input_read_ctrl.cmd.flags[1]),
+      .cmd_sreg_use_idx(gemm_ctrl_if.input_read_ctrl.cmd.flags[1]),
+      .cmd_zreg_use_idx(gemm_ctrl_if.input_read_ctrl.cmd.flags[1]),
+      .cmd_w_load_target(
+          gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[0].target),
+      .cmd_s_load_target(
+          gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[1].target),
+      .cmd_z_load_target(
+          gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[2].target),
+      .cmd_work_seq(gemm_ctrl_if.input_read_ctrl.cmd.work_seq),
+      .input_valid(i_dma_gemm_bus_if.req_valid),
+      .input_ready(i_gemm_bus_if.req_ready),
+      .input_ready_out(i_dma_gemm_bus_if.req_ready),
+      .packet_ctrl(gemm_unit_v2_if.packet_ctrl),
+      .ingress_complete(packetizer_ingress_complete),
+      .completion_valid(common_writeback_drained),
+      .command_done(packetizer_command_done),
+      .command_active(packetizer_active),
+      .active_work_seq(packetizer_active_work_seq)
+    );
+
+    assign gemm_unit_v2_if.input_admission_ready = 1'b1;
+    assign gemm_unit_v2_if.w_load_value[0] = w_load_value_r[0];
+    assign gemm_unit_v2_if.w_load_value[1] = w_load_value_r[1];
+    assign gemm_unit_v2_if.s_load_value[0] = s_load_value_r[0];
+    assign gemm_unit_v2_if.s_load_value[1] = s_load_value_r[1];
+    assign gemm_unit_v2_if.z_load_value[0] = z_load_value_r[0];
+    assign gemm_unit_v2_if.z_load_value[1] = z_load_value_r[1];
+
+    assign i_gemm_bus_if.req_valid = gemm_unit_v2_if.packet_ctrl.valid;
+    assign i_gemm_bus_if.req_data = i_dma_gemm_bus_if.req_data;
+    assign i_dma_gemm_bus_if.rsp_valid = i_gemm_bus_if.rsp_valid;
+    assign i_dma_gemm_bus_if.rsp_data = i_gemm_bus_if.rsp_data;
+    assign i_gemm_bus_if.rsp_ready = i_dma_gemm_bus_if.rsp_ready;
+
+    VX_gemm_compute_core #(
+      .INSTANCE_ID(INSTANCE_ID)
+    ) u_VX_gemm_compute_core (
+      .clk(clk),
+      .reset(reset),
+      .input_bus_if(i_gemm_bus_if),
+      .weight_bus_if(w_gemm_bus_if),
+      .scale_bus_if(scale_gemm_bus_if),
+      .zero_bus_if(zero_gemm_bus_if),
+      .gemm_unit_if(gemm_unit_v2_if),
+      .acc_if(gemm_acc_if),
+      .postprocess_ready(1'b1)
     `ifdef PERF_ENABLE
       ,.perf(gemm_unit_perf)
     `endif
     );
 
-    // load paths: gemm_unit (slave ports) <-> load ldmAs (master ports)
-    `ASSIGN_VX_MEM_BUS_IF(i_gemm_bus_if, i_dma_gemm_bus_if);
+    VX_gemm_acc_lmem #(
+      .ADDRW(`MEM_ADDR_WIDTH),
+      .DATAW(`GEMM_PSUM_DATA_SIZE * 8),
+      .TAGW(32),
+      .LMEM_TAGW(GEMM_BASE_TAG_WIDTH),
+      .READ_SLOTS(GEMM_ACC_LMEM_READ_SLOTS)
+    ) u_VX_gemm_acc_lmem (
+      .clk(clk),
+      .reset(reset),
+      .acc_if(gemm_acc_if),
+      .psum_rd_lmem_bus_if(psum_rd_raw_bus_if),
+      .psum_wr_lmem_bus_if(psum_wr_raw_bus_if),
+      .final_lmem_bus_if(final_raw_bus_if)
+    );
+
+    // load paths: common core (slave ports) <-> load LDMAs (master ports)
     `ASSIGN_VX_MEM_BUS_IF(w_gemm_bus_if, w_dma_gemm_bus_if);
    
     //`ASSIGN_VX_MEM_BUS_IF(sz_gemm_bus_if, sz_dma_gemm_bus_if);
 
     assign sz_gemm_bus_if.req_valid  = sz_dma_gemm_bus_if.req_valid;
-    //assign sz_gemm_bus_if.req_data   = sz_dma_gemm_bus_if.req_data;
     assign sz_dma_gemm_bus_if.req_ready  = sz_gemm_bus_if.req_ready;
-    assign sz_dma_gemm_bus_if.rsp_valid  = sz_gemm_bus_if.rsp_valid;
-    assign sz_dma_gemm_bus_if.rsp_data   = sz_gemm_bus_if.rsp_data;
-    assign sz_gemm_bus_if.rsp_ready  = sz_dma_gemm_bus_if.rsp_ready;
-    
+    assign sz_dma_gemm_bus_if.rsp_valid  = 1'b0;
+    assign sz_dma_gemm_bus_if.rsp_data   = '0;
+    assign sz_gemm_bus_if.rsp_ready  = 1'b1;
+
     assign sz_gemm_bus_if.req_data.rw    = sz_dma_gemm_bus_if.req_data.rw;
     assign sz_gemm_bus_if.req_data.addr  = (sz_dma_gemm_bus_if.req_data.addr) << (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE));
     assign sz_gemm_bus_if.req_data.data   = sz_dma_gemm_bus_if.req_data.data;
@@ -965,8 +1173,34 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     assign sz_gemm_bus_if.req_data.flags  = sz_dma_gemm_bus_if.req_data.flags;
     assign sz_gemm_bus_if.req_data.tag    = sz_dma_gemm_bus_if.req_data.tag;
 
-    // output path: gemm_unit (slave port) <-> output ldma (master port)
-    `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, o_dma_gemm_bus_if);
+    wire qparam_owner_valid = (qparam_install_writes_remaining_r != 0);
+    wire qparam_owner_turnover
+        = quant_param_dma_ctrl_if.start && quant_param_dma_ctrl_if.idle;
+    wire [7:0] qparam_route_opcode = qparam_owner_valid
+        ? qparam_install_opcode_r
+        : (qparam_owner_turnover
+            ? gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0]
+            : qparam_install_opcode_r);
+    wire qparam_route_scale = (qparam_route_opcode == OP_SC_LDMA_MXU);
+    wire qparam_route_zero = (qparam_route_opcode == OP_ZP_LDMA_MXU);
+    assign scale_gemm_bus_if.req_valid
+        = sz_gemm_bus_if.req_valid && qparam_route_scale;
+    assign scale_gemm_bus_if.req_data = sz_gemm_bus_if.req_data;
+    assign scale_gemm_bus_if.rsp_ready = 1'b1;
+    assign zero_gemm_bus_if.req_valid
+        = sz_gemm_bus_if.req_valid && qparam_route_zero;
+    assign zero_gemm_bus_if.req_data = sz_gemm_bus_if.req_data;
+    assign zero_gemm_bus_if.rsp_ready = 1'b1;
+    assign sz_gemm_bus_if.req_ready = qparam_route_scale
+        ? scale_gemm_bus_if.req_ready
+        : (qparam_route_zero ? zero_gemm_bus_if.req_ready : 1'b0);
+
+    // The NAIVE FSM writes final rows through the ACC LMEM adapter.  The
+    // legacy internal-ACC output port is intentionally absent from the common
+    // default path; no current NAIVE opcode routes a command to child 3.
+    assign o_dma_gemm_bus_if.req_ready = 1'b0;
+    assign o_dma_gemm_bus_if.rsp_valid = 1'b0;
+    assign o_dma_gemm_bus_if.rsp_data = '0;
 
 `ifdef PERF_ENABLE
     gemm_node_perf_t gemm_ctrl_perf;
@@ -1007,6 +1241,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Input DMA (LMEM -> GEMM, DIR=0)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
+      .MAX_DIMS(1),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE)),
@@ -1025,7 +1260,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .gemm_bus_if(i_dma_gemm_bus_if)
     );
 
-    // Weight gather DMA: four strided 16-byte rows -> one 64-byte GEMM write.
+    // Weight gather DMA: MXU_WLOAD_NUM strided packed rows per GEMM write.
     VX_lmem_weight_gather_dma #(
       .INSTANCE_ID({INSTANCE_ID, "_weight_gather_dma"}),
       .NUM_LANES(GEMM_WEIGHT_LANES),
@@ -1042,6 +1277,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Quant param DMA (LMEM -> GEMM, DIR=0)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
+      .MAX_DIMS(1),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)),
@@ -1063,6 +1299,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // Output DMA (GEMM -> LMEM, DIR=1)
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
+      .MAX_DIMS(1),
       .DIR(1),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),
@@ -1097,6 +1334,101 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .dma_if(dma_if),
       .store_done(output_store_done)
     );
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        if (packetizer_cmd_valid && packetizer_cmd_ready) begin
+          assert (gemm_ctrl_if.input_read_ctrl.cmd.work_seq != 0)
+            else $fatal(1, "%s: NAIVE Input command has no work sequence",
+                        INSTANCE_ID);
+          assert (gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[0].valid
+               && gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[1].valid
+               && gemm_ctrl_if.input_read_ctrl.cmd.input_admit_waits[2].valid)
+            else $fatal(1, "%s: NAIVE Input command lacks exact W/S/Z targets",
+                        INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.weight_register_write) begin
+          assert (weight_install_writes_remaining_r != 0)
+            else $fatal(1, "%s: Weight register write has no command owner",
+                        INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.scale_register_write
+         || gemm_unit_v2_if.zero_point_register_write) begin
+          assert (qparam_install_writes_remaining_r != 0)
+            else $fatal(1, "%s: qparam register write has no command owner",
+                        INSTANCE_ID);
+        end
+        if (sz_gemm_bus_if.req_valid) begin
+          assert (qparam_route_scale || qparam_route_zero)
+            else $fatal(1, "%s: qparam request has no opcode owner",
+                        INSTANCE_ID);
+        end
+        if (qparam_owner_turnover && qparam_owner_valid) begin
+          assert ((qparam_install_writes_remaining_r == 1)
+               && (((qparam_install_opcode_r == OP_SC_LDMA_MXU)
+                    && gemm_unit_v2_if.scale_register_write)
+                || ((qparam_install_opcode_r == OP_ZP_LDMA_MXU)
+                    && gemm_unit_v2_if.zero_point_register_write)))
+            else $fatal(1,
+                "%s: qparam command replaced an unretired opcode owner",
+                INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.scale_register_write) begin
+          assert (qparam_route_scale && !qparam_route_zero)
+            else $fatal(1, "%s: Scale write crossed qparam opcode owner",
+                        INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.zero_point_register_write) begin
+          assert (qparam_route_zero && !qparam_route_scale)
+            else $fatal(1, "%s: ZP write crossed qparam opcode owner",
+                        INSTANCE_ID);
+        end
+        assert (!(gemm_unit_v2_if.scale_register_write
+               && gemm_unit_v2_if.zero_point_register_write))
+          else $fatal(1, "%s: combined qparam request wrote both resources",
+                      INSTANCE_ID);
+        if (quant_param_dma_ctrl_if.start
+         && quant_param_dma_ctrl_if.idle) begin
+          assert ((quant_param_dma_ctrl_if.seg_size != 0)
+               && (qparam_install_expected_writes != 0))
+            else $fatal(1, "%s: qparam command has no install writes",
+                        INSTANCE_ID);
+          assert (qparam_install_cmd_bytes
+               == quant_param_dma_ctrl_if.bounds[0]
+                * quant_param_dma_ctrl_if.seg_size)
+            else $fatal(1,
+                "%s: qparam command bytes disagree with DMA segmentation",
+                INSTANCE_ID);
+        end
+        if (gemm_unit_v2_if.tagged_writeback) begin
+          assert (packetizer_active
+               && (gemm_unit_v2_if.tagged_writeback_work_seq
+                   == packetizer_active_work_seq))
+            else $fatal(1, "%s: writeback notification lost packet ownership",
+                        INSTANCE_ID);
+        end
+        if (packetizer_command_done) begin
+          assert (gemm_write_queues_empty)
+            else $fatal(1, "%s: NAIVE command completed before LMEM lane drain",
+                        INSTANCE_ID);
+        end
+      end
+    end
+`endif
+
+    `UNUSED_VAR (packetizer_ingress_complete)
+    `UNUSED_VAR (gemm_unit_v2_if.tagged_final_writeback)
+    `UNUSED_VAR (gemm_unit_v2_if.last_write)
+    `UNUSED_VAR (gemm_unit_v2_if.pipeline_empty)
+    `UNUSED_VAR (gemm_unit_v2_if.input_ahead_credit)
+    `UNUSED_VAR (gemm_unit_v2_if.input_admit_valid)
+    `UNUSED_VAR (gemm_unit_v2_if.input_admit_work_seq)
+    `UNUSED_VAR (gemm_unit_v2_if.consumer_block_valid)
+    `UNUSED_VAR (gemm_unit_v2_if.consumer_block_resource)
+    `UNUSED_VAR (gemm_unit_v2_if.consumer_block_work_seq)
+    `UNUSED_VAR (gemm_unit_v2_if.consumer_block_bank)
+    `UNUSED_VAR (gemm_unit_v2_if.consumer_block_target)
 
 `ifdef PERF_ENABLE
     // LMEM byte counters: tally per-lane fires across physical LMEM ports.

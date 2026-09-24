@@ -54,7 +54,7 @@ class xrt_sim::Impl {
 public:
   Impl()
     : ram_(nullptr)
-    , dram_sim_(NUM_DMA_CHANNELS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
+    , dram_sim_(NUM_HBM_PORTS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
     , stop_(false)
     , ctrl_fd_(-1)
     , mem_fd_(-1)
@@ -269,7 +269,7 @@ private:
   //   failure is obvious.
   void assert_port_range(uint8_t port_id, uint64_t addr) {
     constexpr uint32_t BANKS_PER_PORT =
-        PLATFORM_MEMORY_NUM_BANKS / NUM_DMA_CHANNELS;
+        PLATFORM_MEMORY_NUM_BANKS / NUM_HBM_PORTS;
     const uint64_t port_base =
         (uint64_t)port_id * BANKS_PER_PORT * mem_bank_size_;
     const uint64_t port_top =
@@ -468,7 +468,7 @@ private:
     // 2. DramSim tick + drain DRAM queues
     dram_sim_.tick();
 
-    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
+    for (int b = 0; b < NUM_HBM_PORTS; ++b) {
       if (!dram_queues_[b].empty()) {
         auto mem_req = dram_queues_[b].front();
         dram_sim_.send_request(mem_req->addr, mem_req->write, [](void* arg) {
@@ -484,7 +484,7 @@ private:
     }
 
     // 3. Send ready responses back to VCS via mem_sock
-    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
+    for (int b = 0; b < NUM_HBM_PORTS; ++b) {
       while (true) {
         auto it = find_ready_mem_rsp(b);
         if (it == pending_mem_reqs_[b].end()) {
@@ -543,9 +543,9 @@ private:
   int mem_fd_;
 
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];  // per HBM bank (32)
-  mem_req_list_t pending_mem_reqs_[NUM_DMA_CHANNELS];      // per AXI port (8)
-  std::queue<mem_req_t*> dram_queues_[NUM_DMA_CHANNELS];   // per AXI port (8)
-  std::queue<aw_state_t> aw_queues_[NUM_DMA_CHANNELS];     // per AXI port (8)
+  mem_req_list_t pending_mem_reqs_[NUM_HBM_PORTS];      // per AXI port
+  std::queue<mem_req_t*> dram_queues_[NUM_HBM_PORTS];   // per AXI port
+  std::queue<aw_state_t> aw_queues_[NUM_HBM_PORTS];     // per AXI port
 };
 
 ///////////////////////////////////////////////////////////////////////////////

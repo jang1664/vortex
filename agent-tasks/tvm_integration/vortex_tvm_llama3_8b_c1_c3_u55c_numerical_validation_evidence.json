@@ -1,0 +1,1748 @@
+{
+  "acceptance_oracle": "gpu_vs_vortex",
+  "acceptance_pass": false,
+  "backend_verdicts": {
+    "C1": "FAIL",
+    "C3": "PASS"
+  },
+  "backends": {
+    "C1": {
+      "cases": {
+        "S1": {
+          "batch_isolation": {
+            "batch_size": 1,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": false
+          },
+          "package": {
+            "identity": {
+              "alias": "C1",
+              "backend_policy": "c1_all_fp16_tcu",
+              "layout_policy": "not_applicable",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 1,
+                "cache_capacity": 8,
+                "prompt_length": 1
+              },
+              "shape_case": "S1",
+              "workload_variant": "all_sgemm_tcu",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C1/S1/package.json",
+            "sha256": "1a9f70e006e8d5fef306867e0561ac0ea3d1037b842e9dd32d2b1f6c976fa1ff"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "d1845ed335f1facefe0a4386a4d69644caf910f6068854c4f63915d19590d7f7",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C1/S1.json",
+            "prompt_token_ids": [
+              [
+                1
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23864,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "09029627bb42612bf310610853bff5f1d290b731ed370018fe4acf7a09a2e419",
+            "tensor_count": 1275
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 652,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    2418.5614693798125,
+                    2192.781034730375,
+                    2191.730966795236,
+                    2189.400402439758
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C1/S1-bytecode-canonical.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4690",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:2a:00.1",
+                "xrt_device_index": "0",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin"
+              },
+              "sha256": "4fb6d526e1e6a4c5ba262a939d24f3af46409694ecbeac1097b807557f12a236",
+              "total_vm_invocation_count": 136
+            },
+            {
+              "allocator": "naive",
+              "canonical": [],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    2418.036264299415,
+                    2191.4257514728233,
+                    2190.5809409786016,
+                    2188.1117396559566
+                  ],
+                  "phase_logits_sha256": [
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                },
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    2417.1957056168467,
+                    2193.8091821875423,
+                    2191.4588430440053,
+                    2193.862227572128
+                  ],
+                  "phase_logits_sha256": [
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C1/S1-bytecode-free-persistent2.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4736",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:2a:00.1",
+                "xrt_device_index": "0",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin"
+              },
+              "sha256": "79b4c5d72db8950ea4191617ea9f2509e0f741dc01263a6f3f920d99d4b1dfd8",
+              "total_vm_invocation_count": 272
+            },
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 652,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    2405.214924111031,
+                    2202.7195550873876,
+                    2204.2704997789115,
+                    2200.3113329475746
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "compiled",
+              "free_running": [],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C1/S1-compiled-canonical.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4738",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin"
+              },
+              "sha256": "e60dacff7f39a7b09f2b9e5b327490b2c60220be057eb218b4a5c1c57712963b",
+              "total_vm_invocation_count": 136
+            }
+          ]
+        },
+        "S2": {
+          "batch_isolation": {
+            "batch_size": 1,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": false
+          },
+          "package": {
+            "identity": {
+              "alias": "C1",
+              "backend_policy": "c1_all_fp16_tcu",
+              "layout_policy": "not_applicable",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 1,
+                "cache_capacity": 16,
+                "prompt_length": 7
+              },
+              "shape_case": "S2",
+              "workload_variant": "all_sgemm_tcu",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C1/S2/package.json",
+            "sha256": "1a7d8ead4dd9e0c3c4c9ead054340b3c00f06e3f2c2d38bfe93a811d54446cd8"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "02509304bb159ae13b7e295c8ee6a049ac8981122cf2098ae21530697eac3c5e",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C1/S2.json",
+            "prompt_token_ids": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23606,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "01710929101ba0a111ae538dc69a0fe775b82946164475e54565e94f3d552bd5",
+            "tensor_count": 1275
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "pooled",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 792,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    3094.3484778422862,
+                    2990.6502060415223,
+                    2984.850640949793,
+                    2979.6035741409287
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    3093.7828276837245,
+                    2984.449491822161,
+                    2991.2955090394244,
+                    2986.232419089414
+                  ],
+                  "phase_logits_sha256": [
+                    "20fd9b481b307869e69d39b46c48926ed23d6b34a1911414ca18ab809ee9b18d",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C1/S2-bytecode-both-pooled.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4749",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:2a:00.1",
+                "xrt_device_index": "0",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin"
+              },
+              "sha256": "05208c15ffcf835915c2cf791527d9a80c9ade798332cfac4ce786e3bbe818c9",
+              "total_vm_invocation_count": 272
+            }
+          ]
+        },
+        "S3": {
+          "batch_isolation": {
+            "batch_size": 2,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": true
+          },
+          "package": {
+            "identity": {
+              "alias": "C1",
+              "backend_policy": "c1_all_fp16_tcu",
+              "layout_policy": "not_applicable",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 2,
+                "cache_capacity": 8,
+                "prompt_length": 1
+              },
+              "shape_case": "S3",
+              "workload_variant": "all_sgemm_tcu",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C1/S3/package.json",
+            "sha256": "508cd9141b74c20d244b73dc407fbc14d59d1b8a1543e92363c094d20c6b6255"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "4768f59db39de8e60733d8039bcd9939627eb8d76f5d2b97a285a69e1593ed4d",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C1/S3.json",
+            "prompt_token_ids": [
+              [
+                1
+              ],
+              [
+                2
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23606,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "4922591638d369a121bdc0d40e08aa504e8dea6deb1b83fa885f839945863f60",
+            "tensor_count": 1275
+          },
+          "required_coverage": {
+            "bytecode_canonical": false,
+            "bytecode_free_running": false,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": []
+        },
+        "S4": {
+          "batch_isolation": {
+            "batch_size": 2,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": true
+          },
+          "package": {
+            "identity": {
+              "alias": "C1",
+              "backend_policy": "c1_all_fp16_tcu",
+              "layout_policy": "not_applicable",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 2,
+                "cache_capacity": 16,
+                "prompt_length": 7
+              },
+              "shape_case": "S4",
+              "workload_variant": "all_sgemm_tcu",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C1/S4/package.json",
+            "sha256": "ffc34396c427ef8167d6cad659f273f9fdbc9d955f4a58488817e3d966f895f9"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "5ec94796b3c6024e6afa5c3decdb9f55bf2847f00ba34ef9458b39d98887f473",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C1/S4.json",
+            "prompt_token_ids": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              [
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23864,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "e6d55557fdfe4baeda20972aded479a907fcb465de7f24964f45d85de6d24c0e",
+            "tensor_count": 1275
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": false,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "pooled",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 280,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 932,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    2875.1426523430273,
+                    3072.411934558302,
+                    3075.8955285521224,
+                    3077.1339389616624
+                  ],
+                  "top1": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": true,
+              "canonical_input_staging": "fixed",
+              "exec_mode": "bytecode",
+              "free_running": [],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C1/S4-bytecode-canonical-fixed.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4773",
+                "slurm_step_id": null,
+                "vortex_shm_path": "/tmp/vortex-c1-s4-canonical-4773",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:2a:00.1",
+                "xrt_device_index": null,
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin"
+              },
+              "sha256": "9d5c980714da2826bca5e0eb202f54073c16dde139081841a5411bd378fd38c8",
+              "total_vm_invocation_count": 136
+            }
+          ]
+        }
+      }
+    },
+    "C3": {
+      "cases": {
+        "S1": {
+          "batch_isolation": {
+            "batch_size": 1,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": false
+          },
+          "package": {
+            "identity": {
+              "alias": "C3",
+              "backend_policy": "c3_all_w4_naive",
+              "layout_policy": "row_major",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "bb6f38efd8b45c9d03c783f03502bce0d1620a880c12499dc60d1bf897acabe5",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "5ceb94c342db6de0642234e9c3724ef459dfc1f1a56b47d6e132aadf9d3e74c4",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 1,
+                "cache_capacity": 8,
+                "prompt_length": 1
+              },
+              "shape_case": "S1",
+              "workload_variant": "all_fpint_gemm_naive",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "a68d686d5006821e5710e077a74797693cc25ba2ccc6e0c9cdcfa975e6b0f42a"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C3/S1/package.json",
+            "sha256": "1153ae608078decbfd45dfb888af503399f018907190a35406118c3baf4aa2dc"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "b373ba0d49315fa70020206253f0d2ab0465fcdaed0e7285a8ccf735b4118e3e",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C3/S1.json",
+            "prompt_token_ids": [
+              [
+                1
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23864,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "675c2e54b78dd5ff197964d35d1babad5204637d8d3d0c22809aa4a1669194f2",
+            "tensor_count": 1262
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 652,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    26.310905220918357,
+                    29.803283956833184,
+                    29.85952534340322,
+                    30.441347608342767
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S1-bytecode-canonical.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4734",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "88a4486ecfea7c04f1d8eea63ee5bea3e6428c7531e27b2901b1476dfe8ad04f",
+              "total_vm_invocation_count": 136
+            },
+            {
+              "allocator": "naive",
+              "canonical": [],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    25.537783537991345,
+                    29.40727813448757,
+                    29.358799090608954,
+                    29.903140240348876
+                  ],
+                  "phase_logits_sha256": [
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                },
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    26.05559336580336,
+                    29.49839099869132,
+                    28.976801767013967,
+                    29.577826691791415
+                  ],
+                  "phase_logits_sha256": [
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S1-bytecode-free-persistent2.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4735",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "f4dbd649bf2fdc43391f25aef13dfe8669e26d2fce8042dcfda509327c6d9a6c",
+              "total_vm_invocation_count": 272
+            },
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 652,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    26.284140299074352,
+                    29.763674965128303,
+                    29.32118542306125,
+                    30.352313701994717
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "compiled",
+              "free_running": [],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S1-compiled-canonical.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4737",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "46716909e74770ed89bb69e770083926f461c0204135388adda263b760e06f03",
+              "total_vm_invocation_count": 136
+            }
+          ]
+        },
+        "S2": {
+          "batch_isolation": {
+            "batch_size": 1,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": false
+          },
+          "package": {
+            "identity": {
+              "alias": "C3",
+              "backend_policy": "c3_all_w4_naive",
+              "layout_policy": "row_major",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "bb6f38efd8b45c9d03c783f03502bce0d1620a880c12499dc60d1bf897acabe5",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "5ceb94c342db6de0642234e9c3724ef459dfc1f1a56b47d6e132aadf9d3e74c4",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 1,
+                "cache_capacity": 16,
+                "prompt_length": 7
+              },
+              "shape_case": "S2",
+              "workload_variant": "all_fpint_gemm_naive",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "a68d686d5006821e5710e077a74797693cc25ba2ccc6e0c9cdcfa975e6b0f42a"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C3/S2/package.json",
+            "sha256": "0091e36e4cfb1c3e369d0d64eb990631c1a58bd5aefbbe6a9f9c6cba771986d3"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "febca0aed44739e2340eb198fa54469b839e6ba6af17b4af8b75cdafa36b4253",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C3/S2.json",
+            "prompt_token_ids": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23864,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "feeb703dc81d79f9c8cdcac6a1404e20ce6a7644655df15cc2c75fa8a4433bd9",
+            "tensor_count": 1262
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 0,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0008635578560642898,
+                  "maximum_relative_l2": 0.0008635578583765112,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 792,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    121.69823745917529,
+                    32.31489209178835,
+                    33.18065652437508,
+                    33.46186388749629
+                  ],
+                  "top1": [
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ],
+                    [
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    120.86217086575925,
+                    31.643108590506017,
+                    32.62011430691928,
+                    33.336908623576164
+                  ],
+                  "phase_logits_sha256": [
+                    "20fd9b481b307869e69d39b46c48926ed23d6b34a1911414ca18ab809ee9b18d",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa",
+                    "313f313fa07c4609185c669763bfee483c44876adb99103bc5e5ebc96319fafa"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S2-bytecode-both.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4739",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "2a4d545cc6d0c2e3342b8359a81c1d700ba257b694890d4da9e36adaee904e13",
+              "total_vm_invocation_count": 272
+            }
+          ]
+        },
+        "S3": {
+          "batch_isolation": {
+            "batch_size": 2,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": true
+          },
+          "package": {
+            "identity": {
+              "alias": "C3",
+              "backend_policy": "c3_all_w4_naive",
+              "layout_policy": "row_major",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "bb6f38efd8b45c9d03c783f03502bce0d1620a880c12499dc60d1bf897acabe5",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "5ceb94c342db6de0642234e9c3724ef459dfc1f1a56b47d6e132aadf9d3e74c4",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 2,
+                "cache_capacity": 8,
+                "prompt_length": 1
+              },
+              "shape_case": "S3",
+              "workload_variant": "all_fpint_gemm_naive",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "a68d686d5006821e5710e077a74797693cc25ba2ccc6e0c9cdcfa975e6b0f42a"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C3/S3/package.json",
+            "sha256": "350427d3828604f3746e6c37a38590419d076b346dc42c3997bbb4c22433baea"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "8e21710b1f9dae538f8f86ce2cdf419c90c662efb4009fa81646d0adba139fd3",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C3/S3.json",
+            "prompt_token_ids": [
+              [
+                1
+              ],
+              [
+                2
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23606,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "76f98be8e1e03a9fa0b345220712d0c776b8a4562f7ebbfeb3771c752e4592e3",
+            "tensor_count": 1262
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "naive",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 280,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0,
+                  "maximum_relative_l2": 0.0,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 932,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    38.411692009307444,
+                    44.97249737381935,
+                    45.195477003231645,
+                    46.00021039880812
+                  ],
+                  "top1": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    38.45585753954947,
+                    44.702691378071904,
+                    44.78669182024896,
+                    45.85983567405492
+                  ],
+                  "phase_logits_sha256": [
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S3-bytecode-both.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4739",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "642a3722cd0beadfeefcf878bd899fd318e16b610c678a28bcf2d24aec6bdff6",
+              "total_vm_invocation_count": 272
+            }
+          ]
+        },
+        "S4": {
+          "batch_isolation": {
+            "batch_size": 2,
+            "distinct_prompt_rows": true,
+            "explicit_per_batch_trace_checks_required": true
+          },
+          "package": {
+            "identity": {
+              "alias": "C3",
+              "backend_policy": "c3_all_w4_naive",
+              "layout_policy": "row_major",
+              "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+              "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+              "materialization_manifest_sha256": "bb6f38efd8b45c9d03c783f03502bce0d1620a880c12499dc60d1bf897acabe5",
+              "model": {
+                "head_dim": 128,
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "kv_group_size": 128,
+                "model": "llama3-8b",
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "num_layers": 32,
+                "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+                "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+                "synthetic_seed": 20260902,
+                "vocabulary_size": 128256,
+                "weight_group_size": 32
+              },
+              "profile_fingerprint": "5ceb94c342db6de0642234e9c3724ef459dfc1f1a56b47d6e132aadf9d3e74c4",
+              "revisions": {
+                "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+                "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+              },
+              "shape": {
+                "batch_size": 2,
+                "cache_capacity": 16,
+                "prompt_length": 7
+              },
+              "shape_case": "S4",
+              "workload_variant": "all_fpint_gemm_naive",
+              "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin",
+              "xclbin_sha256": "a68d686d5006821e5710e077a74797693cc25ba2ccc6e0c9cdcfa975e6b0f42a"
+            },
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_compile_matrix/packages/C3/S4/package.json",
+            "sha256": "67f2f1e511b0e84a36a265d9947d4a71982acdaaf167ba83fd5444fb19a2db25"
+          },
+          "reference": {
+            "determinism_replay_count": 2,
+            "npz_sha256": "1ada09bc7d8ce89848701ccd3a933ec99043f5e80c565f94cb7c7e79516fcd1e",
+            "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/references/C3/S4.json",
+            "prompt_token_ids": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              [
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14
+              ]
+            ],
+            "reference_device": {
+              "allow_tf32_cudnn": false,
+              "allow_tf32_matmul": false,
+              "compute_capability": [
+                8,
+                6
+              ],
+              "cublas_workspace_config": ":4096:8",
+              "cuda_runtime": "12.8",
+              "cudnn_version": 91900,
+              "deterministic_algorithms": true,
+              "driver_version": "570.211.01",
+              "float32_matmul_precision": "highest",
+              "memory_free_mib_before_parameters": 23864,
+              "memory_total_mib": 24576,
+              "name": "NVIDIA GeForce RTX 3090",
+              "reference_device": "gpu",
+              "torch_device": "cuda:0",
+              "torch_version": "2.11.0+cu128"
+            },
+            "sha256": "4c632f1ecfe2fe69048548d59ae7766043947ec4c6ae12e0751b8d7192628bd5",
+            "tensor_count": 1262
+          },
+          "required_coverage": {
+            "bytecode_canonical": true,
+            "bytecode_free_running": true,
+            "compiled_canonical": true,
+            "persistent_free_running_twice": true
+          },
+          "traces": [
+            {
+              "allocator": "pooled",
+              "canonical": [
+                {
+                  "explicit_batch_comparison_count": 280,
+                  "layer_comparison_count": 128,
+                  "maximum_large_relative_error": 0.0008635578560642898,
+                  "maximum_relative_l2": 0.0008635578583765113,
+                  "maximum_small_absolute_error": 0.0,
+                  "metric_count": 932,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    225.8381184488535,
+                    49.94804346188903,
+                    51.586674806661904,
+                    52.72794749494642
+                  ],
+                  "top1": [
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0
+                    ]
+                  ]
+                }
+              ],
+              "canonical_input_readback_verified": null,
+              "canonical_input_staging": null,
+              "exec_mode": "bytecode",
+              "free_running": [
+                {
+                  "generated_token_ids": [
+                    [
+                      0,
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      0,
+                      0
+                    ]
+                  ],
+                  "maximum_logit_magnitude": 0.0,
+                  "phase_count": 4,
+                  "phase_latency_seconds": [
+                    222.97105041146278,
+                    48.65160797536373,
+                    50.490936033427715,
+                    51.83134982828051
+                  ],
+                  "phase_logits_sha256": [
+                    "e5e7c887f54aae023fb3ae172a5551c9c7f9d4447c75e1bbb8dd56ee03654853",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74",
+                    "95558825c834519fd320c52bb9075261ffe8a1e53979c690ae2358f4768b3d74"
+                  ]
+                }
+              ],
+              "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/runs/C3/S4-bytecode-both-pooled.json",
+              "runtime_environment": {
+                "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+                "hostname": "fpga",
+                "slurm_job_id": "4742",
+                "slurm_step_id": "0",
+                "vx_ready_timeout_ms": "300000",
+                "xrt_device_bdf": "0000:3d:00.1",
+                "xrt_device_index": "1",
+                "xrt_ini_path": "/dev/null",
+                "xrt_xclbin_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/vortex_afu.xclbin"
+              },
+              "sha256": "f10ccfb07ca98d2a1a0d2106ca643a71cb8e1bdc2542eec3af39303489400754",
+              "total_vm_invocation_count": 272
+            }
+          ]
+        }
+      }
+    }
+  },
+  "complete": false,
+  "cpu_policy": "explicit_diagnostic_fallback_only",
+  "failure_manifest": {
+    "path": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/tvm_integration/vortex_tvm_llama3_8b_c1_c3_u55c_numerical_validation_failure_evidence.json",
+    "sha256": "802c4b9cdb54dfa24d7e8bd68abae0665fc301a7ccaac1188a6dcf09c31a0c63"
+  },
+  "failures": [
+    {
+      "alias": "C1",
+      "artifacts": [
+        {
+          "nbytes": 90028,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3/canonical-p1-l10.npz",
+          "role": "mismatch_naive_layer10",
+          "sha256": "ae7c4574a0803951cf21f2a14ef6e4b82914db858f1f2ea9406a75bebfaf10f4"
+        },
+        {
+          "nbytes": 90024,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-pooled/canonical-p1-l4.npz",
+          "role": "mismatch_pooled_layer4",
+          "sha256": "69f1621bc2cc6d0181feb9fa449deb6edb08326119a8657eb6a2321d8b13f6ee"
+        },
+        {
+          "nbytes": 90028,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-fixed-verified/canonical-p1-l21.npz",
+          "role": "mismatch_fixed_readback_layer21",
+          "sha256": "b50795b6ec68f6bd696ba4f50022fed2ddd2ae9686f8314cf494a9e54c5f2dd2"
+        },
+        {
+          "nbytes": 181928,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/mismatches/C1/S3-fixed-addressed/canonical-p1-l3.npz",
+          "role": "mismatch_addressed_reread_layer3",
+          "sha256": "6f2859eb917e2c4c386abfcd28fdc0beaae66f86b96bccd96c0442bab6ed80a4"
+        },
+        {
+          "nbytes": 85793,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S3-prefill32-decode-checkpoints32.json",
+          "role": "passing_reduced_checkpoint_sequence",
+          "sha256": "fb16f1eef7c6112ebea361ec1716f026f9029873c6315ce6b722b62381dc3aef"
+        },
+        {
+          "nbytes": 86561,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S3-fullresident-prefillchain1-decodecheckpoints32.json",
+          "role": "passing_full_resident_canonical_chain",
+          "sha256": "d8b40732772b8d68b707554209f80654983588d30e9454c57d51c456fa7d2bc0"
+        }
+      ],
+      "case": "S3",
+      "category": "numerical_mismatch",
+      "counts_against_acceptance": true,
+      "id": "c1-s3-intermittent-resident-single-zero",
+      "observations": {
+        "actual_value": 0.0,
+        "attempts": [
+          {
+            "allocator": "naive",
+            "coordinate": [
+              1,
+              0,
+              2719
+            ],
+            "layer": 10,
+            "phase": 1
+          },
+          {
+            "allocator": "pooled",
+            "coordinate": [
+              1,
+              0,
+              3935
+            ],
+            "layer": 4,
+            "phase": 1
+          },
+          {
+            "allocator": "pooled_fixed_input_readback",
+            "coordinate": [
+              1,
+              0,
+              2591
+            ],
+            "layer": 21,
+            "phase": 1
+          },
+          {
+            "allocator": "pooled_fixed_input_address_reread",
+            "coordinate": [
+              1,
+              0,
+              3647
+            ],
+            "layer": 3,
+            "output_address": 3713171456,
+            "phase": 1,
+            "reread_1": 0.0,
+            "reread_2": 0.0
+          }
+        ],
+        "cosine": 0.9999389629809912,
+        "expected_value": -18.09375,
+        "nonfinite_count": 0,
+        "reduced_probe_result": "Both the 32-prefill plus 32-decode checkpoint sequence and the full-resident varied-prefill-chain version passed all exposed checkpoints.",
+        "relative_l2": 0.011048543456039804,
+        "violation_fraction": 0.0001220703125
+      },
+      "package_identity": {
+        "alias": "C1",
+        "backend_policy": "c1_all_fp16_tcu",
+        "layout_policy": "not_applicable",
+        "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+        "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+        "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+        "model": {
+          "head_dim": 128,
+          "hidden_size": 4096,
+          "intermediate_size": 14336,
+          "kv_group_size": 128,
+          "model": "llama3-8b",
+          "num_attention_heads": 32,
+          "num_key_value_heads": 8,
+          "num_layers": 32,
+          "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+          "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+          "synthetic_seed": 20260902,
+          "vocabulary_size": 128256,
+          "weight_group_size": 32
+        },
+        "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+        "revisions": {
+          "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+          "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+        },
+        "shape": {
+          "batch_size": 2,
+          "cache_capacity": 8,
+          "prompt_length": 1
+        },
+        "shape_case": "S3",
+        "workload_variant": "all_sgemm_tcu",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+      },
+      "reference_device": "gpu",
+      "reference_npz_sha256": "4768f59db39de8e60733d8039bcd9939627eb8d76f5d2b97a285a69e1593ed4d",
+      "summary": "Four independent canonical runs each lost exactly one batch-1 hidden element in decode phase 1; the failing layer and coordinate moved, while every coordinate was lane 31 modulo 32 and all seven cache outputs remained exact."
+    },
+    {
+      "alias": "C1",
+      "artifacts": [
+        {
+          "nbytes": 647,
+          "path": "/home/jaeyongjang/project.local/vortex_base/agent-tasks/tvm_integration/vortex_tvm_llama3_8b_c1_c3_u55c_numerical_validation/c1_s4_free_job4766_failure.txt",
+          "role": "slurm_and_runtime_failure_summary",
+          "sha256": "5ba734552deea23e1db645229587cde2ee6237753ce5db774c36b40f40d25f4f"
+        },
+        {
+          "nbytes": 50249,
+          "path": "/home/jaeyongjang/project.local/tvm/build/llama3_c1_c3_numerical_validation/probes/C1/S4-free-diagnostic-rerun.json",
+          "role": "passing_fresh_process_counterexample",
+          "sha256": "9ee399e26da04beab76ca73418a5231443242ce2830051cdd581c4df411a8ea1"
+        }
+      ],
+      "case": "S4",
+      "category": "kernel_timeout",
+      "counts_against_acceptance": true,
+      "id": "c1-s4-free-prefill-layer0-timeout",
+      "observations": {
+        "elapsed": "00:05:56",
+        "fresh_process_counterexample": {
+          "device_open_count": 1,
+          "elapsed": "03:21:51",
+          "generated_token_ids": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0
+            ]
+          ],
+          "parameter_upload_count": 1,
+          "phase_cache_lengths": [
+            7,
+            8,
+            9,
+            10
+          ],
+          "slurm_exit_code": "0:0",
+          "slurm_job_id": "4779",
+          "slurm_state": "COMPLETED",
+          "total_vm_invocation_count": 136,
+          "xrt_device_bdf": "0000:3d:00.1"
+        },
+        "layer": 0,
+        "phase": 0,
+        "runtime_error": "Vortex kernel wait failed with error -1; the device is poisoned and the process must be restarted",
+        "slurm_exit_code": "1:0",
+        "slurm_job_id": "4766",
+        "slurm_state": "FAILED",
+        "vx_ready_timeout_ms": 300000,
+        "xrt_device_bdf": "0000:3d:00.1"
+      },
+      "package_identity": {
+        "alias": "C1",
+        "backend_policy": "c1_all_fp16_tcu",
+        "layout_policy": "not_applicable",
+        "logical_archive_manifest_sha256": "2d2593790d216514c8faa6df1c1ca6fa3309682d6043d54923dcea68bcae2316",
+        "logical_content_sha256": "c8fe2cd16bc469837ea8ba84667b7308f81f262a02425639e04ab6f02d997fa0",
+        "materialization_manifest_sha256": "ca7939545dbdf5c1d467f85d8d7aec468c07d3d191ceb722ff93ac632414503d",
+        "model": {
+          "head_dim": 128,
+          "hidden_size": 4096,
+          "intermediate_size": 14336,
+          "kv_group_size": 128,
+          "model": "llama3-8b",
+          "num_attention_heads": 32,
+          "num_key_value_heads": 8,
+          "num_layers": 32,
+          "quantization_policy": "signed_all_asymmetric_wkv4_v1",
+          "synthetic_parameter_scheme": "constant_hash_compile_fixture_v1",
+          "synthetic_seed": 20260902,
+          "vocabulary_size": 128256,
+          "weight_group_size": 32
+        },
+        "profile_fingerprint": "48c79e30c618b040eed1fdde73a1a5db349680091984844900782e4b40d7d957",
+        "revisions": {
+          "tvm": "7c058ba37ce58ac0d88d0f3d7965f37a987d43d0",
+          "vortex": "e526e6ba7f3acde6f3d93cb20e15b0c2d8e5e977"
+        },
+        "shape": {
+          "batch_size": 2,
+          "cache_capacity": 16,
+          "prompt_length": 7
+        },
+        "shape_case": "S4",
+        "workload_variant": "all_sgemm_tcu",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "e6317313876fa64247b0e49b17cddc9fd3e451caa41fd1da313c1bbbe4d701cb"
+      },
+      "reference_device": "gpu",
+      "reference_npz_sha256": "5ec94796b3c6024e6afa5c3decdb9f55bf2847f00ba34ef9458b39d98887f473",
+      "summary": "The free-running S4 process exceeded the 300-second kernel wait in prefill layer 0 and exited with device-poisoned status without an in-process retry."
+    }
+  ],
+  "format": "vortex-llama3-c1-c3-u55c-validation-evidence",
+  "missing_coverage": [
+    "C1/S3/bytecode_canonical",
+    "C1/S3/bytecode_free_running",
+    "C1/S4/bytecode_free_running"
+  ],
+  "schema_version": 1
+}

@@ -42,13 +42,16 @@ class FixedCapacityKVQuantizedCache:
     ) -> None:
         if head_dim % 2 != 0:
             raise ValueError("head_dim must be even for INT4 packing")
-        if k_mode != "asym" or v_mode != "sym":
-            raise ValueError("persistent decode v1 requires asymmetric K and symmetric V")
+        if k_mode != "asym" or v_mode not in ("sym", "asym"):
+            raise ValueError(
+                "persistent decode requires asymmetric K and symmetric/asymmetric V"
+            )
         self.device = torch.device(device)
         if self.device.type == "cuda" and self.device.index is None:
             self.device = torch.device("cuda", torch.cuda.current_device())
         self.k_mode = k_mode
         self.v_mode = v_mode
+        self.payload_dtype = torch.uint8 if v_mode == "asym" else torch.int8
         self.geometry = CacheGeometry(
             batch_size=batch_size,
             num_kv_heads=num_kv_heads,
@@ -64,11 +67,12 @@ class FixedCapacityKVQuantizedCache:
             head_dim // 2,
         )
         qparam_shape = (batch_size, num_kv_heads, max_sequence_length, 1)
-        self.qkey = torch.zeros(packed_shape, dtype=torch.int8, device=self.device)
+        self.qkey = torch.zeros(packed_shape, dtype=self.payload_dtype, device=self.device)
         self.k_scale = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
-        self.k_zero = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
-        self.qvalue = torch.zeros(packed_shape, dtype=torch.int8, device=self.device)
+        self.k_zero = torch.zeros(qparam_shape, dtype=torch.int16, device=self.device)
+        self.qvalue = torch.zeros(packed_shape, dtype=self.payload_dtype, device=self.device)
         self.v_scale = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
+        self.v_zero = torch.zeros(qparam_shape, dtype=torch.int16, device=self.device)
 
     @property
     def logical_length(self) -> int:
@@ -92,7 +96,14 @@ class FixedCapacityKVQuantizedCache:
         }
 
     def storage_tensors(self) -> tuple[torch.Tensor, ...]:
-        return self.qkey, self.k_scale, self.k_zero, self.qvalue, self.v_scale
+        return (
+            self.qkey,
+            self.k_scale,
+            self.k_zero,
+            self.qvalue,
+            self.v_scale,
+            self.v_zero,
+        )
 
     def _validate_sources(
         self,
@@ -119,20 +130,34 @@ class FixedCapacityKVQuantizedCache:
             if not tensor.dtype.is_floating_point:
                 raise ValueError(f"{name} source must be floating point")
 
-    @staticmethod
     def _quantize(
-        values: torch.Tensor, mode: str
+        self, values: torch.Tensor, mode: str
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if self.v_mode == "asym":
+            from ..vortex_export_ops import _quantize_reference
+
+            packed, scale, zero = _quantize_reference(
+                values,
+                values.ndim - 1,
+                self.geometry.head_dim,
+                values.ndim - 1,
+                "signed_asymmetric_int4",
+            )
+            return packed, scale, zero
         quantized, scale, zero = quantize_per_token(values, mode=mode)
-        return pack_int4_to_int8(quantized), scale, zero
+        return (
+            pack_int4_to_int8(quantized),
+            scale,
+            zero.to(torch.int16) if zero is not None else None,
+        )
 
     def prefill(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
         prompt_length = key_states.shape[2] if key_states.ndim == 4 else -1
         self._validate_sources(key_states, value_states, expected_length=prompt_length)
         qkey, k_scale, k_zero = self._quantize(key_states, self.k_mode)
-        qvalue, v_scale, _ = self._quantize(value_states, self.v_mode)
+        qvalue, v_scale, v_zero = self._quantize(value_states, self.v_mode)
         assert k_zero is not None
-        self.prefill_quantized(qkey, k_scale, k_zero, qvalue, v_scale)
+        self.prefill_quantized(qkey, k_scale, k_zero, qvalue, v_scale, v_zero)
 
     def prefill_quantized(
         self,
@@ -141,17 +166,26 @@ class FixedCapacityKVQuantizedCache:
         k_zero: torch.Tensor,
         qvalue: torch.Tensor,
         v_scale: torch.Tensor,
+        v_zero: Optional[torch.Tensor],
     ) -> None:
         prompt_length = qkey.shape[2] if qkey.ndim == 4 else -1
         self.state.validate_prefill(prompt_length)
         self._validate_quantized(
-            qkey, k_scale, k_zero, qvalue, v_scale, expected_length=prompt_length
+            qkey,
+            k_scale,
+            k_zero,
+            qvalue,
+            v_scale,
+            v_zero,
+            expected_length=prompt_length,
         )
         self.qkey[:, :, :prompt_length].copy_(qkey)
         self.k_scale[:, :, :prompt_length].copy_(k_scale)
         self.k_zero[:, :, :prompt_length].copy_(k_zero)
         self.qvalue[:, :, :prompt_length].copy_(qvalue)
         self.v_scale[:, :, :prompt_length].copy_(v_scale)
+        if v_zero is not None:
+            self.v_zero[:, :, :prompt_length].copy_(v_zero)
         self.state.publish_prefill(prompt_length)
 
     def append(
@@ -164,7 +198,7 @@ class FixedCapacityKVQuantizedCache:
     ) -> None:
         self._validate_sources(key_states, value_states, expected_length=1)
         qkey, k_scale, k_zero = self._quantize(key_states, self.k_mode)
-        qvalue, v_scale, _ = self._quantize(value_states, self.v_mode)
+        qvalue, v_scale, v_zero = self._quantize(value_states, self.v_mode)
         assert k_zero is not None
         self.append_quantized(
             qkey,
@@ -172,6 +206,7 @@ class FixedCapacityKVQuantizedCache:
             k_zero,
             qvalue,
             v_scale,
+            v_zero,
             position=position,
             generation=generation,
         )
@@ -183,6 +218,7 @@ class FixedCapacityKVQuantizedCache:
         k_zero: torch.Tensor,
         qvalue: torch.Tensor,
         v_scale: torch.Tensor,
+        v_zero: Optional[torch.Tensor],
         *,
         position: int,
         generation: Optional[int] = None,
@@ -191,7 +227,7 @@ class FixedCapacityKVQuantizedCache:
             self.state.require_generation(generation)
         self.state.validate_append(position=position)
         self._validate_quantized(
-            qkey, k_scale, k_zero, qvalue, v_scale, expected_length=1
+            qkey, k_scale, k_zero, qvalue, v_scale, v_zero, expected_length=1
         )
         target = slice(position, position + 1)
         self.qkey[:, :, target].copy_(qkey)
@@ -199,6 +235,8 @@ class FixedCapacityKVQuantizedCache:
         self.k_zero[:, :, target].copy_(k_zero)
         self.qvalue[:, :, target].copy_(qvalue)
         self.v_scale[:, :, target].copy_(v_scale)
+        if v_zero is not None:
+            self.v_zero[:, :, target].copy_(v_zero)
         self.state.publish_append()
 
     def _validate_quantized(
@@ -208,6 +246,7 @@ class FixedCapacityKVQuantizedCache:
         k_zero: torch.Tensor,
         qvalue: torch.Tensor,
         v_scale: torch.Tensor,
+        v_zero: Optional[torch.Tensor],
         *,
         expected_length: int,
     ) -> None:
@@ -219,10 +258,10 @@ class FixedCapacityKVQuantizedCache:
         )
         qparam_shape = (*packed_shape[:-1], 1)
         expected = (
-            ("qkey", qkey, packed_shape, torch.int8),
+            ("qkey", qkey, packed_shape, self.payload_dtype),
             ("k_scale", k_scale, qparam_shape, torch.float16),
-            ("k_zero", k_zero, qparam_shape, torch.float16),
-            ("qvalue", qvalue, packed_shape, torch.int8),
+            ("k_zero", k_zero, qparam_shape, torch.int16),
+            ("qvalue", qvalue, packed_shape, self.payload_dtype),
             ("v_scale", v_scale, qparam_shape, torch.float16),
         )
         for name, tensor, shape, dtype in expected:
@@ -235,6 +274,20 @@ class FixedCapacityKVQuantizedCache:
                 raise ValueError(
                     f"{name} device {tensor.device} does not match cache {self.device}"
                 )
+        if self.v_mode == "asym":
+            if v_zero is None:
+                raise ValueError("asymmetric V cache requires zero-points")
+            if tuple(v_zero.shape) != qparam_shape or v_zero.dtype != torch.int16:
+                raise ValueError(
+                    f"v_zero expected shape={qparam_shape}, dtype={torch.int16}; "
+                    f"got shape={tuple(v_zero.shape)}, dtype={v_zero.dtype}"
+                )
+            if v_zero.device != self.device:
+                raise ValueError(
+                    f"v_zero device {v_zero.device} does not match cache {self.device}"
+                )
+        elif v_zero is not None:
+            raise ValueError("symmetric V cache must not provide zero-points")
 
     def get_kv(
         self, *, generation: Optional[int] = None
@@ -252,19 +305,19 @@ class FixedCapacityKVQuantizedCache:
         ), (
             self.qvalue[:, :, active],
             self.v_scale[:, :, active],
-            None,
+            self.v_zero[:, :, active] if self.v_mode == "asym" else None,
         )
 
     def dequantized_kv(self) -> tuple[torch.Tensor, torch.Tensor]:
         key, value = self.get_kv()
         qkey, k_scale, k_zero = key
-        qvalue, v_scale, _ = value
+        qvalue, v_scale, v_zero = value
         return (
             dequantize_per_token(
                 unpack_int8_to_int4(qkey), k_scale, k_zero, mode=self.k_mode
             ),
             dequantize_per_token(
-                unpack_int8_to_int4(qvalue), v_scale, None, mode=self.v_mode
+                unpack_int8_to_int4(qvalue), v_scale, v_zero, mode=self.v_mode
             ),
         )
 

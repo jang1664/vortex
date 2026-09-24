@@ -20,7 +20,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     parameter AXI_DATA_WIDTH  = `PLATFORM_MEMORY_DATA_SIZE * 8,
     parameter AXI_ADDR_WIDTH  = `PLATFORM_MEMORY_ADDR_WIDTH,
     parameter AXI_TID_WIDTH   = VX_MEM_TAG_WIDTH,
-    parameter NUM_HBM_PORTS   = `NUM_DMA_CHANNELS,
+    parameter NUM_HBM_PORTS   = `NUM_HBM_PORTS,
     parameter AXI_DMA_ID_WIDTH = 8
 )(
     `SCOPE_IO_DECL
@@ -116,13 +116,12 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     localparam VX_MEM_ADDR_A_WIDTH = VX_MEM_ADDR_WIDTH - SUB_LDATAW;
 
     localparam NUM_DMA_TOTAL = `NUM_CORES * `NUM_DMA_CHANNELS;
-
-    // Number of DMA slaves per mux: when merged (NUM_HBM_PORTS < NUM_DMA_CHANNELS),
-    // all DMA channels feed into the single mux; otherwise each HBM port gets one channel per core.
-    localparam NUM_DMA_PER_MUX = (NUM_HBM_PORTS == `NUM_DMA_CHANNELS)
-                               ? `NUM_CORES
-                               : `NUM_CORES * `NUM_DMA_CHANNELS;
-    localparam NUM_MUX_INPUTS = 1 + NUM_DMA_PER_MUX;
+    localparam HBM_PORTS_PER_DMA = NUM_HBM_PORTS / `NUM_DMA_CHANNELS;
+    localparam DMA_SEL_SHIFT = $clog2(`NUM_DMA_CHANNELS);
+    localparam DMA_PORT_SLOT_BITS = (HBM_PORTS_PER_DMA > 1)
+                                     ? $clog2(HBM_PORTS_PER_DMA) : 1;
+    // One LSU input plus the statically-owned DMA channel from every core.
+    localparam NUM_MUX_INPUTS = 1 + `NUM_CORES;
 
     // LSU AXI adapter outputs a single bank with TID width = AXI_TID_WIDTH
     // The demux does not change the ID width
@@ -139,6 +138,32 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // After VX_mem_remap below, the HBM bank index sits at REMAP_BANK_SHIFT.
     localparam HBM_SEL_BITS = `CLOG2(NUM_HBM_PORTS);
     localparam REMAP_BANK_SHIFT = `PLATFORM_MEMORY_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS);
+
+    initial begin
+        if ((`NUM_TMEM_BANKS < 1)
+         || ((`NUM_TMEM_BANKS & (`NUM_TMEM_BANKS - 1)) != 0))
+            $fatal(1, "NUM_TMEM_BANKS(%0d) must be a positive power of two", `NUM_TMEM_BANKS);
+        if ((`NUM_DMA_CHANNELS < 1)
+         || ((`NUM_DMA_CHANNELS & (`NUM_DMA_CHANNELS - 1)) != 0))
+            $fatal(1, "NUM_DMA_CHANNELS(%0d) must be a positive power of two", `NUM_DMA_CHANNELS);
+        if ((NUM_HBM_PORTS < 1)
+         || ((NUM_HBM_PORTS & (NUM_HBM_PORTS - 1)) != 0))
+            $fatal(1, "NUM_HBM_PORTS(%0d) must be a positive power of two", NUM_HBM_PORTS);
+        if (`NUM_DMA_CHANNELS > `NUM_TMEM_BANKS)
+            $fatal(1, "NUM_DMA_CHANNELS(%0d) exceeds NUM_TMEM_BANKS(%0d)",
+                   `NUM_DMA_CHANNELS, `NUM_TMEM_BANKS);
+        if (`NUM_DMA_CHANNELS > NUM_HBM_PORTS)
+            $fatal(1, "NUM_DMA_CHANNELS(%0d) exceeds NUM_HBM_PORTS(%0d)",
+                   `NUM_DMA_CHANNELS, NUM_HBM_PORTS);
+        if ((`PLATFORM_MEMORY_NUM_BANKS % NUM_HBM_PORTS) != 0)
+            $fatal(1, "PLATFORM_MEMORY_NUM_BANKS(%0d) is not divisible by NUM_HBM_PORTS(%0d)",
+                   `PLATFORM_MEMORY_NUM_BANKS, NUM_HBM_PORTS);
+`ifdef PLATFORM_MEMORY_NUM_PORTS
+        if (`PLATFORM_MEMORY_NUM_PORTS != NUM_HBM_PORTS)
+            $fatal(1, "legacy PLATFORM_MEMORY_NUM_PORTS(%0d) must match NUM_HBM_PORTS(%0d)",
+                   `PLATFORM_MEMORY_NUM_PORTS, NUM_HBM_PORTS);
+`endif
+    end
 
     ///////////////////////////////////////////////////////////////////////////
     // AXI struct typedefs for axi_mux and axi_demux
@@ -510,6 +535,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 
     VX_mem_remap #(
         .ADDR_W     (AXI_ADDR_WIDTH),
+        .NUM_PORTS  (NUM_HBM_PORTS),
         .BANK_SHIFT (REMAP_BANK_SHIFT)
     ) u_lsu_aw_remap (
         .m_address   (lsu_axi_awaddr),
@@ -518,6 +544,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 
     VX_mem_remap #(
         .ADDR_W     (AXI_ADDR_WIDTH),
+        .NUM_PORTS  (NUM_HBM_PORTS),
         .BANK_SHIFT (REMAP_BANK_SHIFT)
     ) u_lsu_ar_remap (
         .m_address   (lsu_axi_araddr),
@@ -635,6 +662,87 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     );
 
     ///////////////////////////////////////////////////////////////////////////
+    // Restricted DMA AXI routing for H>D
+    ///////////////////////////////////////////////////////////////////////////
+
+    // A DMA channel c may only reach ports c+kD.  Keep a direct, zero-demux
+    // path when H==D; otherwise each core/channel gets an H/D-output demux.
+    slv_axi_req_t  [NUM_DMA_TOTAL-1:0][HBM_PORTS_PER_DMA-1:0] dma_demux_req;
+    slv_axi_resp_t [NUM_DMA_TOTAL-1:0][HBM_PORTS_PER_DMA-1:0] dma_demux_resp;
+
+    if (NUM_HBM_PORTS > `NUM_DMA_CHANNELS) begin : g_dma_hbm_demux
+        for (genvar core = 0; core < `NUM_CORES; ++core) begin : g_core
+            for (genvar ch = 0; ch < `NUM_DMA_CHANNELS; ++ch) begin : g_channel
+                localparam int DMA_IDX = core * `NUM_DMA_CHANNELS + ch;
+
+                slv_axi_req_t dma_slv_req;
+                slv_axi_resp_t dma_slv_resp;
+                wire [HBM_SEL_BITS-1:0] dma_aw_global_port =
+                    dma_axi_m[DMA_IDX].aw_addr[PORT_SEL_SHIFT +: HBM_SEL_BITS];
+                wire [HBM_SEL_BITS-1:0] dma_ar_global_port =
+                    dma_axi_m[DMA_IDX].ar_addr[PORT_SEL_SHIFT +: HBM_SEL_BITS];
+                wire [DMA_PORT_SLOT_BITS-1:0] dma_aw_owned_slot =
+                    DMA_PORT_SLOT_BITS'(dma_aw_global_port >> DMA_SEL_SHIFT);
+                wire [DMA_PORT_SLOT_BITS-1:0] dma_ar_owned_slot =
+                    DMA_PORT_SLOT_BITS'(dma_ar_global_port >> DMA_SEL_SHIFT);
+
+                `AXI_ASSIGN_TO_REQ(dma_slv_req, dma_axi_m[DMA_IDX])
+                `AXI_ASSIGN_FROM_RESP(dma_axi_m[DMA_IDX], dma_slv_resp)
+
+                axi_demux #(
+                    .AxiIdWidth  (SLV_ID_WIDTH),
+                    .AtopSupport (1'b0),
+                    .aw_chan_t   (slv_axi_aw_chan_t),
+                    .w_chan_t    (slv_axi_w_chan_t),
+                    .b_chan_t    (slv_axi_b_chan_t),
+                    .ar_chan_t   (slv_axi_ar_chan_t),
+                    .r_chan_t    (slv_axi_r_chan_t),
+                    .axi_req_t   (slv_axi_req_t),
+                    .axi_resp_t  (slv_axi_resp_t),
+                    .NoMstPorts  (HBM_PORTS_PER_DMA),
+                    .MaxTrans    (8),
+                    .AxiLookBits (SLV_ID_WIDTH),
+                    .UniqueIds   (1'b0),
+                    .SpillAw     (1'b1),
+                    .SpillW      (1'b0),
+                    .SpillB      (1'b0),
+                    .SpillAr     (1'b1),
+                    .SpillR      (1'b0)
+                ) u_dma_demux (
+                    .clk_i              (clk),
+                    .rst_ni             (~reset),
+                    .test_i             (1'b0),
+                    .slv_req_i          (dma_slv_req),
+                    .slv_aw_select_i    (dma_aw_owned_slot),
+                    .slv_ar_select_i    (dma_ar_owned_slot),
+                    .slv_resp_o         (dma_slv_resp),
+                    .mst_reqs_o         (dma_demux_req[DMA_IDX]),
+                    .mst_resps_i        (dma_demux_resp[DMA_IDX])
+                );
+
+            `ifndef SYNTHESIS
+                always_ff @(posedge clk) begin
+                    if (!reset && dma_axi_m[DMA_IDX].aw_valid) begin
+                        assert ((int'(dma_aw_global_port)
+                                 % `NUM_DMA_CHANNELS) == ch)
+                            else $fatal(1,
+                                "%m: DMA ch%0d AW selected unowned HBM port %0d",
+                                ch, dma_aw_global_port);
+                    end
+                    if (!reset && dma_axi_m[DMA_IDX].ar_valid) begin
+                        assert ((int'(dma_ar_global_port)
+                                 % `NUM_DMA_CHANNELS) == ch)
+                            else $fatal(1,
+                                "%m: DMA ch%0d AR selected unowned HBM port %0d",
+                                ch, dma_ar_global_port);
+                    end
+                end
+            `endif
+            end
+        end
+    end
+
+    ///////////////////////////////////////////////////////////////////////////
     // Per-HBM-port AXI mux: merge LSU demux + DMA channels
     ///////////////////////////////////////////////////////////////////////////
 
@@ -679,7 +787,8 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         assign mux_slv_reqs[0] = lsu_mux_req;
         assign lsu_mux_resp = mux_slv_resps[0];
 
-        // Slave[1..NUM_DMA_PER_MUX] = DMA channels for this HBM port
+        // Slave[1..NUM_CORES] = the statically-owned DMA channel from each
+        // core for this HBM port.
         if (NUM_HBM_PORTS == `NUM_DMA_CHANNELS) begin : g_dma_multi_port
             // Non-merged: each HBM port j gets DMA channel j from each core
             for (genvar i = 0; i < `NUM_CORES; ++i) begin : g_dma_to_mux
@@ -687,15 +796,13 @@ module Vortex_axi import VX_gpu_pkg::*; #(
                 `AXI_ASSIGN_TO_REQ(mux_slv_reqs[1+i], dma_axi_m[DMA_IDX])
                 `AXI_ASSIGN_FROM_RESP(dma_axi_m[DMA_IDX], mux_slv_resps[1+i])
             end
-        end else begin : g_dma_merged
-            // Merged: all DMA channels feed into the single mux (j==0)
-            for (genvar i = 0; i < `NUM_CORES; ++i) begin : g_core
-                for (genvar ch = 0; ch < `NUM_DMA_CHANNELS; ++ch) begin : g_ch
-                    localparam DMA_IDX = i * `NUM_DMA_CHANNELS + ch;
-                    localparam MUX_SLV = 1 + i * `NUM_DMA_CHANNELS + ch;
-                    `AXI_ASSIGN_TO_REQ(mux_slv_reqs[MUX_SLV], dma_axi_m[DMA_IDX])
-                    `AXI_ASSIGN_FROM_RESP(dma_axi_m[DMA_IDX], mux_slv_resps[MUX_SLV])
-                end
+        end else begin : g_dma_restricted
+            localparam int OWNER_CH = j % `NUM_DMA_CHANNELS;
+            localparam int OWNED_SLOT = j / `NUM_DMA_CHANNELS;
+            for (genvar i = 0; i < `NUM_CORES; ++i) begin : g_dma_to_mux
+                localparam int DMA_IDX = i * `NUM_DMA_CHANNELS + OWNER_CH;
+                assign mux_slv_reqs[1+i] = dma_demux_req[DMA_IDX][OWNED_SLOT];
+                assign dma_demux_resp[DMA_IDX][OWNED_SLOT] = mux_slv_resps[1+i];
             end
         end
 

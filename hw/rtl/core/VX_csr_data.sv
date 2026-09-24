@@ -252,6 +252,7 @@ import VX_fpu_pkg::*;
             `CSR_READ_64(`VX_CSR_MPM_MXU_ACC_OUTPUT_VALID, read_mpm_class, accel_perf.gemm_unit.acc_output_valid);
             `CSR_READ_64(`VX_CSR_MPM_MXU_PSUM_UNDERFLOW, read_mpm_class, accel_perf.gemm_unit.psum_underflow);
             `CSR_READ_64(`VX_CSR_MPM_MXU_RD_WR_CONFLICT, read_mpm_class, accel_perf.gemm_unit.rd_wr_conflict);
+            `CSR_READ_64(`VX_CSR_MPM_DMA_UNION_ACTIVE_CYC, read_mpm_class, accel_perf.dma_union_active_cycles);
             default:;
             endcase
         end

@@ -1,0 +1,153 @@
+task: gemm-node-nonuniform-debug
+state: complete
+spec: agent-tasks/gemm-node-nonuniform-debug/gemm-node-nonuniform-debug-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/gemm_node_nonuniform_debug.md
+baseline_commit: e1b2188f
+updated: "2026-08-08 03:35"
+iterations:
+  - feature: "Phase 0 existing type-3 baseline QDIR=0"
+    iteration: 1
+    timestamp: "2026-08-08 03:00"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "None."
+    lesson: "The current explicitly rebuilt QDIR=0 node path passes its independent type-3 profile, but this profile replicates scale/zero across K groups and is not equivalent to main.cpp."
+    coverage: "M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=0; 1024 real outputs; zero mismatches; job done at 18335ns."
+    markers: "TILED_GEMM_TEST_CFG input/weight/scale/zp type=3; TILED OUTPUT CHECK PASSED; CONFIG GEMM PASSED"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/baseline-qdir0/sim.log
+  - feature: "Phase 0 existing type-3 baseline QDIR=1"
+    iteration: 1
+    timestamp: "2026-08-08 03:00"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "None."
+    lesson: "The current explicitly rebuilt QDIR=1 node path passes its independent type-3 profile, but this profile replicates scale/zero across K rows and uses a legacy generic reference arithmetic boundary."
+    coverage: "M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1; 1024 real outputs; zero mismatches; job done at 18335ns."
+    markers: "TILED_GEMM_TEST_CFG input/weight/scale/zp type=3; TILED OUTPUT CHECK PASSED; CONFIG GEMM PASSED"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/baseline-qdir1/sim.log
+  - feature: "Phase 1 application-matching nonuniform profile"
+    iteration: 1
+    timestamp: "2026-08-08 03:11"
+    status: pass
+    error_summary: "None during compile/elaboration; focused simulations pending independent verification."
+    root_cause: "The existing QCOL testbench writer serialized qparams as [group][cur_n], while main.cpp and the FSM consume [nb][group][MXU_NT]. Replicated/periodic type-3 qparams masked the loop-order error. The existing generic reference also did not model main.cpp's QDIR=1 FP16-RNE A*scale boundary."
+    fix_applied: "Added an explicit MAIN_CPP_NONUNIFORM profile with full QDIR-specific arrays and application arithmetic, corrected the QCOL writer universally to [nb][group][MXU_NT], and added activation/source/tiled/INT4/footprint assertions and parseable markers. Production RTL was not changed."
+    lesson: "A nonuniform input or weight alone cannot validate a qparam layout; scale/zero must vary across every index represented by the interface contract."
+    coverage: "VCS compile, elaboration, and link passed; git diff --check passed. No simulation was run by the implementation role."
+    markers: "compile 14.448s; elaboration 2.830s; link 0.522s; KDB generated"
+    log: build/hw/unittest/gemm_node_improve/logs/compile.log
+  - feature: "Phase 2 focused application profile QDIR=0"
+    iteration: 2
+    timestamp: "2026-08-08 03:13"
+    status: pass
+    error_summary: "None."
+    root_cause: "The corrected QCOL [nb][group][MXU_NT] testbench writer now matches the application/FSM contract."
+    fix_applied: "Testbench-only QCOL loop-order correction from iteration 1; no production RTL change."
+    lesson: "Full (kg,n)-varying qparams expose the loop-order bug that replicated/periodic type-3 values could not detect."
+    coverage: "Explicit profile activation; source FP16/INT4/qparam sentinels; 4096-byte input/qparam/output footprints; 1024-byte qparam slots; 1024 outputs; zero mismatches; job done at 18335ns."
+    markers: "MAIN_CPP_NONUNIFORM_PROFILE; SOURCE_PASS ref_0_0=0x55f7 ref_0_9=0x5001; TILED_PASS; OUTPUT_PASS compared=1024 mismatches=0"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/focused-qdir0-iter2/sim.log
+  - feature: "Phase 2 focused application profile QDIR=1"
+    iteration: 2
+    timestamp: "2026-08-08 03:13"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A; the existing QROW data contract is compatible with the full application layout and FP16-RNE reference boundary."
+    fix_applied: "Added the exact testbench profile/reference; no production RTL change."
+    lesson: "QDIR=1 must round A*scale to FP16 before applying W-zero to match the application and RTL input-scaling boundary."
+    coverage: "Explicit profile activation; source FP16/INT4/qparam sentinels; 4096-byte input/qparam/output footprints; 1024-byte qparam slots; 1024 outputs; zero mismatches; job done at 18335ns."
+    markers: "MAIN_CPP_NONUNIFORM_PROFILE; SOURCE_PASS ref_0_0=0x4405 ref_0_9=0x4523; TILED_PASS; OUTPUT_PASS compared=1024 mismatches=0"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/focused-qdir1-iter2/sim.log
+  - feature: "Phase 2 existing QCOL regression suite"
+    iteration: 3
+    timestamp: "2026-08-08 03:24"
+    status: pass
+    error_summary: "None; pass=30 fail=0."
+    root_cause: "N/A"
+    fix_applied: "None after focused testbench correction."
+    lesson: "The universal [nb][group][MXU_NT] writer correction preserves all existing QCOL shapes, QBLKs, and weight orientations."
+    coverage: "Five shapes x QBLK 32/64/128 x WTRANS 0/1 = 30 cases."
+    markers: "RESULT pass=30 fail=0; no mismatch/fatal/error/failed markers"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/regress-qcol-iter3/regress_20260808_031447.summary
+  - feature: "Phase 2 existing QROW regression suite"
+    iteration: 3
+    timestamp: "2026-08-08 03:24"
+    status: pass
+    error_summary: "None; pass=24 fail=0."
+    root_cause: "N/A"
+    fix_applied: "None after focused testbench correction."
+    lesson: "The application profile and QCOL writer correction do not regress the independent QROW matrix."
+    coverage: "Four shapes x QBLK 32/64/128 x WTRANS 0/1 = 24 cases."
+    markers: "RESULT pass=24 fail=0; no mismatch/fatal/error/failed markers"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/regress-qrow-iter3/regress_20260808_031859.summary
+  - feature: "Phase 5 XRT-VCS M=4 QDIR=0"
+    iteration: 4
+    timestamp: "2026-08-08 03:27"
+    status: pass
+    error_summary: "None; application exit_status=0 and PASSED."
+    root_cause: "N/A; production QCOL hardware/software layout is correct."
+    fix_applied: "No production change."
+    lesson: "The real main.cpp QCOL workload passes independently, confirming the defect was confined to the unit-test writer order."
+    coverage: "WLOAD=8,M=4(padded 8),N=256,K=256,QBLK=32,WTRANS=0,QDIR=0; ref[0,0]=0x55f7, ref[0,32]=0xcff3; jobs=256; total_cycles=1705; busy_cycles=8034; overlap=1186/1629."
+    markers: "PASSED; exit_status=0; PERF instrs=12165 cycles=8003 IPC=1.520055"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/xrt-m4-qdir0-iter4/20260808-032600_run_wload8_m4_n256_k256_q32_t0_d0_pid1327458/wrapper.log
+  - feature: "Phase 5 XRT-VCS M=4 QDIR=1"
+    iteration: 4
+    timestamp: "2026-08-08 03:29"
+    status: pass
+    error_summary: "None; application exit_status=0 and PASSED."
+    root_cause: "N/A"
+    fix_applied: "No production change."
+    lesson: "The real main.cpp QROW workload agrees with the focused profile's FP16-RNE reference boundary."
+    coverage: "WLOAD=8,M=4(padded 8),N=256,K=256,QBLK=32,WTRANS=0,QDIR=1; ref[0,0]=0x4405, ref[0,32]=0x400a; jobs=256; total_cycles=1704; busy_cycles=8035; overlap=1186/1628; sim time=88160000ps."
+    markers: "PASSED; exit_status=0; PERF instrs=12165 cycles=8004 IPC=1.519865"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/xrt-m4-qdir1-iter4/20260808-032706_run_wload8_m4_n256_k256_q32_t0_d1_pid1339209/wrapper.log
+  - feature: "Phase 5 XRT-VCS M=256 QDIR=0"
+    iteration: 4
+    timestamp: "2026-08-08 03:31"
+    status: pass
+    error_summary: "None; application exit_status=0 and PASSED."
+    root_cause: "N/A"
+    fix_applied: "No production change."
+    lesson: "The production QCOL contract remains correct across the multi-M-tile workload."
+    coverage: "WLOAD=8,M=256,N=256,K=256,QBLK=32,WTRANS=0,QDIR=0; ref[0,0]=0x55f7, ref[0,32]=0xcff3; jobs=16384; total_cycles=20729; busy_cycles=27096; overlap=18926/20381; sim time=285760000ps."
+    markers: "PASSED; exit_status=0; PERF instrs=13689 cycles=27065 IPC=0.505782"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/xrt-m256-qdir0-iter4/20260808-032727_run_wload8_m256_n256_k256_q32_t0_d0_pid1342706/wrapper.log
+  - feature: "Phase 5 XRT-VCS M=256 QDIR=1"
+    iteration: 4
+    timestamp: "2026-08-08 03:32"
+    status: pass
+    error_summary: "None; application exit_status=0 and PASSED."
+    root_cause: "N/A"
+    fix_applied: "No production change."
+    lesson: "Both production quantization directions pass the same full nonuniform application workload at the large shape."
+    coverage: "WLOAD=8,M=256,N=256,K=256,QBLK=32,WTRANS=0,QDIR=1; ref[0,0]=0x4405, ref[0,32]=0x400a; jobs=16384; total_cycles=20730; busy_cycles=27098; overlap=18926/20382; sim time=292320000ps."
+    markers: "PASSED; exit_status=0; PERF instrs=13689 cycles=27067 IPC=0.505745"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/xrt-m256-qdir1-iter4/20260808-032938_run_wload8_m256_n256_k256_q32_t0_d1_pid1364245/wrapper.log
+  - feature: "Application-profile activation negative guard"
+    iteration: 5
+    timestamp: "2026-08-08 03:34"
+    status: pass
+    error_summary: "Expected raw sim_fail at time 0 proved the guard; this is a passing negative test."
+    root_cause: "The focused TEST name was intentionally supplied without +MAIN_CPP_NONUNIFORM."
+    fix_applied: "None."
+    lesson: "A focused test cannot silently fall back to legacy type-3 vectors when the profile plusarg is omitted."
+    coverage: "Fatal at 0ps before job allocation; profile/source/tiled/output pass markers all absent."
+    markers: "TEST=MAINCPP_NONUNIFORM_QCOL requires +MAIN_CPP_NONUNIFORM"
+    log: agent-tasks/gemm-node-nonuniform-debug/evidence/profile-guard-iter5/sim.log
+log:
+  - timestamp: "2026-08-08 02:56"
+    action: "Loaded the project-context and rtl-improve procedures, confirmed the user-approved nonuniform debug plan, and locked the dirty worktree before task changes."
+    result: "Created a separate confirmed specification and status ledger. The configured build, VCS W-2024.09-SP1, /usr/bin/gcc, and /usr/bin/g++ are available."
+    learned: "gemm_node_improve uses its SystemVerilog testbench rather than main.cpp. The current testbench hash is 82a67f2000508f664113dee42bed75fbda6352091b3c86b93f52263c53f8de71, main.cpp is f10f06b8a6052e5062f41199daf6849b8cfa64ea5684a63747efdd352864295e, and VX_dma_unit_misal.sv remains 1fcf0015b791779e6a5fc94f0b3db4791f1bd2d3bcdc41ae435455971ae53f57."
+  - timestamp: "2026-08-08 03:35"
+    action: "Completed the final evidence audit and wrote the durable root-cause and verification report."
+    result: "Task complete. Focused QDIR0/QDIR1 tests passed 1024/1024, legacy suites passed 30/30 and 24/24, the activation negative guard passed, and four XRT-VCS manifests recorded exit_status=0. STATUS YAML and git diff whitespace checks passed."
+    learned: "The only defect was a masked QCOL testbench serialization loop-order error. Production QCOL/QROW architecture passed the real main.cpp workloads without a task-local RTL change."
+pitfalls:
+  - "Do not treat a varying input/weight with replicated scale/zero as equivalent to the application's full nonuniform quantization layout."
+  - "Do not replace existing type-3 vectors or weaken exact/reference comparisons."
+  - "Do not fix an architectural incompatibility; report it before production RTL changes."
+  - "Do not modify or revert unrelated DMA optimization worktree changes."

@@ -244,6 +244,8 @@
 `define VX_CSR_MPM_MXU_PSUM_UNDERFLOW_H  12'hB96
 `define VX_CSR_MPM_MXU_RD_WR_CONFLICT    12'hB17
 `define VX_CSR_MPM_MXU_RD_WR_CONFLICT_H  12'hB97
+`define VX_CSR_MPM_DMA_UNION_ACTIVE_CYC  12'hB18
+`define VX_CSR_MPM_DMA_UNION_ACTIVE_CYC_H 12'hB98
 
 // ===========================================================================
 // Machine Performance-monitoring accelerator counters (class 4: ACCEL_DMA)

@@ -1,0 +1,427 @@
+task: dma-optim
+state: complete
+spec: agent-tasks/dma-optim/dma-optim-spec.md
+source_plan: docs/future_optim/gemv/gemm_improve/dma_optim.md
+baseline_commit: e1b2188f
+updated: "2026-08-08 17:16"
+iterations:
+  - feature: "Phase 0 aligned DMA baseline"
+    iteration: 1
+    timestamp: "2026-08-07 21:36"
+    status: compile_error
+    error_summary: "VCS could not elaborate dma_mem_unit because VX_generic_arbiter instantiated unresolved module VX_rr_arbiter."
+    root_cause: "The dma_mem_unit source-template Makefile listed VX_generic_arbiter but omitted VX_rr_arbiter and its default MODEL=1 dependency VX_onehot_encoder."
+    fix_applied: "Added the two missing library sources to the source-template Makefile and synchronized the configured build copy; the unchanged test request is pending iteration 2 verification."
+    lesson: "The directed aligned-DMA baseline cannot be claimed until the configured unittest source list includes every instantiated library module."
+    log: build/hw/unittest/dma_mem_unit/logs/compile.log
+  - feature: "Phase 0 TMEM DMA controller baseline"
+    iteration: 1
+    timestamp: "2026-08-07 21:36"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "None."
+    lesson: "The existing depth-4 controller baseline accepts 30 logical commands, issues/completes 62 descriptors, completes 46 store chunks, and reports one four-cycle store-to-load switch."
+    coverage: "Depth/full/FIFO/drain, exact 4/8/16/32 chunk address sets, high-priority pause/resume, queue-full behavior, config backpressure, exact completion, and final idle."
+    markers: "TMEM_DMA_DEPTH_PASS; TMEM_DMA_CHUNK_PASS; TMEM_DMA_PRIORITY_PASS; TMEM_DMA_BACKPRESSURE_PASS; TMEM_DMA_EXACT_COMPLETION_PASS; TEST PASSED"
+    log: build/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+  - feature: "Phase 0 aligned DMA baseline"
+    iteration: 2
+    timestamp: "2026-08-07 21:41"
+    status: pass
+    error_summary: "None."
+    root_cause: "Iteration 1 omitted VX_rr_arbiter and VX_onehot_encoder from the dma_mem_unit source-template Makefile."
+    fix_applied: "Added both instantiated library modules to the source template and synchronized the configured build copy."
+    lesson: "The baseline exposes multiplier issue/done, segment prepare, and completion timestamps but lacks explicit descriptor-handshake and first-request markers, which must be added for matched latency acceptance."
+    coverage: "Nine aligned G2L/L2G cases including request-buffer backpressure completed successfully."
+    markers: "9x CASE PASS; TEST PASSED"
+    log: build/hw/unittest/dma_mem_unit/logs/sim.log
+  - feature: "Phase 0 XRT-VCS WLOAD8 baseline M=4"
+    iteration: 1
+    timestamp: "2026-08-07 21:40"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "None."
+    lesson: "Run-mode counters establish numerical and aggregate performance baselines but do not expose DMA command-level latency."
+    coverage: "M=4,K=256,N=256,QBLK=32,WLOAD=8; reference outputs 0x4405 and 0x400a; PERF jobs=256, total_cycles=2255, busy_cycles=8561, DMA+MXU overlap=1194/2179, instruction cycles=8530."
+    markers: "PERF; PASSED"
+    log: agent-tasks/dma-optim/evidence/baseline-m4/20260807-213819_run_wload8_m4_n256_k256_q32_t0_d1_pid2065575/wrapper.log
+  - feature: "Phase 0 XRT-VCS WLOAD8 baseline M=256"
+    iteration: 1
+    timestamp: "2026-08-07 21:43"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "None."
+    lesson: "The matched large baseline is numerically correct and reuses the same configured WLOAD8 simulator image."
+    coverage: "M=256,K=256,N=256,QBLK=32,WLOAD=8; reference outputs 0x4405 and 0x400a; PERF jobs=16384, total_cycles=21529, busy_cycles=27837, DMA+MXU overlap=19470/21187, instruction cycles=27806."
+    markers: "PERF; PASSED"
+    log: agent-tasks/dma-optim/evidence/baseline-m256/20260807-214224_run_wload8_m256_n256_k256_q32_t0_d1_pid2126588/wrapper.log
+  - feature: "Phase 1/2 aligned fast launch and rollover"
+    iteration: 1
+    timestamp: "2026-08-07 22:04"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "Implemented registered fast launch, D0/D1-only dimension-aware correction generation, and independent read/write pending rollover in VX_dma_unit_align."
+    lesson: "Matched FSDB events improve command-fire-to-first-request from 7 to 1 cycles and prior-done-valid-to-next-request from 9 to 3 cycles while all existing aligned cases remain correct."
+    coverage: "Nine existing aligned G2L/L2G cases, request-buffer backpressure, 1-D/2-D/3-D address behavior, multiplier setup, completion, and finished FSDB evidence."
+    markers: "9x CASE PASS; TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/unit-baseline/dma_mem_unit_phase12_sim.log
+  - feature: "Phase 3 lookahead plumbing - aligned and engine"
+    iteration: 1
+    timestamp: "2026-08-07 22:15"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "Added the dedicated lookahead interface, inactive legacy tie-offs, and routing through the aligned DMA hierarchy."
+    lesson: "Inactive PREPARE/ACTIVATE plumbing preserves the aligned unit and AXI/TMEM engine protocol behavior."
+    coverage: "dma_mem_unit 9/9 cases; dma_engine read/write remap, multibeat windows, AXI ready stalls, R/B throttles, TMEM throttles, numerical checks, and final B drain."
+    markers: "TEST PASSED; DMA_ENGINE_PROTOCOL_STALL_PASS"
+    log: build/hw/unittest/dma_engine/logs/sim.log
+  - feature: "Phase 3 lookahead plumbing - controller"
+    iteration: 1
+    timestamp: "2026-08-07 22:15"
+    status: pass
+    error_summary: "None."
+    root_cause: "N/A"
+    fix_applied: "Routed the inactive lookahead interface through the GEMM node/controller boundary."
+    lesson: "The existing controller still completes 30 logical commands and 62 descriptors with exact final idle under inactive lookahead."
+    coverage: "Depth-4 queue, chunking, priority, backpressure, exact completion, and scheduler performance checks."
+    markers: "TMEM_DMA_SCHED_PERF_CHECK_PASS; TMEM_DMA_EXACT_COMPLETION_PASS; TEST PASSED"
+    log: build/hw/unittest/gemm_tmem_dma_ctrl/logs/sim.log
+  - feature: "Phase 3 lookahead plumbing - node integration"
+    iteration: 1
+    timestamp: "2026-08-07 22:15"
+    status: sim_fail
+    error_summary: "M=4,N=256,K=256 node job completed but the nonuniform numerical checker found 784/1024 mismatches."
+    root_cause: "The default QDIR=0 nonuniform GEMM node lane/data-layout path is pre-existing and outside the DMA optimization. A temporary diagnostic build with fast launch disabled reproduced the same first m=0,n=9 mismatch and repeating output pattern (680/1024 mismatches versus 784/1024 with fast launch)."
+    fix_applied: "No out-of-scope GEMM/test-layout fix was applied. The temporary diagnostic macro was fully removed and work stopped pending explicit user defer or scope expansion."
+    lesson: "Focused DMA tests and the QDIR=1 XRT target cannot authorize silently skipping a known failing QDIR=0 node request under the rtl-improve blocking rule."
+    log: build/hw/unittest/gemm_node_improve/logs/sim.log
+  - feature: "Phase 3 lookahead plumbing - node integration"
+    iteration: 2
+    timestamp: "2026-08-08 13:22"
+    status: pass
+    error_summary: "None; the exact previously failing M=4,N=256,K=256,QDIR=0 request now compares 1024/1024 outputs."
+    root_cause: "Iteration 1 was blocked by the separately resolved gemm_node_improve QCOL testbench serialization order, not by DMA fast launch or inactive look-ahead plumbing."
+    fix_applied: "No DMA change. The separate nonuniform task corrected only the QCOL testbench writer to the application/FSM [nb][group][MXU_NT] contract."
+    lesson: "Phase 3 inactive look-ahead plumbing is functionally clean; Phase 4 may proceed under the original confirmed architecture."
+    coverage: "M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=0,type-3 vectors; job done at 18335ns; 1024 outputs; zero mismatches."
+    markers: "TILED OUTPUT CHECK PASSED; CONFIG GEMM PASSED; TB completed"
+    log: agent-tasks/dma-optim/evidence/phase3-node-resume-iter2/sim.log
+  - feature: "Phase 4 controller prepared-candidate table"
+    iteration: 1
+    timestamp: "2026-08-08 13:49"
+    status: sim_fail
+    error_summary: "Depth 1 failed because the high candidate was not marked prepared; depth 4 failed priority-load FIFO ordering at j=6 (src=0x505000). Depth 2 passed its reduced suite but did not cover the required prepared-table marker."
+    root_cause: "Pending Phase 4 debug. The first implementation compiles and covers both candidate IDs at depth 4, but candidate readiness and reserved-command ordering are not yet correct across queue depths."
+    fix_applied: "None yet; preserved all three independent logs and returned the exact failures to the implementation loop."
+    lesson: "Compile/elaboration and a single queue depth are insufficient for candidate ownership. Readiness, FIFO order, and capacity accounting must be proved together at depths 1, 2, and 4."
+    coverage: "Depth 1 reached 5 logical completions before the preparation fatal; depth 2 completed 9 commands exactly once; depth 4 emitted TMEM_DMA_PREPARED_TABLE_PASS before the priority FIFO mismatch."
+    markers: "depth1 Fatal high candidate not prepared; depth2 TEST PASSED; depth4 TMEM_DMA_PREPARED_TABLE_PASS then priority_load_fifo mismatch"
+    log: agent-tasks/dma-optim/evidence/phase4-controller-iter1
+  - feature: "Phase 4 controller prepared-candidate table"
+    iteration: 2
+    timestamp: "2026-08-08 13:54"
+    status: sim_fail
+    error_summary: "Depth 1 failed the queue-full contract check immediately after the accepted pending command; depths 2 and 4 passed."
+    root_cause: "The RTL capacity bug from iteration 1 was corrected by counting reserved logical candidates in cmd_ready. The remaining depth-1 failure is under focused timing diagnosis because the check observes the pending-to-candidate transfer boundary."
+    fix_applied: "Counted pending plus reserved new logical candidates, excluding speculative continuation chunks of the already-owned paused store; restored original priority sequence and bounded preparation wait."
+    lesson: "Depth 4 now proves both IDs, FIFO priority, cursor speculation, backpressure, 30 exact logical completions, and original capacity; depth 1 must still prove the one-entry pending-to-candidate boundary without an observation-race assumption."
+    coverage: "Depth2 pass 8 logical/8 descriptors; depth4 pass 30 logical, 62 descriptors, 46 store chunks, exact completion and final idle."
+    markers: "depth1 queue full contract mismatch; depth2 TEST PASSED; depth4 TMEM_DMA_PREPARED_TABLE_PASS, TMEM_DMA_PRIORITY_PASS, TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/phase4-controller-iter2
+  - feature: "Phase 4 controller prepared-candidate table"
+    iteration: 3
+    timestamp: "2026-08-08 13:59"
+    status: pass
+    error_summary: "None. Pending depths 1, 2, and 4 all pass without fatal or assertion."
+    root_cause: "Iteration 1 exposed missing reserved-candidate capacity accounting and a test sequence that unintentionally expanded priority coverage. Iteration 2's sole depth-1 failure was an observation race: ownership was still in pending_q for one cycle before transfer to ID0."
+    fix_applied: "Counted reserved new logical candidates in cmd_ready while excluding speculative continuation chunks, restored original ordering sequences, and made the test wait boundedly for pending-to-candidate ownership transfer before inspecting the slot."
+    lesson: "The controller now preserves the original queue capacity while moving ownership between pending and random-access candidate storage; PREPARE bookkeeping does not duplicate completion or commit a speculative store cursor."
+    coverage: "Depth1 7/7 logical/descriptors; depth2 8/8; depth4 30 logical, 62 descriptors, 46 store chunks, both IDs, priority/FIFO ordering, cursor speculation, backpressure, exact completion, and final idle."
+    markers: "TMEM_DMA_DEPTH_PASS at depths 1/2/4; TMEM_DMA_PREPARED_TABLE_PASS; TMEM_DMA_PRIORITY_PASS; TMEM_DMA_EXACT_COMPLETION_PASS; TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/phase4-controller-iter3
+  - feature: "Phase 5 aligned precalculation cache"
+    iteration: 1
+    timestamp: "2026-08-08 14:09"
+    status: pass
+    error_summary: "None. All five requested aligned, engine, and controller runs passed."
+    root_cause: "N/A"
+    fix_applied: "Added two random-access tagged D0/D1 result slots in VX_dma_unit_align, cache-hit and unprepared ACTIVATE behavior, owner/lifetime protection, and a slot1-before-slot0 directed test."
+    lesson: "The aligned backend can accept PREPARE without changing active DMA state, associate late multiplier results by prep_id, activate either slot, and retire it without perturbing engine drain or controller completion behavior."
+    coverage: "DMA cache hit twice with reverse slot order and tagged retirement; 9 existing aligned cases; engine protocol stalls/numerical/final drain; controller depths 1/2/4 including 30 logical commands and 62 descriptors."
+    markers: "DMA_PHASE5_CACHE_PASS; 9x CASE PASS; DMA_ENGINE_PROTOCOL_STALL_PASS; TMEM_DMA_PREPARED_TABLE_PASS; TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/phase5-iter1
+  - feature: "Phase 6 safe same-edge chaining"
+    iteration: 1
+    timestamp: "2026-08-08 14:27"
+    status: sim_fail
+    error_summary: "dma_mem_unit did not assert the next request after ACTIVATE; controller depths 1/2 undercounted chained descriptor issues; depth 4 held logical done more than one cycle; gemm_node produced 784/1024 numerical mismatches. dma_engine alone passed."
+    root_cause: "Pending Phase 6 debug. The implementation compiles and the engine B-drain gate is correct, but chained launch, completion-pulse replacement, issue accounting, and integrated numerical behavior are not yet correct."
+    fix_applied: "None yet; all six independent logs were preserved and returned to the isolated Phase 6 implementation loop."
+    lesson: "Same-edge cfg acceptance is not sufficient proof: the following-cycle request, exactly-one logical done, chained issue accounting, and node numerical output must all agree."
+    coverage: "Phase5 cache precheck passed; engine protocol/numerical/delayed-B passed; controller reached capacity checks before failures; node completed the job before numerical mismatch."
+    markers: "DMA_ENGINE_PHASE6_B_DRAIN_PASS; dma_mem next-request fatal; ctrl issue/complete mismatch or repeated done; node 784/1024 mismatch"
+    log: agent-tasks/dma-optim/evidence/phase6-iter1
+  - feature: "Phase 3 node prerequisite clean-rebuild audit"
+    iteration: 3
+    timestamp: "2026-08-08 15:20"
+    status: blocked
+    error_summary: "The recorded Phase 3 node iteration-2 PASS was produced by stale incremental VCS objects and did not compile the changed DMA controller or aligned backend."
+    root_cause: "The compile log recompiles only VX_pe_tree_new and tb_VX_gemm_node_improve. Forced exact Phase 3 controller/aligned reconstructions fail 784/1024, and forced pre-change aligned RTL also fails 680/1024 at the same first m=0,n=9 location."
+    fix_applied: "No out-of-scope node/QCOL architecture or test-contract fix was applied. Temporary diagnostic reconstructions were restored byte-for-byte."
+    lesson: "Incremental parsing is not production-RTL validation. A changed DMA module must appear in the VCS recompile set or the simulator must be rebuilt cleanly before a node PASS can clear the gate."
+    coverage: "Exact M=4,N=256,K=256,QBLK=32,QDIR=0 clean diagnostics with current, no-chain, no-candidate, exact Phase3, and pre-change aligned variants."
+    markers: "compile.log: recompiling only VX_pe_tree_new and tb_VX_gemm_node_improve; current/Phase3 784 mismatches; pre-change aligned 680 mismatches"
+    log: agent-tasks/dma-optim/evidence/phase3-node-resume-iter2/compile.log
+  - feature: "Phase 6 retained simple-fix characterization"
+    iteration: 2
+    timestamp: "2026-08-08 15:28"
+    status: sim_fail
+    error_summary: "dma_mem_unit still lacks the next internal request after ACTIVATE; controller depth 4 reaches the zero-cycle chain marker then trips DMA channel-slot misalignment. Engine and controller depths 1/2 pass."
+    root_cause: "Not pursued further because the clean-rebuild audit activated the confirmed hard-rule stop before additional Phase 6 edits."
+    fix_applied: "Retained only previously diagnosed test/accounting corrections: L2G request-side observation, chained issue counting, and distinct back-to-back completion handling."
+    lesson: "The saved Phase 6 candidate remains incomplete and must not be used as a passing implementation."
+    coverage: "dma_mem fail after Phase5 marker; engine pass including delayed B; controller depths1/2 pass; depth4 chain marker then slot assertion. Node and XRT deliberately not run after the hard-rule stop."
+    markers: "DMA_ENGINE_PHASE6_B_DRAIN_PASS; TMEM_DMA_PHASE6_CHAIN_PASS; dma_mem next-request fatal; controller DMA channel-slot misalignment"
+    log: agent-tasks/dma-optim/evidence/phase6-simple-fixes-final
+  - feature: "Clean-build node prerequisite"
+    iteration: 1
+    timestamp: "2026-08-08 15:40"
+    status: compile_error
+    error_summary: "Fresh VCS parsed and elaborated the DMA RTL but DPI compilation failed because the new configured tree did not yet contain generated hw/VX_config.h."
+    root_cause: "Configure populates build templates but does not run the build-side `make -C hw config` generated-header prerequisite."
+    fix_applied: "Pending iteration 2: generate VX_config.h and VX_types.h from the clean build's hw config target under the sourced target configuration, then rerun unchanged."
+    lesson: "A clean unittest build requires both configure and the generated hw headers before float_dpi.cpp can link."
+    coverage: "Fresh compile log parsed VX_dma_unit_align.sv and VX_gemm_tmem_dma_ctrl.sv; no simulation executable or numerical result."
+    markers: "fatal error: VX_config.h: No such file or directory"
+    log: agent-tasks/dma-optim/evidence/clean-build-node-iter1/compile.log
+  - feature: "Clean-build node prerequisite"
+    iteration: 2
+    timestamp: "2026-08-08 15:46"
+    status: pass
+    error_summary: "None. The fresh current DMA simulator compares all 1024 outputs correctly."
+    root_cause: "The existing build tree's VCS archive was stale. The clean tree's first attempt created fresh DMA HDL archives before DPI stopped on missing generated headers; after generating the headers, iteration 2 linked and ran those fresh archives successfully."
+    fix_applied: "Generated the clean configured tree's VX_config.h and VX_types.h using `make -C build_dma_clean_20260808_1534/hw config`; no RTL or numerical-oracle fix was needed."
+    lesson: "The earlier 784/680 mismatch classifications were simulator-cache artifacts. Fresh DMA archives prove the current node/QCOL contract and Phase 6 production integration are numerically correct for the exact prerequisite."
+    coverage: "M=4,N=256,K=256,QBLK=32,WTRANS=0,QDIR=0,type3; job done 18205ns; 1024/1024 outputs; zero mismatches."
+    markers: "TILED OUTPUT CHECK PASSED; CONFIG GEMM PASSED; TB completed"
+    log: agent-tasks/dma-optim/evidence/clean-build-node-iter2/sim.log
+  - feature: "Phase 6 safe same-edge chaining"
+    iteration: 3
+    timestamp: "2026-08-08 15:50"
+    status: sim_fail
+    error_summary: "Clean dma_mem_unit still lacks the next internal LMEM request after ACTIVATE; clean controller depth 4 chains ID0 successfully then trips DMA channel-slot misalignment. Engine and controller depths 1/2 pass."
+    root_cause: "Pending focused Phase 6 debug. Stale-archive effects are eliminated by the new configured build."
+    fix_applied: "None yet. The unchanged clean matrix isolated the two remaining production/test divergences."
+    lesson: "The clean node PASS exonerates the broader integration; only the direct next-request timing and post-chain descriptor slot context remain blocking."
+    coverage: "Phase5 cache marker before dma_mem failure; engine B-drain pass; depth1 7 commands pass; depth2 8 pass; depth4 chain marker then assertion at 915ns."
+    markers: "DMA_PHASE5_CACHE_PASS; DMA_ENGINE_PHASE6_B_DRAIN_PASS; TMEM_DMA_PHASE6_CHAIN_PASS; channel-slot misalignment"
+    log: agent-tasks/dma-optim/evidence/phase6-clean-iter3
+  - feature: "Phase 6 safe same-edge chaining"
+    iteration: 4
+    timestamp: "2026-08-08 15:56"
+    status: sim_fail
+    error_summary: "Five of six clean runs pass. Controller depth 4 reaches all functional Phase6/Phase4 markers but the debug store issue counter reports 45 versus 46 completed/observed descriptors."
+    root_cause: "The chained descriptor was added to the general descriptor-issue counter but the store-specific debug issue event still only recognizes the legacy S_PROG path."
+    fix_applied: "Pending iteration 5: include a chained store candidate in the store issue event without changing scheduling or completion behavior."
+    lesson: "Zero-cycle chaining must be represented consistently in both general and store-specific performance counters."
+    coverage: "dma_mem Phase5/Phase6 hit/miss and 9 cases pass; engine/B drain pass; depths1/2 pass; depth4 all functional markers pass; node 1024/1024 pass."
+    markers: "DMA_PHASE6_CHAIN_PASS; DMA_PHASE6_CACHE_MISS_PASS; TMEM_DMA_PHASE6_CHAIN_PASS; TMEM_DMA_PHASE6_CACHE_MISS_PASS; depth4 store issue count mismatch"
+    log: agent-tasks/dma-optim/evidence/phase6-clean-iter4
+  - feature: "Phase 6 safe same-edge chaining"
+    iteration: 5
+    timestamp: "2026-08-08 15:59"
+    status: pass
+    error_summary: "None. The clean six-target matrix is complete after the focused depth-4 counter retest."
+    root_cause: "Iteration 3 exposed two directed-TB errors: wrong request-side direction and an intentionally malformed channel-slot address. Iteration 4 exposed store-specific debug accounting that omitted the chained issue event."
+    fix_applied: "Corrected the G2L dcache request check, aligned the unprepared-high test command's channel slots, and classified the single chained descriptor-issue event with candidate_is_store_q for the store counter."
+    lesson: "Same-edge chaining is now functionally and observably consistent: zero-cycle completion-to-ACTIVATE, one-cycle ACTIVATE-to-request, exact store/general accounting, and no priority or B-drain violation."
+    coverage: "dma_mem Phase5/6 hit/miss plus 9 cases; engine protocol/numerical/B-drain; controller depths1/2/4; depth4 34 logical,66 descriptors,46 stores; node 1024/1024."
+    markers: "DMA_PHASE6_CHAIN_PASS; DMA_PHASE6_CACHE_MISS_PASS; DMA_ENGINE_PHASE6_B_DRAIN_PASS; TMEM_DMA_PHASE6_CHAIN_PASS; TMEM_DMA_PHASE6_CACHE_MISS_PASS; TMEM_DMA_SCHED_PERF_CHECK_PASS; TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/phase6-clean-iter5-ctrl-depth4/sim.log
+  - feature: "Phase 7 directed and legacy regression matrix"
+    iteration: 1
+    timestamp: "2026-08-08 16:12"
+    status: sim_fail
+    error_summary: "6/10 pass. New dma_mem stride is misaligned; depth4 ACTIVATE ID assertion fails under skew; dma_mem_unit_misal lacks arbiter source dependencies; legacy dma_node aggregate byte-enable check fails."
+    root_cause: "Pending focused fixes. Aligned engine Phase7, controller depths1/2, legacy engine, local misaligned DMA, and clean node numerical integration already pass."
+    fix_applied: "Added Phase7 directed coverage and globally atomic multi-channel cfg/ACTIVATE; verification exposed the four remaining issues before acceptance."
+    lesson: "Atomic ready-skew behavior must gate descriptor valid and ACTIVATE sideband consistently, and every fresh configured legacy target must carry its complete source dependency closure."
+    coverage: "Aligned engine PREPARE during delayed B passes; local misaligned 18+4 cases pass; node 1024/1024; three directed/legacy targets remain unresolved."
+    markers: "DMA_ENGINE_PHASE7_PREPARE_B_DRAIN_PASS; dma_mem alignment fatal; ctrl ACTIVATE ID mismatch; misal unresolved VX_rr_arbiter; dma_node aggregate byte-enable fatal"
+    log: agent-tasks/dma-optim/evidence/phase7-clean-iter1
+  - feature: "Phase 7 directed and legacy regression matrix"
+    iteration: 2
+    timestamp: "2026-08-08 16:39"
+    status: sim_fail
+    error_summary: "dma_mem passes every Phase7 marker; controller depth 4 enters a zero-time combinational hang at 3785ns after the atomic-ready change. Remaining focused legacy tests were not started."
+    root_cause: "The candidate selection and selected-channel cfg_all_ready active-mask path form a combinational dependency. Selection must be independent of readiness, with a separate atomic fire qualification."
+    fix_applied: "Corrected aligned Phase7 test strides, narrowed the legacy node probe footprint, closed misaligned arbiter dependencies, and tightened ACTIVATE assertions; atomic chain fire refactor pending iteration 3."
+    lesson: "Global atomic acceptance cannot feed readiness back into the scheduler-selection predicate when readiness active masks are themselves selected by that predicate."
+    coverage: "dma_mem known-zero, rollover, PREPARE isolation, Phase5/6 and 9 cases pass. Controller reached 3785ns before zero-time hang; test was terminated after more than eight wall-clock minutes."
+    markers: "DMA_PHASE7_KNOWN_ZERO_PASS; DMA_PHASE7_ROLLOVER_PASS; DMA_PHASE7_PREPARE_ISOLATION_PASS; controller timeout/hang"
+    log: agent-tasks/dma-optim/evidence/phase7-clean-iter2
+  - feature: "Phase 7 directed and legacy regression matrix"
+    iteration: 3
+    timestamp: "2026-08-08 16:47"
+    status: sim_fail
+    error_summary: "Focused controller run again failed to terminate; diagnostic loop reporting later proved no RTL combinational SCC."
+    root_cause: "The legacy cfg-backpressure TB drove every ready low and then waited for cfg.valid. Under the new atomic contract valid correctly remains low until all active channels are ready, creating a one-way testbench deadlock."
+    fix_applied: "The backpressure test now waits for S_PROG, checks zero partial valid/ACTIVATE and stable descriptor payload while blocked, then releases ready and completes normally."
+    lesson: "An atomic-valid protocol must be backpressure-tested through internal pending/state and payload stability, not by waiting for valid while deliberately withholding all readiness."
+    coverage: "VCS +vcs+loopreport diagnostic passed the 3785ns boundary, emitted the Phase7 skew-priority marker, and identified the later cfg-backpressure wait."
+    markers: "TMEM_DMA_PHASE7_SKEW_PRIORITY_PASS; no VCS loop report; cfg-backpressure TB deadlock"
+    log: agent-tasks/dma-optim/evidence/phase7-clean-iter3-ctrl-depth4/sim.log
+  - feature: "Phase 7 directed and legacy regression matrix"
+    iteration: 4
+    timestamp: "2026-08-08 16:55"
+    status: pass
+    error_summary: "None. The focused clean controller and legacy DMA regressions all terminate and pass."
+    root_cause: "Iteration 3 was a directed-test protocol deadlock, while the legacy failures were incomplete fresh-build source closure and an oversized wrapped probe footprint."
+    fix_applied: "Kept readiness-independent selection with atomic fire, rewrote cfg backpressure to observe pending state/payload stability, added missing arbiter dependencies, and constrained the legacy node probe to its intended active byte footprint."
+    lesson: "Atomic per-channel PREPARE/ACTIVATE now tolerates acceptance/result/ready skew without partial cfg, stale ID use, fallback priority inversion, or loss of legacy misaligned behavior."
+    coverage: "Controller depth4: 37 logical, 69 descriptors, 47 stores, exact pulses 37/15; dma_mem_unit_misal 2126/2126; dma_node active-lane 1/1; aligned engine delayed-B PREPARE and local misaligned DMA already pass."
+    markers: "TMEM_DMA_PHASE7_SKEW_PRIORITY_PASS; TMEM_DMA_BACKPRESSURE_PASS atomic_valid=1; TMEM_DMA_SCHED_PERF_CHECK_PASS; TMEM_DMA_EXACT_COMPLETION_PASS; TEST PASSED"
+    log: agent-tasks/dma-optim/evidence/phase7-clean-iter4-ctrl-depth4/sim.log
+  - feature: "Phase 7 clean node integration"
+    iteration: 5
+    timestamp: "2026-08-08 17:03"
+    status: pass
+    error_summary: "None. Default, MAINCPP nonuniform QCOL, and MAINCPP nonuniform QROW node integrations all pass against freshly compiled current DMA RTL."
+    root_cause: "N/A"
+    fix_applied: "None in this iteration; this is the final numerical integration gate after the controller atomic-ready corrections."
+    lesson: "The completed lookahead/cache/chaining implementation preserves both quantization directions and the nonuniform application-derived data/layout contract."
+    coverage: "Three M=4,N=256,K=256,QBLK=32 clean VCS runs; each compares 1024/1024 outputs with zero mismatch, job done at 18205ns."
+    markers: "TILED OUTPUT CHECK PASSED; MAIN_CPP_NONUNIFORM_OUTPUT_PASS mismatches=0; CONFIG GEMM PASSED"
+    log: agent-tasks/dma-optim/evidence/phase7-clean-iter5-node
+  - feature: "Phase 7 final XRT-VCS workloads"
+    iteration: 1
+    timestamp: "2026-08-08 17:01"
+    status: launch_error
+    error_summary: "The forced clean VCS rebuild succeeded, but the M=4 application did not launch because a relative --build-dir was resolved again after changing into that directory. M=256 was not started."
+    root_cause: "run_target_gemm.sh constructed BUILD_DIR/ci/run_black.sh from the relative caller argument, then executed it inside BUILD_DIR, duplicating the path prefix."
+    fix_applied: "Canonicalized BUILD_DIR and an explicit OUTPUT_ROOT before configure/build/run path construction; bash syntax and relative-path dry-run now resolve the runner and artifact paths absolutely."
+    lesson: "A wrapper that changes working directory must canonicalize caller paths at the boundary; a successful simulator build alone is not an XRT functional result."
+    coverage: "Current RTL VCS compile/elaboration/link succeeded; no simulation, numerical, or performance result was claimed."
+    markers: "exit_status=127; absolute-runner dry-run PASS"
+    log: agent-tasks/dma-optim/evidence/xrt-final-m4/20260808-165830_run_wload8_m4_n256_k256_q32_t0_d1_pid926512/wrapper.log
+  - feature: "Phase 7 final XRT-VCS workloads"
+    iteration: 2
+    timestamp: "2026-08-08 17:06"
+    status: pass
+    error_summary: "None. Both fixed WLOAD=8 QDIR=1 workloads pass full application comparison from the clean-build simulator."
+    root_cause: "Iteration 1 was solely a relative wrapper-path launch bug; no RTL or simulation failure occurred."
+    fix_applied: "Reused the current-RTL simulator produced by the successful forced rebuild and launched through the canonical absolute runner path."
+    lesson: "Matched total cycles improve from 2255 to 1697 for M=4 and from 21529 to 20701 for M=256 while preserving exact application outputs. Run mode exposes aggregate jobs/performance but not internal DMA command or PREPARE lifecycle markers."
+    coverage: "M=4: jobs256,total1697,busy8035,overlap1187/1627,IPC1.519865. M=256: jobs16384,total20701,busy27023,overlap18924/20369,IPC0.506928. Both exit0 and PASSED."
+    markers: "PASSED; PERF jobs; PERF total_cycles; DMA+MXU overlap; exit_status=0"
+    log: agent-tasks/dma-optim/evidence/xrt-final-m4-rerun/20260808-170052_run_wload8_m4_n256_k256_q32_t0_d1_pid951693/wrapper.log
+  - feature: "Phase 7 trace-only command-count characterization"
+    iteration: 3
+    timestamp: "2026-08-08 17:16"
+    status: pass
+    error_summary: "None. Both trace workloads pass numerically and expose exact controller command/descriptor completion counts."
+    root_cause: "Run mode intentionally omits DBG_TRACE_GEMM, so its aggregate PERF record cannot supply the plan's internal DMA command-count field."
+    fix_applied: "No RTL change. Rebuilt once with the standard trace fingerprint, ran M=4, then reused the same simulator for M=256."
+    lesson: "M=4 accepts/completes 24 logical DMA commands (16 load, 8 store), 24 descriptors, and 8 store chunks. M=256 accepts/completes 48 logical DMA commands (32 load, 16 store), 64 descriptors, and 32 store chunks. Production trace still lacks unambiguous PREPARE/ACTIVATE classification, so cycle-exact lifecycle acceptance remains sourced from directed tests."
+    coverage: "M=4 TMEM accepted/logical=24/24, desc=24/24, stores=8/8; M=256 accepted/logical=48/48, desc=64/64, stores=32/32; event-line counts cross-check cumulative records; both PASSED."
+    markers: "TMEM_DMA_CMD_ACCEPT; TMEM_DMA_LOGICAL_COMPLETE; TMEM_DMA_SCHED_PERF; PASSED"
+    log: agent-tasks/dma-optim/evidence/xrt-final-trace-m4/20260808-170843_trace_wload8_m4_n256_k256_q32_t0_d1_pid1027995/simv.log
+log:
+  - timestamp: "2026-08-08 17:16"
+    action: "Completed trace-only command-count characterization and the final source/task audit."
+    result: "Both trace workloads pass; command accept equals logical completion and every descriptor/store issue equals completion. The task meets functional and matched-latency acceptance."
+    learned: "Use run-mode artifacts for matched performance and trace-mode artifacts only for command accounting; use the directed tests for PREPARE/ACTIVATE hit classification and exact lifecycle cycles."
+  - timestamp: "2026-08-08 17:06"
+    action: "Ran both final WLOAD=8 XRT-VCS workloads from the clean configured build after correcting path canonicalization."
+    result: "PASS/PASS with exact numerical sentinels; total cycles improved by 558 (24.7%) for M=4 and 828 (3.85%) for M=256 versus Phase 0."
+    learned: "The functional/performance acceptance is green. Internal command-count and lifecycle fields remain absent from run-mode logs and must be reported from directed matched evidence unless an additional trace-only characterization is justified."
+  - timestamp: "2026-08-08 17:01"
+    action: "Attempted the first final XRT workload from the clean build and corrected a relative runner-path launch bug."
+    result: "The current RTL simulator rebuilt successfully; application launch failed before simulation, and the corrected absolute path passed dry-run validation."
+    learned: "The final two workloads must be rerun; the launch-only failure carries no functional or performance conclusion."
+  - timestamp: "2026-08-08 17:03"
+    action: "Closed Phase 7 with focused clean controller/legacy tests and three final node numerical integrations."
+    result: "PASS: all directed lookahead, atomic skew/backpressure, aligned/misaligned legacy, and QDIR0/QDIR1 node gates are green."
+    learned: "The final XRT-VCS workloads can now run from the same clean configured build; no existing-build incremental archive is acceptable as final evidence."
+  - timestamp: "2026-08-08 15:59"
+    action: "Completed the focused clean depth-4 retest after correcting chained-store debug classification."
+    result: "PASS: descriptors 66/66, stores 46/46/46 observed, logical 34, exact completion, final idle, and every Phase4/6 marker."
+    learned: "Phase 7 may proceed from a clean-build Phase 6 gate; existing-build VCS results remain non-authoritative because of stale archives."
+  - timestamp: "2026-08-08 15:46"
+    action: "Completed the user-authorized clean rebuild after generating the clean tree's required hw headers."
+    result: "The exact node prerequisite passes 1024/1024 with current DMA RTL. The hard-rule blocker was a stale build artifact, not an architecture/QCOL contract defect."
+    learned: "All remaining Phase 6 and final acceptance tests must use the clean configured tree or otherwise force the relevant VCS production modules to rebuild."
+  - timestamp: "2026-08-08 15:34"
+    action: "User explicitly authorized a clean build after the stale incremental VCS prerequisite was reported."
+    result: "Resumed only the clean-build prerequisite audit. A new configured build directory will be used without deleting or mutating the existing build tree."
+    learned: "The fresh build must compile every production DMA source before the node result can be used to classify the remaining failure."
+  - timestamp: "2026-08-08 15:28"
+    action: "Activated the source plan's hard-rule stop after clean-rebuild diagnostics invalidated the prior node prerequisite."
+    result: "The node/QCOL integration fails even with exact pre-change aligned DMA behavior, while the earlier reported PASS used stale DMA archives. No architectural workaround, final XRT run, or further Phase 6 fix was attempted."
+    learned: "Resume requires resolving the separate clean-build gemm_node QCOL contract issue first, then re-establishing a trustworthy Phase 3 gate and restarting Phase 6 verification."
+  - timestamp: "2026-08-08 14:27"
+    action: "Ran the six-target Phase 6 formal matrix after adding same-edge completion/ACTIVATE."
+    result: "Only dma_engine passed. Chained aligned launch and controller replacement semantics remain incorrect, and the node numerical gate regressed."
+    learned: "The next iteration must diagnose each first divergence before editing and must not classify the node mismatch as the former testbench issue without reproducing it against the now-corrected node baseline."
+  - timestamp: "2026-08-08 14:09"
+    action: "Verified the Phase 5 two-slot aligned precalculation cache and unchanged engine/controller behavior."
+    result: "All five formal requests passed with no fatal or assertion. Slot 1 activated before slot 0, both were cache hits, and both retired exactly once."
+    learned: "Phase 6 can now change only the safe completion boundary and retain the proven PREPARE/result-slot machinery."
+  - timestamp: "2026-08-08 13:59"
+    action: "Completed Phase 4 iteration 3 across the full pending-depth matrix."
+    result: "All depths pass original capacity, ownership, prepared-table, ordering, backpressure, exactly-once completion, and final-idle checks."
+    learned: "Phase 5 may now attach real aligned-channel result slots to a controller whose reservation and scheduling semantics are independently proven."
+  - timestamp: "2026-08-08 13:54"
+    action: "Re-ran Phase 4 after fixing reserved-command capacity and preparation timing."
+    result: "Depths 2 and 4 pass all applicable checks; only depth 1 fails at the immediate pending-to-candidate queue-full observation."
+    learned: "The final iteration-3 correction must preserve the capacity predicate while waiting for candidate capture rather than assuming capture occurs on the command-accept edge."
+  - timestamp: "2026-08-08 13:49"
+    action: "Ran the Phase 4 controller matrix independently at TB_PENDING_DEPTH 1, 2, and 4."
+    result: "Iteration failed: depth 1 candidate readiness and depth 4 priority FIFO order are incorrect; depth 2 alone passed."
+    learned: "The next correction must also audit cmd_ready accounting for commands reserved in candidate slots, because reservation moves ownership out of pending_q without completing the logical command."
+  - timestamp: "2026-08-08 13:34"
+    action: "Completed the read-only Phase 4 controller-table audit against the resumed Phase 3 baseline and the confirmed PREPARE/ACTIVATE architecture."
+    result: "No architecture contradiction was found. The isolated Phase 4 boundary is ID0 oldest high-priority load and ID1 paused-store next chunk or oldest low-priority command, with random-access activation, high-before-fallback suppression including same-edge high acceptance, reservation ownership, no same-cycle ID reuse, and deferred physical-completion store commit."
+    learned: "Phase 4 can prove controller reservation, priority, and PREPARE bookkeeping with mocked lookahead responses. End-to-end prepared hits and same-edge chaining deliberately remain Phase 5 and Phase 6 dependencies."
+  - timestamp: "2026-08-08 13:20"
+    action: "Resumed the confirmed DMA look-ahead plan after completing the separate gemm-node nonuniform debug task. Re-read the full source plan, specification, rtl-improve procedure, project context, current worktree, and preserved Phase 0-3 evidence."
+    result: "The former Phase 3 node blocker is resolved: the separate task proved a testbench-only QCOL serialization bug, corrected it, passed focused QDIR0/QDIR1 tests, all QCOL/QROW suites, and four XRT-VCS workloads without a production GEMM architecture change. The DMA task resumes from the exact prior node verification request before Phase 4 edits."
+    learned: "The previous node mismatch did not invalidate the confirmed DMA architecture. Existing Phase 1/2 fast-launch and Phase 3 inactive PREPARE/ACTIVATE plumbing remain the current implementation baseline; VX_dma_unit_misal.sv still matches its locked hash."
+  - timestamp: "2026-08-07 21:32"
+    action: "Loaded the project-context and rtl-improve procedures, read the full authoritative DMA optimization plan, and inspected related completed DMA scheduling and command-trace tasks."
+    result: "Created a confirmed specification preserving all Phase 0-7 requirements and the plan's hard-stop rule. No production RTL or test files have been changed."
+    learned: "The current source tree contains multi-command scheduling and lifecycle tracing from earlier work, but no PREPARE/ACTIVATE look-ahead interface is present. Existing unrelated document moves and the untracked source plan are user work and must be preserved."
+  - timestamp: "2026-08-07 21:34"
+    action: "Locked the pre-change aligned/misaligned/controller/engine state, tool prerequisites, and configured build availability for Phase 0."
+    result: "The configured build/ci/run_black.sh, VCS W-2024.09-SP1, /usr/bin/gcc, /usr/bin/g++, make, and timeout are available. Production RTL has no worktree diff. Baseline SHA-256 values are align=502ec14cdcea786556939866f706979f3c81e406f46583e1e11147f0dfe2f559, misal=1fcf0015b791779e6a5fc94f0b3db4791f1bd2d3bcdc41ae435455971ae53f57, unit=28e70d0194ad9426ea2622d5c1f42d94ded7c02e2aa874620266974c9c3d4036, engine=06781e66d592bbcb6d1a9481bd10e69f59b0778c62a1532243b567dc7fb5fae5, controller=6b7e1fb35bc8b83e08e03eba62c116d09a86507bdbe7fb6e4bfa6e3a7ae7042f."
+    learned: "The aligned backend currently accepts descriptors only in S_IDLE, enters S_PRECALC, generates six D0/D1/D2 products, and waits for all products before S_PREP_SEG. VX_dma_engine already suppresses external completion until AXI B responses drain."
+  - timestamp: "2026-08-07 21:40"
+    action: "Added the required --m runner option and independently validated the Phase 0 M=4 XRT-VCS baseline before any production RTL change."
+    result: "ci/run_target_gemm.sh now defaults to M=4, accepts a positive --m, passes it to the application, and records M in the run tag and manifest. The M=4 WLOAD=8 case passed numerical comparison with PERF instrs=12207, cycles=8530, jobs=256, and DMA+MXU overlap 1194/2179 cycles; run-mode logs do not expose the two requested command-level latency metrics."
+    learned: "Matched latency acceptance requires new directed-test timestamps or trace-enabled instrumentation; aggregate run-mode performance counters cannot substitute for command-accept-to-first-request or previous-completion-to-next-request measurements."
+  - timestamp: "2026-08-07 21:46"
+    action: "Extracted exact pre-change aligned-DMA handshake/request events from the finished Phase 0 VCS FSDB without modifying RTL or test stimulus."
+    result: "For both first G2L and second L2G descriptors, cfg_fire assertion to first internal request assertion is seven cycles. Prior done-valid assertion to the next command's first request assertion is nine cycles. Raw transitions are cfg_fire 145-155 ns, first G2L request 215 ns, done valid 565-575 ns, next cfg_fire 585-595 ns, and first L2G request 655 ns."
+    learned: "Latency convention uses the rising assertion of each handshake qualifier/request-fire signal, matching cycle-by-cycle RTL observability. This produces 7-cycle command-fire-to-first-request and 9-cycle prior-done-valid-to-next-request baselines; candidate measurements use the identical convention."
+  - timestamp: "2026-08-07 22:06"
+    action: "Measured the Phase 1/2 candidate with the same FSDB signals and preserved both pre-change and candidate waveforms."
+    result: "The candidate cfg_fire rises at 145 ns and first G2L request fire rises at 155 ns (1 cycle); prior done valid rises at 515 ns and the next L2G request fire rises at 545 ns (3 cycles). This is a six-cycle reduction for both target metrics against the preserved pre-change waveform."
+    learned: "The fast-path improvement exceeds the one-cycle first-request acceptance threshold before PREPARE/ACTIVATE integration; final chaining acceptance still requires a prepared controller-owned candidate and same-edge activation proof."
+  - timestamp: "2026-08-07 22:22"
+    action: "Audited the Phase 3 node numerical failure with a temporary fast-path-disabled diagnostic and authoritative prior task evidence."
+    result: "HARD-RULE SCOPE STOP. The unchanged M=4,N=256,K=256,QBLK=32 default QDIR=0 request fails independently of the DMA fast path and lookahead plumbing. Correcting its nonuniform lane/QCOL layout requires expanding beyond the confirmed DMA plan; no such fix or verification weakening was applied."
+    learned: "Resume Phase 4 only after the user either explicitly defers this pre-existing QDIR=0 node failure in favor of the plan's directed DMA plus QDIR=1 XRT acceptance matrix, or authorizes expanding scope to repair the GEMM nonuniform layout first."
+  - timestamp: "2026-08-07 21:50"
+    action: "Completed the read-only Phase 1-6 architecture preflight and reconciled existing command-ledger evidence with the two fixed XRT baselines."
+    result: "No source-plan architecture contradiction was found. Existing trace evidence at the same baseline commit reports 22 total logical commands and 5 TMEM-DMA commands for M=4, and 44 total logical commands and 10 TMEM-DMA commands for M=256. The implementation will proceed in isolated Phase 1/2, plumbing, controller/cache, and chaining stages."
+    learned: "Current old-entry visibility, AXI B-drain gating, done_sticky early-channel tracking, priority scan, and deferred store cursor commit support the confirmed same-edge ACTIVATE design without altering request-level outstanding state."
+pitfalls:
+  - "Do not treat the existing request-level outstanding machinery or multi-command controller queue as command look-ahead."
+  - "Do not modify or use VX_dma_unit_misal.sv as an implementation target."
+  - "Do not activate fallback work when a late high-priority load is pending."
+  - "Do not infer a replacement architecture if a source-plan design problem is found; stop and report under the hard rule."
