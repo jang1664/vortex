@@ -1,0 +1,763 @@
+@INPROCEEDINGS{figna,
+  author={Jang, Jaeyong and Kim, Yulhwa and Lee, Juheun and Kim, Jae-Joon},
+  booktitle={2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA)}, 
+  title={FIGNA: Integer Unit-Based Accelerator Design for FP-INT GEMM Preserving Numerical Accuracy}, 
+  year={2024},
+  volume={},
+  number={},
+  pages={760-773},
+  keywords={Training;Quantization (signal);Computational modeling;Neural networks;Computer architecture;Hardware;Energy efficiency;FP-INT GEMM;Numerical Accuracy;Weight Only Quantization;NPU},
+  doi={10.1109/HPCA57654.2024.00064}}
+
+@inproceedings{lut_tensor_core,
+author = {Mo, Zhiwen and Wang, Lei and Wei, Jianyu and Zeng, Zhichen and Cao, Shijie and Ma, Lingxiao and Jing, Naifeng and Cao, Ting and Xue, Jilong and Yang, Fan and Yang, Mao},
+title = {LUT Tensor Core: A Software-Hardware Co-Design for LUT-Based Low-Bit LLM Inference},
+year = {2025},
+isbn = {9798400712616},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3695053.3731057},
+doi = {10.1145/3695053.3731057},
+abstract = {Large Language Model (LLM) inference becomes resource-intensive, prompting a shift toward low-bit model weights to reduce the memory footprint and improve efficiency. Such low-bit LLMs necessitate the mixed-precision matrix multiplication (mpGEMM), an important yet underexplored operation involving the multiplication of lower-precision weights with higher-precision activations. Off-the-shelf hardware does not support this operation natively, leading to indirect, thus inefficient, dequantization-based implementations.In this paper, we study the lookup table (LUT)-based approach for mpGEMM and find that a conventional LUT implementation fails to achieve the promised gains. To unlock the full potential of LUT-based mpGEMM, we propose LUT Tensor Core, a software-hardware co-design for low-bit LLM inference. LUT Tensor Core differentiates itself from conventional LUT designs through: 1) software-based optimizations to minimize table precompute overhead and weight reinterpretation to reduce table storage; 2) a LUT-based Tensor Core hardware design with an elongated tiling shape to maximize table reuse and a bit-serial design to support diverse precision combinations in mpGEMM; 3) a new instruction set and compilation optimizations for LUT-based mpGEMM. LUT Tensor Core significantly outperforms existing pure software LUT implementations and achieves a 1.44 \texttimes{} improvement in compute density and energy efficiency compared to previous state-of-the-art LUT-based accelerators.},
+booktitle = {Proceedings of the 52nd Annual International Symposium on Computer Architecture},
+pages = {514–528},
+numpages = {15},
+keywords = {Low-bit LLM, Software-hardware co-design, LUT, Accelerator},
+location = {
+},
+series = {ISCA '25}
+}
+
+@INPROCEEDINGS{figlut,
+  author={Park, Gunho and Kwon, Hyeokjun and Kim, Jiwoo and Bae, Jeongin and Park, Baeseong and Lee, Dongsoo and Lee, Youngjoo},
+  booktitle={2025 IEEE International Symposium on High Performance Computer Architecture (HPCA)}, 
+  title={FIGLUT: An Energy-Efficient Accelerator Design for FP-INT GEMM Using Look-Up Tables}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={1098-1111},
+  keywords={Multiplexing;Quantization (signal);Large language models;Memory architecture;Performance gain;Hardware;Energy efficiency;Generators;Table lookup;Flip-flops},
+  doi={10.1109/HPCA61900.2025.00085}}
+
+@inproceedings{jin2024uncovering,
+author = {Jin, Zhixian and Rocca, Christopher and Kim, Jiho and Kasan, Hans and Rhu, Minsoo and Bakhoda, Ali and Aamodt, Tor M. and Kim, John},
+title = {Uncovering Real GPU NoC Characteristics: Implications on Interconnect Architecture},
+year = {2024},
+publisher = {IEEE Press},
+url = {https://doi.org/10.1109/MICRO61859.2024.00070},
+doi = {10.1109/MICRO61859.2024.00070},
+abstract = {A critical component of high-throughput processors such as GPUs is the network-on-chip (NoC) that interconnects the large number of cores and the memory partitions together. In this work, we provide a detailed analysis, in terms of latency and bandwidth, of real GPU NoC across several generations of modern NVIDIA GPUs. Our analysis identifies how non-uniform latency exists between the cores and the memory partitions based on their physical location in the GPU. The non-uniformity can result in up to approximately 70 % difference in on-chip latency. In comparison, the bandwidth provided from the cores to the memory partitions is approximately uniform. However, recent GPUs that consist of multiple GPU “partitions” present different on-chip latency and bandwidth characteristics when communicating between the partitions. Based on our analysis of real GPU interconnect, we discuss potential implications including its impact on timing used in side-channel attacks as well as NoC microarchitectures. We show how the non-uniform latency can be exploited in a timing side-channel attack within a GPU as the core location impacts performance (or timing). In addition, proper understanding (and proper assumptions) of GPU NoC is critical to ensure a network that does not bottleneck the overall system performance.},
+booktitle = {Proceedings of the 2024 57th IEEE/ACM International Symposium on Microarchitecture},
+pages = {885–898},
+numpages = {14},
+location = {Austin, TX, USA},
+series = {MICRO '24}
+}
+
+@inproceedings{tine2021vortex,
+author = {Tine, Blaise and Yalamarthy, Krishna Praveen and Elsabbagh, Fares and Hyesoon, Kim},
+title = {Vortex: Extending the RISC-V ISA for GPGPU and 3D-Graphics},
+year = {2021},
+isbn = {9781450385572},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3466752.3480128},
+doi = {10.1145/3466752.3480128},
+abstract = {The importance of open-source hardware and software has been increasing. However, despite GPUs being one of the more popular accelerators across various applications, there is very little open-source GPU infrastructure in the public domain. We argue that one of the reasons for the lack of open-source infrastructure for GPUs is rooted in the complexity of their ISA and software stacks. In this work, we first propose an ISA extension to RISC-V that supports GPGPUs and graphics. The main goal of the ISA extension proposal is to minimize the ISA changes so that the corresponding changes to the open-source ecosystem are also minimal, which makes for a sustainable development ecosystem. To demonstrate the feasibility of the minimally extended RISC-V ISA, we implemented the complete software and hardware stacks of Vortex on FPGA. Vortex is a PCIe-based soft GPU that supports OpenCL and OpenGL. Vortex can be used in a variety of applications, including machine learning, graph analytics, and graphics rendering. Vortex can scale up to 32 cores on an Altera Stratix 10 FPGA, delivering a peak performance of 25.6 GFlops at 200 Mhz.},
+booktitle = {MICRO-54: 54th Annual IEEE/ACM International Symposium on Microarchitecture},
+pages = {754–766},
+numpages = {13},
+keywords = {reconfigurable computing, memory systems., computer graphics},
+location = {Virtual Event, Greece},
+series = {MICRO '21}
+}
+
+% ----------------------------------------------------------------------------------------
+% Quantization
+------------------------------------------------------------------------------------------
+@misc{frantar2022gptq,
+      title={GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers}, 
+      author={Elias Frantar and Saleh Ashkboos and Torsten Hoefler and Dan Alistarh},
+      year={2023},
+      eprint={2210.17323},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2210.17323}, 
+}
+
+@article{lin2023awq,
+  title={Awq: Activation-aware weight quantization for llm compression and acceleration},
+  author={Lin, Ji and Tang, Jiaming and Tang, Haotian and Yang, Shang and Chen, Wei-Ming and Wang, Wei-Chen and Xiao, Guangxuan and Dang, Xingyu and Gan, Chuang and Han, Song},
+  journal={arXiv preprint arXiv:2306.00978},
+  year={2023}
+}
+
+@inproceedings{dettmers2023spqr,
+  title={Spqr: A sparse-quantized representation for near-lossless llm weight compression},
+  author={Dettmers, Tim and Svirschevski, Ruslan A and Egiazarian, Vage and Kuznedelev, Denis and Frantar, Elias and Ashkboos, Saleh and Borzunov, Alexander and Hoefler, Torsten and Alistarh, Dan},
+  booktitle={The twelfth international conference on learning representations},
+  year={2023}
+}
+
+@inproceedings{shao2023omniquant,
+  title={Omniquant: Omnidirectionally calibrated quantization for large language models},
+  author={Shao, Wenqi and Chen, Mengzhao and Zhang, Zhaoyang and Xu, Peng and Zhao, Lirui and Li, Zhiqian and Zhang, Kaipeng and Peng, Gao and Qiao, Yu and Luo, Ping},
+  booktitle={International Conference on Learning Representations},
+  volume={2024},
+  pages={45472--45496},
+  year={2024}
+}
+
+@inproceedings{liu2024spinquant,
+  title={Spinquant: Llm quantization with learned rotations},
+  author={Liu, Zechun and Zhao, Changsheng and Fedorov, Igor and Soran, Bilge and Choudhary, Dhruv and Krishnamoorthi, Raghuraman and Chandra, Vikas and Tian, Yuandong and Blankevoort, Tijmen},
+  booktitle={International Conference on Learning Representations},
+  volume={2025},
+  pages={92009--92032},
+  year={2025}
+}
+
+@article{liu2024kivi,
+  title={Kivi: A tuning-free asymmetric 2bit quantization for kv cache},
+  author={Liu, Zirui and Yuan, Jiayi and Jin, Hongye and Zhong, Shaochen and Xu, Zhaozhuo and Braverman, Vladimir and Chen, Beidi and Hu, Xia},
+  journal={arXiv preprint arXiv:2402.02750},
+  year={2024}
+}
+
+@article{hooper2024kvquant,
+  title={Kvquant: Towards 10 million context length llm inference with kv cache quantization},
+  author={Hooper, Coleman and Kim, Sehoon and Mohammadzadeh, Hiva and Mahoney, Michael W and Shao, Yakun S and Keutzer, Kurt and Gholami, Amir},
+  journal={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={1270--1303},
+  year={2024}
+}
+
+@article{he2024zipcache,
+  title={Zipcache: Accurate and efficient kv cache quantization with salient token identification},
+  author={He, Yefei and Zhang, Luoming and Wu, Weijia and Liu, Jing and Zhou, Hong and Zhuang, Bohan},
+  journal={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={68287--68307},
+  year={2024}
+}
+
+@article{yue2024wkvquant,
+  title={Wkvquant: Quantizing weight and key/value cache for large language models gains more},
+  author={Yue, Yuxuan and Yuan, Zhihang and Duanmu, Haojie and Zhou, Sifan and Wu, Jianlong and Nie, Liqiang},
+  journal={arXiv preprint arXiv:2402.12065},
+  year={2024}
+}
+
+@article{ashkboos2024quarot,
+  title={Quarot: Outlier-free 4-bit inference in rotated llms},
+  author={Ashkboos, Saleh and Mohtashami, Amirkeivan and Croci, Maximilian L and Li, Bo and Cameron, Pashmina and Jaggi, Martin and Alistarh, Dan and Hoefler, Torsten and Hensman, James},
+  journal={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={100213--100240},
+  year={2024}
+}
+
+@inproceedings{marlin,
+  title={Marlin: Mixed-precision auto-regressive parallel inference on large language models},
+  author={Frantar, Elias and Castro, Roberto L and Chen, Jiale and Hoefler, Torsten and Alistarh, Dan},
+  booktitle={Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming},
+  pages={239--251},
+  year={2025}
+}
+
+@inproceedings{bitdecoding,
+  title={Bitdecoding: Unlocking tensor cores for long-context llms with low-bit kv cache},
+  author={Du, Dayou and Cao, Shijie and Cheng, Jianyi and Mai, Luo and Cao, Ting and Yang, Mao},
+  booktitle={2026 IEEE International Symposium on High Performance Computer Architecture (HPCA)},
+  pages={1--13},
+  year={2026},
+  organization={IEEE}
+}
+
+@inproceedings{anda,
+  title={Anda: Unlocking efficient LLM inference with a variable-length grouped activation data format},
+  author={Fang, Chao and Shi, Man and Geens, Robin and Symons, Arne and Wang, Zhongfeng and Verhelst, Marian},
+  booktitle={2025 IEEE International Symposium on High Performance Computer Architecture (HPCA)},
+  pages={1467--1481},
+  year={2025},
+  organization={IEEE}
+}
+
+@inproceedings{axcore,
+  title={AxCore: A Quantization-Aware Approximate GEMM Unit for LLM Inference},
+  author={Zou, Jiaxiang and Chen, Yonghao and Chen, Xingyu and Xu, Chenxi and Chen, Xinyu},
+  booktitle={Proceedings of the 58th IEEE/ACM International Symposium on Microarchitecture},
+  pages={839--853},
+  year={2025}
+}
+
+@inproceedings{virgo,
+  title={Virgo: Cluster-level matrix unit integration in gpus for scalability and energy efficiency},
+  author={Kim, Hansung and Yan, Ruohan Richard and You, Joshua and Yang, Tieliang Vamber and Shao, Yakun Sophia},
+  booktitle={Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2},
+  pages={1382--1399},
+  year={2025}
+}
+
+@article{mqa,
+  title={Fast transformer decoding: One write-head is all you need},
+  author={Shazeer, Noam},
+  journal={arXiv preprint arXiv:1911.02150},
+  year={2019}
+}
+
+@inproceedings{gqa,
+  title={Gqa: Training generalized multi-query transformer models from multi-head checkpoints},
+  author={Ainslie, Joshua and Lee-Thorp, James and De Jong, Michiel and Zemlyanskiy, Yury and Lebr{\'o}n, Federico and Sanghai, Sumit},
+  booktitle={Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing},
+  pages={4895--4901},
+  year={2023}
+}
+
+@misc{deepseekai2024deepseekv2strongeconomicalefficient,
+      title={DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model}, 
+      author={DeepSeek-AI and Aixin Liu and Bei Feng and Bin Wang and Bingxuan Wang and Bo Liu and Chenggang Zhao and Chengqi Dengr and Chong Ruan and Damai Dai and Daya Guo and Dejian Yang and Deli Chen and Dongjie Ji and Erhang Li and Fangyun Lin and Fuli Luo and Guangbo Hao and Guanting Chen and Guowei Li and H. Zhang and Hanwei Xu and Hao Yang and Haowei Zhang and Honghui Ding and Huajian Xin and Huazuo Gao and Hui Li and Hui Qu and J. L. Cai and Jian Liang and Jianzhong Guo and Jiaqi Ni and Jiashi Li and Jin Chen and Jingyang Yuan and Junjie Qiu and Junxiao Song and Kai Dong and Kaige Gao and Kang Guan and Lean Wang and Lecong Zhang and Lei Xu and Leyi Xia and Liang Zhao and Liyue Zhang and Meng Li and Miaojun Wang and Mingchuan Zhang and Minghua Zhang and Minghui Tang and Mingming Li and Ning Tian and Panpan Huang and Peiyi Wang and Peng Zhang and Qihao Zhu and Qinyu Chen and Qiushi Du and R. J. Chen and R. L. Jin and Ruiqi Ge and Ruizhe Pan and Runxin Xu and Ruyi Chen and S. S. Li and Shanghao Lu and Shangyan Zhou and Shanhuang Chen and Shaoqing Wu and Shengfeng Ye and Shirong Ma and Shiyu Wang and Shuang Zhou and Shuiping Yu and Shunfeng Zhou and Size Zheng and T. Wang and Tian Pei and Tian Yuan and Tianyu Sun and W. L. Xiao and Wangding Zeng and Wei An and Wen Liu and Wenfeng Liang and Wenjun Gao and Wentao Zhang and X. Q. Li and Xiangyue Jin and Xianzu Wang and Xiao Bi and Xiaodong Liu and Xiaohan Wang and Xiaojin Shen and Xiaokang Chen and Xiaosha Chen and Xiaotao Nie and Xiaowen Sun and Xiaoxiang Wang and Xin Liu and Xin Xie and Xingkai Yu and Xinnan Song and Xinyi Zhou and Xinyu Yang and Xuan Lu and Xuecheng Su and Y. Wu and Y. K. Li and Y. X. Wei and Y. X. Zhu and Yanhong Xu and Yanping Huang and Yao Li and Yao Zhao and Yaofeng Sun and Yaohui Li and Yaohui Wang and Yi Zheng and Yichao Zhang and Yiliang Xiong and Yilong Zhao and Ying He and Ying Tang and Yishi Piao and Yixin Dong and Yixuan Tan and Yiyuan Liu and Yongji Wang and Yongqiang Guo and Yuchen Zhu and Yuduan Wang and Yuheng Zou and Yukun Zha and Yunxian Ma and Yuting Yan and Yuxiang You and Yuxuan Liu and Z. Z. Ren and Zehui Ren and Zhangli Sha and Zhe Fu and Zhen Huang and Zhen Zhang and Zhenda Xie and Zhewen Hao and Zhihong Shao and Zhiniu Wen and Zhipeng Xu and Zhongyu Zhang and Zhuoshu Li and Zihan Wang and Zihui Gu and Zilin Li and Ziwei Xie},
+      year={2024},
+      eprint={2405.04434},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2405.04434}, 
+}
+
+@article{a100,
+  title={Nvidia a100 tensor core gpu: Performance and innovation},
+  author={Choquette, Jack and Gandhi, Wishwesh and Giroux, Olivier and Stam, Nick and Krashinsky, Ronny},
+  journal={IEEE Micro},
+  volume={41},
+  number={2},
+  pages={29--35},
+  year={2021},
+  publisher={IEEE}
+}
+
+@article{dissecting_hopper,
+  title={Dissecting the nvidia hopper architecture through microbenchmarking and multiple level analysis},
+  author={Luo, Weile and Fan, Ruibo and Li, Zeyu and Du, Dayou and Liu, Hongyuan and Wang, Qiang and Chu, Xiaowen},
+  journal={arXiv preprint arXiv:2501.12084},
+  year={2025}
+}
+
+@inproceedings{pagedattention,
+  title={Efficient memory management for large language model serving with pagedattention},
+  author={Kwon, Woosuk and Li, Zhuohan and Zhuang, Siyuan and Sheng, Ying and Zheng, Lianmin and Yu, Cody Hao and Gonzalez, Joseph and Zhang, Hao and Stoica, Ion},
+  booktitle={Proceedings of the 29th symposium on operating systems principles},
+  pages={611--626},
+  year={2023}
+}
+
+@inproceedings{orca,
+  title={Orca: A distributed serving system for {{Transformer-Based}} generative models},
+  author={Yu, Gyeong-In and Jeong, Joo Seong and Kim, Geon-Woo and Kim, Soojeong and Chun, Byung-Gon},
+  booktitle={16th USENIX symposium on operating systems design and implementation (OSDI 22)},
+  pages={521--538},
+  year={2022}
+}
+
+@inproceedings{ladder,
+  author       = {Lei Wang and
+                  Lingxiao Ma and
+                  Shijie Cao and
+                  Quanlu Zhang and
+                  Jilong Xue and
+                  Yining Shi and
+                  Ningxin Zheng and
+                  Ziming Miao and
+                  Fan Yang and
+                  Ting Cao and
+                  Yuqing Yang and
+                  Mao Yang},
+  editor       = {Ada Gavrilovska and
+                  Douglas B. Terry},
+  title        = {Ladder: Enabling Efficient Low-Precision Deep Learning Computing through
+                  Hardware-aware Tensor Transformation},
+  booktitle    = {18th {USENIX} Symposium on Operating Systems Design and Implementation,
+                  {OSDI} 2024, Santa Clara, CA, USA, July 10-12, 2024},
+  pages        = {307--323},
+  publisher    = {{USENIX} Association},
+  year         = {2024},
+  timestamp    = {Tue, 09 Dec 2025 08:06:16 +0100},
+  biburl       = {https://dblp.org/rec/conf/osdi/WangMCZX0ZM0C0Y24.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@inproceedings{gemmini,
+  author       = {Hasan Genc and
+                  Seah Kim and
+                  Alon Amid and
+                  Ameer Haj{-}Ali and
+                  Vighnesh Iyer and
+                  Pranav Prakash and
+                  Jerry Zhao and
+                  Daniel Grubb and
+                  Harrison Liew and
+                  Howard Mao and
+                  Albert J. Ou and
+                  Colin Schmidt and
+                  Samuel Steffl and
+                  John Charles Wright and
+                  Ion Stoica and
+                  Jonathan Ragan{-}Kelley and
+                  Krste Asanovic and
+                  Borivoje Nikolic and
+                  Yakun Sophia Shao},
+  title        = {Gemmini: Enabling Systematic Deep-Learning Architecture Evaluation
+                  via Full-Stack Integration},
+  booktitle    = {58th {ACM/IEEE} Design Automation Conference, {DAC} 2021, San Francisco,
+                  CA, USA, December 5-9, 2021},
+  pages        = {769--774},
+  publisher    = {{IEEE}},
+  year         = {2021},
+  url          = {https://doi.org/10.1109/DAC18074.2021.9586216},
+  doi          = {10.1109/DAC18074.2021.9586216},
+  timestamp    = {Mon, 03 Mar 2025 21:01:48 +0100},
+  biburl       = {https://dblp.org/rec/conf/dac/GencKAHIPZGLMO021.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@article{wikitext,
+  title={Pointer sentinel mixture models},
+  author={Merity, Stephen and Xiong, Caiming and Bradbury, James and Socher, Richard},
+  journal={arXiv preprint arXiv:1609.07843},
+  year={2016}
+}
+
+@article{llama2,
+  author       = {Hugo Touvron and
+                  Louis Martin and
+                  Kevin Stone and
+                  Peter Albert and
+                  Amjad Almahairi and
+                  Yasmine Babaei and
+                  Nikolay Bashlykov and
+                  Soumya Batra and
+                  Prajjwal Bhargava and
+                  Shruti Bhosale and
+                  Dan Bikel and
+                  Lukas Blecher and
+                  Cristian Canton{-}Ferrer and
+                  Moya Chen and
+                  Guillem Cucurull and
+                  David Esiobu and
+                  Jude Fernandes and
+                  Jeremy Fu and
+                  Wenyin Fu and
+                  Brian Fuller and
+                  Cynthia Gao and
+                  Vedanuj Goswami and
+                  Naman Goyal and
+                  Anthony Hartshorn and
+                  Saghar Hosseini and
+                  Rui Hou and
+                  Hakan Inan and
+                  Marcin Kardas and
+                  Viktor Kerkez and
+                  Madian Khabsa and
+                  Isabel Kloumann and
+                  Artem Korenev and
+                  Punit Singh Koura and
+                  Marie{-}Anne Lachaux and
+                  Thibaut Lavril and
+                  Jenya Lee and
+                  Diana Liskovich and
+                  Yinghai Lu and
+                  Yuning Mao and
+                  Xavier Martinet and
+                  Todor Mihaylov and
+                  Pushkar Mishra and
+                  Igor Molybog and
+                  Yixin Nie and
+                  Andrew Poulton and
+                  Jeremy Reizenstein and
+                  Rashi Rungta and
+                  Kalyan Saladi and
+                  Alan Schelten and
+                  Ruan Silva and
+                  Eric Michael Smith and
+                  Ranjan Subramanian and
+                  Xiaoqing Ellen Tan and
+                  Binh Tang and
+                  Ross Taylor and
+                  Adina Williams and
+                  Jian Xiang Kuan and
+                  Puxin Xu and
+                  Zheng Yan and
+                  Iliyan Zarov and
+                  Yuchen Zhang and
+                  Angela Fan and
+                  Melanie Kambadur and
+                  Sharan Narang and
+                  Aur{\'{e}}lien Rodriguez and
+                  Robert Stojnic and
+                  Sergey Edunov and
+                  Thomas Scialom},
+  title        = {Llama 2: Open Foundation and Fine-Tuned Chat Models},
+  journal      = {CoRR},
+  volume       = {abs/2307.09288},
+  year         = {2023},
+  url          = {https://doi.org/10.48550/arXiv.2307.09288},
+  doi          = {10.48550/ARXIV.2307.09288},
+  eprinttype   = {arXiv},
+  eprint       = {2307.09288},
+  timestamp    = {Tue, 11 Feb 2025 12:43:02 +0100},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2307-09288.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@misc{llama3,
+      title={The Llama 3 Herd of Models}, 
+      author={Aaron Grattafiori and Abhimanyu Dubey and Abhinav Jauhri and Abhinav Pandey and Abhishek Kadian and Ahmad Al-Dahle and Aiesha Letman and Akhil Mathur and Alan Schelten and Alex Vaughan and Amy Yang and Angela Fan and Anirudh Goyal and Anthony Hartshorn and Aobo Yang and Archi Mitra and Archie Sravankumar and Artem Korenev and Arthur Hinsvark and Arun Rao and Aston Zhang and Aurelien Rodriguez and Austen Gregerson and Ava Spataru and Baptiste Roziere and Bethany Biron and Binh Tang and Bobbie Chern and Charlotte Caucheteux and Chaya Nayak and Chloe Bi and Chris Marra and Chris McConnell and Christian Keller and Christophe Touret and Chunyang Wu and Corinne Wong and Cristian Canton Ferrer and Cyrus Nikolaidis and Damien Allonsius and Daniel Song and Danielle Pintz and Danny Livshits and Danny Wyatt and David Esiobu and Dhruv Choudhary and Dhruv Mahajan and Diego Garcia-Olano and Diego Perino and Dieuwke Hupkes and Egor Lakomkin and Ehab AlBadawy and Elina Lobanova and Emily Dinan and Eric Michael Smith and Filip Radenovic and Francisco Guzmán and Frank Zhang and Gabriel Synnaeve and Gabrielle Lee and Georgia Lewis Anderson and Govind Thattai and Graeme Nail and Gregoire Mialon and Guan Pang and Guillem Cucurell and Hailey Nguyen and Hannah Korevaar and Hu Xu and Hugo Touvron and Iliyan Zarov and Imanol Arrieta Ibarra and Isabel Kloumann and Ishan Misra and Ivan Evtimov and Jack Zhang and Jade Copet and Jaewon Lee and Jan Geffert and Jana Vranes and Jason Park and Jay Mahadeokar and Jeet Shah and Jelmer van der Linde and Jennifer Billock and Jenny Hong and Jenya Lee and Jeremy Fu and Jianfeng Chi and Jianyu Huang and Jiawen Liu and Jie Wang and Jiecao Yu and Joanna Bitton and Joe Spisak and Jongsoo Park and Joseph Rocca and Joshua Johnstun and Joshua Saxe and Junteng Jia and Kalyan Vasuden Alwala and Karthik Prasad and Kartikeya Upasani and Kate Plawiak and Ke Li and Kenneth Heafield and Kevin Stone and Khalid El-Arini and Krithika Iyer and Kshitiz Malik and Kuenley Chiu and Kunal Bhalla and Kushal Lakhotia and Lauren Rantala-Yeary and Laurens van der Maaten and Lawrence Chen and Liang Tan and Liz Jenkins and Louis Martin and Lovish Madaan and Lubo Malo and Lukas Blecher and Lukas Landzaat and Luke de Oliveira and Madeline Muzzi and Mahesh Pasupuleti and Mannat Singh and Manohar Paluri and Marcin Kardas and Maria Tsimpoukelli and Mathew Oldham and Mathieu Rita and Maya Pavlova and Melanie Kambadur and Mike Lewis and Min Si and Mitesh Kumar Singh and Mona Hassan and Naman Goyal and Narjes Torabi and Nikolay Bashlykov and Nikolay Bogoychev and Niladri Chatterji and Ning Zhang and Olivier Duchenne and Onur Çelebi and Patrick Alrassy and Pengchuan Zhang and Pengwei Li and Petar Vasic and Peter Weng and Prajjwal Bhargava and Pratik Dubal and Praveen Krishnan and Punit Singh Koura and Puxin Xu and Qing He and Qingxiao Dong and Ragavan Srinivasan and Raj Ganapathy and Ramon Calderer and Ricardo Silveira Cabral and Robert Stojnic and Roberta Raileanu and Rohan Maheswari and Rohit Girdhar and Rohit Patel and Romain Sauvestre and Ronnie Polidoro and Roshan Sumbaly and Ross Taylor and Ruan Silva and Rui Hou and Rui Wang and Saghar Hosseini and Sahana Chennabasappa and Sanjay Singh and Sean Bell and Seohyun Sonia Kim and Sergey Edunov and Shaoliang Nie and Sharan Narang and Sharath Raparthy and Sheng Shen and Shengye Wan and Shruti Bhosale and Shun Zhang and Simon Vandenhende and Soumya Batra and Spencer Whitman and Sten Sootla and Stephane Collot and Suchin Gururangan and Sydney Borodinsky and Tamar Herman and Tara Fowler and Tarek Sheasha and Thomas Georgiou and Thomas Scialom and Tobias Speckbacher and Todor Mihaylov and Tong Xiao and Ujjwal Karn and Vedanuj Goswami and Vibhor Gupta and Vignesh Ramanathan and Viktor Kerkez and Vincent Gonguet and Virginie Do and Vish Vogeti and Vítor Albiero and Vladan Petrovic and Weiwei Chu and Wenhan Xiong and Wenyin Fu and Whitney Meers and Xavier Martinet and Xiaodong Wang and Xiaofang Wang and Xiaoqing Ellen Tan and Xide Xia and Xinfeng Xie and Xuchao Jia and Xuewei Wang and Yaelle Goldschlag and Yashesh Gaur and Yasmine Babaei and Yi Wen and Yiwen Song and Yuchen Zhang and Yue Li and Yuning Mao and Zacharie Delpierre Coudert and Zheng Yan and Zhengxing Chen and Zoe Papakipos and Aaditya Singh and Aayushi Srivastava and Abha Jain and Adam Kelsey and Adam Shajnfeld and Adithya Gangidi and Adolfo Victoria and Ahuva Goldstand and Ajay Menon and Ajay Sharma and Alex Boesenberg and Alexei Baevski and Allie Feinstein and Amanda Kallet and Amit Sangani and Amos Teo and Anam Yunus and Andrei Lupu and Andres Alvarado and Andrew Caples and Andrew Gu and Andrew Ho and Andrew Poulton and Andrew Ryan and Ankit Ramchandani and Annie Dong and Annie Franco and Anuj Goyal and Aparajita Saraf and Arkabandhu Chowdhury and Ashley Gabriel and Ashwin Bharambe and Assaf Eisenman and Azadeh Yazdan and Beau James and Ben Maurer and Benjamin Leonhardi and Bernie Huang and Beth Loyd and Beto De Paola and Bhargavi Paranjape and Bing Liu and Bo Wu and Boyu Ni and Braden Hancock and Bram Wasti and Brandon Spence and Brani Stojkovic and Brian Gamido and Britt Montalvo and Carl Parker and Carly Burton and Catalina Mejia and Ce Liu and Changhan Wang and Changkyu Kim and Chao Zhou and Chester Hu and Ching-Hsiang Chu and Chris Cai and Chris Tindal and Christoph Feichtenhofer and Cynthia Gao and Damon Civin and Dana Beaty and Daniel Kreymer and Daniel Li and David Adkins and David Xu and Davide Testuggine and Delia David and Devi Parikh and Diana Liskovich and Didem Foss and Dingkang Wang and Duc Le and Dustin Holland and Edward Dowling and Eissa Jamil and Elaine Montgomery and Eleonora Presani and Emily Hahn and Emily Wood and Eric-Tuan Le and Erik Brinkman and Esteban Arcaute and Evan Dunbar and Evan Smothers and Fei Sun and Felix Kreuk and Feng Tian and Filippos Kokkinos and Firat Ozgenel and Francesco Caggioni and Frank Kanayet and Frank Seide and Gabriela Medina Florez and Gabriella Schwarz and Gada Badeer and Georgia Swee and Gil Halpern and Grant Herman and Grigory Sizov and Guangyi and Zhang and Guna Lakshminarayanan and Hakan Inan and Hamid Shojanazeri and Han Zou and Hannah Wang and Hanwen Zha and Haroun Habeeb and Harrison Rudolph and Helen Suk and Henry Aspegren and Hunter Goldman and Hongyuan Zhan and Ibrahim Damlaj and Igor Molybog and Igor Tufanov and Ilias Leontiadis and Irina-Elena Veliche and Itai Gat and Jake Weissman and James Geboski and James Kohli and Janice Lam and Japhet Asher and Jean-Baptiste Gaya and Jeff Marcus and Jeff Tang and Jennifer Chan and Jenny Zhen and Jeremy Reizenstein and Jeremy Teboul and Jessica Zhong and Jian Jin and Jingyi Yang and Joe Cummings and Jon Carvill and Jon Shepard and Jonathan McPhie and Jonathan Torres and Josh Ginsburg and Junjie Wang and Kai Wu and Kam Hou U and Karan Saxena and Kartikay Khandelwal and Katayoun Zand and Kathy Matosich and Kaushik Veeraraghavan and Kelly Michelena and Keqian Li and Kiran Jagadeesh and Kun Huang and Kunal Chawla and Kyle Huang and Lailin Chen and Lakshya Garg and Lavender A and Leandro Silva and Lee Bell and Lei Zhang and Liangpeng Guo and Licheng Yu and Liron Moshkovich and Luca Wehrstedt and Madian Khabsa and Manav Avalani and Manish Bhatt and Martynas Mankus and Matan Hasson and Matthew Lennie and Matthias Reso and Maxim Groshev and Maxim Naumov and Maya Lathi and Meghan Keneally and Miao Liu and Michael L. Seltzer and Michal Valko and Michelle Restrepo and Mihir Patel and Mik Vyatskov and Mikayel Samvelyan and Mike Clark and Mike Macey and Mike Wang and Miquel Jubert Hermoso and Mo Metanat and Mohammad Rastegari and Munish Bansal and Nandhini Santhanam and Natascha Parks and Natasha White and Navyata Bawa and Nayan Singhal and Nick Egebo and Nicolas Usunier and Nikhil Mehta and Nikolay Pavlovich Laptev and Ning Dong and Norman Cheng and Oleg Chernoguz and Olivia Hart and Omkar Salpekar and Ozlem Kalinli and Parkin Kent and Parth Parekh and Paul Saab and Pavan Balaji and Pedro Rittner and Philip Bontrager and Pierre Roux and Piotr Dollar and Polina Zvyagina and Prashant Ratanchandani and Pritish Yuvraj and Qian Liang and Rachad Alao and Rachel Rodriguez and Rafi Ayub and Raghotham Murthy and Raghu Nayani and Rahul Mitra and Rangaprabhu Parthasarathy and Raymond Li and Rebekkah Hogan and Robin Battey and Rocky Wang and Russ Howes and Ruty Rinott and Sachin Mehta and Sachin Siby and Sai Jayesh Bondu and Samyak Datta and Sara Chugh and Sara Hunt and Sargun Dhillon and Sasha Sidorov and Satadru Pan and Saurabh Mahajan and Saurabh Verma and Seiji Yamamoto and Sharadh Ramaswamy and Shaun Lindsay and Shaun Lindsay and Sheng Feng and Shenghao Lin and Shengxin Cindy Zha and Shishir Patil and Shiva Shankar and Shuqiang Zhang and Shuqiang Zhang and Sinong Wang and Sneha Agarwal and Soji Sajuyigbe and Soumith Chintala and Stephanie Max and Stephen Chen and Steve Kehoe and Steve Satterfield and Sudarshan Govindaprasad and Sumit Gupta and Summer Deng and Sungmin Cho and Sunny Virk and Suraj Subramanian and Sy Choudhury and Sydney Goldman and Tal Remez and Tamar Glaser and Tamara Best and Thilo Koehler and Thomas Robinson and Tianhe Li and Tianjun Zhang and Tim Matthews and Timothy Chou and Tzook Shaked and Varun Vontimitta and Victoria Ajayi and Victoria Montanez and Vijai Mohan and Vinay Satish Kumar and Vishal Mangla and Vlad Ionescu and Vlad Poenaru and Vlad Tiberiu Mihailescu and Vladimir Ivanov and Wei Li and Wenchen Wang and Wenwen Jiang and Wes Bouaziz and Will Constable and Xiaocheng Tang and Xiaojian Wu and Xiaolan Wang and Xilun Wu and Xinbo Gao and Yaniv Kleinman and Yanjun Chen and Ye Hu and Ye Jia and Ye Qi and Yenda Li and Yilin Zhang and Ying Zhang and Yossi Adi and Youngjin Nam and Yu and Wang and Yu Zhao and Yuchen Hao and Yundi Qian and Yunlu Li and Yuzi He and Zach Rait and Zachary DeVito and Zef Rosnbrick and Zhaoduo Wen and Zhenyu Yang and Zhiwei Zhao and Zhiyu Ma},
+      year={2024},
+      eprint={2407.21783},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2407.21783}, 
+}
+
+@article{attentionisallyouneed,
+  title={Attention is all you need},
+  author={Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N and Kaiser, {\L}ukasz and Polosukhin, Illia},
+  journal={Advances in neural information processing systems},
+  volume={30},
+  year={2017}
+}
+
+@inproceedings{tvm,
+  author       = {Tianqi Chen and
+                  Thierry Moreau and
+                  Ziheng Jiang and
+                  Lianmin Zheng and
+                  Eddie Q. Yan and
+                  Haichen Shen and
+                  Meghan Cowan and
+                  Leyuan Wang and
+                  Yuwei Hu and
+                  Luis Ceze and
+                  Carlos Guestrin and
+                  Arvind Krishnamurthy},
+  editor       = {Andrea C. Arpaci{-}Dusseau and
+                  Geoff Voelker},
+  title        = {{TVM:} An Automated End-to-End Optimizing Compiler for Deep Learning},
+  booktitle    = {13th {USENIX} Symposium on Operating Systems Design and Implementation,
+                  {OSDI} 2018, Carlsbad, CA, USA, October 8-10, 2018},
+  pages        = {578--594},
+  publisher    = {{USENIX} Association},
+  year         = {2018},
+  timestamp    = {Sat, 30 Sep 2023 09:54:21 +0200},
+  biburl       = {https://dblp.org/rec/conf/osdi/ChenMJZYSCWHCGK18.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@inproceedings{flashattention,
+  title={Flashattention: Fast and memory-efficient exact attention with io-awareness},
+  author={Dao, Tri and Fu, Daniel Y and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  booktitle={Advances in neural information processing systems},
+  year={2022}
+}
+
+@inproceedings{flashattention2,
+  title={Flashattention-2: Faster attention with better parallelism and work partitioning},
+  author={Dao, Tri},
+  booktitle={International Conference on Learning Representations},
+  volume={2024},
+  pages={35549--35562},
+  year={2024}
+}
+
+@inproceedings{shi2023welder,
+  title={Welder: Scheduling deep learning memory access via tile-graph},
+  author={Shi, Yining and Yang, Zhi and Xue, Jilong and Ma, Lingxiao and Xia, Yuqing and Miao, Ziming and Guo, Yuxiao and Yang, Fan and Zhou, Lidong},
+  booktitle={17th USENIX Symposium on Operating Systems Design and Implementation (OSDI 23)},
+  pages={701--718},
+  year={2023}
+}
+
+@inproceedings{zhu2022roller,
+  author       = {Hongyu Zhu and
+                  Ruofan Wu and
+                  Yijia Diao and
+                  Shanbin Ke and
+                  Haoyu Li and
+                  Chen Zhang and
+                  Jilong Xue and
+                  Lingxiao Ma and
+                  Yuqing Xia and
+                  Wei Cui and
+                  Fan Yang and
+                  Mao Yang and
+                  Lidong Zhou and
+                  Asaf Cidon and
+                  Gennady Pekhimenko},
+  editor       = {Marcos K. Aguilera and
+                  Hakim Weatherspoon},
+  title        = {{ROLLER:} Fast and Efficient Tensor Compilation for Deep Learning},
+  booktitle    = {16th {USENIX} Symposium on Operating Systems Design and Implementation,
+                  {OSDI} 2022, Carlsbad, CA, USA, July 11-13, 2022},
+  pages        = {233--248},
+  publisher    = {{USENIX} Association},
+  year         = {2022},
+  timestamp    = {Mon, 21 Oct 2024 07:58:42 +0200},
+  biburl       = {https://dblp.org/rec/conf/osdi/ZhuWDKLZXMXC0YZ22.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@inproceedings{tillet2019triton,
+  title={Triton: an intermediate language and compiler for tiled neural network computations},
+  author={Tillet, Philippe and Kung, Hsiang-Tsung and Cox, David},
+  booktitle={Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages},
+  pages={10--19},
+  year={2019}
+}
+
+@inproceedings{agrawal2024taming,
+  title={Taming {{Throughput-Latency}} tradeoff in {{LLM}} inference with {{Sarathi-Serve}}},
+  author={Agrawal, Amey and Kedia, Nitin and Panwar, Ashish and Mohan, Jayashree and Kwatra, Nipun and Gulavani, Bhargav and Tumanov, Alexey and Ramjee, Ramachandran},
+  booktitle={18th USENIX symposium on operating systems design and implementation (OSDI 24)},
+  pages={117--134},
+  year={2024}
+}
+
+@inproceedings{patel2024splitwise,
+  title={Splitwise: Efficient generative llm inference using phase splitting},
+  author={Patel, Pratyush and Choukse, Esha and Zhang, Chaojie and Shah, Aashaka and Goiri, {\'I}{\~n}igo and Maleki, Saeed and Bianchini, Ricardo},
+  booktitle={2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA)},
+  pages={118--132},
+  year={2024},
+  organization={IEEE}
+}
+
+@misc{llm-analysis-chengli,
+  author = {Cheng Li},
+  title = {LLM-Analysis: Latency and Memory Analysis of Transformer Models for Training and Inference},
+  year = {2023},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/cli99/llm-analysis}},
+}
+
+% ----------------------------------------------------------------------------------------
+% Unused references
+% ----------------------------------------------------------------------------------------
+
+@book{lamport94,
+ author = "Leslie Lamport",
+ title = "{\LaTeX: A Document Preparation System}",
+ year = "1994",
+ publisher = "Addison-Wesley",
+ edition = "2nd",
+ address = "Reading, Massachusetts"
+}
+
+@inproceedings{nicepaper1,
+  author = "Firstname1 Lastname1 and Firstname2 Lastname2",
+  title = "A Very Nice Paper To Cite",
+  year = "2016",
+  booktitle = "Proceedings of the 26th IEEE International Symposium on High Performance Computer Architecture"
+}
+
+@inproceedings{nicepaper2,
+  author = "Firstname1 Lastname1 and Firstname2 Lastname2 and Firstname3 Lastname3",
+  title = "Another Very Nice Paper to Cite",
+  year = "2015",
+  booktitle = "Proceedings of the 48th Annual IEEE/ACM International Symposium on Microarchitecture"
+}
+
+@inproceedings{nicepaper3,
+  author = "Firstname1 Lastname1 and Firstname2 Lastname2 and Firstname3 Lastname3 and Firstname4 Lastname4 and Firstname5 Lastname5 and Firstname6 Lastname6 and Firstname7 Lastname7 and Firstname8 Lastname8 and Firstname9 Lastname9 and Firstname10 Lastname10 and Firstname11 Lastname11 and Firstname12 Lastname12",
+  title = "Yet Another Very Nice Paper To Cite, With Many Author Names All Spelled Out",
+  year = "2011",
+  booktitle = "Proceedings of the 38th Annual International Symposium on Computer Architecture"
+}
+
+@inproceedings{sheng2023flexgen,
+  title={Flexgen: High-throughput generative inference of large language models with a single gpu},
+  author={Sheng, Ying and Zheng, Lianmin and Yuan, Binhang and Li, Zhuohan and Ryabinin, Max and Chen, Beidi and Liang, Percy and R{\'e}, Christopher and Stoica, Ion and Zhang, Ce},
+  booktitle={International Conference on Machine Learning},
+  pages={31094--31116},
+  year={2023},
+  organization={PMLR}
+}
+
+@article{zhao2024atom,
+  title={Atom: Low-bit quantization for efficient and accurate llm serving},
+  author={Zhao, Yilong and Lin, Chien-Yu and Zhu, Kan and Ye, Zihao and Chen, Lequn and Zheng, Size and Ceze, Luis and Krishnamurthy, Arvind and Chen, Tianqi and Kasikci, Baris},
+  journal={Proceedings of Machine Learning and Systems},
+  volume={6},
+  pages={196--209},
+  year={2024}
+}
+
+@inbook{pytorch,
+author = {Paszke, Adam and Gross, Sam and Massa, Francisco and Lerer, Adam and Bradbury, James and Chanan, Gregory and Killeen, Trevor and Lin, Zeming and Gimelshein, Natalia and Antiga, Luca and Desmaison, Alban and K\"{o}pf, Andreas and Yang, Edward and DeVito, Zach and Raison, Martin and Tejani, Alykhan and Chilamkurthy, Sasank and Steiner, Benoit and Fang, Lu and Bai, Junjie and Chintala, Soumith},
+title = {PyTorch: an imperative style, high-performance deep learning library},
+year = {2019},
+publisher = {Curran Associates Inc.},
+address = {Red Hook, NY, USA},
+abstract = {Deep learning frameworks have often focused on either usability or speed, but not both. PyTorch is a machine learning library that shows that these two goals are in fact compatible: it provides an imperative and Pythonic programming style that supports code as a model, makes debugging easy and is consistent with other popular scientific computing libraries, while remaining efficient and supporting hardware accelerators such as GPUs.In this paper, we detail the principles that drove the implementation of PyTorch and how they are reflected in its architecture. We emphasize that every aspect of PyTorch is a regular Python program under the full control of its user. We also explain how the careful and pragmatic implementation of the key components of its runtime enables them to work together to achieve compelling performance. We demonstrate the efficiency of individual subsystems, as well as the overall speed of PyTorch on several common benchmarks.},
+booktitle = {Proceedings of the 33rd International Conference on Neural Information Processing Systems},
+articleno = {721},
+numpages = {12}
+}
+
+@misc{kim2023squeezellm,
+  title        = {{SqueezeLLM}: Dense-and-Sparse Quantization},
+  author       = {Kim, Sehoon and Hooper, Coleman and Gholami, Amir and Dong, Zhen and Li, Xiuyu and Shen, Sheng and Mahoney, Michael W. and Keutzer, Kurt},
+  year         = {2023},
+  eprint       = {2306.07629},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CL}
+}
+
+@misc{lee2023owq,
+  title        = {{OWQ}: Outlier-Aware Weight Quantization for Efficient Fine-Tuning and Inference of Large Language Models},
+  author       = {Lee, Changhun and Jin, Jungyu and Kim, Taesu and Kim, Hyungjun and Park, Eunhyeok},
+  year         = {2023},
+  eprint       = {2306.02272},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CL}
+}
+
+@misc{kim2023finequant,
+  title        = {{FineQuant}: Unlocking Efficiency with Fine-Grained Weight-Only Quantization for LLMs},
+  author       = {Kim, Young Jin and Henry, Rawn and Fahim, Raffy and Awadalla, Hany Hassan},
+  year         = {2023},
+  eprint       = {2308.09723},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{chee2023quip,
+  title        = {{QuIP}: 2-Bit Quantization of Large Language Models With Guarantees},
+  author       = {Chee, Jerry and Cai, Yaohui and Kuleshov, Volodymyr and De Sa, Christopher},
+  year         = {2023},
+  eprint       = {2307.13304},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{tseng2024quipsharp,
+  title        = {{QuIP{\#}}: Even Better LLM Quantization with Hadamard Incoherence and Lattice Codebooks},
+  author       = {Tseng, Albert and Chee, Jerry and Sun, Qingyao and Kuleshov, Volodymyr and De Sa, Christopher},
+  year         = {2024},
+  eprint       = {2402.04396},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{shang2023pbllm,
+  title        = {{PB-LLM}: Partially Binarized Large Language Models},
+  author       = {Shang, Yuzhang and Yuan, Zhihang and Wu, Qiang and Dong, Zhen},
+  year         = {2023},
+  eprint       = {2310.00034},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{egiazarian2024aqlm,
+  title        = {Extreme Compression of Large Language Models via Additive Quantization},
+  author       = {Egiazarian, Vage and Panferov, Andrei and Kuznedelev, Denis and Frantar, Elias and Babenko, Artem and Alistarh, Dan},
+  year         = {2024},
+  eprint       = {2401.06118},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{huang2024billm,
+  title        = {{BiLLM}: Pushing the Limit of Post-Training Quantization for LLMs},
+  author       = {Huang, Wei and Liu, Yangdong and Qin, Haotong and Li, Ying and Zhang, Shiming and Liu, Xianglong and Magno, Michele and Qi, Xiaojuan},
+  year         = {2024},
+  eprint       = {2402.04291},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{malinovskii2024pvtuning,
+  title        = {{PV-Tuning}: Beyond Straight-Through Estimation for Extreme LLM Compression},
+  author       = {Malinovskii, Vladimir and Mazur, Denis and Ilin, Ivan and Kuznedelev, Denis and Burlachenko, Konstantin and Yi, Kai and Alistarh, Dan and Richtarik, Peter},
+  year         = {2024},
+  eprint       = {2405.14852},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{tseng2024qtip,
+  title        = {{QTIP}: Quantization with Trellises and Incoherence Processing},
+  author       = {Tseng, Albert and Sun, Qingyao and Hou, David and De Sa, Christopher},
+  year         = {2024},
+  eprint       = {2406.11235},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{liu2024vptq,
+  title        = {{VPTQ}: Extreme Low-bit Vector Post-Training Quantization for Large Language Models},
+  author       = {Liu, Yifei and Wen, Jicheng and Wang, Yang and Ye, Shengyu and Zhang, Li Lyna and Cao, Ting and Li, Cheng and Yang, Mao},
+  year         = {2024},
+  eprint       = {2409.17066},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.AI}
+}
+
+@misc{luo2024daq,
+  title        = {{DAQ}: Density-Aware Post-Training Weight-Only Quantization For LLMs},
+  author       = {Luo, Yingsong and Chen, Ling},
+  year         = {2024},
+  eprint       = {2410.12187},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{lee2024lrq,
+  title        = {{LRQ}: Optimizing Post-Training Quantization for Large Language Models by Learning Low-Rank Weight-Scaling Matrices},
+  author       = {Lee, Jung Hyun and Kim, Jeonghoon and Yang, June Yong and Kwon, Se Jung and Yang, Eunho and Yoo, Kang Min and Lee, Dongsoo},
+  year         = {2024},
+  eprint       = {2407.11534},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{yan2026d2quant,
+  title        = {{$D^2$Quant}: Accurate Low-bit Post-Training Weight Quantization for LLMs},
+  author       = {Yan, Xianglong and Bao, ChengZhu and Li, Zhiteng and Zhang, Tianao and Zhang, Shaoqiu and Xie, Ruobing and Sun, Samm and Zhang, Yulun},
+  year         = {2026},
+  eprint       = {2602.02546},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{xu2025butterflyquant,
+  title        = {{ButterflyQuant}: Ultra-low-bit LLM Quantization through Learnable Orthogonal Butterfly Transforms},
+  author       = {Xu, Bingxin and Dong, Zhen and Elachqar, Oussama and Shang, Yuzhang},
+  year         = {2025},
+  eprint       = {2509.09679},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@article{duanmu2024skvq,
+  title={Skvq: Sliding-window key and value cache quantization for large language models},
+  author={Duanmu, Haojie and Yuan, Zhihang and Li, Xiuhong and Duan, Jiangfei and Zhang, Xingcheng and Lin, Dahua},
+  journal={arXiv preprint arXiv:2405.06219},
+  year={2024}
+}
+
+@InProceedings{specdec,
+  title = 	 {Fast Inference from Transformers via Speculative Decoding},
+  author =       {Leviathan, Yaniv and Kalman, Matan and Matias, Yossi},
+  booktitle = 	 {Proceedings of the 40th International Conference on Machine Learning},
+  pages = 	 {19274--19286},
+  year = 	 {2023},
+  editor = 	 {Krause, Andreas and Brunskill, Emma and Cho, Kyunghyun and Engelhardt, Barbara and Sabato, Sivan and Scarlett, Jonathan},
+  volume = 	 {202},
+  series = 	 {Proceedings of Machine Learning Research},
+  month = 	 {23--29 Jul},
+  publisher =    {PMLR},
+  pdf = 	 {https://proceedings.mlr.press/v202/leviathan23a/leviathan23a.pdf},
+  url = 	 {https://proceedings.mlr.press/v202/leviathan23a.html},
+  abstract = 	 {Inference from large autoregressive models like Transformers is slow - decoding K tokens takes K serial runs of the model. In this work we introduce speculative decoding - an algorithm to sample from autoregressive models faster without any changes to the outputs, by computing several tokens in parallel. At the heart of our approach lie the observations that (1) hard language-modeling tasks often include easier subtasks that can be approximated well by more efficient models, and (2) using speculative execution and a novel sampling method, we can make exact decoding from the large models faster, by running them in parallel on the outputs of the approximation models, potentially generating several tokens concurrently, and without changing the distribution. Our method can accelerate existing off-the-shelf models without retraining or architecture changes. We demonstrate it on T5-XXL and show a 2X-3X acceleration compared to the standard T5X implementation, with identical outputs.}
+}
