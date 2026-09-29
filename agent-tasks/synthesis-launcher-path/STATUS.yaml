@@ -1,0 +1,11 @@
+task: synthesis-launcher-path
+state: complete
+scope: Resolve source and configured build paths in ci/run_syn_hw.sh.
+pitfalls:
+  - configure makes build/ci/run_syn_hw.sh a symlink to the source script.
+  - Resolving only the source symlink loses the invoked custom build; retain both paths.
+  - Launcher verification must stub make to avoid starting real FPGA synthesis.
+log:
+  - timestamp: "2026-09-29 23:34"
+    status: complete
+    detail: "Reproduced original build/build lookup in an isolated fixture. Resolve source root from readlink -f, retain the invocation tree for the default build, support configured cwd and preserve CLI > BUILD_DIR precedence. Shell syntax,12 regression tests and4 actual configured build/ci invocations passed with a recording make stub. Config lookup, synthesis cwd, SLR exports, failure propagation and log placement checked. No synthesis, PnR or commit performed."

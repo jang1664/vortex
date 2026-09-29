@@ -2,13 +2,25 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# configure links build/ci scripts to the source tree. Keep the invocation
+# tree for build selection, but resolve the link to locate source configs.
+ENTRY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ "${ENTRY_ROOT}" != "${REPO_ROOT}" ]]; then
+  DEFAULT_BUILD_ROOT="${ENTRY_ROOT}"
+elif [[ -f "config.mk" ]]; then
+  DEFAULT_BUILD_ROOT="$(pwd)"
+else
+  DEFAULT_BUILD_ROOT="${REPO_ROOT}/build"
+fi
 
 PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}"
 TARGET=hw
 CLOCK_FREQ_HZ="${CLOCK_FREQ_HZ:-100}"
-BUILD_ROOT="${BUILD_DIR:-${REPO_ROOT}/build}"
+BUILD_ROOT="${BUILD_DIR:-${DEFAULT_BUILD_ROOT}}"
 
 CONFIG_ARG=""
 POSTFIX=""
@@ -24,7 +36,9 @@ Usage: ci/run_syn_hw.sh --config NAME_OR_PATH [--build-dir DIR] [--postfix VALUE
 Options:
   -c, --config NAME_OR_PATH  Config name or path. A bare name is resolved from
                              the repository's configs/ directory.
-      --build-dir DIR        Configured build root (default: BUILD_DIR or repo/build).
+      --build-dir DIR        Configured build root (overrides BUILD_DIR).
+                             Otherwise use the invoked build tree, configured
+                             current directory, or repo/build, in that order.
       --postfix VALUE        Append _VALUE to the config-derived PREFIX.
       --perf [VALUE]         Pass PERF to make (default value: 1).
       --debug [VALUE]        Pass DEBUG to make (default value: 3).
@@ -52,6 +66,7 @@ CLOCK_FREQ_HZ overrides the default kernel clock of 100 (MHz in the Makefile).
 
 Configure the build root before running this script, for example from build/:
   ../configure --xlen=64 --tooldir=/opt/vortex --prefix="$HOME/tools/vortex"
+  ./ci/run_syn_hw.sh --config th32_c1_improve_m32_tcol32.sh
 Synthesis runs in BUILD_DIR/hw/syn/xilinx/xrt, with the log under its output directory.
 EOF
 }
