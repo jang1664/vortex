@@ -1240,6 +1240,15 @@ for block_size in range(1, full_bitwidth+1):
 `ifndef MXU_COL_TILE
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
 `endif
+// Storage policy is separate from naive input/weight scheduling.
+`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_USE_ACC_MEM
+`define GEMM_NAIVE_ACC_MEM
+`else
+`define GEMM_NAIVE_LMEM_PSUM
+`endif
+`endif
+
 `ifdef GEMM_NAIVE
 `define MXU_WLOAD_NUM 4           // Naive LMEM gather loads four weight rows per request
 `else

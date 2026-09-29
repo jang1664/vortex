@@ -42,6 +42,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    lmem_bus_if [`LMEM_NUM_PORTS], // ordinary physical LMEM ports
     VX_mem_bus_if.master    psum_rd_lmem_bus_if [`LMEM_NUM_PORTS],
     VX_mem_bus_if.master    psum_wr_lmem_bus_if [`LMEM_NUM_PORTS]
+`ifdef GEMM_NAIVE_ACC_MEM
+    ,input wire [`LMEM_NUM_BANKS-1:0] output_write_commit
+`endif
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t gemm_unit_perf
     ,output gemm_node_perf_t gemm_node_perf
@@ -224,12 +227,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && quant_param_dma_ctrl_if.idle && sz_is_notify;
     wire sz_notify_fire = sz_notify_pending_r && gemm_sync_if[2].ready;
 
+    wire output_path_idle, output_path_done;
     logic        output_notify_pending_r;
     logic [31:0] output_notify_reg_idx_r;
     logic [31:0] output_notify_value_r;
 
     wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.start && gemm_ctrl_if.output_write_ctrl.cmd.instr[7:0] == OP_NOTIFY);
-    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
+    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_path_idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
     // Completion/synchronization path from child nodes to gemm_ctrl.
@@ -445,6 +449,96 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       end
     end
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    // Count narrow requests before any LMEM arbitration buffer. A wide
+    // splitter request may commit early lanes before its final handshake.
+    localparam int OUTPUT_PENDING_W = `CLOG2(MT * NT * 2 / LSU_WORD_SIZE + 1);
+    logic [OUTPUT_PENDING_W-1:0] output_write_pending_r;
+    logic output_copy_active_r, output_dma_done_r;
+`ifndef SYNTHESIS
+    logic output_store_pending_r, output_store_overlap_seen_r;
+`endif
+    wire [GEMM_OUTPUT_LANES-1:0] output_lane_fire, output_lane_valid;
+    for (genvar lane = 0; lane < GEMM_OUTPUT_LANES; ++lane) begin : g_output_drain
+      assign output_lane_fire[lane] = o_lane_mem_if[lane].req_valid && o_lane_mem_if[lane].req_ready;
+      assign output_lane_valid[lane] = o_lane_mem_if[lane].req_valid;
+    end
+    wire [OUTPUT_PENDING_W:0] output_write_push = (OUTPUT_PENDING_W+1)'($countones(output_lane_fire));
+    wire [OUTPUT_PENDING_W:0] output_write_pop = (OUTPUT_PENDING_W+1)'($countones(output_write_commit));
+    wire [OUTPUT_PENDING_W:0] output_write_next = {1'b0, output_write_pending_r} + output_write_push - output_write_pop;
+    wire output_writes_drained = (output_write_pending_r == 0) && !(|output_lane_valid);
+    wire output_copy_done = output_copy_active_r && output_dma_done_r
+                          && output_dma_ctrl_if.idle && output_writes_drained;
+    assign output_path_idle = output_dma_ctrl_if.idle && !output_copy_active_r;
+    assign output_path_done = output_copy_done;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        output_write_pending_r <= '0;
+        output_copy_active_r <= 1'b0;
+        output_dma_done_r <= 1'b0;
+`ifndef SYNTHESIS
+        output_store_pending_r <= 1'b0;
+        output_store_overlap_seen_r <= 1'b0;
+`endif
+      end else begin
+        output_write_pending_r <= output_write_next[OUTPUT_PENDING_W-1:0];
+        if (output_dma_ctrl_if.start) begin
+          output_copy_active_r <= 1'b1;
+          output_dma_done_r <= 1'b0;
+        end else if (output_copy_done) begin
+          output_copy_active_r <= 1'b0;
+          output_dma_done_r <= 1'b0;
+        end else if (output_dma_ctrl_if.done) begin
+          output_dma_done_r <= 1'b1;
+        end
+`ifndef SYNTHESIS
+        if (output_store_done)
+          output_store_pending_r <= 1'b0;
+        if (output_copy_done)
+          $display("[%0t] %s: NAIVE_ACC_COPY_DRAINED", $time, INSTANCE_ID);
+        assert (output_write_pop <= ({1'b0, output_write_pending_r} + output_write_push))
+          else $fatal(1, "ACC output write counter underflow");
+        assert (!output_write_next[OUTPUT_PENDING_W])
+          else $fatal(1, "ACC output write counter overflow");
+        if (output_dma_ctrl_if.start) begin
+          assert (output_path_idle && output_writes_drained)
+            else $fatal(1, "ACC copy started before prior output drained");
+          assert (!output_store_pending_r)
+            else $fatal(1, "ACC output copy overwrites an active HBM STORE");
+          assert ((output_dma_ctrl_if.src_base_addr % `GEMM_PSUM_DATA_SIZE) == 0
+               && output_dma_ctrl_if.src_base_addr + MT * NT * 4 <= `GEMM_ACC_MEM_TOT_SIZE)
+            else $fatal(1, "ACC output source is unaligned or exceeds memory capacity");
+        end
+        if (gemm_unit_if.start) begin
+          if (output_store_pending_r && !output_store_overlap_seen_r) begin
+            output_store_overlap_seen_r <= 1'b1;
+            $display("[%0t] %s: NAIVE_ACC_COMPUTE_DURING_STORE", $time, INSTANCE_ID);
+          end
+          assert (!output_copy_active_r)
+            else $fatal(1, "ACC computation overlaps output copy");
+          assert ((gemm_ctrl_if.input_read_ctrl.cmd.rs1_data % `GEMM_PSUM_DATA_SIZE) == 0
+               && gemm_ctrl_if.input_read_ctrl.cmd.rs1_data
+                    + gemm_ctrl_if.input_read_ctrl.cmd.eff_mt * `GEMM_PSUM_DATA_SIZE <= `GEMM_ACC_MEM_TOT_SIZE)
+            else $fatal(1, "ACC compute address is unaligned or out of range");
+        end
+        if (gemm_dma_ctrl_if.start && gemm_dma_ctrl_if.cmd.instr[7:0] == 8'h11) begin
+          output_store_pending_r <= 1'b1;
+          output_store_overlap_seen_r <= 1'b0;
+          $display("[%0t] %s: NAIVE_ACC_STORE_START", $time, INSTANCE_ID);
+          assert (!output_copy_active_r && output_writes_drained)
+            else $fatal(1, "HBM STORE started before ACC output drained");
+        end
+`endif
+      end
+    end
+    `VX_STATIC_ASSERT(MT * NT * 4 <= `GEMM_ACC_MEM_TOT_SIZE, ("naive tile exceeds ACC capacity"))
+    `VX_STATIC_ASSERT((NT % `MXU_COL) == 0, ("naive ACC tile columns must align to MXU_COL"))
+`else
+    assign output_path_idle = output_dma_ctrl_if.idle;
+    assign output_path_done = output_dma_ctrl_if.done;
+`endif
+
     // Output store DMA command mapping.
     wire [31:0] output_mt_eff_cmd = {11'd0, gemm_ctrl_if.output_write_ctrl.cmd.eff_mt};
     wire [31:0] output_nt_eff_cmd = gemm_ctrl_if.output_write_ctrl.cmd.groups_eff;
@@ -454,24 +548,44 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     wire [31:0] output_nt_eff     = (output_nt_eff_raw > NT) ? NT : output_nt_eff_raw;
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
+`ifdef GEMM_NAIVE_ACC_MEM
+    // Historical naive convention: source addresses are FP32 bytes even
+    // though each ACC read returns a converted FP16 row.
+    assign output_dma_ctrl_if.src_strides[0] = `GEMM_PSUM_DATA_SIZE;
+    assign output_dma_ctrl_if.src_strides[1] = MT * `GEMM_PSUM_DATA_SIZE;
+`else
     assign output_dma_ctrl_if.src_strides[0] = output_nt_eff * 16/8;
     assign output_dma_ctrl_if.src_strides[1] = 0;
+`endif
     assign output_dma_ctrl_if.src_strides[2] = 0;
 
     assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
     assign output_dma_ctrl_if.dst_strides[0] = NT*16/8;
+`ifdef GEMM_NAIVE_ACC_MEM
+    assign output_dma_ctrl_if.dst_strides[1] = `GEMM_OUTPUT_DATA_SIZE;
+`else
     assign output_dma_ctrl_if.dst_strides[1] = 0;
+`endif
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
     assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
+`ifdef GEMM_NAIVE_ACC_MEM
+    assign output_dma_ctrl_if.bounds[1] = (output_nt_eff + `MXU_COL - 1) / `MXU_COL;
+`else
     assign output_dma_ctrl_if.bounds[1] = 32'd1;
+`endif
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    assign output_dma_ctrl_if.seg_size         = (output_nt_eff < `MXU_COL)
+                                               ? output_nt_eff * 2 : `GEMM_OUTPUT_DATA_SIZE;
+`else
     assign output_dma_ctrl_if.seg_size         = output_nt_eff * 16 / 8;
+`endif
     assign output_dma_ctrl_if.reg_idx           = '0;
     assign output_dma_ctrl_if.reg_value         = '0;
-    assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
+    assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_path_idle;
+    assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_path_done;
 
     assign gemm_sync_if[3].valid   = output_notify_pending_r;
     assign gemm_sync_if[3].reg_idx = output_notify_pending_r ? output_notify_reg_idx_r : 32'd0;

@@ -277,6 +277,9 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
   localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
 
   localparam logic [7:0] OP_I_LDMA_ARM    = 8'h22;
+`ifdef GEMM_NAIVE_ACC_MEM
+  localparam logic [7:0] OP_O_ACC2LMEM    = 8'h23;
+`endif
 
   // --------------------------------------------------------------------------
   // Sync register assignment
@@ -555,6 +558,9 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
 
     // output stage (only when last-kt tile for this (mt,nt))
     S_O_WAIT_LMEM2DRAM_DONE, S_O_LMEM2DRAM, S_O_LMEM2DRAM_NTF,
+`ifdef GEMM_NAIVE_ACC_MEM
+    S_O_ACC2LMEM, S_O_ACC2LMEM_NTF, S_O_WAIT_ACC2LMEM_DONE,
+`endif
 
     // advance + optionally preload next tile
     S_ADVANCE_TILES, S_O_WAIT_LMEM2DRAM_FINAL, // 34
@@ -842,8 +848,12 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
     // Input slice (mt_eff_cur rows, MXU_KT cols)
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
 
-    // PSUM slice base (mt_eff_cur rows, MXU_NT cols)
+    // Block-major PSUM slice (mt_eff_cur rows, MXU_NT cols).
+`ifdef GEMM_NAIVE_ACC_MEM
+    lmem_out_slice = 64'(n0_out) * MT * FP32_BYTES;
+`else
     lmem_out_slice = job_q.lmem_psum_base + 64'(n0_out) * MT * FP32_BYTES;
+`endif
 
     // Weight slice base in current tile buffer
     lmem_w_mxu = wbuf_base(buf_cur) + 64'(w_row0) * 64'(w_row_stride_bytes) + 64'(w_col0_bytes);
@@ -1506,12 +1516,60 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       S_O_WAIT_LMEM2DRAM_DONE: begin
         if (can_emit) begin
+`ifdef GEMM_NAIVE_ACC_MEM
+          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
+`else
           out_cmd_d   = make_wait_cmd(rid_o, o_store_issue_q);
+`endif
+          out_start_d = 1'b1;
+`ifdef GEMM_NAIVE_ACC_MEM
+          state_d     = S_O_ACC2LMEM;
+`else
+          state_d     = S_O_LMEM2DRAM;
+`endif
+        end
+      end
+
+`ifdef GEMM_NAIVE_ACC_MEM
+      S_O_ACC2LMEM: begin
+        if (can_emit) begin
+          gemm_unified_cmd_t c;
+          logic [7:0] flags;
+
+          c = '0;
+          flags      = {7'd0, buf_cur};
+
+          c.flags    = flags;
+          c.instr    = make_instr(OP_O_ACC2LMEM, mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES));
+          c.rs1_data  = job_q.lmem_obuf_base; // dst
+          c.rs2_data  = 64'd0;           // src
+          // Pass effective tile extents to output path mapper.
+          c.eff_mt    = mt_eff_cur;
+          c.groups_eff = nt_eff_cur;
+
+          out_cmd_d   = c;
+          out_start_d = 1'b1;
+          state_d     = S_O_ACC2LMEM_NTF;
+        end
+      end
+
+      S_O_ACC2LMEM_NTF: begin
+        if (can_emit) begin
+          out_cmd_d   = make_notify_cmd(rid_o, 2*o_store_issue_q + 1, 1'b1);
+          out_start_d = 1'b1;
+          state_d     = S_O_WAIT_ACC2LMEM_DONE;
+        end
+      end
+
+      S_O_WAIT_ACC2LMEM_DONE: begin
+        if (can_emit) begin
+          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q + 1);
           out_start_d = 1'b1;
           state_d     = S_O_LMEM2DRAM;
         end
       end
 
+`endif
       S_O_LMEM2DRAM: begin
         if (can_emit) begin
           out_cmd_d   = make_dma_st(out_tile_addr(job_q, mt_cur, nt_cur),
@@ -1580,7 +1638,11 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
 
       S_O_WAIT_LMEM2DRAM_FINAL: begin
         if (can_emit) begin
+`ifdef GEMM_NAIVE_ACC_MEM
+          out_cmd_d   = make_wait_cmd(rid_o, 2*o_store_issue_q);
+`else
           out_cmd_d   = make_wait_cmd(rid_o, o_store_issue_q);
+`endif
           out_start_d = 1'b1;
           state_d     = S_IDLE;
         end
@@ -1872,6 +1934,9 @@ module VX_gemm_fsm_naive import VX_gpu_pkg::*; #(
       OP_SC_LDMA_MXU:   return "SC_LDMA_MXU";
       OP_ZP_LDMA_MXU:   return "ZP_LDMA_MXU";
       OP_I_LDMA_ARM:    return "I_LDMA_ARM";
+`ifdef GEMM_NAIVE_ACC_MEM
+      OP_O_ACC2LMEM:    return "O_ACC2LMEM";
+`endif
       default:          return "UNKNOWN";
     endcase
   endfunction

@@ -201,3 +201,21 @@
 ---
 
 생성: `docs/rtl/mem/VX_local_mem.md` (한글, local memory 상세 노트)
+
+
+## Naive ACC output completion
+
+When `GEMM_NAIVE_USE_ACC_MEM` is enabled for `GEMM_NAIVE`, the core LMEM
+instance sets `NAIVE_OUTPUT_COMMIT=1`. The `naive_output_write_commit` output
+has one bit per bank and pulses on the actual RAM write for an ACC-to-LMEM
+output request. The decoder uses existing arbiter route fields below the UUID:
+normal priority input (1), GEMM shared-memory client (2), and output DMA (3).
+Other local-memory instances leave this parameter disabled and drive zero.
+
+The naive node counts narrow output-lane handshakes before arbitration and
+subtracts these bank commits. It delays output-copy completion until the DMA
+is idle, the splitter has no pending lane requests, and the write count is
+zero. This prevents a subsequent HBM STORE from reading stale output. The FSM
+can advance after issuing STORE, but the existing ordered prefetch commands
+and depth-four DMA queue can still delay the next tile's computation until
+STORE completes; this change does not guarantee compute/STORE overlap.

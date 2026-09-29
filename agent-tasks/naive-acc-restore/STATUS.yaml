@@ -1,0 +1,102 @@
+task: naive-acc-restore
+state: COMPLETE
+updated: "2026-09-29 17:08"
+reference_commit: f4c65cc86b47c428d5e42526dfbdfa52d1c81a4f
+spec: naive-acc-restore-spec.md
+results: results.md
+pitfalls:
+  - "Old naive output source strides are FP32 bytes with 64-byte bus address decoding; do not mix in feat/gemv's virtual FP16 address convention."
+  - "Output wide-bus acceptance does not mean writes have committed to LMEM; track narrow issue and actual bank commit, and drain lane skids."
+  - "The splitter can issue early lanes before wide req_ready; reserving pending writes only on wide handshake can underflow."
+  - "VCS simv must be built independently for ON/OFF/C2; CONFIGS changes alone may not invalidate it."
+  - "verify_rtl.py blackbox CLI hardcodes build/ and directly calls blackbox.sh; reuse its report helpers with the user-required wrapper instead."
+  - "With default_nettype none, VCS requires output_path_idle declaration before its use in output_notify_req."
+  - "The blackbox wrapper redirects application PASS output to build/run.log; classify and archive that log as well as wrapper stdout and simv.log."
+  - "Direct C2 make simv in a fresh build needs make -C hw first to generate VX_config.h; the blackbox wrapper normally supplies that prerequisite."
+  - "DEBUG_LEVEL=3 emits expensive per-lane FP traces (hundreds of MB per partial M256 run). DEBUG_LEVEL=1 retains required unconditional sequence markers and assertions."
+  - "The mixed-language VCS flow does not forward --debug level to vlogan or DPI C++; explicitly define DEBUG_LEVEL=1 in CONFIGS and VCS_CPPFLAGS for compact traces."
+  - "Historical naive has no explicit post-STORE wait, but depth-four DMA queue plus ordered prefetch can indirectly delay next-tile compute until STORE ends. No actual compute/STORE overlap was observed in the requested cases."
+iterations:
+  - timestamp: "2026-09-29 16:36"
+    phase: implementation
+    status: in_progress
+    summary: "Started approved historical-naive ACC restoration; RTL delegated and C2/C3 comments updated without changing their selected options."
+  - timestamp: "2026-09-29 16:39"
+    phase: verification_setup
+    status: in_progress
+    summary: "Preparing independent ON/OFF/C2 configured builds. Six functional runs use identical DEBUG=3 and DBG_TRACE_GEMM options for sequencing evidence; C2 compile covers normal NDEBUG tags."
+  - timestamp: "2026-09-29 16:41"
+    iteration: 1
+    phase: verification
+    status: compile_error
+    test: "C3 ACC ON M1 K256 N256"
+    summary: "VCS rejected output_path_idle use before declaration; no simulation ran. RTL implementation agent is moving the declaration before its first use."
+    log: "build_naive_acc_on_vcs/verification/iter01_m1/stdout.log"
+  - timestamp: "2026-09-29 16:44"
+    iteration: 2
+    phase: verification
+    status: pass
+    test: "C3 ACC ON M1 K256 N256 smoke"
+    cycles: 11727
+    summary: "Declaration fix passed full blackbox; two output-copy-drained then STORE-start pairs, no assertions. Final review restored short-N output segment length; final matrix will use fresh elaboration of that frozen source."
+    log: "build_naive_acc_on_vcs/verification/iter02_m1/run.log"
+  - timestamp: "2026-09-29 16:45"
+    iteration: 2
+    phase: verification
+    status: pass
+    test: "C3 ACC ON M16 K256 N256 smoke"
+    cycles: 12855
+    summary: "Second smoke passed. C2 direct compile initially lacked generated VX_config.h; generating configured hardware headers before retry. Final source is frozen and ON/OFF/C2 builds are isolated."
+    log: "build_naive_acc_on_vcs/verification/iter02_m16/run.log"
+  - timestamp: "2026-09-29 16:45"
+    iteration: 3
+    phase: verification
+    status: in_progress
+    summary: "Fresh final ON and OFF elaboration plus C2 compile launched independently. Previous ON/C2 simulator and generated C++ directories preserved rather than deleted."
+  - timestamp: "2026-09-29 16:50"
+    iteration: 3
+    phase: verification
+    status: pass
+    test: "C3 ON/OFF M1/M16; C2 ACC ON compile"
+    summary: "All four small functional cases passed on final RTL; C2 normal NDEBUG+TCU compile/elaboration passed after generating hardware headers. M256 ON/OFF were actively progressing but produced 926/676 MB traces in 151/120 seconds. Those two attempts were stopped safely to reduce trace volume, with no observed RTL failure."
+    logs:
+      - "build_naive_acc_on_vcs/verification/iter03_m1/run.log"
+      - "build_naive_acc_on_vcs/verification/iter03_m16/run.log"
+      - "build_naive_acc_off_vcs/verification/iter03_m1/run.log"
+      - "build_naive_acc_off_vcs/verification/iter03_m16/run.log"
+      - "build_naive_acc_c2_vcs/verification/iter03_m0/stdout.log"
+  - timestamp: "2026-09-29 16:50"
+    iteration: 4
+    phase: verification
+    status: in_progress
+    summary: "Rebuilding ON/OFF with DEBUG_LEVEL=1 and rerunning all six cases consistently; immediate assertions and ACC sequence markers remain enabled. C2 final-source compile remains valid."
+  - timestamp: "2026-09-29 16:53"
+    iteration: 4
+    phase: verification
+    status: pass
+    test: "C3 ON/OFF M1 smoke"
+    summary: "Both M1 cases passed, but debug level did not reach mixed-language vlogan and DPI C++; traces remained verbose. No design failure. Explicit verification-only compiler defines will be used consistently in final matrix."
+  - timestamp: "2026-09-29 16:53"
+    iteration: 5
+    phase: verification
+    status: in_progress
+    summary: "Fresh ON/OFF builds with explicit DEBUG_LEVEL=1 in CONFIGS and VCS_CPPFLAGS; all six cases will use identical trace settings and unchanged frozen RTL. C2 iter03 compile retained."
+  - timestamp: "2026-09-29 17:02"
+    iteration: 5
+    phase: verification
+    status: partial_pass
+    summary: "Final ON/OFF M1 and M16 all passed. Both M256 runs reached the 300-second deadline with continuing DMA progress and no assertion/error lines; ON completed three copy-drained then STORE-start pairs. Deadline logs are preserved. Actual compute/STORE overlap has not been observed."
+  - timestamp: "2026-09-29 17:02"
+    iteration: 6
+    phase: verification
+    status: in_progress
+    summary: "Retrying only M256 ON/OFF with an 1800-second deadline, unchanged source/configuration and existing per-variant binaries. Keep four iter05 functional passes and C2 iter03 compile result."
+  - timestamp: "2026-09-29 17:08"
+    iteration: 6
+    phase: verification
+    status: pass
+    summary: "M256 ON and OFF passed with exit zero, application PASSED, and no RTL assertion/error lines (382.75/428.11 seconds). All six functional cases plus C2 compile/elaboration now pass; all seven RTL hash maps match current source. ON M256 has four correctly ordered copy-drained/STORE-start pairs; actual compute/STORE overlap markers are zero. All OFF ACC markers are zero."
+    logs:
+      - "build_naive_acc_on_vcs/verification/iter06_m256/run.log"
+      - "build_naive_acc_off_vcs/verification/iter06_m256/run.log"
+      - "build_naive_acc_on_vcs/verification/summary.json"

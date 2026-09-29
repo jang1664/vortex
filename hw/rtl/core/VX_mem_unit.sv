@@ -34,6 +34,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
    ,VX_mem_bus_if.slave     gemm_data_if [`LMEM_NUM_PORTS]
    ,VX_mem_bus_if.slave     gemm_psum_rd_if [`LMEM_NUM_PORTS]
    ,VX_mem_bus_if.slave     gemm_psum_wr_if [`LMEM_NUM_PORTS]
+`ifdef GEMM_NAIVE_ACC_MEM
+   ,output wire [`LMEM_NUM_BANKS-1:0] naive_output_write_commit
+`endif
 `endif
 );
     VX_lsu_mem_if #(
@@ -271,9 +274,15 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
 `endif
         .OUT_BUF    (3)
+`ifdef GEMM_NAIVE_ACC_MEM
+        ,.NAIVE_OUTPUT_COMMIT(1)
+`endif
     ) local_mem (
         .clk        (clk),
         .reset      (reset),
+`ifdef GEMM_NAIVE_ACC_MEM
+        .naive_output_write_commit(naive_output_write_commit),
+`endif
     `ifdef PERF_ENABLE
         .lmem_perf  (lmem_perf),
     `endif
@@ -295,6 +304,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     end
 
 `ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_ACC_MEM
+    assign naive_output_write_commit = '0;
+`endif
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_gemm_data_if
         `UNUSED_VX_MEM_BUS_IF (gemm_data_if[i])
         `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])

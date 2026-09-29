@@ -82,6 +82,10 @@ module VX_core import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LSU_TAG_WIDTH)
     ) lsu_mem_if[`NUM_LSU_BLOCKS]();
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    wire [`LMEM_NUM_BANKS-1:0] naive_output_write_commit;
+`endif
+
     // DMA control interfaces from mem_unit
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -304,6 +308,9 @@ module VX_core import VX_gpu_pkg::*; #(
        ,.gemm_data_if      (gemm_data_if)
        ,.gemm_psum_rd_if   (gemm_psum_rd_if)
        ,.gemm_psum_wr_if   (gemm_psum_wr_if)
+`ifdef GEMM_NAIVE_ACC_MEM
+       ,.naive_output_write_commit(naive_output_write_commit)
+`endif
 `endif
     );
 
@@ -371,6 +378,9 @@ module VX_core import VX_gpu_pkg::*; #(
         .lmem_bus_if (gemm_data_if)
        ,.psum_rd_lmem_bus_if(gemm_psum_rd_if)
        ,.psum_wr_lmem_bus_if(gemm_psum_wr_if)
+`ifdef GEMM_NAIVE_ACC_MEM
+       ,.output_write_commit(naive_output_write_commit)
+`endif
     );
 
     for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_naive_gemm_dma_axi

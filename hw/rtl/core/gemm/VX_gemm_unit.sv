@@ -74,7 +74,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam FP16_MUL_LATENCY = 0;
     localparam FP32_MUL_LATENCY = 0;
     localparam FP32_ADD_LATENCY = 0;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     // External LMEM has a longer and conflict-dependent response latency than
     // the internal accumulator SRAM. Keep enough PSUM reads in flight to
     // preserve the no-backpressure GEMM datapath when writes win a bank clash.
@@ -353,7 +353,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [1:0]                                    acc_rd_fifo_alm_full_by_bank;
     logic                                          acc_mem_rd_data_valid;
     logic                                          acc_mem_rd_data_take;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     logic [`GEMM_ACC_MAX_CNT:0]                    acc_rd_prefetch_count;
     logic [PSUM_RD_BURST_COUNT_W-1:0]              acc_mem_accum_rd_burst_count;
     logic [PSUM_RD_OUTSTANDING_W-1:0]              acc_mem_accum_rd_outstanding;
@@ -366,7 +366,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [1:0][ACC_RD_CREDIT_W-1:0]               acc_rd_credit_count_by_bank;
     logic [ACC_RD_CREDIT_W:0]                      acc_rd_credit_count;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_out_data;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]            final_fp16_data;
     logic [`MXU_COL-1:0]                            final_fp16_valid;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            final_lmem_addr_q;
@@ -486,6 +486,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE);
 `endif
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    // Keep the naive node interface stable when PSUMs live in the internal ACC.
+    assign psum_rd_lmem_bus_if.req_valid = 1'b0;
+    assign psum_rd_lmem_bus_if.req_data = '0;
+    assign psum_rd_lmem_bus_if.rsp_ready = 1'b1;
+    assign psum_wr_lmem_bus_if.req_valid = 1'b0;
+    assign psum_wr_lmem_bus_if.req_data = '0;
+    assign psum_wr_lmem_bus_if.rsp_ready = 1'b1;
+    assign final_lmem_bus_if.req_valid = 1'b0;
+    assign final_lmem_bus_if.req_data = '0;
+    assign final_lmem_bus_if.rsp_ready = 1'b1;
+`endif
+
     // =========================================================================
     // Accumulator Memory Bank Address Calculation
     // =========================================================================
@@ -500,7 +513,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_mem_out_rd_bank        = get_acc_mem_idx(acc_mem_out_rd_addr);
     assign acc_mem_accum_wr_fire      = acc_mem_accum_wr_req && in_flight
                                       && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     assign acc_mem_accum_rd_accept    = psum_rd_lmem_bus_if.req_valid && psum_rd_lmem_bus_if.req_ready;
     wire acc_mem_accum_rd_rsp_fire    = psum_rd_lmem_bus_if.rsp_valid && psum_rd_lmem_bus_if.rsp_ready;
 `else
@@ -600,7 +613,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_rd_fifo_push_by_bank[0] = acc_mem_rd_data_take && (acc_mem_rd_rsp_bank[0] == 1'b0);
     assign acc_rd_fifo_push_by_bank[1] = acc_mem_rd_data_take && (acc_mem_rd_rsp_bank[0] == 1'b1);
     assign acc_rd_fifo_push = |acc_rd_fifo_push_by_bank;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     // Accumulate commands initialize PSUM read/FIFO state on their start edge.
     // Wait for all requested PSUMs on short commands, or until each parity
     // FIFO reaches the eight-entry prefetch threshold on longer commands. The
@@ -624,7 +637,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 `else
     assign input_accept_ready = 1'b1;
 `endif
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     assign acc_mem_rd_rsp_bank = psum_rd_lmem_bus_if.rsp_data.tag[1:0];
     assign acc_rd_fifo_in_data_by_bank[0] = psum_rd_lmem_bus_if.rsp_data.data;
     assign acc_rd_fifo_in_data_by_bank[1] = psum_rd_lmem_bus_if.rsp_data.data;
@@ -642,7 +655,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                          || acc_rd_fifo_pop_fire_by_bank[1]);
 
     // ----- Read Data Valid Tracking -----
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     always_comb begin
         acc_mem_rd_data_valid = psum_rd_lmem_bus_if.rsp_valid;
     end
@@ -703,7 +716,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         if (reset) begin
             acc_mem_accum_rd_rr <= 1'b0;
             acc_rd_consume_bank <= 1'b0;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
             acc_mem_accum_rd_burst_count <= '0;
             acc_mem_accum_rd_outstanding <= '0;
             acc_mem_accum_rd_burst_wait <= 1'b0;
@@ -712,13 +725,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
                 acc_mem_accum_rd_rr <= acc_mem_accum_start_bank[0];
                 acc_rd_consume_bank <= acc_mem_accum_start_bank[0];
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                 acc_mem_accum_rd_burst_count <= '0;
                 acc_mem_accum_rd_outstanding <= '0;
                 acc_mem_accum_rd_burst_wait <= 1'b0;
 `endif
             end else begin
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                 case ({acc_mem_accum_rd_accept, acc_mem_accum_rd_rsp_fire})
                     2'b10: acc_mem_accum_rd_outstanding <= acc_mem_accum_rd_outstanding + 1'b1;
                     2'b01: begin
@@ -794,7 +807,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             ACCUM_RD_READ: begin
                 if (acc_mem_accum_rd_cnt > 0) begin
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                     if (!acc_mem_accum_rd_burst_wait) begin
 `endif
                     if (acc_mem_accum_wr_fire) begin
@@ -811,7 +824,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                 acc_mem_accum_rd_req = 1'b1;
                             end
                             2'b11: begin
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                                 // Hold the selected parity for a bounded burst;
                                 // switching is performed only after it drains.
                                 acc_mem_accum_rd_sel = acc_mem_accum_rd_rr;
@@ -830,7 +843,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                     end
                     acc_mem_accum_rd_req = acc_mem_accum_rd_req
                                          && (~acc_mem_rd_data_valid || acc_mem_rd_data_take);
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                     end
 `endif
                     if (acc_mem_accum_rd_accept) begin
@@ -838,7 +851,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                             = acc_mem_accum_rd_cnt_by_bank[acc_mem_accum_rd_sel] - 1;
                     end
                 end else if (~acc_mem_rd_data_valid
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
                           && (acc_mem_accum_rd_outstanding == 0)
 `endif
                 ) begin
@@ -1630,7 +1643,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Accumulator Memory Banks
     // -------------------------------------------------------------------------
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     wire psum_rd_req_valid = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load;
     wire psum_wr_req_valid = acc_mem_accum_wr_fire && !gemm_unit_ctrl.is_last;
     wire [$bits(psum_rd_lmem_bus_if.req_data.addr)-1:0] psum_rd_word_addr
@@ -1700,7 +1713,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     endgenerate
 `endif
 
-`ifndef GEMM_NAIVE
+`ifndef GEMM_NAIVE_LMEM_PSUM
 `ifdef SIMULATION
 `ifndef SYNTHESIS
     task initialize_acc_mem(
@@ -1775,7 +1788,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // FP32 to FP16 Converters
     // -------------------------------------------------------------------------
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             final_lmem_addr_q <= '0;

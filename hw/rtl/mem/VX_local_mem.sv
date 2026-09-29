@@ -32,6 +32,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     // Request tag size
     parameter TAG_WIDTH         = 16,
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    // Enable only for the core LMEM instance with naive routing tags.
+    parameter NAIVE_OUTPUT_COMMIT = 0,
+`endif
+
     // Omega ordering resources
     parameter OMEGA_STORE_CAM_SIZE = `LMEM_OMEGA_STORE_CAM_SIZE,
     parameter OMEGA_RSP_QUEUE_SIZE = `LMEM_OMEGA_RSP_QUEUE_SIZE,
@@ -47,6 +52,9 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     output lmem_perf_t lmem_perf,
 `endif
 
+`ifdef GEMM_NAIVE_ACC_MEM
+    output wire [NUM_BANKS-1:0] naive_output_write_commit,
+`endif
     VX_mem_bus_if.slave mem_bus_if [NUM_REQS]
 );
     `UNUSED_SPARAM (INSTANCE_ID)
@@ -406,6 +414,20 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             .wdata (per_bank_req_data[i]),
             .rdata (per_bank_rsp_data[i])
         );
+
+`ifdef GEMM_NAIVE_ACC_MEM
+        if (NAIVE_OUTPUT_COMMIT) begin : g_naive_output_commit
+            // Tags retain the three nested arbiter selections below UUID.
+            assign naive_output_write_commit[i] = per_bank_req_valid[i]
+                && per_bank_req_ready[i] && per_bank_req_rw[i]
+                && per_bank_req_tag[i][LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH]
+                && (per_bank_req_tag[i][GEMM_LMEM_TAG_WIDTH-UUID_WIDTH +: LMEM_ARB_ROUTE_TAG_BITS] == LMEM_ARB_ROUTE_TAG_BITS'(2))
+                && (per_bank_req_tag[i][GEMM_BASE_TAG_WIDTH-UUID_WIDTH +: GEMM_ARB_ROUTE_TAG_BITS] == GEMM_ARB_ROUTE_TAG_BITS'(3));
+            `VX_STATIC_ASSERT(TAG_WIDTH == LMEM_LOCAL_TAG_WIDTH + 1, ("invalid naive output commit tag width"))
+        end else begin : g_no_naive_output_commit
+            assign naive_output_write_commit[i] = 1'b0;
+        end
+`endif
 
         // read-during-write hazard detection
         reg [BANK_ADDR_WIDTH-1:0] last_wr_addr;
