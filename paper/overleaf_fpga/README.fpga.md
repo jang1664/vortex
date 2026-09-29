@@ -33,19 +33,24 @@ saved as `_outputs/main.before-10pages.tex` and
 
 The prose was shortened against the [FPGA 2027 long-paper limit](https://wp.isfpga.org/call-for-papers/)
 of 10 pages excluding references. The current PDF ends its body approximately
-80% down the second column of page 10 and has 12 pages including references,
+82% down the second column of page 10 and has 12 pages including references,
 which begin on page 10. Methodology and contribution details were restored
 from the original after the initial shortening. The more condensed version
 is backed up as `_outputs/main.before-fill80.tex` and `.pdf`.
 Edits focus on repeated motivation and overview prose. Detailed engine,
 memory-system, and runtime explanations and the evaluation result analysis
-are retained. All 15 figure blocks, 6 tables, displayed equations, and 42
-citation keys are preserved. The wide latency figure is queued earlier and
+are retained, with a shorter accuracy-evaluation introduction. All 15 figures,
+6 tables, displayed equations, and 42 citation keys remain. The wide latency figure is queued earlier and
 pending floats are placed before the conclusion.
 
-Font sizes, line spacing, margins, and figure sizes were unchanged during
-shortening. Float-to-text gaps remain fixed at one body-text line; ragged
-page bottoms prevent those gaps from stretching to fill columns.
-Verification results are saved in `_outputs/shortening-verification.json`.
+The ACM template's float spacing, list layout, and flush-bottom page alignment
+are restored. Manual vertical skips and table row-height overrides were removed.
+The hardware-configuration table now spans both columns at the default text
+size instead of using a reduced font. Margins, body font size, line spacing,
+and figure sizes are unchanged. Local table column widths remain specific
+to each table.
+The preceding draft is backed up as `_outputs/main.before-template-reset.tex`
+and `.pdf`. Current verification results are in
+`_outputs/template-reset-verification.json`.
 The existing bibliography has incomplete metadata, and figures lack ACM
 accessibility descriptions; these produce nonfatal warnings.

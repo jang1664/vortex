@@ -48,10 +48,38 @@
 
 \title[FINISH: An End-to-End FP--INT LLM Inference System]{FINISH: An End-to-End FP–INT LLM Inference System with Quantized Weights and KV Cache}
 
+
+% Revision review copy: yellow marks sentences changed from ../overleaf_hpca/main.tex.
+% Unchanged equations keep their ordinary numbering; revequation is available
+% for subsequent equation revisions. The clean manuscript remains main.tex.
+\usepackage{soul}
+\sethlcolor{yellow}
+\DeclareRobustCommand{\rev}[1]{\hl{#1}}
+\soulregister\cite7
+\soulregister\ref7
+\soulregister\eqref7
+% Manuscript macros are called with {} and typeset as a unit inside \hl.
+\soulregister\ours7
+\soulregister\fpint7
+\soulregister\wkv7
+\soulregister\qcol7
+\soulregister\qrow7
+% Highlight revised equation numbers locally; labels retain plain numeric values.
+\makeatletter
+\newenvironment{revequation}{%
+  \begingroup
+  \renewcommand{\tagform@}[1]{\maketag@@@{\rev{(##1)}}}%
+  \begin{equation}%
+}{%
+  \end{equation}%
+  \endgroup
+}
+\makeatother
+
 \begin{document}
 
 \begin{abstract}
-Weight-and-KV-cache (WKV) quantization makes the dominant LLM GEMMs products of FP activations and INT weights or KV tensors. GPUs dequantize INT operands before FP$\times$FP computation, while prior \fpint{} accelerators mainly support linear layers, leaving quantized attention on the FP path. We present \ours{}, an end-to-end hardware/software system that extends native \fpint{} execution to both linear and attention GEMMs. Some KV-quantized attention mappings associate scales with the reduction dimension, preventing post-accumulation scaling. \ours{} folds these scales into the FP input, allowing linear layers, $QK^T$, and $PV$ to share one datapath with 3.41\% GEMM-engine area overhead. A decoupled GEMM engine, partitioned tensor memory, and restricted high-bandwidth interconnect sustain high utilization of the denser array. Constraint-aware layouts and runtime support satisfy the resulting address restrictions. We extend the Vortex GPGPU and evaluate four incremental designs on an FPGA prototype. Over the linear-only \fpint{} baseline, \ours{} achieves geometric-mean end-to-end speedups of 3.24$\times$ in prefill and 5.93$\times$ in decode, with energy per token reduced by 2.67$\times$ and 8.72$\times$, respectively.
+\rev{Weight-and-KV-cache (WKV) quantization makes the dominant LLM GEMMs products of FP activations and INT weights or KV tensors.} \rev{GPUs dequantize INT operands before FP$\times$FP computation, while prior \fpint{} accelerators mainly support linear layers, leaving quantized attention on the FP path.} \rev{We present \ours{}, an end-to-end hardware/software system that extends native \fpint{} execution to both linear and attention GEMMs.} \rev{Some KV-quantized attention mappings associate scales with the reduction dimension, preventing post-accumulation scaling.} \rev{\ours{} folds these scales into the FP input, allowing linear layers, $QK^T$, and $PV$ to share one datapath with 3.41\% GEMM-engine area overhead.} \rev{A decoupled GEMM engine, partitioned tensor memory, and restricted high-bandwidth interconnect sustain high utilization of the denser array. Constraint-aware layouts and runtime support satisfy the resulting address restrictions.} \rev{We extend the Vortex GPGPU and evaluate four incremental designs on an FPGA prototype.} \rev{Over the linear-only \fpint{} baseline, \ours{} achieves geometric-mean end-to-end speedups of 3.24$\times$ in prefill and 5.93$\times$ in decode, with energy per token reduced by 2.67$\times$ and 8.72$\times$, respectively.}
 
 %First, we propose a matrix multiplication unit (MXU) and an \fpint{} attention kernel that together support multiple KV quantization directions, so both linear layers and quantized KV attention execute on the same \fpint{} datapath.
 %First, we identify that some KV-quantized attention demands a quantization direction that conventional FP-INT datapaths structurally cannot factor out of the reduction, and we resolve it by folding the scale into the FP operand before prealignment with 3.41\% GEMM-engine area overhead only, enabling linear layers, $QK^T$, and $PV$ to share one FP-INT datapath.
@@ -67,7 +95,7 @@ Weight-and-KV-cache (WKV) quantization makes the dominant LLM GEMMs products of 
 % Weight quantization is already widely deployed in LLM inference. Weight-only quantization keeps activations in FP and stores weights in INT4/INT8 to reduce model footprint and memory traffic. Activations and queries are input-dependent and dynamic, which makes aggressive quantization difficult, but weights can be quantized offline with a variety of techniques that minimize the resulting error~\cite{frantar2022gptq,lin2023awq,dettmers2023spqr,kim2023squeezellm,lee2023owq,kim2023finequant,shao2023omniquant,chee2023quip,tseng2024quipsharp,shang2023pbllm,egiazarian2024aqlm,huang2024billm,malinovskii2024pvtuning,tseng2024qtip,liu2024vptq,luo2024daq,lee2024lrq,yan2026d2quant,xu2025butterflyquant,liu2024spinquant}. Reducing weights to a low bit width directly reduces memory-traffic latency, and the saved capacity can also be spent on a larger model or a longer KV cache to improve accuracy.
 
 % As modern LLMs scale to long-context and high-throughput serving, however, the KV cache itself has become a new memory bottleneck. At context lengths beyond 32k or 128k, the KV cache can demand memory capacity and bandwidth comparable to the model weights. LLM inference has therefore moved beyond weight-only quantization toward \wkv{} quantization, in which both the weights and the KV cache are quantized.
-Large language model (LLM) inference is constrained by memory capacity, bandwidth, and computation. Weight-only quantization (WoQ) reduces model footprint and traffic by storing weights in INT4 or INT8 while retaining FP activations~\cite{frantar2022gptq,lin2023awq,dettmers2023spqr,shao2023omniquant,liu2024spinquant}. Long contexts also increase KV-cache traffic~\cite{pagedattention} and attention computation (Fig.~\ref{fig:long_seq_atten_overhead})~\cite{attentionisallyouneed,flashattention,flashattention2}, motivating weight-and-KV-cache (\wkv{}) quantization~\cite{yue2024wkvquant,liu2024spinquant}. Its linear layers multiply FP activations by INT weights. Attention similarly multiplies FP queries by INT keys in $QK^T$ and FP probabilities by INT values in $PV$~\cite{figna,yue2024wkvquant,liu2024spinquant}.
+\rev{Large language model (LLM) inference is constrained by memory capacity, bandwidth, and computation.} \rev{Weight-only quantization (WoQ) reduces model footprint and traffic by storing weights in INT4 or INT8 while retaining FP activations~\cite{frantar2022gptq,lin2023awq,dettmers2023spqr,shao2023omniquant,liu2024spinquant}.} \rev{Long contexts also increase KV-cache traffic~\cite{pagedattention} and attention computation (Fig.~\ref{fig:long_seq_atten_overhead})~\cite{attentionisallyouneed,flashattention,flashattention2}, motivating weight-and-KV-cache (\wkv{}) quantization~\cite{yue2024wkvquant,liu2024spinquant}.} \rev{Its linear layers multiply FP activations by INT weights. Attention similarly multiplies FP queries by INT keys in $QK^T$ and FP probabilities by INT values in $PV$~\cite{figna,yue2024wkvquant,liu2024spinquant}.}
 
 % ---------------------------------------------------------------------
 % Quantization is one of the most effective techniques for reducing inference cost. Weight-only quantization keeps activations in FP while storing weights in INT4 or INT8, reducing model footprint and per-token weight traffic~\cite{frantar2022gptq,lin2023awq,dettmers2023spqr,kim2023squeezellm,lee2023owq,kim2023finequant,shao2023omniquant,chee2023quip,tseng2024quipsharp,shang2023pbllm,egiazarian2024aqlm,huang2024billm,malinovskii2024pvtuning,tseng2024qtip,liu2024vptq,luo2024daq,lee2024lrq,yan2026d2quant,xu2025butterflyquant,liu2024spinquant}. The saved capacity can be used for a larger model, a longer context, or a larger serving batch, improving the accuracy--throughput--cost tradeoff.
@@ -77,7 +105,7 @@ Large language model (LLM) inference is constrained by memory capacity, bandwidt
 
 
 
-GPUs dequantize these INT operands before FP$\times$FP Tensor Core execution. Marlin~\cite{marlin} and BitDecoding~\cite{bitdecoding} hide much of the conversion latency through fusion, but retain FP MACs. During decode, repeated KV-cache dequantization incurs non-negligible energy overhead even when its latency is hidden through fusion. They therefore capture memory savings without the compute-density and energy benefits of native \fpint{} hardware, even as MQA, GQA, MLA, batching, and quantization raise arithmetic intensity~\cite{mqa,gqa,deepseekai2024deepseekv2strongeconomicalefficient}.
+\rev{GPUs dequantize these INT operands before FP$\times$FP Tensor Core execution.} \rev{Marlin~\cite{marlin} and BitDecoding~\cite{bitdecoding} hide much of the conversion latency through fusion, but retain FP MACs.} \rev{During decode, repeated KV-cache dequantization incurs non-negligible energy overhead even when its latency is hidden through fusion.} \rev{They therefore capture memory savings without the compute-density and energy benefits of native \fpint{} hardware, even as MQA, GQA, MLA, batching, and quantization raise arithmetic intensity~\cite{mqa,gqa,deepseekai2024deepseekv2strongeconomicalefficient}.}
 
 \begin{comment}
 This software path also incurs a distinct decode-stage energy cost. Each
@@ -89,20 +117,20 @@ execution therefore pays both the energy of repeated KV-cache dequantization
 and the lower compute efficiency of the FP$\times$FP datapath.
 \end{comment}
 
-FIGNA~\cite{figna}, ANDA~\cite{anda}, and LUT-based designs~\cite{figlut,lut_tensor_core} improve array-level TOPS/mm$^2$ and TOPS/W, but two system gaps remain. Most accelerate linear layers while leaving quantized attention on the FP path. Attention-oriented designs also lack efficient support for some quantization directions. Moreover, scaling register files, caches, DMA, and crossbars to feed denser arrays can erode their area and energy advantages.
+\rev{FIGNA~\cite{figna}, ANDA~\cite{anda}, and LUT-based designs~\cite{figlut,lut_tensor_core} improve array-level TOPS/mm$^2$ and TOPS/W, but two system gaps remain.} \rev{Most accelerate linear layers while leaving quantized attention on the FP path. Attention-oriented designs also lack efficient support for some quantization directions.} \rev{Moreover, scaling register files, caches, DMA, and crossbars to feed denser arrays can erode their area and energy advantages.}
 
-\ours{} addresses both gaps with a reconfigurable \fpint{} GEMM engine, dedicated tensor memory, and constraint-aware layouts and runtime support. The matrix multiplication unit (MXU) is decoupled from the SIMT pipeline, which handles control and vector operations~\cite{virgo,gemmini}. Our contributions are:
+\rev{\ours{} addresses both gaps with a reconfigurable \fpint{} GEMM engine, dedicated tensor memory, and constraint-aware layouts and runtime support.} \rev{The matrix multiplication unit (MXU) is decoupled from the SIMT pipeline, which handles control and vector operations~\cite{virgo,gemmini}.} \rev{Our contributions are:}
 
 %a partitioned tensor-memory subsystem with fixed interleaved connectivity and specialized DMA engines, 
 
 \begin{itemize}
-\item \textbf{Native \fpint{} linear and attention GEMMs.} We propose a reconfigurable \fpint{} GEMM engine that supports the different quantization and loading requirements of quantized operands, allowing linear layers, $QK^T$, and PV to share one native \fpint{} datapath.
+\item \rev{\textbf{Native \fpint{} linear and attention GEMMs.} We propose a reconfigurable \fpint{} GEMM engine that supports the different quantization and loading requirements of quantized operands, allowing linear layers, $QK^T$, and PV to share one native \fpint{} datapath.}
 
-\item \textbf{Dedicated tensor memory and datapath.} Restricted connectivity supplies the denser MXU without proportionally scaling general-purpose crossbars and caches.
+\item \rev{\textbf{Dedicated tensor memory and datapath.} Restricted connectivity supplies the denser MXU without proportionally scaling general-purpose crossbars and caches.}
 
 \item \textbf{Hardware-constraint-aware data mapping and allocation.} We introduce tile-major layouts, alignment-aware allocation, and fused layout transformation to satisfy the alignment and bank-mapping constraints of the simplified tensor path without an additional transformation pass.
 
-\item \textbf{End-to-end implementation and evaluation.} Four incremental Vortex-based FPGA designs isolate the contributions of native \fpint{} attention and tensor-memory support.
+\item \rev{\textbf{End-to-end implementation and evaluation.} Four incremental Vortex-based FPGA designs isolate the contributions of native \fpint{} attention and tensor-memory support.}
 
     %\item \textbf{Native \fpint{} execution for linear and quantized-attention GEMMs.} We propose a quantization-direction-reconfigurable GEMM engine that supports various quantization directions and independently configures standard or transposed loading of the INT operand. %The same physical MXU therefore executes linear layers, $QK^T$, and $PV$ without falling back to an FP Tensor Core in either prefill or decode.
 
@@ -165,7 +193,7 @@ This paper makes the following contributions.
 \section{Background and Motivation}
 \subsection{WKV-Quantized LLM Inference}
 
-\wkv{} quantization keeps activations in FP and stores weights and KV tensors in INT. With quantization scales $S_*$ and zero points $Z_*$, the linear and attention kernels are
+\rev{\wkv{} quantization keeps activations in FP and stores weights and KV tensors in INT.} \rev{With quantization scales $S_*$ and zero points $Z_*$, the linear and attention kernels are}
 
 \begin{align}
     Y_{\mathrm{linear},fp}
@@ -215,7 +243,7 @@ This paper makes the following contributions.
     \right).
 \end{align}
 
-Fig.~\ref{fig:fpint_inference} contrasts GPU dequantize-then-FP execution, prior linear-only \fpint{} acceleration, and native \fpint{} execution across both linear and attention GEMMs. Supporting attention requires handling scales that vary along the reduction dimension and cannot be applied after accumulation.
+\rev{Fig.~\ref{fig:fpint_inference} contrasts GPU dequantize-then-FP execution, prior linear-only \fpint{} acceleration, and native \fpint{} execution across both linear and attention GEMMs.} \rev{Supporting attention requires handling scales that vary along the reduction dimension and cannot be applied after accumulation.}
 
 \begin{figure}[t]
     \centering
@@ -243,7 +271,7 @@ Fig.~\ref{fig:fpint_inference} contrasts GPU dequantize-then-FP execution, prior
 
 \subsection{Why Memory Savings Alone Are Insufficient}
 
-Prefill is generally compute-bound~\cite{agrawal2024taming,patel2024splitwise}. Decode is often memory-bound, but batching, GQA, MQA, MLA, and quantization increase arithmetic intensity~\cite{orca,pagedattention}. The roofline analysis in Fig.~\ref{fig:bottleneck-analysis} motivates processing quantized operands directly, rather than only reducing traffic before FP execution~\cite{llm-analysis-chengli}.
+\rev{Prefill is generally compute-bound~\cite{agrawal2024taming,patel2024splitwise}.} \rev{Decode is often memory-bound, but batching, GQA, MQA, MLA, and quantization increase arithmetic intensity~\cite{orca,pagedattention}.} \rev{The roofline analysis in Fig.~\ref{fig:bottleneck-analysis} motivates processing quantized operands directly, rather than only reducing traffic before FP execution~\cite{llm-analysis-chengli}.}
 
 \begin{figure}[t]
     \centering
@@ -272,7 +300,7 @@ Prefill is generally compute-bound~\cite{agrawal2024taming,patel2024splitwise}. 
 %The fundamental limitation is that every MAC still incurs the cost of the FP$\times$FP datapath. 
 %Software optimization therefore captures the memory benefit of quantization but cannot exploit the substantially higher compute density and energy efficiency of a dedicated \fpint{} unit~\cite{figna}.
 
-Fused software FP-INT kernels retain quantized storage but convert operands to FP for every Tensor Core MAC. Fusion hides conversion latency, not its energy or the cost of FP arithmetic. Decode additionally dequantizes the accumulated KV cache for each generated token.
+\rev{Fused software FP-INT kernels retain quantized storage but convert operands to FP for every Tensor Core MAC.} \rev{Fusion hides conversion latency, not its energy or the cost of FP arithmetic.} \rev{Decode additionally dequantizes the accumulated KV cache for each generated token.}
 
 \begin{comment}
 Although fusion can hide dequantization latency, our measurements show that
@@ -285,10 +313,10 @@ path (Figure~\ref{fig:e2e-energy-dequant-breakdown}).
 \subsection{System-Level Limitations of Existing FP-INT Accelerators}
 \label{sec:sys_gap}
 
-FIGNA~\cite{figna} aligns FP mantissas to a shared exponent for integer MACs, while FIGLUT~\cite{figlut} and LUT Tensor Core~\cite{lut_tensor_core} replace low-bit dot products with table lookups. These improve array-level efficiency but leave two system limitations.
+\rev{FIGNA~\cite{figna} aligns FP mantissas to a shared exponent for integer MACs, while FIGLUT~\cite{figlut} and LUT Tensor Core~\cite{lut_tensor_core} replace low-bit dot products with table lookups.} \rev{These improve array-level efficiency but leave two system limitations.}
 
-\textbf{Limitation 1: Incomplete quantized-attention support.}
-KV-cache schemes associate metadata with tokens or channels. Group size separately determines how many elements share it (Table~\ref{tab:kv_quant_direction}). Both prefill and decode execute $QK^T$ and $PV$: prefill attention grows as $O(N^2)$ with sequence length, while decode repeatedly accesses the growing cache. FP fallback therefore limits both stages, especially long-sequence prefill (Fig.~\ref{fig:long_seq_atten_overhead}). Most prior \fpint{} designs accelerate only linear layers. AxCore~\cite{axcore} supports attention but lacks native channel-wise K and token-wise V quantization.
+\rev{\textbf{Limitation 1: Incomplete quantized-attention support.}
+KV-cache schemes associate metadata with tokens or channels. Group size separately determines how many elements share it (Table~\ref{tab:kv_quant_direction}).} \rev{Both prefill and decode execute $QK^T$ and $PV$: prefill attention grows as $O(N^2)$ with sequence length, while decode repeatedly accesses the growing cache.} \rev{FP fallback therefore limits both stages, especially long-sequence prefill (Fig.~\ref{fig:long_seq_atten_overhead}).} \rev{Most prior \fpint{} designs accelerate only linear layers. AxCore~\cite{axcore} supports attention but lacks native channel-wise K and token-wise V quantization.}
 
 %AxCore considers quantized attention but does not natively support token-wise KV quantization~\cite{axcore}.
 
@@ -315,7 +343,7 @@ WKVQuant~\cite{yue2024wkvquant}  / QuaRot~\cite{ashkboos2024quarot} / SpinQuant~
 \end{tabularx}
 \end{table}
 
-We define hardware quantization direction in the INT operand layout seen by the MXU: \qcol{} associates metadata with columns and \qrow{} with rows. The mapping from token/channel quantization depends on the operation and load orientation. Channel-wise K consumed transposed in $QK^T$ and token-wise V in $PV$ require \qrow{}. Their scales and zero points vary across reduction terms, so a conventional \qcol{} datapath cannot apply one correction after accumulation. Per-term dequantization and FP reduction erode its efficiency (Fig.~\ref{fig:quant_row_dir_overhead}).
+\rev{We define hardware quantization direction in the INT operand layout seen by the MXU: \qcol{} associates metadata with columns and \qrow{} with rows.} \rev{The mapping from token/channel quantization depends on the operation and load orientation.} \rev{Channel-wise K consumed transposed in $QK^T$ and token-wise V in $PV$ require \qrow{}.} \rev{Their scales and zero points vary across reduction terms, so a conventional \qcol{} datapath cannot apply one correction after accumulation. Per-term dequantization and FP reduction erode its efficiency (Fig.~\ref{fig:quant_row_dir_overhead}).}
 
 \begin{figure}[t]
     \centering
@@ -336,8 +364,8 @@ We define hardware quantization direction in the INT operand layout seen by the 
     \label{fig:quant_row_dir_overhead}
 \end{figure}
 
-\textbf{Limitation 2: Operand delivery erodes array-level gains.}
-A denser MXU needs matching operand, partial-sum, and command bandwidth. Conventional GPU memory hierarchies provide flexible access through crossbars~\cite{jin2024uncovering,tine2021vortex}. Scaling their ports and banks with an \fpint{} array increases interconnect and peripheral area, diminishing its TOPS/mm$^2$ advantage (Fig.~\ref{fig:xbar_overhead}).
+\rev{\textbf{Limitation 2: Operand delivery erodes array-level gains.}
+A denser MXU needs matching operand, partial-sum, and command bandwidth.} \rev{Conventional GPU memory hierarchies provide flexible access through crossbars~\cite{jin2024uncovering,tine2021vortex}.} \rev{Scaling their ports and banks with an \fpint{} array increases interconnect and peripheral area, diminishing its TOPS/mm$^2$ advantage (Fig.~\ref{fig:xbar_overhead}).}
 
 
 \begin{figure}[t]
@@ -370,7 +398,7 @@ A denser MXU needs matching operand, partial-sum, and command bandwidth. Convent
 % LLM inference contains control flow and vector operations, including normalization, activation functions, softmax, elementwise operations, quantization, and layout manipulation, in addition to GEMMs. Although these vector operations account for a relatively small fraction of the total arithmetic work, offloading them to a host CPU would incur frequent synchronization and data-transfer overheads. The orignal Vortex SIMT pipeline therefore remains responsible for control flow, vector kernels, kernel launch, and synchronization, while a decoupled \fpint{} GEMM engine executes the linear and attention GEMMs through memory-mapped IO (MMIO)-issued descriptors.
 % ---------------------------------------------------------------------
 % +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-Built on Vortex~\cite{tine2021vortex}, \ours{} couples a native \fpint{} GEMM engine to dedicated tensor memory (Fig.~\ref{fig:overview}). The SIMT pipeline retains control flow, kernel launch, synchronization, and vector operations including normalization, activation, softmax, quantization, and layout manipulation. It invokes the decoupled GEMM engine through memory-mapped IO (MMIO) descriptors.
+\rev{Built on Vortex~\cite{tine2021vortex}, \ours{} couples a native \fpint{} GEMM engine to dedicated tensor memory (Fig.~\ref{fig:overview}).} \rev{The SIMT pipeline retains control flow, kernel launch, synchronization, and vector operations including normalization, activation, softmax, quantization, and layout manipulation.} \rev{It invokes the decoupled GEMM engine through memory-mapped IO (MMIO) descriptors.}
 % +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 %To make the end-to-end FP-INT LLM inference system more effective, we introduce several design features as follows.
@@ -437,7 +465,7 @@ Built on Vortex~\cite{tine2021vortex}, \ours{} couples a native \fpint{} GEMM en
 % ---------------------------------------------------------------------
 % +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 \subsection{Dedicated Tensor Path with Constraint-Aware Software Support}
-Dedicated tensor memory (TMEM) separates regular GEMM traffic from general-purpose SIMT accesses~\cite{dissecting_hopper,virgo}. Restricted connectivity lowers hardware cost (Section~\ref{sec:memory-system}). Aligned allocation and tiled layouts satisfy its address constraints (Section~\ref{sec:runtime-section}). The tensor path provides $8\times$ the baseline HBM-to-TMEM bandwidth, while DMA and interconnect logic occupy 5.5\% of total area.
+\rev{Dedicated tensor memory (TMEM) separates regular GEMM traffic from general-purpose SIMT accesses~\cite{dissecting_hopper,virgo}.} \rev{Restricted connectivity lowers hardware cost (Section~\ref{sec:memory-system}). Aligned allocation and tiled layouts satisfy its address constraints (Section~\ref{sec:runtime-section}).} \rev{The tensor path provides $8\times$ the baseline HBM-to-TMEM bandwidth, while DMA and interconnect logic occupy 5.5\% of total area.}
 % +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 \subsection{Hardware-Generated GEMM Command Stream}
@@ -1556,7 +1584,7 @@ GPU ref.
 \end{tabular}
 \end{table}
 
-Q-COL retains the GPU FP16 scale-application order with FIGNA-style arithmetic, while Q-ROW folds scales into the FP operand before prealignment. We therefore examine whether this scale reordering introduces additional arithmetic error or degrades model-level accuracy.
+\rev{Q-COL retains the GPU FP16 scale-application order with FIGNA-style arithmetic, while Q-ROW folds scales into the FP operand before prealignment.} We therefore examine whether this scale reordering introduces additional arithmetic error or degrades model-level accuracy.
 Fig.~\ref{fig:numerical_accuracy} reports the mean ULP error relative to an FP64 reference computed on the CPU for fan-in values $K$ ranging from 32 to 32,768. In Q-ROW, \ours{} achieves mean ULP error comparable to that of the GPU FP16 path, while in Q-COL, its error remains approximately three orders of magnitude lower. These results show that the proposed scale reordering for Q-ROW does not introduce additional dot-product-level numerical error relative to the GPU FP16 baseline.
 Table~\ref{tab:accuracy} compares Llama2-7B and Llama3-8B SpinQuant W4A16KV4 under the GPU reference and under native \fpint{} execution for the linear layers, attention GEMMs, or both. 
 
@@ -2003,7 +2031,7 @@ Their combined 3.5\% area overhead shows that the direct-connected tensor path p
 \section{Conclusion}
 
 % WKV quantization turns both linear layers and KV-attention GEMMs into \fpint{} operations, yet most prior \fpint{} accelerators accelerate only linear layers and fall back to an FP$\times$FP datapath for quantized attention. We presented \ours{}, an end-to-end system that extends native \fpint{} execution across both, combining a GEMM engine with reconfigurable quantization direction and operand-loading orientation with a dedicated tensor-memory subsystem and datapath. On an FPGA prototype evaluated through four incremental design points, \ours{} improves array-level TOPS/mm$^2$ by $2.21\times$ and TOPS/W by $2.97\times$ over the FP TCU, and across Llama2-7B and Llama3-8B W4A16KV4 inference reduces area-normalized end-to-end latency by $3.24\times$ in prefill and $4.73\times$ in decode on geomean, with energy per token lower by $3.85\times$ and $97.44\times$. Realizing the system-level benefit of WKV quantization therefore requires co-designing native \fpint{} attention support with an operand-delivery system that keeps the denser array utilized.
-WKV quantization makes both linear and attention GEMMs \fpint{} operations, but prior accelerators typically retain FP attention. \ours{} supports both through reconfigurable quantization direction and operand loading, with dedicated tensor memory sustaining the denser array. It achieves $3.13\times$ the FP TCU's TOPS/mm$^2$ and $2.54\times$ its TOPS/W. On the FPGA prototype, geometric-mean end-to-end speedups over the linear-only \fpint{} baseline are $3.24\times$ in prefill and $5.93\times$ in decode, with energy per token reduced by $2.67\times$ and $8.72\times$. These results show how native quantized-attention support and operand delivery together translate array efficiency into system-level gains.
+\rev{WKV quantization makes both linear and attention GEMMs \fpint{} operations, but prior accelerators typically retain FP attention.} \rev{\ours{} supports both through reconfigurable quantization direction and operand loading, with dedicated tensor memory sustaining the denser array.} \rev{It achieves $3.13\times$ the FP TCU's TOPS/mm$^2$ and $2.54\times$ its TOPS/W.} \rev{On the FPGA prototype, geometric-mean end-to-end speedups over the linear-only \fpint{} baseline are $3.24\times$ in prefill and $5.93\times$ in decode, with energy per token reduced by $2.67\times$ and $8.72\times$.} \rev{These results show how native quantized-attention support and operand delivery together translate array efficiency into system-level gains.}
 
 
 %%%%%%% -- PAPER CONTENT ENDS -- %%%%%%%%
