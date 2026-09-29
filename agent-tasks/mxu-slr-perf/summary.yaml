@@ -1,0 +1,518 @@
+status: PASS
+cases: 6
+shape:
+  M: 256
+  K: 256
+  N: 256
+  q: 32
+  t: 0
+  d: 0
+  r: 1
+perf_class: 3
+primary_metric: PERF total_cycles / VX_CSR_MPM_GEMM_TOTAL_CYC
+records:
+- variant: improve_slr0
+  backend: improve
+  slr: 0
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_improve_m32_tcol32.sh
+  config_sha256: 2f2f8e70a00a9f1e1e6667630a3eccd47c2578c86b7455ba24cc14e7b5a5338b
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DDISABLE_FSDB -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_improve_slr0
+  attempts:
+  - returncode: 0
+    seconds: 293.97
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/improve_slr0/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/improve_slr0/attempt1.simv.log
+    timeout: 300
+    jobs: 128
+    total_cycles: 24762
+    busy_cycles: 31136
+    compute_cycles: 19477
+    stall_cycles: 128
+    mac_count: 2097152
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=24762 busy_cycles=31136'
+    - 'PERF: compute_cycles=19477 stall_cycles=128 mac_count=2097152'
+    - 'PERF: DMA+MXU overlap=73.035% (18085 / 24762)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=2048 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      66.166%         84.120%           52.621%'
+    - 'PERF: weight      4.135%          5.257%            3.289%'
+    - 'PERF: psum       57.895%         73.605%           46.043%'
+    - 'PERF: output      8.271%         10.515%            6.578%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=2097152 FLOPs=4194304'
+    - 'PERF: Achieved throughput=169.385 FLOPs/cycle'
+    - 'PERF: instrs=14013, cycles=31105, IPC=0.450506'
+- variant: improve_slr1
+  backend: improve
+  slr: 1
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_improve_m32_tcol32.sh
+  config_sha256: 2f2f8e70a00a9f1e1e6667630a3eccd47c2578c86b7455ba24cc14e7b5a5338b
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DGEMM_SLR_PIPELINE -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DGEMM_SLR_PIPELINE -DDISABLE_FSDB -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_improve_slr1
+  attempts:
+  - returncode: 0
+    seconds: 292.16
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/improve_slr1/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/improve_slr1/attempt1.simv.log
+    timeout: 300
+    jobs: 128
+    total_cycles: 25274
+    busy_cycles: 31586
+    compute_cycles: 19989
+    stall_cycles: 128
+    mac_count: 2097152
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=25274 busy_cycles=31586'
+    - 'PERF: compute_cycles=19989 stall_cycles=128 mac_count=2097152'
+    - 'PERF: DMA+MXU overlap=71.556% (18085 / 25274)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=2048 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      64.826%         81.965%           51.871%'
+    - 'PERF: weight      4.052%          5.123%            3.242%'
+    - 'PERF: psum       56.722%         71.719%           45.387%'
+    - 'PERF: output      8.103%         10.246%            6.484%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=2097152 FLOPs=4194304'
+    - 'PERF: Achieved throughput=165.953 FLOPs/cycle'
+    - 'PERF: instrs=14049, cycles=31555, IPC=0.445223'
+- variant: naive_acc_slr0
+  backend: naive_acc
+  slr: 0
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_naive_m32_tcol32.sh
+  config_sha256: 2c33f10b770a6f93f16b9a7423b7ac210a161235ffd3a7434740df3e7d7eb25e
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DDISABLE_FSDB -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_naive_acc_slr0
+  attempts:
+  - returncode: 124
+    seconds: 300.0
+    passed: false
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr0/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr0/attempt1.simv.log
+    timeout: 300
+  - returncode: 0
+    seconds: 258.26
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr0/attempt2.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr0/attempt2.simv.log
+    timeout: 1800
+    jobs: 128
+    total_cycles: 38602
+    busy_cycles: 45779
+    compute_cycles: 22565
+    stall_cycles: 128
+    mac_count: 2097152
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=38602 busy_cycles=45779'
+    - 'PERF: compute_cycles=22565 stall_cycles=128 mac_count=2097152'
+    - 'PERF: DMA+MXU overlap=25.993% (10034 / 38602)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=2048 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      42.443%         72.608%           35.789%'
+    - 'PERF: weight      2.653%          4.538%            2.237%'
+    - 'PERF: psum       37.138%         63.532%           31.316%'
+    - 'PERF: output      5.305%          9.076%            4.474%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=2097152 FLOPs=4194304'
+    - 'PERF: Achieved throughput=108.655 FLOPs/cycle'
+    - 'PERF: instrs=15187, cycles=45754, IPC=0.331927'
+- variant: naive_acc_slr1
+  backend: naive_acc
+  slr: 1
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_naive_m32_tcol32.sh
+  config_sha256: 2c33f10b770a6f93f16b9a7423b7ac210a161235ffd3a7434740df3e7d7eb25e
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DGEMM_SLR_PIPELINE -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DGEMM_SLR_PIPELINE -DDISABLE_FSDB -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_naive_acc_slr1
+  attempts:
+  - returncode: 124
+    seconds: 300.0
+    passed: false
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr1/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr1/attempt1.simv.log
+    timeout: 300
+  - returncode: 0
+    seconds: 255.77
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr1/attempt2.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_acc_slr1/attempt2.simv.log
+    timeout: 1800
+    jobs: 128
+    total_cycles: 39111
+    busy_cycles: 46259
+    compute_cycles: 23074
+    stall_cycles: 128
+    mac_count: 2097152
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=39111 busy_cycles=46259'
+    - 'PERF: compute_cycles=23074 stall_cycles=128 mac_count=2097152'
+    - 'PERF: DMA+MXU overlap=25.885% (10124 / 39111)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=2048 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      41.891%         71.006%           35.418%'
+    - 'PERF: weight      2.618%          4.438%            2.214%'
+    - 'PERF: psum       36.655%         62.131%           30.991%'
+    - 'PERF: output      5.236%          8.876%            4.427%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=2097152 FLOPs=4194304'
+    - 'PERF: Achieved throughput=107.241 FLOPs/cycle'
+    - 'PERF: instrs=15223, cycles=46234, IPC=0.329260'
+- variant: naive_noacc_slr0
+  backend: naive_noacc
+  slr: 0
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_naive_m32_tcol32.sh
+  config_sha256: 2c33f10b770a6f93f16b9a7423b7ac210a161235ffd3a7434740df3e7d7eb25e
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32
+    -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DAFU_DONE_WAIT_CACHE_DRAIN
+    -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF
+    -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32
+    -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DAFU_DONE_WAIT_CACHE_DRAIN
+    -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF
+    -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DDISABLE_FSDB -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_naive_noacc_slr0
+  attempts:
+  - returncode: 124
+    seconds: 300.0
+    passed: false
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr0/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr0/attempt1.simv.log
+    timeout: 300
+  - returncode: 0
+    seconds: 312.22
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr0/attempt2.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr0/attempt2.simv.log
+    timeout: 1800
+    jobs: 128
+    total_cycles: 70016
+    busy_cycles: 77164
+    compute_cycles: 56115
+    stall_cycles: 128
+    mac_count: 0
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=70016 busy_cycles=77164'
+    - 'PERF: compute_cycles=56115 stall_cycles=128 mac_count=0'
+    - 'PERF: DMA+MXU overlap=14.898% (10431 / 70016)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=0 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      23.400%         29.197%           21.233%'
+    - 'PERF: weight      1.463%          1.825%            1.327%'
+    - 'PERF: psum       20.475%         25.548%           18.579%'
+    - 'PERF: output      0.000%          0.000%            0.000%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=0 FLOPs=0'
+    - 'PERF: Achieved throughput=0.000 FLOPs/cycle'
+    - 'PERF: instrs=17695, cycles=77139, IPC=0.229391'
+- variant: naive_noacc_slr1
+  backend: naive_noacc
+  slr: 1
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  commit: f290725d1d521990942ad06c9fed24824d3e344e
+  source_sha256:
+    hw/rtl/core/gemm/VX_gemm_unit.sv: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+    hw/rtl/core/gemm/VX_gemm_ctrl.sv: 552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892
+    hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv: ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf
+    runtime/stub/utils.cpp: fd431b7cd6ee891b8973acccd927c610b1aee67c8f1ca7a82a8975e88c3f858c
+    tests/regression/fpint_gemm_ffn_hw/main.cpp: fb2208811d8df417b0fc4c646203b0a4085e1eace6d7428057e756055f49e43d
+    tests/regression/fpint_gemm_ffn_hw_naive/main.cpp: c1570a15e6b3beb803e1e4702ebb8743b1d30b37dcf26bfb9aa847c0d8600230
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/configs/th32_c1_naive_m32_tcol32.sh
+  config_sha256: 2c33f10b770a6f93f16b9a7423b7ac210a161235ffd3a7434740df3e7d7eb25e
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32
+    -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DAFU_DONE_WAIT_CACHE_DRAIN
+    -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF
+    -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DGEMM_SLR_PIPELINE -DDISABLE_FSDB
+  effective_perf_configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32
+    -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DAFU_DONE_WAIT_CACHE_DRAIN
+    -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF
+    -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DGEMM_SLR_PIPELINE -DDISABLE_FSDB
+    -DPERF_ENABLE
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  - --perf
+  - '3'
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_mxu_perf3_naive_noacc_slr1
+  attempts:
+  - returncode: 124
+    seconds: 300.01
+    passed: false
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr1/attempt1.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr1/attempt1.simv.log
+    timeout: 300
+  - returncode: 0
+    seconds: 293.91
+    passed: true
+    fatal: false
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr1/attempt2.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-perf/results/naive_noacc_slr1/attempt2.simv.log
+    timeout: 1800
+    jobs: 128
+    total_cycles: 68145
+    busy_cycles: 75293
+    compute_cycles: 54244
+    stall_cycles: 128
+    mac_count: 0
+    raw_perf_lines:
+    - 'PERF: === MXU Performance Analysis ==='
+    - 'PERF: jobs=128 total_cycles=68145 busy_cycles=75293'
+    - 'PERF: compute_cycles=54244 stall_cycles=128 mac_count=0'
+    - 'PERF: DMA+MXU overlap=15.254% (10395 / 68145)'
+    - 'PERF: --- MXU Raw Counters ---'
+    - 'PERF: input:  fire=16384 stall=0'
+    - 'PERF: weight: fire=1024 stall=0'
+    - 'PERF: psum:   fire=14336 stall=0'
+    - 'PERF: output: fire=0 stall=0'
+    - 'PERF: accum: rd_accept=14336 wr_fire=16384 scaler_valid=16384 acc_output_valid=14336
+      psum_underflow=0 rd_wr_conflict=0'
+    - 'PERF: --- MXU Utilization ---'
+    - 'PERF:           /total_cycles   /compute_cycles   /busy_cycles'
+    - 'PERF: input      24.043%         30.204%           21.760%'
+    - 'PERF: weight      1.503%          1.888%            1.360%'
+    - 'PERF: psum       21.037%         26.429%           19.040%'
+    - 'PERF: output      0.000%          0.000%            0.000%'
+    - 'PERF: --- Roofline ---'
+    - 'PERF: MACs=0 FLOPs=0'
+    - 'PERF: Achieved throughput=0.000 FLOPs/cycle'
+    - 'PERF: instrs=17545, cycles=75268, IPC=0.233100'
