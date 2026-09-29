@@ -34,6 +34,7 @@ def make_args(**overrides):
         "debug": None,
         "profile": False,
         "disable_congestion_fail_fast": False,
+        "mxu_slr_floorplan": False,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -73,6 +74,17 @@ class GenVitisIniTest(unittest.TestCase):
             )
             self.assertFalse(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
 
+    def test_mxu_checks_survive_disabled_congestion_gate(self):
+        lines = self.vivado_lines(mxu_slr_floorplan=True,
+                                 disable_congestion_fail_fast=True)
+        self.assertTrue(any("STEPS.OPT_DESIGN.TCL.POST" in line for line in lines))
+        self.assertTrue(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
+
+    def test_mxu_checks_are_hardware_only(self):
+        lines = self.vivado_lines(target="hw_emu", mxu_slr_floorplan=True)
+        self.assertFalse(any("STEPS.OPT_DESIGN.TCL.POST" in line for line in lines))
+        self.assertFalse(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
+
     def test_makefile_tracks_and_validates_gate_setting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             prefix = Path(temp_dir) / "gate"
@@ -108,7 +120,7 @@ class GenVitisIniTest(unittest.TestCase):
             enabled = run_make()
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
-            self.assertEqual("CONGESTION_FAIL_FAST=1\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
             stable_mtimes = tuple(
                 path.stat().st_mtime_ns
                 for path in (config_stamp, backup_stamp, link_stamp, generated_ini)
@@ -140,7 +152,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertNotIn("PLACE_DESIGN.TCL.POST", disabled_ini)
             self.assertIn("OPT_DESIGN.TCL.PRE", disabled_ini)
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
-            self.assertEqual("CONGESTION_FAIL_FAST=0\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=0 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
             self.assertEqual(
                 compile_side_mtimes,
                 tuple(path.stat().st_mtime_ns for path in (config_stamp, backup_stamp)),
@@ -152,12 +164,32 @@ class GenVitisIniTest(unittest.TestCase):
             reenabled = run_make()
             self.assertEqual(reenabled.returncode, 0, reenabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
-            self.assertEqual("CONGESTION_FAIL_FAST=1\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
 
             invalid = run_make(2)
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("CONGESTION_FAIL_FAST must be 0 or 1", invalid.stderr)
+
+            missing_rtl = run_make(GEMM_MXU_SLR_FLOORPLAN=1)
+            self.assertNotEqual(missing_rtl.returncode, 0)
+            self.assertIn("requires -DGEMM_SLR_PIPELINE", missing_rtl.stderr)
+            invalid_slr = run_make(GEMM_MXU_SLR_FLOORPLAN=2)
+            self.assertNotEqual(invalid_slr.returncode, 0)
+            self.assertIn("GEMM_MXU_SLR_FLOORPLAN must be 0 or 1", invalid_slr.stderr)
+            enabled_slr = run_make(0, GEMM_MXU_SLR_FLOORPLAN=1,
+                                   CONFIGS="-DGEMM_SLR_PIPELINE")
+            self.assertEqual(enabled_slr.returncode, 0, enabled_slr.stderr)
+            self.assertIn("STEPS.OPT_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertIn("GEMM_MXU_SLR_FLOORPLAN=1", link_stamp.read_text())
+            self.assertTrue((build_dir / "xrt_backup" / "mxu_slr_floorplan.tcl").is_file())
+
+            slr_off = run_make(0, GEMM_MXU_SLR_FLOORPLAN=0,
+                               CONFIGS="-DGEMM_SLR_PIPELINE")
+            self.assertEqual(slr_off.returncode, 0, slr_off.stderr)
+            self.assertNotIn("STEPS.OPT_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertNotIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
 
 
 if __name__ == "__main__":

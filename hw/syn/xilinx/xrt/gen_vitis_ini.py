@@ -49,7 +49,10 @@ def build_ini(args):
             ("ROUTE_DESIGN", "POST", "post_route_hook.tcl"),
             ("POST_ROUTE_PHYS_OPT_DESIGN", "POST", "post_physopt_hook.tcl"),
         ]
-        if args.target == "hw" and not args.disable_congestion_fail_fast:
+        if args.target == "hw" and args.mxu_slr_floorplan:
+            hooks.insert(2, ("OPT_DESIGN", "POST", "post_opt_hook.tcl"))
+        if args.target == "hw" and (not args.disable_congestion_fail_fast
+                                    or args.mxu_slr_floorplan):
             hooks.insert(2, ("PLACE_DESIGN", "POST", "post_place_hook.tcl"))
         for step, when, tcl in hooks:
             vivado.append(f"prop=run.impl_1.STEPS.{step}.TCL.{when}={args.hook_dir}/{tcl}")
@@ -163,6 +166,8 @@ def main():
     parser.add_argument("--hook-dir", default=None, metavar="DIR")
     parser.add_argument("--disable-congestion-fail-fast", action="store_true",
                         help="Disable the hardware post-place congestion gate")
+    parser.add_argument("--mxu-slr-floorplan", action="store_true",
+                        help="Enable MXU-only SLR post-opt and post-place checks")
     parser.add_argument("--clock-freq", default=None, metavar="MHZ",
                         help="Kernel clock frequency in MHz")
     parser.add_argument("--simulator", default="xsim", choices=["xsim", "vcs"],

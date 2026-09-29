@@ -3,8 +3,8 @@
 # Sourced from post_init_hook.tcl after init_design and before place_design.
 # Avoid whole-module SLR locks. Earlier attempts to pblock u_VX_gemm_unit
 # and u_tmem_subsystem to specific SLRs caused either RP clock-column
-# violations or SLR0 CLB overflow. The active constraints below only spread
-# DMA channels inside SLR0 clock regions to reduce local routing conflicts.
+# violations or SLR0 CLB overflow. Default placement remains unconstrained.
+# GEMM_MXU_SLR_FLOORPLAN enables only MXU and its explicit crossing banks.
 #
 # Clock-region ranges for U55C/VU47P:
 #   SLR0 = CLOCKREGION_X0Y0:CLOCKREGION_X7Y3
@@ -132,3 +132,6 @@ proc vortex_dma_channel_cells {channels} {
 # vortex_soft_pblock pblock_dma_ch2_3 CLOCKREGION_X2Y0:CLOCKREGION_X3Y1 $dma_ch2_3
 # vortex_soft_pblock pblock_dma_ch4_5 CLOCKREGION_X0Y2:CLOCKREGION_X2Y3 $dma_ch4_5
 # vortex_soft_pblock pblock_dma_ch6_7 CLOCKREGION_X3Y2:CLOCKREGION_X5Y3 $dma_ch6_7
+
+source [file join [file dirname [info script]] mxu_slr_floorplan.tcl]
+::vortex::mxu_slr::apply post_init
