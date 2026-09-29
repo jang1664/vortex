@@ -271,7 +271,7 @@ private:
                     << ", req_rw 0x" << uint32_t(dut_.mem_req_rw) << ")";
                 fail(oss.str());
             }
-#ifdef LMEM_RSP_OMEGA_ENABLE
+#if defined(LMEM_RSP_OMEGA_ENABLE) && !defined(LMEM_RSP_OMEGA_ORDER_DISABLE)
             if (expected_order_[lane].empty()
              || expected_order_[lane].front() != tag) {
                 std::ostringstream oss;
@@ -289,7 +289,7 @@ private:
                     << " data 0x" << std::hex << data;
                 fail(oss.str());
             }
-#ifdef LMEM_RSP_OMEGA_ENABLE
+#if defined(LMEM_RSP_OMEGA_ENABLE) && !defined(LMEM_RSP_OMEGA_ORDER_DISABLE)
             expected_order_[lane].pop_front();
 #endif
             expected_.erase(it);
@@ -333,7 +333,7 @@ private:
                     op.tag, ExpectedResponse{lane, memory_[op.addr]});
                 if (!inserted.second)
                     fail("duplicate outstanding tag");
-#ifdef LMEM_RSP_OMEGA_ENABLE
+#if defined(LMEM_RSP_OMEGA_ENABLE) && !defined(LMEM_RSP_OMEGA_ORDER_DISABLE)
                 expected_order_[lane].push_back(op.tag);
 #endif
             }
@@ -358,7 +358,7 @@ private:
     VVX_local_mem_top dut_;
     std::array<uint64_t, kNumWords> memory_;
     std::unordered_map<uint16_t, ExpectedResponse> expected_;
-#ifdef LMEM_RSP_OMEGA_ENABLE
+#if defined(LMEM_RSP_OMEGA_ENABLE) && !defined(LMEM_RSP_OMEGA_ORDER_DISABLE)
     std::array<std::deque<uint16_t>, kNumReqs> expected_order_;
 #endif
     uint64_t expected_bank_stalls_ = 0;
@@ -422,6 +422,10 @@ int main(int argc, char** argv) {
     // Omega's internal blocking is not reported as a final-bank stall.
     test.settle_and_check_counter();
 
+    // Unguarded Omega intentionally provides no cross-requester RAW guarantee.
+    // Keep data/tag/backpressure tests below, but only assert RAW ordering
+    // when the selected fabric promises it.
+#if !defined(LMEM_REQ_OMEGA_ENABLE) || !defined(LMEM_REQ_OMEGA_ORDER_DISABLE)
     LaneQueues read_after_write;
     const uint16_t hazard_addr = make_addr(5, 3);
     read_after_write[7].push_back(write_op(hazard_addr, 0xff, 0xdecafbad12345678ull));
@@ -441,6 +445,9 @@ int main(int argc, char** argv) {
         write_op(cross_hazard_addr, 0x3c, 0xfedcba9876543210ull));
     partial_raw[11].push_back(read_op(test, cross_hazard_addr));
     test.run_phase("partial-write read-after-write hazard", partial_raw, false);
+#else
+    std::cout << "SKIP: RAW ordering checks (Omega request ordering disabled)" << std::endl;
+#endif
 
     LaneQueues contended_writes;
     // A bank has 16 rows in this focused configuration. Use one writer per

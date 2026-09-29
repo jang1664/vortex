@@ -283,9 +283,24 @@
 `define LMEM_XBAR_MAX_FANOUT `MAX_FANOUT
 `endif
 
-// Ordering resources used only by the corresponding Omega local-memory
-// fabric. The store CAM is shared by all requesters; the response queue depth
-// is per requester.
+// Omega ordering is enabled by default, independently of fabric selection.
+// Define LMEM_REQ_OMEGA_ORDER_DISABLE to bypass outstanding-store RAW ordering,
+// or LMEM_RSP_OMEGA_ORDER_DISABLE to bypass requester-local response ordering.
+// Defining both restores the historical unguarded Omega transport. These are
+// presence macros (including =0); bypass mode does not guarantee those orders.
+`ifdef LMEM_REQ_OMEGA_ENABLE
+`ifndef LMEM_REQ_OMEGA_ORDER_DISABLE
+`define LMEM_REQ_OMEGA_ORDER_ENABLED
+`endif
+`endif
+`ifdef LMEM_RSP_OMEGA_ENABLE
+`ifndef LMEM_RSP_OMEGA_ORDER_DISABLE
+`define LMEM_RSP_OMEGA_ORDER_ENABLED
+`endif
+`endif
+
+// Resources used only when the corresponding ordering guard is enabled.
+// The store CAM is shared; response queue depth is per requester.
 `ifndef LMEM_OMEGA_STORE_CAM_SIZE
 `define LMEM_OMEGA_STORE_CAM_SIZE 64
 `endif
