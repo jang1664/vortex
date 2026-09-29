@@ -7,12 +7,12 @@ from C3, and vector kernels from C4. Registering a C2 image never creates a C2
 measurement or refinement task. C4_fused remains included and C4_alone remains
 excluded.
 
-This branch preserves the existing hardware selection:
+The candidate selection is:
 
 | Candidate | FPGA alias |
 | --- | --- |
 | C1 | C1 |
-| C2 | C2 |
+| C2 | naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem |
 | C3 | C3 |
 | C4 | C4_v3 |
 
@@ -23,9 +23,9 @@ are not automatically reused by this new tag.
 
 Suite generation validates every configured candidate, including C2, even though
 C2 has no independent measurement task. Each alias must resolve to an existing
-config, FPGA image, manifest, and kernel clock information. If the legacy C2
-image is unavailable, restore it at its configured path before generating suites;
-do not substitute a different image under the same experiment tag.
+config, FPGA image, manifest, and kernel clock information. The C2 candidate uses
+the available big-memory image (also aliased as `C3_v3`); the global `C2` alias
+is unchanged. Use a new experiment tag when changing this selection.
 
 ## Generate the workload
 
