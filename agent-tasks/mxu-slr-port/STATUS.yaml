@@ -1,0 +1,49 @@
+task: mxu-slr-port
+state: complete
+baseline_commit: 73664e653
+reference_branch: feat/gemv
+scope: MXU-only SLR transport and floorplan; naive ACC ON/OFF and improve VCS verification
+pitfalls:
+  - Preserve existing uncommitted analysis files and untracked scripts/configs.
+  - Do not import the feat/gemv compute-core refactor or DMA transports.
+  - Macro variants require separately configured simulator builds.
+  - Physical synthesis and PnR are outside the approved scope.
+  - "Tcl collections must be compared by canonical NAME, not scalar versus singleton-list text."
+  - "Generator tests must match STEPS.OPT_DESIGN.TCL.POST exactly; substring OPT_DESIGN also matches POST_ROUTE_PHYS_OPT_DESIGN."
+  - "SLR ON exposed a naive LMEM PSUM underflow at M256; preserve failed logs and rerun after a reasoned fix."
+  - "Delayed-response unit targets must reproduce the node's PSUM read-set serialization; otherwise they exercise an unsupported cross-set request stream."
+  - "Configured unit builds need their own generated VX_config.h/VX_types.h, not the unrelated main build/hw headers."
+log:
+  - timestamp: "2026-09-29 18:50"
+    status: started
+    detail: "User authorized the completed plan. Baseline source is 73664e653; RTL, verification, and floorplan work are separated."
+  - timestamp: "2026-09-29 18:59"
+    status: pass
+    detail: "Three immutable-source kernel baselines passed. Initial focused VCS results show exact output and MXU delay changing from 5 to 9 cycles."
+  - timestamp: "2026-09-29 19:00"
+    status: sim_fail
+    detail: "SLR ON naive ACC OFF M256 failed PSUM FIFO empty at107555000ps. RTL agent investigating; all 12 M1/M16 kernel cases passed."
+  - timestamp: "2026-09-29 19:00"
+    status: pass
+    detail: "First physical fixtures: 22 MXU floorplan checks,22 existing congestion-hook checks,and6 generator tests passed after correcting fixture collection comparison and preserving hook return contract. Physical implementation remains unrun."
+  - timestamp: "2026-09-29 19:02"
+    status: fix_applied
+    detail: "SLR+naive LMEM PSUM now reserves a returned per-bank PSUM on every accepted activation, accounting for in-flight rows. FIFO capacity, arbitration and DMA unchanged. Fresh final2 builds started for all42 cases; directed delayed-response accumulation stress added."
+  - timestamp: "2026-09-29 19:06"
+    status: deferred_by_user
+    detail: "User explicitly deferred existing improve QROW arithmetic/reference mismatch. Immutable baseline reproduces both t0/d1 and t1/d1 with identical30/4096 errors; retain four final OFF/ON cases as baseline-equivalent failures, not PASS. Continue remaining SLR verification without tolerance changes."
+  - timestamp: "2026-09-29 19:09"
+    status: verification_running
+    detail: "Final RTL stable. All six fresh M256 runs showed progress but exceeded initial300s including compilation; retry1800s. Superseded old runs stopped. Final directed matrix and384-row PSUM stress use configured local headers. Floorplan fixture now26 checks; generator6 and existing congestion22 checks pass."
+  - timestamp: "2026-09-29 19:13"
+    status: pass
+    detail: "Final directed suite8/8 with108 exact vectors each and identical result streams; PSUM stress384 accumulated vectors PASS. Final-source M256 kernel cases passed all six variants, including the repaired naive ACC OFF SLR ON path. Remaining kernel cases running."
+  - timestamp: "2026-09-29 19:19"
+    status: verification_complete_before_reference_fix
+    detail: "Final2 completed42cases:38PASS and4 baseline-equivalent improve QROW failures. All naive cases passed, including external PSUM M33/r2 with SLR ON."
+  - timestamp: "2026-09-29 19:20"
+    status: reference_fix_requested
+    detail: "User superseded QROW deferral and requested reference correction and retest. Both fpint hardware host apps now round activation*scale toFP16 RNE before QROW reduction. QCOL expressions and1% tolerance unchanged. Rerun18cases across3backends andSLR OFF/ON with new host binaries and preserved prior evidence."
+  - timestamp: "2026-09-29 19:23"
+    status: pass
+    detail: "Reference-corrected xrt-vcs-sim rerun18/18PASS: QROW t0/t1 and QCOL t0 for improve, naive ACC ON/OFF, each with SLR OFF/ON. All four formerly failing improve QROW cases now pass at unchanged1% tolerance. Parent independently audited return codes, no fatal, and matching RTL/host hashes. Earlier42-case evidence retained; remaining24 QCOL cases retain valid unchanged-reference results. Directed8/8+384PSUM stress and physical fixture26+22+6 checks pass. No synthesis/PnR or commit performed."

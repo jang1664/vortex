@@ -1,0 +1,2 @@
+# Preserve exploratory artifacts locally without checking in duplicate logs/configs.
+/directed-preliminary/

@@ -1,0 +1,433 @@
+timestamp: '2026-09-29T19:19:09.004223+09:00'
+scope_acceptance: HISTORICAL_PRE_REFERENCE_FIX
+raw_case_audit_exit_code: 1
+legacy_active_runner_process_exit_code: 0
+note: Historical42-case matrix before host reference correction. Raw statusFAIL; follow-up18-case
+  reference validation in progress.
+case_count: 42
+pass_count: 38
+unaddressed_new_regressions: 0
+attempt_count: 48
+initial_timeouts: 6
+baseline_passes: 3
+baseline_qrow_reproductions: 2
+variants:
+- variant: final2_naive_acc_slr0
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/metadata.json
+  pass: 7
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 16.72
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 31.8
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 323.61
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 31.59
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 40.83
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t0_d1_r1.attempt1.simv.log
+    status: PASS
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 40.24
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m16_t1_d1_r1.attempt1.simv.log
+    status: PASS
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 96.19
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr0/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 0
+- variant: final2_naive_acc_slr1
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/metadata.json
+  pass: 7
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 16.59
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 31.91
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 321.03
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 32.69
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 41.13
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t0_d1_r1.attempt1.simv.log
+    status: PASS
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 39.42
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m16_t1_d1_r1.attempt1.simv.log
+    status: PASS
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 97.75
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_acc_slr1/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 0
+- variant: final2_naive_noacc_slr0
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/metadata.json
+  pass: 7
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 16.14
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 33.1
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 360.8
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 32.87
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 40.69
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t0_d1_r1.attempt1.simv.log
+    status: PASS
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 40.07
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m16_t1_d1_r1.attempt1.simv.log
+    status: PASS
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 102.63
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr0/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 0
+- variant: final2_naive_noacc_slr1
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/metadata.json
+  pass: 7
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 15.8
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 34.39
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 364.31
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 34.07
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 39.75
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t0_d1_r1.attempt1.simv.log
+    status: PASS
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 41.37
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m16_t1_d1_r1.attempt1.simv.log
+    status: PASS
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 102.6
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_naive_noacc_slr1/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 0
+- variant: final2_improve_slr0
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/metadata.json
+  pass: 5
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 11.5
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 24.19
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 257.27
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 25.14
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 2
+    duration_seconds: 25.17
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t0_d1_r1.attempt1.simv.log
+    status: BASELINE_EQUIVALENT_FAILURE
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 2
+    duration_seconds: 24.96
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m16_t1_d1_r1.attempt1.simv.log
+    status: BASELINE_EQUIVALENT_FAILURE
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 78.16
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr0/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 2
+- variant: final2_improve_slr1
+  rtl_sha256: 55a40a71e8e434a7e0973d57c1895d7dec07b7728645b25487b1ee9e495dfb90
+  metadata: agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/metadata.json
+  pass: 5
+  cases:
+  - case: m1_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 11.78
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m1_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m1_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m1_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M1
+  - case: m16_t0_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 25.71
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d0_r1.attempt1.simv.log
+    status: PASS
+    label: M16
+  - case: m256_t0_d0_r1
+    attempt: 2
+    returncode: 0
+    duration_seconds: 259.1
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m256_t0_d0_r1.attempt2.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m256_t0_d0_r1.attempt2.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m256_t0_d0_r1.attempt2.simv.log
+    status: PASS
+    label: M256
+  - case: m16_t1_d0_r1
+    attempt: 1
+    returncode: 0
+    duration_seconds: 25.49
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d0_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d0_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d0_r1.attempt1.simv.log
+    status: PASS
+    label: T
+  - case: m16_t0_d1_r1
+    attempt: 1
+    returncode: 2
+    duration_seconds: 24.63
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t0_d1_r1.attempt1.simv.log
+    status: BASELINE_EQUIVALENT_FAILURE
+    label: Q
+  - case: m16_t1_d1_r1
+    attempt: 1
+    returncode: 2
+    duration_seconds: 24.52
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d1_r1.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d1_r1.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m16_t1_d1_r1.attempt1.simv.log
+    status: BASELINE_EQUIVALENT_FAILURE
+    label: TQ
+  - case: m33_t0_d0_r2
+    attempt: 1
+    returncode: 0
+    duration_seconds: 78.91
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m33_t0_d0_r2.attempt1.log
+    applog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m33_t0_d0_r2.attempt1.app.log
+    simlog: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-port/verification/results/final2_improve_slr1/m33_t0_d0_r2.attempt1.simv.log
+    status: PASS
+    label: M33x2
+  baseline_failures: 2
+qrow_comparison: agent-tasks/mxu-slr-port/verification/results/qdir_comparison.json
+original_regression_evidence: agent-tasks/mxu-slr-port/verification/results/final_naive_noacc_slr1/results.json
+user_direction: Earlier deferral superseded by explicit request to fix reference and
+  retest
+baseline_failure_count: 4
