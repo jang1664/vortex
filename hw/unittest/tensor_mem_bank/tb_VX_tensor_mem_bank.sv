@@ -34,6 +34,18 @@ module tb_VX_tensor_mem_bank import VX_gpu_pkg::*; ();
       .mem_bus_if (mem_bus_if)
   );
 
+  initial begin
+    if ((dut.USE_URAM !== `TMEM_USE_URAM)
+     || (dut.sp_ram.USE_URAM !== `TMEM_USE_URAM))
+      $fatal(1, "TMEM_USE_URAM did not reach the SRAM instance");
+`ifdef SYNTHESIS
+    if (dut.sp_ram.USE_URAM_FINAL !== `TMEM_USE_URAM)
+      $fatal(1, "TMEM_USE_URAM selected the wrong synthesis RTL arm");
+`endif
+    $display("TMEM_USE_URAM=%0d (RTL test; not a physical primitive mapping check)",
+             dut.sp_ram.USE_URAM);
+  end
+
   logic [NUM_PORTS-1:0]                  req_valid;
   logic [NUM_PORTS-1:0]                  req_rw;
   logic [NUM_PORTS-1:0][ADDR_WIDTH-1:0]  req_addr;

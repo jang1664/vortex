@@ -4,6 +4,8 @@ compile: setup
 	-kdb \
 	-sverilog \
 	-full64 \
+	-top $(TOP_MODULE) \
+	-cc /usr/bin/gcc -cpp /usr/bin/g++ \
 	-debug_access+all \
 	-l $(COMPILE_LOG) \
 	-timescale=$(TIME_SCALE) \

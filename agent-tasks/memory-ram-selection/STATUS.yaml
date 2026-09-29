@@ -1,0 +1,27 @@
+task: memory-ram-selection
+state: complete
+baseline_commit: 5745b94cd
+reference_commit: 72045e5a253c823de32845920b17eafee9e5b216
+scope: Port independent numeric LMEM/ACC/TMEM RAM selection into current RTL.
+pitfalls:
+  - Preserve four preexisting dirty config scripts, including their Omega options.
+  - The source patch does not apply cleanly; the current branch has no VX_gemm_acc_internal module.
+  - All three selectors now default to BRAM per the user's follow-up; explicit value1 requests URAM independently.
+  - Behavioral VCS does not establish physical BRAM/URAM inference; test synthesis RTL arms separately and state the limit.
+  - The existing tensor_mem_bank VCS recipe lacked -top, accidentally elaborating the unused compiled-SRAM fail-fast module as a root.
+log:
+  - timestamp: "2026-09-29 23:08"
+    status: implemented
+    detail: "User authorized merging RAM selection or adapting current RTL. Read source commit; git apply --check failed for config/TMEM and missing ACC module. Ported only four RTL files and the related TMEM unit-test plumbing. VX_sp_ram is already identical across branches. Defaults LMEM=1, ACC=1, TMEM=0. Existing SLR/ACC/Omega structure and dirty configs preserved."
+  - timestamp: "2026-09-29 23:12"
+    status: test_harness_fix
+    detail: "All five initial unit runs hit an unresolved compiled-SRAM sentinel because the existing VCS recipe elaborated every unused library module as a root. Added explicit testbench -top and system compiler arguments; rerun units in fresh final builds. Kernel runs use a separate correct top and continue unchanged."
+  - timestamp: "2026-09-29 23:13"
+    status: pass
+    detail: "Final TMEM VCS suite5/5PASS: default selection, explicit0/1 behavioral models, and explicit0/1 SYNTHESIS RTL arms. Tests check parameter propagation and synthesized-arm selection as well as existing arbitration/byte-enable/read-response behavior. Four fresh M256 xrt-vcs-sim kernel runs continue (improve/naive internal ACC, allBRAM/allURAM, SLR ON)."
+  - timestamp: "2026-09-29 23:17"
+    status: complete
+    detail: "M256 kernel4/4PASS: improve and naive internal ACC, each all-BRAM/all-URAM with SLR ON. All completed within300s. Final audit confirms9/9 applicable passes and unchanged source hashes. Initial unit failures are archived; overall original campaign exit1 reflects those historical failures, and fresh unit rerun exits0. Reports and usage documentation saved. No physical synthesis/PnR or commit performed. Existing dirty configs preserved."
+  - timestamp: "2026-09-29 23:19"
+    status: complete
+    detail: "User requested all-BRAM defaults. Changed only LMEM_USE_URAM and GEMM_ACC_USE_URAM defaults from1 to0; TMEM was already0. Updated usage and current-result documentation. Existing explicit all-BRAM simulations cover the same effective selectors; no simulation rerun for this default-only edit. git diff --check passes."

@@ -394,7 +394,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             .SIZE     (WORDS_PER_BANK),
             .WRENW    (WORD_SIZE),
             .OUT_REG  (1),
-            .USE_URAM (1),
+            .USE_URAM (`LMEM_USE_URAM),
             .RDW_MODE ("R")
         ) lmem_store (
             .clk   (clk),

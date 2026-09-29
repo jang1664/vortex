@@ -1,0 +1,396 @@
+status: PASS
+baseline_commit: 5745b94cd
+reference_commit: 72045e5a2
+unit_passes: 5
+kernel_passes: 4
+total_passes: 9
+physical_synthesis_run: false
+historical_campaign_exit_code: 1
+unit_retry_exit_code: 0
+note: Initial campaign includes five pre-fix unit elaboration failures and four passing
+  kernels. Five fresh unit reruns pass after the VCS top fix. Kernels do not use the
+  unit VCS helper.
+records:
+- name: final_unit_improve_default
+  kind: unit
+  backend: improve
+  value: null
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/vcs.mk: 6a396a6e63dfcc80f00edf8032a7dc2f802ac1ff9da709a232ee63776f7208f4
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - python3
+  - /home/jaeyongjang/project.local/vortex_fpint/tools/verify_rtl.py
+  - unittest
+  - --path
+  - /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_default/hw/unittest/tensor_mem_bank
+  - --sim
+  - vcs
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_default
+  attempts:
+  - returncode: 0
+    seconds: 6.34
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/final_unit_improve_default/attempt1.log
+    fatal: false
+- name: final_unit_improve_0
+  kind: unit
+  backend: improve
+  value: 0
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/vcs.mk: 6a396a6e63dfcc80f00edf8032a7dc2f802ac1ff9da709a232ee63776f7208f4
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DTMEM_USE_URAM=0
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - python3
+  - /home/jaeyongjang/project.local/vortex_fpint/tools/verify_rtl.py
+  - unittest
+  - --path
+  - /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_0/hw/unittest/tensor_mem_bank
+  - --sim
+  - vcs
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_0
+  attempts:
+  - returncode: 0
+    seconds: 6.41
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/final_unit_improve_0/attempt1.log
+    fatal: false
+- name: final_unit_improve_1
+  kind: unit
+  backend: improve
+  value: 1
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/vcs.mk: 6a396a6e63dfcc80f00edf8032a7dc2f802ac1ff9da709a232ee63776f7208f4
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=1 -DGEMM_ACC_USE_URAM=1 -DTMEM_USE_URAM=1
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - python3
+  - /home/jaeyongjang/project.local/vortex_fpint/tools/verify_rtl.py
+  - unittest
+  - --path
+  - /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_1/hw/unittest/tensor_mem_bank
+  - --sim
+  - vcs
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_1
+  attempts:
+  - returncode: 0
+    seconds: 6.34
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/final_unit_improve_1/attempt1.log
+    fatal: false
+- name: final_unit_improve_0_synth
+  kind: unit
+  backend: improve
+  value: 0
+  synthesis_rtl: true
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/vcs.mk: 6a396a6e63dfcc80f00edf8032a7dc2f802ac1ff9da709a232ee63776f7208f4
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DTMEM_USE_URAM=0 -DSYNTHESIS
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - python3
+  - /home/jaeyongjang/project.local/vortex_fpint/tools/verify_rtl.py
+  - unittest
+  - --path
+  - /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_0_synth/hw/unittest/tensor_mem_bank
+  - --sim
+  - vcs
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_0_synth
+  attempts:
+  - returncode: 0
+    seconds: 6.41
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/final_unit_improve_0_synth/attempt1.log
+    fatal: false
+- name: final_unit_improve_1_synth
+  kind: unit
+  backend: improve
+  value: 1
+  synthesis_rtl: true
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/vcs.mk: 6a396a6e63dfcc80f00edf8032a7dc2f802ac1ff9da709a232ee63776f7208f4
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=1 -DGEMM_ACC_USE_URAM=1 -DTMEM_USE_URAM=1 -DSYNTHESIS
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - python3
+  - /home/jaeyongjang/project.local/vortex_fpint/tools/verify_rtl.py
+  - unittest
+  - --path
+  - /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_1_synth/hw/unittest/tensor_mem_bank
+  - --sim
+  - vcs
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_final_unit_improve_1_synth
+  attempts:
+  - returncode: 0
+    seconds: 6.4
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/final_unit_improve_1_synth/attempt1.log
+    fatal: false
+- name: kernel_improve_0
+  kind: kernel
+  backend: improve
+  value: 0
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DTMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE
+    -DDISABLE_FSDB
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_kernel_improve_0
+  attempts:
+  - returncode: 0
+    seconds: 206.57
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/kernel_improve_0/attempt1.log
+    fatal: false
+- name: kernel_improve_1
+  kind: kernel
+  backend: improve
+  value: 1
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1
+    -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20
+    -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8
+    -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8
+    -DDMA_RD_OUTSTANDING_SLOT=8 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE
+    -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT
+    -DFEXP_PE_RATIO=16 -DLMEM_USE_URAM=1 -DGEMM_ACC_USE_URAM=1 -DTMEM_USE_URAM=1 -DGEMM_SLR_PIPELINE
+    -DDISABLE_FSDB
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_improve_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_kernel_improve_1
+  attempts:
+  - returncode: 0
+    seconds: 205.74
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/kernel_improve_1/attempt1.log
+    fatal: false
+- name: kernel_naive_0
+  kind: kernel
+  backend: naive
+  value: 0
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DLMEM_USE_URAM=0 -DGEMM_ACC_USE_URAM=0 -DTMEM_USE_URAM=0 -DGEMM_SLR_PIPELINE
+    -DDISABLE_FSDB
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_naive_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_kernel_naive_0
+  attempts:
+  - returncode: 0
+    seconds: 247.11
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/kernel_naive_0/attempt1.log
+    fatal: false
+- name: kernel_naive_1
+  kind: kernel
+  backend: naive
+  value: 1
+  synthesis_rtl: false
+  source_sha256:
+    hw/rtl/VX_config.vh: e37472e7ec558645d136305c545d703bc5148eafc8708b8bfe1d9a439f7d4453
+    hw/rtl/mem/VX_local_mem.sv: b20499b5cc9031892fe073501ec626941fbef3b85faaa0407f868b26c92fd872
+    hw/rtl/mem/VX_tensor_mem_bank.sv: e107e9cb52764396c135dee3ac2b9d22625701bd4ef39f240d5093e89d844127
+    hw/rtl/core/gemm/VX_gemm_unit.sv: e7b9606abe688bb9f27cd24922718120a92e25ad5c70d80a6d46e5d1409877ce
+    hw/rtl/libs/VX_sp_ram.sv: e92d5d64b473f3409191566c4c6eda12f34a6bdcbca3ed1d9990434ff5a24af2
+    hw/unittest/tensor_mem_bank/Makefile: a360ad35a1f9108bdcee56a87ed40e04e40f1e7c8e91d172c64507f372ce004d
+    hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv: 82fbc7429c89329285cddf06c4bb8647ab256805ea948be550cf1efd70670500
+  configs: -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32
+    -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP
+    -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768
+    -DLMEM_LOG_SIZE=21 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DGEMM_NAIVE_USE_ACC_MEM -DGEMM_ACC_MEM_DEPTH=512
+    -DMXU_COL_TILE=32 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16
+    -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE
+    -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16
+    -DLMEM_USE_URAM=1 -DGEMM_ACC_USE_URAM=1 -DTMEM_USE_URAM=1 -DGEMM_SLR_PIPELINE
+    -DDISABLE_FSDB
+  config: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/configs/th32_c1_naive_m32_tcol32.sh
+  configure:
+  - ../configure
+  - --xlen=64
+  - --tooldir=/opt/vortex
+  - --prefix=/home/jaeyongjang/tools/vortex
+  command:
+  - /home/jaeyongjang/project.local/vortex_fpint/ci/run_black.sh
+  - xrt-vcs-sim
+  - --app
+  - fpint_gemm_ffn_hw_naive
+  - --args
+  - -m 256 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1
+  build: /home/jaeyongjang/project.local/vortex_fpint/build_ram_select_kernel_naive_1
+  attempts:
+  - returncode: 0
+    seconds: 248.17
+    passed: true
+    log: /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/memory-ram-selection/results/kernel_naive_1/attempt1.log
+    fatal: false

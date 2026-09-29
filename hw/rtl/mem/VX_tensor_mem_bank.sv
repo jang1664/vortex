@@ -23,7 +23,8 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     parameter DATA_SIZE  = 64,       // Data width in bytes (512-bit = 64 bytes)
     parameter NUM_PORTS  = 5,        // Number of requestors
     parameter TAG_WIDTH  = 8,
-    parameter `STRING ARBITER = "R"  // Round-robin arbitration
+    parameter `STRING ARBITER = "R", // Round-robin arbitration
+    parameter bit USE_URAM = `TMEM_USE_URAM
 ) (
     input wire clk,
     input wire reset,
@@ -100,17 +101,16 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     wire [DATA_WIDTH-1:0] sram_rdata;
 
     // Single-port bank: sram_read and sram_write are mutually exclusive
-    // (gated by req_rw), so RDW_MODE has no observable effect. We set
-    // RDW_MODE="R" and USE_URAM=1 to force URAM mapping — URAM primitives
-    // only support read-first / no-change semantics, and 8 banks of
-    // 512-word x 512-bit fit into 64 URAM288 (8 per bank). This offloads
-    // the 512 RAMB36 that would otherwise be consumed by these banks.
+    // (gated by req_rw), so RDW_MODE has no observable effect. The selected
+    // RDW_MODE="R" supports both URAM and BRAM mapping. USE_URAM follows
+    // TMEM_USE_URAM (BRAM by default); selecting 1 uses URAM without
+    // changing byte enables or the registered read latency.
     VX_sp_ram #(
         .DATAW    (DATA_WIDTH),
         .SIZE     (NUM_WORDS),
         .WRENW    (DATA_SIZE),
         .OUT_REG  (1),
-        .USE_URAM (1),
+        .USE_URAM (USE_URAM),
         .RDW_MODE ("R")
     ) sp_ram (
         .clk    (clk),
