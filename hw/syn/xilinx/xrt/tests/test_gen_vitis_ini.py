@@ -48,6 +48,18 @@ class GenVitisIniTest(unittest.TestCase):
     def vivado_lines(self, **overrides):
         return self.generator.build_ini(make_args(**overrides))["vivado"]
 
+    def test_clock_workaround_is_hardware_only(self):
+        hook = "prop=run.impl_1.STEPS.INIT_DESIGN.TCL.PRE=/tmp/xrt-hooks/pre_init_hook.tcl"
+        for slr in (False, True):
+            for disabled in (False, True):
+                with self.subTest(slr=slr, disabled=disabled):
+                    options = dict(mxu_slr_floorplan=slr,
+                                   disable_congestion_fail_fast=disabled)
+                    self.assertEqual(self.vivado_lines(**options).count(hook), 1)
+                    self.assertNotIn(hook, self.vivado_lines(target="hw_emu", **options))
+        self.assertFalse(any("INIT_DESIGN.TCL.PRE" in line
+                             for line in self.vivado_lines(hook_dir=None)))
+
     def test_hw_registers_post_place_hook_by_default(self):
         lines = self.vivado_lines()
         self.assertIn(
@@ -120,6 +132,11 @@ class GenVitisIniTest(unittest.TestCase):
             enabled = run_make()
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
+            self.assertIn("INIT_DESIGN.TCL.PRE", generated_ini.read_text())
+            self.assertEqual(
+                (build_dir / "xrt_backup" / "pre_init_hook.tcl").read_text(),
+                (XRT_DIR / "pre_init_hook.tcl").read_text(),
+            )
             self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
             stable_mtimes = tuple(
                 path.stat().st_mtime_ns
