@@ -277,7 +277,14 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
             zp = float(h_zeros[k * ng_total + ng]);
           }
           float w = float(h_W_raw[k * N + n]);
-          sum += a * (w - zp) * scale;
+          if (QDIR == 0) {
+            sum += a * (w - zp) * scale;
+          } else {
+            // QROW scales the activation in VX_fp16_mul before reduction.
+            // Match its FP16 RNE rounding, including zero-point correction.
+            float scaled_a = fp16_to_float(float_to_fp16(a * scale));
+            sum += scaled_a * (w - zp);
+          }
         }
         h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
       }
