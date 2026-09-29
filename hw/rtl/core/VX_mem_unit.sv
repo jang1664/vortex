@@ -53,7 +53,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
     localparam CPU_LMEM_ARB_SEL_BITS = `ARB_SEL_BITS(`NUM_LSU_BLOCKS, 1);
     localparam CPU_LMEM_TAG_WIDTH = LSU_TAG_WIDTH + CPU_LMEM_ARB_SEL_BITS;
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     localparam GEMM_PSUM_LANES = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
     localparam LMEM_PRIORITY_TAG_WIDTH = LMEM_LOCAL_TAG_WIDTH + `ARB_SEL_BITS(2, 1);
 `endif
@@ -62,7 +62,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     `VX_STATIC_ASSERT(CPU_LMEM_TAG_WIDTH <= GEMM_LMEM_TAG_WIDTH,
         ("invalid CPU LMEM tag width: CPU=%0d, shared=%0d", CPU_LMEM_TAG_WIDTH, GEMM_LMEM_TAG_WIDTH))
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
         ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
          2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
@@ -147,7 +147,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
     ) lmem_membus_arb_out_if[`LMEM_NUM_PORTS]();
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
@@ -210,7 +210,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[i], lane_arb_out_if[0]);
     end
     
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_priority_order
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
@@ -255,20 +255,21 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
         `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
     end
+`elsif GEMM_NAIVE_ACC_MEM
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_acc_psum_ports
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
+        `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
+    end
 `endif
 
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
         .SIZE       (1 << `LMEM_LOG_SIZE),
-`ifdef GEMM_NAIVE
         .NUM_REQS   (`LMEM_NUM_PORTS),
-`else
-        .NUM_REQS   (`LMEM_NUM_PORTS),
-`endif
         .NUM_BANKS  (`LMEM_NUM_BANKS),
         .WORD_SIZE  (LSU_WORD_SIZE),
         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
         .TAG_WIDTH  (LMEM_PRIORITY_TAG_WIDTH),
 `else
         .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
@@ -286,7 +287,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .lmem_perf  (lmem_perf),
     `endif
-`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_LMEM_PSUM
         .mem_bus_if (lmem_priority_if)
 `else
         .mem_bus_if (lmem_membus_arb_out_if)

@@ -1027,9 +1027,14 @@ package VX_gpu_pkg;
         LMEM_TAG_WIDTH,
         (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
-    // The naive backend merges five GEMM clients before shared LMEM. Improve
-    // keeps this width for interface consistency even though it uses TMEM.
-    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(5, 1);
+    // Internal ACC uses only input, weight, scale/zero and output clients.
+    // Preserve the external-PSUM layout for the other configurations.
+`ifdef GEMM_NAIVE_ACC_MEM
+    localparam GEMM_ARB_INPUTS = 4;
+`else
+    localparam GEMM_ARB_INPUTS = 5;
+`endif
+    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(GEMM_ARB_INPUTS, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
     // PSUM reads merge two clients, while writes merge two PSUM lanes and the
     // final-output client.

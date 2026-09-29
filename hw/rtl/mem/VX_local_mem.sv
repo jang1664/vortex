@@ -409,13 +409,13 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 
 `ifdef GEMM_NAIVE_ACC_MEM
         if (NAIVE_OUTPUT_COMMIT) begin : g_naive_output_commit
-            // Tags retain the three nested arbiter selections below UUID.
+            // Internal ACC bypasses external-PSUM priority arbitration. Tags
+            // retain only the GEMM tensor and CPU/DMA/GEMM lane selections.
             assign naive_output_write_commit[i] = per_bank_req_valid[i]
                 && per_bank_req_ready[i] && per_bank_req_rw[i]
-                && per_bank_req_tag[i][LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH]
                 && (per_bank_req_tag[i][GEMM_LMEM_TAG_WIDTH-UUID_WIDTH +: LMEM_ARB_ROUTE_TAG_BITS] == LMEM_ARB_ROUTE_TAG_BITS'(2))
                 && (per_bank_req_tag[i][GEMM_BASE_TAG_WIDTH-UUID_WIDTH +: GEMM_ARB_ROUTE_TAG_BITS] == GEMM_ARB_ROUTE_TAG_BITS'(3));
-            `VX_STATIC_ASSERT(TAG_WIDTH == LMEM_LOCAL_TAG_WIDTH + 1, ("invalid naive output commit tag width"))
+            `VX_STATIC_ASSERT(TAG_WIDTH == LMEM_LOCAL_TAG_WIDTH, ("invalid naive output commit tag width"))
         end else begin : g_no_naive_output_commit
             assign naive_output_write_commit[i] = 1'b0;
         end
