@@ -1,0 +1,7 @@
+{
+  "valid_runs": 7,
+  "ACC_artifacts_equal_to_prechange_baseline": true,
+  "archived_RTL_matches_worktree": true,
+  "shared_dependencies_checked": 95,
+  "changed_shared_dependencies": []
+}

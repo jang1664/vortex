@@ -1,0 +1,413 @@
+--- before
+
++++ after
+
+@@ -33,5 +33,4 @@
+
+     localparam int GEMM_SZ_LANES     = ((16*32)/8) / LSU_WORD_SIZE;
+     localparam int GEMM_OUTPUT_LANES = ((16/8)*32) / LSU_WORD_SIZE;
+-    localparam int GEMM_PSUM_LANES   = ((32/8)*32) / LSU_WORD_SIZE;
+     localparam int I_LANE_OFFSET     = 0;
+     localparam int W_LANE_OFFSET     = 8;
+@@ -64,12 +63,9 @@
+
+     ) o_gemm_bus_if ();
+     VX_mem_bus_if #(
+-      .DATA_SIZE(((32/8)*32)),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_rd_wide_bus_if (), psum_rd_raw_bus_if (),
+-      psum_wr_wide_bus_if (), psum_wr_marked_bus_if (), psum_wr_raw_bus_if ();
++      .DATA_SIZE(((32/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) psum_rd_raw_bus_if (), psum_wr_raw_bus_if ();
+     VX_mem_bus_if #(
+-      .DATA_SIZE(((16/8)*32)),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) final_wide_bus_if (), final_raw_bus_if ();
++      .DATA_SIZE(((16/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) final_raw_bus_if ();
+     VX_mem_bus_if # (
+       .DATA_SIZE(LSU_WORD_SIZE),
+@@ -88,16 +84,4 @@
+
+       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+     ) o_lane_mem_if [GEMM_OUTPUT_LANES] ();
+-    VX_mem_bus_if #(
+-      .DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) final_lane_mem_if [GEMM_OUTPUT_LANES] ();
+-    VX_mem_bus_if #(
+-      .DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_rd_lane_mem_if [GEMM_PSUM_LANES] ();
+-    VX_mem_bus_if #(
+-      .DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_wr_lane_mem_if [GEMM_PSUM_LANES] ();
+     VX_mem_bus_if # (
+       .DATA_SIZE(((16/8)*32)),   
+@@ -136,6 +120,4 @@
+
+     VX_gemm_dma_ctrl_naive_if gemm_dma_ctrl_if ();
+     logic        input_notify_pending_r;
+-    logic        gemm_done_pending_r;
+-    logic [11:0] gemm_wr_lane_pending_r;
+     logic [31:0] input_notify_reg_idx_r;
+     logic [31:0] input_notify_value_r;
+@@ -200,29 +182,5 @@
+
+     assign input_dma_ctrl_if.reg_value       = '0;
+     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
+-    logic [32-1:0] gemm_wr_lane_fire;
+-    logic [32-1:0] psum_wr_lane_fire;
+-    for (genvar p = 0; p < 32; ++p) begin : g_wr_lane_fire
+-      assign gemm_wr_lane_fire[p] = psum_wr_lmem_bus_if[p].req_valid
+-                                  && psum_wr_lmem_bus_if[p].req_ready;
+-      assign psum_wr_lane_fire[p] = gemm_wr_lane_fire[p]
+-                                  && psum_wr_lmem_bus_if[p].req_data.flags[0];
+-    end
+-    localparam int PSUM_LANE_BANK_SET_BIT = $clog2(GEMM_PSUM_LANES);
+-    logic [32-1:0] psum_wr_lane_fire_by_set [2];
+-    for (genvar p = 0; p < 32; ++p) begin : g_wr_lane_fire_by_set
+-      assign psum_wr_lane_fire_by_set[0][p] = psum_wr_lane_fire[p]
+-          && ~psum_wr_lmem_bus_if[p].req_data.addr[PSUM_LANE_BANK_SET_BIT];
+-      assign psum_wr_lane_fire_by_set[1][p] = psum_wr_lane_fire[p]
+-          && psum_wr_lmem_bus_if[p].req_data.addr[PSUM_LANE_BANK_SET_BIT];
+-    end
+-    wire [6:0] psum_wr_lane_pop_by_set [2];
+-    assign psum_wr_lane_pop_by_set[0] = 7'($countones(psum_wr_lane_fire_by_set[0]));
+-    assign psum_wr_lane_pop_by_set[1] = 7'($countones(psum_wr_lane_fire_by_set[1]));
+-    wire [11:0] gemm_wr_lane_push = (psum_wr_raw_bus_if.req_valid && psum_wr_raw_bus_if.req_ready ? 12'd16 : 12'd0)
+-                                       + (final_raw_bus_if.req_valid && final_raw_bus_if.req_ready ? 12'd8 : 12'd0);
+-    wire [11:0] gemm_wr_lane_pop = 12'($countones(gemm_wr_lane_fire));
+-    wire gemm_write_queues_empty = (gemm_wr_lane_pending_r == 0);
+-    wire gemm_done_drained = gemm_done_pending_r && gemm_write_queues_empty;
+-    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_done_drained;
++    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;
+     assign gemm_sync_if[0].valid   = input_notify_pending_r;
+     assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
+@@ -231,15 +189,7 @@
+
+       if (reset) begin
+         input_notify_pending_r <= 1'b0;
+-        gemm_done_pending_r <= 1'b0;
+-        gemm_wr_lane_pending_r <= '0;
+         input_notify_reg_idx_r <= '0;
+         input_notify_value_r   <= '0;
+       end else begin
+-        gemm_wr_lane_pending_r <= gemm_wr_lane_pending_r
+-                                + gemm_wr_lane_push - gemm_wr_lane_pop;
+-        if (gemm_unit_if.done)
+-          gemm_done_pending_r <= 1'b1;
+-        else if (gemm_done_drained)
+-          gemm_done_pending_r <= 1'b0;
+         if (input_notify_req) begin
+           input_notify_pending_r <= 1'b1;
+@@ -490,5 +440,5 @@
+
+         .DATA_SIZE(LSU_WORD_SIZE),
+         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-      ) lane_arb_in_if [5] ();
++      ) lane_arb_in_if [GEMM_ARB_INPUTS] ();
+       VX_mem_bus_if #(
+         .DATA_SIZE(LSU_WORD_SIZE),
+@@ -543,9 +493,6 @@
+
+         assign lane_arb_in_if[3].rsp_ready = 1'b1;
+       end
+-      assign lane_arb_in_if[4].req_valid = 1'b0;
+-      assign lane_arb_in_if[4].req_data  = '0;
+-      assign lane_arb_in_if[4].rsp_ready = 1'b1;
+       VX_mem_arb #(
+-        .NUM_INPUTS(5),
++        .NUM_INPUTS(GEMM_ARB_INPUTS),
+         .NUM_OUTPUTS(1),
+         .DATA_SIZE(LSU_WORD_SIZE),
+@@ -568,99 +515,11 @@
+
+     assign lmem_bus_if[i].rsp_ready  = lane_arb_out_if[0].rsp_ready;
+     end
+-    for (genvar i = 0; i < 32; ++i) begin : g_psum_lane_arb
+-      VX_mem_bus_if #(
+-        .DATA_SIZE(LSU_WORD_SIZE),
+-        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-      ) rd_in_if[2](), wr_in_if[3]();
+-      VX_mem_bus_if #(
+-        .DATA_SIZE(LSU_WORD_SIZE),
+-        .TAG_WIDTH(PSUM_LMEM_TAG_WIDTH)
+-      ) rd_out_if[1]();
+-      VX_mem_bus_if #(
+-        .DATA_SIZE(LSU_WORD_SIZE),
+-        .TAG_WIDTH(PSUM_ARB_TAG_WIDTH)
+-      ) wr_out_if[1]();
+-      if (i < GEMM_PSUM_LANES) begin : g_lower_lane
+-    assign rd_in_if[0].req_valid  = psum_rd_lane_mem_if[i].req_valid; 
+-    assign rd_in_if[0].req_data   = psum_rd_lane_mem_if[i].req_data; 
+-    assign psum_rd_lane_mem_if[i].req_ready  = rd_in_if[0].req_ready; 
+-    assign psum_rd_lane_mem_if[i].rsp_valid  = rd_in_if[0].rsp_valid; 
+-    assign psum_rd_lane_mem_if[i].rsp_data   = rd_in_if[0].rsp_data; 
+-    assign rd_in_if[0].rsp_ready  = psum_rd_lane_mem_if[i].rsp_ready;
+-    assign wr_in_if[0].req_valid  = psum_wr_lane_mem_if[i].req_valid; 
+-    assign wr_in_if[0].req_data   = psum_wr_lane_mem_if[i].req_data; 
+-    assign psum_wr_lane_mem_if[i].req_ready  = wr_in_if[0].req_ready; 
+-    assign psum_wr_lane_mem_if[i].rsp_valid  = wr_in_if[0].rsp_valid; 
+-    assign psum_wr_lane_mem_if[i].rsp_data   = wr_in_if[0].rsp_data; 
+-    assign wr_in_if[0].rsp_ready  = psum_wr_lane_mem_if[i].rsp_ready;
+-      end else begin : g_no_lower_lane
+-        assign rd_in_if[0].req_valid = 1'b0;
+-        assign rd_in_if[0].req_data  = '0;
+-        assign rd_in_if[0].rsp_ready = 1'b1;
+-        assign wr_in_if[0].req_valid = 1'b0;
+-        assign wr_in_if[0].req_data  = '0;
+-        assign wr_in_if[0].rsp_ready = 1'b1;
+-      end
+-      if ((i + 32) < GEMM_PSUM_LANES) begin : g_upper_lane
+-    assign rd_in_if[1].req_valid  = psum_rd_lane_mem_if[i + 32].req_valid; 
+-    assign rd_in_if[1].req_data   = psum_rd_lane_mem_if[i + 32].req_data; 
+-    assign psum_rd_lane_mem_if[i + 32].req_ready  = rd_in_if[1].req_ready; 
+-    assign psum_rd_lane_mem_if[i + 32].rsp_valid  = rd_in_if[1].rsp_valid; 
+-    assign psum_rd_lane_mem_if[i + 32].rsp_data   = rd_in_if[1].rsp_data; 
+-    assign rd_in_if[1].rsp_ready  = psum_rd_lane_mem_if[i + 32].rsp_ready;
+-    assign wr_in_if[1].req_valid  = psum_wr_lane_mem_if[i + 32].req_valid; 
+-    assign wr_in_if[1].req_data   = psum_wr_lane_mem_if[i + 32].req_data; 
+-    assign psum_wr_lane_mem_if[i + 32].req_ready  = wr_in_if[1].req_ready; 
+-    assign psum_wr_lane_mem_if[i + 32].rsp_valid  = wr_in_if[1].rsp_valid; 
+-    assign psum_wr_lane_mem_if[i + 32].rsp_data   = wr_in_if[1].rsp_data; 
+-    assign wr_in_if[1].rsp_ready  = psum_wr_lane_mem_if[i + 32].rsp_ready;
+-      end else begin : g_no_upper_lane
+-        assign rd_in_if[1].req_valid = 1'b0;
+-        assign rd_in_if[1].req_data  = '0;
+-        assign rd_in_if[1].rsp_ready = 1'b1;
+-        assign wr_in_if[1].req_valid = 1'b0;
+-        assign wr_in_if[1].req_data  = '0;
+-        assign wr_in_if[1].rsp_ready = 1'b1;
+-      end
+-      if (i < GEMM_OUTPUT_LANES) begin : g_final_lane
+-    assign wr_in_if[2].req_valid  = final_lane_mem_if[i].req_valid; 
+-    assign wr_in_if[2].req_data   = final_lane_mem_if[i].req_data; 
+-    assign final_lane_mem_if[i].req_ready  = wr_in_if[2].req_ready; 
+-    assign final_lane_mem_if[i].rsp_valid  = wr_in_if[2].rsp_valid; 
+-    assign final_lane_mem_if[i].rsp_data   = wr_in_if[2].rsp_data; 
+-    assign wr_in_if[2].rsp_ready  = final_lane_mem_if[i].rsp_ready;
+-      end else begin : g_no_final_lane
+-        assign wr_in_if[2].req_valid = 1'b0;
+-        assign wr_in_if[2].req_data  = '0;
+-        assign wr_in_if[2].rsp_ready = 1'b1;
+-      end
+-      VX_mem_arb #(
+-        .NUM_INPUTS(2), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
+-        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+-        .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
+-        .REQ_OUT_BUF(2), .RSP_OUT_BUF(2), .ARBITER("P")
+-      ) psum_rd_arb (
+-        .clk(clk), .reset(reset), .bus_in_if(rd_in_if), .bus_out_if(rd_out_if)
+-      );
+-      VX_mem_arb #(
+-        .NUM_INPUTS(3), .NUM_OUTPUTS(1), .DATA_SIZE(LSU_WORD_SIZE),
+-        .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+-        .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
+-        .REQ_OUT_BUF(2), .RSP_OUT_BUF(2), .ARBITER("P")
+-      ) psum_wr_arb (
+-        .clk(clk), .reset(reset), .bus_in_if(wr_in_if), .bus_out_if(wr_out_if)
+-      );
+-    assign psum_rd_lmem_bus_if[i].req_valid  = rd_out_if[0].req_valid; 
+-    assign psum_rd_lmem_bus_if[i].req_data   = rd_out_if[0].req_data; 
+-    assign rd_out_if[0].req_ready  = psum_rd_lmem_bus_if[i].req_ready; 
+-    assign rd_out_if[0].rsp_valid  = psum_rd_lmem_bus_if[i].rsp_valid; 
+-    assign rd_out_if[0].rsp_data   = psum_rd_lmem_bus_if[i].rsp_data; 
+-    assign psum_rd_lmem_bus_if[i].rsp_ready  = rd_out_if[0].rsp_ready;
+-    assign psum_wr_lmem_bus_if[i].req_valid  = wr_out_if[0].req_valid; 
+-    assign psum_wr_lmem_bus_if[i].req_data   = wr_out_if[0].req_data; 
+-    assign wr_out_if[0].req_ready  = psum_wr_lmem_bus_if[i].req_ready; 
+-    assign wr_out_if[0].rsp_valid  = psum_wr_lmem_bus_if[i].rsp_valid; 
+-    assign wr_out_if[0].rsp_data   = psum_wr_lmem_bus_if[i].rsp_data; 
+-    assign psum_wr_lmem_bus_if[i].rsp_ready  = wr_out_if[0].rsp_ready;
++    for (genvar i = 0; i < 32; ++i) begin : g_acc_psum_tieoff
++    assign psum_rd_lmem_bus_if[i].req_valid = 0; 
++    assign psum_rd_lmem_bus_if[i].req_data = '0; 
++    assign psum_rd_lmem_bus_if[i].rsp_ready = 0;
++    assign psum_wr_lmem_bus_if[i].req_valid = 0; 
++    assign psum_wr_lmem_bus_if[i].req_data = '0; 
++    assign psum_wr_lmem_bus_if[i].rsp_ready = 0;
+     end
+     VX_mem_bus_split #(
+@@ -694,170 +553,13 @@
+
+       .lane_bus_if (o_lane_mem_if)
+     );
+-    VX_elastic_buffer #(
+-      .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
+-    ) psum_wr_queue (
+-      .clk(clk), .reset(reset),
+-      .valid_in(psum_wr_raw_bus_if.req_valid), .data_in(psum_wr_raw_bus_if.req_data),
+-      .ready_in(psum_wr_raw_bus_if.req_ready),
+-      .valid_out(psum_wr_wide_bus_if.req_valid), .data_out(psum_wr_wide_bus_if.req_data),
+-      .ready_out(psum_wr_wide_bus_if.req_ready)
+-    );
+-    assign psum_wr_raw_bus_if.rsp_valid = psum_wr_wide_bus_if.rsp_valid;
+-    assign psum_wr_raw_bus_if.rsp_data = psum_wr_wide_bus_if.rsp_data;
+-    assign psum_wr_wide_bus_if.rsp_ready = psum_wr_raw_bus_if.rsp_ready;
+-    assign psum_wr_marked_bus_if.req_valid = psum_wr_wide_bus_if.req_valid;
+-    assign psum_wr_marked_bus_if.req_data.rw = psum_wr_wide_bus_if.req_data.rw;
+-    assign psum_wr_marked_bus_if.req_data.addr = psum_wr_wide_bus_if.req_data.addr;
+-    assign psum_wr_marked_bus_if.req_data.data = psum_wr_wide_bus_if.req_data.data;
+-    assign psum_wr_marked_bus_if.req_data.byteen = psum_wr_wide_bus_if.req_data.byteen;
+-    assign psum_wr_marked_bus_if.req_data.flags
+-        = psum_wr_wide_bus_if.req_data.flags | MEM_FLAGS_WIDTH'(1);
+-    assign psum_wr_marked_bus_if.req_data.tag = psum_wr_wide_bus_if.req_data.tag;
+-    assign psum_wr_wide_bus_if.req_ready = psum_wr_marked_bus_if.req_ready;
+-    assign psum_wr_wide_bus_if.rsp_valid = psum_wr_marked_bus_if.rsp_valid;
+-    assign psum_wr_wide_bus_if.rsp_data = psum_wr_marked_bus_if.rsp_data;
+-    assign psum_wr_marked_bus_if.rsp_ready = psum_wr_wide_bus_if.rsp_ready;
+-    logic [6:0] psum_wr_pending_by_set [2];
+-    wire psum_wr_pending_push = psum_wr_raw_bus_if.req_valid
+-                              && psum_wr_raw_bus_if.req_ready;
+-    wire [6:0] psum_wr_lane_push_by_set [2];
+-    assign psum_wr_lane_push_by_set[0] = (psum_wr_pending_push
+-        && ~psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+-    assign psum_wr_lane_push_by_set[1] = (psum_wr_pending_push
+-        && psum_wr_raw_bus_if.req_data.addr[0]) ? 7'd16 : 7'd0;
+-    wire psum_rd_pending_conflict
+-        = psum_rd_raw_bus_if.req_valid
+-       && (psum_wr_pending_by_set[psum_rd_raw_bus_if.req_data.addr[0]] != 0);
+-    wire psum_rd_current_conflict
+-        = psum_rd_raw_bus_if.req_valid
+-       && psum_wr_raw_bus_if.req_valid
+-       && (psum_wr_raw_bus_if.req_data.addr[0]
+-        == psum_rd_raw_bus_if.req_data.addr[0]);
+-    logic [6:0] psum_rd_outstanding_r;
+-    logic psum_rd_active_set_r;
+-    wire psum_rd_set_switch_block
+-        = psum_rd_raw_bus_if.req_valid
+-       && (psum_rd_outstanding_r != 0)
+-       && (psum_rd_raw_bus_if.req_data.addr[0] != psum_rd_active_set_r);
+-    wire psum_rd_order_block = psum_rd_pending_conflict
+-                             || psum_rd_current_conflict
+-                             || psum_rd_set_switch_block;
+-    assign psum_rd_wide_bus_if.req_valid = psum_rd_raw_bus_if.req_valid
+-                                         && ~psum_rd_order_block;
+-    assign psum_rd_wide_bus_if.req_data = psum_rd_raw_bus_if.req_data;
+-    assign psum_rd_raw_bus_if.req_ready = psum_rd_wide_bus_if.req_ready
+-                                        && ~psum_rd_order_block;
+-    assign psum_rd_raw_bus_if.rsp_valid = psum_rd_wide_bus_if.rsp_valid;
+-    assign psum_rd_raw_bus_if.rsp_data = psum_rd_wide_bus_if.rsp_data;
+-    assign psum_rd_wide_bus_if.rsp_ready = psum_rd_raw_bus_if.rsp_ready;
+-    wire psum_rd_wide_req_fire = psum_rd_wide_bus_if.req_valid
+-                               && psum_rd_wide_bus_if.req_ready;
+-    wire psum_rd_wide_rsp_fire = psum_rd_wide_bus_if.rsp_valid
+-                               && psum_rd_wide_bus_if.rsp_ready;
+-    always_ff @(posedge clk) begin
+-      if (reset) begin
+-        psum_wr_pending_by_set[0] <= '0;
+-        psum_wr_pending_by_set[1] <= '0;
+-        psum_rd_outstanding_r <= '0;
+-        psum_rd_active_set_r <= 1'b0;
+-      end else begin
+-        if (psum_rd_wide_req_fire && (psum_rd_outstanding_r == 0))
+-          psum_rd_active_set_r <= psum_rd_wide_bus_if.req_data.addr[0];
+-        case ({psum_rd_wide_req_fire, psum_rd_wide_rsp_fire})
+-          2'b10: begin
+-            if (~&psum_rd_outstanding_r)
+-              psum_rd_outstanding_r <= psum_rd_outstanding_r + 1'b1;
+-          end
+-          2'b01: begin
+-            if (psum_rd_outstanding_r != 0)
+-              psum_rd_outstanding_r <= psum_rd_outstanding_r - 1'b1;
+-            else
+-              psum_rd_outstanding_r <= '0;
+-          end
+-          default: psum_rd_outstanding_r <= psum_rd_outstanding_r;
+-        endcase
+-        assert (!(psum_rd_wide_req_fire && ~psum_rd_wide_rsp_fire
+-               && (&psum_rd_outstanding_r)))
+-          else $fatal(1, "PSUM read outstanding overflow: count=%0d",
+-                      psum_rd_outstanding_r);
+-        assert (!(psum_rd_wide_rsp_fire && ~psum_rd_wide_req_fire
+-               && (psum_rd_outstanding_r == 0)))
+-          else $fatal(1, "PSUM read outstanding underflow");
+-        for (integer s = 0; s < 2; ++s) begin
+-          if (psum_wr_lane_pop_by_set[s]
+-              <= (psum_wr_pending_by_set[s] + psum_wr_lane_push_by_set[s])) begin
+-            psum_wr_pending_by_set[s] <= psum_wr_pending_by_set[s]
+-                                         + psum_wr_lane_push_by_set[s]
+-                                         - psum_wr_lane_pop_by_set[s];
+-          end else begin
+-            psum_wr_pending_by_set[s] <= '0;
+-          end
+-          assert (psum_wr_lane_pop_by_set[s]
+-                  <= (psum_wr_pending_by_set[s] + psum_wr_lane_push_by_set[s]))
+-            else $fatal(1, "PSUM pending-write underflow: set=%0d pending=%0d push=%0d pop=%0d",
+-                        s, psum_wr_pending_by_set[s],
+-                        psum_wr_lane_push_by_set[s], psum_wr_lane_pop_by_set[s]);
+-        end
+-      end
+-    end
+-    VX_elastic_buffer #(
+-      .DATAW($bits(final_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
+-    ) final_wr_queue (
+-      .clk(clk), .reset(reset),
+-      .valid_in(final_raw_bus_if.req_valid), .data_in(final_raw_bus_if.req_data),
+-      .ready_in(final_raw_bus_if.req_ready),
+-      .valid_out(final_wide_bus_if.req_valid), .data_out(final_wide_bus_if.req_data),
+-      .ready_out(final_wide_bus_if.req_ready)
+-    );
+-    assign final_raw_bus_if.rsp_valid = final_wide_bus_if.rsp_valid;
+-    assign final_raw_bus_if.rsp_data = final_wide_bus_if.rsp_data;
+-    assign final_wide_bus_if.rsp_ready = final_raw_bus_if.rsp_ready;
+-    VX_mem_bus_split #(
+-      .NUM_LANES(GEMM_OUTPUT_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) final_lane_split (
+-      .clk(clk), .reset(reset), .wide_bus_if(final_wide_bus_if),
+-      .lane_bus_if(final_lane_mem_if)
+-    );
+-    VX_mem_bus_split #(
+-      .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_rd_lane_split (
+-      .clk(clk), .reset(reset), .wide_bus_if(psum_rd_wide_bus_if),
+-      .lane_bus_if(psum_rd_lane_mem_if)
+-    );
+-    VX_mem_bus_split #(
+-      .NUM_LANES(GEMM_PSUM_LANES), .LANE_DATA_SIZE(LSU_WORD_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_wr_lane_split (
+-      .clk(clk), .reset(reset), .wide_bus_if(psum_wr_marked_bus_if),
+-      .lane_bus_if(psum_wr_lane_mem_if)
+-    );
+-    localparam int PSUM_SHADOW_WORDS = (1 << 20) / LSU_WORD_SIZE;
+-    for (genvar l = 0; l < GEMM_PSUM_LANES; ++l) begin : g_psum_shadow_check
+-      logic [LSU_WORD_SIZE*8-1:0] psum_shadow [0:PSUM_SHADOW_WORDS-1];
+-      logic [$clog2(PSUM_SHADOW_WORDS)-1:0] rd_addr_q[64];
+-      integer rd_head, rd_tail;
+-      always_ff @(posedge clk) begin
+-        if (reset) begin
+-          rd_head <= 0;
+-          rd_tail <= 0;
+-        end else begin
+-          if (psum_wr_lane_mem_if[l].req_valid && psum_wr_lane_mem_if[l].req_ready)
+-            psum_shadow[psum_wr_lane_mem_if[l].req_data.addr] <= psum_wr_lane_mem_if[l].req_data.data;
+-          if (psum_rd_lane_mem_if[l].req_valid && psum_rd_lane_mem_if[l].req_ready) begin
+-            rd_addr_q[rd_tail & 63] <= psum_rd_lane_mem_if[l].req_data.addr;
+-            rd_tail <= rd_tail + 1;
+-          end
+-          if (psum_rd_lane_mem_if[l].rsp_valid && psum_rd_lane_mem_if[l].rsp_ready) begin
+-            assert (psum_rd_lane_mem_if[l].rsp_data.data === psum_shadow[rd_addr_q[rd_head & 63]])
+-              else $fatal(1, "PSUM LMEM mismatch lane=%0d addr=0x%0h got=0x%0h expected=0x%0h",
+-                          l, rd_addr_q[rd_head & 63], psum_rd_lane_mem_if[l].rsp_data.data,
+-                          psum_shadow[rd_addr_q[rd_head & 63]]);
+-            rd_head <= rd_head + 1;
+-          end
+-        end
+-      end
+-    end
++    assign psum_rd_raw_bus_if.req_ready = 0; 
++    assign psum_rd_raw_bus_if.rsp_valid = 0; 
++    assign psum_rd_raw_bus_if.rsp_data  = '0; 
++    assign psum_wr_raw_bus_if.req_ready = 0; 
++    assign psum_wr_raw_bus_if.rsp_valid = 0; 
++    assign psum_wr_raw_bus_if.rsp_data  = '0; 
++    assign final_raw_bus_if.req_ready = 0; 
++    assign final_raw_bus_if.rsp_valid = 0; 
++    assign final_raw_bus_if.rsp_data  = '0; 
+     VX_gemm_unit #(
+       .INSTANCE_ID(INSTANCE_ID)

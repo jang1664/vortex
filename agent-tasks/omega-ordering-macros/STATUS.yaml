@@ -1,0 +1,11 @@
+status: complete
+iteration: 1
+preprocessing: all_16_combinations_passed
+unit_tests: all_9_fabric_ordering_modes_passed
+blackbox:
+  case: C3_M256_internal_ACC_SLR_OFF_both_ordering_guards_disabled
+  status: pass
+  total_cycles: 46272
+  compute_cycles: 30107
+  integrity_verified: true
+commit: see_git_history

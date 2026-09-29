@@ -1,0 +1,11 @@
+logs/
+artifacts
+__pycache__/
+!summary.json
+!environment.json
+!snapshot_C*.json
+!counter_definitions.json
+!config_audit.json
+!scope.json
+!integrity_audit.json
+!*_trace_diagnostic.json

@@ -1,0 +1,29 @@
+[
+  {
+    "variant": "C3_old",
+    "removed": [
+      "-DLMEM_REQ_OMEGA_ENABLE",
+      "-DLMEM_RSP_OMEGA_ENABLE"
+    ],
+    "added": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C3_off",
+    "removed": [
+      "-DLMEM_REQ_OMEGA_ENABLE",
+      "-DLMEM_RSP_OMEGA_ENABLE"
+    ],
+    "added": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C3_on",
+    "removed": [
+      "-DLMEM_REQ_OMEGA_ENABLE",
+      "-DLMEM_RSP_OMEGA_ENABLE"
+    ],
+    "added": [],
+    "config_hash_verified": true
+  }
+]

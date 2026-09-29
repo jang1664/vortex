@@ -1,0 +1,9 @@
+{
+  "target_repetitions": {
+    "C1": 1,
+    "C3": 1,
+    "C4": 3
+  },
+  "target_valid_runs": 14,
+  "reason": "Explicit user reductions: C1 and C3 one run per variant; preserve completed C4 three runs."
+}

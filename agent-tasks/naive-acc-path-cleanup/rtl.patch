@@ -1,0 +1,528 @@
+diff --git a/hw/rtl/VX_config.vh b/hw/rtl/VX_config.vh
+index 05d55cdd0..cb7b2f608 100644
+--- a/hw/rtl/VX_config.vh
++++ b/hw/rtl/VX_config.vh
+@@ -283,9 +283,24 @@
+ `define LMEM_XBAR_MAX_FANOUT `MAX_FANOUT
+ `endif
+ 
+-// Ordering resources used only by the corresponding Omega local-memory
+-// fabric. The store CAM is shared by all requesters; the response queue depth
+-// is per requester.
++// Omega ordering is enabled by default, independently of fabric selection.
++// Define LMEM_REQ_OMEGA_ORDER_DISABLE to bypass outstanding-store RAW ordering,
++// or LMEM_RSP_OMEGA_ORDER_DISABLE to bypass requester-local response ordering.
++// Defining both restores the historical unguarded Omega transport. These are
++// presence macros (including =0); bypass mode does not guarantee those orders.
++`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifndef LMEM_REQ_OMEGA_ORDER_DISABLE
++`define LMEM_REQ_OMEGA_ORDER_ENABLED
++`endif
++`endif
++`ifdef LMEM_RSP_OMEGA_ENABLE
++`ifndef LMEM_RSP_OMEGA_ORDER_DISABLE
++`define LMEM_RSP_OMEGA_ORDER_ENABLED
++`endif
++`endif
++
++// Resources used only when the corresponding ordering guard is enabled.
++// The store CAM is shared; response queue depth is per requester.
+ `ifndef LMEM_OMEGA_STORE_CAM_SIZE
+ `define LMEM_OMEGA_STORE_CAM_SIZE 64
+ `endif
+diff --git a/hw/rtl/VX_gpu_pkg.sv b/hw/rtl/VX_gpu_pkg.sv
+index cb324af5e..80f1daea2 100644
+--- a/hw/rtl/VX_gpu_pkg.sv
++++ b/hw/rtl/VX_gpu_pkg.sv
+@@ -1027,9 +1027,14 @@ package VX_gpu_pkg;
+         LMEM_TAG_WIDTH,
+         (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
+ 
+-    // The naive backend merges five GEMM clients before shared LMEM. Improve
+-    // keeps this width for interface consistency even though it uses TMEM.
+-    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(5, 1);
++    // Internal ACC uses only input, weight, scale/zero and output clients.
++    // Preserve the external-PSUM layout for the other configurations.
++`ifdef GEMM_NAIVE_ACC_MEM
++    localparam GEMM_ARB_INPUTS = 4;
++`else
++    localparam GEMM_ARB_INPUTS = 5;
++`endif
++    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(GEMM_ARB_INPUTS, 1);
+     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
+     // PSUM reads merge two clients, while writes merge two PSUM lanes and the
+     // final-output client.
+diff --git a/hw/rtl/core/VX_mem_unit.sv b/hw/rtl/core/VX_mem_unit.sv
+index 0abf3d60f..6b148f549 100644
+--- a/hw/rtl/core/VX_mem_unit.sv
++++ b/hw/rtl/core/VX_mem_unit.sv
+@@ -53,7 +53,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
+     localparam CPU_LMEM_ARB_SEL_BITS = `ARB_SEL_BITS(`NUM_LSU_BLOCKS, 1);
+     localparam CPU_LMEM_TAG_WIDTH = LSU_TAG_WIDTH + CPU_LMEM_ARB_SEL_BITS;
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     localparam GEMM_PSUM_LANES = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
+     localparam LMEM_PRIORITY_TAG_WIDTH = LMEM_LOCAL_TAG_WIDTH + `ARB_SEL_BITS(2, 1);
+ `endif
+@@ -62,7 +62,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+ 
+     `VX_STATIC_ASSERT(CPU_LMEM_TAG_WIDTH <= GEMM_LMEM_TAG_WIDTH,
+         ("invalid CPU LMEM tag width: CPU=%0d, shared=%0d", CPU_LMEM_TAG_WIDTH, GEMM_LMEM_TAG_WIDTH))
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
+         ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
+          2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
+@@ -147,7 +147,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+         .DATA_SIZE (LSU_WORD_SIZE),
+         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+     ) lmem_membus_arb_out_if[`LMEM_NUM_PORTS]();
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     VX_mem_bus_if #(
+         .DATA_SIZE (LSU_WORD_SIZE),
+         .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
+@@ -210,7 +210,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+         `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[i], lane_arb_out_if[0]);
+     end
+     
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_priority_order
+         VX_mem_bus_if #(
+             .DATA_SIZE (LSU_WORD_SIZE),
+@@ -255,20 +255,21 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+         `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
+         `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
+     end
++`elsif GEMM_NAIVE_ACC_MEM
++    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_acc_psum_ports
++        `UNUSED_VX_MEM_BUS_IF (gemm_psum_wr_if[i])
++        `UNUSED_VX_MEM_BUS_IF (gemm_psum_rd_if[i])
++    end
+ `endif
+ 
+     VX_local_mem #(
+         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
+         .SIZE       (1 << `LMEM_LOG_SIZE),
+-`ifdef GEMM_NAIVE
+-        .NUM_REQS   (`LMEM_NUM_PORTS),
+-`else
+         .NUM_REQS   (`LMEM_NUM_PORTS),
+-`endif
+         .NUM_BANKS  (`LMEM_NUM_BANKS),
+         .WORD_SIZE  (LSU_WORD_SIZE),
+         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+         .TAG_WIDTH  (LMEM_PRIORITY_TAG_WIDTH),
+ `else
+         .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
+@@ -286,7 +287,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
+     `ifdef PERF_ENABLE
+         .lmem_perf  (lmem_perf),
+     `endif
+-`ifdef GEMM_NAIVE
++`ifdef GEMM_NAIVE_LMEM_PSUM
+         .mem_bus_if (lmem_priority_if)
+ `else
+         .mem_bus_if (lmem_membus_arb_out_if)
+diff --git a/hw/rtl/core/gemm/VX_gemm_node_naive.sv b/hw/rtl/core/gemm/VX_gemm_node_naive.sv
+index f25be9f1e..8b5ac88ca 100644
+--- a/hw/rtl/core/gemm/VX_gemm_node_naive.sv
++++ b/hw/rtl/core/gemm/VX_gemm_node_naive.sv
+@@ -69,15 +69,19 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     localparam int GEMM_WEIGHT_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE;
+     localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
+     localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     localparam int GEMM_PSUM_LANES   = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
++`endif
+     localparam int I_LANE_OFFSET     = 0;
+     localparam int W_LANE_OFFSET     = 8;
+     localparam int SZ_LANE_OFFSET    = 16;
+     localparam int O_LANE_OFFSET     = 24;
+ 
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     `VX_STATIC_ASSERT(`LMEM_NUM_PORTS == (2 * GEMM_PSUM_LANES),
+         ("GEMM naive split PSUM path requires LMEM_NUM_PORTS=%0d, got %0d",
+          2 * GEMM_PSUM_LANES, `LMEM_NUM_PORTS))
++`endif
+ 
+     // DMA tile sizes
+     localparam int MT = `GEMM_FSM_MT;
+@@ -112,15 +116,21 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
+       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+     ) o_gemm_bus_if ();
++    // Raw ports keep the compute-unit interface stable in both modes.
+     VX_mem_bus_if #(
+-      .DATA_SIZE(`GEMM_PSUM_DATA_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_rd_wide_bus_if (), psum_rd_raw_bus_if (),
+-      psum_wr_wide_bus_if (), psum_wr_marked_bus_if (), psum_wr_raw_bus_if ();
++      .DATA_SIZE(`GEMM_PSUM_DATA_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) psum_rd_raw_bus_if (), psum_wr_raw_bus_if ();
+     VX_mem_bus_if #(
+-      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) final_wide_bus_if (), final_raw_bus_if ();
++      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) final_raw_bus_if ();
++`ifdef GEMM_NAIVE_LMEM_PSUM
++    VX_mem_bus_if #(
++      .DATA_SIZE(`GEMM_PSUM_DATA_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) psum_rd_wide_bus_if (), psum_wr_wide_bus_if (), psum_wr_marked_bus_if ();
++    VX_mem_bus_if #(
++      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) final_wide_bus_if ();
++`endif
+ 
+     // Each 64-byte tensor path has eight logical 64-bit lanes. The physical
+     // mapping below applies a tensor-specific offset and wraps at LMEM_NUM_PORTS.
+@@ -140,6 +150,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       .DATA_SIZE(LSU_WORD_SIZE),
+       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+     ) o_lane_mem_if [GEMM_OUTPUT_LANES] ();
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     VX_mem_bus_if #(
+       .DATA_SIZE(LSU_WORD_SIZE),
+       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+@@ -152,6 +163,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       .DATA_SIZE(LSU_WORD_SIZE),
+       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+     ) psum_wr_lane_mem_if [GEMM_PSUM_LANES] ();
++`endif
+ 
+     // Internal wide buses between load-path adapters and DMAs.
+     VX_mem_bus_if # (
+@@ -201,8 +213,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     VX_gemm_dma_ctrl_naive_if gemm_dma_ctrl_if ();
+ 
+     logic        input_notify_pending_r;
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     logic        gemm_done_pending_r;
+     logic [11:0] gemm_wr_lane_pending_r;
++`endif
+     logic [31:0] input_notify_reg_idx_r;
+     logic [31:0] input_notify_value_r;
+ 
+@@ -292,6 +306,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     assign input_dma_ctrl_if.reg_idx         = '0;
+     assign input_dma_ctrl_if.reg_value       = '0;
+     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     logic [`LMEM_NUM_PORTS-1:0] gemm_wr_lane_fire;
+     logic [`LMEM_NUM_PORTS-1:0] psum_wr_lane_fire;
+     for (genvar p = 0; p < `LMEM_NUM_PORTS; ++p) begin : g_wr_lane_fire
+@@ -317,6 +332,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     wire gemm_write_queues_empty = (gemm_wr_lane_pending_r == 0);
+     wire gemm_done_drained = gemm_done_pending_r && gemm_write_queues_empty;
+     assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_done_drained;
++`else
++    // Internal ACC has no external PSUM/final-write queues to drain.
++    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;
++`endif
+ 
+     assign gemm_sync_if[0].valid   = input_notify_pending_r;
+     assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
+@@ -325,17 +344,21 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     always_ff @(posedge clk) begin
+       if (reset) begin
+         input_notify_pending_r <= 1'b0;
++`ifdef GEMM_NAIVE_LMEM_PSUM
+         gemm_done_pending_r <= 1'b0;
+         gemm_wr_lane_pending_r <= '0;
++`endif
+         input_notify_reg_idx_r <= '0;
+         input_notify_value_r   <= '0;
+       end else begin
++`ifdef GEMM_NAIVE_LMEM_PSUM
+         gemm_wr_lane_pending_r <= gemm_wr_lane_pending_r
+                                 + gemm_wr_lane_push - gemm_wr_lane_pop;
+         if (gemm_unit_if.done)
+           gemm_done_pending_r <= 1'b1;
+         else if (gemm_done_drained)
+           gemm_done_pending_r <= 1'b0;
++`endif
+ 
+         if (input_notify_req) begin
+           input_notify_pending_r <= 1'b1;
+@@ -667,7 +690,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       VX_mem_bus_if #(
+         .DATA_SIZE(LSU_WORD_SIZE),
+         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-      ) lane_arb_in_if [5] ();
++      ) lane_arb_in_if [GEMM_ARB_INPUTS] ();
+       VX_mem_bus_if #(
+         .DATA_SIZE(LSU_WORD_SIZE),
+         .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
+@@ -705,12 +728,14 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+         assign lane_arb_in_if[3].rsp_ready = 1'b1;
+       end
+ 
++`ifdef GEMM_NAIVE_LMEM_PSUM
+       assign lane_arb_in_if[4].req_valid = 1'b0;
+       assign lane_arb_in_if[4].req_data  = '0;
+       assign lane_arb_in_if[4].rsp_ready = 1'b1;
++`endif
+ 
+       VX_mem_arb #(
+-        .NUM_INPUTS(5),
++        .NUM_INPUTS(GEMM_ARB_INPUTS),
+         .NUM_OUTPUTS(1),
+         .DATA_SIZE(LSU_WORD_SIZE),
+         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+@@ -729,6 +754,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     end
+ 
+ 
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     // A 128-byte PSUM request contains sixteen 64-bit lanes. Each physical
+     // LMEM port serves lanes i and i+LMEM_NUM_PORTS. Write and read remain on
+     // separate paths so the bank xbar can enforce write > read > normal.
+@@ -798,6 +824,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       `ASSIGN_VX_MEM_BUS_IF(psum_wr_lmem_bus_if[i], wr_out_if[0]);
+     end
+ 
++`else
++    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_acc_psum_tieoff
++      `INIT_VX_MEM_BUS_IF(psum_rd_lmem_bus_if[i])
++      `INIT_VX_MEM_BUS_IF(psum_wr_lmem_bus_if[i])
++    end
++`endif
++
+     // -------------------------------------------------------------------------
+     // Width-adapter plumbing
+     // -------------------------------------------------------------------------
+@@ -840,6 +873,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+       .lane_bus_if (o_lane_mem_if)
+     );
+ 
++`ifdef GEMM_NAIVE_LMEM_PSUM
+     // Capture no-backpressure GEMM result pulses before per-lane scattering.
+     VX_elastic_buffer #(
+       .DATAW($bits(psum_wr_raw_bus_if.req_data)), .SIZE(4), .OUT_REG(1)
+@@ -1036,6 +1070,12 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
+     end
+ `endif
+ 
++`else
++    `UNUSED_VX_MEM_BUS_IF(psum_rd_raw_bus_if)
++    `UNUSED_VX_MEM_BUS_IF(psum_wr_raw_bus_if)
++    `UNUSED_VX_MEM_BUS_IF(final_raw_bus_if)
++`endif
++
+     // -------------------------------------------------------------------------
+     // GEMM compute/control instances
+     // -------------------------------------------------------------------------
+diff --git a/hw/rtl/mem/VX_local_mem.sv b/hw/rtl/mem/VX_local_mem.sv
+index bce6ef1e7..475ffb100 100644
+--- a/hw/rtl/mem/VX_local_mem.sv
++++ b/hw/rtl/mem/VX_local_mem.sv
+@@ -67,7 +67,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     localparam BANK_ADDR_WIDTH = `CLOG2(WORDS_PER_BANK);
+     localparam BANK_SEL_BITS   = `CLOG2(NUM_BANKS);
+     localparam BANK_SEL_WIDTH  = `UP(BANK_SEL_BITS);
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     localparam STORE_CAM_SLOT_WIDTH = `UP(`CLOG2(OMEGA_STORE_CAM_SIZE));
+     localparam REQ_DATAW       = 1 + BANK_ADDR_WIDTH + WORD_SIZE + WORD_WIDTH + TAG_WIDTH
+                               + STORE_CAM_SLOT_WIDTH;
+@@ -90,12 +90,12 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+ `ifndef LMEM_REQ_OMEGA_ENABLE
+     `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
+ `endif
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     `VX_STATIC_ASSERT(OMEGA_STORE_CAM_SIZE > 0, ("invalid OMEGA_STORE_CAM_SIZE"))
+ `else
+     `UNUSED_PARAM (OMEGA_STORE_CAM_SIZE)
+ `endif
+-`ifdef LMEM_RSP_OMEGA_ENABLE
++`ifdef LMEM_RSP_OMEGA_ORDER_ENABLED
+     `VX_STATIC_ASSERT(OMEGA_RSP_QUEUE_SIZE > 0, ("invalid OMEGA_RSP_QUEUE_SIZE"))
+ `else
+     `UNUSED_PARAM (OMEGA_RSP_QUEUE_SIZE)
+@@ -132,7 +132,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     wire [NUM_BANKS-1:0][WORD_WIDTH-1:0]    per_bank_req_data;
+     wire [NUM_BANKS-1:0][TAG_WIDTH-1:0]     per_bank_req_tag;
+     wire [NUM_BANKS-1:0][REQ_SEL_WIDTH-1:0] per_bank_req_idx;
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     wire [NUM_BANKS-1:0][STORE_CAM_SLOT_WIDTH-1:0] per_bank_req_store_slot;
+ `endif
+     wire [NUM_BANKS-1:0]                    per_bank_req_ready;
+@@ -140,16 +140,17 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     wire [NUM_BANKS-1:0][REQ_DATAW-1:0]     per_bank_req_data_aos;
+ 
+     wire [NUM_REQS-1:0]                 req_valid_in;
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     wire [NUM_REQS-1:0]                 req_rw_in;
+     wire [NUM_REQS-1:0][ADDR_WIDTH-1:0] req_addr_in;
+-`elsif LMEM_RSP_OMEGA_ENABLE
++`elsif LMEM_RSP_OMEGA_ORDER_ENABLED
+     wire [NUM_REQS-1:0]                 req_rw_in;
+ `endif
+     wire [NUM_REQS-1:0][REQ_DATAW-1:0]  req_data_in;
+     wire [NUM_REQS-1:0]                 req_ready_in;
++    wire [NUM_REQS-1:0]                 req_xbar_valid, req_xbar_ready;
+ 
+-`ifdef LMEM_RSP_OMEGA_ENABLE
++`ifdef LMEM_RSP_OMEGA_ORDER_ENABLED
+     localparam RSP_QUEUE_PTR_WIDTH = `UP(`CLOG2(OMEGA_RSP_QUEUE_SIZE));
+     localparam RSP_QUEUE_COUNT_WIDTH = `CLOG2(OMEGA_RSP_QUEUE_SIZE + 1);
+ 
+@@ -160,7 +161,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     reg [NUM_REQS-1:0] rsp_order_issued;
+ `endif
+ 
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_valid;
+     reg [OMEGA_STORE_CAM_SIZE-1:0][ADDR_WIDTH-1:0] store_cam_addr;
+ 
+@@ -170,8 +171,6 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_alloc;
+     reg [OMEGA_STORE_CAM_SIZE-1:0][ADDR_WIDTH-1:0] store_cam_alloc_addr;
+ 
+-    wire [NUM_REQS-1:0] req_xbar_valid;
+-    wire [NUM_REQS-1:0] req_xbar_ready;
+ 
+     // Select distinct free CAM slots for the writes presented in this cycle.
+     // Reads are held behind every accepted, not-yet-committed write to the
+@@ -193,7 +192,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+                 end
+             end else begin
+                 req_order_enable[i] = 1'b1;
+-`ifdef LMEM_RSP_OMEGA_ENABLE
++`ifdef LMEM_RSP_OMEGA_ORDER_ENABLED
+                 req_order_enable[i] &= (rsp_order_count[i]
+                                       < RSP_QUEUE_COUNT_WIDTH'(OMEGA_RSP_QUEUE_SIZE));
+ `endif
+@@ -230,9 +229,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+ 
+     assign req_xbar_valid = req_valid_in & req_order_enable;
+     assign req_ready_in = req_xbar_ready & req_order_enable;
+-`elsif LMEM_RSP_OMEGA_ENABLE
+-    wire [NUM_REQS-1:0] req_xbar_valid;
+-    wire [NUM_REQS-1:0] req_xbar_ready;
++`elsif LMEM_RSP_OMEGA_ORDER_ENABLED
+     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_rsp_queue_ready
+         wire order_queue_ready = req_rw_in[i]
+                               || (rsp_order_count[i]
+@@ -240,17 +237,20 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+         assign req_xbar_valid[i] = req_valid_in[i] && order_queue_ready;
+         assign req_ready_in[i] = req_xbar_ready[i] && order_queue_ready;
+     end
++`else
++    assign req_xbar_valid = req_valid_in;
++    assign req_ready_in = req_xbar_ready;
+ `endif
+ 
+     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_data_in
+         assign req_valid_in[i] = mem_bus_if[i].req_valid;
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+         assign req_rw_in[i] = mem_bus_if[i].req_data.rw;
+         assign req_addr_in[i] = mem_bus_if[i].req_data.addr;
+-`elsif LMEM_RSP_OMEGA_ENABLE
++`elsif LMEM_RSP_OMEGA_ORDER_ENABLED
+         assign req_rw_in[i] = mem_bus_if[i].req_data.rw;
+ `endif
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+         assign req_data_in[i] = {
+             mem_bus_if[i].req_data.rw,
+             req_bank_addr[i],
+@@ -307,18 +307,10 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+             .clk       (clk),
+             .reset     (reset),
+             `UNUSED_PIN (collisions),
+-`ifdef LMEM_RSP_OMEGA_ENABLE
+             .valid_in  (req_xbar_valid),
+-`else
+-            .valid_in  (req_valid_in),
+-`endif
+             .data_in   (req_data_in),
+             .sel_in    (req_bank_idx),
+-`ifdef LMEM_RSP_OMEGA_ENABLE
+             .ready_in  (req_xbar_ready),
+-`else
+-            .ready_in  (req_ready_in),
+-`endif
+             .valid_out (per_bank_req_valid),
+             .data_out  (per_bank_req_data_aos),
+             .sel_out   (per_bank_req_idx),
+@@ -328,7 +320,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+         assign per_bank_req_valid    = '0;
+         assign per_bank_req_data_aos = '0;
+         assign per_bank_req_idx      = '0;
+-        assign req_ready_in          = '0;
++        assign req_xbar_ready        = '0;
+         `UNUSED_VAR (req_data_in)
+         initial begin : invalid_LMEM_XBAR_MAX_FANOUT
+             $error("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT);
+@@ -337,7 +329,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+ `endif
+ 
+     for (genvar i = 0; i < NUM_BANKS; ++i) begin : g_per_bank_req_data_soa
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+         assign {
+             per_bank_req_rw[i],
+             per_bank_req_addr[i],
+@@ -357,7 +349,7 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+ `endif
+     end
+ 
+-`ifdef LMEM_REQ_OMEGA_ENABLE
++`ifdef LMEM_REQ_OMEGA_ORDER_ENABLED
+     wire [OMEGA_STORE_CAM_SIZE-1:0] store_cam_retire;
+     reg [OMEGA_STORE_CAM_SIZE-1:0] store_cam_retire_r;
+ 
+@@ -417,13 +409,13 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+ 
+ `ifdef GEMM_NAIVE_ACC_MEM
+         if (NAIVE_OUTPUT_COMMIT) begin : g_naive_output_commit
+-            // Tags retain the three nested arbiter selections below UUID.
++            // Internal ACC bypasses external-PSUM priority arbitration. Tags
++            // retain only the GEMM tensor and CPU/DMA/GEMM lane selections.
+             assign naive_output_write_commit[i] = per_bank_req_valid[i]
+                 && per_bank_req_ready[i] && per_bank_req_rw[i]
+-                && per_bank_req_tag[i][LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH]
+                 && (per_bank_req_tag[i][GEMM_LMEM_TAG_WIDTH-UUID_WIDTH +: LMEM_ARB_ROUTE_TAG_BITS] == LMEM_ARB_ROUTE_TAG_BITS'(2))
+                 && (per_bank_req_tag[i][GEMM_BASE_TAG_WIDTH-UUID_WIDTH +: GEMM_ARB_ROUTE_TAG_BITS] == GEMM_ARB_ROUTE_TAG_BITS'(3));
+-            `VX_STATIC_ASSERT(TAG_WIDTH == LMEM_LOCAL_TAG_WIDTH + 1, ("invalid naive output commit tag width"))
++            `VX_STATIC_ASSERT(TAG_WIDTH == LMEM_LOCAL_TAG_WIDTH, ("invalid naive output commit tag width"))
+         end else begin : g_no_naive_output_commit
+             assign naive_output_write_commit[i] = 1'b0;
+         end
+@@ -474,10 +466,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+     wire [NUM_REQS-1:0]                 rsp_ready_out;
+ 
+ `ifdef LMEM_RSP_OMEGA_ENABLE
+-    wire [NUM_REQS-1:0] rsp_order_push;
+-    wire [NUM_REQS-1:0] rsp_order_pop = rsp_valid_out & rsp_ready_out;
+     wire [NUM_BANKS-1:0] rsp_omega_valid_in;
+     wire [NUM_BANKS-1:0] rsp_omega_ready_in;
++`ifdef LMEM_RSP_OMEGA_ORDER_ENABLED
++    wire [NUM_REQS-1:0] rsp_order_push;
++    wire [NUM_REQS-1:0] rsp_order_pop = rsp_valid_out & rsp_ready_out;
+ 
+     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_rsp_order_push
+         assign rsp_order_push[i] = req_valid_in[i] && req_ready_in[i]
+@@ -532,6 +525,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
+         end
+     end
+ 
++`else
++    assign rsp_omega_valid_in = per_bank_rsp_valid;
++    assign per_bank_rsp_ready = rsp_omega_ready_in;
++`endif
++
+     VX_stream_omega #(
+         .NUM_INPUTS    (NUM_BANKS),
+         .NUM_OUTPUTS   (NUM_REQS),

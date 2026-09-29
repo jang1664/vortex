@@ -1,0 +1,11 @@
+--- before
+
++++ after
+
+@@ -126,5 +126,4 @@
+
+             assign naive_output_write_commit[i] = per_bank_req_valid[i]
+                 && per_bank_req_ready[i] && per_bank_req_rw[i]
+-                && per_bank_req_tag[i][LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH]
+                 && (per_bank_req_tag[i][GEMM_LMEM_TAG_WIDTH-UUID_WIDTH +: LMEM_ARB_ROUTE_TAG_BITS] == LMEM_ARB_ROUTE_TAG_BITS'(2))
+                 && (per_bank_req_tag[i][GEMM_BASE_TAG_WIDTH-UUID_WIDTH +: GEMM_ARB_ROUTE_TAG_BITS] == GEMM_ARB_ROUTE_TAG_BITS'(3));

@@ -1,0 +1,17 @@
+{
+  "backends": [
+    {
+      "case": "C3",
+      "identical_app_kernel_across_M_and_RTL": true,
+      "successful_measurements": 4
+    },
+    {
+      "case": "C4",
+      "identical_app_kernel_across_M_and_RTL": true,
+      "successful_measurements": 4
+    }
+  ],
+  "shared_dependencies_checked": 95,
+  "changed_dependencies": [],
+  "valid_runs": 8
+}

@@ -1,0 +1,11 @@
+{
+  "preprocessed_selector_disable_combinations": 16,
+  "guard_and_fabric_presence_checks": "passed",
+  "unit_modes_passed": 9,
+  "blackbox_rtl_matches_worktree": true,
+  "blackbox_config_delta": [
+    "-DLMEM_REQ_OMEGA_ORDER_DISABLE",
+    "-DLMEM_RSP_OMEGA_ORDER_DISABLE"
+  ],
+  "omega_library_unchanged_from_historical": true
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "case": "C3",
+    "label": "old",
+    "omega_instances": 2,
+    "store_guard": false,
+    "response_guard": false,
+    "slr": false
+  },
+  {
+    "case": "C3",
+    "label": "current",
+    "omega_instances": 2,
+    "store_guard": false,
+    "response_guard": false,
+    "slr": false
+  },
+  {
+    "case": "C4",
+    "label": "old",
+    "omega_instances": 2,
+    "store_guard": false,
+    "response_guard": false,
+    "slr": false
+  },
+  {
+    "case": "C4",
+    "label": "current",
+    "omega_instances": 2,
+    "store_guard": false,
+    "response_guard": false,
+    "slr": false
+  }
+]

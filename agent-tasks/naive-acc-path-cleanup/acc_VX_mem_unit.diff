@@ -1,0 +1,186 @@
+--- before
+
++++ after
+
+@@ -25,6 +25,4 @@
+
+     localparam CPU_LMEM_ARB_SEL_BITS = ((1 > 1) ? $clog2(((1 + 1 - 1) / (1))) : 0);
+     localparam CPU_LMEM_TAG_WIDTH = LSU_TAG_WIDTH + CPU_LMEM_ARB_SEL_BITS;
+-    localparam GEMM_PSUM_LANES = ((32/8)*32) / LSU_WORD_SIZE;
+-    localparam LMEM_PRIORITY_TAG_WIDTH = LMEM_LOCAL_TAG_WIDTH + ((2 > 1) ? $clog2(((2 + 1 - 1) / (1))) : 0);
+     localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd1024;
+     localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd1024;
+@@ -99,8 +97,4 @@
+
+         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+     ) lmem_membus_arb_out_if[32]();
+-    VX_mem_bus_if #(
+-        .DATA_SIZE (LSU_WORD_SIZE),
+-        .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
+-    ) lmem_priority_if[32]();
+     for (genvar i = 0; i < 32; ++i) begin : g_lmem_lane_dma_arb
+         VX_mem_bus_if #(
+@@ -238,137 +232,5 @@
+
+     assign lmem_membus_arb_out_if[i].rsp_ready  = lane_arb_out_if[0].rsp_ready;
+     end
+-    for (genvar i = 0; i < 32; ++i) begin : g_lmem_priority_order
+-        VX_mem_bus_if #(
+-            .DATA_SIZE (LSU_WORD_SIZE),
+-            .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+-        ) priority_arb_in_if[2]();
+-        VX_mem_bus_if #(
+-            .DATA_SIZE (LSU_WORD_SIZE),
+-            .TAG_WIDTH (LMEM_PRIORITY_TAG_WIDTH)
+-        ) priority_arb_out_if[1]();
+-        if (i < GEMM_PSUM_LANES) begin : g_psum_write_slot
+-    /*verilator lint_off GENUNNAMED*/  
+-    assign priority_arb_in_if[0].req_valid = gemm_psum_wr_if[i].req_valid; 
+-    assign priority_arb_in_if[0].req_data.rw = gemm_psum_wr_if[i].req_data.rw; 
+-    assign priority_arb_in_if[0].req_data.addr = gemm_psum_wr_if[i].req_data.addr; 
+-    assign priority_arb_in_if[0].req_data.data = gemm_psum_wr_if[i].req_data.data; 
+-    assign priority_arb_in_if[0].req_data.byteen = gemm_psum_wr_if[i].req_data.byteen; 
+-    assign priority_arb_in_if[0].req_data.flags = gemm_psum_wr_if[i].req_data.flags; 
+-    if (LMEM_LOCAL_TAG_WIDTH != PSUM_ARB_TAG_WIDTH) begin 
+-        if (UUID_WIDTH != 0) begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_ARB_TAG_WIDTH) begin 
+-                assign priority_arb_in_if[0].req_data.tag = {gemm_psum_wr_if[i].req_data.tag.uuid, {(LMEM_LOCAL_TAG_WIDTH-PSUM_ARB_TAG_WIDTH){1'b0}}, gemm_psum_wr_if[i].req_data.tag.value}; 
+-            end else begin 
+-                assign priority_arb_in_if[0].req_data.tag = {gemm_psum_wr_if[i].req_data.tag.uuid, gemm_psum_wr_if[i].req_data.tag.value[LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH-1:0]}; 
+-            end 
+-        end else begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_ARB_TAG_WIDTH) begin 
+-                assign priority_arb_in_if[0].req_data.tag = {{(LMEM_LOCAL_TAG_WIDTH-PSUM_ARB_TAG_WIDTH){1'b0}}, gemm_psum_wr_if[i].req_data.tag}; 
+-            end else begin 
+-                assign priority_arb_in_if[0].req_data.tag = gemm_psum_wr_if[i].req_data.tag[LMEM_LOCAL_TAG_WIDTH-1:0]; 
+-            end 
+-        end 
+-    end else begin 
+-        assign priority_arb_in_if[0].req_data.tag = gemm_psum_wr_if[i].req_data.tag; 
+-    end 
+-    assign gemm_psum_wr_if[i].req_ready = priority_arb_in_if[0].req_ready; 
+-    assign gemm_psum_wr_if[i].rsp_valid = priority_arb_in_if[0].rsp_valid; 
+-    assign gemm_psum_wr_if[i].rsp_data.data = priority_arb_in_if[0].rsp_data.data; 
+-    if (LMEM_LOCAL_TAG_WIDTH != PSUM_ARB_TAG_WIDTH) begin 
+-        if (UUID_WIDTH != 0) begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_ARB_TAG_WIDTH) begin 
+-                assign gemm_psum_wr_if[i].rsp_data.tag = {priority_arb_in_if[0].rsp_data.tag.uuid, priority_arb_in_if[0].rsp_data.tag.value[PSUM_ARB_TAG_WIDTH-UUID_WIDTH-1:0]}; 
+-            end else begin 
+-                assign gemm_psum_wr_if[i].rsp_data.tag = {priority_arb_in_if[0].rsp_data.tag.uuid, {(PSUM_ARB_TAG_WIDTH-LMEM_LOCAL_TAG_WIDTH){1'b0}}, priority_arb_in_if[0].rsp_data.tag.value}; 
+-            end 
+-        end else begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_ARB_TAG_WIDTH) begin 
+-                assign gemm_psum_wr_if[i].rsp_data.tag = priority_arb_in_if[0].rsp_data.tag[PSUM_ARB_TAG_WIDTH-1:0]; 
+-            end else begin 
+-                assign gemm_psum_wr_if[i].rsp_data.tag = {{(PSUM_ARB_TAG_WIDTH-LMEM_LOCAL_TAG_WIDTH){1'b0}}, priority_arb_in_if[0].rsp_data.tag}; 
+-            end 
+-        end 
+-    end else begin 
+-        assign gemm_psum_wr_if[i].rsp_data.tag = priority_arb_in_if[0].rsp_data.tag; 
+-    end 
+-    assign priority_arb_in_if[0].rsp_ready = gemm_psum_wr_if[i].rsp_ready 
+-    /*verilator lint_off GENUNNAMED*/ ;
+-        end else begin : g_psum_read_slot
+-    /*verilator lint_off GENUNNAMED*/  
+-    assign priority_arb_in_if[0].req_valid = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_valid; 
+-    assign priority_arb_in_if[0].req_data.rw = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.rw; 
+-    assign priority_arb_in_if[0].req_data.addr = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.addr; 
+-    assign priority_arb_in_if[0].req_data.data = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.data; 
+-    assign priority_arb_in_if[0].req_data.byteen = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.byteen; 
+-    assign priority_arb_in_if[0].req_data.flags = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.flags; 
+-    if (LMEM_LOCAL_TAG_WIDTH != PSUM_LMEM_TAG_WIDTH) begin 
+-        if (UUID_WIDTH != 0) begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_LMEM_TAG_WIDTH) begin 
+-                assign priority_arb_in_if[0].req_data.tag = {gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag.uuid, {(LMEM_LOCAL_TAG_WIDTH-PSUM_LMEM_TAG_WIDTH){1'b0}}, gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag.value}; 
+-            end else begin 
+-                assign priority_arb_in_if[0].req_data.tag = {gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag.uuid, gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag.value[LMEM_LOCAL_TAG_WIDTH-UUID_WIDTH-1:0]}; 
+-            end 
+-        end else begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_LMEM_TAG_WIDTH) begin 
+-                assign priority_arb_in_if[0].req_data.tag = {{(LMEM_LOCAL_TAG_WIDTH-PSUM_LMEM_TAG_WIDTH){1'b0}}, gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag}; 
+-            end else begin 
+-                assign priority_arb_in_if[0].req_data.tag = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag[LMEM_LOCAL_TAG_WIDTH-1:0]; 
+-            end 
+-        end 
+-    end else begin 
+-        assign priority_arb_in_if[0].req_data.tag = gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_data.tag; 
+-    end 
+-    assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].req_ready = priority_arb_in_if[0].req_ready; 
+-    assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_valid = priority_arb_in_if[0].rsp_valid; 
+-    assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.data = priority_arb_in_if[0].rsp_data.data; 
+-    if (LMEM_LOCAL_TAG_WIDTH != PSUM_LMEM_TAG_WIDTH) begin 
+-        if (UUID_WIDTH != 0) begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_LMEM_TAG_WIDTH) begin 
+-                assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.tag = {priority_arb_in_if[0].rsp_data.tag.uuid, priority_arb_in_if[0].rsp_data.tag.value[PSUM_LMEM_TAG_WIDTH-UUID_WIDTH-1:0]}; 
+-            end else begin 
+-                assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.tag = {priority_arb_in_if[0].rsp_data.tag.uuid, {(PSUM_LMEM_TAG_WIDTH-LMEM_LOCAL_TAG_WIDTH){1'b0}}, priority_arb_in_if[0].rsp_data.tag.value}; 
+-            end 
+-        end else begin 
+-            if (LMEM_LOCAL_TAG_WIDTH > PSUM_LMEM_TAG_WIDTH) begin 
+-                assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.tag = priority_arb_in_if[0].rsp_data.tag[PSUM_LMEM_TAG_WIDTH-1:0]; 
+-            end else begin 
+-                assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.tag = {{(PSUM_LMEM_TAG_WIDTH-LMEM_LOCAL_TAG_WIDTH){1'b0}}, priority_arb_in_if[0].rsp_data.tag}; 
+-            end 
+-        end 
+-    end else begin 
+-        assign gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_data.tag = priority_arb_in_if[0].rsp_data.tag; 
+-    end 
+-    assign priority_arb_in_if[0].rsp_ready = gemm_psum_rd_if[i - GEMM_PSUM_LANES].rsp_ready 
+-    /*verilator lint_off GENUNNAMED*/ ;
+-        end
+-    assign priority_arb_in_if[1].req_valid  = lmem_membus_arb_out_if[i].req_valid; 
+-    assign priority_arb_in_if[1].req_data   = lmem_membus_arb_out_if[i].req_data; 
+-    assign lmem_membus_arb_out_if[i].req_ready  = priority_arb_in_if[1].req_ready; 
+-    assign lmem_membus_arb_out_if[i].rsp_valid  = priority_arb_in_if[1].rsp_valid; 
+-    assign lmem_membus_arb_out_if[i].rsp_data   = priority_arb_in_if[1].rsp_data; 
+-    assign priority_arb_in_if[1].rsp_ready  = lmem_membus_arb_out_if[i].rsp_ready;
+-        VX_mem_arb #(
+-            .NUM_INPUTS  (2),
+-            .NUM_OUTPUTS (1),
+-            .DATA_SIZE   (LSU_WORD_SIZE),
+-            .TAG_WIDTH   (LMEM_LOCAL_TAG_WIDTH),
+-            .TAG_SEL_IDX (LMEM_LOCAL_TAG_WIDTH - UUID_WIDTH),
+-            .REQ_OUT_BUF (3),
+-            .RSP_OUT_BUF (3),
+-            .ARBITER     ("P")
+-        ) lmem_priority_arb (
+-            .clk        (clk),
+-            .reset      (reset),
+-            .bus_in_if  (priority_arb_in_if),
+-            .bus_out_if (priority_arb_out_if)
+-        );
+-    assign lmem_priority_if[i].req_valid  = priority_arb_out_if[0].req_valid; 
+-    assign lmem_priority_if[i].req_data   = priority_arb_out_if[0].req_data; 
+-    assign priority_arb_out_if[0].req_ready  = lmem_priority_if[i].req_ready; 
+-    assign priority_arb_out_if[0].rsp_valid  = lmem_priority_if[i].rsp_valid; 
+-    assign priority_arb_out_if[0].rsp_data   = lmem_priority_if[i].rsp_data; 
+-    assign lmem_priority_if[i].rsp_ready  = priority_arb_out_if[0].rsp_ready;
+-    end
+-    for (genvar i = GEMM_PSUM_LANES; i < 32; ++i) begin : g_unused_psum_ports
++    for (genvar i = 0; i < 32; ++i) begin : g_unused_acc_psum_ports
+     assign gemm_psum_wr_if[i].req_ready = 0; 
+     assign gemm_psum_wr_if[i].rsp_valid = 0; 
+@@ -385,5 +247,5 @@
+
+         .WORD_SIZE  (LSU_WORD_SIZE),
+         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
+-        .TAG_WIDTH  (LMEM_PRIORITY_TAG_WIDTH),
++        .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
+         .OUT_BUF    (3)
+         ,.NAIVE_OUTPUT_COMMIT(1)
+@@ -393,5 +255,5 @@
+
+         .naive_output_write_commit(naive_output_write_commit),
+         .lmem_perf  (lmem_perf),
+-        .mem_bus_if (lmem_priority_if)
++        .mem_bus_if (lmem_membus_arb_out_if)
+     );
+     VX_lsu_mem_if #(
+@@ -414,5 +276,5 @@
+
+         .RESETW ($bits(coalescer_perf.misses)), 
+         .DEPTH  (1) 
+-    ) __buffer_ex336 ( 
++    ) __buffer_ex337 ( 
+         .clk      (clk), 
+         .reset    (reset), 

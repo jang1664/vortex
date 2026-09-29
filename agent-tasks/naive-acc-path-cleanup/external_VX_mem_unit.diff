@@ -1,0 +1,12 @@
+--- before
+
++++ after
+
+@@ -411,5 +411,5 @@
+
+         .RESETW ($bits(coalescer_perf.misses)), 
+         .DEPTH  (1) 
+-    ) __buffer_ex336 ( 
++    ) __buffer_ex337 ( 
+         .clk      (clk), 
+         .reset    (reset), 

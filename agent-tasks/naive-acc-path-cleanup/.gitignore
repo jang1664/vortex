@@ -1,0 +1,6 @@
+logs/
+artifacts
+__pycache__/
+!summary.json
+!static_audit.json
+!integrity_audit.json

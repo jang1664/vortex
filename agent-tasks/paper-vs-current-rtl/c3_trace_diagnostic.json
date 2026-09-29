@@ -1,0 +1,12 @@
+{
+  "excluded_from_primary": true,
+  "trace": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/paper-vs-current-rtl/logs/C3_off/debug_m256/simv.log",
+  "events": {
+    "GEMM_FSM_STATE_TRANSITION": 109,
+    "GEMM_START": 55,
+    "GEMM_DONE": 54
+  },
+  "first_event_ps": 119045000,
+  "last_event_ps": 614715000,
+  "interpretation": "Repeated compute completions prove forward progress during diagnostic; timeout is not evidence of deadlock. Full primary completion remains required."
+}

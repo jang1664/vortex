@@ -1,0 +1,49 @@
+[
+  {
+    "variant": "C1_old",
+    "allowed_define_difference": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C1_current",
+    "allowed_define_difference": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C3_old",
+    "allowed_define_difference": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C3_off",
+    "allowed_define_difference": [
+      "-DGEMM_NAIVE_USE_ACC_MEM"
+    ],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C3_on",
+    "allowed_define_difference": [
+      "-DGEMM_NAIVE_USE_ACC_MEM",
+      "-DGEMM_SLR_PIPELINE"
+    ],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C4_old",
+    "allowed_define_difference": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C4_off",
+    "allowed_define_difference": [],
+    "config_hash_verified": true
+  },
+  {
+    "variant": "C4_on",
+    "allowed_define_difference": [
+      "-DGEMM_SLR_PIPELINE"
+    ],
+    "config_hash_verified": true
+  }
+]

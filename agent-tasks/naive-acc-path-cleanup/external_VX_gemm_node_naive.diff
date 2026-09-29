@@ -1,0 +1,44 @@
+--- before
+
++++ after
+
+@@ -63,12 +63,15 @@
+
+     ) o_gemm_bus_if ();
+     VX_mem_bus_if #(
+-      .DATA_SIZE(((32/8)*32)),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) psum_rd_wide_bus_if (), psum_rd_raw_bus_if (),
+-      psum_wr_wide_bus_if (), psum_wr_marked_bus_if (), psum_wr_raw_bus_if ();
++      .DATA_SIZE(((32/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) psum_rd_raw_bus_if (), psum_wr_raw_bus_if ();
+     VX_mem_bus_if #(
+-      .DATA_SIZE(((16/8)*32)),
+-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-    ) final_wide_bus_if (), final_raw_bus_if ();
++      .DATA_SIZE(((16/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) final_raw_bus_if ();
++    VX_mem_bus_if #(
++      .DATA_SIZE(((32/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) psum_rd_wide_bus_if (), psum_wr_wide_bus_if (), psum_wr_marked_bus_if ();
++    VX_mem_bus_if #(
++      .DATA_SIZE(((16/8)*32)), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
++    ) final_wide_bus_if ();
+     VX_mem_bus_if # (
+       .DATA_SIZE(LSU_WORD_SIZE),
+@@ -417,5 +420,5 @@
+
+         .DATA_SIZE(LSU_WORD_SIZE),
+         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+-      ) lane_arb_in_if [5] ();
++      ) lane_arb_in_if [GEMM_ARB_INPUTS] ();
+       VX_mem_bus_if #(
+         .DATA_SIZE(LSU_WORD_SIZE),
+@@ -474,5 +477,5 @@
+
+       assign lane_arb_in_if[4].rsp_ready = 1'b1;
+       VX_mem_arb #(
+-        .NUM_INPUTS(5),
++        .NUM_INPUTS(GEMM_ARB_INPUTS),
+         .NUM_OUTPUTS(1),
+         .DATA_SIZE(LSU_WORD_SIZE),

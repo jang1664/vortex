@@ -1,0 +1,17 @@
+{
+  "hw/rtl/core/gemm/VX_gemm_ctrl.sv": {
+    "93f4ae97d": "552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892",
+    "391b45d39": "552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892",
+    "18ab7f92b": "552b34a520d3943b91598b981574dd085e26ab61ba888ef8ad9e4cd6cf76b892"
+  },
+  "hw/rtl/core/gemm/VX_gemm_ctrl_naive.sv": {
+    "93f4ae97d": "ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf",
+    "391b45d39": "ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf",
+    "18ab7f92b": "ec8e355cb7fb399555304537dff82059cb1ff89faac1ef7d5d21491fbebc78bf"
+  },
+  "hw/rtl/core/VX_csr_data.sv": {
+    "93f4ae97d": "6403dd408b281c0f1a6ff780cd7593fbf1f203a0ce2070d68a8d9846a17ae1a2",
+    "391b45d39": "6403dd408b281c0f1a6ff780cd7593fbf1f203a0ce2070d68a8d9846a17ae1a2",
+    "18ab7f92b": "6403dd408b281c0f1a6ff780cd7593fbf1f203a0ce2070d68a8d9846a17ae1a2"
+  }
+}

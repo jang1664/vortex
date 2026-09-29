@@ -1,0 +1,15 @@
+{
+  "diagnostic_only": true,
+  "commit_events": 26854,
+  "first_commit_ps": 6365000,
+  "last_commit_ps": 763085000,
+  "warps_with_commits": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "distinct_commit_pcs": 1040,
+  "halfword_store_dispatch_events": 79,
+  "interpretation": "Instructions and output stores progressed during the captured window; this does not establish full M256 completion."
+}

@@ -1,0 +1,80 @@
+[
+  {
+    "mode": "acc",
+    "module": "hw/rtl/core/VX_mem_unit.sv",
+    "diff_lines": 186,
+    "active_after": {
+      "lmem_priority_arb": false,
+      "psum_wr_queue": false,
+      "final_wr_queue": false,
+      "psum_rd_lane_split": false,
+      "g_psum_lane_arb": false,
+      "gemm_done_pending_r": false
+    }
+  },
+  {
+    "mode": "acc",
+    "module": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+    "diff_lines": 413,
+    "active_after": {
+      "lmem_priority_arb": false,
+      "psum_wr_queue": false,
+      "final_wr_queue": false,
+      "psum_rd_lane_split": false,
+      "g_psum_lane_arb": false,
+      "gemm_done_pending_r": false
+    }
+  },
+  {
+    "mode": "acc",
+    "module": "hw/rtl/mem/VX_local_mem.sv",
+    "diff_lines": 11,
+    "active_after": {
+      "lmem_priority_arb": false,
+      "psum_wr_queue": false,
+      "final_wr_queue": false,
+      "psum_rd_lane_split": false,
+      "g_psum_lane_arb": false,
+      "gemm_done_pending_r": false
+    }
+  },
+  {
+    "mode": "external",
+    "module": "hw/rtl/core/VX_mem_unit.sv",
+    "diff_lines": 12,
+    "active_after": {
+      "lmem_priority_arb": true,
+      "psum_wr_queue": false,
+      "final_wr_queue": false,
+      "psum_rd_lane_split": false,
+      "g_psum_lane_arb": false,
+      "gemm_done_pending_r": false
+    }
+  },
+  {
+    "mode": "external",
+    "module": "hw/rtl/core/gemm/VX_gemm_node_naive.sv",
+    "diff_lines": 44,
+    "active_after": {
+      "lmem_priority_arb": false,
+      "psum_wr_queue": true,
+      "final_wr_queue": true,
+      "psum_rd_lane_split": true,
+      "g_psum_lane_arb": true,
+      "gemm_done_pending_r": true
+    }
+  },
+  {
+    "mode": "external",
+    "module": "hw/rtl/mem/VX_local_mem.sv",
+    "diff_lines": 0,
+    "active_after": {
+      "lmem_priority_arb": false,
+      "psum_wr_queue": false,
+      "final_wr_queue": false,
+      "psum_rd_lane_split": false,
+      "g_psum_lane_arb": false,
+      "gemm_done_pending_r": false
+    }
+  }
+]

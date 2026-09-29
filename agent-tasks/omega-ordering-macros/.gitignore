@@ -1,0 +1,7 @@
+logs/
+blackbox/logs/
+blackbox/artifacts
+__pycache__/
+!audit.json
+!unit_results.json
+!blackbox/summary.json
