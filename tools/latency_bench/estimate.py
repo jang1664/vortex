@@ -232,6 +232,8 @@ def _group_value(row: pd.Series, column: str) -> str:
 
 
 def _group_key(row: pd.Series, columns: tuple[str, ...]) -> tuple[str, ...]:
+    if _group_value(row, "selection_digest"):
+        columns = tuple(dict.fromkeys((*columns, "selection_digest", "expected_xclbin_sha256")))
     return tuple(_group_value(row, column) for column in columns)
 
 

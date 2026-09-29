@@ -17,7 +17,9 @@ from .suite import (
     sanitize_id,
     suite_to_expanded_yaml,
 )
-from .yaml_io import safe_dump
+from .yaml_io import safe_load
+from .suite_io import write_suite_payload
+from .candidate_map import resolve_candidate_map
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ class GenerateSuitesOptions:
     fpga_bin_by_backend: tuple[tuple[str, str], ...] = ()
     fpga_bin_by_kind: tuple[tuple[str, str], ...] = ()
     dump_model_structures: bool = False
+    output_format: str = "yaml"
+    candidate_map: Path | None = None
 
 
 def _case_without_fpga_bin(case: BenchCase) -> BenchCase:
@@ -126,6 +130,11 @@ def _write_model_structure_dumps(
 
 
 def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
+    if options.output_format not in ("yaml", "pkl"):
+        raise ValueError("output format must be yaml or pkl")
+    if options.candidate_map and options.fpga_bin_remaps:
+        raise ValueError("candidate-map cannot be combined with FPGA bin remaps")
+    experiment = resolve_candidate_map(options.candidate_map) if options.candidate_map else {}
     repo_root = options.repo_root or find_repo_root()
     matrix_overrides = SuiteMatrixOverrides(
         batch_values=tuple(options.batch_values),
@@ -145,13 +154,21 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         matrix_overrides=matrix_overrides,
     )
     source_suite = _apply_fpga_bin_overrides(loaded.suite, options)
+    experiment = experiment or source_suite.experiment
     out_dir = options.out_dir.expanduser().resolve()
+    if (out_dir / "index.yaml").exists():
+        with (out_dir / "index.yaml").open() as source:
+            previous = safe_load(source) or {}
+        if previous.get("experiment", {}) != experiment:
+            raise ValueError("output contains a different FPGA selection; use a new experiment directory")
     fpga_bin_remaps = dict(options.fpga_bin_remaps)
 
     groups: dict[tuple[str, str], list[BenchCase]] = {}
     for case in source_suite.cases:
         fpga_bin = resolve_case_fpga_bin(source_suite, case)
         fpga_bin = fpga_bin_remaps.get(fpga_bin, fpga_bin)
+        if experiment and fpga_bin not in experiment["candidates"]:
+            raise ValueError(f"unmapped execution source: {fpga_bin}")
         groups.setdefault((case.app, fpga_bin), []).append(case)
 
     generated_specs: list[tuple[Path, BenchSuite, str, str]] = []
@@ -159,10 +176,11 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         name = _group_name(source_suite.name, app, fpga_bin)
         generated_suite = BenchSuite(
             name=name,
+            experiment=experiment,
             defaults=BenchDefaults(**{**source_suite.defaults.__dict__, "app": app, "fpga_bin": fpga_bin}),
             cases=[_case_without_fpga_bin(case) for case in groups[(app, fpga_bin)]],
         )
-        generated_specs.append((out_dir / f"{name}.yaml", generated_suite, app, fpga_bin))
+        generated_specs.append((out_dir / f"{name}.{options.output_format}", generated_suite, app, fpga_bin))
 
     index_path = out_dir / "index.yaml"
     targets = [index_path, *(path for path, _suite, _app, _fpga_bin in generated_specs)]
@@ -182,6 +200,8 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         "base_suite": str(options.suite.expanduser().resolve()),
         "output_dir": str(out_dir),
         "generated": [],
+        "output_format": options.output_format,
+        "experiment": experiment,
     }
     if options.dump_model_structures:
         index["model_structures"] = _write_model_structure_dumps(
@@ -190,8 +210,7 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
             loaded.workload_structures,
         )
     for suite_path, generated_suite, app, fpga_bin in generated_specs:
-        with suite_path.open("w") as fp:
-            safe_dump(suite_to_expanded_yaml(generated_suite), fp, sort_keys=False)
+        write_suite_payload(suite_path, suite_to_expanded_yaml(generated_suite))
         kinds = sorted({case.kind for case in generated_suite.cases if case.kind})
         backends = sorted({case.backend for case in generated_suite.cases if case.backend})
         index["generated"].append({
@@ -205,6 +224,5 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
             "run_command": _run_command(suite_path, out_dir / generated_suite.name),
         })
 
-    with index_path.open("w") as fp:
-        safe_dump(index, fp, sort_keys=False)
+    write_suite_payload(index_path, index)
     return index

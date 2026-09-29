@@ -33,6 +33,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  hw_emu    - Run only hw_emu tests"
   echo "  hw        - Run only hw tests"
   echo "Options:"
+  echo "  --build-only, --run-only, --log=PATH"
+  echo "      Hardware bench build/run phases and blackbox log path"
   echo "  --cores N"
   echo "      Override NUM_CORES with a positive integer"
   echo "  --hw-debug, --enable-hw-debug-module"
@@ -87,6 +89,7 @@ FPGA_BIN=improve_tcol1
 FPGA_BIN_DIR=""
 FPGA_BIN_CONFIGS=""
 BENCH_FLAG=""
+HW_BLACKBOX_FLAGS=()
 PERF_FLAG=""
 DEBUG_FLAG=""
 HW_DEBUG=0
@@ -265,6 +268,18 @@ append_power_args() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --app=*)
+      APP="${1#*=}"
+      shift
+      ;;
+    --args=*)
+      ARGS="${1#*=}"
+      shift
+      ;;
+    --build-only|--run-only|--log=*)
+      HW_BLACKBOX_FLAGS+=("$1")
+      shift
+      ;;
     --app)
       APP="$2"
       shift 2
@@ -619,6 +634,10 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
     CONFIGS="$(append_run_configs "${CONFIGS:-}")"
   fi
   echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
+  HW_BLACKBOX_ARGS=""
+  if [[ ${#HW_BLACKBOX_FLAGS[@]} -gt 0 ]]; then
+    printf -v HW_BLACKBOX_ARGS '%q ' "${HW_BLACKBOX_FLAGS[@]}"
+  fi
   HW_COMMAND="\
   source \"${XRT_DEVICE_DETECTOR}\"; \
   if [[ -z \"\${XRT_INI_PATH:-}\" ]]; then \
@@ -650,7 +669,7 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\" ${HW_BLACKBOX_ARGS}
   "
   if [[ "${USE_SRUN}" == "1" && -z "${SLURM_JOB_ID:-}${SLURM_STEP_ID:-}" ]]; then
     srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "${HW_COMMAND}"

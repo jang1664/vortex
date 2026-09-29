@@ -23,7 +23,7 @@ Examples:
 
 Environment overrides:
   STAGES="prefill generation"
-  FPGA_BINS="naive_gemm_tcol32 naive_simd improve_tcol32"  # restrict generated bins
+  FPGA_BINS="C1 C3 C4"  # restrict generated bins
 EOF
 }
 
@@ -143,75 +143,8 @@ fi
 
 STAGES="${STAGES:-prefill generation}"
 
-if [[ -z "${FPGA_BINS:-}" ]]; then
-  fpga_bins=()
-  for stage in ${STAGES}; do
-    case "${stage}" in
-      prefill|generation)
-        ;;
-      *)
-        echo "ERROR: unsupported stage: ${stage}" >&2
-        exit 1
-        ;;
-    esac
-
-    shopt -s nullglob
-    suites=("${INPUT_DIR}/${stage}_merged/${stage}_merged_"*.yaml)
-    shopt -u nullglob
-
-    if [[ ${#suites[@]} -eq 0 ]]; then
-      echo "ERROR: no merged suites found for ${stage}: ${INPUT_DIR}/${stage}_merged/${stage}_merged_*.yaml" >&2
-      exit 1
-    fi
-
-    for suite in "${suites[@]}"; do
-      fpga_bin="$(basename "${suite}")"
-      fpga_bin="${fpga_bin#${stage}_merged_}"
-      fpga_bin="${fpga_bin%.yaml}"
-
-      seen=0
-      for existing in "${fpga_bins[@]}"; do
-        if [[ "${existing}" == "${fpga_bin}" ]]; then
-          seen=1
-          break
-        fi
-      done
-      if [[ ${seen} -eq 0 ]]; then
-        fpga_bins+=("${fpga_bin}")
-      fi
-    done
-  done
-  FPGA_BINS="${fpga_bins[*]}"
-fi
-
-echo "Running on HW"
-echo "INPUT_DIR=${INPUT_DIR}"
-echo "OUTPUT_DIR=${OUTPUT_DIR}"
-echo "STAGES=${STAGES}"
-echo "FPGA_BINS=${FPGA_BINS}"
-
-for stage in ${STAGES}; do
-  case "${stage}" in
-    prefill|generation)
-      ;;
-    *)
-      echo "ERROR: unsupported stage: ${stage}" >&2
-      exit 1
-      ;;
-  esac
-
-  echo "STAGE=${stage}"
-  for fpga_bin in ${FPGA_BINS}; do
-    suite="${INPUT_DIR}/${stage}_merged/${stage}_merged_${fpga_bin}.yaml"
-    out_dir="${OUTPUT_DIR}/${fpga_bin}"
-
-    if [[ ! -f "${suite}" ]]; then
-      echo "ERROR: suite not found for ${stage}/${fpga_bin}: ${suite}" >&2
-      exit 1
-    fi
-
-    echo "FPGA_BIN=${fpga_bin} SUITE=${suite} OUT_DIR=${out_dir}"
-    STAGE="${stage}" SUITE="${suite}" OUT_DIR="${out_dir}" \
-      "${SCRIPT_DIR}/run_fpga_bin.sh" "${fpga_bin}" "${pass_args[@]}"
-  done
-done
+PYTHON_BIN="${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}"
+if [[ ! -x "${PYTHON_BIN}" ]]; then PYTHON_BIN="python3"; fi
+export STAGES
+exec "${PYTHON_BIN}" "${SCRIPT_DIR}/workflow.py" run \
+  --input "${INPUT_DIR}" --output "${OUTPUT_DIR}" "${pass_args[@]}"

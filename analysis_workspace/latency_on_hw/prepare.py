@@ -15,6 +15,7 @@ interpolation must already be resolved by ``run_compose.py``.
 """
 
 import argparse
+import json
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -45,6 +46,7 @@ for path in (REPO_ROOT, LATENCY_DIR):
 import tools.latency_bench.plot as latency_plot_module
 from tools.latency_bench.compose import LatencyScaleRule, apply_latency_scale_rules
 from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data_versions
+from tools.latency_bench.report import sha256_file
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
 from energy_per_token import (
     DEFAULT_FPGA_PERIOD_S,
@@ -56,6 +58,7 @@ from energy_per_token import (
 )
 import plot as plot_script
 
+EXCEL_FIGURE_DATA_CSV = plot_script.EXCEL_FIGURE_DATA_CSV
 FPGA_IDLE_POWER = 0.854 * 6.300 + 0.852 * 0.200
 
 OUTPUT_FOLDER = "output_figure"
@@ -374,6 +377,9 @@ def suite_file_order(model: str) -> list[str]:
 
 
 def _generated_suite_files(directory: Path) -> list[Path]:
+    from tools.latency_bench.suite_io import indexed_suites
+    if (directory / "index.yaml").is_file():
+        return [path for _, path in indexed_suites(directory / "index.yaml")]
     return [path for path in sorted(directory.glob("*.yaml")) if path.name != "index.yaml"]
 
 
@@ -899,6 +905,9 @@ def _build_total_provenance(composed: pd.DataFrame, merge_keys: list[str]) -> pd
             original_selected_run_ids=_join_unique(group.get("selected_run_id", pd.Series(dtype=str))),
             original_selected_timestamp_utc=_join_unique(group.get("selected_timestamp_utc", pd.Series(dtype=str))),
             original_source_fpga_bin_labels=_join_unique(group.get("source_fpga_bin_labels", pd.Series(dtype=str))),
+            original_source_fpga_bin_aliases=_join_unique(group.get("source_fpga_bin_aliases", pd.Series(dtype=str))),
+            original_source_fpga_bin_dirs=_join_unique(group.get("source_fpga_bin_dirs", pd.Series(dtype=str))),
+            selection_digest=_join_unique(group.get("selection_digest", pd.Series(dtype=str))),
             original_source_xclbin_sha256s=_join_unique(group.get("source_xclbin_sha256s", pd.Series(dtype=str))),
             original_source_suites=_join_unique(group.get("source_suites", pd.Series(dtype=str))),
             original_estimate_source_case_ids=_join_unique(group.get("estimate_source_case_id", pd.Series(dtype=str))),
@@ -988,6 +997,7 @@ def _build_total_csv_frame(result: PlotRunResult) -> pd.DataFrame:
         "original_compose_statuses", "original_source_suites", "original_source_raw_dbs",
         "original_source_run_ids", "original_selected_run_ids", "original_selected_timestamp_utc",
         "original_source_fpga_bin_labels", "original_source_xclbin_sha256s",
+        "original_source_fpga_bin_aliases", "original_source_fpga_bin_dirs", "selection_digest",
         "estimate_model", "estimate_basis", "estimate_selected_by", "estimate_mode", "estimate_group",
         "estimate_source_case_id", "estimate_source_raw_dbs",
         "original_estimate_source_case_ids", "original_estimate_source_raw_dbs",
@@ -2243,6 +2253,59 @@ def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
         )
 
 
+def _validate_exact_model_input(frame: pd.DataFrame, model: str) -> None:
+    models = sorted(frame["model"].dropna().astype(str).unique())
+    if models != [model]:
+        raise ValueError(
+            f"exact model input for {model!r} contains models {models}; "
+            "pass that model's receipt-selected composed artifact"
+        )
+
+
+def prepared_model_output_paths(
+    model: str,
+    *,
+    output_root: Path | None = None,
+) -> tuple[Path, ...]:
+    """Declare every CSV and manifest emitted by one model prepare task."""
+
+    root = FIGURE_OUTPUT_ROOT if output_root is None else Path(output_root)
+    latency_names = (
+        main_out_name(model),
+        e2e_no_area_norm_out_name(model),
+        e2e_stacked_out_name(model),
+        e2e_gemm_layout_stacked_out_name(model),
+        e2e_no_area_norm_stacked_out_name(model),
+        gemm_only_out_name(model),
+        gemm_only_no_area_norm_out_name(model),
+    )
+    outputs: list[Path] = []
+    for name in latency_names:
+        outputs.extend(
+            (
+                root / name / EXCEL_FIGURE_DATA_CSV,
+                root / name / TOTAL_CSV_NAME,
+            )
+        )
+    if PREPARE_ENERGY:
+        for power_metric in ENERGY_POWER_METRICS:
+            for name in (
+                energy_out_name(model, power_metric),
+                energy_stacked_out_name(model, power_metric),
+                energy_gemm_layout_vector_stacked_out_name(model, power_metric),
+                gemm_only_energy_out_name(model, power_metric),
+                energy_no_area_norm_out_name(model, power_metric),
+                energy_no_area_norm_stacked_out_name(model, power_metric),
+                energy_no_area_norm_gemm_layout_vector_stacked_out_name(
+                    model, power_metric
+                ),
+                gemm_only_energy_no_area_norm_out_name(model, power_metric),
+            ):
+                outputs.append(root / name / EXCEL_FIGURE_DATA_CSV)
+    outputs.append(root / f"prepare_manifest.{model}.json")
+    return tuple(outputs)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare plot CSVs from a complete combined composed.csv."
@@ -2266,12 +2329,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Prepared figure-data root; defaults to output_figure/figures_prepare.",
     )
+    parser.add_argument(
+        "--exact-model-input",
+        action="store_true",
+        help=(
+            "Require --composed-csv to contain only the single selected model. "
+            "The resumable pipeline uses this to prevent sibling substitution."
+        ),
+    )
     return parser
-
-
-def _model_composed_path(combined_path: Path, model: str) -> Path:
-    candidate = combined_path.parent.parent / model / combined_path.name
-    return candidate if candidate.is_file() else combined_path
 
 
 def _run_model_prepare_process(
@@ -2285,7 +2351,7 @@ def _run_model_prepare_process(
         sys.executable,
         str(Path(__file__).resolve()),
         "--composed-csv",
-        str(_model_composed_path(composed_csv, model)),
+        str(composed_csv),
         "--out-tokens",
         str(out_tokens),
         "--models",
@@ -2314,6 +2380,8 @@ def main(argv: list[str] | None = None) -> int:
             f"invalid --models selection {selected_models}; "
             f"configured models: {TARGET_MODELS}"
         )
+    if args.exact_model_input and len(selected_models) != 1:
+        raise ValueError("--exact-model-input requires exactly one --models value")
     workers = min(len(selected_models), 4) if args.workers == 0 else args.workers
     if workers < 1:
         raise ValueError(f"--workers must be >= 0, got {args.workers}")
@@ -2341,6 +2409,8 @@ def main(argv: list[str] | None = None) -> int:
     _configure_out_tokens(args.out_tokens)
     COMPOSED_INPUT = pd.read_csv(args.composed_csv)
     _validate_prepare_composed(COMPOSED_INPUT, args.out_tokens)
+    if args.exact_model_input:
+        _validate_exact_model_input(COMPOSED_INPUT, selected_models[0])
 
     print(f"target model: {TARGET_MODEL}")
     print(f"target models: {selected_models}")
@@ -2353,6 +2423,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     prepared_outputs = []
+    prepared_by_model: dict[str, list[Path]] = {}
     for model in selected_models:
         suite_tag = suite_tag_for_model(model)
         main_name = main_out_name(model)
@@ -2491,8 +2562,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        prepared_outputs.extend(
-            [
+        model_outputs = [
                 figure_data_path(main_name),
                 total_data_path(main_name),
                 figure_data_path(no_area_norm_name),
@@ -2534,7 +2604,8 @@ def main(argv: list[str] | None = None) -> int:
                     for energy_name in gemm_only_energy_no_area_norm_names
                 ),
             ]
-        )
+        prepared_outputs.extend(model_outputs)
+        prepared_by_model[model] = model_outputs
 
     if BUILD_LLAMA_COMPARE:
         llama_compare_speedup = load_or_build_llama_compare_speedup()
@@ -2548,6 +2619,36 @@ def main(argv: list[str] | None = None) -> int:
         if not path.exists():
             raise FileNotFoundError(path)
         print(f"prepared {path}")
+    for model, paths in prepared_by_model.items():
+        manifest_path = FIGURE_OUTPUT_ROOT / f"prepare_manifest.{model}.json"
+        declared = set(
+            prepared_model_output_paths(model, output_root=FIGURE_OUTPUT_ROOT)
+        ) - {manifest_path}
+        if set(paths) != declared:
+            missing = sorted(str(path) for path in declared - set(paths))
+            extra = sorted(str(path) for path in set(paths) - declared)
+            raise RuntimeError(
+                f"prepared output declaration drift for {model}: "
+                f"missing={missing}, extra={extra}"
+            )
+        manifest = {
+            "type": "vortex-latency-prepare-artifacts",
+            "schema_version": 1,
+            "model": model,
+            "composed_csv": str(args.composed_csv.resolve()),
+            "out_tokens": args.out_tokens,
+            "outputs": [
+                {
+                    "path": str(path.resolve()),
+                    "sha256": sha256_file(path),
+                    "size": path.stat().st_size,
+                }
+                for path in paths
+            ],
+        }
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        print(f"prepared {manifest_path}")
     return 0
 
 

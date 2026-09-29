@@ -12,6 +12,7 @@ from tools.latency_bench.fpga_bins import (
     FpgaBinAlias,
     load_fpga_bin_aliases,
     resolve_fpga_bin,
+    resolve_fpga_bin_artifacts,
     resolve_fpga_bin_config,
 )
 
@@ -88,10 +89,63 @@ aliases:
 
             self.assertEqual(bin_dir.resolve(), resolve_fpga_bin(str(bin_dir)))
 
-    def test_built_in_improve_alias_enables_bank_interleave(self) -> None:
-        config = resolve_fpga_bin_config("improve_tcol1")
+    def test_resolves_checked_alias_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bin_dir = tmp_path / "image" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "vortex_afu.xclbin").write_bytes(b"xclbin")
+            (bin_dir.parent / "manifest.json").write_text("{}\n")
+            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
+            self._write_alias_map(alias_map, bin_dir)
 
-        self.assertEqual((Path(__file__).resolve().parents[2] / "configs" / "improve_tcol1.sh").resolve(), config.configs)
+            artifacts = resolve_fpga_bin_artifacts(
+                "test_alias", alias_map_path=alias_map, require_alias=True
+            )
+
+            self.assertEqual("test_alias", artifacts.alias)
+            self.assertEqual(bin_dir.resolve(), artifacts.bin_dir)
+            self.assertEqual((bin_dir.parent / "manifest.json").resolve(), artifacts.manifest)
+            self.assertEqual((bin_dir / "vortex_afu.xclbin").resolve(), artifacts.xclbin)
+
+    def test_checked_alias_artifacts_fail_closed_for_missing_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            missing_bin_dir = tmp_path / "missing" / "bin"
+            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
+            self._write_alias_map(alias_map, missing_bin_dir)
+
+            with self.assertRaisesRegex(
+                FileNotFoundError,
+                "alias 'test_alias' image directory is unavailable",
+            ):
+                resolve_fpga_bin_artifacts(
+                    "test_alias", alias_map_path=alias_map, require_alias=True
+                )
+
+    def test_checked_alias_artifacts_reject_non_alias_when_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bin_dir = tmp_path / "image" / "bin"
+            bin_dir.mkdir(parents=True)
+            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
+            self._write_alias_map(alias_map, bin_dir)
+
+            with self.assertRaisesRegex(ValueError, "is not an alias"):
+                resolve_fpga_bin_artifacts(
+                    bin_dir, alias_map_path=alias_map, require_alias=True
+                )
+
+    def test_built_in_c4_alias_enables_bank_interleave(self) -> None:
+        config = resolve_fpga_bin_config("C4")
+
+        expected = (
+            Path(__file__).resolve().parents[2]
+            / "configs"
+            / "improve_th32_tcol32_hwexp_dcache.sh"
+        ).resolve()
+        self.assertEqual(expected, config.configs)
+        self.assertIn("-DBANK_INTERLEAVE", expected.read_text(encoding="utf-8"))
 
     def test_ci_resolver_script_rejects_removed_xrt_mem_map_option(self) -> None:
         proc = subprocess.run(

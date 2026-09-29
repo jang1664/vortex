@@ -15,7 +15,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .yaml_io import safe_load
+from .suite_io import read_suite_payload
+from .candidate_map import validate_snapshot
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -108,6 +109,7 @@ class BenchSuite:
     defaults: BenchDefaults
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
+    experiment: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
     source_expanded_snapshot_reusable: bool = field(default=False, repr=False, compare=False)
     source_warmup_override: int | None = field(default=None, repr=False, compare=False)
@@ -1061,8 +1063,9 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
                           matrix_overrides: SuiteMatrixOverrides | None = None,
                           collect_workload_structures: bool = False) -> LoadedSuiteArtifacts:
     repo_root = find_repo_root() if repo_root is None else repo_root
-    with path.open() as fp:
-        raw = safe_load(fp) or {}
+    raw = read_suite_payload(path)
+    experiment = raw.get("experiment") or {}
+    validate_snapshot(experiment)
     if not isinstance(raw, dict):
         raise ValueError(f"suite must be a YAML mapping: {path}")
     raw = _apply_suite_matrix_overrides(raw, matrix_overrides)
@@ -1111,9 +1114,12 @@ def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
             defaults=defaults,
             cases=cases,
             fpga_bins=dict(fpga_bins_raw),
+            experiment=experiment,
             source_path=path,
         )
     suite = _canonicalize_suite_cases(suite)
+    if experiment:
+        suite = replace(suite, cases=[replace(case, xclbin_sha256=experiment["candidates"][resolve_case_fpga_bin(suite, case)]["xclbin_sha256"]) for case in suite.cases])
     raw_cases = raw.get("cases") or []
     source_expanded_snapshot_reusable = (
         isinstance(raw_cases, list)
@@ -1263,6 +1269,8 @@ def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
         "defaults": defaults,
         "cases": cases,
     }
+    if suite.experiment:
+        out["experiment"] = suite.experiment
     if suite.fpga_bins:
         out["fpga_bins"] = suite.fpga_bins
     return out

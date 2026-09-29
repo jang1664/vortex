@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 PYTHON_BIN="${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
@@ -34,6 +36,8 @@ Override options:
   --generation-max-seq-len N     Fix generation KV-cache capacity/stride.
   --decode-measurement MODE      Generation mode: exact or sampled.
   --decode-sample-interval N     Sampling interval for sampled mode.
+  --candidate-map PATH          Candidate selection (default: local candidate_fpga_bins.yaml).
+  --output-format FORMAT        pkl (default) or yaml.
   --fpga-bin-remap OLD=NEW       Remap a resolved FPGA bin; repeat as needed.
   --fpga-bin-default BIN         Override fpga_bins.default.
   --fpga-bin-by-app APP=BIN      Override one fpga_bins.by_app entry; repeat as needed.
@@ -61,6 +65,8 @@ GENERATION_OUT_TOKENS=""
 GENERATION_MAX_SEQ_LEN=""
 DECODE_MEASUREMENT=""
 DECODE_SAMPLE_INTERVAL=""
+CANDIDATE_MAP="${CANDIDATE_MAP:-${SCRIPT_DIR}/candidate_fpga_bins.yaml}"
+OUTPUT_FORMAT="${OUTPUT_FORMAT:-pkl}"
 FPGA_BIN_REMAPS=()
 FPGA_BIN_DEFAULT=""
 FPGA_BIN_BY_APP=()
@@ -178,6 +184,11 @@ while [[ $# -gt 0 ]]; do
             DECODE_SAMPLE_INTERVAL="$2"
             shift 2
             ;;
+        --candidate-map|--output-format)
+            if [[ $# -lt 2 ]]; then echo "Error: $1 requires a value" >&2; exit 1; fi
+            if [[ "$1" == "--candidate-map" ]]; then CANDIDATE_MAP="$2"; else OUTPUT_FORMAT="$2"; fi
+            shift 2
+            ;;
         --fpga-bin-remap)
             if [[ $# -lt 2 ]]; then
                 echo "Error: $1 requires a value" >&2
@@ -278,7 +289,7 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-GENERATE_ARGS=()
+GENERATE_ARGS=(--candidate-map "${CANDIDATE_MAP}" --output-format "${OUTPUT_FORMAT}")
 if [[ -n "${BATCHES}" ]]; then
     GENERATE_ARGS+=(--batches "${BATCHES}")
 fi
@@ -343,16 +354,16 @@ find_suite() {
     printf '%s\n' "${matches[0]}"
 }
 
-clean_suite_dir() {
+prepare_suite_dir() {
     local out_dir="$1"
     mkdir -p "${out_dir}"
-    find "${out_dir}" -maxdepth 1 -type f -name '*.yaml' -delete
+    # Index readers ignore stale payloads; do not delete historical artifacts.
 }
 
 generate_suite() {
     local suite="$1"
     local out_dir="$2"
-    clean_suite_dir "${out_dir}"
+    prepare_suite_dir "${out_dir}"
     "${PYTHON_BIN}" -m tools.latency_bench generate-suites \
         --suite "${suite}" \
         --out "${out_dir}" \
@@ -380,24 +391,26 @@ generate_suite_by_suffix "generation_C3" "${OUTPUT_DIR}/C3_generation"
 # generate_suite_by_suffix "generation_C4_alone" "${OUTPUT_DIR}/C4_alone_generation"
 generate_suite_by_suffix "generation_C4_fused" "${OUTPUT_DIR}/C4_fused_generation"
 
-clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
+prepare_suite_dir "${OUTPUT_DIR}/prefill_merged"
 # C4_alone is intentionally excluded; only the fused C4 suites are merged.
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \
-    --suite-glob "${OUTPUT_DIR}/C1_prefill/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C2_prefill/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C3_prefill/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C4_fused_prefill/*.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C1_prefill/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C2_prefill/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C3_prefill/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C4_fused_prefill/index.yaml" \
     --out "${OUTPUT_DIR}/prefill_merged" \
     --group-by-fpga-bin \
+    --output-format "${OUTPUT_FORMAT}" \
     --overwrite
 
-clean_suite_dir "${OUTPUT_DIR}/generation_merged"
+prepare_suite_dir "${OUTPUT_DIR}/generation_merged"
 # C4_alone is intentionally excluded; only the fused C4 suites are merged.
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \
-    --suite-glob "${OUTPUT_DIR}/C1_generation/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C2_generation/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C3_generation/*.yaml" \
-    --suite-glob "${OUTPUT_DIR}/C4_fused_generation/*.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C1_generation/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C2_generation/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C3_generation/index.yaml" \
+    --suite-glob "${OUTPUT_DIR}/C4_fused_generation/index.yaml" \
     --out "${OUTPUT_DIR}/generation_merged" \
     --group-by-fpga-bin \
+    --output-format "${OUTPUT_FORMAT}" \
     --overwrite

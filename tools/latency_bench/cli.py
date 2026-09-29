@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import time
 from pathlib import Path
 
@@ -45,7 +46,9 @@ from .runner import (
     resolve_fpga_bin_config,
     run_suite,
 )
-from .suite import apply_case_filters, find_repo_root, load_suite
+from .fpga_bins import FpgaBinConfig
+from .suite import apply_case_filters, find_repo_root, load_suite, resolve_case_fpga_bin
+from .candidate_map import validate_run_selection, measurement_provenance
 
 
 def normalize_power_kernel_iterations(value: str | int, auto: bool = False) -> tuple[int, bool]:
@@ -86,7 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="FPGA bin alias, bin directory, or vortex_afu.xclbin path; overrides suite defaults.fpga_bin.",
     )
-    run.add_argument("--suite", required=True, help="Suite YAML path.")
+    run.add_argument("--candidate-map", type=Path, default=None)
+    run.add_argument("--suite", required=True, help="Suite YAML or trusted generated PKL path.")
     run.add_argument("--out", required=True, help="Output directory.")
     run.add_argument("--run-id", default=None, help="Optional run id under OUT/runs; default is UTC timestamp.")
     run.add_argument("--warmup", type=int, default=None, help="Override suite warmup.")
@@ -295,6 +299,21 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {','.join(DEFAULT_SKIP_EXISTING_COLUMNS)}). "
             "Measurement-environment columns such as iterations and power intervals are not supported."
         ),
+    )
+    run.add_argument(
+        "--strict-measurement-reuse",
+        action="store_true",
+        help="Use pipeline measurement completeness and acquisition compatibility checks.",
+    )
+    run.add_argument(
+        "--adopt-legacy",
+        action="store_true",
+        help="Allow only missing historical application-source identity in strict reuse mode.",
+    )
+    run.add_argument(
+        "--application-source-identity",
+        default="",
+        help="Pipeline-provided content identity for application/build inputs.",
     )
     run.add_argument(
         "--no-prebuild",
@@ -513,6 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-suites",
         help="Expand a base suite and export one runnable suite per (app, FPGA bin) group.",
     )
+    gen.add_argument("--candidate-map", type=Path, default=None)
+    gen.add_argument("--output-format", choices=("yaml", "pkl"), default="yaml")
     gen.add_argument("--suite", required=True, help="Base suite YAML path.")
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
     gen.add_argument("--overwrite", action="store_true", help="Replace existing generated suite files.")
@@ -639,9 +660,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--suite-glob",
         action="append",
         required=True,
-        help="Suite YAML glob pattern; repeat to merge multiple pattern sets. Quote patterns to let Python expand them.",
+        help="Suite YAML/PKL glob or index.yaml path; repeat to merge multiple inputs.",
     )
-    merge.add_argument("--out", required=True, help="Output YAML path, or output directory with --group-by-fpga-bin.")
+    merge.add_argument("--output-format", choices=("yaml", "pkl"), default="yaml")
+    merge.add_argument("--out", required=True, help="Output YAML/PKL path, or output directory with --group-by-fpga-bin.")
     merge.add_argument("--name", default="", help="Merged suite base name; default is derived from --out.")
     merge.add_argument("--group-by-fpga-bin", action="store_true", help="Write one merged suite per FPGA bin under --out.")
     merge.add_argument("--overwrite", action="store_true", help="Replace existing merged suite files.")
@@ -750,7 +772,27 @@ def run_cmd(args: argparse.Namespace) -> int:
     fpga_bin_label = args.fpga_bin or suite.defaults.fpga_bin
     if not fpga_bin_label:
         raise ValueError("run requires --fpga-bin unless the suite sets defaults.fpga_bin")
-    fpga_bin = resolve_fpga_bin_config(fpga_bin_label)
+    if args.candidate_map and not suite.experiment:
+        raise ValueError("--candidate-map requires a generated suite with an experiment snapshot")
+    provenance = {}
+    if suite.experiment:
+        if not args.strict_measurement_reuse:
+            validate_run_selection(suite.experiment, args.candidate_map)
+        if args.candidate_map:
+            suite = replace(suite, experiment={**suite.experiment, "candidate_map": str(args.candidate_map.resolve())})
+        if fpga_bin_label not in suite.experiment["candidates"]:
+            raise ValueError(f"unmapped execution source: {fpga_bin_label}")
+        if any(resolve_case_fpga_bin(suite, case) != fpga_bin_label for case in suite.cases):
+            raise ValueError("selected FPGA differs from generated case routing")
+        target = suite.experiment["candidates"][fpga_bin_label]
+        fpga_bin = (
+            FpgaBinConfig(Path(target["bin_dir"]), Path(target["config"]))
+            if args.strict_measurement_reuse
+            else resolve_fpga_bin_config(target["alias"])
+        )
+        provenance = measurement_provenance(suite.experiment, fpga_bin_label)
+    else:
+        fpga_bin = resolve_fpga_bin_config(fpga_bin_label)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
     blackbox_args = merge_override_args(suite.defaults.blackbox_args, args.blackbox_arg)
@@ -769,6 +811,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         build_dir=Path(args.build_dir).resolve(),
         fpga_bin_dir=fpga_bin.path,
         fpga_bin_label=fpga_bin_label,
+        provenance=provenance,
         out_dir=Path(args.out).resolve(),
         platform=platform,
         xrt_device_index=xrt_device_index,
@@ -787,6 +830,9 @@ def run_cmd(args: argparse.Namespace) -> int:
         run_id=run_id,
         skip_existing=args.skip_existing,
         skip_existing_columns=normalize_skip_existing_columns(args.skip_existing_columns),
+        strict_measurement_reuse=args.strict_measurement_reuse,
+        adopt_legacy=args.adopt_legacy,
+        application_source_identity=args.application_source_identity,
         prebuild=not args.no_prebuild,
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
@@ -986,6 +1032,8 @@ def main(argv: list[str] | None = None) -> int:
             fpga_bin_by_backend=fpga_bin_by_backend,
             fpga_bin_by_kind=fpga_bin_by_kind,
             dump_model_structures=args.dump_model_structures,
+            candidate_map=args.candidate_map,
+            output_format=args.output_format,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
         print(f"generated {len(index['generated'])} suites")
@@ -993,6 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "merge-suites":
         result = merge_suites(MergeSuitesOptions(
             suite_globs=tuple(args.suite_glob),
+            output_format=args.output_format,
             out=Path(args.out),
             name=args.name,
             group_by_fpga_bin=args.group_by_fpga_bin,

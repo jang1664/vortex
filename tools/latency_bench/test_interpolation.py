@@ -4,6 +4,7 @@ import unittest
 import argparse
 import csv
 import io
+import json
 import random
 import tempfile
 from contextlib import redirect_stdout
@@ -11,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from . import interpolation as interpolation_module
 from .interpolation import (
     bracketed_intervals,
     interpolation_group_key,
@@ -309,10 +311,12 @@ class RefineCommandTest(unittest.TestCase):
             for case, value in values:
                 row = {column: "" for column in RAW_DB_COLUMNS}
                 row.update({
+                    "run_id": "fixture-source",
                     "status": "pass",
                     "app": case.app,
                     "args": case.args,
                     "xclbin_sha256": case.xclbin_sha256,
+                    "exec_key": case.exec_key,
                     "p50_us": value,
                 })
                 writer.writerow(row)
@@ -328,6 +332,7 @@ class RefineCommandTest(unittest.TestCase):
         seed: int = 0,
         kernel_types: list[str] | None = None,
         include_extra_kernel: bool = False,
+        expected_return: int = 0,
     ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         softmax_cases = [
             _case(
@@ -398,7 +403,7 @@ class RefineCommandTest(unittest.TestCase):
                 "tools.latency_bench.interpolation._load_suite_for_raw",
                 return_value=suite,
             ), redirect_stdout(io.StringIO()):
-                self.assertEqual(0, refine_command(args))
+                self.assertEqual(expected_return, refine_command(args))
             with (root / "refine" / "iterations.csv").open(newline="") as fp:
                 history = list(csv.DictReader(fp))
             with (root / "refine" / "selections.csv").open(newline="") as fp:
@@ -413,9 +418,12 @@ class RefineCommandTest(unittest.TestCase):
         self.assertEqual("midpoint", history[0]["sampling_strategy"])
 
     def test_empty_measurement_errors_do_not_converge(self) -> None:
-        history, _ = self.run_refine(probe_has_sample=False)
+        history, _ = self.run_refine(
+            probe_has_sample=False,
+            expected_return=1,
+        )
 
-        self.assertEqual(2, len(history))
+        self.assertEqual(0, len(history))
         self.assertNotIn("converged", {item["status"] for item in history})
 
     def test_kernel_type_filter_selects_requested_type(self) -> None:
@@ -466,6 +474,481 @@ class RefineCommandTest(unittest.TestCase):
 
         self.assertEqual(expected, [item["case_id"] for item in selections])
         self.assertEqual("random", history[0]["sampling_strategy"])
+
+    def test_interruption_after_selection_writes_recovery_checkpoint(self) -> None:
+        class AbruptLoss(BaseException):
+            pass
+
+        cases = [
+            _case(
+                f"case_{length}",
+                app="softmax",
+                backend="softmax",
+                variant="v",
+                name="softmax",
+                logical_cache_length=length,
+            )
+            for length in (0, 5, 10)
+        ]
+        suite = BenchSuite("test", BenchDefaults(), cases)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main_raw = root / "raw_db.csv"
+            probe_raw = root / "probe.csv"
+            self.write_raw(main_raw, [(cases[0], 100.0), (cases[-1], 200.0)])
+            self.write_raw(probe_raw, [])
+            args = argparse.Namespace(
+                suite=str(root / "suite.yaml"),
+                output_root=None,
+                raw_db=str(main_raw),
+                probe_raw_db=None,
+                measure_command="measure {suite} {out}",
+                out=str(root / "refine"),
+                refinement_id=None,
+                target_error=0.01,
+                samples_per_iteration=2,
+                validation_samples=1,
+                max_iterations=2,
+                kernel_types=[],
+                sampling_strategy="midpoint",
+                seed=0,
+                metric="p50_us",
+                require_convergence=False,
+            )
+            with patch(
+                "tools.latency_bench.interpolation._load_suite_for_raw",
+                return_value=suite,
+            ), patch(
+                "tools.latency_bench.interpolation.run_measurement_command",
+                side_effect=AbruptLoss,
+            ), redirect_stdout(io.StringIO()), self.assertRaises(AbruptLoss):
+                refine_command(args)
+
+            checkpoint_path = root / "refine" / "recovery.json"
+            self.assertTrue(checkpoint_path.exists())
+            checkpoint = json.loads(checkpoint_path.read_text())
+            self.assertEqual(1, checkpoint["schema_version"])
+            self.assertEqual("selected", checkpoint["active_iteration"]["phase"])
+            self.assertEqual([cases[1].exec_key], checkpoint["active_iteration"]["selected_exec_keys"])
+
+
+class DurableRefinementRecoveryTest(unittest.TestCase):
+    class AbruptLoss(BaseException):
+        pass
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.cases = [
+            _case(
+                f"case_{length}",
+                app="softmax",
+                backend="softmax",
+                variant="v",
+                name="softmax",
+                logical_cache_length=length,
+            )
+            for length in (0, 2, 4, 6, 8, 10)
+        ]
+        self.suite = BenchSuite("recovery", BenchDefaults(), self.cases)
+        self.main_raw = self.root / "raw_db.csv"
+        self._write_raw(
+            self.main_raw, [(self.cases[0], 100.0), (self.cases[-1], 200.0)]
+        )
+        self.args = argparse.Namespace(
+            suite=str(self.root / "suite.yaml"),
+            output_root=None,
+            raw_db=str(self.main_raw),
+            probe_raw_db=None,
+            measure_command="fixture {suite} {out}",
+            out=str(self.root / "refine"),
+            refinement_id=None,
+            target_error=0.01,
+            samples_per_iteration=2,
+            validation_samples=2,
+            max_iterations=3,
+            kernel_types=[],
+            sampling_strategy="midpoint",
+            seed=0,
+            metric="p50_us",
+            require_convergence=False,
+        )
+        self.selected_by_suite: dict[Path, list[BenchCase]] = {}
+        self.probe_values: dict[Path, dict[str, tuple[BenchCase, float]]] = {}
+        self.measurement_exec_keys: list[str] = []
+        self._real_write_candidate_suite = interpolation_module.write_candidate_suite
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _write_raw(
+        self, path: Path, values: list[tuple[BenchCase, float]]
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=RAW_DB_COLUMNS)
+            writer.writeheader()
+            for case, value in values:
+                row = {column: "" for column in RAW_DB_COLUMNS}
+                row.update({
+                    "run_id": f"original-{case.case_id}",
+                    "status": "pass",
+                    "app": case.app,
+                    "args": case.args,
+                    "xclbin_sha256": case.xclbin_sha256,
+                    "exec_key": case.exec_key,
+                    "p50_us": value,
+                })
+                writer.writerow(row)
+
+    def _capture_suite(
+        self, suite: BenchSuite, cases: list[BenchCase], path: Path
+    ) -> None:
+        self.selected_by_suite[path] = list(cases)
+        self._real_write_candidate_suite(suite, cases, path)
+
+    def _measure(self, template: str, suite_path: Path, out_dir: Path) -> Path:
+        del template
+        selected = self.selected_by_suite[suite_path]
+        self.measurement_exec_keys.extend(case.exec_key for case in selected)
+        path = out_dir / "raw_db.csv"
+        values = self.probe_values.setdefault(path, {})
+        for case in selected:
+            length = int(case.shape["logical_cache_length"])
+            values[case.exec_key] = (case, 100.0 + 10.0 * length)
+        self._write_raw(path, list(values.values()))
+        return path
+
+    def _run(self, **patches: object) -> int:
+        active_patches = [
+            patch(
+                "tools.latency_bench.interpolation._load_suite_for_raw",
+                return_value=self.suite,
+            ),
+            patch(
+                "tools.latency_bench.interpolation.write_candidate_suite",
+                side_effect=self._capture_suite,
+            ),
+            patch(
+                "tools.latency_bench.interpolation.run_measurement_command",
+                side_effect=self._measure,
+            ),
+        ]
+        active_patches.extend(patches.values())
+        for active in active_patches:
+            active.start()
+        try:
+            with redirect_stdout(io.StringIO()):
+                return refine_command(self.args)
+        finally:
+            for active in reversed(active_patches):
+                active.stop()
+
+    def _checkpoint(self) -> dict[str, object]:
+        return json.loads((self.root / "refine" / "recovery.json").read_text())
+
+    def test_every_saved_boundary_resumes_once_with_original_errors(self) -> None:
+        self.assertEqual(0, self._run())
+        reference_errors = self._checkpoint()["errors"]
+        self.assertEqual(2, len(self.measurement_exec_keys))
+
+        for boundary in ("selected", "probed", "promoted", "committed", "partial"):
+            with self.subTest(boundary=boundary):
+                self.tearDown()
+                self.setUp()
+                crashed = False
+                if boundary in {"selected", "probed", "committed"}:
+                    real_save = interpolation_module._save_recovery_checkpoint
+
+                    def save_then_crash(path, checkpoint, *, wanted=boundary):
+                        nonlocal crashed
+                        real_save(path, checkpoint)
+                        if not crashed and checkpoint["phase"] == wanted:
+                            crashed = True
+                            raise self.AbruptLoss()
+
+                    injected = patch(
+                        "tools.latency_bench.interpolation._save_recovery_checkpoint",
+                        side_effect=save_then_crash,
+                    )
+                elif boundary == "promoted":
+                    real_promote = interpolation_module.promote_probe_rows
+
+                    def promote_then_crash(*args, **kwargs):
+                        nonlocal crashed
+                        result = real_promote(*args, **kwargs)
+                        if not crashed:
+                            crashed = True
+                            raise self.AbruptLoss()
+                        return result
+
+                    injected = patch(
+                        "tools.latency_bench.interpolation.promote_probe_rows",
+                        side_effect=promote_then_crash,
+                    )
+                else:
+                    normal_measure = self._measure
+
+                    def partial_then_crash(template, suite_path, out_dir):
+                        nonlocal crashed
+                        if crashed:
+                            return normal_measure(template, suite_path, out_dir)
+                        crashed = True
+                        selected = self.selected_by_suite[suite_path]
+                        self.measurement_exec_keys.append(selected[0].exec_key)
+                        path = out_dir / "raw_db.csv"
+                        self.probe_values[path] = {
+                            selected[0].exec_key: (
+                                selected[0],
+                                100.0
+                                + 10.0 * int(selected[0].shape["logical_cache_length"]),
+                            )
+                        }
+                        self._write_raw(path, list(self.probe_values[path].values()))
+                        raise self.AbruptLoss()
+
+                    injected = patch(
+                        "tools.latency_bench.interpolation.run_measurement_command",
+                        side_effect=partial_then_crash,
+                    )
+                with self.assertRaises(self.AbruptLoss):
+                    self._run(injected=injected)
+                self.assertEqual(0, self._run())
+                checkpoint = self._checkpoint()
+                self.assertEqual(1, checkpoint["completed_budget"])
+                self.assertEqual(1, len(checkpoint["history"]))
+                self.assertEqual(reference_errors, checkpoint["errors"])
+                self.assertEqual(2, len(self.measurement_exec_keys))
+                with self.main_raw.open(newline="") as source:
+                    promoted = [
+                        row for row in csv.DictReader(source)
+                        if row["exec_key"] in set(self.measurement_exec_keys)
+                    ]
+                self.assertEqual(
+                    {f"original-{case.case_id}" for case in self.cases[1:-1]
+                     if case.exec_key in set(self.measurement_exec_keys)},
+                    {row["run_id"] for row in promoted},
+                )
+
+    def test_self_promotions_and_unrelated_rows_keep_epoch(self) -> None:
+        self.assertEqual(0, self._run())
+        original = self._checkpoint()
+        initial_measurements = len(self.measurement_exec_keys)
+
+        unrelated = _case(
+            "unrelated", app="other", backend="other", variant="v",
+            name="other", logical_cache_length=5,
+        )
+        current: list[tuple[BenchCase, float]] = []
+        with self.main_raw.open(newline="") as source:
+            for row in csv.DictReader(source):
+                matching = next(
+                    (case for case in self.cases if case.exec_key == row["exec_key"]),
+                    None,
+                )
+                if matching is not None:
+                    current.append((matching, float(row["p50_us"])))
+        current.append((unrelated, 1.0))
+        self._write_raw(self.main_raw, current)
+
+        self.assertEqual(0, self._run())
+        restored = self._checkpoint()
+        self.assertEqual(original["epoch_id"], restored["epoch_id"])
+        self.assertEqual(initial_measurements, len(self.measurement_exec_keys))
+        self.assertEqual(1, len(restored["history"]))
+
+    def test_zero_exit_with_partial_probes_retries_same_iteration(self) -> None:
+        normal_measure = self._measure
+        returned_partial = False
+
+        def partial_success(template, suite_path, out_dir):
+            nonlocal returned_partial
+            if returned_partial:
+                return normal_measure(template, suite_path, out_dir)
+            returned_partial = True
+            selected = self.selected_by_suite[suite_path]
+            self.measurement_exec_keys.append(selected[0].exec_key)
+            path = out_dir / "raw_db.csv"
+            self.probe_values[path] = {
+                selected[0].exec_key: (
+                    selected[0],
+                    100.0 + 10.0 * int(selected[0].shape["logical_cache_length"]),
+                )
+            }
+            self._write_raw(path, list(self.probe_values[path].values()))
+            return path
+
+        with patch.object(self, "_measure", side_effect=partial_success):
+            self.assertEqual(1, self._run())
+            failed = self._checkpoint()
+            self.assertEqual("failed", failed["phase"])
+            self.assertEqual(0, failed["completed_budget"])
+            self.assertEqual(0, self._run())
+
+        recovered = self._checkpoint()
+        self.assertEqual(1, recovered["completed_budget"])
+        self.assertEqual(1, len(recovered["history"]))
+        self.assertEqual(2, len(self.measurement_exec_keys))
+
+    def test_budget_and_gate_changes_reuse_completed_iterations(self) -> None:
+        self.args.validation_samples = 1
+        self.args.target_error = 0.0001
+        self.args.max_iterations = 3
+
+        def nonlinear_measure(template, suite_path, out_dir):
+            del template
+            selected = self.selected_by_suite[suite_path]
+            self.measurement_exec_keys.extend(case.exec_key for case in selected)
+            path = out_dir / "raw_db.csv"
+            values = self.probe_values.setdefault(path, {})
+            for case in selected:
+                values[case.exec_key] = (
+                    case, 500.0 + int(case.shape["logical_cache_length"])
+                )
+            self._write_raw(path, list(values.values()))
+            return path
+
+        with patch.object(self, "_measure", side_effect=nonlinear_measure):
+            self.assertEqual(0, self._run())
+            self.assertEqual(3, self._checkpoint()["completed_budget"])
+            count_at_exhaustion = len(self.measurement_exec_keys)
+            self.assertEqual(0, self._run())
+            self.assertEqual(count_at_exhaustion, len(self.measurement_exec_keys))
+
+            self.args.require_convergence = True
+            self.assertEqual(2, self._run())
+            self.assertEqual(count_at_exhaustion, len(self.measurement_exec_keys))
+            self.args.require_convergence = False
+
+            self.args.max_iterations = 2
+            self.assertEqual(0, self._run())
+            self.assertEqual(count_at_exhaustion, len(self.measurement_exec_keys))
+
+            self.args.max_iterations = 5
+            self.assertEqual(0, self._run())
+            self.assertLessEqual(
+                len(self.measurement_exec_keys) - count_at_exhaustion, 2
+            )
+            count_after_delta = len(self.measurement_exec_keys)
+            self.args.target_error = 10.0
+            self.assertEqual(0, self._run())
+            self.assertEqual(count_after_delta, len(self.measurement_exec_keys))
+
+    def test_sampling_change_creates_epoch_but_reuses_physical_rows(self) -> None:
+        self.assertEqual(0, self._run())
+        first = self._checkpoint()
+        first_measurements = len(self.measurement_exec_keys)
+        self.args.sampling_strategy = "random"
+        self.args.seed = 17
+
+        self.assertEqual(0, self._run())
+        second = self._checkpoint()
+
+        self.assertNotEqual(first["epoch_id"], second["epoch_id"])
+        self.assertEqual(1, len(second["archived_epochs"]))
+        self.assertTrue(set(first["accepted_post_state"]) <= set(second["external_anchor_values"]))
+        self.assertGreaterEqual(len(self.measurement_exec_keys), first_measurements)
+
+    def test_random_resume_preserves_saved_remaining_order(self) -> None:
+        self.args.sampling_strategy = "random"
+        self.args.seed = 7
+        self.args.validation_samples = 2
+        self.args.max_iterations = 2
+        self.args.target_error = 0.0001
+        expected = [case.exec_key for case in self.cases[1:-1]]
+        random.Random(self.args.seed).shuffle(expected)
+        real_save = interpolation_module._save_recovery_checkpoint
+        crashed = False
+
+        def save_after_first_commit(path, checkpoint):
+            nonlocal crashed
+            real_save(path, checkpoint)
+            if (
+                not crashed
+                and checkpoint["phase"] == "committed"
+                and checkpoint["completed_budget"] == 1
+            ):
+                crashed = True
+                raise self.AbruptLoss()
+
+        def nonlinear_measure(template, suite_path, out_dir):
+            del template
+            selected = self.selected_by_suite[suite_path]
+            self.measurement_exec_keys.extend(case.exec_key for case in selected)
+            path = out_dir / "raw_db.csv"
+            values = self.probe_values.setdefault(path, {})
+            for case in selected:
+                values[case.exec_key] = (
+                    case, 500.0 + int(case.shape["logical_cache_length"])
+                )
+            self._write_raw(path, list(values.values()))
+            return path
+
+        with patch.object(self, "_measure", side_effect=nonlinear_measure):
+            with self.assertRaises(self.AbruptLoss):
+                self._run(injected=patch(
+                    "tools.latency_bench.interpolation._save_recovery_checkpoint",
+                    side_effect=save_after_first_commit,
+                ))
+            self.assertEqual(0, self._run())
+
+        checkpoint = self._checkpoint()
+        self.assertEqual(expected, [row["exec_key"] for row in checkpoint["selections"]])
+        self.assertEqual(expected, self.measurement_exec_keys)
+        self.assertEqual(2, checkpoint["completed_budget"])
+
+    def test_validation_suite_and_external_anchor_changes_start_new_epochs(self) -> None:
+        self.assertEqual(0, self._run())
+        first = self._checkpoint()
+
+        self.args.validation_samples = 1
+        self.assertEqual(0, self._run())
+        validation_changed = self._checkpoint()
+        self.assertNotEqual(first["epoch_id"], validation_changed["epoch_id"])
+
+        self.suite = replace(self.suite, name="recovery-v2")
+        self.assertEqual(0, self._run())
+        suite_changed = self._checkpoint()
+        self.assertNotEqual(
+            validation_changed["epoch_id"], suite_changed["epoch_id"]
+        )
+
+        unselected = next(
+            case for case in self.cases
+            if case.exec_key not in suite_changed["accepted_post_state"]
+            and case not in (self.cases[0], self.cases[-1])
+        )
+        existing: list[tuple[BenchCase, float]] = []
+        with self.main_raw.open(newline="") as source:
+            rows = list(csv.DictReader(source))
+        for case in self.cases:
+            matching = next(
+                (row for row in rows if row["exec_key"] == case.exec_key), None
+            )
+            if matching is not None:
+                existing.append((case, float(matching["p50_us"])))
+        existing.append((unselected, 333.0))
+        self._write_raw(self.main_raw, existing)
+
+        self.assertEqual(0, self._run())
+        anchor_changed = self._checkpoint()
+        self.assertNotEqual(suite_changed["epoch_id"], anchor_changed["epoch_id"])
+        self.assertIn("relevant external anchors", anchor_changed["archived_epochs"][-1]["superseded_reason"])
+
+    def test_legacy_progress_report_does_not_certify_recovery(self) -> None:
+        out = Path(self.args.out)
+        out.mkdir(parents=True)
+        (out / "state.json").write_text(json.dumps({
+            "status": "completed", "completed_budget": 99,
+        }))
+        self.args.max_iterations = 0
+
+        self.assertEqual(0, self._run())
+
+        checkpoint = self._checkpoint()
+        self.assertEqual(0, checkpoint["completed_budget"])
+        self.assertEqual([], checkpoint["history"])
+        self.assertEqual(0, len(self.measurement_exec_keys))
 
 
 if __name__ == "__main__":

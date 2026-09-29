@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import hashlib
+import json
 from pathlib import Path
+import subprocess
 import sys
+from unittest import mock
 
 import pandas as pd
 
@@ -83,6 +87,39 @@ class ComposedPipelineTest(unittest.TestCase):
             run_compose._count_summary(frame, "compose_status"),
         )
         self.assertEqual("n/a", run_compose._count_summary(frame, "absent"))
+
+    def test_compose_cli_selects_one_model_without_combining(self) -> None:
+        args = run_compose.build_parser().parse_args(
+            [
+                "--llama2-results", "llama2",
+                "--llama3-results", "llama3",
+                "--out", "out",
+                "--models", "llama2_7b",
+                "--no-combine",
+            ]
+        )
+
+        self.assertEqual(("llama2_7b",), run_compose._selected_model_keys(args.models))
+        self.assertTrue(args.no_combine)
+
+    def test_combine_reads_only_declared_model_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            llama2 = _decode_frame(out_tokens=1)
+            llama3 = llama2.copy()
+            llama3["model"] = "llama3_8b"
+            for model, frame in (("llama2_7b", llama2), ("llama3_8b", llama3)):
+                directory = root / model
+                directory.mkdir()
+                frame.to_csv(directory / "composed.csv", index=False)
+
+            combined, manifest = run_compose.combine_model_artifacts(
+                ("llama3_8b",), out_root=root,
+                metric="fpga_cycle_latency", select="latest", missing="error",
+            )
+
+            self.assertEqual({"llama3_8b"}, set(combined["model"]))
+            self.assertEqual(["llama3_8b"], manifest["model_keys"])
 
     def test_decode_latency_is_grouped_by_input_kv_and_averaged_per_token(self) -> None:
         frame = _decode_frame()
@@ -297,6 +334,178 @@ class ComposedPipelineTest(unittest.TestCase):
         self.assertIn("power_dynamic_avg_W", arguments)
         self.assertNotIn("all", arguments)
         self.assertIn("png", arguments)
+
+    def test_prepare_child_uses_exact_supplied_composed_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            combined = root / "combined" / "composed.csv"
+            sibling = root / "llama2_7b" / "composed.csv"
+            combined.parent.mkdir()
+            sibling.parent.mkdir()
+            combined.write_text("combined\n")
+            sibling.write_text("stale sibling\n")
+
+            with mock.patch.object(prepare.subprocess, "run") as run:
+                prepare._run_model_prepare_process(
+                    model="llama2_7b",
+                    composed_csv=combined,
+                    out_tokens=4,
+                    output_root=root / "prepared",
+                )
+
+            command = run.call_args.args[0]
+            source_index = command.index("--composed-csv") + 1
+            self.assertEqual(str(combined), command[source_index])
+            self.assertNotIn(str(sibling), command)
+
+    def test_exact_prepare_input_rejects_another_model(self) -> None:
+        frame = _decode_frame()
+        frame.loc[frame.index[-1], "model"] = "llama3_8b"
+
+        with self.assertRaisesRegex(ValueError, "exact model input"):
+            prepare._validate_exact_model_input(frame, "llama2_7b")
+
+    def test_expected_plot_outputs_include_every_format_and_kernel_csv(self) -> None:
+        expected = plot.expected_plot_outputs(
+            "kernel_dynamic_power",
+            formats=("png", "pdf"),
+            power_metric=None,
+        )
+
+        self.assertIn(
+            Path("kernel_dynamic_power/kernel_dynamic_power_by_kind.csv"),
+            expected,
+        )
+        self.assertIn(
+            Path("kernel_dynamic_power/kernel_dynamic_power_inputs.json"),
+            expected,
+        )
+        self.assertIn(
+            Path("kernel_dynamic_power/kernel_dynamic_power_by_kind.png"),
+            expected,
+        )
+        self.assertIn(
+            Path("kernel_dynamic_power/kernel_dynamic_power_by_kind.pdf"),
+            expected,
+        )
+
+    def test_kernel_power_filters_snapshot_before_dropping_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidates = {
+                label: {
+                    "alias": f"alias-{label}",
+                    "bin_dir": f"/bins/{label}",
+                    "xclbin": f"/bins/{label}/kernel.xclbin",
+                    "xclbin_sha256": f"sha-{label}",
+                    "config": f"/bins/{label}/config.mk",
+                    "config_sha256": f"config-{label}",
+                    "manifest": f"/bins/{label}/manifest.json",
+                    "manifest_sha256": f"manifest-{label}",
+                    "fpga_period_s": 4e-9,
+                    "fpga_clock_source": f"/bins/{label}/xclbin.info",
+                }
+                for label in ("C1", "C2", "C3", "C4")
+            }
+            digest = hashlib.sha256(
+                json.dumps(
+                    candidates, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            snapshot = {
+                "schema_version": 1,
+                "selection_digest": digest,
+                "candidates": candidates,
+            }
+            current = root / "current.csv"
+            historical = root / "historical.csv"
+            pd.DataFrame(
+                [
+                    {
+                        "app": "softmax",
+                        "kind": "softmax",
+                        "power_dynamic_avg_w": 2.0,
+                        "status": "pass",
+                        "fpga_bin_label": "C4",
+                        "xclbin_sha256": "sha-C4",
+                    },
+                    {
+                        "app": "softmax",
+                        "kind": "softmax",
+                        "power_dynamic_avg_w": 99.0,
+                        "status": "pass",
+                        "fpga_bin_label": "C4",
+                        "xclbin_sha256": "old-C4",
+                    },
+                ]
+            ).to_csv(current, index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "app": "softmax",
+                        "kind": "softmax",
+                        "power_dynamic_avg_w": 77.0,
+                        "status": "pass",
+                        "fpga_bin_label": "C4",
+                        "xclbin_sha256": "sha-C4",
+                    }
+                ]
+            ).to_csv(historical, index=False)
+
+            summary, provenance = plot.kernel_dynamic_power_summary(
+                (current,), snapshot=snapshot
+            )
+
+            self.assertEqual([2.0], summary["mean_dynamic_power_w"].tolist())
+            self.assertEqual([str(current)], provenance["raw_dbs"])
+            self.assertEqual(digest, provenance["selection_digest"])
+            self.assertEqual(1, provenance["selected_row_count"])
+
+    def test_plot_script_loads_candidate_snapshot_outside_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = root / "snapshot.json"
+            candidates = {
+                label: {
+                    "alias": f"alias-{label}",
+                    "bin_dir": f"/bins/{label}",
+                    "xclbin": f"/bins/{label}/kernel.xclbin",
+                    "xclbin_sha256": f"sha-{label}",
+                    "config": f"/bins/{label}/config.mk",
+                    "config_sha256": f"config-{label}",
+                    "manifest": f"/bins/{label}/manifest.json",
+                    "manifest_sha256": f"manifest-{label}",
+                    "fpga_period_s": 4e-9,
+                    "fpga_clock_source": f"/bins/{label}/xclbin.info",
+                }
+                for label in ("C1", "C2", "C3", "C4")
+            }
+            digest = hashlib.sha256(
+                json.dumps(
+                    candidates, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            snapshot.write_text(json.dumps({
+                "schema_version": 1,
+                "selection_digest": digest,
+                "candidates": candidates,
+            }))
+            script = SCRIPT_DIR / "plot.py"
+            code = (
+                "import runpy; "
+                f"module = runpy.run_path({str(script)!r}); "
+                f"module['_read_candidate_snapshot'](module['Path']({str(snapshot)!r}))"
+            )
+
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
 
 
 if __name__ == "__main__":

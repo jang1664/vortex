@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .candidate_map import PROVENANCE_COLUMNS
 from .power_summary import read_power_summary
 from .perf_log import FPGA_CYCLE_COLUMNS, parse_fpga_cycle_stats
 from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
@@ -15,6 +17,7 @@ RAW_DB_COLUMNS = [
     "run_id",
     "timestamp_utc",
     "fpga_bin_label",
+    *PROVENANCE_COLUMNS,
     "git_commit",
     "git_branch",
     "git_dirty",
@@ -333,6 +336,7 @@ def append_raw_execution(
     log_file: Path,
     elapsed_wall_s: str,
     mode: str,
+    provenance: dict | None = None,
 ) -> int:
     cases = _case_rows_for_exec(cases_csv, exec_key)
     if not cases:
@@ -438,6 +442,7 @@ def append_raw_execution(
             **cycle,
     })
 
+    row.update({key: value for key, value in (provenance or {}).items() if key in PROVENANCE_COLUMNS})
     return _write_raw_rows([row], output, mode=mode, run_id=run_id)
 
 
@@ -447,6 +452,7 @@ def _parse_bool_arg(value: str) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Append one latency bench execution to raw_db.csv.")
+    parser.add_argument("--provenance-json", default="{}", type=json.loads)
     parser.add_argument("--output", required=True, type=Path, help="Top-level raw_db.csv.")
     parser.add_argument("--cases-csv", required=True, type=Path, help="Run-local cases.csv.")
     parser.add_argument("--exec-key", required=True, help="Execution key.")
@@ -491,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     append_raw_execution(
         output=args.output,
+        provenance=args.provenance_json,
         cases_csv=args.cases_csv,
         exec_key=args.exec_key,
         run_id=args.run_id,

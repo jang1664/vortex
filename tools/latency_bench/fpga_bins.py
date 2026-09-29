@@ -25,6 +25,17 @@ class FpgaBinConfig:
     configs: Path | None = None
 
 
+@dataclass(frozen=True)
+class FpgaBinArtifacts:
+    """Exact, provisioned files selected by one FPGA-bin alias."""
+
+    alias: str | None
+    bin_dir: Path
+    config: Path | None
+    manifest: Path
+    xclbin: Path
+
+
 def normalize_fpga_bin(path: Path) -> Path:
     path = path.expanduser().resolve()
     return path.parent if path.name == "vortex_afu.xclbin" else path
@@ -106,6 +117,60 @@ def resolve_fpga_bin_config(
     return FpgaBinConfig(
         path=normalize_fpga_bin(Path(resolved)),
         configs=configs,
+    )
+
+
+def resolve_fpga_bin_artifacts(
+    value: str | Path,
+    *,
+    alias_map_path: str | Path | None = None,
+    require_alias: bool = False,
+) -> FpgaBinArtifacts:
+    """Resolve and validate the exact config, manifest, and xclbin for ``value``.
+
+    This is intentionally stricter than :func:`resolve_fpga_bin_config`, which
+    is also used while creating images.  Compile/package consumers must fail
+    closed instead of inferring a target profile from a shell config or an
+    ambient xclbin path when the mapped image has not been provisioned.
+    """
+
+    raw_value = str(value)
+    aliases = load_fpga_bin_aliases(alias_map_path)
+    alias = raw_value if raw_value in aliases else None
+    if require_alias and alias is None:
+        raise ValueError(f"FPGA bin {raw_value!r} is not an alias in the selected alias map")
+
+    resolved = resolve_fpga_bin_config(
+        raw_value, alias_map_path=alias_map_path, aliases=aliases
+    )
+    if alias is not None and resolved.configs is None:
+        raise ValueError(f"FPGA bin alias {alias!r} does not define a config file")
+    if resolved.configs is not None and not resolved.configs.is_file():
+        raise FileNotFoundError(
+            f"FPGA bin alias {alias!r} config file is unavailable: {resolved.configs}"
+        )
+    if not resolved.path.is_dir():
+        label = f"alias {alias!r}" if alias is not None else "path"
+        raise FileNotFoundError(
+            f"FPGA bin {label} image directory is unavailable: {resolved.path}"
+        )
+
+    manifest = resolved.path.parent / "manifest.json"
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            f"FPGA bin alias {alias!r} manifest is unavailable: {manifest}"
+        )
+    xclbin = resolved.path / "vortex_afu.xclbin"
+    if not xclbin.is_file():
+        raise FileNotFoundError(
+            f"FPGA bin alias {alias!r} xclbin is unavailable: {xclbin}"
+        )
+    return FpgaBinArtifacts(
+        alias=alias,
+        bin_dir=resolved.path,
+        config=resolved.configs,
+        manifest=manifest.resolve(),
+        xclbin=xclbin.resolve(),
     )
 
 
