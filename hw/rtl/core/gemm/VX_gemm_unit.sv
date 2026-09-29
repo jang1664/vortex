@@ -61,7 +61,22 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam ACT_REDUCE_OUT_DLY = get_pipe_stage_num(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam ACT_REDUCE_PIPE_STAGES = get_pipe_stage_bitmask(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam BLK_IDX_DLY = DEFAULT_OUT_DLY;
-    localparam MXU_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1) + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV) + ((`MXU_COL / `MXU_COL_TILE) - 1);
+    localparam MXU_BASE_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1)
+                               + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV)
+                               + ((`MXU_COL / `MXU_COL_TILE) - 1);
+`ifdef GEMM_SLR_PIPELINE
+    // Unstalled TX/RX pairs add two cycles in each direction. Keep local
+    // correction and exponent paths aligned with the returning MXU result.
+    localparam MXU_INPUT_TRANSPORT_DLY = 2;
+    localparam MXU_OUTPUT_TRANSPORT_DLY = 2;
+    `VX_STATIC_ASSERT(`MXU_ROW == 32 && `MXU_COL == 32 && `MXU_COL_TILE == 32,
+        ("GEMM_SLR_PIPELINE requires a single 32x32 MXU tile"))
+`else
+    localparam MXU_INPUT_TRANSPORT_DLY = 0;
+    localparam MXU_OUTPUT_TRANSPORT_DLY = 0;
+`endif
+    localparam MXU_OUT_DLY = MXU_BASE_OUT_DLY
+                          + MXU_INPUT_TRANSPORT_DLY + MXU_OUTPUT_TRANSPORT_DLY;
     localparam MAX_EXP_IN_DELAY = MXU_OUT_DLY + DEFAULT_OUT_DLY;
     `VX_STATIC_ASSERT(MXU_OUT_DLY >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY, ("MXU_OUT_DLY must be >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY"));
     localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
@@ -614,6 +629,58 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_rd_fifo_push_by_bank[1] = acc_mem_rd_data_take && (acc_mem_rd_rsp_bank[0] == 1'b1);
     assign acc_rd_fifo_push = |acc_rd_fifo_push_by_bank;
 `ifdef GEMM_NAIVE_LMEM_PSUM
+`ifdef GEMM_SLR_PIPELINE
+    // A returned PSUM must be reserved for every accepted activation. A FIFO
+    // occupancy threshold alone cannot account for the longer unstalled SLR
+    // flight or an arbitrarily delayed LMEM response. Reservations alternate
+    // with output consumption, and count only returned data (not read requests).
+    // Keep the existing FIFO capacity and read/write arbitration unchanged.
+    if (1) begin : g_slr_psum_admission
+        logic reserve_bank_q;
+        logic [1:0][ACC_RD_CREDIT_W-1:0] available_q;
+        wire reserve_fire = i_lmem_bus_if.req_valid && i_lmem_bus_if.req_ready
+                         && in_flight && !gemm_unit_ctrl.is_load;
+
+        // Do not buffer a future command's input while idle: every accumulate
+        // row must take its reservation after that command initializes parity.
+        assign input_accept_ready = gemm_unit_if.start
+                                  ? gemm_unit_if.gemm_unit_ctrl.is_load
+                                  : (in_flight && (gemm_unit_ctrl.is_load
+                                     || (available_q[reserve_bank_q] != 0)));
+
+        always_ff @(posedge clk or posedge reset) begin
+            if (reset) begin
+                reserve_bank_q <= 1'b0;
+                available_q <= '0;
+            end else if (gemm_unit_if.start) begin
+                reserve_bank_q <= acc_mem_accum_start_bank[0];
+                available_q <= '0;
+            end else begin
+                if (reserve_fire)
+                    reserve_bank_q <= ~reserve_bank_q;
+                for (int i = 0; i < 2; ++i) begin
+                    case ({acc_rd_fifo_push_by_bank[i], reserve_fire && (reserve_bank_q == i)})
+                        2'b10: available_q[i] <= available_q[i] + ACC_RD_CREDIT_W'(1);
+                        2'b01: available_q[i] <= available_q[i] - ACC_RD_CREDIT_W'(1);
+                        default: available_q[i] <= available_q[i];
+                    endcase
+                end
+            end
+        end
+`ifndef SYNTHESIS
+        always @(posedge clk) begin
+            if (!reset && !gemm_unit_if.start) begin
+                if (reserve_fire)
+                    assert (available_q[reserve_bank_q] != 0)
+                        else $fatal(1, "%s: SLR activation has no returned PSUM reservation", INSTANCE_ID);
+                for (int i = 0; i < 2; ++i)
+                    assert (available_q[i] <= ACC_RD_CREDIT_W'(ACC_RD_FIFO_DEPTH))
+                        else $fatal(1, "%s: SLR PSUM reservation credit out of range", INSTANCE_ID);
+            end
+        end
+`endif
+    end
+`else
     // Accumulate commands initialize PSUM read/FIFO state on their start edge.
     // Wait for all requested PSUMs on short commands, or until each parity
     // FIFO reaches the eight-entry prefetch threshold on longer commands. The
@@ -624,6 +691,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                               : (gemm_unit_ctrl.is_load
                               || (acc_rd_prefetch_count >= gemm_unit_ctrl.acc_cnt)
                               || acc_rd_fifo_alm_full);
+`endif
 
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
@@ -1170,6 +1238,28 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .ready_i    (1'b1)
     );
 
+`ifdef GEMM_SLR_PIPELINE
+    // The local QROW shift and the SLR TX sample the same block indices.
+    // Preserve both copies: merging either into the other would give the
+    // crossing TX a local SLR1 fanout, or remove its USER_SLL_REG identity.
+    // This is the existing always-ready, one-cycle pipe, not an extra stage.
+    if (1) begin : g_local_prealign_blk_idx
+        `VX_STATIC_ASSERT(BLK_IDX_DLY == 1, ("SLR local block-index delay must be one cycle"))
+        (* DONT_TOUCH = "TRUE", SHREG_EXTRACT = "NO" *)
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] data_q;
+        logic valid_q;
+        always_ff @(posedge clk) begin
+            // Match VX_pipe_buffer: data also advances on invalid/reset cycles.
+            data_q <= prealigner_blk_idx;
+            if (reset)
+                valid_q <= 1'b0;
+            else
+                valid_q <= prealigner_out_valid;
+        end
+        assign prealigner_blk_idx_q = data_q;
+        assign prealigner_pipe_out_valid = valid_q;
+    end
+`else
     VX_pipe_buffer #(
         .DATAW (`MXU_ROW * `BLOCK_IDX_WIDTH),
         .DEPTH (BLK_IDX_DLY)
@@ -1183,6 +1273,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .ready_out (1'b1),
         .valid_out (prealigner_pipe_out_valid)
     );
+
+`endif
 
     VX_pipe_buffer #(
         .DATAW (`IFP_EXP_WIDTH),
@@ -1283,20 +1375,218 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // GEMM Tree (MXU)
     // -------------------------------------------------------------------------
+    logic [`MXU_ROW-1:0][`SEL_BLOCK_WIDTH-1:0] mxu_input_capture;
+    logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] mxu_blk_capture;
+    logic mxu_input_valid_capture;
+    logic mxu_weight_use_capture;
+    logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0] mxu_weight_capture;
+    logic mxu_weight_valid_capture;
+    logic mxu_weight_write_capture;
+    logic mxu_weight_dir_capture;
+    logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0] mxu_output_raw;
+    logic [`MXU_COL/`MXU_COL_TILE-1:0] mxu_output_valid_raw;
+
+`ifdef GEMM_SLR_PIPELINE
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_ROW-1:0][`SEL_BLOCK_WIDTH-1:0] data;
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] block_idx;
+        logic weight_sel;
+    } mxu_input_transport_t;
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0] block_idx;
+        logic weight_sel;
+    } mxu_input_control_transport_t;
+    typedef struct packed {
+        logic valid;
+        logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0] data;
+        logic weight_sel;
+        logic direction;
+    } mxu_weight_transport_t;
+    typedef struct packed {
+        logic [`MXU_COL/`MXU_COL_TILE-1:0] valid;
+        logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0] data;
+    } mxu_output_transport_t;
+
+    // These names identify disjoint placement groups. In particular, the RX
+    // D inputs below are exactly the corresponding TX Q outputs: no enable,
+    // handshake mux, arithmetic, or validity decode is allowed between them.
+    if (1) begin : g_slr_mxu_input_tx
+        // Keep this dedicated TX separate from the preserved local block-index
+        // FFs above. Preserve the small control vector to retain its existing
+        // field layout and direct connection to the RX control register.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
+        mxu_input_control_transport_t control_q;
+        // Both transport data stages must remain standalone FFs, rather
+        // than being absorbed into the MXU DSP input pipeline registers.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
+        logic [$bits(prealigner_int_data)-1:0] data_q;
+        mxu_input_transport_t payload_q;
+        assign payload_q = {control_q.valid, data_q,
+                            control_q.block_idx, control_q.weight_sel};
+        always_ff @(posedge clk) begin
+            control_q <= {prealigner_out_valid && !reset, prealigner_blk_idx,
+                          gemm_unit_ctrl.wreg_use_idx};
+            data_q <= prealigner_int_data;
+        end
+    end
+    if (1) begin : g_slr_mxu_input_rx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_input_control_transport_t control_q;
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", DONT_TOUCH = "TRUE" *)
+        logic [$bits(prealigner_int_data)-1:0] data_q;
+        mxu_input_transport_t payload_q;
+        assign payload_q = {control_q.valid, data_q,
+                            control_q.block_idx, control_q.weight_sel};
+        always_ff @(posedge clk) begin
+            control_q <= g_slr_mxu_input_tx.control_q;
+            data_q <= g_slr_mxu_input_tx.data_q;
+            if (reset)
+                control_q.valid <= 1'b0;
+        end
+        assign {mxu_input_valid_capture, mxu_input_capture, mxu_blk_capture,
+                mxu_weight_use_capture} = payload_q;
+    end
+    if (1) begin : g_slr_mxu_weight_tx
+`ifdef GEMM_NAIVE
+        // The naive gather response BRAM must not absorb this SLR1 TX FF
+        // into its output register: the SLR2 RX requires a fabric FF Q driver.
+        (* DONT_TOUCH = "TRUE" *)
+`endif
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO" *)
+        mxu_weight_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= {mxu_ready_weight && !reset, mxu_weight,
+                          wreg_wr_idx, wreg_load_dir};
+        end
+    end
+    if (1) begin : g_slr_mxu_weight_rx
+        // Keep the existing valid reset on the FF R pin, not an AND gate
+        // on D that would break the dedicated inter-SLR TX Q -> RX D link.
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_weight_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= g_slr_mxu_weight_tx.payload_q;
+            if (reset)
+                payload_q.valid <= 1'b0;
+        end
+        assign {mxu_weight_valid_capture, mxu_weight_capture,
+                mxu_weight_write_capture, mxu_weight_dir_capture} = payload_q;
+    end
+    if (1) begin : g_slr_mxu_output_tx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_output_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= {mxu_output_valid_raw, mxu_output_raw};
+            if (reset)
+                payload_q.valid <= '0;
+        end
+    end
+    if (1) begin : g_slr_mxu_output_rx
+        (* USER_SLL_REG = "TRUE", SHREG_EXTRACT = "NO", EXTRACT_RESET = "yes" *)
+        mxu_output_transport_t payload_q;
+        always_ff @(posedge clk) begin
+            payload_q <= g_slr_mxu_output_tx.payload_q;
+            if (reset)
+                payload_q.valid <= '0;
+        end
+        assign {mxu_output_valid, mxu_output} = payload_q;
+    end
+
+`else
+    assign mxu_input_capture = prealigner_int_data;
+    assign mxu_blk_capture = prealigner_blk_idx;
+    assign mxu_input_valid_capture = prealigner_out_valid;
+    assign mxu_weight_use_capture = gemm_unit_ctrl.wreg_use_idx;
+    assign mxu_weight_capture = mxu_weight;
+    assign mxu_weight_valid_capture = mxu_ready_weight;
+    assign mxu_weight_write_capture = wreg_wr_idx;
+    assign mxu_weight_dir_capture = wreg_load_dir;
+    assign mxu_output = mxu_output_raw;
+    assign mxu_output_valid = mxu_output_valid_raw;
+`endif
+
+`ifdef GEMM_SLR_PIPELINE
+    (* KEEP_HIERARCHY = "yes" *)
+`endif
     VX_gemm_tree_v1 u_mxu (
         .clk_i            (clk),
         .resetn_i         (~reset),
-        .ifmap_i          (prealigner_int_data),
-        .weight_i         (mxu_weight),
-        .in_weight_sel_i  (wreg_wr_idx),
-        .out_weight_sel_i (gemm_unit_ctrl.wreg_use_idx),
-        .ready_weight_i   (mxu_ready_weight),
-        .input_valid_i    (prealigner_out_valid),
-        .weight_load_dir_i(wreg_load_dir),
-        .blk_sidx_i       (prealigner_blk_idx),
-        .ps_o             (mxu_output),
-        .output_valid_o   (mxu_output_valid)
+        .ifmap_i          (mxu_input_capture),
+        .weight_i         (mxu_weight_capture),
+        .in_weight_sel_i  (mxu_weight_write_capture),
+        .out_weight_sel_i (mxu_weight_use_capture),
+        .ready_weight_i   (mxu_weight_valid_capture),
+        .input_valid_i    (mxu_input_valid_capture),
+        .weight_load_dir_i(mxu_weight_dir_capture),
+        .blk_sidx_i       (mxu_blk_capture),
+        .ps_o             (mxu_output_raw),
+        .output_valid_o   (mxu_output_valid_raw)
     );
+
+`ifdef GEMM_SLR_PIPELINE
+`ifndef SYNTHESIS
+    // Simulation-only reference timing and weight-version accounting. The
+    // existing in_flight interlock owns each bank until the final ACC write;
+    // transport needs no new hardware ownership protocol. At MXU capture the
+    // installed version must be exactly the one visible at activation launch.
+    if (1) begin : g_slr_mxu_checks
+        logic [MXU_OUT_DLY-1:0] expected_result_valid_q;
+        logic [MXU_INPUT_TRANSPORT_DLY-1:0] expected_input_valid_q;
+        logic [MXU_INPUT_TRANSPORT_DLY-1:0] expected_weight_valid_q;
+        logic [MXU_INPUT_TRANSPORT_DLY-1:0] expected_weight_sel_q;
+        int unsigned launched_weight_version [2];
+        int unsigned installed_weight_version [2];
+        int unsigned expected_weight_version_q [MXU_INPUT_TRANSPORT_DLY];
+
+        always @(posedge clk) begin
+            if (reset) begin
+                expected_result_valid_q <= '0;
+                expected_input_valid_q <= '0;
+                expected_weight_valid_q <= '0;
+                expected_weight_sel_q <= '0;
+                for (int i = 0; i < 2; ++i) begin
+                    launched_weight_version[i] <= 0;
+                    installed_weight_version[i] <= 0;
+                end
+                for (int i = 0; i < MXU_INPUT_TRANSPORT_DLY; ++i)
+                    expected_weight_version_q[i] <= 0;
+            end else begin
+                expected_result_valid_q <= {expected_result_valid_q[MXU_OUT_DLY-2:0], prealigner_out_valid};
+                expected_input_valid_q <= {expected_input_valid_q[MXU_INPUT_TRANSPORT_DLY-2:0], prealigner_out_valid};
+                expected_weight_valid_q <= {expected_weight_valid_q[MXU_INPUT_TRANSPORT_DLY-2:0], mxu_ready_weight};
+                expected_weight_sel_q <= {expected_weight_sel_q[MXU_INPUT_TRANSPORT_DLY-2:0], gemm_unit_ctrl.wreg_use_idx};
+                expected_weight_version_q[0] <= launched_weight_version[gemm_unit_ctrl.wreg_use_idx];
+                for (int i = 1; i < MXU_INPUT_TRANSPORT_DLY; ++i)
+                    expected_weight_version_q[i] <= expected_weight_version_q[i-1];
+                if (mxu_ready_weight)
+                    launched_weight_version[wreg_wr_idx] <= launched_weight_version[wreg_wr_idx] + 1;
+                if (mxu_weight_valid_capture)
+                    installed_weight_version[mxu_weight_write_capture] <= installed_weight_version[mxu_weight_write_capture] + 1;
+
+                assert (mxu_input_valid_capture === expected_input_valid_q[MXU_INPUT_TRANSPORT_DLY-1])
+                    else $fatal(1, "%s: SLR activation capture delay mismatch", INSTANCE_ID);
+                assert (mxu_weight_valid_capture === expected_weight_valid_q[MXU_INPUT_TRANSPORT_DLY-1])
+                    else $fatal(1, "%s: SLR weight installation delay mismatch", INSTANCE_ID);
+                if (mxu_input_valid_capture) begin
+                    assert (mxu_weight_use_capture === expected_weight_sel_q[MXU_INPUT_TRANSPORT_DLY-1])
+                        else $fatal(1, "%s: SLR activation weight bank misaligned", INSTANCE_ID);
+                    assert (installed_weight_version[mxu_weight_use_capture]
+                            == expected_weight_version_q[MXU_INPUT_TRANSPORT_DLY-1])
+                        else $fatal(1, "%s: SLR weight overwritten or used before installation", INSTANCE_ID);
+                end
+                assert ((&mxu_output_valid_dly) === expected_result_valid_q[MXU_OUT_DLY-1])
+                    else $fatal(1, "%s: SLR MXU result delay mismatch", INSTANCE_ID);
+                assert (pre_proc_out_valid === (&mxu_output_valid_dly))
+                    else $fatal(1, "%s: SLR zero-point correction misaligned", INSTANCE_ID);
+                assert (prealigner_max_exp_q_valid === merger_out_valid)
+                    else $fatal(1, "%s: SLR exponent misaligned", INSTANCE_ID);
+            end
+        end
+    end
+`endif
+`endif
 
     // -------------------------------------------------------------------------
     // MXU Output Delay Alignment
