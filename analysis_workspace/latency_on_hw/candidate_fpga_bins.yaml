@@ -1,6 +1,6 @@
 schema_version: 1
 candidates:
-  C1: C1
-  C2: naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem
-  C3: C3
-  C4: C4_v3
+  C1: tcu_th32_c1_rev3
+  C2: none
+  C3: none
+  C4: none

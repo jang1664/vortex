@@ -37,6 +37,7 @@ Override options:
   --decode-measurement MODE      Generation mode: exact or sampled.
   --decode-sample-interval N     Sampling interval for sampled mode.
   --candidate-map PATH          Candidate selection (default: local candidate_fpga_bins.yaml).
+  --candidates LIST             Execution sources to generate: C1,C3,C4 (also CANDIDATES env).
   --output-format FORMAT        pkl (default) or yaml.
   --fpga-bin-remap OLD=NEW       Remap a resolved FPGA bin; repeat as needed.
   --fpga-bin-default BIN         Override fpga_bins.default.
@@ -66,6 +67,7 @@ GENERATION_MAX_SEQ_LEN=""
 DECODE_MEASUREMENT=""
 DECODE_SAMPLE_INTERVAL=""
 CANDIDATE_MAP="${CANDIDATE_MAP:-${SCRIPT_DIR}/candidate_fpga_bins.yaml}"
+CANDIDATES="${CANDIDATES:-}"
 OUTPUT_FORMAT="${OUTPUT_FORMAT:-pkl}"
 FPGA_BIN_REMAPS=()
 FPGA_BIN_DEFAULT=""
@@ -184,6 +186,10 @@ while [[ $# -gt 0 ]]; do
             DECODE_SAMPLE_INTERVAL="$2"
             shift 2
             ;;
+        --candidates)
+            CANDIDATES="${2:?--candidates requires a value}"
+            shift 2
+            ;;
         --candidate-map|--output-format)
             if [[ $# -lt 2 ]]; then echo "Error: $1 requires a value" >&2; exit 1; fi
             if [[ "$1" == "--candidate-map" ]]; then CANDIDATE_MAP="$2"; else OUTPUT_FORMAT="$2"; fi
@@ -290,6 +296,9 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 
 GENERATE_ARGS=(--candidate-map "${CANDIDATE_MAP}" --output-format "${OUTPUT_FORMAT}")
+if [[ -n "${CANDIDATES}" ]]; then
+    GENERATE_ARGS+=(--candidates "${CANDIDATES}")
+fi
 if [[ -n "${BATCHES}" ]]; then
     GENERATE_ARGS+=(--batches "${BATCHES}")
 fi

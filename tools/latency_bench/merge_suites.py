@@ -31,7 +31,7 @@ def _expand_suite_globs(patterns: tuple[str, ...]) -> list[Path]:
             path = Path(match).expanduser().resolve()
             if path.name == "index.yaml":
                 if Path(pattern).name == "index.yaml":
-                    for _, indexed in indexed_suites(path):
+                    for _, indexed in indexed_suites(path, allow_empty=True):
                         paths[indexed] = None
                 continue
             if path.suffix not in SUITE_SUFFIXES:
