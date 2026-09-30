@@ -1,0 +1,80 @@
+[
+  {
+    "point": "lmem_16",
+    "LUT": 23256,
+    "logic_LUT": 23256,
+    "LUTRAM": 0,
+    "SRL": 0,
+    "FF": 18448,
+    "BRAM36": 128,
+    "BRAM18": 0,
+    "BRAM_tiles": 128.0,
+    "URAM": 0,
+    "DSP": 0
+  },
+  {
+    "point": "lmem_64",
+    "LUT": 338624,
+    "logic_LUT": 338624,
+    "LUTRAM": 0,
+    "SRL": 0,
+    "FF": 214528,
+    "BRAM36": 128,
+    "BRAM18": 0,
+    "BRAM_tiles": 128.0,
+    "URAM": 0,
+    "DSP": 0
+  },
+  {
+    "point": "cache_2",
+    "LUT": 9486,
+    "logic_LUT": 9478,
+    "LUTRAM": 8,
+    "SRL": 0,
+    "FF": 13803,
+    "BRAM36": 1094,
+    "BRAM18": 10,
+    "BRAM_tiles": 1099.0,
+    "URAM": 0,
+    "DSP": 0
+  },
+  {
+    "point": "cache_8",
+    "LUT": 45635,
+    "logic_LUT": 45603,
+    "LUTRAM": 32,
+    "SRL": 0,
+    "FF": 65179,
+    "BRAM36": 1216,
+    "BRAM18": 32,
+    "BRAM_tiles": 1232.0,
+    "URAM": 0,
+    "DSP": 0
+  },
+  {
+    "point": "axi_2",
+    "LUT": 15332,
+    "logic_LUT": 15308,
+    "LUTRAM": 24,
+    "SRL": 0,
+    "FF": 8390,
+    "BRAM36": 0,
+    "BRAM18": 0,
+    "BRAM_tiles": 0.0,
+    "URAM": 0,
+    "DSP": 0
+  },
+  {
+    "point": "axi_8",
+    "LUT": 61235,
+    "logic_LUT": 61139,
+    "LUTRAM": 96,
+    "SRL": 0,
+    "FF": 33554,
+    "BRAM36": 0,
+    "BRAM18": 0,
+    "BRAM_tiles": 0.0,
+    "URAM": 0,
+    "DSP": 0
+  }
+]

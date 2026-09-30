@@ -1,0 +1,99 @@
+{
+  "part": "xcu55c-fsvh2892-2L-e",
+  "clock_ns": 10,
+  "synthesis": "out_of_context",
+  "git_commit": "f1f6303b112e060e56f0512294bd86f2be373b26",
+  "config": "/home/donghweeson/workspace/vortex/configs/fig5_fpga_memory.sh",
+  "defines": [
+    "-DSYNTHESIS",
+    "-DNDEBUG",
+    "-DVIVADO",
+    "-DXLEN_64",
+    "-DMEM_ADDR_WIDTH=34",
+    "-DPLATFORM_MEMORY_NUM_BANKS=32",
+    "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
+    "-DPLATFORM_MERGED_MEMORY_INTERFACE",
+    "-DNUM_CLUSTERS=1",
+    "-DNUM_CORES=1",
+    "-DNUM_THREADS=8",
+    "-DLMEM_USE_URAM=0"
+  ],
+  "points": {
+    "lmem_16": {
+      "top": "VX_local_mem_top",
+      "parameters": {
+        "NUM_REQS": 16,
+        "NUM_BANKS": 16,
+        "SIZE": 524288,
+        "WORD_SIZE": 8,
+        "TAG_WIDTH": 16
+      }
+    },
+    "lmem_64": {
+      "top": "VX_local_mem_top",
+      "parameters": {
+        "NUM_REQS": 64,
+        "NUM_BANKS": 64,
+        "SIZE": 524288,
+        "WORD_SIZE": 8,
+        "TAG_WIDTH": 16
+      }
+    },
+    "cache_2": {
+      "top": "VX_cache_top",
+      "parameters": {
+        "NUM_REQS": 2,
+        "NUM_BANKS": 2,
+        "MEM_PORTS": 2,
+        "CACHE_SIZE": 4194304,
+        "LINE_SIZE": 64,
+        "WORD_SIZE": 16,
+        "NUM_WAYS": 4,
+        "MSHR_SIZE": 16,
+        "TAG_WIDTH": 32,
+        "WRITEBACK": 1,
+        "DIRTY_BYTES": 0
+      }
+    },
+    "cache_8": {
+      "top": "VX_cache_top",
+      "parameters": {
+        "NUM_REQS": 8,
+        "NUM_BANKS": 8,
+        "MEM_PORTS": 8,
+        "CACHE_SIZE": 4194304,
+        "LINE_SIZE": 64,
+        "WORD_SIZE": 16,
+        "NUM_WAYS": 4,
+        "MSHR_SIZE": 16,
+        "TAG_WIDTH": 32,
+        "WRITEBACK": 1,
+        "DIRTY_BYTES": 0
+      }
+    },
+    "axi_2": {
+      "top": "VX_axi_adapter",
+      "parameters": {
+        "NUM_PORTS_IN": 2,
+        "NUM_BANKS_OUT": 32,
+        "DATA_WIDTH": 512,
+        "ADDR_WIDTH_IN": 26,
+        "ADDR_WIDTH_OUT": 32,
+        "TAG_WIDTH_IN": 16,
+        "TAG_WIDTH_OUT": 16
+      }
+    },
+    "axi_8": {
+      "top": "VX_axi_adapter",
+      "parameters": {
+        "NUM_PORTS_IN": 8,
+        "NUM_BANKS_OUT": 32,
+        "DATA_WIDTH": 512,
+        "ADDR_WIDTH_IN": 26,
+        "ADDR_WIDTH_OUT": 32,
+        "TAG_WIDTH_IN": 16,
+        "TAG_WIDTH_OUT": 16
+      }
+    }
+  }
+}
