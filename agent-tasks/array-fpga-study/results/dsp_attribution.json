@@ -1,0 +1,38 @@
+[
+  {
+    "component": "Activation reduction",
+    "USE_MULT": "NONE",
+    "USE_SIMD": "ONE48",
+    "count": 1
+  },
+  {
+    "component": "Direct GEMM arithmetic",
+    "USE_MULT": "MULTIPLY",
+    "USE_SIMD": "ONE48",
+    "count": 64
+  },
+  {
+    "component": "Input scaler",
+    "USE_MULT": "MULTIPLY",
+    "USE_SIMD": "ONE48",
+    "count": 32
+  },
+  {
+    "component": "MXU",
+    "USE_MULT": "MULTIPLY",
+    "USE_SIMD": "ONE48",
+    "count": 1024
+  },
+  {
+    "component": "MXU",
+    "USE_MULT": "NONE",
+    "USE_SIMD": "ONE48",
+    "count": 672
+  },
+  {
+    "component": "Output scaler",
+    "USE_MULT": "MULTIPLY",
+    "USE_SIMD": "ONE48",
+    "count": 64
+  }
+]

@@ -1,0 +1,6 @@
+# Preserve evidence hashes exactly, including raw vendor report whitespace.
+results/** -text -whitespace
+*.py text eol=lf
+*.tcl text eol=lf
+*.sv text eol=lf
+*.md text eol=lf

@@ -1,0 +1,212 @@
+[
+  {
+    "file": "reports/fp_tcu_native/hierarchy.rpt",
+    "sha256": "a796a30109ee1dd1ee648c33bf6d8c09768d28e18462e39b131ffd26934aae01",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/hierarchy.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_native/utilization.rpt",
+    "sha256": "24aa1b46822752659ef0ad712dc8ed74c530b648ef30995f16d52c0fd28f4c4e",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/utilization.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_native/timing_post_opt.rpt",
+    "sha256": "d48c99dc204ba543814ac55ee07be8648136057101493a9a2dfcd77eaa74cd74",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_native/primitives.csv",
+    "sha256": "963ecd541919a5978da96e70a183ae714cd3fcd8e208f0c9444314c77dec618a",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/primitives.csv"
+  },
+  {
+    "file": "reports/fp_tcu_native/summary.json",
+    "sha256": "3e03f192c84ac187b8ba1201794027ebeca40938b6993eb6fa57c57e8b888eb3",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/summary.json"
+  },
+  {
+    "file": "reports/fp_tcu_native/status.json",
+    "sha256": "b6793e0864ba6bb99c979d42c5423ec8cca6ad8e1d663cb16ce9eee53d501bdb",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/status.json"
+  },
+  {
+    "file": "reports/fp_tcu_native/manifest.json",
+    "sha256": "aeb6a58682d73af5f6eeabf7be83cbcfcfe09c492d11f0a0371422a50e8f899a",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/manifest.json"
+  },
+  {
+    "file": "reports/fp_tcu_native/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/clock.xdc"
+  },
+  {
+    "file": "reports/fp_tcu_native/ip_setup.tcl",
+    "sha256": "03702326223c1699fea8e18aac1a376ca8ee657937654b55b3719b2cc29a9997",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/ip_setup.tcl"
+  },
+  {
+    "file": "reports/woq_derived_native/hierarchy.rpt",
+    "sha256": "4bb59f83f31195503a3f11c7652d1e02696c532f02eba299efabfd5f64204d0f",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/hierarchy.rpt"
+  },
+  {
+    "file": "reports/woq_derived_native/utilization.rpt",
+    "sha256": "a6c8a5785c9622e497e026fb2a63015eb7213c91254c1c371936113b0e379d2c",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/utilization.rpt"
+  },
+  {
+    "file": "reports/woq_derived_native/timing_post_opt.rpt",
+    "sha256": "766dcc443d120aef92b04eea00077ee46167655642e546b7ecfa32436331c186",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/woq_derived_native/primitives.csv",
+    "sha256": "6f8f9dfec65513c0357ddfa9dea504ab199d833d5fd0e4dc539795e5833efc3b",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/primitives.csv"
+  },
+  {
+    "file": "reports/woq_derived_native/summary.json",
+    "sha256": "924f4aedf4d228f33f88c93c0038333621526821a1900e92b281fddc89df63d0",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/summary.json"
+  },
+  {
+    "file": "reports/woq_derived_native/status.json",
+    "sha256": "b9d818dd71930b7dd6d3d3cd97c802c10de42b2cbefaf23105b25976fdc5698e",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/status.json"
+  },
+  {
+    "file": "reports/woq_derived_native/manifest.json",
+    "sha256": "5a656f1be6a5731a9ef420c5fa5d19919ce8dbca80f52aca38e3a131fe8183ac",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/manifest.json"
+  },
+  {
+    "file": "reports/woq_derived_native/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/clock.xdc"
+  },
+  {
+    "file": "reports/woq_derived_native/ip_setup.tcl",
+    "sha256": "882500a7996199746a3baf87cc3355988580afe6da9f55e20bb87828b84f6f0a",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/ip_setup.tcl"
+  },
+  {
+    "file": "reports/woq_derived_native/command.json",
+    "sha256": "d463ca7cf657d4f82d7dc2191b92b42890537f5111d2a84fc1c648a1cbfe0381",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/command.json"
+  },
+  {
+    "file": "reports/wkv_native/hierarchy.rpt",
+    "sha256": "77a5ed77853ad42cf01373e8b4e3fe5b1092d413fe7bcdaf00e6d9c0bcd74457",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/hierarchy.rpt"
+  },
+  {
+    "file": "reports/wkv_native/utilization.rpt",
+    "sha256": "ec1b96134f440880664e5a36ccd1ce9d7d5965e932ffe57fdce23e14efc44340",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/utilization.rpt"
+  },
+  {
+    "file": "reports/wkv_native/timing_post_opt.rpt",
+    "sha256": "2d988f144be47732eae841a3264a0124c7ae8cbcba38fe88da1ce24b5a56cf87",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/wkv_native/primitives.csv",
+    "sha256": "07ffa0856993290f1412dece6058bce7fbc1e0ee7e1a848c6c8c084a888bbb31",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/primitives.csv"
+  },
+  {
+    "file": "reports/wkv_native/summary.json",
+    "sha256": "2f63a4706e425542ab0e43b5416968a48d1f2b6c4149161ad55ff4b81c61cd28",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/summary.json"
+  },
+  {
+    "file": "reports/wkv_native/status.json",
+    "sha256": "3b9b238f8d53086fe033698fd99c579abecdf53d0d24caf487e26e74b9c4bede",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/status.json"
+  },
+  {
+    "file": "reports/wkv_native/manifest.json",
+    "sha256": "9f9e07de7542c7f2df1d1b5d0eb3a16742782f08eb7329419d8e289b147e7f5d",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/manifest.json"
+  },
+  {
+    "file": "reports/wkv_native/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/clock.xdc"
+  },
+  {
+    "file": "reports/wkv_native/ip_setup.tcl",
+    "sha256": "882500a7996199746a3baf87cc3355988580afe6da9f55e20bb87828b84f6f0a",
+    "original": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/ip_setup.tcl"
+  },
+  {
+    "file": "reports/woq_derived_native/console.log",
+    "sha256": "3afb1ce2256c381f6a3f4232d8a883a09b7069b68d4701350a1b83a20cd75e76",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/console.log"
+  },
+  {
+    "file": "reports/woq_derived_native/synthesis.log",
+    "sha256": "e0ab7efed5a807de09e721988e966343816a29bbabe73b8a3d1df725841dff5e",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/project/fig5_ooc.runs/synth_1/runme.log"
+  },
+  {
+    "file": "provenance/verification_gate.json",
+    "sha256": "0b1155d04043ebd1d135e0c29b7bfdaf5addf1291e3df717ae89cceb68bbfe58",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/woq_derived_native/verification_gate.json"
+  },
+  {
+    "file": "provenance/baseline_compatibility.json",
+    "sha256": "c972c28c027ab366eb40971ff044d7990b9801f91f87a1138ceae91568643010",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/baseline_compatibility.json"
+  },
+  {
+    "file": "provenance/ablation.json",
+    "sha256": "08efc616a2524f7a68ca59bd3f4315d3e2943139af8b4b3ed68081fd41974007",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/woq_derived_native/ablation.json"
+  },
+  {
+    "file": "provenance/fpint_32x32_snapshot.json",
+    "sha256": "2931da87415f5a92828ebad1a207111684fd88dc4c924d378dcc5243acb3e390",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/fpint_32x32/snapshot.json"
+  },
+  {
+    "file": "provenance/tcu_fp16_snapshot.json",
+    "sha256": "56e56f8cb2651e66f0b6f8c599aeb07d8b75a9e99cc4fdc7e381f49ff8a65882",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/snapshot.json"
+  },
+  {
+    "file": "verification/rtl.json",
+    "sha256": "dd46bcfe18650953be652466ed4287e9750f0408711471f6ce25419c4138ac27",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/verification.json"
+  },
+  {
+    "file": "verification/test_manifest.json",
+    "sha256": "920043747862d8700b6e2074bd71049db496276dca8babd7333e76db80851990",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/test_manifest.json"
+  },
+  {
+    "file": "verification/rtl_sim.log",
+    "sha256": "db9fbb6815bc6a1489fc3694ca1374834d4bee7576bf7a980d8604b7391a24ba",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/logs/sim.log"
+  },
+  {
+    "file": "verification/rtl_compile.log",
+    "sha256": "5239ea93dab6a1d93be8810544061d16d5dcf5198afbdff0ae2ffdab2888b299",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/logs/compile.log"
+  },
+  {
+    "file": "verification/vendor_ip.json",
+    "sha256": "1dd25d9e41e35c7c213f2e1c57817d3e77abcf0240d2d4de52c477b238bda311",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/vendor_ip_check/result.json"
+  },
+  {
+    "file": "verification/vendor_ip.log",
+    "sha256": "5af9bb17e0d630a865cd377698ca1f1389012f2f9e5bdda82b9e549ff8c71ebe",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/vendor_ip_check/console.log"
+  },
+  {
+    "file": "reports/wkv_native/dsp_cells.csv",
+    "sha256": "03a35033b135b0dd71d422cf7311a258e6a8c746cf332428eee151912944ef76",
+    "original": "/home/donghweeson/workspace/vortex/build-array-fpga-study/dsp_attribution/wkv_native.csv"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "status": "pass",
+  "exit_code": 0,
+  "command": [
+    "/tool/Program/Xilinx/2025.1/Vivado/bin/vivado",
+    "-mode",
+    "batch",
+    "-source",
+    "/home/donghweeson/workspace/vortex/agent-tasks/array-fpga-study/vendor_ip_sim.tcl",
+    "-tclargs",
+    "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32",
+    "/home/donghweeson/workspace/vortex/build-array-fpga-study/vendor_ip_check",
+    "/home/donghweeson/workspace/vortex/agent-tasks/array-fpga-study/vendor_ip_tb.sv"
+  ],
+  "testbench_sha256": "772378c11fd5c7c39e38078acac4f4cedbbfe9e3a43078b6f3d476ac5eaf2265",
+  "log_sha256": "5af9bb17e0d630a865cd377698ca1f1389012f2f9e5bdda82b9e549ff8c71ebe",
+  "scope": "Actual generated AMD FP16 multiply, FP32 multiply/add models; directed finite arithmetic, always ready, burst + valid gaps; not full IEEE proof",
+  "accepted": 27,
+  "returned": 27,
+  "measured_handshake_latency": 1,
+  "consecutive_outputs": 18
+}

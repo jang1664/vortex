@@ -1,0 +1,13 @@
+component,LUT,FF,DSP,RAMB36,RAMB18,URAM,BRAM36eq
+SIMT pipeline,259551,181537,104,146,2,0,147.0
+LMEM,40514,51360,0,0,0,32,0.0
+D-cache,26326,40115,0,220,28,0,234.0
+I-cache,1926,2276,0,31,9,0,35.5
+Core memory interconnect,54694,33597,0,2,0,0,2.0
+ACC hard memory,0,0,0,0,0,60,0.0
+GEMM logic + ACC glue,148898,50391,1857,0,0,0,0.0
+TMEM banks,7127,160,0,0,0,64,0.0
+Tensor DMA engines,56208,16296,168,84,20,0,94.0
+TMEM switches/control,3241,32,0,0,0,0,0.0
+GEMM/DMA control + frontend,17422,10762,142,23,0,0,23.0
+AFU/AXI/cluster residual,16829,38401,0,0,0,0,0.0

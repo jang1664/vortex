@@ -1,0 +1,366 @@
+{
+  "scope": "historical C4, Physopt postRoute, accelerator=vortex_afu_1",
+  "part": "xcu55c-fsvh2892-2L-e",
+  "vivado": "2025.1",
+  "source_binary_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin",
+  "reports": [
+    {
+      "original": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/hier_utilization.rpt",
+      "archived": "reports/c4/hier_utilization.rpt",
+      "sha256": "db99b2b67c7e824db4c7c8f2cd652e2bb880ae875a9c3766bc9b9509e0f8c247"
+    },
+    {
+      "original": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/impl_1_full_util_routed.rpt",
+      "archived": "reports/c4/impl_1_full_util_routed.rpt",
+      "sha256": "d86ad5ded7f917c9c257bd4320df36d7e761fd4124ec21cfe7344d260e319c9b"
+    }
+  ],
+  "accelerator": {
+    "LUT": 632736,
+    "FF": 424927,
+    "DSP": 2271,
+    "RAMB36": 506,
+    "RAMB18": 59,
+    "URAM": 156
+  },
+  "device_design_total": {
+    "LUT": 809907,
+    "FF": 643744,
+    "DSP": 2275,
+    "RAMB36": 703,
+    "RAMB18": 65,
+    "URAM": 156
+  },
+  "shell_and_other": {
+    "LUT": 177171,
+    "FF": 218817,
+    "DSP": 4,
+    "RAMB36": 197,
+    "RAMB18": 6,
+    "URAM": 0
+  },
+  "groups": [
+    {
+      "component": "SIMT pipeline",
+      "LUT": 259551,
+      "FF": 181537,
+      "DSP": 104,
+      "RAMB36": 146,
+      "RAMB18": 2,
+      "URAM": 0,
+      "BRAM36eq": 147.0,
+      "basis": [
+        "core minus gemm_node minus mem_unit; includes instruction register files"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 41.02042558033682,
+        "FF": 42.72192635440911,
+        "DSP": 4.579480405107882,
+        "RAMB36": 28.85375494071146,
+        "RAMB18": 3.389830508474576,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "LMEM",
+      "LUT": 40514,
+      "FF": 51360,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 32,
+      "BRAM36eq": 0.0,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/mem_unit/local_mem",
+          "line": 6072
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 6.402986395589946,
+        "FF": 12.086781964902206,
+        "DSP": 0.0,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 20.512820512820515
+      }
+    },
+    {
+      "component": "D-cache",
+      "LUT": 26326,
+      "FF": 40115,
+      "DSP": 0,
+      "RAMB36": 220,
+      "RAMB18": 28,
+      "URAM": 0,
+      "BRAM36eq": 234.0,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/dcache",
+          "line": 2505
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 4.160661002376979,
+        "FF": 9.440445064681699,
+        "DSP": 0.0,
+        "RAMB36": 43.47826086956522,
+        "RAMB18": 47.45762711864407,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "I-cache",
+      "LUT": 1926,
+      "FF": 2276,
+      "DSP": 0,
+      "RAMB36": 31,
+      "RAMB18": 9,
+      "URAM": 0,
+      "BRAM36eq": 35.5,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/icache",
+          "line": 7205
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 0.3043923532089213,
+        "FF": 0.5356214126191087,
+        "DSP": 0.0,
+        "RAMB36": 6.126482213438735,
+        "RAMB18": 15.254237288135593,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "Core memory interconnect",
+      "LUT": 54694,
+      "FF": 33597,
+      "DSP": 0,
+      "RAMB36": 2,
+      "RAMB18": 0,
+      "URAM": 0,
+      "BRAM36eq": 2.0,
+      "basis": [
+        "mem_unit minus local_mem"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 8.644047438426137,
+        "FF": 7.906534534167045,
+        "DSP": 0.0,
+        "RAMB36": 0.3952569169960474,
+        "RAMB18": 0.0,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "ACC hard memory",
+      "LUT": 0,
+      "FF": 0,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 60,
+      "BRAM36eq": 0.0,
+      "basis": [
+        "GEMM RAM primitives only; glue logic remains in GEMM logic"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 0.0,
+        "FF": 0.0,
+        "DSP": 0.0,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 38.46153846153846
+      }
+    },
+    {
+      "component": "GEMM logic + ACC glue",
+      "LUT": 148898,
+      "FF": 50391,
+      "DSP": 1857,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "BRAM36eq": 0.0,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_VX_gemm_unit",
+          "line": 4356
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 23.53240530015678,
+        "FF": 11.8587427958214,
+        "DSP": 81.77014531043594,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "TMEM banks",
+      "LUT": 7127,
+      "FF": 160,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 64,
+      "BRAM36eq": 0.0,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[0].u_bank",
+          "line": 5512
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[1].u_bank",
+          "line": 5518
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[2].u_bank",
+          "line": 5524
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[3].u_bank",
+          "line": 5530
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[4].u_bank",
+          "line": 5536
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[5].u_bank",
+          "line": 5542
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[6].u_bank",
+          "line": 5548
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/g_bank[7].u_bank",
+          "line": 5554
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 1.1263781419106862,
+        "FF": 0.03765352637041186,
+        "DSP": 0.0,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 41.02564102564103
+      }
+    },
+    {
+      "component": "Tensor DMA engines",
+      "LUT": 56208,
+      "FF": 16296,
+      "DSP": 168,
+      "RAMB36": 84,
+      "RAMB18": 20,
+      "URAM": 0,
+      "BRAM36eq": 94.0,
+      "basis": [
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_dma_engine",
+          "line": 5560
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_ldma_input",
+          "line": 5642
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_ldma_output",
+          "line": 5651
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_ldma_sz",
+          "line": 5660
+        },
+        {
+          "path": "level0_wrapper/level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_tmem_subsystem/u_ldma_weight",
+          "line": 5669
+        }
+      ],
+      "percent_of_accelerator": {
+        "LUT": 8.883325747231073,
+        "FF": 3.835011660826448,
+        "DSP": 7.397622192866579,
+        "RAMB36": 16.600790513833992,
+        "RAMB18": 33.898305084745765,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "TMEM switches/control",
+      "LUT": 3241,
+      "FF": 32,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "BRAM36eq": 0.0,
+      "basis": [
+        "u_tmem_subsystem minus banks and five DMA engine subtrees"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 0.512219946391544,
+        "FF": 0.007530705274082372,
+        "DSP": 0.0,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "GEMM/DMA control + frontend",
+      "LUT": 17422,
+      "FF": 10762,
+      "DSP": 142,
+      "RAMB36": 23,
+      "RAMB18": 0,
+      "URAM": 0,
+      "BRAM36eq": 23.0,
+      "basis": [
+        "gemm_node minus GEMM unit and TMEM subsystem; includes any hierarchy accounting difference"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 2.753439033024832,
+        "FF": 2.5326703174898277,
+        "DSP": 6.252752091589608,
+        "RAMB36": 4.545454545454546,
+        "RAMB18": 0.0,
+        "URAM": 0.0
+      }
+    },
+    {
+      "component": "AFU/AXI/cluster residual",
+      "LUT": 16829,
+      "FF": 38401,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "BRAM36eq": 0.0,
+      "basis": [
+        "vortex_afu_1 minus all listed non-overlapping groups"
+      ],
+      "percent_of_accelerator": {
+        "LUT": 2.6597190613462804,
+        "FF": 9.037081663438661,
+        "DSP": 0.0,
+        "RAMB36": 0.0,
+        "RAMB18": 0.0,
+        "URAM": 0.0
+      }
+    }
+  ],
+  "caveats": [
+    "This historical C4 build uses 60 ACC URAMs; OOC matched WoQ/WKV use BRAM. Do not combine totals.",
+    "Counts only: ignore report percentages with mixed PR-region denominators.",
+    "ACC hard memory excludes all LUT/FF glue; GEMM logic + ACC glue retains it.",
+    "Hierarchy optimization moves logic between scopes. Components are attribution, not removal costs.",
+    "gemm_node immediate-child LUT counts exceed parent by 2; parent-minus-selected-children keeps accounting exact without asserting a cause.",
+    "No Fmax, power, or deployed throughput is inferred from these counts."
+  ]
+}

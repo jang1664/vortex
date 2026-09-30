@@ -1,0 +1,10 @@
+{
+  "report": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/verification.json",
+  "sha256": "dd46bcfe18650953be652466ed4287e9750f0408711471f6ce25419c4138ac27",
+  "report_data": {
+    "status": "pass",
+    "test_name": "array_fpga_test",
+    "error_log": "",
+    "log_file": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/logs/sim.log"
+  }
+}

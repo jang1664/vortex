@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "array_fpga_test",
+  "error_log": "",
+  "log_file": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/logs/sim.log"
+}

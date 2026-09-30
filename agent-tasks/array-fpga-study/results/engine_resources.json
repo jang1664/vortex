@@ -1,0 +1,53 @@
+[
+  {
+    "engine": "fp_tcu_native",
+    "precision": "FP16 x FP16",
+    "MAC_per_cycle": 256,
+    "reference_MHz": 100,
+    "LUT": 80662,
+    "FF": 126202,
+    "DSP": 1024,
+    "RAMB36": 1,
+    "RAMB18": 0,
+    "URAM": 0,
+    "BRAM36eq": 1.0,
+    "internal_ACC_KiB": 0,
+    "nominal_GOPS": 51.2,
+    "GOPS_per_kLUT": 0.6347474647293645,
+    "GOPS_per_DSP": 0.05
+  },
+  {
+    "engine": "woq_derived_native",
+    "precision": "FP16 x INT4; WoQ subset",
+    "MAC_per_cycle": 1024,
+    "reference_MHz": 100,
+    "LUT": 136565,
+    "FF": 46280,
+    "DSP": 1825,
+    "RAMB36": 56,
+    "RAMB18": 4,
+    "URAM": 0,
+    "BRAM36eq": 58.0,
+    "internal_ACC_KiB": 256,
+    "nominal_GOPS": 204.8,
+    "GOPS_per_kLUT": 1.4996521802804526,
+    "GOPS_per_DSP": 0.11221917808219178
+  },
+  {
+    "engine": "wkv_native",
+    "precision": "FP16 x INT4; WKV",
+    "MAC_per_cycle": 1024,
+    "reference_MHz": 100,
+    "LUT": 147203,
+    "FF": 50704,
+    "DSP": 1857,
+    "RAMB36": 56,
+    "RAMB18": 4,
+    "URAM": 0,
+    "BRAM36eq": 58.0,
+    "internal_ACC_KiB": 256,
+    "nominal_GOPS": 204.8,
+    "GOPS_per_kLUT": 1.3912759930164467,
+    "GOPS_per_DSP": 0.11028540656973614
+  }
+]
