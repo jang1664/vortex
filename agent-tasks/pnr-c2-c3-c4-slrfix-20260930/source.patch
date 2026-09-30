@@ -1,0 +1,369 @@
+diff --git a/hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl b/hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl
+index 3a6a1dce7..9209d79ab 100644
+--- a/hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl
++++ b/hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl
+@@ -31,24 +31,40 @@ proc ::vortex::mxu_slr::truth {property object} {
+ }
+ 
+ proc ::vortex::mxu_slr::inventory {} {
+-    variable cells; variable roles; variable owners; variable roots
+-    set cells [dict create]; set roles [dict create]; set owners [dict create]
++    variable cells; variable owners; variable roots; variable endpoints
++    set cells [dict create]; set owners [dict create]
++    set endpoints [dict create]
+     set witnesses [dict create]; set roots {}
+-    foreach cell [get_cells -hierarchical -quiet -include_replicated_objects -filter {IS_PRIMITIVE == 1} *] {
+-        set name [get_property NAME $cell]
++    puts "INFO: MXU inventory: collecting placement cells and crossing FFs"
++    # Query Vivado properties in bulk, as in the full feat/gemv floorplan.
++    # Per-cell property calls are prohibitively slow on full kernel DCPs.
++    set primitive [get_cells -hierarchical -quiet -include_replicated_objects -filter {IS_PRIMITIVE == 1} *]
++    set names [get_property NAME $primitive]
++    set refs [get_property REF_NAME $primitive]
++    if {[llength $primitive] != [llength $names] || [llength $names] != [llength $refs]} {
++        error "Incomplete MXU primitive NAME/REF_NAME inventory"
++    }
++    foreach cell $primitive name $names ref $refs {
+         set group [classify $name]
+         if {![llength $group]} {continue}
+-        set ref [get_property REF_NAME $cell]
+         if {$ref in {GND VCC}} {continue}
+         lassign $group root role owner
+         dict set cells $name $cell
+-        dict set roles $name $role
+         dict set owners $name $owner
+-        dict set witnesses $root $role 1
+         if {$role ni {mxu local}} {
+-            if {![string match FD* $ref] || ![truth USER_SLL_REG $cell]} {
++            # Ownership includes LUTs that synthesis creates before a TX FF
++            # or beside an RX FF. Only marked fabric FFs are crossing endpoints.
++            # Keep missing FF attributes and attributes on non-FFs fail-fast.
++            if {![string match FD* $ref]} {
++                if {[truth USER_SLL_REG $cell]} {
++                    error "MXU boundary is not a marked fabric FF: $name ($ref)"
++                }
++                continue
++            }
++            if {![truth USER_SLL_REG $cell]} {
+                 error "MXU boundary is not a marked fabric FF: $name ($ref)"
+             }
++            dict set endpoints $name $role
+             # Both the data and control banks must survive synthesis.
+             if {[regexp {^(input_(?:tx|rx))$} $role]
+                 && [regexp {[/.](data_q|control_q)_reg} $name -> bank]} {
+@@ -57,6 +73,7 @@ proc ::vortex::mxu_slr::inventory {} {
+         } elseif {$role eq "local" && [truth USER_SLL_REG $cell]} {
+             error "Local block-index FF must not be an SLR endpoint: $name"
+         }
++        dict set witnesses $root $role 1
+     }
+     set roots [dict keys $witnesses]
+     if {![llength $roots]} {error "MXU floorplan found no u_VX_gemm_unit/u_mxu hierarchy"}
+@@ -67,6 +84,7 @@ proc ::vortex::mxu_slr::inventory {} {
+             }
+         }
+     }
++    puts "INFO: MXU inventory: [dict size $cells] placement cells, [dict size $endpoints] crossing FFs"
+ }
+ 
+ proc ::vortex::mxu_slr::net_pins {pin} {
+@@ -76,14 +94,26 @@ proc ::vortex::mxu_slr::net_pins {pin} {
+ }
+ 
+ proc ::vortex::mxu_slr::check_links {placed report_file} {
+-    variable cells; variable roles; variable owners
++    variable cells; variable endpoints; variable owners
++    array set owner_map $owners
++    array set endpoint_map $endpoints
++    # Relationship queries need freshly resolved Vivado objects. Handles
++    # stored in Tcl maps can become names and fail for indexed register names.
++    set endpoint_cells [get_cells -quiet [dict keys $endpoints]]
++    if {[llength $endpoint_cells] != [dict size $endpoints]} {
++        error "Incomplete MXU crossing FF object inventory"
++    }
+     set seen [dict create]; set laguna_count 0; set pairs 0
+     set out [open $report_file w]
+     puts $out "tx\trx\ttx_slr\trx_slr\ttx_loc\trx_loc\tlaguna"
+     try {
+-        dict for {rx_name role} $roles {
++        foreach rx $endpoint_cells {
++            set rx_name [get_property NAME $rx]
++            if {![info exists endpoint_map($rx_name)]} {
++                error "Unexpected MXU crossing FF object: $rx_name"
++            }
++            set role $endpoint_map($rx_name)
+             if {![string match *_rx $role]} {continue}
+-            set rx [dict get $cells $rx_name]
+             set d [get_pins -quiet -of_objects $rx -filter {REF_PIN_NAME == D}]
+             if {[llength $d] != 1} {error "MXU RX must have exactly one D pin: $rx_name"}
+             set drivers {}; set loads {}
+@@ -106,8 +136,8 @@ proc ::vortex::mxu_slr::check_links {placed report_file} {
+                 puts $out "# constant $rx_name $tx_name"
+                 continue
+             }
+-            if {![dict exists $roles $tx_name]
+-                || [dict get $roles $tx_name] ne [string map {_rx _tx} $role]
++            if {![info exists endpoint_map($tx_name)]
++                || $endpoint_map($tx_name) ne [string map {_rx _tx} $role]
+                 || [lindex [classify $rx_name] 0] ne [lindex [classify $tx_name] 0]
+                 || [get_property REF_PIN_NAME $q] ne "Q"} {
+                 error "MXU RX is not directly driven by its marked TX FF Q: $rx_name <- $tx_name"
+@@ -117,8 +147,8 @@ proc ::vortex::mxu_slr::check_links {placed report_file} {
+                 error "MXU TX has nonexclusive fanout (local FF may have merged): $tx_name"
+             }
+             dict set seen $tx_name 1
+-            set tx_slr [dict get $owners $tx_name]
+-            set rx_slr [dict get $owners $rx_name]
++            set tx_slr $owner_map($tx_name)
++            set rx_slr $owner_map($rx_name)
+             set tx_loc {}; set rx_loc {}; set laguna 0
+             if {$placed} {
+                 set tx_loc [get_property LOC $tx]; set rx_loc [get_property LOC $rx]
+@@ -130,7 +160,7 @@ proc ::vortex::mxu_slr::check_links {placed report_file} {
+             incr pairs; incr laguna_count $laguna
+             puts $out [join [list $tx_name $rx_name $tx_slr $rx_slr $tx_loc $rx_loc $laguna] "\t"]
+         }
+-        dict for {name role} $roles {
++        dict for {name role} $endpoints {
+             if {[string match *_tx $role] && ![dict exists $seen $name]} {
+                 error "MXU TX has no matching direct RX: $name"
+             }
+@@ -147,15 +177,19 @@ proc ::vortex::mxu_slr::check_links {placed report_file} {
+ # Clock/reset and literal constants are infrastructure, not payload crossings.
+ proc ::vortex::mxu_slr::check_tree_ports {} {
+     variable roots; variable owners
++    array set owner_map $owners
+     foreach root $roots {
+         set tree [get_cells -quiet [list $root/u_mxu]]
+         if {[llength $tree] != 1} {error "MXU hierarchy anchor was lost: $root/u_mxu"}
+         foreach port [get_pins -quiet -of_objects $tree] {
+             if {[regexp {/(clk_i|resetn_i)$} [get_property NAME $port]]} {continue}
+             set pins [net_pins $port]
++            if {![llength $pins]} {continue}
+             set constant 0
+-            foreach pin $pins {
+-                if {[get_property DIRECTION $pin] ne "OUT"} {continue}
++            set directions [get_property DIRECTION $pins]
++            if {[llength $directions] != [llength $pins]} {error "Incomplete MXU port pin inventory: $port"}
++            foreach pin $pins direction $directions {
++                if {$direction ne "OUT"} {continue}
+                 set ref [get_property REF_NAME [get_cells -quiet -of_objects $pin]]
+                 set pin_name [get_property REF_PIN_NAME $pin]
+                 if {($ref eq "GND" && $pin_name eq "G")
+@@ -163,10 +197,9 @@ proc ::vortex::mxu_slr::check_tree_ports {} {
+             }
+             # A literal constant net can also feed unrelated platform logic.
+             if {$constant} {continue}
+-            foreach pin $pins {
+-                set cell [get_cells -quiet -of_objects $pin]
+-                set name [get_property NAME $cell]
+-                if {![dict exists $owners $name] || [dict get $owners $name] != 2} {
++            set connected [get_cells -quiet -of_objects $pins]
++            foreach name [get_property NAME $connected] {
++                if {![info exists owner_map($name)] || $owner_map($name) != 2} {
+                     error "MXU data port bypasses the SLR2 transport: $port -> $name"
+                 }
+             }
+@@ -174,25 +207,59 @@ proc ::vortex::mxu_slr::check_tree_ports {} {
+     }
+ }
+ 
++# Resolve names to typed objects and read one property in bulk. A collection
++# of pblocks cannot detect an unassigned leaf, so preserve every cell's value.
++proc ::vortex::mxu_slr::placement_properties {property} {
++    variable cells
++    set objects [get_cells -quiet [dict keys $cells]]
++    set names [get_property NAME $objects]
++    set values [get_property $property $objects]
++    if {[llength $objects] == 1} {set values [list $values]}
++    if {[llength $objects] != [dict size $cells]
++        || [llength $names] != [dict size $cells]
++        || [llength $values] != [dict size $cells]} {
++        error "Incomplete MXU $property inventory"
++    }
++    array set expected $cells
++    array set actual {}
++    foreach name $names value $values {
++        if {![info exists expected($name)] || [info exists actual($name)]} {
++            error "Unexpected or duplicate MXU cell: $name"
++        }
++        set actual($name) $value
++    }
++    return [array get actual]
++}
++
+ proc ::vortex::mxu_slr::check_membership {placed} {
+     variable cells; variable owners
+     foreach owner {1 2} {
+         set block [get_pblocks -quiet pblock_mxu_slr$owner]
+         if {[llength $block] != 1} {error "Missing MXU SLR$owner pblock"}
+         foreach property {IS_SOFT CONTAIN_ROUTING EXCLUDE_PLACEMENT} {
+-            if {[string tolower [get_property $property $block]] ni {0 false no}} {
+-                error "MXU pblock $block requires $property=false"
++            set value [get_property $property $block]
++            if {[string tolower $value] ni {0 false no}} {
++                error "MXU pblock $block requires $property=false (actual='$value')"
+             }
+         }
+     }
++    array set membership [placement_properties PBLOCK]
++    array set owner_map $owners
+     dict for {name cell} $cells {
+-        set owner [dict get $owners $name]
++        set owner $owner_map($name)
+         set expected pblock_mxu_slr$owner
+-        if {[get_property PBLOCK $cell] ne $expected} {
++        if {$membership($name) ne $expected} {
+             error "MXU cell has wrong pblock: $name (expected $expected)"
+         }
+-        if {$placed && [get_slrs -quiet -of_objects $cell] ne "SLR$owner"} {
+-            error "MXU cell placed in wrong SLR: $name (expected SLR$owner)"
++    }
++    if {$placed} {
++        set objects [get_cells -quiet [dict keys $cells]]
++        foreach cell $objects {
++            set name [get_property NAME $cell]
++            set owner $owner_map($name)
++            if {[get_slrs -quiet -of_objects $cell] ne "SLR$owner"} {
++                error "MXU cell placed in wrong SLR: $name (expected SLR$owner)"
++            }
+         }
+     }
+ }
+@@ -203,6 +270,9 @@ proc ::vortex::mxu_slr::apply {phase} {
+     set part [string tolower [get_property PART [current_design]]]
+     if {![string match xcu55c-* $part]} {error "MXU SLR floorplan supports XCU55C only: $part"}
+     inventory
++    puts "INFO: MXU $phase: assigning pblocks"
++    array set old_blocks [placement_properties PBLOCK]
++    array set owner_map $owners
+     foreach owner {1 2} {
+         set name pblock_mxu_slr$owner
+         set block [get_pblocks -quiet $name]
+@@ -214,10 +284,15 @@ proc ::vortex::mxu_slr::apply {phase} {
+         } elseif {[llength $block] != 1} {
+             error "MXU post-opt requires existing $name"
+         }
++        # Vivado 2025.1 can reset IS_SOFT when EXCLUDE_PLACEMENT is set.
++        # Set IS_SOFT last so the checked hard-pblock contract is retained.
++        foreach property {EXCLUDE_PLACEMENT CONTAIN_ROUTING IS_SOFT} {
++            set_property $property false [get_pblocks $name]
++        }
+         set members {}
+         dict for {cell_name cell} $cells {
+-            if {[dict get $owners $cell_name] != $owner} {continue}
+-            set old [get_property PBLOCK $cell]
++            if {$owner_map($cell_name) != $owner} {continue}
++            set old $old_blocks($cell_name)
+             # A platform RP pblock may already cover the kernel. Reject other
+             # Vortex user floorplans, while allowing the platform enclosure.
+             if {$old ne $name && ([string match pblock_mxu* $old]
+@@ -230,13 +305,18 @@ proc ::vortex::mxu_slr::apply {phase} {
+             foreach root $roots {lappend members {*}[get_cells -quiet [list $root/u_mxu]]}
+         }
+         add_cells_to_pblock $block $members
+-        foreach property {IS_SOFT CONTAIN_ROUTING EXCLUDE_PLACEMENT} {
+-            set_property $property false $block
++        # Attaching cells under a platform RP can change child properties.
++        # Re-resolve the pblock and reassert the contract, as in feat/gemv.
++        foreach property {EXCLUDE_PLACEMENT CONTAIN_ROUTING IS_SOFT} {
++            set_property $property false [get_pblocks $name]
+         }
+         puts "INFO: MXU SLR$owner $phase: [llength $members] placement members"
+     }
++    puts "INFO: MXU $phase: checking pblock membership"
+     check_membership 0
++    puts "INFO: MXU $phase: checking direct FF links"
+     check_links 0 ${phase}_mxu_slr_links.tsv
++    puts "INFO: MXU $phase: checking MXU ports"
+     check_tree_ports
+ }
+ 
+diff --git a/hw/syn/xilinx/xrt/tests/test_mxu_slr_floorplan.tcl b/hw/syn/xilinx/xrt/tests/test_mxu_slr_floorplan.tcl
+index df7a3b72e..cc78a3c89 100644
+--- a/hw/syn/xilinx/xrt/tests/test_mxu_slr_floorplan.tcl
++++ b/hw/syn/xilinx/xrt/tests/test_mxu_slr_floorplan.tcl
+@@ -48,13 +48,24 @@ proc add_second_unit {} {
+ proc current_design {} {return design}
+ proc get_cells {args} {
+     set idx [lsearch -exact $args -of_objects]
+-    if {$idx >= 0} {return [list [file dirname [lindex $args [expr {$idx+1}]]]]}
++    if {$idx >= 0} {
++        set result {}
++        foreach pin [lindex $args [expr {$idx+1}]] {lappend result [file dirname $pin]}
++        return [lsort -unique $result]
++    }
+     if {[lsearch -exact $args -hierarchical] >= 0} {return $::primitives}
+-    set name [lindex [lindex $args end] 0]
+-    if {[dict exists $::props $name] || [dict exists $::ports $name]} {return [list $name]}
+-    return {}
++    set result {}
++    foreach name [lindex $args end] {
++        if {[dict exists $::props $name] || [dict exists $::ports $name]} {lappend result $name}
++    }
++    return $result
+ }
+ proc get_property {property object} {
++    if {[llength $object] > 1} {
++        set values {}
++        foreach item $object {lappend values [get_property $property $item]}
++        return $values
++    }
+     set object [lindex $object 0]
+     if {$property eq "PART"} {return $::part}
+     if {$property eq "NAME"} {return $object}
+@@ -87,6 +98,10 @@ proc resize_pblock {block args} {
+ }
+ proc set_property {property value object} {
+     dict set ::block_props $object $property $value
++    # Reproduce Vivado 2025.1's EXCLUDE_PLACEMENT setter side effect.
++    if {$property eq "EXCLUDE_PLACEMENT" && $value in {false 0}} {
++        dict set ::block_props $object IS_SOFT true
++    }
+ }
+ proc add_cells_to_pblock {block cells} {
+     foreach object $cells {
+@@ -121,6 +136,43 @@ foreach backend {gemm_node_naive gemm_node} {
+     rejects {::vortex::mxu_slr::check_placed} {*wrong SLR*}
+ }
+ 
++fixture
++set tx_lut $::root/g_slr_mxu_weight_tx.payload_q_valid_i_1
++set rx_lut $::root/g_slr_mxu_weight_rx.local_reset_i_1
++cell $tx_lut LUT5
++cell $rx_lut LUT2
++::vortex::mxu_slr::apply post_init
++::vortex::mxu_slr::apply post_opt
++::vortex::mxu_slr::check_placed
++assert_equal [dict get $::props $tx_lut PBLOCK] pblock_mxu_slr1 "TX helper placement"
++assert_equal [dict get $::props $rx_lut PBLOCK] pblock_mxu_slr2 "RX helper placement"
++assert_equal [dict exists $::vortex::mxu_slr::endpoints $tx_lut] 0 "TX helper is not a crossing FF"
++assert_equal [dict exists $::vortex::mxu_slr::endpoints $rx_lut] 0 "RX helper is not a crossing FF"
++assert_equal [dict size $::vortex::mxu_slr::endpoints] 8 "Only actual FF endpoints counted"
++dict set ::props $tx_lut PBLOCK {}
++rejects {::vortex::mxu_slr::check_membership 0} {*wrong pblock*}
++dict set ::props $tx_lut PBLOCK pblock_mxu_slr1
++dict set ::props $tx_lut USER_SLL_REG 1
++rejects {::vortex::mxu_slr::inventory} {*not a marked fabric FF*}
++
++fixture
++set missing $::root/g_slr_mxu_weight_tx.payload_q_reg\[0\]
++set ::primitives [lsearch -all -inline -not -exact $::primitives $missing]
++cell $::root/g_slr_mxu_weight_tx.payload_q_valid_i_1 LUT5
++rejects {::vortex::mxu_slr::inventory} {*Missing MXU placement group*}
++
++fixture
++dict lappend ::ports $::root/u_mxu $::root/u_mxu/unused_o
++::vortex::mxu_slr::apply post_init
++assert_equal [dict size $::vortex::mxu_slr::endpoints] 8 "Unconnected port has no crossing"
++
++fixture
++set rx $::root/g_slr_mxu_weight_rx.payload_q_reg\[0\]
++set illegal_lut $::root/g_slr_mxu_weight_tx.crossing_i_1
++cell $illegal_lut LUT2
++dict set ::nets $rx/D [list $illegal_lut/O $rx/D]
++rejects {::vortex::mxu_slr::apply post_init} {*not directly driven*}
++
+ fixture
+ set ::env(VORTEX_GEMM_MXU_SLR_FLOORPLAN) 0
+ source [file join $xrt_dir floorplan.tcl]

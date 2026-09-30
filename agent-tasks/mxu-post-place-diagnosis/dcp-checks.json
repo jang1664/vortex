@@ -1,0 +1,20 @@
+[
+  {
+    "config": "th32_c1_tcu_naive_m32_tcol32",
+    "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+    "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_tcu_naive_m32_tcol32",
+    "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_tcu_naive_m32_tcol32.log"
+  },
+  {
+    "config": "th32_c1_naive_m32_tcol32",
+    "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+    "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_naive_m32_tcol32",
+    "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_naive_m32_tcol32.log"
+  },
+  {
+    "config": "th32_c1_improve_m32_tcol32",
+    "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+    "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_improve_m32_tcol32",
+    "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_improve_m32_tcol32.log"
+  }
+]

@@ -26,3 +26,26 @@
 **/simv.daidir/
 **/simv.vdb/
 **/xsim.dir/
+
+# Reviewed MXU/PnR task records: keep compact root summaries and manifests;
+# nested directories are local Vivado workspaces and prior-run archives.
+/hook-parity-20260930/*/
+!/hook-parity-20260930/*.json
+/mxu-floorplan-parity-20260930/*/
+!/mxu-floorplan-parity-20260930/*.json
+/mxu-post-place-diagnosis/*/
+!/mxu-post-place-diagnosis/*.json
+/mxu-reset-boundary-diagnosis/*/
+!/mxu-reset-boundary-diagnosis/*.json
+/mxu-slr-inventory-diagnosis/*/
+!/mxu-slr-inventory-diagnosis/*.json
+/pnr-c2-c3-c4-gemvgroup-20260930/*/
+!/pnr-c2-c3-c4-gemvgroup-20260930/*.json
+/pnr-c2-c3-c4-slrfix-20260930/*/
+!/pnr-c2-c3-c4-slrfix-20260930/*.json
+/pnr-c4-boundary-20260930/*/
+!/pnr-c4-boundary-20260930/*.json
+/pnr-four-configs-20260929/*/
+!/pnr-four-configs-20260929/*.json
+/pnr-four-configs-20260930/*/
+!/pnr-four-configs-20260930/*.json

@@ -1,0 +1,9 @@
+task: four-config-pnr
+state: STOPPED_BY_USER
+updated: "2026-09-30T00:04:40+09:00"
+reason: Port clock API pre-init workaround before restarting PnR.
+details: status.json
+history: events.jsonl
+pitfalls:
+  - Initial jobs did not include feat/gemv commit 866681b2d.
+  - Existing outputs and logs are preserved; use a fresh postfix on restart.

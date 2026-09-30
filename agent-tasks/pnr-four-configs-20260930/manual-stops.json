@@ -1,0 +1,10 @@
+{
+  "time": "2026-09-30T02:04:53.394983+09:00",
+  "event": "stopped_by_user",
+  "configs": [
+    "th32_c1_tcu_naive_m32_tcol32",
+    "th32_c1_naive_m32_tcol32"
+  ],
+  "process_count": 48,
+  "reason": "Fix MXU floorplan inventory before restarting C2/C3; retain C1"
+}

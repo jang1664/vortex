@@ -1,0 +1,12 @@
+[
+  {
+    "config": "th32_c1_naive_m32_tcol32",
+    "returncode": 1,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-inventory-diagnosis/final-dcp-th32_c1_naive_m32_tcol32.log"
+  },
+  {
+    "config": "th32_c1_improve_m32_tcol32",
+    "returncode": 1,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-inventory-diagnosis/final-dcp-th32_c1_improve_m32_tcol32.log"
+  }
+]

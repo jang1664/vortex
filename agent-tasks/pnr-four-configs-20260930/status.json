@@ -1,0 +1,128 @@
+{
+  "time": "2026-09-30T05:34:35+09:00",
+  "monitor_pid": 1911314,
+  "free_disk_gib": 52.0,
+  "runs": [
+    {
+      "config": "tcu_th32_c1_rev3",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "tcu_th32_c1_rev3.sh",
+        "--postfix",
+        "pnr_clockfix_20260930_001016"
+      ],
+      "pid": 1911317,
+      "started": "2026-09-30T00:10:45+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/tcu_th32_c1_rev3.launcher.log",
+      "state": "passed",
+      "returncode": 0,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/tcu_th32_c1_rev3.launcher.log",
+      "recent_lines": [
+        "cp tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/reports/link/imp/impl_1_kernel_util_synthed.rpt tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin",
+        "cp: cannot stat 'tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/reports/link/imp/impl_1_kernel_util_synthed.rpt': No such file or directory",
+        "make: [Makefile:437: report] Error 1 (ignored)",
+        "cp tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/reports/link/imp/impl_1_kernel_util_routed.rpt tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin",
+        "cp: cannot stat 'tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/reports/link/imp/impl_1_kernel_util_routed.rpt': No such file or directory",
+        "make: [Makefile:438: report] Error 1 (ignored)",
+        "cp tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/reports/link/imp/impl_1_full_util_routed.rpt tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin",
+        "cp tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt tcu_th32_c1_rev3_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin"
+      ],
+      "errors": []
+    },
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_tcu_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_clockfix_20260930_001016"
+      ],
+      "pid": 1911318,
+      "started": "2026-09-30T00:10:45+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/th32_c1_tcu_naive_m32_tcol32.launcher.log",
+      "state": "failed",
+      "returncode": -15,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log",
+      "recent_lines": [
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr1_2 is 4",
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr1_3 is 4",
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr1_4 is 4",
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr2_1 is 4",
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr2_2 is 4",
+        "INFO: [Constraints 18-13253] Total boundary pins count on instance fanout_aresetn_pcie_slr2_3 is 4",
+        "INFO: [Common 17-14] Message 'Constraints 18-13253' appears 100 times and further instances of the messages will be disabled.",
+        "INFO: [Constraints 18-13251] 501 boundary pins have been processed.."
+      ],
+      "errors": []
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_clockfix_20260930_001016"
+      ],
+      "pid": 1911319,
+      "started": "2026-09-30T00:10:45+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/th32_c1_naive_m32_tcol32.launcher.log",
+      "state": "failed",
+      "returncode": -15,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log",
+      "recent_lines": [
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/g_split_lmem_lanes.lmem_lane_split/g_lane_rsp[9].rsp_skid/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/g_split_lmem_lanes.lmem_lane_split/g_masked_response.rsp_context_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/icache/g_cache_wrap[0].cache_wrap/g_cache.cache/g_banks[0].bank/cache_mshr/mshr_store/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/icache/g_cache_wrap[0].cache_wrap/g_cache.cache/g_banks[0].bank/cache_repl/g_enable.g_fifo.fifo_store/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Resolving asynchronous BRAM patch: 'level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/icache/g_cache_wrap[0].cache_wrap/g_cache.cache/g_banks[0].bank/mem_req_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch'.",
+        "INFO: [AsyncBRAM Patch] Time (s): cpu = 00:06:50.91 ; elapsed = 00:06:51 ."
+      ],
+      "errors": []
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_improve_m32_tcol32.sh",
+        "--postfix",
+        "pnr_clockfix_20260930_001016"
+      ],
+      "pid": 1911320,
+      "started": "2026-09-30T00:10:45+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/th32_c1_improve_m32_tcol32.launcher.log",
+      "state": "failed",
+      "returncode": 2,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260930/th32_c1_improve_m32_tcol32.launcher.log",
+      "recent_lines": [
+        "ERROR: [VPL 60-806] Failed to finish platform linker",
+        "INFO: [v++ 60-1442] [01:55:57] Run run_link: Step vpl: Failed",
+        "Time (s): cpu = 00:01:02 ; elapsed = 01:43:26 . Memory (MB): peak = 520.996 ; gain = 0.000 ; free physical = 97454 ; free virtual = 361644",
+        "ERROR: [v++ 60-661] v++ link run 'run_link' failed",
+        "ERROR: [v++ 60-626] Kernel link failed to complete",
+        "ERROR: [v++ 60-703] Failed to finish linking",
+        "INFO: [v++ 60-1653] Closing dispatch client.",
+        "make: *** [Makefile:402: th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin] Error 1"
+      ],
+      "errors": [
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [VPL 60-806] Failed to finish platform linker",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-661] v++ link run 'run_link' failed",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-626] Kernel link failed to complete",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-703] Failed to finish linking",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/imp/impl_1_runme.log: ERROR: [VPL_TCL 101-2] MXU boundary is not a marked fabric FF: level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_VX_gemm_unit/g_slr_mxu_weight_tx.payload_q[valid]_i_1 (LUT5)",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/imp/impl_1_runme.log: ERROR: [VPL_TCL 101-3] sourcing script /home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/scripts/impl_1/_full_init_post.tcl failed",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log: ERROR: [VPL_TCL 101-2] MXU boundary is not a marked fabric FF: level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_VX_gemm_unit/g_slr_mxu_weight_tx.payload_q[valid]_i_1 (LUT5)",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log: ERROR: [VPL_TCL 101-3] sourcing script /home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_clockfix_20260930_001016_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/scripts/impl_1/_full_init_post.tcl failed"
+      ]
+    }
+  ]
+}

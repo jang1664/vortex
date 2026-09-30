@@ -1,0 +1,24 @@
+{
+  "time": "2026-09-30T07:16:42.453680+09:00",
+  "event": "resume_verified",
+  "runs": [
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "pid": 3744320,
+      "resume_checkpoint": "level0_wrapper_opt.dcp",
+      "vivado_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/vivado.log"
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "pid": 3744321,
+      "resume_checkpoint": "level0_wrapper_opt.dcp",
+      "vivado_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/vivado.log"
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "pid": 3744322,
+      "resume_checkpoint": "level0_wrapper_opt.dcp",
+      "vivado_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/vivado.log"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "terminal": "C",
+    "drivers": ""
+  },
+  {
+    "terminal": "CE",
+    "drivers": "inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/mem_unit/g_lmem_lane_dma_arb[0].lmem_membus_dma_arbiter/g_rsp_select.rsp_switch/g_out_buf[0].out_buf/g_eb2.stream_buffer/VCC/P"
+  },
+  {
+    "terminal": "D",
+    "drivers": "inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/mem_unit/local_mem/rsp_xbar/g_omega.g_switches[0].g_stages[4].xbar_switch/g_multi_inputs.g_multiple_outputs.g_xbar_arbs[0].xbar_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_buffer.valid_out_r_i_1__380/O"
+  },
+  {
+    "terminal": "R",
+    "drivers": "inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].__core_reset/g_relay.g_reset_r[0].reset_r_reg[0]/Q"
+  }
+]

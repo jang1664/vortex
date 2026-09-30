@@ -1,0 +1,33 @@
+{
+  "time": "2026-09-30T02:48:28.717193+09:00",
+  "runs": [
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "source_snapshot_matches": {
+        "mxu_slr_floorplan.tcl": true,
+        "pre_init_hook.tcl": true,
+        "gen_vitis_ini.py": true
+      },
+      "errors": []
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "source_snapshot_matches": {
+        "mxu_slr_floorplan.tcl": true,
+        "pre_init_hook.tcl": true,
+        "gen_vitis_ini.py": true
+      },
+      "errors": []
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "source_snapshot_matches": {
+        "mxu_slr_floorplan.tcl": true,
+        "pre_init_hook.tcl": true,
+        "gen_vitis_ini.py": true
+      },
+      "errors": []
+    }
+  ],
+  "alarm_environment_present": true
+}

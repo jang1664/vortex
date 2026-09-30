@@ -1,0 +1,7 @@
+{
+  "check_pblock_properties": true,
+  "cell_objects": true,
+  "cell_properties": true,
+  "control_pin_allowlist": true,
+  "check_group_membership_after_mxu_pblock_pattern_mapping": true
+}

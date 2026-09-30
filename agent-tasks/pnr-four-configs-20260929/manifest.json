@@ -1,0 +1,15 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint",
+  "commit": "50b6ba5d35eecf880f358e37de301388a13bc4bf",
+  "platform": "/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm",
+  "postfix": "pnr_20260929_235744",
+  "configs": [
+    "tcu_th32_c1_rev3",
+    "th32_c1_tcu_naive_m32_tcol32",
+    "th32_c1_naive_m32_tcol32",
+    "th32_c1_improve_m32_tcol32"
+  ],
+  "interval_seconds": 3600,
+  "poll_seconds": 60,
+  "jobs_per_build": 8
+}

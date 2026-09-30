@@ -1,0 +1,124 @@
+{
+  "time": "2026-09-30T00:04:40+09:00",
+  "monitor_pid": 1833197,
+  "free_disk_gib": 74.8,
+  "runs": [
+    {
+      "config": "tcu_th32_c1_rev3",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "tcu_th32_c1_rev3.sh",
+        "--postfix",
+        "pnr_20260929_235744"
+      ],
+      "pid": 1833201,
+      "started": "2026-09-29T23:57:55+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/tcu_th32_c1_rev3_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260929/tcu_th32_c1_rev3.launcher.log",
+      "state": "stopped_by_user",
+      "returncode": null,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/tcu_th32_c1_rev3_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/bd_22c0_fanout_aresetn_kernel_01_slr1_4_0_synth_1/runme.log",
+      "recent_lines": [
+        "Start Part Resource Summary",
+        "---------------------------------------------------------------------------------",
+        "Part Resources:",
+        "DSPs: 9024 (col length:94)",
+        "BRAMs: 4032 (col length: RAMB18 288 RAMB36 144)",
+        "---------------------------------------------------------------------------------",
+        "Finished Part Resource Summary",
+        "---------------------------------------------------------------------------------"
+      ],
+      "errors": [],
+      "stopped": "2026-09-30T00:04:40+09:00"
+    },
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_tcu_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_20260929_235744"
+      ],
+      "pid": 1833202,
+      "started": "2026-09-29T23:57:55+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260929/th32_c1_tcu_naive_m32_tcol32.launcher.log",
+      "state": "stopped_by_user",
+      "returncode": null,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/runme.log",
+      "recent_lines": [
+        "Command: synth_design -top ulp_vortex_afu_1_0 -part xcu55c-fsvh2892-2L-e -incremental_mode off -mode out_of_context",
+        "Starting synth_design",
+        "Attempting to get a license for feature 'Synthesis' and/or device 'xcu55c'",
+        "INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xcu55c'",
+        "INFO: [Device 21-403] Loading part xcu55c-fsvh2892-2L-e",
+        "INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 1 processes.",
+        "INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes",
+        "INFO: [Synth 8-7075] Helper process launched with PID 1891835"
+      ],
+      "errors": [],
+      "stopped": "2026-09-30T00:04:40+09:00"
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_20260929_235744"
+      ],
+      "pid": 1833203,
+      "started": "2026-09-29T23:57:55+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260929/th32_c1_naive_m32_tcol32.launcher.log",
+      "state": "stopped_by_user",
+      "returncode": null,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/bd_22c0_psreset_aclk_freerun_0_synth_1/runme.log",
+      "recent_lines": [
+        "Start Handling Custom Attributes",
+        "---------------------------------------------------------------------------------",
+        "---------------------------------------------------------------------------------",
+        "Finished Handling Custom Attributes : Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 3325.789 ; gain = 386.672 ; free physical = 22798 ; free virtual = 328854",
+        "---------------------------------------------------------------------------------",
+        "---------------------------------------------------------------------------------",
+        "Finished RTL Optimization Phase 1 : Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 3325.789 ; gain = 386.672 ; free physical = 22798 ; free virtual = 328854",
+        "---------------------------------------------------------------------------------"
+      ],
+      "errors": [],
+      "stopped": "2026-09-30T00:04:40+09:00"
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_improve_m32_tcol32.sh",
+        "--postfix",
+        "pnr_20260929_235744"
+      ],
+      "pid": 1833204,
+      "started": "2026-09-29T23:57:55+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-four-configs-20260929/th32_c1_improve_m32_tcol32.launcher.log",
+      "state": "stopped_by_user",
+      "returncode": null,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_20260929_235744_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_interconnect_axilite_user_imp_auto_cc_0_synth_1/runme.log",
+      "recent_lines": [
+        "INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xcu55c'",
+        "INFO: [Device 21-403] Loading part xcu55c-fsvh2892-2L-e",
+        "INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 1 processes.",
+        "INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes",
+        "INFO: [Synth 8-7075] Helper process launched with PID 1890889",
+        "---------------------------------------------------------------------------------",
+        "Starting RTL Elaboration : Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 3229.285 ; gain = 289.859 ; free physical = 23095 ; free virtual = 329149",
+        "---------------------------------------------------------------------------------"
+      ],
+      "errors": [],
+      "stopped": "2026-09-30T00:04:40+09:00"
+    }
+  ],
+  "monitor_state": "stopped_by_user"
+}

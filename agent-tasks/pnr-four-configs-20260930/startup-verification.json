@@ -1,0 +1,32 @@
+{
+  "time": "2026-09-30T00:11:45.059865+09:00",
+  "commit": "9522bf55e787218069425b56e525e17d175cc8a6",
+  "configure_returncode": 0,
+  "runs": [
+    {
+      "config": "tcu_th32_c1_rev3",
+      "hook_matches_source": true,
+      "generator_matches_source": true,
+      "slr": false
+    },
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "hook_matches_source": true,
+      "generator_matches_source": true,
+      "slr": true
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "hook_matches_source": true,
+      "generator_matches_source": true,
+      "slr": true
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "hook_matches_source": true,
+      "generator_matches_source": true,
+      "slr": true
+    }
+  ],
+  "alarm_environment_present": true
+}

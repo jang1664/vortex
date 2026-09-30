@@ -1,0 +1,30 @@
+[
+  {
+    "test": "test_pre_init_hook.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_congestion_fail_fast.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_post_place_hook.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_post_place_slr_snapshot.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_post_opt_hook.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_mxu_slr_floorplan.tcl",
+    "returncode": 0
+  },
+  {
+    "test": "test_mxu_post_place_objects.tcl",
+    "returncode": 0
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "time": "2026-09-30T11:37:38+09:00",
+  "command_observed": "open_checkpoint level0_wrapper_opt.dcp",
+  "runtime_hooks_hash_verified": true,
+  "from_step": "vpl.impl.place_design",
+  "note": "C4 placement/routing still running; final timing not yet known"
+}

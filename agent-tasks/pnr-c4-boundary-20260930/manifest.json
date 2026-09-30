@@ -1,0 +1,62 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint",
+  "commit": "9522bf55e787218069425b56e525e17d175cc8a6",
+  "platform": "/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm",
+  "configs": [
+    "th32_c1_improve_m32_tcol32"
+  ],
+  "interval_seconds": 3600,
+  "poll_seconds": 60,
+  "jobs_per_build": 8,
+  "previous_task": "agent-tasks/pnr-c2-c3-c4-gemvgroup-20260930",
+  "clock_freq_mhz": 100,
+  "pending_validation": false,
+  "validation_evidence": "agent-tasks/mxu-floorplan-parity-20260930/verification.json",
+  "restart_mode": "v++ --from_step vpl.impl.place_design",
+  "runs": [
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "config_file": "/home/jaeyongjang/project.local/vortex_fpint/configs/th32_c1_improve_m32_tcol32.sh",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "vpp_command": [
+        "/tool/Program/Xilinx/2025.1/Vitis/bin/v++",
+        "--link",
+        "--target",
+        "hw",
+        "--platform",
+        "/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm",
+        "--save-temps",
+        "--no_ip_cache",
+        "--user_ip_repo_paths",
+        "/home/data/xilinx_ip/clk_metadata_adapter",
+        "--vivado.synth.jobs",
+        "8",
+        "--vivado.impl.jobs",
+        "8",
+        "--report_level",
+        "2",
+        "--config",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/xrt_backup/vitis.gen.ini",
+        "--optimize",
+        "3",
+        "-o",
+        "../th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin",
+        "../th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xo",
+        "--from_step",
+        "vpl.impl.place_design"
+      ],
+      "previous_log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-c2-c3-c4-slrfix-20260930/th32_c1_improve_m32_tcol32.launcher.log"
+    }
+  ],
+  "resume_prepared": "2026-09-30T07:14:51.980865+09:00",
+  "source_sha256": {
+    "hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl": "b082dfe6ba38fa5770e4be17754f708a8b48c58bb35e4f5dc000ef277d5313fc",
+    "hw/syn/xilinx/xrt/post_opt_hook.tcl": "e372f5eaf4df8236a80f593b36b416de11fbc5633c0fb5d8bd74bb6d8684e14b",
+    "hw/syn/xilinx/xrt/post_place_hook.tcl": "0876b0cff3c63375492555d814bba81b36735fde872d3351b980a2a52f61e2a7"
+  },
+  "runtime_sha256": {
+    "mxu_slr_floorplan.tcl": "b082dfe6ba38fa5770e4be17754f708a8b48c58bb35e4f5dc000ef277d5313fc",
+    "post_opt_hook.tcl": "e372f5eaf4df8236a80f593b36b416de11fbc5633c0fb5d8bd74bb6d8684e14b",
+    "post_place_hook.tcl": "0876b0cff3c63375492555d814bba81b36735fde872d3351b980a2a52f61e2a7"
+  }
+}

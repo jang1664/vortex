@@ -1,0 +1,5 @@
+task: mxu-reset-boundary-diagnosis
+state: COMPLETE
+findings: findings.md
+comparison: compare-boundary.log
+pin_audit: pin-summary.json

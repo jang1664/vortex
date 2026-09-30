@@ -1,0 +1,101 @@
+{
+  "time": "2026-09-30T07:12:40.597353+09:00",
+  "monitor_pid": 2491989,
+  "free_disk_gib": 50.6,
+  "runs": [
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_tcu_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_slrfix_20260930_023759"
+      ],
+      "pid": 2491992,
+      "started": "2026-09-30T02:47:23+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-c2-c3-c4-slrfix-20260930/th32_c1_tcu_naive_m32_tcol32.launcher.log",
+      "state": "stopped_for_restart",
+      "returncode": -15,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log",
+      "recent_lines": [
+        "|  Shift Register                                   |           28  |              0  |                     4  |           0  |           1  |  00:00:02  |",
+        "|  BRAM Register                                    |            0  |              0  |                     0  |         199  |           1  |  00:00:01  |",
+        "|  URAM Register                                    |            0  |              0  |                     0  |           0  |           1  |  00:00:03  |",
+        "|  Dynamic/Static Region Interface Net Replication  |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |",
+        "|  Total                                            |          642  |          10221  |                 10703  |         203  |          10  |  00:02:56  |",
+        "-----------------------------------------------------------------------------------------------------------------------------------------------------------",
+        "",
+        ""
+      ],
+      "errors": []
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_naive_m32_tcol32.sh",
+        "--postfix",
+        "pnr_slrfix_20260930_023759"
+      ],
+      "pid": 2491993,
+      "started": "2026-09-30T02:47:23+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-c2-c3-c4-slrfix-20260930/th32_c1_naive_m32_tcol32.launcher.log",
+      "state": "stopped_for_restart",
+      "returncode": -15,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log",
+      "recent_lines": [
+        "WARNING: [Timing 38-436] There are set_bus_skew constraint(s) in this design. Please run report_bus_skew to ensure that bus skew requirements are met.",
+        "report_timing_summary: Time (s): cpu = 00:08:33 ; elapsed = 00:02:05 . Memory (MB): peak = 35264.090 ; gain = 0.000 ; free physical = 46901 ; free virtual = 325997",
+        "INFO: [Vivado 12-24838] Running report commands \"report_control_sets, report_io, report_utilization\" in parallel.",
+        "Running report generation with 3 threads.",
+        "INFO: [Vivado 12-24828] Executing command : report_io -file hw_bb_locked_io_placed.rpt",
+        "report_io: Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 35264.090 ; gain = 0.000 ; free physical = 46704 ; free virtual = 325801",
+        "INFO: [Vivado 12-24828] Executing command : report_control_sets -verbose -file hw_bb_locked_control_sets_placed.rpt",
+        "report_control_sets: Time (s): cpu = 00:00:08 ; elapsed = 00:00:05 . Memory (MB): peak = 35264.090 ; gain = 0.000 ; free physical = 45998 ; free virtual = 325111"
+      ],
+      "errors": []
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "command": [
+        "./ci/run_syn_hw.sh",
+        "--config",
+        "th32_c1_improve_m32_tcol32.sh",
+        "--postfix",
+        "pnr_slrfix_20260930_023759"
+      ],
+      "pid": 2491994,
+      "started": "2026-09-30T02:47:23+09:00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-c2-c3-c4-slrfix-20260930/th32_c1_improve_m32_tcol32.launcher.log",
+      "state": "failed",
+      "returncode": 2,
+      "latest_log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/pnr-c2-c3-c4-slrfix-20260930/th32_c1_improve_m32_tcol32.launcher.log",
+      "recent_lines": [
+        "ERROR: [VPL 60-806] Failed to finish platform linker",
+        "INFO: [v++ 60-1442] [06:50:34] Run run_link: Step vpl: Failed",
+        "Time (s): cpu = 00:03:02 ; elapsed = 04:01:25 . Memory (MB): peak = 520.996 ; gain = 0.000 ; free physical = 68747 ; free virtual = 347663",
+        "ERROR: [v++ 60-661] v++ link run 'run_link' failed",
+        "ERROR: [v++ 60-626] Kernel link failed to complete",
+        "ERROR: [v++ 60-703] Failed to finish linking",
+        "INFO: [v++ 60-1653] Closing dispatch client.",
+        "make: *** [Makefile:402: th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin/vortex_afu.xclbin] Error 1"
+      ],
+      "errors": [
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [VPL 60-806] Failed to finish platform linker",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-661] v++ link run 'run_link' failed",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-626] Kernel link failed to complete",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/v++.log: ERROR: [v++ 60-703] Failed to finish linking",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/imp/impl_1_runme.log: ERROR: [VPL_TCL 101-2] MXU cell placed in wrong SLR: level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_VX_gemm_unit/u_mxu/tile_col[0].gen_col_zero.u_pe/product[0][0] (expected SLR2)",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/logs/link/imp/impl_1_runme.log: ERROR: [VPL_TCL 101-3] sourcing script /home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/scripts/impl_1/_full_place_post.tcl failed",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log: ERROR: [VPL_TCL 101-2] MXU cell placed in wrong SLR: level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/gemm_node/u_VX_gemm_unit/u_mxu/tile_col[0].gen_col_zero.u_pe/product[0][0] (expected SLR2)",
+        "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log: ERROR: [VPL_TCL 101-3] sourcing script /home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/scripts/impl_1/_full_place_post.tcl failed"
+      ]
+    }
+  ],
+  "monitor_stopped": true
+}

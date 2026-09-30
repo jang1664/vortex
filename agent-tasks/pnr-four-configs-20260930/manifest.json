@@ -1,0 +1,25 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint",
+  "commit": "9522bf55e787218069425b56e525e17d175cc8a6",
+  "platform": "/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm",
+  "postfix": "pnr_clockfix_20260930_001016",
+  "configs": [
+    "tcu_th32_c1_rev3",
+    "th32_c1_tcu_naive_m32_tcol32",
+    "th32_c1_naive_m32_tcol32",
+    "th32_c1_improve_m32_tcol32"
+  ],
+  "interval_seconds": 3600,
+  "poll_seconds": 60,
+  "jobs_per_build": 8,
+  "previous_task": "agent-tasks/pnr-four-configs-20260929",
+  "clock_freq_mhz": 100,
+  "source_sha256": {
+    "hw/syn/xilinx/xrt/pre_init_hook.tcl": "723afd35b97f2112b8e898b4e86b2a47ddf74eee9919d499bf0427e31c671043",
+    "hw/syn/xilinx/xrt/gen_vitis_ini.py": "469ecb335b37af18d6853fb888deb81810d63d16593b9673a8c47b0de748460f",
+    "configs/tcu_th32_c1_rev3.sh": "8b9ba96287bf0d19df0cb8e8578d0bc2f1c0a88d21e74430831b432fb02fe550",
+    "configs/th32_c1_tcu_naive_m32_tcol32.sh": "e0030816fc83fd74ee728932629b51d3761d33d31a7580b73c5a7959148ded0b",
+    "configs/th32_c1_naive_m32_tcol32.sh": "d8074af4492ddac698f1d02c317f089c3e005b245c46237a128925112dc0fb6a",
+    "configs/th32_c1_improve_m32_tcol32.sh": "74d878949057401ff1b09ff8bc20f9a86e1051752c4b3e1fef5fcae6d4145a8e"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "time": "2026-09-30T07:14:51.980865+09:00",
+  "result": "PASS",
+  "source_sha256": "915e264491e4d1495621ab5a2a32174964741a8f3c4f3d2129db72549507f90c",
+  "source_reference": "f4db8ea4e4616054e567dda26b594464cf4bde18",
+  "unit_checks": 36,
+  "typed_object_checks": 22,
+  "vitis_generator_tests": 7,
+  "actual_placement": {
+    "result": "PASS",
+    "log": "placement-profile-v3.log",
+    "ff_pairs": 73,
+    "dsp_site": "DSP48E2_X14Y192",
+    "dsp_slr": "SLR2"
+  },
+  "kernel_dcp_results": [
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+      "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_tcu_naive_m32_tcol32",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_tcu_naive_m32_tcol32.log",
+      "returncode": 0
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_naive_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+      "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_naive_m32_tcol32",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_naive_m32_tcol32.log",
+      "returncode": 0
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "dcp": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_improve_m32_tcol32_pnr_slrfix_20260930_023759_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/ulp_vortex_afu_1_0_synth_1/ulp_vortex_afu_1_0.dcp",
+      "reports": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_improve_m32_tcol32",
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-post-place-diagnosis/group-dcp-th32_c1_improve_m32_tcol32.log",
+      "returncode": 0
+    }
+  ],
+  "scope": "Actual placement of small MXU fixture; C2/C3/C4 existing synthesis DCP ownership and FF links. Full kernel placement/routing checked by resumed PnR."
+}

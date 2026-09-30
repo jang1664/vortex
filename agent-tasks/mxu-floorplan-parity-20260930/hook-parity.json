@@ -1,0 +1,45 @@
+{
+  "reference": "f4db8ea4e4616054e567dda26b594464cf4bde18",
+  "files": [
+    {
+      "file": "pre_init_hook.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "post_init_hook.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "pre_opt_hook.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "post_opt_hook.tcl",
+      "byte_identical": false,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "post_place_hook.tcl",
+      "byte_identical": false,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "post_route_hook.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "post_physopt_hook.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    },
+    {
+      "file": "congestion_fail_fast.tcl",
+      "byte_identical": true,
+      "identical_after_mxu_entrypoint_mapping": true
+    }
+  ]
+}

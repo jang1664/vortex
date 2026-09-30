@@ -1,0 +1,3 @@
+task: c2-c3-c4-slrfix-pnr
+state: STOPPED_FOR_RESTART
+next: ../pnr-c2-c3-c4-gemvgroup-20260930

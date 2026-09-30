@@ -1,0 +1,4 @@
+task: mxu-post-place-diagnosis
+state: COMPLETE
+verification: verification.json
+pnr_status: ../pnr-c2-c3-c4-gemvgroup-20260930/status.json

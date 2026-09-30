@@ -1,0 +1,73 @@
+{
+  "passed": true,
+  "updated": "2026-09-30T11:36:17.134598+09:00",
+  "checks": {
+    "test_mxu_slr_floorplan": {
+      "passed": true,
+      "checks": 65,
+      "log": "test_mxu_slr_floorplan.log"
+    },
+    "test_mxu_post_place_objects": {
+      "passed": true,
+      "checks": 22,
+      "log": "test_mxu_post_place_objects.log"
+    },
+    "test_post_place_hook": {
+      "passed": true,
+      "checks": 24,
+      "log": "test_post_place_hook.log"
+    },
+    "test_post_place_slr_snapshot": {
+      "passed": true,
+      "checks": 13,
+      "log": "test_post_place_slr_snapshot.log"
+    },
+    "test_post_opt_hook": {
+      "passed": true,
+      "checks": 6,
+      "log": "test_post_opt_hook.log"
+    },
+    "final-synth-th32_c1_improve_m32_tcol32": {
+      "passed": true,
+      "log": "final-synth-th32_c1_improve_m32_tcol32.log",
+      "scope": "synthesized netlist; apply post_init and inventory refresh"
+    },
+    "final-synth-th32_c1_naive_m32_tcol32": {
+      "passed": true,
+      "log": "final-synth-th32_c1_naive_m32_tcol32.log",
+      "scope": "synthesized netlist; apply post_init and inventory refresh"
+    },
+    "final-synth-th32_c1_tcu_naive_m32_tcol32": {
+      "passed": true,
+      "log": "final-synth-th32_c1_tcu_naive_m32_tcol32.log",
+      "scope": "synthesized netlist; apply post_init and inventory refresh"
+    },
+    "placement-v2.log": {
+      "passed": true,
+      "log": "placement-v2.log"
+    },
+    "final-placed-probe.log": {
+      "passed": true,
+      "log": "final-placed-probe.log"
+    },
+    "placed-c2.log": {
+      "passed": true,
+      "log": "placed-c2.log"
+    },
+    "boundary_reference_parity": {
+      "passed": true,
+      "log": "compare-boundary.log"
+    }
+  },
+  "source_sha256": {
+    "hw/syn/xilinx/xrt/mxu_slr_floorplan.tcl": "b082dfe6ba38fa5770e4be17754f708a8b48c58bb35e4f5dc000ef277d5313fc",
+    "hw/syn/xilinx/xrt/post_opt_hook.tcl": "e372f5eaf4df8236a80f593b36b416de11fbc5633c0fb5d8bd74bb6d8684e14b",
+    "hw/syn/xilinx/xrt/post_place_hook.tcl": "0876b0cff3c63375492555d814bba81b36735fde872d3351b980a2a52f61e2a7"
+  },
+  "limitations": [
+    "Synthesis-DCP checks do not run opt_design/place_design.",
+    "Small fixture ran actual placement; full C2 placed DCP is checked read-only.",
+    "C4 full-kernel post-place validation and routed timing remain for the resumed PnR.",
+    "External ownership edges are audited, not rejected, matching feat/gemv."
+  ]
+}

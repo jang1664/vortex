@@ -1,0 +1,32 @@
+{
+  "time": "2026-09-30T02:47:23.771618+09:00",
+  "unit_checks": 36,
+  "generator_tests": 7,
+  "scope": "Existing synthesis DCP: post-init and post-opt inventory refresh only; no actual opt_design, placement or routing.",
+  "dcp_results": [
+    {
+      "config": "th32_c1_tcu_naive_m32_tcol32",
+      "returncode": 0,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-inventory-diagnosis/object-dcp-th32_c1_tcu_naive_m32_tcol32.log",
+      "endpoints": 4684,
+      "pairs": 2342,
+      "owned_cells": 146794
+    },
+    {
+      "config": "th32_c1_naive_m32_tcol32",
+      "returncode": 0,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint/agent-tasks/mxu-slr-inventory-diagnosis/object-dcp-th32_c1_naive_m32_tcol32.log",
+      "endpoints": 4684,
+      "pairs": 2342,
+      "owned_cells": 146794
+    },
+    {
+      "config": "th32_c1_improve_m32_tcol32",
+      "returncode": 0,
+      "log": "agent-tasks/mxu-slr-inventory-diagnosis/verified-dcp-improve/validation-final.log",
+      "endpoints": 4684,
+      "pairs": 2342,
+      "owned_cells": 148004
+    }
+  ]
+}

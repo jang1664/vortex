@@ -1,0 +1,12 @@
+task: mxu-slr-inventory-diagnosis
+state: COMPLETE
+updated: "2026-09-30 02:48"
+result: C2/C3/C4 existing DCP checks passed and PnR restarted.
+evidence: fix-results.md
+verification: verification.json
+pnr_status: ../pnr-c2-c3-c4-slrfix-20260930/status.json
+pitfalls:
+  - Separate local LUT ownership from marked crossing FFs.
+  - Batch properties and resolve typed objects before relationship queries.
+  - Set IS_SOFT last in Vivado 2025.1.
+  - Synthesis DCP tests do not establish placed SLR ownership or timing closure.

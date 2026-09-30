@@ -1,0 +1,6 @@
+task: mxu-floorplan-feat-gemv-parity
+state: COMPLETE
+updated: "2026-09-30T11:37:38+09:00"
+verification: verification.json
+reference_comparison: README.md
+followup: ../pnr-c4-boundary-20260930/status.json

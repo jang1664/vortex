@@ -1,0 +1,53 @@
+{
+  "reference": "f4db8ea4e4616054e567dda26b594464cf4bde18",
+  "files": [
+    {
+      "file": "hw/syn/xilinx/xrt/pre_init_hook.tcl",
+      "identical": true,
+      "sha256": "723afd35b97f2112b8e898b4e86b2a47ddf74eee9919d499bf0427e31c671043",
+      "diff_from_reference": ""
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/post_init_hook.tcl",
+      "identical": true,
+      "sha256": "158ea5350c7433036274076d525f6484974f06502008737a69a6b1981f20dbc3",
+      "diff_from_reference": ""
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/pre_opt_hook.tcl",
+      "identical": true,
+      "sha256": "77d476c4c6f13ef474c685b7384e16b99b1f8438f6c7169d7df27f54da2f759c",
+      "diff_from_reference": ""
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/post_opt_hook.tcl",
+      "identical": false,
+      "sha256": "e372f5eaf4df8236a80f593b36b416de11fbc5633c0fb5d8bd74bb6d8684e14b",
+      "diff_from_reference": "--- feat/gemv/post_opt_hook.tcl\n+++ current/post_opt_hook.tcl\n@@ -1,9 +1,7 @@\n # Refresh optimizer-created primitive ownership before normal place_design.\n # This hook neither launches implementation nor retries a checkpoint.\n-set ::vortex_slr_definitions_only 1\n-source [file join [file dirname [file normalize [info script]]] floorplan.tcl]\n-unset ::vortex_slr_definitions_only\n-if {[catch {::vortex::slr::refresh_post_opt} vortex_slr_error vortex_slr_options]} {\n+source [file join [file dirname [file normalize [info script]]] mxu_slr_floorplan.tcl]\n+if {[catch {::vortex::mxu_slr::apply post_opt} vortex_slr_error vortex_slr_options]} {\n     puts stderr \"ERROR: SLR post_opt ownership hook failed: $vortex_slr_error\"\n     if {[dict exists $vortex_slr_options -errorinfo]} {\n         puts stderr [dict get $vortex_slr_options -errorinfo]"
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/post_place_hook.tcl",
+      "identical": false,
+      "sha256": "0876b0cff3c63375492555d814bba81b36735fde872d3351b980a2a52f61e2a7",
+      "diff_from_reference": "--- feat/gemv/post_place_hook.tcl\n+++ current/post_place_hook.tcl\n@@ -3,11 +3,8 @@\n # placer-final Global/Short congestion reaches the fixed fail-fast threshold.\n \n set vortex_congestion_hook_dir [file dirname [file normalize [info script]]]\n-set ::vortex_slr_definitions_only 1\n-source [file join $vortex_congestion_hook_dir floorplan.tcl]\n-unset ::vortex_slr_definitions_only\n-source [file join $vortex_congestion_hook_dir slr_floorplan_report.tcl]\n-if {[catch {::vortex::slr::post_place} vortex_slr_error vortex_slr_options]} {\n+source [file join $vortex_congestion_hook_dir mxu_slr_floorplan.tcl]\n+if {[catch {::vortex::mxu_slr::check_placed} vortex_slr_error vortex_slr_options]} {\n     # VPL normally saves its placed checkpoint after this hook. Preserve a\n     # failed validation's placed design for read-only diagnosis without ever\n     # converting that failure into permission to route or retry a DCP."
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/post_route_hook.tcl",
+      "identical": true,
+      "sha256": "3528bf890b49ca957310d3aaa6c176164703551435136c15eb7ec19080eb3bd4",
+      "diff_from_reference": ""
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/post_physopt_hook.tcl",
+      "identical": true,
+      "sha256": "e1762a79366159bfa1b67c8f9d0ee448e6894b20eef938ab11937c95117cc70b",
+      "diff_from_reference": ""
+    },
+    {
+      "file": "hw/syn/xilinx/xrt/congestion_fail_fast.tcl",
+      "identical": true,
+      "sha256": "b2cc24256f776a33905084dd3a66078554f9ee8eb31426ae4436617631d694b1",
+      "diff_from_reference": ""
+    }
+  ]
+}
