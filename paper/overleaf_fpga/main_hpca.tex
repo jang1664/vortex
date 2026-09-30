@@ -1,26 +1,42 @@
-% ACM two-column conference layout from acmart-primary.
-% Anonymous local preview; nonacm omits publication metadata and rights blocks.
-% For a final submission, set the options/metadata required by the target FPGA CFP.
-\PassOptionsToPackage{table}{xcolor}
-\PassOptionsToPackage{hyphens}{url}
-\documentclass[sigconf,anonymous,nonacm]{acmart}
-\usepackage{amsmath}
+\documentclass[10pt,conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
+\usepackage{graphicx}
 \usepackage{textcomp}
+\usepackage{xcolor}
 \usepackage{tikz}
+\usepackage[hyphens]{url}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{booktabs}
 \usepackage{array}
 \usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{caption}
 \usepackage{subcaption}
 \usepackage{multirow}
 \usepackage{svg}
+\usepackage{float}
 \usepackage{placeins}
+\usepackage[table]{xcolor}
 \usepackage{tabularx}
 \usepackage{kotex}
+\usepackage{svg} 
 \usepackage{comment}
 \newcolumntype{Y}{>{\centering\arraybackslash}X}
 
-\settopmatter{printfolios=true}
+% Reduce the vertical gap between top/bottom floats and the body text.
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 2pt}
 
+% Ensure letter paper
+\pdfpagewidth=8.5in
+\pdfpageheight=11in
+
+\newcommand{\hpcayear}{2027}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 \newcommand{\ours}{\textsc{FINISH}}
 \newcommand{\fpint}{FP-INT}
@@ -46,10 +62,38 @@
   }%
 }
 
+\setlength{\abovedisplayskip}{3pt}
+\setlength{\belowdisplayskip}{3pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
 
-\title[FINISH: An End-to-End FP--INT LLM Inference System]{FINISH: An End-to-End FP–INT LLM Inference System with Quantized Weights and KV Cache}
 
-\begin{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%% -- UPDATE -- %%%%%%%%%%%%%%%
+\newcommand{\hpcasubmissionnumber}{1037}
+\title{FINISH: An End-to-End FP–INT LLM Inference System with Quantized Weights and KV Cache}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%% -- ONLY FOR CAMERA READY -- %%%%%%%%
+%\def\hpcacameraready{} % Uncomment to build camera-ready version
+\newcommand{\hpcapubid}{0000--0000/00\$00.00}
+\newcommand\hpcaauthors{First Author$\dagger$ and Second Author$\ddagger$}
+\newcommand\hpcaaffiliation{First Affiliation$\dagger$, Second Affiliation$\ddagger$}
+\newcommand\hpcaemail{Email(s)}
+
+%%%%% -- ARTEFACT EVALUATION RESULTS -- %%%%%%
+% Uncomment the following based on the badges that were awarded to this paper
+%\def\aeopen{}           % The artifact is publically available
+%\def\aereviewed{}     % The artefact has been reviewed
+%\def\aereproduced{} % The results have been reproduced
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{hpca-template}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%% -- PAPER CONTENT STARTS -- %%%%%%%%%
 
 \begin{abstract}
 LLM inference increasingly employs both weight and KV cache quantization. In such weight and KV cache (WKV) quantized models, the core GEMMs operate on FP activations and INT weights or KV tensors. Today's GPUs execute these operations by dequantizing INT operands on the fly and running the resulting FP$\times$FP product on Tensor Cores. Although this approach reduces memory traffic, it forfeits the compute- and energy-efficiency benefits of quantization. Prior \fpint{} hardware also falls short because it mainly accelerates linear layers and leaves long-context attention on the conventional FP path.
@@ -63,8 +107,6 @@ Third, we extend the open-source Vortex GPGPU into an end-to-end stack and evalu
 %Second, we co-design a decoupled GEMM engine, high-bandwidth tensor memory and direct-connected memory path to keep the larger array utilized.
 
 \end{abstract}
-
-\maketitle
 
 \section{Introduction}
 
@@ -2047,7 +2089,7 @@ These results demonstrate that realizing the system-level benefit of WKV quantiz
 
 
 %%%%%%%%% -- BIB STYLE AND FILE -- %%%%%%%%
-\bibliographystyle{ACM-Reference-Format}
+\bibliographystyle{IEEEtranS}
 \bibliography{refs}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
