@@ -1,0 +1,70 @@
+[
+  {
+    "engine": "fp_tcu_64",
+    "scope": "engine only",
+    "memory_points": [],
+    "LUT": 20930,
+    "FF": 32563,
+    "DSP": 256,
+    "RAMB36": 1,
+    "RAMB18": 0,
+    "URAM": 0,
+    "BRAM36eq": 1.0,
+    "nominal_GOPS": 12.8,
+    "GOPS_per_kLUT": 0.6115623506927855,
+    "GOPS_per_DSP": 0.05
+  },
+  {
+    "engine": "fp_tcu_64",
+    "scope": "engine + memory subsystem",
+    "memory_points": [
+      "lmem_8",
+      "cache_1",
+      "axi_1"
+    ],
+    "LUT": 39064,
+    "FF": 47484,
+    "DSP": 256,
+    "RAMB36": 1202,
+    "RAMB18": 7,
+    "URAM": 0,
+    "BRAM36eq": 1205.5,
+    "nominal_GOPS": 12.8,
+    "GOPS_per_kLUT": 0.32766741757116524,
+    "GOPS_per_DSP": 0.05
+  },
+  {
+    "engine": "wkv_16x16",
+    "scope": "engine only",
+    "memory_points": [],
+    "LUT": 51070,
+    "FF": 21796,
+    "DSP": 496,
+    "RAMB36": 56,
+    "RAMB18": 4,
+    "URAM": 0,
+    "BRAM36eq": 58.0,
+    "nominal_GOPS": 51.2,
+    "GOPS_per_kLUT": 1.002545525748972,
+    "GOPS_per_DSP": 0.1032258064516129
+  },
+  {
+    "engine": "wkv_16x16",
+    "scope": "engine + memory subsystem",
+    "memory_points": [
+      "lmem_32",
+      "cache_4",
+      "axi_4"
+    ],
+    "LUT": 190180,
+    "FF": 127852,
+    "DSP": 496,
+    "RAMB36": 1316,
+    "RAMB18": 24,
+    "URAM": 0,
+    "BRAM36eq": 1328.0,
+    "nominal_GOPS": 51.2,
+    "GOPS_per_kLUT": 0.26921863497738985,
+    "GOPS_per_DSP": 0.1032258064516129
+  }
+]
