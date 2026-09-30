@@ -25,3 +25,6 @@
 [submodule "paper/overleaf_hpca"]
 	path = paper/overleaf_hpca
 	url = https://git@git.overleaf.com/69f2b336ec9a1166d028e2fd
+[submodule "paper/overleaf_fpga"]
+	path = paper/overleaf_fpga
+	url = https://git@git.overleaf.com/6abca5c26d48efed2ff1f834
