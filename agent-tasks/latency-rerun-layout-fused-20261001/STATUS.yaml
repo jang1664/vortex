@@ -1,0 +1,38 @@
+task: latency-rerun-layout-fused-20261001
+status: complete
+branch: feat/gemv
+log:
+  - timestamp: "2026-10-01 01:11"
+    action: Copied historical llama2/llama3 measurements, suites, and figures; preserved timestamped backups.
+    result: Source checkout unchanged; workflow updates ported without kernel edits.
+    learned: Historical suites and CSVs contain absolute artifact paths requiring relocation.
+  - timestamp: "2026-10-01 01:47"
+    action: Implemented app-pattern remeasurement, variant capture, staged successful-row publication, and imported-baseline preservation.
+    result: 80 contract tests pass. FPGA pilot measured one selected quantization case with valid power and variant/binary provenance.
+    learned: Captured config paths no longer exist in the original branch; relocated only byte-identical configs and recalculated local suite snapshots. Existing CLI progress and mock FPGA programming tests also fail on unmodified HEAD.
+  - timestamp: "2026-10-01 01:52"
+    action: Rebuilt final candidates, checked quantization edge patterns and decode append, and compared 1k/4k fused versus matching standalone kernels.
+    result: Initial summary was incorrect; later log review found K qparam mismatches at 1k/4k. Original K measurements are superseded. V and softmax representative checks passed.
+    learned: QBLK256 with GEMM_QDIR0 is rejected by existing KT>=QBLK validation; this is an unsupported setup, not a kernel mismatch. Reopened validation after discovering the K output address error.
+  - timestamp: "2026-10-01 02:12"
+    action: Cancelled own jobs 4994/4995; fixed K qparam fast-path tile offsets and recovered three completed generation softmax measurements per model.
+    result: Fixed K checks at 130, 1024, and 4096 pass on FPGA. Rebuilding row-resume support before resubmission.
+    learned: DMA names here describe the existing tiled buffer format, not a hardware DMA_node. Both the CPU reference and GEMM qparam layout reserve aligned storage.
+  - timestamp: "2026-10-01 02:42"
+    action: Completed strict partial-row resume, interrupted publication, actual Makefile/config variant resolution, and refinement variant identity.
+    result: 87 workflow and 25 interpolation tests pass. Both model jobs 4997/4998 are acquiring generation data; preserved C1/C3 and unselected C4 rows compare equal to the relocated backup.
+    learned: New prefill quant cycles improve about 25–39 percent versus old records, while corrected softmax is about 7–36 percent higher; old grouped TH16 masked checks failed, so historical speed is not a verified equivalent-work control.
+  - timestamp: "2026-10-01 03:09"
+    action: Preserved 110 completed generation points per model and partitioned identical remaining softmax executions between batch4 (job5000) and batch64 (job4999).
+    result: Each canonical C4 database has 131 final original rows and 118 pending rows; no unselected row differs from backup. Shared-row import requires full destination strict reuse evidence and preserves the source measurement provenance.
+    learned: Model identity does not change the physical softmax execution when app/args/hardware/variant/acquisition are identical; avoid duplicate acquisition to shorten the final flow.
+  - timestamp: "2026-10-01 04:08"
+    action: Replaced all 249 original selected rows per model, shared verified identical softmax executions, refined interpolation, and regenerated all requested plots.
+    result: Both refinement runs converged after one iteration. Compose/prepare/plot finished without failures; 247170 workload rows per model. 88 workflow tests and 25 interpolation tests pass. Original output and all unselected raw rows are preserved.
+    learned: Corrected softmax increases historical 32k C4 TTFT by 20.66/24.72 percent for llama2/llama3 despite matched-control layout overhead below 40 percent. See docs/kernel/optimizations/layout_fused_prefill_th16_20261001.md.
+pitfalls:
+  - Benchmark pass indicates valid latency/power acquisition, not CPU-reference correctness.
+  - Force rerun must bypass both skip-existing and pipeline evidence adoption.
+  # Correction recorded below in the log continuation.
+
+final_followup_report: docs/kernel/optimizations/softmax_hardware_fp16_th16_20261001.md

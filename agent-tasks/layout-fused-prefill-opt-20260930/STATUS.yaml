@@ -1,0 +1,28 @@
+task: layout-fused-prefill-opt-20260930
+status: complete
+branch: feat/gemv
+base_commit: f4db8ea4e4616054e567dda26b594464cf4bde18
+scope: Add selectable software variants for fused KV quantization and softmax; measure on the existing TH16/MXU16 C4 bitstream.
+log:
+  - timestamp: '2026-09-30 22:48'
+    action: Created a separate feat/gemv worktree and inspected existing variants, optimization lessons, and hardware allocations.
+    result: Existing variant infrastructure and archived C4 bitstream are available. One of two U55C devices is unallocated; use an independent Slurm allocation.
+    learned: The grouped softmax wrapper contains hardcoded 32-element address arithmetic despite the target using 16 threads and 16-wide microtiles. Validate masked output before interpreting performance.
+  - timestamp: '2026-09-30 23:07'
+    action: Built baseline and candidates and ran CPU-reference checks on independently allocated FPGA index 1.
+    result: Historical grouped softmax fails masked output. Cursor and generic shuffle controls show intermittent masked-row errors; unmasked cursor passes. Both baseline and warp quantization produce the same 65 signed-weight mismatches at K130/N128.
+    learned: The fused quantization implementation uses FP16 qparam arithmetic while its CPU SpinQuant reference specifies FP32 scale and reciprocal multiplication. Add opt-in FP32 candidate arithmetic; do not relax reference checks or silently change historical defaults.
+  - timestamp: '2026-09-30 23:54'
+    action: Added FP32 per-thread and microtile chunk quantization, full-warp exp tails, matching standalone softmax control, and subnormal-preserving probability conversion.
+    result: K/V signed symmetric, signed asymmetric, and legacy modes pass CPU-reference byte checks; small masked and unmasked softmax plus 1k causal softmax pass. Initial 1k quantization benchmarks improve K by 26.3% and V by 25.3% versus the FP32 cursor control; fused remains 48.3% and 75.6% slower than standalone.
+    learned: Full-warp exp tails alone do not eliminate all generic softmax failures. A 1k control run left one lane's outputs untouched in one row. Add warp/block synchronization before reductions and between reused row partitions, then repeat validation before benchmarking softmax. Both softmax apps require explicit matching scale; use the shared deterministic score initializer in both benchmark harnesses.
+pitfalls:
+  - Configure-generated app Makefiles must be refreshed after registering a new variant; source headers and C++ files already come from VORTEX_HOME.
+  - Configure copies build templates but does not generate VX_config.h/VX_types.h; run make -C hw config before compiling a fresh kernel library.
+  - Do not reuse or interrupt the active latency measurement allocation 4971.
+  - Linked-worktree third-party submodules are empty; reuse the original checkout through THIRD_PARTY_DIR when required.
+  - Kernel source variants must be rebuilt through their make variable; retain baseline and candidate build directories.
+  - Benchmark latency does not replace CPU-reference correctness validation.
+
+final_report: docs/kernel/optimizations/softmax_hardware_fp16_th16_20261001.md
+completion_note: Quantization optimization and hardware-FP16 softmax follow-up completed; see the linked report for final measurements and accepted FTZ differences.

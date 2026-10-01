@@ -1,0 +1,12 @@
+task: softmax-hardware-fp16-20261001
+status: complete
+branch: feat/gemv
+conversion_policy: historical hardware FP16 conversion; no software subnormal repair
+report: docs/kernel/optimizations/softmax_hardware_fp16_th16_20261001.md
+rows_replaced_per_model: 228
+new_refinement_probes_per_model: 6
+final_softmax_rows_per_model: 234
+quantization_rows_changed: 0
+pipeline_completed: true
+final_audit: agent-tasks/softmax-hardware-fp16-20261001/output_audit.json
+known_numerical_difference: Strict CPU-reference Q3/K65537 fails because positive subnormal probabilities flush to zero; reference and tolerances remain unchanged.

@@ -1,0 +1,4 @@
+# Locally retained comparison binaries and historical source snapshots.
+/hardware_binaries/
+/preserving_binaries/
+/preserving_sources/
