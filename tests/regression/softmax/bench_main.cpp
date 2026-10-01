@@ -18,6 +18,7 @@
 #include <vortex.h>
 #include "common.h"
 #include "host_variant.h"
+#include "../softmax_common/host_data.h"
 #include "../vector_common/fp16.h"
 #include "bench_util.h"
 
@@ -47,12 +48,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void initialize_random(std::vector<data_t>& vec) {
-  for (auto& val : vec) {
-    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
-    val = float_to_fp16(x);
-  }
-}
 
 static void pack_rows_to_pitch(
     std::vector<uint8_t>& dst,
@@ -127,8 +122,7 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_input;
   if (bench.copy_inputs) {
     h_input.resize(input_size);
-    srand(42);
-    initialize_random(h_input);
+    initialize_softmax_scores(h_input);
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);

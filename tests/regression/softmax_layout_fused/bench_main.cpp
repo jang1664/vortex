@@ -150,6 +150,8 @@ int main(int argc, char *argv[]) {
     printf("Skipping input preparation and H2D copy (%zu bytes)\n", tiled_bytes);
   }
 
+  uint64_t num_cores = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   uint64_t num_warps = 0;
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
@@ -161,7 +163,8 @@ int main(int argc, char *argv[]) {
     SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE || \
     SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_UNROLL2 || \
     SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_ADDR32 || \
-    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_GROUPED
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_GROUPED || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_CURSOR
   const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #else
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
@@ -170,6 +173,9 @@ int main(int argc, char *argv[]) {
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_SOFTMAX_LAYOUT_FUSED;
   arg.grid_dim[0] = batch * heads * seq_q;
+#ifdef SOFTMAX_SAFE_HOST
+  arg.grid_dim[0] = std::min(arg.grid_dim[0], std::max(1u, (uint32_t)num_cores * NUM_WARPS));
+#endif
   arg.grid_dim[1] = 1;
   arg.grid_dim[2] = 1;
   arg.block_dim[0] = tpb;

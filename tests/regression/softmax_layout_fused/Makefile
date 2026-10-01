@@ -8,7 +8,7 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 SRCS := $(SRC_DIR)/main.cpp
 
 SOFTMAX_LAYOUT_FUSED_VARIANT ?= rev2_shuffle_grouped
-SOFTMAX_LAYOUT_FUSED_VARIANTS := rev1 rev2 rev2_chunked rev2_addrgen rev2_shuffle rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped opt opt_warp
+SOFTMAX_LAYOUT_FUSED_VARIANTS := rev1 rev2 rev2_chunked rev2_addrgen rev2_shuffle rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped rev2_shuffle_cursor rev2_shuffle_safe opt opt_warp
 ifneq ($(filter $(SOFTMAX_LAYOUT_FUSED_VARIANT),$(SOFTMAX_LAYOUT_FUSED_VARIANTS)),$(SOFTMAX_LAYOUT_FUSED_VARIANT))
   $(error Unsupported SOFTMAX_LAYOUT_FUSED_VARIANT=$(SOFTMAX_LAYOUT_FUSED_VARIANT); expected one of: $(SOFTMAX_LAYOUT_FUSED_VARIANTS))
 endif
@@ -38,6 +38,14 @@ else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2_shuffle_addr32)
   VX_SRCS := $(SRC_DIR)/kernel.rev2_shuffle_addr32.cpp
   CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_ADDR32
   VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_ADDR32
+else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2_shuffle_safe)
+  VX_SRCS := $(SRC_DIR)/kernel.rev2_shuffle_safe.cpp
+  CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE
+  VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE
+else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2_shuffle_cursor)
+  VX_SRCS := $(SRC_DIR)/kernel.rev2_shuffle_cursor.cpp
+  CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_CURSOR
+  VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_CURSOR
 else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2_shuffle_grouped)
   VX_SRCS := $(SRC_DIR)/kernel.rev2_shuffle_grouped.cpp
   CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_SHUFFLE_GROUPED
@@ -59,10 +67,17 @@ endif
 ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),opt_warp)
 # opt_warp includes kernel.opt.cpp.
 kernel.elf: $(SRC_DIR)/kernel.opt.cpp
-else ifneq ($(filter rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped,$(SOFTMAX_LAYOUT_FUSED_VARIANT)),)
+else ifneq ($(filter rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped rev2_shuffle_cursor rev2_shuffle_safe,$(SOFTMAX_LAYOUT_FUSED_VARIANT)),)
 kernel.elf: $(SRC_DIR)/kernel.rev2_shuffle.cpp
 else ifneq ($(filter rev2 rev2_chunked rev2_addrgen rev2_shuffle rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped,$(SOFTMAX_LAYOUT_FUSED_VARIANT)),)
 kernel.elf: $(VORTEX_HOME)/tests/regression/softmax_common/kernel.simt_cached.h
 endif
 
+ifneq ($(filter rev2_shuffle_cursor rev2_shuffle_safe,$(SOFTMAX_LAYOUT_FUSED_VARIANT)),)
+  CXXFLAGS += -DSOFTMAX_SAFE_HOST=1
+endif
+
 include ../common.mk
+
+# Shared numeric helpers affect both source and variant wrappers.
+kernel.elf: $(VORTEX_HOME)/tests/regression/vector_common/fp16_preserve.h $(wildcard $(VORTEX_HOME)/tests/regression/softmax_common/*.h)

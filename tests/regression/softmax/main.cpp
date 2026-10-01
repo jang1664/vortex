@@ -320,7 +320,7 @@ int main(int argc, char *argv[]) {
           float rel_threshold = std::abs(expected) * 0.01f;  // 1%
           float threshold = std::max(abs_threshold, rel_threshold);
           
-          if (diff > threshold) {
+          if (!std::isfinite(got) || (use_mask && k > q && got != 0.0f) || diff > threshold) {
             if (errors < 10) {
               float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
               max_rel_error = std::max(max_rel_error, rel_error);

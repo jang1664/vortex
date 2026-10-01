@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <vortex.h>
+#include <VX_config.h>
 
 #define SOFTMAX_VARIANT_REV1 1
 #define SOFTMAX_VARIANT_OPT 2
@@ -29,6 +30,9 @@
 #endif
 
 static inline const char* softmax_variant_name() {
+#ifdef SOFTMAX_SAFE_HOST
+  return "rev2_shuffle_safe";
+#endif
 #if SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
   return "dma_serial";
 #elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2_SHUFFLE_GROUPED
@@ -145,7 +149,11 @@ static inline uint32_t softmax_grid_x(
   (void)num_cores;
   *rows_per_block = 1;
   *row_tiles = total_rows;
+#ifdef SOFTMAX_SAFE_HOST
+  return std::min(total_rows, std::max(1u, static_cast<uint32_t>(num_cores) * NUM_WARPS));
+#else
   return total_rows;
+#endif
 #endif
 }
 
