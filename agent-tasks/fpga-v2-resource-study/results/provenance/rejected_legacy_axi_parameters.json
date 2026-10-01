@@ -1,0 +1,5 @@
+{
+  "status": "excluded",
+  "reason": "Old NUM_BANKS_OUT=32 is now transport groups, but default NUM_HBM_PORTS=8 gives invalid geometry; old ADDR_WIDTH_OUT32 cannot represent physical34-bit HBM map. Synthesis preprocessing removes static assertions, so synthesis success alone did not validate these points.",
+  "replacement": "Explicit NUM_HBM_PORTS32, groups32, INTERLEAVE1, ADDR_WIDTH_IN28/OUT34, simulation static-assert geometry verification before rerun."
+}

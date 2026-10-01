@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "fpga_v2_test",
+  "error_log": "",
+  "log_file": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2_test/logs/sim.log"
+}

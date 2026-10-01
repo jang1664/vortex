@@ -1,0 +1,32 @@
+{
+  "status": "pass",
+  "verification": {
+    "status": "pass",
+    "test_name": "fpga_v2_test",
+    "error_log": "",
+    "log_file": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2_test/logs/sim.log"
+  },
+  "vendor_ip": {
+    "status": "pass",
+    "exit_code": 0,
+    "command": [
+      "/tool/Program/Xilinx/2025.1/Vivado/bin/vivado",
+      "-mode",
+      "batch",
+      "-source",
+      "/home/donghweeson/workspace/vortex-fpint-fpga-v2/agent-tasks/array-fpga-study/vendor_ip_sim.tcl",
+      "-tclargs",
+      "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16",
+      "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/vendor_ip_check",
+      "/home/donghweeson/workspace/vortex-fpint-fpga-v2/agent-tasks/array-fpga-study/vendor_ip_tb.sv"
+    ],
+    "testbench_sha256": "772378c11fd5c7c39e38078acac4f4cedbbfe9e3a43078b6f3d476ac5eaf2265",
+    "log_sha256": "e3ffa97837e200fd3d72d8ff00b3f479bd50f32c457c8da0d08b45075c31784e",
+    "scope": "Actual generated AMD FP16 multiply, FP32 multiply/add models; directed finite arithmetic, always ready, burst + valid gaps; not full IEEE proof",
+    "accepted": 27,
+    "returned": 27,
+    "measured_handshake_latency": 1,
+    "consecutive_outputs": 18
+  },
+  "source_match": true
+}

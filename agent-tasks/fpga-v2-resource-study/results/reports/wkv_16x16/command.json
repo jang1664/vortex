@@ -1,0 +1,13 @@
+[
+  "/tool/Program/Xilinx/2025.1/Vivado/bin/vivado",
+  "-mode",
+  "batch",
+  "-source",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/agent-tasks/fig5-fpga/synth.tcl",
+  "-tclargs",
+  "VX_gemm_unit_top",
+  "xcu55c-fsvh2892-2L-e",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/sources.txt",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16",
+  ""
+]

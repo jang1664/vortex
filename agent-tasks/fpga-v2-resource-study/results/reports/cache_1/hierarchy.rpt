@@ -1,0 +1,62 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date         : Thu Oct  1 16:53:28 2026
+| Host         : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command      : report_utilization -hierarchical -hierarchical_depth 12 -file /home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/hierarchy.rpt
+| Design       : VX_cache_top
+| Device       : xcu55c-fsvh2892-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------------------------------------------+------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|                   Instance                   |               Module               | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++----------------------------------------------+------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| VX_cache_top                                 |                              (top) |       5453 |       5449 |       4 |    0 | 7387 |   1073 |      7 |    0 |          0 |
+|   (VX_cache_top)                             |                              (top) |          0 |          0 |       0 |    0 | 1225 |      0 |      0 |    0 |          0 |
+|   cache                                      |                      VX_cache_wrap |       5453 |       5449 |       4 |    0 | 6162 |   1073 |      7 |    0 |          0 |
+|     g_cache.cache                            |                           VX_cache |       5453 |       5449 |       4 |    0 | 6162 |   1073 |      7 |    0 |          0 |
+|       g_banks[0].bank                        |                      VX_cache_bank |       4517 |       4513 |       4 |    0 | 4592 |   1066 |      6 |    0 |          0 |
+|         (g_banks[0].bank)                    |                      VX_cache_bank |        139 |        139 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|         (cache_mshr)                         |                      VX_cache_mshr |        510 |        506 |       4 |    0 |  508 |      0 |      0 |    0 |          0 |
+|         cache_data                           |                      VX_cache_data |       1536 |       1536 |       0 |    0 |    0 |   1024 |      0 |    0 |          0 |
+|           g_data_store[0].data_store         |          VX_sp_ram__parameterized0 |        256 |        256 |       0 |    0 |    0 |    256 |      0 |    0 |          0 |
+|           g_data_store[1].data_store         |       VX_sp_ram__parameterized0_18 |        768 |        768 |       0 |    0 |    0 |    256 |      0 |    0 |          0 |
+|           g_data_store[2].data_store         |       VX_sp_ram__parameterized0_19 |        256 |        256 |       0 |    0 |    0 |    256 |      0 |    0 |          0 |
+|           g_data_store[3].data_store         |       VX_sp_ram__parameterized0_20 |        256 |        256 |       0 |    0 |    0 |    256 |      0 |    0 |          0 |
+|         cache_flush                          |                     VX_cache_flush |         54 |         54 |       0 |    0 |   21 |      0 |      0 |    0 |          0 |
+|         core_rsp_queue                       |  VX_elastic_buffer__parameterized0 |        171 |        171 |       0 |    0 |  172 |      2 |      1 |    0 |          0 |
+|           g_ebN.fifo_queue                   |      VX_fifo_queue__parameterized0 |        171 |        171 |       0 |    0 |  172 |      2 |      1 |    0 |          0 |
+|             (g_ebN.fifo_queue)               |      VX_fifo_queue__parameterized0 |          1 |          1 |       0 |    0 |  166 |      0 |      0 |    0 |          0 |
+|             g_depth_n.dp_ram                 |          VX_dp_ram__parameterized2 |        164 |        164 |       0 |    0 |    0 |      2 |      1 |    0 |          0 |
+|               g_async.g_bram.async_ram_patch | VX_async_ram_patch__parameterized2 |        164 |        164 |       0 |    0 |    0 |      2 |      1 |    0 |          0 |
+|         mem_req_queue                        |      VX_fifo_queue__parameterized1 |        590 |        590 |       0 |    0 |  622 |      9 |      0 |    0 |          0 |
+|           (mem_req_queue)                    |      VX_fifo_queue__parameterized1 |          2 |          2 |       0 |    0 |  616 |      0 |      0 |    0 |          0 |
+|           g_depth_n.dp_ram                   |          VX_dp_ram__parameterized3 |        582 |        582 |       0 |    0 |    0 |      9 |      0 |    0 |          0 |
+|             g_async.g_bram.async_ram_patch   | VX_async_ram_patch__parameterized3 |        582 |        582 |       0 |    0 |    0 |      9 |      0 |    0 |          0 |
+|         pipe_reg0                            |                   VX_pipe_register |       1377 |       1377 |       0 |    0 | 3155 |      0 |      0 |    0 |          0 |
+|           g_shift_register                   |                  VX_shift_register |       1377 |       1377 |       0 |    0 | 3155 |      0 |      0 |    0 |          0 |
+|         pipe_reg1                            |   VX_pipe_register__parameterized1 |         78 |         78 |       0 |    0 |   99 |      0 |      0 |    0 |          0 |
+|           g_shift_register                   |  VX_shift_register__parameterized1 |         78 |         78 |       0 |    0 |   99 |      0 |      0 |    0 |          0 |
+|       g_mem_rsp_queue[0].mem_rsp_queue       |                  VX_elastic_buffer |        534 |        534 |       0 |    0 |  529 |      7 |      1 |    0 |          0 |
+|         g_ebN.fifo_queue                     |                      VX_fifo_queue |        534 |        534 |       0 |    0 |  529 |      7 |      1 |    0 |          0 |
+|           (g_ebN.fifo_queue)                 |                      VX_fifo_queue |          2 |          2 |       0 |    0 |  523 |      0 |      0 |    0 |          0 |
+|           g_depth_n.dp_ram                   |                          VX_dp_ram |        522 |        522 |       0 |    0 |    0 |      7 |      1 |    0 |          0 |
+|             g_async.g_bram.async_ram_patch   |                 VX_async_ram_patch |        522 |        522 |       0 |    0 |    0 |      7 |      1 |    0 |          0 |
+|       mem_rsp_xbar                           |                    VX_stream_omega |        393 |        393 |       0 |    0 | 1036 |      0 |      0 |    0 |          0 |
+|         g_fallback.xbar_switch               |                     VX_stream_xbar |        393 |        393 |       0 |    0 | 1036 |      0 |      0 |    0 |          0 |
+|           g_passthru.out_buf                 |  VX_elastic_buffer__parameterized3 |        393 |        393 |       0 |    0 | 1036 |      0 |      0 |    0 |          0 |
+|             g_eb2.stream_buffer              |                   VX_stream_buffer |        393 |        393 |       0 |    0 | 1036 |      0 |      0 |    0 |          0 |
++----------------------------------------------+------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+

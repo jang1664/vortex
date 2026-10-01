@@ -1,0 +1,16 @@
+# WoQ GEMM_IMPROVE adaptation — Iteration 1
+status: pass
+error_summary: none
+root_cause: none
+fix_applied: current production wrapper specialized to Q-COL and standard loading; obsolete external-ACC patch excluded
+verification: build-fpga-v2-study/fpga_v2_test/verification.json
+coverage: three seeds, 288 lanes per seed, 864 total; signed weights and lane-varying quantization parameters
+lesson: preserve current arithmetic and ACC; separate native datapath ablation from historical ASIC patches
+synthesis: pass
+
+axi_parameter_migration:
+  initial_trials: excluded
+  reason: old generic list left 32 transport groups behind default 8 physical ports and 32-bit addresses
+  fix: explicitly select 32 physical ports, interleave, 28-bit word and 34-bit byte addresses
+  geometry_gate: pass for both 1/4 input cases with production static assertions enabled
+  replacement_synthesis: pass
