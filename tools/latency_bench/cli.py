@@ -48,7 +48,7 @@ from .runner import (
 )
 from .fpga_bins import FpgaBinConfig
 from .suite import apply_case_filters, find_repo_root, load_suite, resolve_case_fpga_bin
-from .candidate_map import validate_run_selection, measurement_provenance
+from .candidate_map import validate_run_selection, measurement_provenance, execution_candidates_argument
 
 
 def normalize_power_kernel_iterations(value: str | int, auto: bool = False) -> tuple[int, bool]:
@@ -326,6 +326,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Filter expanded suite cases, e.g. 'app=fpint_gemm_ffn_hw & stage=prefill'. Repeat to AND filters.",
     )
+    run.add_argument("--kernel-variant", action="append", default=[], metavar="APP=NAME",
+                     help="Select a software implementation; repeat for different apps.")
 
     vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv or suite/raw_db inputs.")
     vis.add_argument("--results", default=None, help="Path to results.csv for legacy per-run figures.")
@@ -533,6 +535,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Expand a base suite and export one runnable suite per (app, FPGA bin) group.",
     )
     gen.add_argument("--candidate-map", type=Path, default=None)
+    gen.add_argument("--candidates", type=execution_candidates_argument, default=None,
+                     help="Generate only selected execution sources (comma-separated C1,C3,C4).")
     gen.add_argument("--output-format", choices=("yaml", "pkl"), default="yaml")
     gen.add_argument("--suite", required=True, help="Base suite YAML path.")
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
@@ -833,6 +837,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         strict_measurement_reuse=args.strict_measurement_reuse,
         adopt_legacy=args.adopt_legacy,
         application_source_identity=args.application_source_identity,
+        kernel_variants=tuple(args.kernel_variant),
         prebuild=not args.no_prebuild,
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
@@ -1033,6 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
             fpga_bin_by_kind=fpga_bin_by_kind,
             dump_model_structures=args.dump_model_structures,
             candidate_map=args.candidate_map,
+            candidates=args.candidates,
             output_format=args.output_format,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")

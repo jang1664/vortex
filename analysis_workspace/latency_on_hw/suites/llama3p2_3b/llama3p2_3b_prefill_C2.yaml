@@ -8,7 +8,7 @@ defaults:
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: C4
+  default: C1
 
   by_backend:
     sgemm_tcu: C1
@@ -17,12 +17,12 @@ fpga_bins:
   by_app:
     fpint_gemm_ffn_hw: C4
     fpint_gemm_ffn_hw_naive: C3
-    rmsnorm: C4
-    rope: C4
-    softmax: C4
-    silu: C4
-    eladd: C4
-    elmul: C4
+    rmsnorm: C1
+    rope: C1
+    softmax: C1
+    silu: C1
+    eladd: C1
+    elmul: C1
 
 workloads:
   - id: llama3p2_3b_prefill_C2

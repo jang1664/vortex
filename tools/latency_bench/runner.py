@@ -39,6 +39,7 @@ from .suite import (
 from .yaml_io import safe_dump
 from .suite_io import write_suite_payload
 from .candidate_map import measurement_provenance, validate_run_selection, validate_snapshot
+from .kernel_variants import parse_variants, variant_environment, source_identity
 
 
 DEFAULT_SRUN_ARGS = (
@@ -142,6 +143,9 @@ class StrictMeasurementPolicy:
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
     acquisition_settings: Mapping[str, object] = field(default_factory=dict)
     adopt_legacy: bool = False
+    kernel_variants: Mapping[str, str] = field(default_factory=dict)
+    resolved_kernel_variants: Mapping[str, str] = field(default_factory=dict)
+    frozen_baseline_signatures: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.xclbin_sha256:
@@ -227,6 +231,7 @@ class RunOptions:
     strict_measurement_reuse: bool = False
     adopt_legacy: bool = False
     application_source_identity: str = ""
+    kernel_variants: tuple[str, ...] = ()
     prebuild: bool = True
     program_fpga: bool = True
     measure_latency: bool = True
@@ -600,13 +605,27 @@ def _strict_row_decision(
             blocked.append("run manifest is missing fpga_period_s")
         elif not math.isclose(float(period), policy.fpga_period_s, rel_tol=1e-12, abs_tol=0.0):
             pending.append("run manifest fpga_period_s differs")
-        source_identity = recorded.get("application_source_identity")
-        if source_identity in (None, ""):
+        app_metadata = manifest_record[0].get("kernel_variants", {}).get(unit.app)
+        recorded_identity = recorded.get("application_source_identity")
+        if app_metadata:
+            if app_metadata.get("source_identity") != source_identity(repo_root(), unit.app):
+                pending.append("application source identity differs for this app")
+            requested_variant = policy.resolved_kernel_variants.get(unit.app, policy.kernel_variants.get(unit.app))
+            if requested_variant and app_metadata.get("selected") != requested_variant:
+                pending.append("kernel variant differs")
+        elif recorded_identity in (None, ""):
             legacy_provenance = True
             if not policy.adopt_legacy:
                 blocked.append("historical application-source identity is unavailable; use --adopt-legacy")
-        elif str(source_identity) != policy.application_source_identity:
-            pending.append("application-source identity differs")
+            if unit.app in policy.kernel_variants:
+                pending.append("historical kernel variant is unknown")
+        elif str(recorded_identity) != policy.application_source_identity:
+            from .selective_rerun import row_signature
+            if (unit.app not in policy.kernel_variants and
+                    row_signature(row) in policy.frozen_baseline_signatures):
+                legacy_provenance = True
+            else:
+                pending.append("application-source identity differs")
         recorded_settings = recorded.get("acquisition_settings")
         if not isinstance(recorded_settings, dict):
             blocked.append("run manifest acquisition settings are unavailable")
@@ -644,6 +663,10 @@ def evaluate_measurement_coverage(
     """Resolve exact reusable coverage with the pipeline's strict predicate."""
 
     manifest_records = dict(manifests) if manifests is not None else load_measurement_manifests(raw_db)
+    baseline = raw_db.parent / "frozen_baseline.json"
+    if policy.adopt_legacy and baseline.is_file():
+        payload = json.loads(baseline.read_text())
+        policy = replace(policy, frozen_baseline_signatures=frozenset(payload["row_signatures"]))
     rows_by_workload: dict[tuple[str, str], list[dict[str, str]]] = {}
     if raw_db.exists():
         with raw_db.open(newline="") as source:
@@ -736,6 +759,13 @@ def strict_measurement_policy(
     elif options.configs is not None and options.configs.is_file():
         config_sha256 = sha256_file(options.configs)
         fpga_period_s = options.provenance.get("fpga_period_s")
+    requested = parse_variants(options.kernel_variants, repo_root())
+    resolved = dict(requested)
+    from .kernel_variants import query_selection
+    for app in {case.app for case in suite.cases if case.measurement_kind == "measured"}:
+        if (options.build_dir / "tests/regression" / app / "Makefile").is_file():
+            _, resolved[app], _ = query_selection(options.build_dir.resolve(), app,
+                options.configs, requested.get(app, ""))
     return StrictMeasurementPolicy(
         fpga_bin_label=options.fpga_bin_label,
         xclbin_sha256=xclbin_sha256,
@@ -747,6 +777,8 @@ def strict_measurement_policy(
         power_min_samples=options.power_min_samples,
         acquisition_settings=measurement_acquisition_settings(options),
         adopt_legacy=options.adopt_legacy,
+        kernel_variants=requested,
+        resolved_kernel_variants=resolved,
     )
 
 
@@ -997,6 +1029,7 @@ def write_run_script(
     git: GitMetadata,
     xclbin_sha256: str,
 ) -> Path:
+    requested_variants = parse_variants(options.kernel_variants, repo_root())
     script = options.out_dir / "run_fpga_bench.sh"
     status_csv = options.out_dir / "run_status.csv"
     progress_csv = options.out_dir / "progress.csv"
@@ -1422,6 +1455,8 @@ def write_run_script(
         ])
     if options.configs_extra:
         lines.append(f"export CONFIGS=\"${{CONFIGS:-}} {options.configs_extra}\"")
+    for name, value in variant_environment(repo_root(), requested_variants).items():
+        lines.append(f"export {name}={_q(value)}")
     lines.extend([
         "if ! latency_bench_init_fpga_identity; then",
         "  echo \"[latency-bench] FPGA identity capture failed\" >&2",
@@ -1464,6 +1499,10 @@ def write_run_script(
                 "set +e",
                 f"{build_cmd} 2>&1 | tee -a {_q(build_log)}{quiet_redirect}",
                 "rc=\"${PIPESTATUS[0]}\"",
+                f'if [[ "$rc" == "0" && -f {_q(options.build_dir / "tests/regression" / app / "kernel.vxbin")} ]]; then '
+                f'"${{PYTHON:-python3}}" -m tools.latency_bench.kernel_variants '
+                f'--build-dir {_q(options.build_dir)} --out {_q(options.out_dir)} '
+                f'--app {_q(app)} --requested {_q(requested_variants.get(app, ""))} || rc=$?; fi',
                 "set -u",
                 f"printf '[latency-bench] stage=build_end app=%s rc=%s log=%s\\n' {_q(app)} \"$rc\" {_q(build_log)} | tee -a {_q(build_log)}{quiet_redirect}",
                 f"if [[ \"$rc\" == \"0\" ]]; then printf '[build {idx}/{len(apps)}] passed app=%s\\n' {_q(app)}; else printf '[build {idx}/{len(apps)}] failed app=%s rc=%s log=%s\\n' {_q(app)} \"$rc\" {_q(build_log)}; fi",
@@ -1797,7 +1836,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
 
     if suite.experiment:
         if not run_options.strict_measurement_reuse:
-            validate_run_selection(suite.experiment)
+            validate_run_selection(suite.experiment, execution_label=run_options.fpga_bin_label)
         validate_snapshot(suite.experiment)
         expected = suite.experiment["candidates"][run_options.fpga_bin_label]
         if str(run_options.fpga_bin_dir.resolve()) != expected["bin_dir"] or str(run_options.configs) != expected["config"]:
@@ -1863,7 +1902,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         )
     if units_to_run and run_options.strict_measurement_reuse:
         if suite.experiment:
-            validate_run_selection(suite.experiment)
+            validate_run_selection(suite.experiment, execution_label=run_options.fpga_bin_label)
         validate_inputs(run_options)
     print(f"[prepare] writing cases.csv ({len(suite.cases)} rows)...", flush=True)
     phase_started = time.monotonic()
@@ -1992,6 +2031,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             "suite.expanded.pkl",
             "resolved_fpga_aliases.yaml",
             "manifest.json",
+            "kernel_variants.json",
             "run_fpga_bench.sh",
         ),
         run_id=run_id,
@@ -2075,6 +2115,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             "manifest.json",
             "run_fpga_bench.sh",
             "run_status.csv",
+            "kernel_variants.json",
             "progress.csv",
             "attempt_status.csv",
             "results.csv",

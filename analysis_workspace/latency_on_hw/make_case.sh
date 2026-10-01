@@ -7,7 +7,7 @@ decode_measurement="${2:-${DECODE_MEASUREMENT:-sampled}}"
 decode_sample_interval="${3:-${DECODE_SAMPLE_INTERVAL:-32}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
-experiment_tag="${EXPERIMENT_TAG:-th16_20260917}"
+experiment_tag="${EXPERIMENT_TAG:-C3_C4_v3_pipeline}"
 export CANDIDATE_MAP="${CANDIDATE_MAP:-${SCRIPT_DIR}/candidate_fpga_bins.yaml}"
 
 if [[ "${decode_measurement}" != "exact" && "${decode_measurement}" != "sampled" ]]; then

@@ -19,7 +19,7 @@ from .suite import (
 )
 from .yaml_io import safe_load
 from .suite_io import write_suite_payload
-from .candidate_map import resolve_candidate_map
+from .candidate_map import parse_execution_candidates, resolve_candidate_map, validate_snapshot
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class GenerateSuitesOptions:
     dump_model_structures: bool = False
     output_format: str = "yaml"
     candidate_map: Path | None = None
+    candidates: tuple[str, ...] | None = None
 
 
 def _case_without_fpga_bin(case: BenchCase) -> BenchCase:
@@ -129,12 +130,26 @@ def _write_model_structure_dumps(
     return {name: str(path) for name, path in paths.items()}
 
 
+def _extends_selection(previous: dict, current: dict) -> bool:
+    """Permit newly provisioned sources without rebinding any captured image."""
+    if previous.get("schema_version") != 2 or current.get("schema_version") != 2:
+        return False
+    validate_snapshot(previous)
+    validate_snapshot(current)
+    before, after = previous["candidates"], current["candidates"]
+    return before.keys() < after.keys() and all(after[label] == spec for label, spec in before.items())
+
+
 def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
     if options.output_format not in ("yaml", "pkl"):
         raise ValueError("output format must be yaml or pkl")
     if options.candidate_map and options.fpga_bin_remaps:
         raise ValueError("candidate-map cannot be combined with FPGA bin remaps")
-    experiment = resolve_candidate_map(options.candidate_map) if options.candidate_map else {}
+    selected = (parse_execution_candidates(",".join(options.candidates))
+                if options.candidates is not None else None)
+    if selected is not None and options.candidate_map is None:
+        raise ValueError("--candidates requires --candidate-map")
+    experiment = resolve_candidate_map(options.candidate_map, selected) if options.candidate_map else {}
     repo_root = options.repo_root or find_repo_root()
     matrix_overrides = SuiteMatrixOverrides(
         batch_values=tuple(options.batch_values),
@@ -159,7 +174,8 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
     if (out_dir / "index.yaml").exists():
         with (out_dir / "index.yaml").open() as source:
             previous = safe_load(source) or {}
-        if previous.get("experiment", {}) != experiment:
+        previous_selection = previous.get("experiment", {})
+        if previous_selection != experiment and not _extends_selection(previous_selection, experiment):
             raise ValueError("output contains a different FPGA selection; use a new experiment directory")
     fpga_bin_remaps = dict(options.fpga_bin_remaps)
 
@@ -167,6 +183,8 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
     for case in source_suite.cases:
         fpga_bin = resolve_case_fpga_bin(source_suite, case)
         fpga_bin = fpga_bin_remaps.get(fpga_bin, fpga_bin)
+        if selected is not None and fpga_bin not in selected:
+            continue
         if experiment and fpga_bin not in experiment["candidates"]:
             raise ValueError(f"unmapped execution source: {fpga_bin}")
         groups.setdefault((case.app, fpga_bin), []).append(case)
@@ -203,6 +221,8 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         "output_format": options.output_format,
         "experiment": experiment,
     }
+    if selected is not None and not generated_specs:
+        index["empty_reason"] = "no_selected_candidates"
     if options.dump_model_structures:
         index["model_structures"] = _write_model_structure_dumps(
             out_dir,

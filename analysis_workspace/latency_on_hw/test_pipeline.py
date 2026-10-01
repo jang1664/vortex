@@ -763,6 +763,11 @@ class PipelineOrchestrationTest(unittest.TestCase):
             state_base=self.root / "state", models=("llama2",),
             python=sys.executable,
         )
+        # These orchestration fixtures replace stage execution with text files.
+        # Supply the complete-source prerequisites separately.
+        for path in pipeline._raw_dbs(self.settings, "llama2"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("status\npass\n")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -1230,6 +1235,149 @@ class PipelineOrchestrationTest(unittest.TestCase):
         after = commands.read_text().splitlines()
         self.assertEqual(before + ["refine"], after)
         self.assertEqual(["refine:fixture"], rerun["executed"])
+
+
+class PartialCandidatePipelineTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.settings = pipeline.PipelineSettings(
+            tag="partial", workspace=self.root / "workspace", state_base=self.root / "state",
+            models=("llama2",), candidates=("C1",), python=sys.executable,
+        )
+
+    def test_run_and_refine_select_only_requested_candidates(self):
+        for labels in (("C1",), ("C4",), ("C3", "C4")):
+            settings = pipeline.replace(self.settings, candidates=labels)
+            runs = pipeline._run_tasks(settings)
+            refinements = pipeline._refine_tasks(settings)
+            self.assertEqual(2 * len(labels), len(runs))
+            self.assertEqual(set(labels), {task.metadata["environment"]["FPGA_BINS"] for task in runs})
+            self.assertTrue(all(task.effective_parameters["measure_power"] for task in runs))
+            self.assertEqual(set(labels), {task.metadata["label"] for task in refinements})
+        self.assertEqual(3, len(pipeline._raw_dbs(self.settings, "llama2")))
+
+    def test_run_through_refine_never_checks_or_executes_other_candidates(self):
+        coverage = MeasurementCoverage((MeasurementEvidence(
+            "new-exec", MeasurementReuseState.PENDING, ("no matching rows",)
+        ),))
+        # Real task builders and stage barriers, with hardware/evidence substituted.
+        with mock.patch.object(pipeline, "_strict_coverage_for_run_task", return_value=coverage), \
+             mock.patch.object(pipeline, "_execute_task") as execute, \
+             mock.patch.object(pipeline, "inspect_refinement_evidence",
+                               side_effect=PipelineOrchestrationTest._terminal_evidence) as inspect:
+            code, result = pipeline.run_pipeline(self.settings, last="refine")
+        self.assertEqual(0, code, result)
+        self.assertEqual(["run:llama2:prefill:C1", "run:llama2:generation:C1", "refine:llama2:C1"],
+                         [call.args[0].key for call in execute.call_args_list])
+        self.assertEqual(1, inspect.call_count)
+        self.assertIn("C1", str(inspect.call_args.args[0]))
+        self.assertEqual(["C1"], result["settings"]["candidates"])
+
+    def test_refine_only_requires_selected_run_receipts(self):
+        seen = []
+
+        def reusable(task, store):
+            seen.append(task.key)
+            return pipeline.TaskDecision(task, pipeline.Decision.REUSE, "fixture")
+
+        coverage = mock.Mock(complete=True, blocked_exec_keys=())
+        with mock.patch.object(pipeline, "inspect_task", side_effect=reusable), \
+             mock.patch.object(pipeline, "_strict_coverage_for_run_task", return_value=coverage), \
+             mock.patch.object(pipeline, "inspect_refinement_evidence",
+                               side_effect=PipelineOrchestrationTest._terminal_evidence):
+            code, result = pipeline.run_pipeline(self.settings, first="refine", last="refine")
+        self.assertEqual(0, code, result)
+        self.assertTrue(seen)
+        self.assertTrue(all(key.endswith(":C1") for key in seen), seen)
+
+    def test_downstream_reports_every_missing_raw_db_before_starting_children(self):
+        c1 = pipeline._raw_dbs(self.settings, "llama2")[0]
+        c1.parent.mkdir(parents=True)
+        c1.write_text("status\npass\n")
+        for stage in ("compose", "prepare", "plot"):
+            with self.subTest(stage=stage), mock.patch.object(pipeline, "_execute_task") as execute:
+                code, result = pipeline.run_pipeline(self.settings, first=stage, last=stage)
+            self.assertEqual(2, code)
+            execute.assert_not_called()
+            message = " ".join(result["blocked"])
+            self.assertIn("C3/raw_db.csv", message)
+            self.assertIn("C4/raw_db.csv", message)
+            self.assertNotIn("C2/raw_db.csv", message)
+            self.assertFalse(self.settings.state_root.exists())
+
+    def test_subset_suites_do_not_certify_full_composition_even_when_raw_files_exist(self):
+        for path in pipeline._raw_dbs(self.settings, "llama2"):
+            path.parent.mkdir(parents=True)
+            path.write_text("status\npass\n")
+        index = self.settings.suite_root("llama2") / "prefill_merged/index.yaml"
+        index.parent.mkdir(parents=True)
+        index.write_text("generated: [{fpga_bin: C1, suite: unused.pkl}]\n")
+        code, result = pipeline.run_pipeline(self.settings, first="compose", last="compose")
+        self.assertEqual(2, code)
+        self.assertIn("missing execution candidates C3,C4", " ".join(result["blocked"]))
+
+    def test_downstream_validates_unselected_measurement_and_refinement_receipts(self):
+        seen = []
+
+        def pending(task, store):
+            seen.append(task.key)
+            return pipeline.TaskDecision(task, pipeline.Decision.PENDING, "no receipt")
+
+        with mock.patch.object(pipeline, "inspect_task", side_effect=pending), \
+             mock.patch.object(pipeline, "_strict_coverage_for_run_task", side_effect=ValueError("missing")):
+            problems = pipeline._validate_excluded_prerequisites(
+                self.settings, ("compose",), pipeline.ReceiptStore(self.settings.state_root),
+                publish_adoption=False)
+        self.assertTrue(problems)
+        self.assertIn("run:llama2:prefill:C3", seen)
+        self.assertIn("refine:llama2:C4", seen)
+
+    def test_cli_selection_and_dry_run_do_not_write_files(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = workflow.main([
+                "pipeline", "--tag", "partial", "--workspace", str(self.settings.workspace),
+                "--state-root", str(self.settings.state_base), "--models", "llama2",
+                "--candidates", "C1", "--to", "run", "--dry-run",
+            ])
+        self.assertEqual(0, code)
+        result = json.loads(output.getvalue())
+        self.assertEqual(["C1"], result["settings"]["candidates"])
+        self.assertEqual(2, len(result["blocked"]))  # Both C1 workload suites are absent.
+        self.assertNotIn(":C3", " ".join(result["blocked"]))
+        self.assertEqual([], list(self.root.iterdir()))
+
+    def test_plot_uses_generated_snapshot_instead_of_old_partial_run_manifest(self):
+        from tools.latency_bench.candidate_map import _digest
+        from tools.latency_bench.yaml_io import safe_dump
+        import plot
+
+        candidates = {label: dict(
+            alias=label, bin_dir="bin", xclbin="bin/image", xclbin_sha256=label,
+            config="config", config_sha256="config-sha", manifest="manifest",
+            manifest_sha256="manifest-sha", fpga_period_s=1e-8, fpga_clock_source="clock",
+        ) for label in ("C1", "C3", "C4")}
+        snapshot = {"schema_version": 2, "candidates": candidates, "selection_digest": _digest(candidates)}
+        old = self.settings.result_root("llama2") / "C1/latest/manifest.json"
+        old.parent.mkdir(parents=True)
+        old.write_text("{}")
+        index = self.settings.suite_root("llama2") / "prefill_merged/index.yaml"
+        index.parent.mkdir(parents=True)
+        index.write_text(safe_dump({"experiment": snapshot}))
+        selected = pipeline._candidate_snapshot_path(self.settings)
+        self.assertEqual(index, selected)
+        self.assertEqual(snapshot, plot._read_candidate_snapshot(selected))
+
+    def test_invalid_cli_candidate_explains_c2_composition(self):
+        from contextlib import redirect_stderr
+
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            workflow.main(["pipeline", "--tag", "partial", "--candidates", "C2"])
+        self.assertEqual(2, error.exception.code)
+        self.assertIn("C2 is a composed variant", errors.getvalue())
 
 
 class CampaignWrapperTest(unittest.TestCase):

@@ -54,11 +54,12 @@ def write_suite_payload(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def indexed_suites(index_path: Path) -> list[tuple[str, Path]]:
+def indexed_suites(index_path: Path, *, allow_empty: bool = False) -> list[tuple[str, Path]]:
     with index_path.open() as source:
         index = safe_load(source) or {}
     entries = index.get("generated")
-    if not isinstance(entries, list) or not entries:
+    intentional_empty = allow_empty and index.get("empty_reason") == "no_selected_candidates"
+    if not isinstance(entries, list) or (not entries and not intentional_empty):
         raise ValueError(f"empty or invalid suite index: {index_path}")
     result = []
     for entry in entries:

@@ -2,19 +2,35 @@
 
 `candidate_fpga_bins.yaml` selects the C1–C4 aliases from
 `ci/fpga_bin_alias_map.yaml`. The workflow does not change the global C1–C4
-aliases. C2 keeps its existing composition: TCU GEMM comes from C1, naive GEMM
-from C3, and vector kernels from C4. Registering a C2 image never creates a C2
+aliases. TCU GEMM comes from C1, naive GEMM from C3, and improved GEMM from C4.
+All vector, layout, and quantization kernels (including fused variants) execute
+on C1. Logical C2 combines C1 TCU/vector results with C3 naive GEMM results.
+Registering a C2 image never creates a C2
 measurement or refinement task. C4_fused remains included and C4_alone remains
 excluded.
+
+The local `candidate_fpga_bins.yaml` is the source of truth for image aliases.
+Execution sources are C1, C3, and C4; logical C2 has no independent raw database.
+
+The default experiment tag is `C3_C4_v3_pipeline`. Results use logical execution
+labels (`C1`, `C3`, `C4`), so C4 measurements are saved under `C4/` regardless of
+the selected image alias. Older output roots and their `C4_v3/` directories
+are not automatically reused by this new tag.
+
+Without a candidate filter, suite generation validates every configured
+candidate, including C2, even though C2 has no independent measurement task.
+Each alias must resolve to an existing config, FPGA image, manifest, and kernel
+clock information. Use a new experiment tag when replacing a selected image.
+See the subset workflow below when some images are not yet available.
 
 ## Generate the workload
 
 The pipeline consumes generated workload indexes; it does not create them. Use a
-new tag whenever the candidate selection changes, and use that tag throughout:
+new tag when replacing candidate images, and use that tag throughout:
 
 ```bash
 cd analysis_workspace/latency_on_hw
-export EXPERIMENT_TAG=th16_20260917
+export EXPERIMENT_TAG=C3_C4_v3_pipeline
 export PYTHON=$HOME/.conda/envs/vortex/bin/python
 ./make_case.sh full
 ```
@@ -62,12 +78,52 @@ Resume a bounded stage range when its excluded prerequisites are valid:
   --from compose --to plot --rerun compose
 ```
 
-`--rerun STAGE` re-enters only that stage and keeps its normal fine-grained
-reuse rules. It does not force FPGA remeasurement. A range never runs an earlier
-stage implicitly; missing or stale prerequisites stop with a recovery command.
-There is intentionally no pipeline force flag for physical remeasurement. Use
-the standalone measurement command only after every pipeline and legacy writer
-for the same raw output root is quiescent.
+`--rerun` (or `--rerun run`) forces physical remeasurement in the run
+stage. Other `--rerun STAGE` values re-enter that stage using its normal reuse
+rules. A range never runs an earlier stage implicitly; missing or stale
+prerequisites stop with a recovery command.
+
+To replace measurements for selected applications and then rebuild figures:
+
+```bash
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" \
+  --models llama2,llama3 --candidates C4 --from run --to plot \
+  --rerun --adopt-legacy \
+  --filter 'app=~kv_cache_quant_layout_fused* | app=softmax_layout_fused' \
+  --kernel-variant kv_cache_quant_layout_fused_w4a16=prefill_tiled_chunk_fp32 \
+  --kernel-variant softmax_layout_fused=rev2_shuffle_cursor
+```
+
+Filters use the existing case-expression syntax: `app=NAME`, `app=~GLOB`,
+`&` for AND, and `|` for OR. Repeated `--filter` expressions are combined by
+AND. The same filter limits refinement kernel types. Compose, prepare, and
+plot still use the complete model workload and preserved measurements.
+Historical measured probe points are included even if the current suite
+marks those shapes as interpolated.
+
+Repeat `--kernel-variant APP=NAME` to override each application's Makefile
+selection. Without an override, the configured Makefile/environment selection
+is retained and recorded. Each run stores `kernel_variants.json`, and its
+manifest records the selected implementation, selection source, application
+source hash, and `kernel.vxbin` SHA-256. The output root also indexes these
+records by run ID; raw rows refer to that run ID.
+
+Remeasurements are staged under `remeasurements/<stage>.<timestamp>/` with a
+`raw_db.before.csv` backup and a `rerun_summary.json`. Only successful rows
+replace the corresponding `(FPGA label, xclbin SHA, app, normalized args)`
+entries. Failed and unselected rows are preserved. Benchmark success records
+latency/power acquisition; it does not imply a value check. To resume after an
+interruption, omit `--rerun`; strict reuse keeps completed measurements only
+when implementation, hardware, clock, and acquisition evidence agree.
+SIGTERM/keyboard interruption publishes completed rows when the process can
+finish its handler; an immediate hard kill can leave evidence in staging.
+
+Imported historical baselines may be explicitly sealed in a
+`frozen_baseline.json` row-signature inventory. With `--adopt-legacy`, exact
+unchanged rows for applications without an explicit variant override remain
+available to the full-model composition. This preserves their original
+source/variant provenance rather than claiming they were measured using the
+current software. Hardware and acquisition checks still apply.
 
 Historical results without pipeline receipts can be adopted when the raw rows
 and saved manifests prove the requested latency, power, xclbin, config, clock,
@@ -107,7 +163,7 @@ so stale YAML/PKL siblings are not rediscovered.
 
 Raw CSVs retain the actual execution label, alias, bin path, xclbin SHA-256,
 selection digest, captured period, and clock source. A logical C2 vector use is
-therefore recorded with C4 as its physical source. Composition keeps expected
+therefore recorded with C1 as its physical source. Composition keeps expected
 image identity and actual source provenance; prepared totals retain aggregated
 provenance.
 
@@ -125,3 +181,69 @@ campaign. The pipeline detects its `latest/run_state.json` writer and blocks.
 After the old writer is quiescent, inspect `status` or `--dry-run`; adopt only
 complete compatible evidence, then start the successor from the first reported
 pending stage.
+
+## Measure a subset of candidates
+
+Use `--candidates C1` or a comma-separated list such as `--candidates C1,C3`
+with `workflow.py pipeline` or `status`. It selects physical execution sources,
+not logical model variants. C2 has no independent measurement; selecting C2
+directly is an error. `--candidates C1` collects TCU GEMM and all vector/layout/
+quantization kernels; `--candidates C4` collects the improved GEMM kernels.
+The complete logical C1 workload now executes on C1. The downstream pipeline
+still produces the full candidate comparison and therefore requires C3/C4.
+Regenerate suites after this routing change: existing generated suites and raw
+rows keep their original hardware provenance. Historical C4 vector timings are
+not relabeled or reused as C1 measurements.
+
+| Phase | Candidate subset behavior |
+| --- | --- |
+| `run` | Measures latency and power only for the selected execution sources. |
+| `refine` | Refines selected sources independently, requiring their compatible run evidence. Probes measure latency only. |
+| `compose` | Requires C1/C3/C4 raw databases, full generated workloads, and compatible run/refine evidence for all sources. |
+| `prepare` | Uses complete composed results; the pipeline validates the full upstream chain. The candidate filter does not trim figures or models. |
+| `plot` | Uses prepared results plus C1/C3/C4 raw databases for kernel power, and validates the full upstream chain. |
+
+The default execution selection remains C1,C3,C4. Missing downstream raw files
+produce an error naming the source and exact `raw_db.csv` path. A subset
+selection never silently omits missing sources from composition or plots.
+When a range includes downstream stages, the selected run/refine work completes
+before the full-source barrier is checked. Existing compatible evidence for
+unselected sources can satisfy that barrier.
+
+Generate suites for the same subset when other images are not available:
+
+```bash
+cd analysis_workspace/latency_on_hw
+export PYTHON=$HOME/.conda/envs/vortex/bin/python
+export EXPERIMENT_TAG=C1_rev3_initial
+CANDIDATES=C1 ./make_case.sh full
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full \
+  --candidates C1 --to run --dry-run
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full \
+  --candidates C1 --to run
+```
+
+`make_cases.sh` also accepts `--candidates C1` directly. Only selected aliases
+are resolved; unselected map entries may be absent, `null`, or `none`. Selected
+entries still require real image/config/manifest/clock artifacts. Generation
+collects the selected source's cases across all logical workload variants and
+keeps only those sources in the merged indexes. Empty per-variant indexes are
+marked explicitly and skipped by the merger.
+
+Results are `outputs_llama2_main.<tag>/C1/raw_db.csv` and
+`outputs_llama3_main.<tag>/C1/raw_db.csv`. Use `--to refine` to include refinement,
+or `--from refine --to refine --candidates C1` to refine existing C1 results.
+Hardware execution still requires configured build directories and the normal
+Slurm environment. Neither `--dry-run` nor `status` starts hardware work.
+
+Partial snapshots use schema version 2; historical full snapshots remain
+supported. Adding unrelated aliases does not invalidate an existing partial
+snapshot, but changing a selected image/config does. An explicitly filtered
+experiment can be extended under the same tag by regenerating with a superset,
+for example `CANDIDATES=C1,C3,C4 ./make_case.sh full`, as long as all previously
+captured candidate artifacts are unchanged. Rerun the pipeline with all sources;
+compatible C1 raw rows are adopted through the existing strict measurement
+checks, and missing sources are measured. Removing candidates or changing an
+existing selection still requires a new tag. Power plots use the generated workload
+snapshot when present, so a reused C1 manifest with a partial snapshot cannot
+exclude C3/C4 rows from a full plot.

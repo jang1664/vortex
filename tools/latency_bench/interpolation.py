@@ -751,7 +751,7 @@ def _recovery_identity(
     args: argparse.Namespace,
     kernel_types: list[str],
 ) -> dict[str, Any]:
-    return {
+    identity = {
         "suite_identity": _suite_identity(suite),
         "metric": args.metric,
         "sampling_strategy": args.sampling_strategy,
@@ -759,6 +759,19 @@ def _recovery_identity(
         "validation_samples": args.validation_samples,
         "kernel_types": kernel_types,
     }
+
+    # Variant changes invalidate numerical probe caches even if anchors happen
+    # to have the same values. Preserve compatibility for legacy commands.
+    tokens = shlex.split(getattr(args, "measure_command", "") or "")
+    variants = [tokens[i + 1] for i, token in enumerate(tokens[:-1])
+                if token == "--kernel-variant"]
+    if variants:
+        identity["kernel_variants"] = sorted(variants)
+        sources = [tokens[i + 1] for i, token in enumerate(tokens[:-1])
+                   if token == "--application-source-identity"]
+        if sources:
+            identity["application_source_identity"] = sources[-1]
+    return identity
 
 
 def _relevant_values(

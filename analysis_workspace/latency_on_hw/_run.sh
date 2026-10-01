@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Select a fresh tag when the candidate map changes.
-suite_postfix="${EXPERIMENT_TAG:-th16_20260917}"
+suite_postfix="${EXPERIMENT_TAG:-C3_C4_v3_pipeline}"
 output_postfix="${suite_postfix}"
 suite_size="${SUITE_SIZE:-full}"
 fpga_bins="${FPGA_BINS:-}"

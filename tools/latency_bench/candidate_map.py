@@ -1,6 +1,7 @@
 """Freeze candidate selections independently of logical kernel routing."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +12,23 @@ from .fpga_clock import XCLBIN_INFO_FILENAMES, kernel_clock_period_s
 from .yaml_io import safe_load
 
 PROVENANCE_COLUMNS = ("fpga_bin_alias", "selection_digest", "fpga_period_s", "fpga_clock_source")
+EXECUTION_CANDIDATES = ("C1", "C3", "C4")
+
+
+def parse_execution_candidates(value: str) -> tuple[str, ...]:
+    labels = tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
+    if "C2" in labels:
+        raise ValueError("C2 is a composed variant and has no independent measurement; select its execution sources (C1,C3 for current suites)")
+    if not labels or set(labels) - set(EXECUTION_CANDIDATES):
+        raise ValueError("--candidates expects a comma-separated subset of C1,C3,C4")
+    return tuple(label for label in EXECUTION_CANDIDATES if label in labels)
+
+
+def execution_candidates_argument(value: str) -> tuple[str, ...]:
+    try:
+        return parse_execution_candidates(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def _digest(candidates: dict) -> str:
@@ -23,7 +41,12 @@ def validate_snapshot(snapshot: dict) -> None:
     if not isinstance(snapshot, dict):
         raise ValueError("invalid candidate snapshot")
     candidates = snapshot.get("candidates")
-    if snapshot.get("schema_version") != 1 or not isinstance(candidates, dict) or set(candidates) != {"C1", "C2", "C3", "C4"}:
+    version = snapshot.get("schema_version")
+    if not isinstance(candidates, dict) or not candidates or (
+        version == 1 and set(candidates) != {"C1", "C2", "C3", "C4"}
+    ) or (
+        version == 2 and not set(candidates) <= set(EXECUTION_CANDIDATES)
+    ) or version not in (1, 2):
         raise ValueError("invalid candidate snapshot schema")
     required = {"alias", "bin_dir", "xclbin", "xclbin_sha256", "config", "config_sha256", "manifest", "manifest_sha256", "fpga_period_s", "fpga_clock_source"}
     if any(not isinstance(spec, dict) or not required.issubset(spec) for spec in candidates.values()):
@@ -32,7 +55,7 @@ def validate_snapshot(snapshot: dict) -> None:
         raise ValueError("candidate snapshot digest mismatch")
 
 
-def resolve_candidate_map(path: Path) -> dict[str, Any]:
+def resolve_candidate_map(path: Path, selected: tuple[str, ...] | None = None) -> dict[str, Any]:
     # Import lazily: report also consumes suites, which validate snapshots.
     from .report import sha256_file
     with path.open() as source:
@@ -40,8 +63,16 @@ def resolve_candidate_map(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError(f"invalid candidate map schema: {path}")
     mapping = payload.get("candidates")
-    if not isinstance(mapping, dict) or set(mapping) != {"C1", "C2", "C3", "C4"}:
+    if not isinstance(mapping, dict) or set(mapping) - {"C1", "C2", "C3", "C4"}:
+        raise ValueError(f"invalid candidate labels: {path}")
+    if selected is None and set(mapping) != {"C1", "C2", "C3", "C4"}:
         raise ValueError(f"candidate map must define C1, C2, C3, C4: {path}")
+    if selected is not None:
+        selected = parse_execution_candidates(",".join(selected))
+        missing = set(selected) - set(mapping)
+        if missing:
+            raise ValueError(f"candidate map is missing selected candidates {','.join(sorted(missing))}: {path}")
+        mapping = {label: mapping[label] for label in selected}
     candidates = {}
     for label, alias in sorted(mapping.items()):
         if not isinstance(alias, str) or not alias.strip():
@@ -65,14 +96,21 @@ def resolve_candidate_map(path: Path) -> dict[str, Any]:
             "manifest": str(artifacts.manifest), "manifest_sha256": sha256_file(artifacts.manifest),
             "fpga_period_s": period, "fpga_clock_source": clock_source,
         }
-    return {"schema_version": 1, "candidate_map": str(path.resolve()),
+    return {"schema_version": 1 if selected is None else 2, "candidate_map": str(path.resolve()),
             "selection_digest": _digest(candidates), "candidates": candidates}
 
 
-def validate_run_selection(snapshot: dict, candidate_map: Path | None = None) -> None:
+def validate_run_selection(snapshot: dict, candidate_map: Path | None = None,
+                           *, execution_label: str | None = None) -> None:
     validate_snapshot(snapshot)
     path = candidate_map or Path(snapshot["candidate_map"])
-    current = resolve_candidate_map(path)
+    if execution_label is not None:
+        current = resolve_candidate_map(path, (execution_label,))
+        if current["candidates"][execution_label] != snapshot["candidates"][execution_label]:
+            raise ValueError(f"FPGA selection changed for {execution_label}; generate a new experiment")
+        return
+    selected = tuple(snapshot["candidates"]) if snapshot["schema_version"] == 2 else None
+    current = resolve_candidate_map(path, selected)
     if current["selection_digest"] != snapshot["selection_digest"]:
         raise ValueError("FPGA selection changed since generation; generate a new experiment")
 
@@ -97,9 +135,8 @@ def filter_snapshot_rows(raw, snapshot: dict):
 
 
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser(description="Validate a captured FPGA selection before running a queued job.")
     parser.add_argument("--run-manifest", required=True, type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.run_manifest.read_text())
-    validate_run_selection(manifest["experiment"])
+    validate_run_selection(manifest["experiment"], execution_label=manifest.get("fpga_bin_label"))

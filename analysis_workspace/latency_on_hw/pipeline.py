@@ -13,11 +13,12 @@ import json
 import os
 import shutil
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -1059,6 +1060,15 @@ class PipelineSettings:
     adopt_legacy: bool = False
     require_convergence: bool = False
     python: str = sys.executable
+    candidates: tuple[str, ...] = EXECUTION_BINS
+    case_filters: tuple[str, ...] = ()
+    kernel_variants: tuple[str, ...] = ()
+    force_measurement: bool = False
+
+    def __post_init__(self) -> None:
+        from tools.latency_bench.candidate_map import parse_execution_candidates
+
+        object.__setattr__(self, "candidates", parse_execution_candidates(",".join(self.candidates)))
 
     @property
     def state_root(self) -> Path:
@@ -1123,7 +1133,10 @@ def _suite_for(settings: PipelineSettings, model: str, stage: str, label: str) -
         return index.parent / f"missing-{label}.pkl"
     matches = [path for current, path in indexed_suites(index) if current == label]
     if len(matches) != 1:
-        raise ValueError(f"expected one generated suite for {model}/{stage}/{label}")
+        raise ValueError(
+            f"expected one generated suite for {model}/{stage}/{label} in {index}; "
+            f"generate suites including --candidates {label}"
+        )
     return matches[0]
 
 
@@ -1153,7 +1166,7 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
     application_source = _path_identity(settings.application_source_root)
     for model in settings.models:
         for stage in ("prefill", "generation"):
-            for label in EXECUTION_BINS:
+            for label in settings.candidates:
                 suite = _suite_for(settings, model, stage, label)
                 marker = _run_marker(settings, model, stage, label)
                 command = (
@@ -1170,12 +1183,32 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                     "--no-power-auto-duration",
                     "--retry",
                 ) + (("--adopt-legacy",) if settings.adopt_legacy else ())
+                if settings.case_filters or settings.kernel_variants or settings.force_measurement:
+                    command = (
+                        settings.python, "-m", "tools.latency_bench.selective_rerun",
+                        "--suite", str(suite), "--out", str(settings.result_root(model) / label),
+                        "--stage", stage, "--fpga-bin", label,
+                        "--build-dir", str(settings.build_root(model)),
+                        "--application-source-identity", application_source.sha256,
+                        "--warmup", str(MEASUREMENT_ACQUISITION["warmup"]),
+                        "--iterations", str(MEASUREMENT_ACQUISITION["iterations"]),
+                        "--power-idle-stability-policy", str(settings.workspace / "idle_stability_policy.json"),
+                    )
+                    for expression in settings.case_filters:
+                        command += ("--filter", expression)
+                    for variant in settings.kernel_variants:
+                        command += ("--kernel-variant", variant)
+                    if settings.force_measurement:
+                        command += ("--force",)
                 tasks.append(TaskSpec(
                     key=f"run:{model}:{stage}:{label}", stage="run",
                     inputs={"suite": _path_identity(suite),
                             "application_source": application_source},
                     effective_parameters={
                         "model": model, "stage": stage, "label": label,
+                        "case_filters": list(settings.case_filters),
+                        "kernel_variants": list(settings.kernel_variants),
+                        "force_measurement": settings.force_measurement,
                         **MEASUREMENT_ACQUISITION,
                         "measure_latency": True, "measure_power": True,
                         "power_kernel_iterations": "auto",
@@ -1211,7 +1244,7 @@ def _refine_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
     refine_script = settings.workspace / "run_interp_refine_example.sh"
     application_source = _path_identity(settings.application_source_root)
     for model in settings.models:
-        for label in EXECUTION_BINS:
+        for label in settings.candidates:
             suite = _suite_for(settings, model, "generation", label)
             checkpoint = _refinement_checkpoint(settings, model, label)
             output_root = settings.result_root(model) / label
@@ -1233,6 +1266,21 @@ def _refine_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                 "--max-iterations", str(settings.max_iterations),
                 "--sampling-strategy", "midpoint", "--seed", "0",
             )
+            for variant in settings.kernel_variants:
+                measure += " --kernel-variant " + shlex.quote(variant)
+            if settings.case_filters:
+                from tools.latency_bench.suite import load_suite, apply_case_filters
+                expanded = load_suite(suite, repo_root=settings.workspace.parents[1])
+                filtered = apply_case_filters(expanded, settings.case_filters)
+                from tools.latency_bench.interpolation import interpolation_candidates, kernel_type
+                applicable = interpolation_candidates(filtered)
+                if not applicable:
+                    continue
+                for physical_type in sorted({kernel_type(c) for c in applicable}):
+                    command += ("--kernel-type", physical_type)
+            # Refresh the embedded command after adding implementation selections.
+            position = command.index("--measure-command") + 1
+            command = command[:position] + (measure,) + command[position + 1:]
             tasks.append(TaskSpec(
                 key=f"refine:{model}:{label}", stage="refine",
                 # The recovery protocol owns relevant-anchor compatibility.
@@ -1245,6 +1293,8 @@ def _refine_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                     "validation_samples": settings.validation_samples,
                     "max_iterations": settings.max_iterations,
                     "metric": "fpga_cycle", "sampling_strategy": "midpoint", "seed": 0,
+                    "case_filters": list(settings.case_filters),
+                    "kernel_variants": list(settings.kernel_variants),
                 },
                 outputs=(OutputSpec(checkpoint),),
                 resources=(settings.result_root(model), settings.build_root(model)),
@@ -1271,6 +1321,7 @@ def _compose_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             "--llama2-suites", str(settings.suite_root("llama2")),
             "--llama3-suites", str(settings.suite_root("llama3")),
             "--models", key, "--no-combine", "--out", "{attempt_root}",
+            "--raw-db-subdirs", ",".join(EXECUTION_BINS),
         )
         tasks.append(TaskSpec(
             key=f"compose:{model}", stage="compose", inputs=inputs,
@@ -1341,6 +1392,14 @@ def _prepare_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
 
 
 def _candidate_snapshot_path(settings: PipelineSettings) -> Path:
+    from tools.latency_bench.yaml_io import safe_load
+
+    # A reused C1 measurement may have been captured before C3/C4 were added.
+    # The generated workload is authoritative for downstream source selection.
+    for model in settings.models:
+        index = settings.suite_root(model) / "prefill_merged" / "index.yaml"
+        if index.is_file() and (safe_load(index.read_text()) or {}).get("experiment"):
+            return index
     for model in settings.models:
         path = settings.result_root(model) / "C1" / "latest" / "manifest.json"
         if path.is_file():
@@ -1493,6 +1552,11 @@ def _strict_coverage_for_run_task(
         warmup_override=int(task.effective_parameters["warmup"]),
         iterations_override=int(task.effective_parameters["iterations"]),
     )
+    if task.effective_parameters.get("case_filters"):
+        from tools.latency_bench.selective_rerun import selected_suite
+        suite = selected_suite(suite, Path(str(task.metadata["raw_db"])),
+            tuple(task.effective_parameters["case_filters"]),
+            str(task.effective_parameters["label"]), str(task.effective_parameters["stage"]))
     label = str(task.effective_parameters["label"])
     candidate = suite.experiment["candidates"][label]
     options = RunOptions(
@@ -1505,6 +1569,7 @@ def _strict_coverage_for_run_task(
         strict_measurement_reuse=True,
         adopt_legacy=settings.adopt_legacy,
         application_source_identity=task.inputs["application_source"].sha256,
+        kernel_variants=tuple(task.effective_parameters.get("kernel_variants", ())),
         skip_existing=True,
         measure_latency=True,
         measure_power=True,
@@ -1631,9 +1696,20 @@ def _validate_excluded_prerequisites(
 ) -> list[str]:
     problems: list[str] = []
     first = STAGES.index(selected[0])
+    requested_filters = settings.case_filters
+    if first >= STAGES.index("compose"):
+        settings = replace(settings, candidates=EXECUTION_BINS, case_filters=(), force_measurement=False)
     for stage in STAGES[:first]:
+        try:
+            tasks = build_stage_tasks(
+                replace(settings, case_filters=requested_filters) if stage == "refine" else settings,
+                stage,
+            )
+        except (OSError, ValueError, KeyError) as error:
+            problems.append(f"{stage}: {error}")
+            continue
         if stage == "refine":
-            for task in build_stage_tasks(settings, stage):
+            for task in tasks:
                 decision = inspect_task(task, store)
                 if decision.decision is not Decision.REUSE:
                     problems.append(
@@ -1649,7 +1725,7 @@ def _validate_excluded_prerequisites(
                         f"{task.key}: {reason}; rerun with --from refine"
                     )
             continue
-        for task in build_stage_tasks(settings, stage):
+        for task in tasks:
             decision = inspect_task(task, store)
             if _is_measurement_task(task):
                 try:
@@ -1683,6 +1759,40 @@ def _validate_excluded_prerequisites(
     return problems
 
 
+def _full_input_problems(settings: PipelineSettings, stage: str) -> list[str]:
+    """Report missing physical sources before checking downstream receipts."""
+    if stage not in ("compose", "prepare", "plot"):
+        return []
+    problems = []
+    for model in settings.models:
+        for label, path in zip(EXECUTION_BINS, _raw_dbs(settings, model)):
+            if not path.is_file():
+                problems.append(
+                    f"{stage}:{model}: requires all execution candidates C1,C3,C4; "
+                    f"missing {label} raw DB: {path}; measure with --candidates {label} --to run"
+                )
+        # Raw files alone cannot make a subset-generated workload complete.
+        from tools.latency_bench.yaml_io import safe_load
+
+        for workload_stage in ("prefill", "generation"):
+            index = settings.suite_root(model) / f"{workload_stage}_merged" / "index.yaml"
+            if not index.is_file():
+                continue  # The existing prerequisite checks report missing suites.
+            try:
+                payload = safe_load(index.read_text())
+                labels = {entry["fpga_bin"] for entry in payload["generated"]}
+                missing = set(EXECUTION_BINS) - labels
+                if missing:
+                    problems.append(
+                        f"{stage}:{model}: incomplete {workload_stage} suite index {index}; "
+                        f"missing execution candidates {','.join(sorted(missing))}; "
+                        "generate full suites before downstream stages"
+                    )
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                problems.append(f"{stage}:{model}: invalid suite index {index}: {error}")
+    return problems
+
+
 def run_pipeline(
     settings: PipelineSettings, *, first: str = "run", last: str = "plot",
     rerun: str | None = None, inspect_only: bool = False,
@@ -1690,11 +1800,13 @@ def run_pipeline(
     """Execute stage barriers, committing each successful sibling independently."""
 
     selected = _stage_range(first, last, rerun)
+    settings = replace(settings, force_measurement=(rerun == "run"))
     store = ReceiptStore(settings.state_root)
     summary: dict[str, Any] = {"tag": settings.tag, "range": list(selected), "tasks": [],
                                "settings": {
                                    "suite_size": settings.suite_size,
                                    "models": list(settings.models),
+                                   "candidates": list(settings.candidates),
                                    "out_tokens": settings.out_tokens,
                                    "formats": list(settings.formats),
                                    "target_error": settings.target_error,
@@ -1715,6 +1827,10 @@ def run_pipeline(
                 f"active external legacy writer recorded by {writer}; wait for it to finish"
             )
             return 2, summary
+    problems = _full_input_problems(settings, first)
+    if problems:
+        summary["blocked"].extend(problems)
+        return (0 if inspect_only else 2), summary
     problems = _validate_excluded_prerequisites(
         settings, selected, store, publish_adoption=not inspect_only
     )
@@ -1722,7 +1838,19 @@ def run_pipeline(
         summary["blocked"].extend(problems)
         return (0 if inspect_only else 2), summary
     for stage in selected:
-        tasks = build_stage_tasks(settings, stage)
+        problems = _full_input_problems(settings, stage)
+        if stage == "compose" and settings.candidates != EXECUTION_BINS and not problems:
+            problems = _validate_excluded_prerequisites(
+                settings, ("compose",), store, publish_adoption=not inspect_only
+            )
+        if problems:
+            summary["blocked"].extend(problems)
+            return (0 if inspect_only else 2), summary
+        try:
+            tasks = build_stage_tasks(settings, stage)
+        except (OSError, ValueError, KeyError) as error:
+            summary["blocked"].append(f"{stage}: {error}")
+            return (0 if inspect_only else 2), summary
         for task in tasks:
             # The aggregate consumes model artifacts produced by earlier
             # siblings in this same barrier, so resolve its identities only
@@ -1742,7 +1870,7 @@ def run_pipeline(
                     if inspect_only:
                         continue
                     return (0 if inspect_only else 2), summary
-                if measurement_coverage.blocked_exec_keys:
+                if measurement_coverage.blocked_exec_keys and not forced:
                     summary["blocked"].append(
                         f"{task.key}: {_coverage_problem(measurement_coverage)}"
                     )
@@ -1762,6 +1890,7 @@ def run_pipeline(
                 and measurement_coverage is not None
                 and measurement_coverage.complete
                 and not inspect_only
+                and not forced
             ):
                 adopted, _ = _adopt_run_task(
                     settings, task, store, publish=True,
@@ -1773,7 +1902,11 @@ def run_pipeline(
             if inspect_only:
                 summary["blocked" if decision.decision is Decision.BLOCKED else "executed"].append(
                     {"task": task.key, "action": "rerun" if forced else "pending",
-                     "reason": decision.reason}
+                     "reason": "forced physical remeasurement" if forced and stage == "run" else decision.reason,
+                     **({"unique_executions": len(measurement_coverage.evidence),
+                         "filters": list(settings.case_filters),
+                         "kernel_variants": list(settings.kernel_variants)}
+                        if measurement_coverage is not None else {})}
                 )
                 continue
             writer = _legacy_writer(settings)
@@ -1800,7 +1933,7 @@ def run_pipeline(
             summary["executed"].append(task.key)
         if STAGES.index(stage) >= STAGES.index("refine"):
             for model in settings.models:
-                for label in EXECUTION_BINS:
+                for label in (settings.candidates if stage == "refine" else EXECUTION_BINS):
                     evidence = inspect_refinement_evidence(
                         _refinement_checkpoint(settings, model, label)
                     )
@@ -1830,6 +1963,8 @@ def _parse_formats(value: str) -> tuple[str, ...]:
 
 
 def cli_main(argv: Sequence[str] | None = None) -> int:
+    from tools.latency_bench.candidate_map import execution_candidates_argument
+
     parser = argparse.ArgumentParser(prog="workflow.py")
     parser.add_argument("action", choices=("pipeline", "status"))
     parser.add_argument("--tag", required=True)
@@ -1837,9 +1972,13 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--workspace", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--suite-size", default=os.environ.get("SUITE_SIZE", "full"))
     parser.add_argument("--models", type=_parse_models, default=MODEL_NAMES)
+    parser.add_argument("--candidates", type=execution_candidates_argument, default=EXECUTION_BINS,
+                        help="Execution sources for run/refine (comma-separated C1,C3,C4); downstream stages still require all sources.")
     parser.add_argument("--from", dest="from_stage", choices=STAGES, default="run")
     parser.add_argument("--to", dest="to_stage", choices=STAGES, default="plot")
-    parser.add_argument("--rerun", choices=STAGES)
+    parser.add_argument("--rerun", choices=STAGES, nargs="?", const="run")
+    parser.add_argument("--filter", action="append", default=[], help="Expanded-case condition; app=~pattern uses glob matching.")
+    parser.add_argument("--kernel-variant", action="append", default=[], metavar="APP=NAME")
     parser.add_argument("--adopt-legacy", action="store_true")
     parser.add_argument("--require-convergence", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1866,7 +2005,17 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         validation_samples=args.validation_samples, max_iterations=args.max_iterations,
         adopt_legacy=args.adopt_legacy, require_convergence=args.require_convergence,
         python=args.python,
+        candidates=args.candidates,
+        case_filters=tuple(args.filter), kernel_variants=tuple(args.kernel_variant),
     )
+    from tools.latency_bench.kernel_variants import parse_variants
+    from tools.latency_bench.suite import compile_case_filter
+    try:
+        parse_variants(settings.kernel_variants, settings.workspace.parents[1])
+        for expression in settings.case_filters:
+            compile_case_filter(expression)
+    except ValueError as error:
+        parser.error(str(error))
     code, summary = run_pipeline(
         settings, first=args.from_stage, last=args.to_stage, rerun=args.rerun,
         inspect_only=(args.dry_run or args.status or args.action == "status"),

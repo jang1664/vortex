@@ -3870,7 +3870,12 @@ def configured_raw_db_paths(latency_dir: Path) -> tuple[Path, ...]:
 
 
 def _read_candidate_snapshot(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text())
+    if path.suffix in (".yaml", ".yml"):
+        from tools.latency_bench.yaml_io import safe_load
+
+        payload = safe_load(path.read_text())
+    else:
+        payload = json.loads(path.read_text())
     snapshot = payload.get("experiment", payload) if isinstance(payload, dict) else payload
     from tools.latency_bench.candidate_map import validate_snapshot
 

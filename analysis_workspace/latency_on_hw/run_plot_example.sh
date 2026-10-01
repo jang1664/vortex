@@ -2,7 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
-tag="${EXPERIMENT_TAG:-th16_20260917}"
+tag="${EXPERIMENT_TAG:-C3_C4_v3_pipeline}"
 python_bin="${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}"
 raw_args=()
 for model in llama2 llama3; do

@@ -2,7 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
-tag="${EXPERIMENT_TAG:-th16_20260917}"
+tag="${EXPERIMENT_TAG:-C3_C4_v3_pipeline}"
 size="${SUITE_SIZE:-full}"
 "${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}" run_compose.py \
   --llama2-results "outputs_llama2_main.${tag}" \
