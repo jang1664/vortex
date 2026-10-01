@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/scripts/gen_sources.sh

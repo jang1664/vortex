@@ -1,0 +1,80 @@
+Magic 271485
+Revision Verdi_W-2024.09-SP1
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 25 1920 1031 431 124
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 0.000000 354217100.000000
+cursor 0.000000
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 0
+; marker line index
+markerPos 26
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "G1"
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/g_blocks[0]/fpu_fpnew/fpu_exp/clk
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -holdScope valid_in
+addSignal -h 15 -holdScope ready_in
+addSignal -h 15 -UNSIGNED -HEX -holdScope mask_in[7:0]
+addSignal -h 15 -holdScope tag_in[0:0]
+addSignal -h 15 -holdScope dataa[7:0]
+addSignal -h 15 -holdScope result[7:0]
+addSignal -h 15 -holdScope has_fflags
+addSignal -h 15 -UNSIGNED -HEX -holdScope fflags[4:0]
+addSignal -h 15 -holdScope tag_out[0:0]
+addSignal -h 15 -holdScope ready_out
+addSignal -h 15 -holdScope valid_out
+addSignal -h 15 -UNSIGNED -HEX -holdScope stage_valid_in[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope stage_valid_out[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope stage_ready_out[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope stage_ready_in[7:0]
+addSignal -h 15 -holdScope lane_valid_out[7:0]
+addSignal -h 15 -holdScope lane_ready_in[7:0]
+addSignal -h 15 -holdScope stage_result[7:0]
+addSignal -h 15 -holdScope stage_status[7:0]
+addSignal -h 15 -holdScope stage_tag_in[7:0]
+addSignal -h 15 -holdScope stage_tag_out[7:0]
+addSignal -h 15 -holdScope stage_operands[7:0]
+addSignal -h 15 -holdScope final_tag[7:0]
+addSignal -h 15 -holdScope fflags_accum
+addGroup "G2"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+

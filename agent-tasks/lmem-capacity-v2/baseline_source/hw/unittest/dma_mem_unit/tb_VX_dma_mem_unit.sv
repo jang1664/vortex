@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/dma_mem_unit/tb_VX_dma_mem_unit.sv

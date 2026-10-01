@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/tests/regression/fpu_format_switch_debug/main.cpp

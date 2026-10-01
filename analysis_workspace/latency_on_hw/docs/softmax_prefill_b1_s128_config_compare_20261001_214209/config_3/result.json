@@ -1,0 +1,14 @@
+{
+  "index": 3,
+  "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh",
+  "returncode": 0,
+  "passed": true,
+  "seconds": 277.272,
+  "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s128_config_compare_20261001_214209/config_3/run_attempt_1.log",
+  "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_3",
+  "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1'",
+  "instrs": 1290016,
+  "cycles": 361071,
+  "ipc": 3.572749,
+  "kernel_sha256": "678edd317ad38e82cbc6927b2cf46caac86888007cf3fed5b54665d3308bcdbb"
+}

@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/tensor_mem_bank/tb_VX_tensor_mem_bank.sv

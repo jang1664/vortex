@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/naive_weight_executor/tb_VX_naive_weight_executor.sv

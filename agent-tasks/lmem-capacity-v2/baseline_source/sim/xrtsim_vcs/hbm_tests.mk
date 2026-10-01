@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/sim/xrtsim_vcs/hbm_tests.mk

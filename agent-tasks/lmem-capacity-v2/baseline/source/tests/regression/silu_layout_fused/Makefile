@@ -1,0 +1,28 @@
+ROOT_DIR := $(realpath ../../..)
+include $(ROOT_DIR)/config.mk
+
+PROJECT := silu_layout_fused
+
+SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
+
+SRCS := $(SRC_DIR)/main.cpp
+
+SILU_LAYOUT_FUSED_VARIANT ?= linear_skip_pad_rows
+SILU_LAYOUT_FUSED_VARIANTS := baseline linear_tiled linear_skip_pad_rows
+ifneq ($(filter $(SILU_LAYOUT_FUSED_VARIANT),$(SILU_LAYOUT_FUSED_VARIANTS)),$(SILU_LAYOUT_FUSED_VARIANT))
+  $(error Unsupported SILU_LAYOUT_FUSED_VARIANT=$(SILU_LAYOUT_FUSED_VARIANT); expected one of: $(SILU_LAYOUT_FUSED_VARIANTS))
+endif
+
+VX_SRCS := $(SRC_DIR)/kernel.$(SILU_LAYOUT_FUSED_VARIANT).cpp
+ifeq ($(SILU_LAYOUT_FUSED_VARIANT),linear_skip_pad_rows)
+  CXXFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=2
+  VX_CFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=2
+else ifeq ($(SILU_LAYOUT_FUSED_VARIANT),linear_tiled)
+  CXXFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=1
+  VX_CFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=1
+else
+  CXXFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=0
+  VX_CFLAGS += -DSILU_LAYOUT_FUSED_VARIANT_TAG=0
+endif
+
+include ../common.mk

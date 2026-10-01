@@ -1,0 +1,13 @@
+{
+  "runner_pid": 1355579,
+  "child_pids": [
+    1444436,
+    1444437,
+    1444434,
+    1444435,
+    1444439
+  ],
+  "extended_at": 1790858183.055921,
+  "maximum_remaining_seconds": 7200,
+  "reason": "Pilot confirms slow simulation; preserve current progress beyond the initial 30-minute timeout."
+}

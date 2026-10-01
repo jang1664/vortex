@@ -1,0 +1,991 @@
+// Copyright © 2019-2023
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <common.h>
+
+#include <iostream>
+#include <fstream>
+#include <list>
+#include <cstring>
+#include <cstdint>
+#include <vector>
+#include <unordered_map>
+#include <vortex.h>
+#include <assert.h>
+
+class ProfilingMode {
+public:
+  ProfilingMode() : perf_class_(0) {
+    auto profiling_s = getenv("VORTEX_PROFILING");
+    if (profiling_s) {
+      perf_class_ = std::atoi(profiling_s);
+    }
+  }
+
+  ~ProfilingMode() {}
+
+  int perf_class() const {
+    return perf_class_;
+  }
+
+private:
+  int perf_class_;
+};
+
+int get_profiling_mode() {
+  static ProfilingMode gProfilingMode;
+  return gProfilingMode.perf_class();
+}
+
+extern int vx_upload_kernel_bytes(vx_device_h hdevice, const void* content, uint64_t size, vx_buffer_h* hbuffer) {
+  if (nullptr == hdevice || nullptr == content || size <= 8 || nullptr == hbuffer)
+    return -1;
+
+  auto bytes = reinterpret_cast<const uint64_t*>(content);
+
+  auto min_vma = *bytes++;
+  auto max_vma = *bytes++;
+  auto bin_size = size - 2 * 8;
+  auto runtime_size = (max_vma - min_vma);
+
+  vx_buffer_h _hbuffer;
+  CHECK_ERR(vx_mem_reserve(hdevice, min_vma, runtime_size, 0, &_hbuffer), {
+    return err;
+  });
+
+  // mask binary region as read-only
+  CHECK_ERR(vx_mem_access(_hbuffer, 0, bin_size, VX_MEM_READ), {
+    vx_mem_free(_hbuffer);
+    return err;
+  });
+
+  // mark global variables region as read-write
+  CHECK_ERR(vx_mem_access(_hbuffer, bin_size, runtime_size - bin_size, VX_MEM_READ_WRITE), {
+    vx_mem_free(_hbuffer);
+    return err;
+  });
+
+  CHECK_ERR(vx_copy_to_dev(_hbuffer, bytes, 0, bin_size), {
+    vx_mem_free(_hbuffer);
+    return err;
+  });
+
+  *hbuffer = _hbuffer;
+
+  return 0;
+}
+
+extern int vx_upload_kernel_file(vx_device_h hdevice, const char* filename, vx_buffer_h* hbuffer) {
+  if (nullptr == hdevice || nullptr == filename || nullptr == hbuffer)
+    return -1;
+
+  std::ifstream ifs(filename);
+  if (!ifs) {
+    std::cerr << "Error: " << filename << " not found" << std::endl;
+    return -1;
+  }
+
+  // read file content
+  ifs.seekg(0, ifs.end);
+  auto size = ifs.tellg();
+  std::vector<char> content(size);
+  ifs.seekg(0, ifs.beg);
+  ifs.read(content.data(), size);
+
+  // upload buffer
+  CHECK_ERR(vx_upload_kernel_bytes(hdevice, content.data(), size, hbuffer), {
+    return err;
+  });
+
+  return 0;
+}
+
+extern int vx_upload_bytes(vx_device_h hdevice, const void* content, uint64_t size, vx_buffer_h* hbuffer) {
+  if (nullptr == hdevice || nullptr == content || 0 == size || nullptr == hbuffer)
+    return -1;
+
+  vx_buffer_h _hbuffer;
+
+  CHECK_ERR(vx_mem_alloc(hdevice, size, VX_MEM_READ, &_hbuffer), {
+    return err;
+  });
+
+  CHECK_ERR(vx_copy_to_dev(_hbuffer, content, 0, size), {
+    vx_mem_free(_hbuffer);
+    return err;
+  });
+
+  *hbuffer = _hbuffer;
+
+  return 0;
+}
+
+extern int vx_upload_file(vx_device_h hdevice, const char* filename, vx_buffer_h* hbuffer) {
+  if (nullptr == hdevice || nullptr == filename || nullptr == hbuffer)
+    return -1;
+
+  std::ifstream ifs(filename);
+  if (!ifs) {
+    std::cerr << "Error: " << filename << " not found" << std::endl;
+    return -1;
+  }
+
+  // read file content
+  ifs.seekg(0, ifs.end);
+  auto size = ifs.tellg();
+  std::vector<char> content(size);
+  ifs.seekg(0, ifs.beg);
+  ifs.read(content.data(), size);
+
+  // upload buffer
+  CHECK_ERR(vx_upload_bytes(hdevice, content.data(), size, hbuffer), {
+    return err;
+  });
+
+  return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
+  uint64_t total_instrs = 0;
+  uint64_t total_cycles = 0;
+  uint64_t max_cycles = 0;
+
+  auto calcRatio = [&](uint64_t part, uint64_t total)->int {
+    if (total == 0)
+      return 0;
+    return int((1.0 - (double(part) / double(total))) * 100);
+  };
+
+  auto caclAverage = [&](uint64_t part, uint64_t total)->double {
+    if (total == 0)
+      return 0;
+    return double(part) / double(total);
+  };
+
+  auto calcAvgPercent = [&](uint64_t part, uint64_t total)->int {
+    return int(caclAverage(part, total) * 100);
+  };
+
+  // PERF: pipeline stalls
+  uint64_t sched_idles = 0;
+  uint64_t sched_stalls = 0;
+  uint64_t ibuffer_stalls = 0;
+  uint64_t scrb_stalls = 0;
+  uint64_t opds_stalls = 0;
+  uint64_t scrb_alu = 0;
+  uint64_t scrb_fpu = 0;
+  uint64_t scrb_lsu = 0;
+  uint64_t scrb_vpu = 0;
+  uint64_t scrb_tcu = 0;
+  uint64_t scrb_csrs = 0;
+  uint64_t scrb_wctl = 0;
+  uint64_t ifetches = 0;
+  uint64_t loads = 0;
+  uint64_t stores = 0;
+  uint64_t ifetch_lat = 0;
+  uint64_t load_lat   = 0;
+  // PERF: l2cache
+  uint64_t l2cache_reads = 0;
+  uint64_t l2cache_writes = 0;
+  uint64_t l2cache_read_misses = 0;
+  uint64_t l2cache_write_misses = 0;
+  uint64_t l2cache_bank_stalls = 0;
+  uint64_t l2cache_mshr_stalls = 0;
+  // PERF: l3cache
+  uint64_t l3cache_reads = 0;
+  uint64_t l3cache_writes = 0;
+  uint64_t l3cache_read_misses = 0;
+  uint64_t l3cache_write_misses = 0;
+  uint64_t l3cache_bank_stalls = 0;
+  uint64_t l3cache_mshr_stalls = 0;
+  // PERF: memory
+  uint64_t mem_reads = 0;
+  uint64_t mem_writes = 0;
+  uint64_t mem_lat = 0;
+  uint64_t mem_bank_stalls = 0;
+
+  // PERF: accelerator — MXU / GEMM unit (class ACCEL_MXU)
+  uint64_t gemm_compute_cycles = 0;
+  uint64_t gemm_stall_cycles = 0;
+  uint64_t gemm_job_count = 0;
+  uint64_t mxu_input_fire = 0,  mxu_input_stall = 0;
+  uint64_t mxu_weight_fire = 0, mxu_weight_stall = 0;
+  uint64_t mxu_psum_fire = 0,   mxu_psum_stall = 0;
+  uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
+  uint64_t mxu_mac_count = 0;
+  uint64_t overlap_dma_mxu = 0;
+  uint64_t dma_union_active_cycles = 0;
+  uint64_t mxu_accum_rd_accept = 0;
+  uint64_t mxu_accum_wr_fire = 0;
+  uint64_t mxu_scaler_valid = 0;
+  uint64_t mxu_acc_output_valid = 0;
+  uint64_t mxu_psum_underflow = 0;
+  uint64_t mxu_rd_wr_conflict = 0;
+
+  // Common to all ACCEL_* classes (CSR B03 / B04)
+  uint64_t busy_cycles = 0;
+  uint64_t gemm_total_cycles = 0;
+
+  // PERF: accelerator — DMA (class ACCEL_DMA)
+  uint64_t cpu_dma_rd_bytes = 0, cpu_dma_wr_bytes = 0;
+  uint64_t cpu_dma_xfer_count = 0, cpu_dma_active_cycles = 0;
+  uint64_t cpu_dma_src_rd_req_fire = 0,  cpu_dma_src_rd_req_stall = 0;
+  uint64_t cpu_dma_src_rd_data_fire = 0, cpu_dma_src_rd_data_stall = 0;
+  uint64_t cpu_dma_dst_wr_fire = 0,      cpu_dma_dst_wr_stall = 0;
+  uint64_t hbm_dma_rd_bytes = 0, hbm_dma_wr_bytes = 0;
+  uint64_t hbm_dma_xfer_count = 0, hbm_dma_active_cycles = 0;
+  uint64_t hbm_dma_src_rd_req_fire = 0,  hbm_dma_src_rd_req_stall = 0;
+  uint64_t hbm_dma_src_rd_data_fire = 0, hbm_dma_src_rd_data_stall = 0;
+  uint64_t hbm_dma_dst_wr_fire = 0,      hbm_dma_dst_wr_stall = 0;
+  uint64_t hbm_dma_active_max = 0, hbm_dma_active_min = UINT64_MAX;
+
+  // PERF: per-LDMA (classes ACCEL_LDMA_IN/WT/SZ/OUT)
+  // Indexed: [0]=input, [1]=weight, [2]=sz, [3]=output
+  struct LdmaCounters {
+    uint64_t rd_bytes = 0, wr_bytes = 0;
+    uint64_t xfer_count = 0, active_cycles = 0;
+    uint64_t src_rd_req_fire = 0,  src_rd_req_stall = 0;
+    uint64_t src_rd_data_fire = 0, src_rd_data_stall = 0;
+    uint64_t dst_wr_fire = 0,      dst_wr_stall = 0;
+    uint64_t wait_dcache = 0,      wait_lmem = 0;
+  };
+  LdmaCounters ldma[4];
+  static const char* const ldma_names[4] = {"input", "weight", "sz", "output"};
+
+  uint64_t num_cores;
+  CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_CORES, &num_cores), {
+    return err;
+  });
+
+  uint64_t isa_flags;
+  CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_ISA_FLAGS, &isa_flags), {
+    return err;
+  });
+
+  uint64_t num_mem_bank_ports;
+  CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_MEM_BANKS, &num_mem_bank_ports), {
+    return err;
+  });
+
+  bool icache_enable  = isa_flags & VX_ISA_EXT_ICACHE;
+  bool dcache_enable  = isa_flags & VX_ISA_EXT_DCACHE;
+  bool l2cache_enable = isa_flags & VX_ISA_EXT_L2CACHE;
+  bool l3cache_enable = isa_flags & VX_ISA_EXT_L3CACHE;
+  bool lmem_enable    = isa_flags & VX_ISA_EXT_LMEM;
+  bool fpu_enable     = isa_flags & VX_ISA_STD_F;
+  bool vpu_enable     = isa_flags & VX_ISA_STD_V;
+  bool tcu_enable     = isa_flags & VX_ISA_EXT_TCU;
+
+  auto perf_class = get_profiling_mode();
+
+  for (unsigned core_id = 0; core_id < num_cores; ++core_id) {
+    uint64_t cycles_per_core;
+    CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MCYCLE, core_id, &cycles_per_core), {
+      return err;
+    });
+
+    uint64_t instrs_per_core;
+    CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MINSTRET, core_id, &instrs_per_core), {
+      return err;
+    });
+
+    switch (perf_class) {
+    case VX_DCR_MPM_CLASS_CORE: {
+      // PERF: pipeline
+      // scheduler idles
+      {
+        uint64_t sched_idles_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCHED_ID, core_id, &sched_idles_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int idles_percent_per_core = calcAvgPercent(sched_idles_per_core, cycles_per_core);
+          fprintf(stream, "PERF: core%d: scheduler idle=%ld (%d%%)\n", core_id, sched_idles_per_core, idles_percent_per_core);
+        }
+        sched_idles += sched_idles_per_core;
+      }
+      // scheduler stalls
+      {
+        uint64_t sched_stalls_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCHED_ST, core_id, &sched_stalls_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int stalls_percent_per_core = calcAvgPercent(sched_stalls_per_core, cycles_per_core);
+          fprintf(stream, "PERF: core%d: scheduler stalls=%ld (%d%%)\n", core_id, sched_stalls_per_core, stalls_percent_per_core);
+        }
+        sched_stalls += sched_stalls_per_core;
+      }
+      // ibuffer stalls
+      {
+        uint64_t ibuffer_stalls_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_IBUF_ST, core_id, &ibuffer_stalls_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int ibuffer_percent_per_core = calcAvgPercent(ibuffer_stalls_per_core, cycles_per_core);
+          fprintf(stream, "PERF: core%d: ibuffer stalls=%ld (%d%%)\n", core_id, ibuffer_stalls_per_core, ibuffer_percent_per_core);
+        }
+        ibuffer_stalls += ibuffer_stalls_per_core;
+      }
+      // scoreboard stalls
+      {
+        uint64_t scrb_stalls_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_ST, core_id, &scrb_stalls_per_core), {
+          return err;
+        });
+        uint64_t scrb_alu_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_ALU, core_id, &scrb_alu_per_core), {
+          return err;
+        });
+        uint64_t scrb_fpu_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_FPU, core_id, &scrb_fpu_per_core), {
+          return err;
+        });
+        uint64_t scrb_lsu_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_LSU, core_id, &scrb_lsu_per_core), {
+          return err;
+        });
+        uint64_t scrb_vpu_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_VPU, core_id, &scrb_vpu_per_core), {
+          return err;
+        });
+        uint64_t scrb_tcu_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_TCU, core_id, &scrb_tcu_per_core), {
+          return err;
+        });
+        uint64_t scrb_csrs_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_CSRS, core_id, &scrb_csrs_per_core), {
+          return err;
+        });
+        uint64_t scrb_wctl_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_SCRB_WCTL, core_id, &scrb_wctl_per_core), {
+          return err;
+        });
+        scrb_alu += scrb_alu_per_core;
+        scrb_fpu += scrb_fpu_per_core;
+        scrb_lsu += scrb_lsu_per_core;
+        scrb_vpu += scrb_vpu_per_core;
+        scrb_tcu += scrb_tcu_per_core;
+        scrb_csrs += scrb_csrs_per_core;
+        scrb_wctl += scrb_wctl_per_core;
+        if (num_cores > 1) {
+          uint64_t scrb_total = scrb_alu_per_core + scrb_lsu_per_core + scrb_csrs_per_core + scrb_wctl_per_core;
+          if (fpu_enable) {
+            scrb_total += scrb_fpu_per_core;
+          }
+          if (vpu_enable) {
+            scrb_total += scrb_vpu_per_core;
+          }
+          if (tcu_enable) {
+            scrb_total += scrb_tcu_per_core;
+          }
+          int scrb_percent_per_core = calcAvgPercent(scrb_stalls_per_core, cycles_per_core);
+          fprintf(stream, "PERF: core%d: scoreboard stalls=%ld (%d%%) (alu=%d%%, lsu=%d%%, csrs=%d%%, wctl=%d%%"
+            , core_id
+            , scrb_stalls_per_core
+            , scrb_percent_per_core
+            , calcAvgPercent(scrb_alu_per_core, scrb_total)
+            , calcAvgPercent(scrb_lsu_per_core, scrb_total)
+            , calcAvgPercent(scrb_csrs_per_core, scrb_total)
+            , calcAvgPercent(scrb_wctl_per_core, scrb_total)
+          );
+          if (fpu_enable) {
+            fprintf(stream, ", fpu=%d%%", calcAvgPercent(scrb_fpu_per_core, scrb_total));
+          }
+          if (vpu_enable) {
+            fprintf(stream, ", vpu=%d%%", calcAvgPercent(scrb_vpu_per_core, scrb_total));
+          }
+          if (tcu_enable) {
+            fprintf(stream, ", tcu=%d%%", calcAvgPercent(scrb_tcu_per_core, scrb_total));
+          }
+          fprintf(stream, ")\n");
+        }
+        scrb_stalls += scrb_stalls_per_core;
+      }
+      // operands stalls
+      {
+        uint64_t opds_stalls_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_OPDS_ST, core_id, &opds_stalls_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int opds_percent_per_core = calcAvgPercent(opds_stalls_per_core, cycles_per_core);
+          fprintf(stream, "PERF: core%d: operands stalls=%ld (%d%%)\n", core_id, opds_stalls_per_core, opds_percent_per_core);
+        }
+        opds_stalls += opds_stalls_per_core;
+      }
+      // PERF: memory
+      // ifetches
+      {
+        uint64_t ifetches_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_IFETCHES, core_id, &ifetches_per_core), {
+          return err;
+        });
+        if (num_cores > 1) fprintf(stream, "PERF: core%d: ifetches=%ld\n", core_id, ifetches_per_core);
+        ifetches += ifetches_per_core;
+
+        uint64_t ifetch_lat_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_IFETCH_LT, core_id, &ifetch_lat_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int mem_avg_lat = caclAverage(ifetch_lat_per_core, ifetches_per_core);
+          fprintf(stream, "PERF: core%d: ifetch latency=%d cycles\n", core_id, mem_avg_lat);
+        }
+        ifetch_lat += ifetch_lat_per_core;
+      }
+      // loads
+      {
+        uint64_t loads_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_LOADS, core_id, &loads_per_core), {
+          return err;
+        });
+        if (num_cores > 1) fprintf(stream, "PERF: core%d: loads=%ld\n", core_id, loads_per_core);
+        loads += loads_per_core;
+
+        uint64_t load_lat_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_LOAD_LT, core_id, &load_lat_per_core), {
+          return err;
+        });
+        if (num_cores > 1) {
+          int mem_avg_lat = caclAverage(load_lat_per_core, loads_per_core);
+          fprintf(stream, "PERF: core%d: load latency=%d cycles\n", core_id, mem_avg_lat);
+        }
+        load_lat += load_lat_per_core;
+      }
+      // stores
+      {
+        uint64_t stores_per_core;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_STORES, core_id, &stores_per_core), {
+          return err;
+        });
+        if (num_cores > 1) fprintf(stream, "PERF: core%d: stores=%ld\n", core_id, stores_per_core);
+        stores += stores_per_core;
+      }
+    } break;
+    case VX_DCR_MPM_CLASS_MEM: {
+      if (lmem_enable) {
+        // PERF: lmem
+        uint64_t lmem_reads;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_LMEM_READS, core_id, &lmem_reads), {
+          return err;
+        });
+        uint64_t lmem_writes;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_LMEM_WRITES, core_id, &lmem_writes), {
+          return err;
+        });
+        uint64_t lmem_bank_stalls;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_LMEM_BANK_ST, core_id, &lmem_bank_stalls), {
+          return err;
+        });
+        int lmem_bank_utilization = calcAvgPercent(lmem_reads + lmem_writes, lmem_reads + lmem_writes + lmem_bank_stalls);
+        fprintf(stream, "PERF: core%d: lmem reads=%ld\n", core_id, lmem_reads);
+        fprintf(stream, "PERF: core%d: lmem writes=%ld\n", core_id, lmem_writes);
+        fprintf(stream, "PERF: core%d: lmem bank stalls=%ld (utilization=%d%%)\n", core_id, lmem_bank_stalls, lmem_bank_utilization);
+      }
+
+      if (icache_enable) {
+        // PERF: Icache
+        uint64_t icache_reads;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_ICACHE_READS, core_id, &icache_reads), {
+          return err;
+        });
+        uint64_t icache_read_misses;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_ICACHE_MISS_R, core_id, &icache_read_misses), {
+          return err;
+        });
+        uint64_t icache_mshr_stalls;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_ICACHE_MSHR_ST, core_id, &icache_mshr_stalls), {
+          return err;
+        });
+        int icache_read_hit_ratio = calcRatio(icache_read_misses, icache_reads);
+        int mshr_utilization = calcAvgPercent(icache_read_misses, icache_read_misses + icache_mshr_stalls);
+        fprintf(stream, "PERF: core%d: icache reads=%ld\n", core_id, icache_reads);
+        fprintf(stream, "PERF: core%d: icache read misses=%ld (hit ratio=%d%%)\n", core_id, icache_read_misses, icache_read_hit_ratio);
+        fprintf(stream, "PERF: core%d: icache mshr stalls=%ld (utilization=%d%%)\n", core_id, icache_mshr_stalls, mshr_utilization);
+      }
+
+      uint64_t dcache_requests_per_core = 0;
+
+      if (dcache_enable) {
+        // PERF: Dcache
+        uint64_t dcache_reads;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_READS, core_id, &dcache_reads), {
+          return err;
+        });
+        uint64_t dcache_writes;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_WRITES, core_id, &dcache_writes), {
+          return err;
+        });
+        dcache_requests_per_core += dcache_reads + dcache_writes;
+        uint64_t dcache_read_misses;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_MISS_R, core_id, &dcache_read_misses), {
+          return err;
+        });
+        uint64_t dcache_write_misses;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_MISS_W, core_id, &dcache_write_misses), {
+          return err;
+        });
+        uint64_t dcache_bank_stalls;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_BANK_ST, core_id, &dcache_bank_stalls), {
+          return err;
+        });
+        uint64_t dcache_mshr_stalls;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DCACHE_MSHR_ST, core_id, &dcache_mshr_stalls), {
+          return err;
+        });
+        int dcache_read_hit_ratio = calcRatio(dcache_read_misses, dcache_reads);
+        int dcache_write_hit_ratio = calcRatio(dcache_write_misses, dcache_writes);
+        int dcache_bank_utilization = calcAvgPercent(dcache_reads + dcache_writes, dcache_reads + dcache_writes + dcache_bank_stalls);
+        int mshr_utilization = calcAvgPercent(dcache_read_misses + dcache_write_misses, dcache_read_misses + dcache_write_misses + dcache_mshr_stalls);
+        fprintf(stream, "PERF: core%d: dcache reads=%ld\n", core_id, dcache_reads);
+        fprintf(stream, "PERF: core%d: dcache writes=%ld\n", core_id, dcache_writes);
+        fprintf(stream, "PERF: core%d: dcache read misses=%ld (hit ratio=%d%%)\n", core_id, dcache_read_misses, dcache_read_hit_ratio);
+        fprintf(stream, "PERF: core%d: dcache write misses=%ld (hit ratio=%d%%)\n", core_id, dcache_write_misses, dcache_write_hit_ratio);
+        fprintf(stream, "PERF: core%d: dcache bank stalls=%ld (utilization=%d%%)\n", core_id, dcache_bank_stalls, dcache_bank_utilization);
+        fprintf(stream, "PERF: core%d: dcache mshr stalls=%ld (utilization=%d%%)\n", core_id, dcache_mshr_stalls, mshr_utilization);
+      }
+
+      // PERF: coalescer
+      uint64_t coalescer_misses;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_COALESCER_MISS, core_id, &coalescer_misses), {
+        return err;
+      });
+      int coalescer_utilization = calcAvgPercent(dcache_requests_per_core - coalescer_misses, dcache_requests_per_core);
+      fprintf(stream, "PERF: core%d: coalescer misses=%ld (hit ratio=%d%%)\n", core_id, coalescer_misses, coalescer_utilization);
+
+      if (l2cache_enable) {
+        // PERF: L2cache
+        uint64_t tmp;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_READS, core_id, &tmp), {
+          return err;
+        });
+        l2cache_reads += tmp;
+
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_WRITES, core_id, &tmp), {
+          return err;
+        });
+        l2cache_writes += tmp;
+
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_MISS_R, core_id, &tmp), {
+          return err;
+        });
+        l2cache_read_misses += tmp;
+
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_MISS_W, core_id, &tmp), {
+          return err;
+        });
+        l2cache_write_misses += tmp;
+
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_BANK_ST, core_id, &tmp), {
+          return err;
+        });
+        l2cache_bank_stalls += tmp;
+
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L2CACHE_MSHR_ST, core_id, &tmp), {
+          return err;
+        });
+        l2cache_mshr_stalls += tmp;
+      }
+      if (0 == core_id) {
+        if (l3cache_enable) {
+          // PERF: L3cache
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_READS, core_id, &l3cache_reads), {
+            return err;
+          });
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_WRITES, core_id, &l3cache_writes), {
+            return err;
+          });
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_MISS_R, core_id, &l3cache_read_misses), {
+            return err;
+          });
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_MISS_W, core_id, &l3cache_write_misses), {
+            return err;
+          });
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_BANK_ST, core_id, &l3cache_bank_stalls), {
+            return err;
+          });
+          CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_L3CACHE_MSHR_ST, core_id, &l3cache_mshr_stalls), {
+            return err;
+          });
+        }
+        // PERF: memory
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_MEM_READS, core_id, &mem_reads), {
+          return err;
+        });
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_MEM_WRITES, core_id, &mem_writes), {
+          return err;
+        });
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_MEM_LT, core_id, &mem_lat), {
+          return err;
+        });
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_MEM_BANK_ST, core_id, &mem_bank_stalls), {
+          return err;
+        });
+      }
+    } break;
+    case VX_DCR_MPM_CLASS_ACCEL_MXU: {
+      #define READ_PERF(csr, accum) do { \
+          uint64_t _v = 0; \
+          CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
+          accum += _v; \
+        } while (0)
+      // Common (B03/B04)
+      READ_PERF(VX_CSR_MPM_BUSY_CYC,          busy_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC,    gemm_total_cycles);
+      // MXU-specific
+      READ_PERF(VX_CSR_MPM_GEMM_COMPUTE_CYC,  gemm_compute_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_STALL_CYC,    gemm_stall_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_JOB_CNT,      gemm_job_count);
+      READ_PERF(VX_CSR_MPM_MXU_MAC_COUNT,     mxu_mac_count);
+      READ_PERF(VX_CSR_MPM_MXU_INPUT_FIRE,    mxu_input_fire);
+      READ_PERF(VX_CSR_MPM_MXU_INPUT_STALL,   mxu_input_stall);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_FIRE,   mxu_weight_fire);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_STALL,  mxu_weight_stall);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_FIRE,     mxu_psum_fire);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_STALL,    mxu_psum_stall);
+      READ_PERF(VX_CSR_MPM_MXU_OUTPUT_FIRE,   mxu_output_fire);
+      READ_PERF(VX_CSR_MPM_MXU_OUTPUT_STALL,  mxu_output_stall);
+      READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU,   overlap_dma_mxu);
+      READ_PERF(VX_CSR_MPM_DMA_UNION_ACTIVE_CYC, dma_union_active_cycles);
+      READ_PERF(VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT, mxu_accum_rd_accept);
+      READ_PERF(VX_CSR_MPM_MXU_ACCUM_WR_FIRE,   mxu_accum_wr_fire);
+      READ_PERF(VX_CSR_MPM_MXU_SCALER_VALID,    mxu_scaler_valid);
+      READ_PERF(VX_CSR_MPM_MXU_ACC_OUTPUT_VALID,mxu_acc_output_valid);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_UNDERFLOW,  mxu_psum_underflow);
+      READ_PERF(VX_CSR_MPM_MXU_RD_WR_CONFLICT,  mxu_rd_wr_conflict);
+      #undef READ_PERF
+    } break;
+    case VX_DCR_MPM_CLASS_ACCEL_DMA: {
+      #define READ_PERF(csr, accum) do { \
+          uint64_t _v = 0; \
+          CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
+          accum += _v; \
+        } while (0)
+      // Common (B03/B04)
+      READ_PERF(VX_CSR_MPM_BUSY_CYC,                  busy_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC,            gemm_total_cycles);
+      // CPU-DMA
+      READ_PERF(VX_CSR_MPM_CPU_DMA_RD_BYTES,          cpu_dma_rd_bytes);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_WR_BYTES,          cpu_dma_wr_bytes);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_XFER_CNT,          cpu_dma_xfer_count);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_ACTIVE_CYC,        cpu_dma_active_cycles);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE,   cpu_dma_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL,  cpu_dma_src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE,  cpu_dma_src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL, cpu_dma_src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_DST_WR_FIRE,       cpu_dma_dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_DST_WR_STALL,      cpu_dma_dst_wr_stall);
+      // HBM-DMA aggregate
+      READ_PERF(VX_CSR_MPM_HBM_DMA_RD_BYTES,          hbm_dma_rd_bytes);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_WR_BYTES,          hbm_dma_wr_bytes);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_XFER_CNT,          hbm_dma_xfer_count);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_ACTIVE_CYC,        hbm_dma_active_cycles);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE,   hbm_dma_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL,  hbm_dma_src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE,  hbm_dma_src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL, hbm_dma_src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_DST_WR_FIRE,       hbm_dma_dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_DST_WR_STALL,      hbm_dma_dst_wr_stall);
+      // HBM-DMA per-channel imbalance — use max-of-max / min-of-min across cores
+      {
+        uint64_t v_max = 0, v_min = 0;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_HBM_DMA_ACTIVE_MAX, core_id, &v_max), { return err; });
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_HBM_DMA_ACTIVE_MIN, core_id, &v_min), { return err; });
+        if (v_max > hbm_dma_active_max) hbm_dma_active_max = v_max;
+        if (v_min < hbm_dma_active_min) hbm_dma_active_min = v_min;
+      }
+      #undef READ_PERF
+    } break;
+    // ---------- Per-LDMA classes (5..8) -------------------------
+    // Each class exposes one LDMA instance via identical CSR layout.
+    case VX_DCR_MPM_CLASS_ACCEL_LDMA_IN:
+    case VX_DCR_MPM_CLASS_ACCEL_LDMA_WT:
+    case VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ:
+    case VX_DCR_MPM_CLASS_ACCEL_LDMA_OUT: {
+      int idx = (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_IN)  ? 0
+              : (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_WT)  ? 1
+              : (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ)  ? 2 : 3;
+      #define READ_PERF(csr, accum) do { \
+          uint64_t _v = 0; \
+          CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
+          accum += _v; \
+        } while (0)
+      // Common (B03/B04)
+      READ_PERF(VX_CSR_MPM_BUSY_CYC,                  busy_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC,            gemm_total_cycles);
+      // Per-LDMA fields (same CSR addresses across all 4 LDMA classes)
+      READ_PERF(VX_CSR_MPM_LDMA_RD_BYTES,             ldma[idx].rd_bytes);
+      READ_PERF(VX_CSR_MPM_LDMA_WR_BYTES,             ldma[idx].wr_bytes);
+      READ_PERF(VX_CSR_MPM_LDMA_XFER_CNT,             ldma[idx].xfer_count);
+      READ_PERF(VX_CSR_MPM_LDMA_ACTIVE_CYC,           ldma[idx].active_cycles);
+      READ_PERF(VX_CSR_MPM_LDMA_SRC_RD_REQ_FIRE,      ldma[idx].src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_LDMA_SRC_RD_REQ_STALL,     ldma[idx].src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_LDMA_SRC_RD_DATA_FIRE,     ldma[idx].src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_LDMA_SRC_RD_DATA_STALL,    ldma[idx].src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_LDMA_DST_WR_FIRE,          ldma[idx].dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_LDMA_DST_WR_STALL,         ldma[idx].dst_wr_stall);
+      READ_PERF(VX_CSR_MPM_LDMA_WAIT_DCACHE,          ldma[idx].wait_dcache);
+      READ_PERF(VX_CSR_MPM_LDMA_WAIT_LMEM,            ldma[idx].wait_lmem);
+      #undef READ_PERF
+    } break;
+    default:
+      break;
+    }
+
+    float IPC = caclAverage(instrs_per_core, cycles_per_core);
+    if (num_cores > 1) fprintf(stream, "PERF: core%d: instrs=%ld, cycles=%ld, IPC=%f\n", core_id, instrs_per_core, cycles_per_core, IPC);
+    total_instrs += instrs_per_core;
+    total_cycles += cycles_per_core;
+    max_cycles = std::max<uint64_t>(cycles_per_core, max_cycles);
+  }
+
+  switch (perf_class) {
+  case VX_DCR_MPM_CLASS_CORE: {
+    int sched_idles_percent = calcAvgPercent(sched_idles, total_cycles);
+    int sched_stalls_percent = calcAvgPercent(sched_stalls, total_cycles);
+    int ibuffer_percent = calcAvgPercent(ibuffer_stalls, total_cycles);
+    int scrb_percent = calcAvgPercent(scrb_stalls, total_cycles);
+    int opds_percent = calcAvgPercent(opds_stalls, total_cycles);
+    int ifetch_avg_lat = caclAverage(ifetch_lat, ifetches);
+    int load_avg_lat = caclAverage(load_lat, loads);
+    uint64_t scrb_total = scrb_alu + scrb_fpu + scrb_lsu + scrb_csrs + scrb_wctl;
+    fprintf(stream, "PERF: scheduler idle=%ld (%d%%)\n", sched_idles, sched_idles_percent);
+    fprintf(stream, "PERF: scheduler stalls=%ld (%d%%)\n", sched_stalls, sched_stalls_percent);
+    fprintf(stream, "PERF: ibuffer stalls=%ld (%d%%)\n", ibuffer_stalls, ibuffer_percent);
+    fprintf(stream, "PERF: scoreboard stalls=%ld (%d%%) (alu=%d%%, lsu=%d%%, csrs=%d%%, wctl=%d%%"
+      , scrb_stalls
+      , scrb_percent
+      , calcAvgPercent(scrb_alu, scrb_total)
+      , calcAvgPercent(scrb_lsu, scrb_total)
+      , calcAvgPercent(scrb_csrs, scrb_total)
+      , calcAvgPercent(scrb_wctl, scrb_total)
+    );
+    if (fpu_enable) {
+      fprintf(stream, ", fpu=%d%%", calcAvgPercent(scrb_fpu, scrb_total));
+    }
+    if (vpu_enable) {
+      fprintf(stream, ", vpu=%d%%", calcAvgPercent(scrb_vpu, scrb_total));
+    }
+    if (tcu_enable) {
+      fprintf(stream, ", tcu=%d%%", calcAvgPercent(scrb_tcu, scrb_total));
+    }
+    fprintf(stream, ")\n");
+    fprintf(stream, "PERF: operands stalls=%ld (%d%%)\n", opds_stalls, opds_percent);
+    fprintf(stream, "PERF: ifetches=%ld\n", ifetches);
+    fprintf(stream, "PERF: loads=%ld\n", loads);
+    fprintf(stream, "PERF: stores=%ld\n", stores);
+    fprintf(stream, "PERF: ifetch latency=%d cycles\n", ifetch_avg_lat);
+    fprintf(stream, "PERF: load latency=%d cycles\n", load_avg_lat);
+  } break;
+  case VX_DCR_MPM_CLASS_MEM: {
+    if (l2cache_enable) {
+      l2cache_reads /= num_cores;
+      l2cache_writes /= num_cores;
+      l2cache_read_misses /= num_cores;
+      l2cache_write_misses /= num_cores;
+      l2cache_bank_stalls /= num_cores;
+      l2cache_mshr_stalls /= num_cores;
+      int read_hit_ratio = calcRatio(l2cache_read_misses, l2cache_reads);
+      int write_hit_ratio = calcRatio(l2cache_write_misses, l2cache_writes);
+      int bank_utilization = calcAvgPercent(l2cache_reads + l2cache_writes, l2cache_reads + l2cache_writes + l2cache_bank_stalls);
+      int mshr_utilization = calcAvgPercent(l2cache_read_misses + l2cache_write_misses, l2cache_read_misses + l2cache_write_misses + l2cache_mshr_stalls);
+      fprintf(stream, "PERF: l2cache reads=%ld\n", l2cache_reads);
+      fprintf(stream, "PERF: l2cache writes=%ld\n", l2cache_writes);
+      fprintf(stream, "PERF: l2cache read misses=%ld (hit ratio=%d%%)\n", l2cache_read_misses, read_hit_ratio);
+      fprintf(stream, "PERF: l2cache write misses=%ld (hit ratio=%d%%)\n", l2cache_write_misses, write_hit_ratio);
+      fprintf(stream, "PERF: l2cache bank stalls=%ld (utilization=%d%%)\n", l2cache_bank_stalls, bank_utilization);
+      fprintf(stream, "PERF: l2cache mshr stalls=%ld (utilization=%d%%)\n", l2cache_mshr_stalls, mshr_utilization);
+    }
+
+    if (l3cache_enable) {
+      int read_hit_ratio = calcRatio(l3cache_read_misses, l3cache_reads);
+      int write_hit_ratio = calcRatio(l3cache_write_misses, l3cache_writes);
+      int bank_utilization = calcAvgPercent(l3cache_reads + l3cache_writes, l3cache_reads + l3cache_writes + l3cache_bank_stalls);
+      int mshr_utilization = calcAvgPercent(l3cache_read_misses + l3cache_write_misses, l3cache_read_misses + l3cache_write_misses + l3cache_mshr_stalls);
+      fprintf(stream, "PERF: l3cache reads=%ld\n", l3cache_reads);
+      fprintf(stream, "PERF: l3cache writes=%ld\n", l3cache_writes);
+      fprintf(stream, "PERF: l3cache read misses=%ld (hit ratio=%d%%)\n", l3cache_read_misses, read_hit_ratio);
+      fprintf(stream, "PERF: l3cache write misses=%ld (hit ratio=%d%%)\n", l3cache_write_misses, write_hit_ratio);
+      fprintf(stream, "PERF: l3cache bank stalls=%ld (utilization=%d%%)\n", l3cache_bank_stalls, bank_utilization);
+      fprintf(stream, "PERF: l3cache mshr stalls=%ld (utilization=%d%%)\n", l3cache_mshr_stalls, mshr_utilization);
+    }
+
+    {
+      uint64_t mem_requests = mem_reads + mem_writes;
+      int mem_avg_lat = caclAverage(mem_lat, mem_reads);
+      int mem_bank_utilization = calcAvgPercent(mem_requests, mem_requests + mem_bank_stalls);
+      fprintf(stream, "PERF: memory requests=%ld (reads=%ld, writes=%ld)\n", mem_requests, mem_reads, mem_writes);
+      fprintf(stream, "PERF: memory latency=%d cycles\n", mem_avg_lat);
+      fprintf(stream, "PERF: memory bank stalls=%ld (utilization=%d%%)\n", mem_bank_stalls, mem_bank_utilization);
+    }
+  } break;
+  case VX_DCR_MPM_CLASS_ACCEL_MXU: {
+    fprintf(stream, "PERF: === MXU Performance Analysis ===\n");
+    fprintf(stream, "PERF: jobs=%ld total_cycles=%ld busy_cycles=%ld\n",
+            gemm_job_count, gemm_total_cycles, busy_cycles);
+    fprintf(stream, "PERF: compute_cycles=%ld stall_cycles=%ld mac_count=%ld\n",
+            gemm_compute_cycles, gemm_stall_cycles, mxu_mac_count);
+    fprintf(stream, "PERF: DMA+MXU overlap=%.3f%% (%ld / %ld)\n",
+            (dma_union_active_cycles > 0)
+              ? 100.0 * overlap_dma_mxu / dma_union_active_cycles : 0.0,
+            overlap_dma_mxu, dma_union_active_cycles);
+    // MXU raw fire/stall
+    fprintf(stream, "PERF: --- MXU Raw Counters ---\n");
+    fprintf(stream, "PERF: input:  fire=%ld stall=%ld\n", mxu_input_fire,  mxu_input_stall);
+    fprintf(stream, "PERF: weight: fire=%ld stall=%ld\n", mxu_weight_fire, mxu_weight_stall);
+    fprintf(stream, "PERF: psum:   fire=%ld stall=%ld\n", mxu_psum_fire,   mxu_psum_stall);
+    fprintf(stream, "PERF: output: fire=%ld stall=%ld\n", mxu_output_fire, mxu_output_stall);
+    fprintf(stream, "PERF: accum: rd_accept=%ld wr_fire=%ld scaler_valid=%ld acc_output_valid=%ld psum_underflow=%ld rd_wr_conflict=%ld\n",
+            mxu_accum_rd_accept, mxu_accum_wr_fire, mxu_scaler_valid, mxu_acc_output_valid,
+            mxu_psum_underflow, mxu_rd_wr_conflict);
+    // MXU utilization table — fire / (denominator)
+    fprintf(stream, "PERF: --- MXU Utilization ---\n");
+    fprintf(stream, "PERF: %-8s  /total_cycles   /compute_cycles   /busy_cycles\n", "");
+    const char* mxu_names[] = {"input", "weight", "psum", "output"};
+    uint64_t    mxu_fires[] = { mxu_input_fire, mxu_weight_fire, mxu_psum_fire, mxu_output_fire };
+    for (int i = 0; i < 4; ++i) {
+      double pct_total   = (gemm_total_cycles > 0)   ? 100.0 * mxu_fires[i] / gemm_total_cycles   : 0.0;
+      double pct_compute = (gemm_compute_cycles > 0) ? 100.0 * mxu_fires[i] / gemm_compute_cycles : 0.0;
+      double pct_busy    = (busy_cycles > 0)         ? 100.0 * mxu_fires[i] / busy_cycles         : 0.0;
+      fprintf(stream, "PERF: %-8s  %7.3f%%        %7.3f%%          %7.3f%%\n",
+              mxu_names[i], pct_total, pct_compute, pct_busy);
+    }
+    // Roofline
+    fprintf(stream, "PERF: --- Roofline ---\n");
+    uint64_t flops = mxu_mac_count * 2;  // MAC = 1 mul + 1 add
+    double achieved_fpc = (gemm_total_cycles > 0) ? (double)flops / (double)gemm_total_cycles : 0.0;
+    fprintf(stream, "PERF: MACs=%ld FLOPs=%ld\n", mxu_mac_count, flops);
+    fprintf(stream, "PERF: Achieved throughput=%.3f FLOPs/cycle\n", achieved_fpc);
+  } break;
+  case VX_DCR_MPM_CLASS_ACCEL_DMA: {
+    fprintf(stream, "PERF: === DMA Subsystem (CPU + HBM) ===\n");
+    fprintf(stream, "PERF: busy_cycles=%ld gemm_total_cycles=%ld\n",
+            busy_cycles, gemm_total_cycles);
+    // CPU-DMA
+    fprintf(stream, "PERF: --- CPU-DMA (1 instance) ---\n");
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_cycles=%ld\n",
+            cpu_dma_rd_bytes, cpu_dma_wr_bytes, cpu_dma_xfer_count, cpu_dma_active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", cpu_dma_src_rd_req_fire,  cpu_dma_src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld stall=%ld\n", cpu_dma_src_rd_data_fire, cpu_dma_src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld stall=%ld\n", cpu_dma_dst_wr_fire,      cpu_dma_dst_wr_stall);
+    {
+      uint64_t cpu_bytes = cpu_dma_rd_bytes + cpu_dma_wr_bytes;
+      double util_busy   = (busy_cycles > 0)           ? 100.0 * cpu_dma_active_cycles / busy_cycles           : 0.0;
+      double util_total  = (gemm_total_cycles > 0)     ? 100.0 * cpu_dma_active_cycles / gemm_total_cycles     : 0.0;
+      double bw_active   = (cpu_dma_active_cycles > 0) ? (double)cpu_bytes / (double)cpu_dma_active_cycles     : 0.0;
+      double bw_busy     = (busy_cycles > 0)           ? (double)cpu_bytes / (double)busy_cycles               : 0.0;
+      fprintf(stream, "PERF: utilization: %.3f%% (/busy) %.3f%% (/total)\n", util_busy, util_total);
+      fprintf(stream, "PERF: bandwidth:   %.3f B/active-cyc, %.3f B/busy-cyc\n", bw_active, bw_busy);
+    }
+    // HBM-DMA aggregate
+    fprintf(stream, "PERF: --- HBM-DMA (8-channel aggregated) ---\n");
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_sum=%ld\n",
+            hbm_dma_rd_bytes, hbm_dma_wr_bytes, hbm_dma_xfer_count, hbm_dma_active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", hbm_dma_src_rd_req_fire,  hbm_dma_src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld stall=%ld\n", hbm_dma_src_rd_data_fire, hbm_dma_src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld stall=%ld\n", hbm_dma_dst_wr_fire,      hbm_dma_dst_wr_stall);
+    if (hbm_dma_active_min == UINT64_MAX) hbm_dma_active_min = 0;
+    {
+      double imbalance = (hbm_dma_active_max > 0)
+                       ? 100.0 * (double)(hbm_dma_active_max - hbm_dma_active_min) / (double)hbm_dma_active_max
+                       : 0.0;
+      fprintf(stream, "PERF: per-ch active: max=%ld min=%ld imbalance=%.3f%%\n",
+              hbm_dma_active_max, hbm_dma_active_min, imbalance);
+      uint64_t hbm_bytes = hbm_dma_rd_bytes + hbm_dma_wr_bytes;
+      // HBM utilization uses the per-channel max (= elapsed cycles a single
+      // channel was active) as the wall-clock denominator. active_sum across
+      // 8 channels already counts overlapped work, so dividing bytes by max
+      // gives bandwidth as observed on the bus.
+      double util_busy = (busy_cycles > 0)           ? 100.0 * hbm_dma_active_max / busy_cycles           : 0.0;
+      double bw_active = (hbm_dma_active_max > 0)    ? (double)hbm_bytes / (double)hbm_dma_active_max     : 0.0;
+      double bw_busy   = (busy_cycles > 0)           ? (double)hbm_bytes / (double)busy_cycles            : 0.0;
+      fprintf(stream, "PERF: utilization: %.3f%% (/busy, using active_max)\n", util_busy);
+      fprintf(stream, "PERF: bandwidth:   %.3f B/active-max-cyc, %.3f B/busy-cyc (8-ch total)\n",
+              bw_active, bw_busy);
+    }
+  } break;
+  // ---------- Per-LDMA dump (classes 5..8) ---------------------
+  case VX_DCR_MPM_CLASS_ACCEL_LDMA_IN:
+  case VX_DCR_MPM_CLASS_ACCEL_LDMA_WT:
+  case VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ:
+  case VX_DCR_MPM_CLASS_ACCEL_LDMA_OUT: {
+    int idx = (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_IN)  ? 0
+            : (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_WT)  ? 1
+            : (perf_class == VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ)  ? 2 : 3;
+    const LdmaCounters& c = ldma[idx];
+    fprintf(stream, "PERF: === LDMA[%s] ===\n", ldma_names[idx]);
+    fprintf(stream, "PERF: busy_cycles=%ld gemm_total_cycles=%ld\n",
+            busy_cycles, gemm_total_cycles);
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_cycles=%ld\n",
+            c.rd_bytes, c.wr_bytes, c.xfer_count, c.active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", c.src_rd_req_fire,  c.src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld stall=%ld\n", c.src_rd_data_fire, c.src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld stall=%ld\n", c.dst_wr_fire,      c.dst_wr_stall);
+    fprintf(stream, "PERF: wait_dcache=%ld wait_lmem=%ld\n",   c.wait_dcache,      c.wait_lmem);
+    // Derived: utilization (%) and bandwidth (B/cycle)
+    uint64_t bytes_total = c.rd_bytes + c.wr_bytes;
+    double util_busy    = (busy_cycles > 0)       ? 100.0 * c.active_cycles / busy_cycles       : 0.0;
+    double util_total   = (gemm_total_cycles > 0) ? 100.0 * c.active_cycles / gemm_total_cycles : 0.0;
+    double bw_active    = (c.active_cycles > 0)   ? (double)bytes_total / (double)c.active_cycles : 0.0;
+    double bw_busy      = (busy_cycles > 0)       ? (double)bytes_total / (double)busy_cycles    : 0.0;
+    fprintf(stream, "PERF: utilization: %.3f%% (/busy_cycles)  %.3f%% (/total_cycles)\n",
+            util_busy, util_total);
+    fprintf(stream, "PERF: bandwidth:   %.3f B/active-cyc  %.3f B/busy-cyc\n",
+            bw_active, bw_busy);
+  } break;
+  default:
+    break;
+  }
+
+  float IPC = caclAverage(total_instrs, max_cycles);
+  fprintf(stream, "PERF: instrs=%ld, cycles=%ld, IPC=%f\n", total_instrs, max_cycles, IPC);
+
+  fflush(stream);
+
+  return 0;
+}
+
+int vx_check_occupancy(vx_device_h hdevice, uint32_t group_size, uint32_t* max_localmem) {
+   // check group size
+  uint64_t warps_per_core, threads_per_warp;
+  CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_WARPS, &warps_per_core), {
+    return err;
+  });
+  CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_THREADS, &threads_per_warp), {
+    return err;
+  });
+  uint32_t threads_per_core = warps_per_core * threads_per_warp;
+  if (group_size > threads_per_core) {
+    printf("Error: cannot schedule kernel with group_size > threads_per_core (%d,%d)\n", group_size, threads_per_core);
+    return -1;
+  }
+
+  // calculate groups occupancy
+  int warps_per_group = (group_size + threads_per_warp-1) / threads_per_warp;
+  int groups_per_core = warps_per_core / warps_per_group;
+
+  // check local memory capacity
+  if (max_localmem) {
+    uint64_t local_mem_size;
+    CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size), {
+      return err;
+    });
+    *max_localmem = local_mem_size / groups_per_core;
+  }
+
+  return 0;
+}

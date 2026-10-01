@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/configs/rv64_zfh_lp64f_dsp_vivado.sh

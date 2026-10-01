@@ -1,0 +1,526 @@
+#!/bin/sh
+
+# Copyright © 2019-2023
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+SCRIPT_DIR=$(dirname "$0")
+ROOT_DIR=$SCRIPT_DIR/..
+
+show_usage()
+{
+    echo "Vortex BlackBox Test Driver v1.0"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--build-only] [--run-only] [--log=logfile] [--nohup] [--help]]"
+}
+
+show_help()
+{
+    show_usage
+    echo "  where"
+    echo "--driver: gpu, simx, rtlsim, opae, xrt, xrt_vcs"
+    echo "--app: any subfolder test under regression or opencl"
+    echo "--pytest: Python test script (e.g., pytorch/test/test_native_eladd.py)"
+    echo "--class: 0=disable, 1=pipeline, 2=memsys"
+    echo "--nohup: build and run in temp directory"
+    echo "  --- Benchmark mode ---"
+    echo "--bench:      run the per-app <app>_bench binary instead of <app> (requires bench_main.cpp)"
+    echo "              all bench-binary flags (--warmup=N, --iterations=N, --csv) go through --args"
+    echo "--build-only: build driver/runtime and app artifacts, then exit without running"
+    echo "--run-only:   run previously built app artifacts without rebuilding"
+    echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
+    echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
+}
+
+add_option() {
+    if [ -n "$1" ]; then
+        echo "$1 $2"
+    else
+        echo "$2"
+    fi
+}
+
+pick_vcs_socket_port() {
+    python3 - <<'PY'
+import socket
+import sys
+
+for _ in range(1000):
+    sockets = []
+    try:
+        ctrl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ctrl.bind(("", 0))
+        port = ctrl.getsockname()[1]
+        sockets.append(ctrl)
+        if port >= 65535:
+            continue
+        mem = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mem.bind(("", port + 1))
+        sockets.append(mem)
+        print(port)
+        sys.exit(0)
+    except OSError:
+        pass
+    finally:
+        for sock in sockets:
+            sock.close()
+
+print("failed to find consecutive free VCS socket ports", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+check_vcs_socket_port() {
+    python3 - "$1" <<'PY'
+import socket
+import sys
+
+try:
+    port = int(sys.argv[1])
+except (IndexError, ValueError):
+    sys.exit(2)
+
+if port <= 0 or port >= 65535:
+    sys.exit(2)
+
+sockets = []
+try:
+    for candidate in (port, port + 1):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("", candidate))
+        sockets.append(sock)
+except OSError:
+    sys.exit(1)
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+}
+
+DEFAULTS() {
+    DRIVER=simx
+    APP=sgemm
+    PYTEST=""
+    DEBUG=0
+    DEBUG_LEVEL=0
+    SCOPE=0
+    HAS_ARGS=0
+    PERF_CLASS=0
+    CONFIGS="$CONFIGS"
+    TEMPBUILD=0
+    LOGFILE=run.log
+    BENCH=0
+    BUILD_ONLY=0
+    RUN_ONLY=0
+}
+
+parse_args() {
+    DEFAULTS
+    for i in "$@"; do
+        case $i in
+            --driver=*) DRIVER=${i#*=} ;;
+            --app=*)    APP=${i#*=} ;;
+            --pytest=*) PYTEST=${i#*=} ;;
+            --clusters=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_CLUSTERS=${i#*=}") ;;
+            --cores=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_CORES=${i#*=}") ;;
+            --warps=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_WARPS=${i#*=}") ;;
+            --threads=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_THREADS=${i#*=}") ;;
+            --l2cache)  CONFIGS=$(add_option "$CONFIGS" "-DL2_ENABLE") ;;
+            --l3cache)  CONFIGS=$(add_option "$CONFIGS" "-DL3_ENABLE") ;;
+            --tcu_enable) CONFIGS=$(add_option "$CONFIGS" "-DEXT_TCU_ENABLE") ;;
+            --perf=*)   CONFIGS=$(add_option "$CONFIGS" "-DPERF_ENABLE"); PERF_CLASS=${i#*=} ;;
+            --debug=*)  DEBUG=1; DEBUG_LEVEL=${i#*=} ;;
+            --scope)    SCOPE=1; ;;
+            --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
+            --log=*)    LOGFILE=${i#*=} ;;
+            --nohup)    TEMPBUILD=1 ;;
+            --bench)    BENCH=1 ;;
+            --build-only) BUILD_ONLY=1 ;;
+            --run-only) RUN_ONLY=1 ;;
+            --help)     show_help; exit 0 ;;
+            *)          show_usage; exit 1 ;;
+        esac
+    done
+    if [ $BUILD_ONLY -eq 1 ] && [ $RUN_ONLY -eq 1 ]; then
+        echo "Error: --build-only and --run-only are mutually exclusive"
+        exit 1
+    fi
+    if [ $RUN_ONLY -eq 1 ] && [ $TEMPBUILD -eq 1 ]; then
+        echo "Error: --run-only does not support --nohup"
+        exit 1
+    fi
+}
+
+set_driver_path() {
+    case $DRIVER in
+        gpu) DRIVER_PATH="" ;;
+        simx|rtlsim|opae|xrt) DRIVER_PATH="$ROOT_DIR/runtime/$DRIVER" ;;
+        xrt_vcs|xrt_vcs_post) DRIVER_PATH="$ROOT_DIR/runtime/xrt" ;;
+        *) echo "Invalid driver: $DRIVER"; exit 1 ;;
+    esac
+}
+
+set_app_path() {
+    if [ -n "$PYTEST" ]; then
+        APP_PATH=""
+        return
+    fi
+    if [ -d "$APP" ]; then
+        APP_PATH="$APP"
+    elif [ -d "$ROOT_DIR/tests/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/$APP"
+    elif [ -d "$ROOT_DIR/tests/regression/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/regression/$APP"
+    elif [ -d "$ROOT_DIR/tests/opencl/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/opencl/$APP"
+    elif [ -d "$ROOT_DIR/tests/hip/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/hip/$APP"
+    else
+        echo "Application folder not found: $APP"
+        exit 1
+    fi
+}
+
+build_driver() {
+    local cmd_opts=""
+    [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=$DEBUG_LEVEL")
+    [ $SCOPE -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "SCOPE=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DESTDIR=\"$TEMPDIR\"")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        # Build VCS simv (RTL or post-impl)
+        local vcs_opts=""
+        [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        if [ -n "${FSDB_DUMP:-}" ] || [ "${GUI:-0}" = "1" ]; then
+            vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        fi
+        if [ "$DRIVER" = "xrt_vcs_post" ]; then
+            vcs_opts=$(add_option "$vcs_opts" "POST_IMPL=1")
+            [ -n "${NETLIST:-}" ] && vcs_opts=$(add_option "$vcs_opts" "NETLIST=$NETLIST")
+            [ -n "${SDF_FILE:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SDF_FILE=$SDF_FILE")
+            [ -n "${SIMLIB_DIR:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SIMLIB_DIR=$SIMLIB_DIR")
+        fi
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv")
+        echo "Running (VCS simv): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS simv"
+            exit $status
+        fi
+        # Build applib
+        vcs_opts=""
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs applib")
+        echo "Running (VCS applib): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS applib"
+            exit $status
+        fi
+        # Build App runtime with xrtsim_vcs target
+        cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH")
+    else
+        cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH")
+    fi
+
+    echo "Running: $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error building driver: $DRIVER_PATH"
+        exit $status
+    fi
+}
+
+ensure_kernel_abi() {
+    local cmd_opts=""
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+    cmd_opts=$(add_option "$cmd_opts" "make -C \"$ROOT_DIR/kernel\"")
+
+    echo "Running (kernel ABI consistency check): $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error checking kernel library ABI: $ROOT_DIR/kernel"
+        exit $status
+    fi
+}
+
+build_app() {
+    if [ -n "$PYTEST" ]; then
+        echo "Error: --build-only does not support --pytest"
+        exit 1
+    fi
+
+    local cmd_opts=""
+    [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+
+    local make_target="all"
+    [ $BENCH -eq 1 ] && make_target="bench"
+    cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
+
+    echo "Running: $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error building app: $APP_PATH"
+        exit $status
+    fi
+}
+
+run_app() {
+    local cmd_opts=""
+    [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
+    [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        # --- Launch VCS simv (shared by both --app and --pytest) ---
+        local VCS_PORT
+        if [ -n "${VCS_SOCKET_PORT:-}" ]; then
+            VCS_PORT=$VCS_SOCKET_PORT
+            if ! check_vcs_socket_port "$VCS_PORT"; then
+                echo "Error: VCS_SOCKET_PORT=$VCS_PORT does not name two available consecutive ports"
+                exit 1
+            fi
+        else
+            VCS_PORT=$(pick_vcs_socket_port) || exit 1
+        fi
+        local SIMV_DIR
+        if [ $TEMPBUILD -eq 1 ]; then
+            SIMV_DIR="$(realpath "$TEMPDIR")"
+        else
+            SIMV_DIR="$(realpath "$ROOT_DIR/sim/xrtsim_vcs")"
+        fi
+
+        # Build VCS runtime flags
+        local simv_flags="+SOCKET_PORT=$VCS_PORT -suppress=ASLR_DETECTED_INFO"
+        if [ "$DRIVER" = "xrt_vcs_post" ] && [ -n "${SDF_FILE:-}" ]; then
+            simv_flags="$simv_flags +maxdelays +sdfverbose"
+        fi
+        [ -n "${VCS_SIMV_FLAGS:-}" ] && simv_flags="$simv_flags $VCS_SIMV_FLAGS"
+
+        local SIMV_LOG="$SIMV_DIR/simv.log"
+        local FSDB_FILE="$SIMV_DIR/vcs_cosim.fsdb"
+        echo "Launching VCS simv on port $VCS_PORT (log: $SIMV_LOG)..."
+        (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
+        VCS_PID=$!
+        sleep 3
+
+        if ! kill -0 $VCS_PID 2>/dev/null; then
+            echo "Error: VCS simv failed to start. Check $SIMV_LOG"
+            cat "$SIMV_LOG"
+            exit 1
+        fi
+
+        # Launch Verdi for live waveform viewing
+        if [ "${GUI:-0}" = "1" ]; then
+            echo "Launching Verdi (live FSDB: $FSDB_FILE)..."
+            # Wait for FSDB file to be created by simv
+            local wait_count=0
+            while [ ! -f "$FSDB_FILE" ] && [ $wait_count -lt 10 ]; do
+                sleep 1
+                wait_count=$((wait_count + 1))
+            done
+            if [ -f "$FSDB_FILE" ]; then
+                verdi -ssf "$FSDB_FILE" &
+                VERDI_PID=$!
+                echo "Verdi PID: $VERDI_PID"
+            else
+                echo "WARNING: FSDB file not found after 10s, skipping Verdi launch"
+            fi
+        fi
+
+        # --- Choose execution path: --pytest or --app ---
+        if [ -n "$PYTEST" ]; then
+            local RT_DIR
+            if [ $TEMPBUILD -eq 1 ]; then
+                RT_DIR="$(realpath "$TEMPDIR")"
+            else
+                RT_DIR="$(realpath "$ROOT_DIR/build/runtime")"
+            fi
+            cmd_opts="VORTEX_HOME=$ROOT_DIR"
+            cmd_opts=$(add_option "$cmd_opts" "VORTEX_DRIVER=xrt")
+            cmd_opts=$(add_option "$cmd_opts" "TORCH_VORTEX_XRT_VCS=1")
+            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT")
+            cmd_opts=$(add_option "$cmd_opts" "LD_LIBRARY_PATH=$SIMV_DIR:$RT_DIR:\$LD_LIBRARY_PATH")
+            cmd_opts=$(add_option "$cmd_opts" "python3 $ROOT_DIR/$PYTEST $ARGS")
+        else
+            local vcs_target="run-xrt"
+            [ $BENCH -eq 1 ] && vcs_target="run-xrt-bench"
+            if [ $RUN_ONLY -eq 1 ]; then
+                vcs_target="exec-xrt"
+                [ $BENCH -eq 1 ] && vcs_target="exec-xrt-bench"
+            fi
+            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" $vcs_target")
+        fi
+    elif [ -n "$PYTEST" ]; then
+        echo "Error: --pytest requires --driver=xrt_vcs"
+        exit 1
+    else
+        local make_target="run-$DRIVER"
+        [ $BENCH -eq 1 ] && make_target="run-$DRIVER-bench"
+        if [ $RUN_ONLY -eq 1 ]; then
+            make_target="exec-$DRIVER"
+            [ $BENCH -eq 1 ] && make_target="exec-$DRIVER-bench"
+        fi
+        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
+    fi
+
+    local status
+    if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
+        local status_file
+        local flush_lines
+        status_file=$(mktemp)
+        flush_lines="${LOG_FLUSH_LINES:-200}"
+
+        echo "Running (bounded log): $cmd_opts"
+        (
+            eval "$cmd_opts"
+            echo $? > "$status_file"
+        ) 2>&1 | awk -v max_bytes="${LOG_MAX_BYTES}" -v flush_lines="${flush_lines}" -v file="${LOGFILE}" '
+            BEGIN {
+                buf = "";
+                blen = 0;
+                cnt = 0;
+            }
+            function flush_buf() {
+                if (blen == 0) {
+                    printf "" > file;
+                } else {
+                    printf "%s", buf > file;
+                }
+                close(file);
+            }
+            {
+                line = $0 "\n";
+                buf = buf line;
+                blen += length(line);
+
+                while (blen > max_bytes) {
+                    n = index(buf, "\n");
+                    if (n <= 0) {
+                        buf = "";
+                        blen = 0;
+                        break;
+                    }
+                    buf = substr(buf, n + 1);
+                    blen = length(buf);
+                }
+
+                cnt += 1;
+                if ((cnt % flush_lines) == 0) {
+                    flush_buf();
+                }
+            }
+            END {
+                flush_buf();
+            }'
+
+        status=$(cat "$status_file" 2>/dev/null || echo 1)
+        rm -f "$status_file"
+    else
+        [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "> $LOGFILE 2>&1")
+        echo "Running: $cmd_opts"
+        eval "$cmd_opts"
+        status=$?
+    fi
+
+    # Clean up VCS and Verdi processes
+    if ([ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]) && [ -n "${VCS_PID:-}" ]; then
+        if [ "${GUI:-0}" = "1" ] && [ -n "${VERDI_PID:-}" ]; then
+            echo "Waiting for Verdi to close (PID: $VERDI_PID)..."
+            wait $VERDI_PID 2>/dev/null
+        fi
+        # The host sends CMD_SHUTDOWN before returning.  Give simv a bounded
+        # window to flush waveforms and reach $finish before falling back to
+        # SIGTERM; killing immediately can truncate the terminal FSDB state.
+        vcs_wait_count=0
+        while kill -0 $VCS_PID 2>/dev/null && [ $vcs_wait_count -lt 50 ]; do
+            sleep 0.1
+            vcs_wait_count=$((vcs_wait_count + 1))
+        done
+        if kill -0 $VCS_PID 2>/dev/null; then
+            kill $VCS_PID 2>/dev/null
+        fi
+        wait $VCS_PID 2>/dev/null
+    fi
+
+    return $status
+}
+
+main() {
+    parse_args "$@"
+    set_driver_path
+    set_app_path
+
+    # execute on default installed GPU
+    if [ "$DRIVER" = "gpu" ]; then
+        run_app
+        exit $?
+    fi
+
+    if [ -n "$CONFIGS" ]; then
+        echo "CONFIGS=$CONFIGS"
+    fi
+
+    export VORTEX_PROFILING=$PERF_CLASS
+
+    if [ $RUN_ONLY -ne 1 ]; then
+        make -C "$ROOT_DIR/hw" config > /dev/null
+        make -C "$ROOT_DIR/runtime/stub" > /dev/null
+        ensure_kernel_abi
+    fi
+
+    if [ $TEMPBUILD -eq 1 ] && [ $RUN_ONLY -ne 1 ]; then
+        # setup temp directory
+        TEMPDIR=$(mktemp -d)
+        mkdir -p "$TEMPDIR"
+        # build stub driver
+        echo "Running: DESTDIR=$TEMPDIR make -C $ROOT_DIR/runtime/stub"
+        DESTDIR="$TEMPDIR" make -C $ROOT_DIR/runtime/stub > /dev/null
+        # register tempdir cleanup on exit
+        trap "rm -rf $TEMPDIR" EXIT
+    fi
+
+    if [ $RUN_ONLY -ne 1 ]; then
+        build_driver
+    fi
+
+    if [ $BUILD_ONLY -eq 1 ]; then
+        build_app
+        exit 0
+    fi
+
+    run_app
+    status=$?
+
+    if [ $DEBUG -eq 1 ] && [ -f "$APP_PATH/trace.vcd" ]; then
+        mv -f $APP_PATH/trace.vcd .
+    fi
+
+    if [ $SCOPE -eq 1 ] && [ -f "$APP_PATH/scope.vcd" ]; then
+        mv -f $APP_PATH/scope.vcd .
+    fi
+
+    exit $status
+}
+
+main "$@"

@@ -1,0 +1,52 @@
+[
+  {
+    "index": 1,
+    "config": "tcu_th16_c1.sh",
+    "returncode": 2,
+    "passed": false,
+    "seconds": 1.422,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553/config_1/run_attempt_1.log",
+    "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_1",
+    "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/tcu_th16_c1.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1'"
+  },
+  {
+    "index": 2,
+    "config": "tcu_th16_c1_v2.sh",
+    "returncode": 2,
+    "passed": false,
+    "seconds": 1.37,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553/config_2/run_attempt_1.log",
+    "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_2",
+    "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/tcu_th16_c1_v2.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1'"
+  },
+  {
+    "index": 3,
+    "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh",
+    "returncode": 2,
+    "passed": false,
+    "seconds": 1.37,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553/config_3/run_attempt_1.log",
+    "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_3",
+    "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1'"
+  },
+  {
+    "index": 4,
+    "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh",
+    "returncode": 2,
+    "passed": false,
+    "seconds": 1.418,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553/config_4/run_attempt_1.log",
+    "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_4",
+    "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1'"
+  },
+  {
+    "index": 5,
+    "config": "improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh",
+    "returncode": 2,
+    "passed": false,
+    "seconds": 1.368,
+    "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553/config_5/run_attempt_1.log",
+    "build": "/tmp/vortex_softmax_compare_j_ndwifz/source/build_5",
+    "command": "set -e\nsource /tmp/vortex_softmax_compare_j_ndwifz/source/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh\nci/run_black.sh xrt-vcs-sim --app softmax --args '-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1'"
+  }
+]

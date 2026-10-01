@@ -1,0 +1,42 @@
+ROOT_DIR := $(realpath ../../..)
+include $(ROOT_DIR)/config.mk
+
+PROJECT := kv_cache_quant_w4a16
+
+SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
+
+KV_CACHE_QUANT_FP16_PROFILE := $(and $(findstring -DEXT_D_DISABLE,$(CONFIGS)),$(findstring -DEXT_ZFH_ENABLE,$(CONFIGS)))
+ifneq (,$(KV_CACHE_QUANT_FP16_PROFILE))
+  KV_CACHE_QUANT_PROFILE_VARIANT := groupwise_fp16
+else
+  KV_CACHE_QUANT_PROFILE_VARIANT := groupwise_fp32
+endif
+
+KV_CACHE_QUANT_VARIANT ?= $(KV_CACHE_QUANT_PROFILE_VARIANT)
+KV_CACHE_QUANT_VARIANTS := baseline groupwise groupwise_fp16 groupwise_fp32
+ifneq ($(filter $(KV_CACHE_QUANT_VARIANT),$(KV_CACHE_QUANT_VARIANTS)),$(KV_CACHE_QUANT_VARIANT))
+  $(error Unsupported KV_CACHE_QUANT_VARIANT=$(KV_CACHE_QUANT_VARIANT); expected one of: $(KV_CACHE_QUANT_VARIANTS))
+endif
+
+KV_CACHE_QUANT_SELECTED_VARIANT := $(if $(filter groupwise,$(KV_CACHE_QUANT_VARIANT)),$(KV_CACHE_QUANT_PROFILE_VARIANT),$(KV_CACHE_QUANT_VARIANT))
+
+SRCS := $(SRC_DIR)/main.cpp
+
+VX_SRCS := $(SRC_DIR)/kernel.$(KV_CACHE_QUANT_SELECTED_VARIANT).cpp
+
+ifneq (,$(filter groupwise_fp16 groupwise_fp32,$(KV_CACHE_QUANT_SELECTED_VARIANT)))
+  CXXFLAGS += -DKV_CACHE_QUANT_VARIANT=KV_CACHE_QUANT_VARIANT_GROUPWISE
+  ifeq ($(KV_CACHE_QUANT_SELECTED_VARIANT),groupwise_fp16)
+    CXXFLAGS += -DKV_CACHE_QUANT_ARITH_FP16=1
+  else
+    CXXFLAGS += -DKV_CACHE_QUANT_ARITH_FP32=1 -DKV_CACHE_QUANT_REFERENCE_FP32=1
+  endif
+else
+  CXXFLAGS += -DKV_CACHE_QUANT_VARIANT=KV_CACHE_QUANT_VARIANT_BASELINE
+endif
+
+include ../common.mk
+
+# Shared numeric helpers affect both source and variant wrappers.
+kernel.elf: $(VORTEX_HOME)/tests/regression/vector_common/fp16_preserve.h $(VORTEX_HOME)/tests/regression/kv_cache_common/kv_cache_w4a16.h
+$(PROJECT): $(VORTEX_HOME)/tests/regression/kv_cache_common/quant_host_patterns.h

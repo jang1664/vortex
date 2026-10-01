@@ -1,0 +1,13 @@
+state WAIT_BUSY_HIGH:
+  if (level0_i/ulp/vortex_afu_1/inst/afu_wrap/vx_busy == 1'b1) then
+    goto WAIT_BUSY_LOW;
+  else
+    goto WAIT_BUSY_HIGH;
+  endif
+
+state WAIT_BUSY_LOW:
+  if (level0_i/ulp/vortex_afu_1/inst/afu_wrap/vx_busy == 1'b1) then
+    goto WAIT_BUSY_LOW;
+  else
+    trigger;
+  endif

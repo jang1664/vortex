@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/syn/xilinx/xrt/tests/check_u55c_directives.tcl

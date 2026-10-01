@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/configs/naive_gemm_th16_tcol16_hwexp_dcache_sxbar_f16.sh

@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/gemm_dma_ctrl_with_dma/tb_VX_gemm_dma_ctrl_with_dma.sv

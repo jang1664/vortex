@@ -1,0 +1,1 @@
+/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/configs/improve_th16_tcol16_hwexp_dcache_sxbar_f16_bigmem.sh

@@ -1,0 +1,66 @@
+diff --git a/src/setjmp/riscv64/longjmp.S b/src/setjmp/riscv64/longjmp.S
+index e76f87c0..9fcf3b12 100644
+--- a/src/setjmp/riscv64/longjmp.S
++++ b/src/setjmp/riscv64/longjmp.S
+@@ -20,6 +20,20 @@ longjmp:
+ 	ld ra,    104(a0)
+ 
+ #ifndef __riscv_float_abi_soft
++#ifdef __riscv_float_abi_single
++	flw fs0,  112(a0)
++	flw fs1,  120(a0)
++	flw fs2,  128(a0)
++	flw fs3,  136(a0)
++	flw fs4,  144(a0)
++	flw fs5,  152(a0)
++	flw fs6,  160(a0)
++	flw fs7,  168(a0)
++	flw fs8,  176(a0)
++	flw fs9,  184(a0)
++	flw fs10, 192(a0)
++	flw fs11, 200(a0)
++#else
+ 	fld fs0,  112(a0)
+ 	fld fs1,  120(a0)
+ 	fld fs2,  128(a0)
+@@ -32,6 +46,7 @@ longjmp:
+ 	fld fs9,  184(a0)
+ 	fld fs10, 192(a0)
+ 	fld fs11, 200(a0)
++#endif
+ #endif
+ 
+ 	seqz a0, a1
+diff --git a/src/setjmp/riscv64/setjmp.S b/src/setjmp/riscv64/setjmp.S
+index 7c178c09..cf1ee589 100644
+--- a/src/setjmp/riscv64/setjmp.S
++++ b/src/setjmp/riscv64/setjmp.S
+@@ -20,6 +20,20 @@ setjmp:
+ 	sd ra,    104(a0)
+ 
+ #ifndef __riscv_float_abi_soft
++#ifdef __riscv_float_abi_single
++	fsw fs0,  112(a0)
++	fsw fs1,  120(a0)
++	fsw fs2,  128(a0)
++	fsw fs3,  136(a0)
++	fsw fs4,  144(a0)
++	fsw fs5,  152(a0)
++	fsw fs6,  160(a0)
++	fsw fs7,  168(a0)
++	fsw fs8,  176(a0)
++	fsw fs9,  184(a0)
++	fsw fs10, 192(a0)
++	fsw fs11, 200(a0)
++#else
+ 	fsd fs0,  112(a0)
+ 	fsd fs1,  120(a0)
+ 	fsd fs2,  128(a0)
+@@ -32,6 +46,7 @@ setjmp:
+ 	fsd fs9,  184(a0)
+ 	fsd fs10, 192(a0)
+ 	fsd fs11, 200(a0)
++#endif
+ #endif
+ 
+ 	li a0, 0

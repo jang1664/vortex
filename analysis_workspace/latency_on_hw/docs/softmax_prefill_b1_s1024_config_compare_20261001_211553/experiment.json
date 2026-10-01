@@ -1,0 +1,47 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv",
+  "source": "/tmp/vortex_softmax_compare_j_ndwifz/source",
+  "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/softmax_prefill_b1_s1024_config_compare_20261001_211553",
+  "configs": [
+    "tcu_th16_c1.sh",
+    "tcu_th16_c1_v2.sh",
+    "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh",
+    "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh",
+    "improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh"
+  ],
+  "case_source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.th16_20260920_c4_slots16_v2r1/C1_prefill/llama3_8b_prefill_C1_softmax_C4.pkl",
+  "case": {
+    "id": "llama3_8b_prefill_all_sgemm_tcu_batch1_prefill_seq_len1024_qblk32_prefill_attn_softmax",
+    "app": "softmax",
+    "model": "llama3-8b",
+    "kind": "softmax",
+    "stage": "prefill",
+    "name": "attn_softmax",
+    "batch": 1,
+    "prefill_seq_len": 1024,
+    "gen_kv_len": 0,
+    "args": "-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1",
+    "calls_per_forward": 1024.0,
+    "warmup": 1,
+    "iterations": 3,
+    "latency_shape": {
+      "fpga_bin_label": "C4",
+      "app": "softmax",
+      "mode": "exact"
+    },
+    "op": "attn_softmax",
+    "backend": "softmax",
+    "variant": "all_sgemm_tcu_spinquant",
+    "shape": {
+      "batch": 1,
+      "heads": 1,
+      "seqq": 1024,
+      "seqk": 1024,
+      "capacity_stride": 1024,
+      "mask": 1
+    }
+  },
+  "git_head": "1e4b367cca8f1a11cff74ce6b428079621b3a398",
+  "makeflags": "FSDB_DUMP= CXX=/usr/bin/g++",
+  "variant": "rev2_shuffle_grouped"
+}

@@ -1,0 +1,205 @@
+Magic 271485
+Revision Verdi_U-2023.03-SP2-9
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 25 1920 930 440 124
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 117312553.207397 117568670.188904
+cursor 117415000.000000
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 11
+; marker line index
+markerPos 32
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "G1"
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/acc_in_data_valid[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_cnt_next[10:0]
+addSignal -h 15 -UNSIGNED -holdScope acc_mem_accum_rd_state
+addSignal -h 15 -UNSIGNED -holdScope acc_mem_accum_rd_state_next
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_wr_addr[18:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_wr_bank[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_wr_bank_addr[16:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_wr_cnt[10:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_wr_cnt_next[10:0]
+addSignal -h 15 -holdScope acc_mem_accum_wr_req
+addSignal -h 15 -UNSIGNED -holdScope acc_mem_accum_wr_state
+addSignal -h 15 -UNSIGNED -holdScope acc_mem_accum_wr_state_next
+addSignal -h 15 -UNSIGNED -holdScope acc_mem_accum_wr_state_q
+addSignal -h 15 -holdScope acc_mem_in_data[3:0]
+addSignal -h 15 -holdScope acc_mem_out_data[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_addr[18:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_addr_q[18:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank_addr[16:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank_q[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_tag_q[44:0]
+addSignal -h 15 -holdScope acc_mem_rd_addr[3:0]
+addSignal -h 15 -holdScope acc_mem_rd_data_valid
+addSignal -h 15 -holdScope acc_mem_rd_depth_addr[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_rd_en[3:0]
+addSignal -h 15 -holdScope acc_mem_rd_out_valid
+addSignal -h 15 -holdScope acc_mem_wr_addr[3:0]
+addSignal -h 15 -holdScope acc_mem_wr_depth_addr[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_wr_en[3:0]
+addSignal -h 15 -holdScope acc_output_data[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_output_valid[31:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -holdScope acc_mem_accum_rd_req
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_addr[18:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_bank[1:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_bank_addr[16:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_bank_q[1:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_mem_accum_rd_cnt[10:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_in_data_valid[31:0]
+addSignal -c ID_YELLOW5 -ls solid -lw 1 -h 15 -UNSIGNED -HEX -holdScope acc_psum_data_valid[31:0]
+addSignal -h 15 -holdScope acc_rd_fifo_empty
+addSignal -h 15 -holdScope acc_rd_fifo_full
+addSignal -h 15 -holdScope acc_rd_fifo_pop
+addSignal -h 15 -holdScope acc_rd_fifo_push
+addSignal -h 15 -holdScope acc_rd_fifo_in_data[31:0]
+addSignal -h 15 -holdScope acc_rd_fifo_out_data[31:0]
+addSignal -h 15 -holdScope act_reduce_blk_idx[31:0]
+addSignal -h 15 -holdScope act_reduce_data_in[31:0]
+addSignal -h 15 -holdScope act_reduce_data_in_shifted[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_out[51:0]
+addSignal -h 15 -holdScope act_reduce_valid_in
+addSignal -h 15 -holdScope act_reduce_valid_out
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -holdScope final_scaled_fp_out_data[31:0]
+addSignal -h 15 -holdScope final_scaler_output_valid
+addSignal -h 15 -holdScope fp16_out_data[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope fp16_out_valid[31:0]
+addSignal -h 15 -holdScope gemm_done
+addSignal -h 15 -holdScope gemm_idle
+addSignal -h 15 -holdScope gemm_unit_ctrl
+addSignal -h 15 -holdScope in_flight
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_pipe_data_out[511:0]
+addSignal -h 15 -holdScope in_pipe_valid_out
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_scaler_a_ready[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_scaler_b_ready[31:0]
+addSignal -h 15 -holdScope in_scaler_result_data[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_scaler_result_valid[31:0]
+addSignal -h 15 -holdScope int2fp_out_data[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope int2fp_output_valid[31:0]
+addSignal -h 15 -holdScope is_qcol
+addSignal -h 15 -holdScope merger_in_valid
+addSignal -h 15 -holdScope merger_out_data[31:0]
+addSignal -h 15 -holdScope merger_out_data_q[31:0]
+addSignal -h 15 -holdScope merger_out_valid
+addSignal -h 15 -holdScope mxu_output[31:0]
+addSignal -h 15 -holdScope mxu_output_dly[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mxu_output_valid[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mxu_output_valid_dly[31:0]
+addSignal -h 15 -holdScope mxu_ready_weight
+addSignal -h 15 -holdScope mxu_weight[3:0]
+addSignal -h 15 -holdScope next_gemm_unit_ctrl
+addSignal -h 15 -UNSIGNED -holdScope next_state
+addSignal -h 15 -holdScope out_mem_rd_req_fire
+addSignal -h 15 -holdScope pre_proc_in_valid
+addSignal -h 15 -holdScope pre_proc_out[31:0]
+addSignal -h 15 -holdScope pre_proc_out_q[31:0]
+addSignal -h 15 -holdScope pre_proc_out_valid
+addSignal -h 15 -holdScope prealigner_blk_idx[31:0]
+addSignal -h 15 -holdScope prealigner_blk_idx_q[31:0]
+addSignal -h 15 -holdScope prealigner_in_data[31:0]
+addSignal -h 15 -holdScope prealigner_in_valid
+addSignal -h 15 -holdScope prealigner_int_data[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope prealigner_max_exp[4:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope prealigner_max_exp_q[4:0]
+addSignal -h 15 -holdScope prealigner_max_exp_q_valid
+addSignal -h 15 -holdScope prealigner_out_valid
+addSignal -h 15 -holdScope prealigner_pipe_out_valid
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -holdScope scale_reg_idx
+addSignal -h 15 -holdScope scale_reg_wr_en
+addSignal -h 15 -holdScope scale_reg_wr_req
+addSignal -h 15 -holdScope scale_regs[1:0]
+addSignal -h 15 -holdScope scaled_fp32_out_data[31:0]
+addSignal -h 15 -holdScope scaled_fp_out_data[31:0]
+addSignal -h 15 -holdScope scaler_bypass_data[31:0]
+addSignal -h 15 -holdScope scaler_bypass_valid
+addSignal -h 15 -UNSIGNED -HEX -holdScope scaler_output_valid[31:0]
+addSignal -h 15 -UNSIGNED -holdScope state
+addSignal -h 15 -UNSIGNED -HEX -holdScope sz_req_addr[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope sz_req_byteen[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope sz_req_data[511:0]
+addSignal -h 15 -holdScope sz_req_hs
+addSignal -h 15 -holdScope sz_req_rw
+addSignal -h 15 -holdScope wreg_load_dir
+addSignal -h 15 -holdScope wreg_wr_idx
+addSignal -h 15 -holdScope zero_regs[1:0]
+addSignal -h 15 -holdScope zp_mul_in_data[31:0]
+addSignal -h 15 -holdScope zp_mul_in_valid
+addSignal -h 15 -holdScope zp_mul_out_data[31:0]
+addSignal -h 15 -holdScope zp_mul_out_data_q[31:0]
+addSignal -h 15 -holdScope zp_mul_out_valid
+addSignal -h 15 -holdScope zp_reg_idx
+addSignal -h 15 -holdScope zp_reg_wr_en
+addSignal -h 15 -holdScope zp_reg_wr_req
+addGroup "G2"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut"
+"/tb_vcs_xrtsim/dut/vortex_axi"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit"
+
+SCOPE_LIST_BEGIN
+"*gemm_unit*"
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/gemm_unit_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+
