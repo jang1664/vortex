@@ -4,6 +4,17 @@
 #include <vx_spawn.h>
 #include <VX_config.h>
 
+#ifndef KV_FUSED_FP32_PARAMS
+#define KV_FUSED_FP32_PARAMS 0
+#endif
+
+// CPU SpinQuant reference retains the scale in FP32 until the tiled store.
+#if KV_FUSED_FP32_PARAMS
+using kv_fused_arith_t = float;
+#else
+using kv_fused_arith_t = _Float16;
+#endif
+
 #ifndef KV_FUSED_QPARAM_WARP
 #define KV_FUSED_QPARAM_WARP 0
 #endif
@@ -22,6 +33,10 @@
 
 #ifndef KV_FUSED_SOURCE_GROUP1_FAST
 #define KV_FUSED_SOURCE_GROUP1_FAST 0
+#endif
+
+#ifndef KV_FUSED_PREFILL_TILED_CHUNK
+#define KV_FUSED_PREFILL_TILED_CHUNK 0
 #endif
 
 #ifndef KV_FUSED_SOURCE_CURSOR
@@ -48,6 +63,10 @@
 #define KV_FUSED_SPLIT_PERSISTENT 0
 #endif
 
+#ifndef KV_FUSED_PREFILL_WARP_GROUP
+#define KV_FUSED_PREFILL_WARP_GROUP 0
+#endif
+
 #if KV_FUSED_FORCE_INLINE
 #define KV_FUSED_SMALL_HELPER static inline __attribute__((always_inline))
 #define KV_FUSED_HELPER static inline __attribute__((always_inline))
@@ -56,36 +75,83 @@
 #define KV_FUSED_HELPER static
 #endif
 
-KV_FUSED_SMALL_HELPER uint32_t float_to_bits(_Float16 value) {
+KV_FUSED_SMALL_HELPER kv_fused_arith_t fused_arith_from_bits(fp16_t bits) {
+#if KV_FUSED_FP32_PARAMS
+  return fp16_to_float_preserve(bits);
+#else
+  return kv_fp16_from_bits(bits);
+#endif
+}
+
+KV_FUSED_SMALL_HELPER fp16_t fused_arith_to_bits(kv_fused_arith_t value) {
+#if KV_FUSED_FP32_PARAMS
+  return float_to_fp16_preserve(value);
+#else
+  return kv_fp16_to_bits(value);
+#endif
+}
+
+KV_FUSED_SMALL_HELPER uint16_t fused_zero_storage(kv_fused_arith_t zero) {
+#if KV_FUSED_FP32_PARAMS
+  return kv_tiled_zero_bits(fused_arith_to_bits(zero));
+#else
+  return (uint16_t)(int16_t)zero;
+#endif
+}
+
+KV_FUSED_SMALL_HELPER uint32_t float_to_bits(kv_fused_arith_t value) {
   union { float f; uint32_t u; } v;
   v.f = (float)value;
   return v.u;
 }
 
-KV_FUSED_SMALL_HELPER _Float16 bits_to_float(uint32_t value) {
+KV_FUSED_SMALL_HELPER kv_fused_arith_t bits_to_float(uint32_t value) {
   union { uint32_t u; float f; } v;
   v.u = value;
-  return (_Float16)v.f;
+  return (kv_fused_arith_t)v.f;
 }
 
-KV_FUSED_SMALL_HELPER _Float16 shfl_down_float(_Float16 value, uint32_t offset) {
+KV_FUSED_SMALL_HELPER kv_fused_arith_t shfl_down_float(kv_fused_arith_t value, uint32_t offset) {
   return bits_to_float((uint32_t)vx_shfl_down(
       float_to_bits(value), offset, NUM_THREADS - 1, 0));
 }
 
-KV_FUSED_SMALL_HELPER _Float16 shfl_idx_float(_Float16 value, uint32_t index) {
+KV_FUSED_SMALL_HELPER kv_fused_arith_t shfl_idx_float(kv_fused_arith_t value, uint32_t index) {
   return bits_to_float((uint32_t)vx_shfl_idx(
       float_to_bits(value), index, NUM_THREADS - 1, 0));
 }
 
-KV_FUSED_SMALL_HELPER int32_t round_half_even(_Float16 value) {
+KV_FUSED_SMALL_HELPER int32_t round_half_even(kv_fused_arith_t value) {
   const int32_t truncated = (int32_t)value;
-  const _Float16 truncated_f = (_Float16)truncated;
+  const kv_fused_arith_t truncated_f = (kv_fused_arith_t)truncated;
   const int32_t floor_value = truncated - (int32_t)(truncated_f > value);
-  const _Float16 fraction = value - (_Float16)floor_value;
+  const kv_fused_arith_t fraction = value - (kv_fused_arith_t)floor_value;
   const int32_t round_up = (int32_t)(fraction > 0.5f)
       | ((int32_t)(fraction == 0.5f) & (floor_value & 1));
   return floor_value + round_up;
+}
+
+// Legacy uses a rounded stored scale, while SpinQuant retains FP32 qparams.
+KV_FUSED_HELPER int32_t legacy_zero(kv_fused_arith_t min_v,
+                                    kv_fused_arith_t range,
+                                    kv_fused_arith_t scale) {
+#if KV_FUSED_FP32_PARAMS
+  const float inv_for_zp = range != 0.0f ? 15.0f / range : 1.0f;
+  return kv_round_half_away_from_zero(-min_v * inv_for_zp);
+#else
+  return kv_round_half_away_from_zero_fp16(-min_v / scale);
+#endif
+}
+
+KV_FUSED_HELPER uint8_t quantize_legacy(kv_fused_arith_t value,
+                                       kv_fused_arith_t scale,
+                                       int16_t zero) {
+#if KV_FUSED_FP32_PARAMS
+  return kv_quantize_value_inv_scale(
+      value, scale == 0.0f ? 0.0f : 1.0f / scale, zero);
+#else
+  return kv_quantize_value_scale_fp16(value, scale, zero);
+#endif
 }
 
 KV_FUSED_HELPER uint32_t min_u32(uint32_t a, uint32_t b) {
@@ -256,8 +322,8 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
     uint32_t log2_mxu_nt,
     uint32_t quant_mode,
     const source_view_t& source_view,
-    _Float16* scale_out,
-    _Float16* zero_out) {
+    kv_fused_arith_t* scale_out,
+    kv_fused_arith_t* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
@@ -268,18 +334,49 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
   const uint32_t n1 = min_u32(n0 + QBLK, N);
   source_row_cursor_t cursor = make_source_row_cursor(
       src, K, N, k, n0, src_layout, log2_mt, log2_mxu_nt, source_view);
-  bool valid = false;
-  _Float16 min_v = kv_fp16_from_bits(source_row_cursor_next(&cursor, &valid));
-  _Float16 max_v = min_v;
-  _Float16 absmax = min_v < 0.0f ? -min_v : min_v;
-  for (uint32_t nn = n0 + 1u; nn < n1; ++nn) {
-    const _Float16 v = kv_fp16_from_bits(source_row_cursor_next(&cursor, &valid));
-    if (v < min_v) min_v = v;
-    if (v > max_v) max_v = v;
-    const _Float16 abs_v = v < 0.0f ? -v : v;
-    if (abs_v > absmax) absmax = abs_v;
+  kv_fused_arith_t min_v;
+  kv_fused_arith_t max_v;
+  kv_fused_arith_t absmax;
+#if KV_FUSED_PREFILL_TILED_CHUNK
+  const uint32_t tile_size = 1u << log2_mxu_nt;
+  if (cursor.within_tile == 0u && cursor.tile_mask == tile_size - 1u
+      && ((n1 - n0) & (tile_size - 1u)) == 0u) {
+    const fp16_t* tile = src + cursor.offset;
+    min_v = fused_arith_from_bits(tile[0]);
+    max_v = min_v;
+    absmax = min_v < 0.0f ? -min_v : min_v;
+    for (uint32_t start = n0; start < n1; start += tile_size) {
+      for (uint32_t col = 0; col < tile_size; ++col) {
+        const kv_fused_arith_t v = fused_arith_from_bits(tile[col]);
+        if (v < min_v) min_v = v;
+        if (v > max_v) max_v = v;
+
+      }
+      tile += cursor.tile_advance + tile_size;
+    }
+  } else
+#endif
+  {
+    bool valid = false;
+    min_v = fused_arith_from_bits(source_row_cursor_next(&cursor, &valid));
+    max_v = min_v;
+    absmax = min_v < 0.0f ? -min_v : min_v;
+    for (uint32_t nn = n0 + 1u; nn < n1; ++nn) {
+      const kv_fused_arith_t v = fused_arith_from_bits(source_row_cursor_next(&cursor, &valid));
+      if (v < min_v) min_v = v;
+      if (v > max_v) max_v = v;
+#if !KV_FUSED_PREFILL_TILED_CHUNK
+      const kv_fused_arith_t abs_v = v < 0.0f ? -v : v;
+      if (abs_v > absmax) absmax = abs_v;
+#endif
+    }
   }
 
+#if KV_FUSED_PREFILL_TILED_CHUNK
+  const kv_fused_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
+  const kv_fused_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
+  absmax = abs_min > abs_max ? abs_min : abs_max;
+#endif
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
     if (absmax < 1e-8f) absmax = 1e-8f;
     *scale_out = absmax / 7.5f;
@@ -287,8 +384,8 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
     return;
   }
 
-  const _Float16 range = max_v - min_v;
-  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+  const kv_fused_arith_t range = max_v - min_v;
+  kv_fused_arith_t scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
@@ -296,13 +393,13 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
+    int32_t zp = legacy_zero(min_v, range, scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (_Float16)zp;
+    *zero_out = (kv_fused_arith_t)zp;
   }
 }
 #endif
@@ -320,41 +417,41 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
                            uint32_t log2_mxu_nt,
                            uint32_t quant_mode,
                            const source_view_t& source_view,
-                           _Float16* scale_out,
-                           _Float16* zero_out) {
+                           kv_fused_arith_t* scale_out,
+                           kv_fused_arith_t* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
     return;
   }
-  _Float16 min_v = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
+  kv_fused_arith_t min_v = fused_arith_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                              log2_mt, log2_mxu_nt,
                                              source_view));
-  _Float16 max_v = min_v;
-  _Float16 absmax = min_v < 0.0f ? -min_v : min_v;
+  kv_fused_arith_t max_v = min_v;
+  kv_fused_arith_t absmax = min_v < 0.0f ? -min_v : min_v;
 
   if (QDIR == 0) {
     const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0; kk < k1; ++kk) {
-      const _Float16 v = kv_fp16_from_bits(load_src_value(src, K, N, kk, n, src_layout,
+      const kv_fused_arith_t v = fused_arith_from_bits(load_src_value(src, K, N, kk, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
-      const _Float16 abs_v = v < 0.0f ? -v : v;
+      const kv_fused_arith_t abs_v = v < 0.0f ? -v : v;
       if (abs_v > absmax) absmax = abs_v;
     }
   } else {
     const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0; nn < n1; ++nn) {
-      const _Float16 v = kv_fp16_from_bits(load_src_value(src, K, N, k, nn, src_layout,
+      const kv_fused_arith_t v = fused_arith_from_bits(load_src_value(src, K, N, k, nn, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
-      const _Float16 abs_v = v < 0.0f ? -v : v;
+      const kv_fused_arith_t abs_v = v < 0.0f ? -v : v;
       if (abs_v > absmax) absmax = abs_v;
     }
   }
@@ -366,8 +463,8 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
     return;
   }
 
-  const _Float16 range = max_v - min_v;
-  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+  const kv_fused_arith_t range = max_v - min_v;
+  kv_fused_arith_t scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
@@ -375,13 +472,13 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
+    int32_t zp = legacy_zero(min_v, range, scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (_Float16)zp;
+    *zero_out = (kv_fused_arith_t)zp;
   }
 }
 
@@ -399,21 +496,21 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
                                 uint32_t quant_mode,
                                 const source_view_t& source_view,
                                 uint32_t lane,
-                                _Float16* scale_out,
-                                _Float16* zero_out) {
+                                kv_fused_arith_t* scale_out,
+                                kv_fused_arith_t* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
     *zero_out = 0.0f;
     return;
   }
-  _Float16 min_v = kv_fp16_from_bits(load_src_value(
+  kv_fused_arith_t min_v = fused_arith_from_bits(load_src_value(
       src, K, N, k, n, src_layout, log2_mt, log2_mxu_nt, source_view));
-  _Float16 max_v = min_v;
+  kv_fused_arith_t max_v = min_v;
   if (QDIR == 0) {
     const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0 + lane; kk < k1; kk += NUM_THREADS) {
-      const _Float16 v = kv_fp16_from_bits(load_src_value(
+      const kv_fused_arith_t v = fused_arith_from_bits(load_src_value(
           src, K, N, kk, n, src_layout, log2_mt, log2_mxu_nt,
           source_view));
       if (v < min_v) min_v = v;
@@ -423,7 +520,7 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
     const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0 + lane; nn < n1; nn += NUM_THREADS) {
-      const _Float16 v = kv_fp16_from_bits(load_src_value(
+      const kv_fused_arith_t v = fused_arith_from_bits(load_src_value(
           src, K, N, k, nn, src_layout, log2_mt, log2_mxu_nt,
           source_view));
       if (v < min_v) min_v = v;
@@ -431,8 +528,8 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
     }
   }
   for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const _Float16 other_min = shfl_down_float(min_v, offset);
-    const _Float16 other_max = shfl_down_float(max_v, offset);
+    const kv_fused_arith_t other_min = shfl_down_float(min_v, offset);
+    const kv_fused_arith_t other_max = shfl_down_float(max_v, offset);
     if (lane + offset < NUM_THREADS) {
       if (other_min < min_v) min_v = other_min;
       if (other_max > max_v) max_v = other_max;
@@ -441,16 +538,16 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const _Float16 abs_min = min_v < 0.0f ? -min_v : min_v;
-    const _Float16 abs_max = max_v < 0.0f ? -max_v : max_v;
-    const _Float16 absmax = abs_min > abs_max ? abs_min : abs_max;
-    const _Float16 clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
+    const kv_fused_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
+    const kv_fused_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
+    const kv_fused_arith_t absmax = abs_min > abs_max ? abs_min : abs_max;
+    const kv_fused_arith_t clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
     *scale_out = clamped_absmax / 7.5f;
     *zero_out = 0.0f;
     return;
   }
-  const _Float16 range = max_v - min_v;
-  _Float16 scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+  const kv_fused_arith_t range = max_v - min_v;
+  kv_fused_arith_t scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           && range / 15.0f > 1e-8f)) {
@@ -458,13 +555,13 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
   } else {
-    int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
+    int32_t zp = legacy_zero(min_v, range, scale);
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
     *scale_out = scale;
-    *zero_out = (_Float16)zp;
+    *zero_out = (kv_fused_arith_t)zp;
   }
 }
 
@@ -484,22 +581,23 @@ KV_FUSED_HELPER uint8_t quant_at(const fp16_t* src,
   if (k >= K || n >= N) {
     return 0;
   }
-  _Float16 scale = 1.0f;
-  _Float16 zero = 0.0f;
+  kv_fused_arith_t scale = 1.0f;
+  kv_fused_arith_t zero = 0.0f;
   compute_params(src, K, N, QBLK, QDIR, k, n, src_layout,
                  log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                  source_view, &scale, &zero);
-  const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
-  const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+  const kv_fused_arith_t stored_scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+  const kv_fused_arith_t quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
       ? stored_scale : scale;
-  const _Float16 value = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
+  const kv_fused_arith_t value = fused_arith_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    return kv_quantize_value_scale_fp16(
-        value, quant_scale, (int16_t)zero);
+    return quantize_legacy(value, quant_scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / quant_scale) + (int32_t)zero;
+  int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
+      ? value * (1.0f / quant_scale)
+      : value / quant_scale) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -513,34 +611,38 @@ KV_FUSED_HELPER uint8_t quant_with_params(const fp16_t* src,
                                  uint32_t src_layout,
                                  uint32_t log2_mt,
                                  uint32_t log2_mxu_nt,
-                                 _Float16 scale,
-                                 _Float16 zero,
+                                 kv_fused_arith_t scale,
+                                 kv_fused_arith_t zero,
                                  uint32_t quant_mode,
                                  const source_view_t& source_view) {
   if (k >= K || n >= N) {
     return 0;
   }
-  const _Float16 value = kv_fp16_from_bits(load_src_value(src, K, N, k, n, src_layout,
+  const kv_fused_arith_t value = fused_arith_from_bits(load_src_value(src, K, N, k, n, src_layout,
                                                    log2_mt, log2_mxu_nt,
                                                    source_view));
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    return kv_quantize_value_scale_fp16(value, scale, (int16_t)zero);
+    return quantize_legacy(value, scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / scale) + (int32_t)zero;
+  int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
+      ? value * (1.0f / scale)
+      : value / scale) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
 }
 
 KV_FUSED_HELPER uint8_t quantize_loaded_value(fp16_t value_bits,
-                                             _Float16 scale,
-                                             _Float16 zero,
+                                             kv_fused_arith_t scale,
+                                             kv_fused_arith_t zero,
                                              uint32_t quant_mode) {
-  const _Float16 value = kv_fp16_from_bits(value_bits);
+  const kv_fused_arith_t value = fused_arith_from_bits(value_bits);
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    return kv_quantize_value_scale_fp16(value, scale, (int16_t)zero);
+    return quantize_legacy(value, scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / scale) + (int32_t)zero;
+  int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
+      ? value * (1.0f / scale)
+      : value / scale) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -786,8 +888,13 @@ KV_FUSED_HELPER uint64_t scale_slot_base(
 }
 
 KV_FUSED_HELPER void store_u16(uint8_t* dst, uint64_t off, uint16_t value) {
+#if KV_FUSED_PREFILL_TILED_CHUNK
+  // Qparam slot bases and element offsets are always aligned to two bytes.
+  *reinterpret_cast<uint16_t*>(dst + off) = value;
+#else
   dst[off] = (uint8_t)(value & 0xffu);
   dst[off + 1] = (uint8_t)(value >> 8);
+#endif
 }
 
 KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
@@ -801,8 +908,8 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
                                       uint32_t quant_mode,
                                       uint32_t source_row,
                                       uint32_t source_col,
-                                      _Float16 scale,
-                                      _Float16 zero) {
+                                      kv_fused_arith_t scale,
+                                      kv_fused_arith_t zero) {
   const uint32_t out_K = padded_qparam_K(
       K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t out_N = padded_qparam_N(
@@ -821,11 +928,45 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
       GEMM_QDIR == 1 && QBLK > TILE_DMA_MXU_NT
           ? QBLK >> log2_mxu_nt
           : 1u;
-  const uint16_t scale_bits = kv_fp16_to_bits(scale);
+  const uint16_t scale_bits = fused_arith_to_bits(scale);
   const uint16_t zero_bits =
       quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
           ? 0u
-          : (uint16_t)(int16_t)zero;
+          : fused_zero_storage(zero);
+
+#if KV_FUSED_PREFILL_TILED_CHUNK
+  if (SOURCE_TRANSPOSED != 0 && GEMM_QDIR == 0
+      && out_K <= kt_size && QBLK >= out_K && source_col == 0u) {
+    // Each DMA N tile has its own aligned slot, including trailing padding.
+    const uint32_t nt_dma = source_row >> log2_nt;
+    const uint32_t n_local = source_row & ((1u << log2_nt) - 1u);
+    const uint64_t offset = scale_slot_base(arg, 0u, nt_dma)
+        + (uint64_t)n_local * TILE_ELEM_BYTES;
+    store_u16(scales, offset, scale_bits);
+    store_u16(zeros, offset, zero_bits);
+    return;
+  }
+  if (SOURCE_TRANSPOSED == 0 && GEMM_QDIR == 1
+      && QBLK >= TILE_DMA_MXU_NT && QBLK <= (1u << log2_nt)
+      && param_k < out_K && param_n + QBLK <= out_N) {
+    const uint32_t kt = param_k >> log2_kt;
+    const uint32_t nt_dma = param_n >> log2_nt;
+    const uint32_t cur_k = min_u32(out_K - (kt << log2_kt), kt_size);
+    const uint32_t nb = (param_n - (nt_dma << log2_nt)) >> log2_mxu_nt;
+    const uint32_t k_local = param_k & (kt_size - 1u);
+    const uint64_t offset = scale_slot_base(arg, kt, nt_dma)
+        + (uint64_t)(nb * cur_k + k_local) * TILE_ELEM_BYTES;
+    auto scale_cursor = reinterpret_cast<uint16_t*>(scales + offset);
+    auto zero_cursor = reinterpret_cast<uint16_t*>(zeros + offset);
+    for (uint32_t replica = 0; replica < n_replicas; ++replica) {
+      *scale_cursor = scale_bits;
+      *zero_cursor = zero_bits;
+      scale_cursor += cur_k;
+      zero_cursor += cur_k;
+    }
+    return;
+  }
+#endif
 
   for (uint32_t replica = 0; replica < n_replicas; ++replica) {
     const uint32_t dst_param_n =
@@ -911,8 +1052,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         cache_K, cache_N, SOURCE_TRANSPOSED);
     const uint32_t weight_N = padded_weight_N(
         cache_K, cache_N, SOURCE_TRANSPOSED);
-    _Float16 scale = 1.0f;
-    _Float16 zero = 0.0f;
+    kv_fused_arith_t scale = 1.0f;
+    kv_fused_arith_t zero = 0.0f;
 #if KV_FUSED_PERSISTENT_WARP
     const bool contiguous_single_row =
         K == 1u && source_view.total_k == 1u
@@ -933,8 +1074,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                    source_view, &scale, &zero);
 #endif
-    const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
-    const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+    const kv_fused_arith_t stored_scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+    const kv_fused_arith_t quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
         ? stored_scale : scale;
 
     for (uint32_t pair = thread_id; pair < (N >> 1); pair += total_threads) {
@@ -976,10 +1117,10 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t elem = position & ((1u << log2_nt) - 1u);
         const uint64_t dst_off = scale_slot_base(arg, 0, nt_dma)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
-        store_u16(scales, dst_off, kv_fp16_to_bits(scale));
+        store_u16(scales, dst_off, fused_arith_to_bits(scale));
         store_u16(zeros, dst_off,
                   quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                      ? 0u : (uint16_t)(int16_t)zero);
+                      ? 0u : fused_zero_storage(zero));
       }
     } else {
       const uint32_t kt = position >> log2_kt;
@@ -991,17 +1132,17 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t elem = nb * cur_k + k_local;
         const uint64_t dst_off = scale_slot_base(arg, kt, 0)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
-        store_u16(scales, dst_off, kv_fp16_to_bits(scale));
+        store_u16(scales, dst_off, fused_arith_to_bits(scale));
         store_u16(zeros, dst_off,
                   quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                      ? 0u : (uint16_t)(int16_t)zero);
+                      ? 0u : fused_zero_storage(zero));
       }
     }
     if (thread_id == 0
         && arg->logical_scale_addr != 0
         && arg->logical_zero_addr != 0) {
-      logical_scales[position] = kv_fp16_to_bits(scale);
-      logical_zeros[position] = kv_fp16_to_bits(zero);
+      logical_scales[position] = fused_arith_to_bits(scale);
+      logical_zeros[position] = fused_arith_to_bits(zero);
     }
     return;
   }
@@ -1009,11 +1150,22 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t weight_K = padded_weight_K(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_N = padded_weight_N(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_bytes = weight_K * (weight_N >> 1);
+  const uint32_t prefill_work_start = KV_FUSED_PREFILL_WARP_GROUP
+      ? thread_id / NUM_THREADS : thread_id;
+  const uint32_t prefill_work_stride = KV_FUSED_PREFILL_WARP_GROUP
+      ? total_threads / NUM_THREADS : total_threads;
+  const uint32_t prefill_lane = threadIdx.x & (NUM_THREADS - 1u);
   const bool reuse_prefill_qparams =
 #if KV_FUSED_PREFILL_QPARAM_REUSE
       SOURCE_QDIR == 1
       && ((SOURCE_TRANSPOSED != 0 && WTRANS != 0 && GEMM_QDIR == 0)
-          || (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && GEMM_QDIR == 1));
+          || (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && GEMM_QDIR == 1))
+#if KV_FUSED_FP32_PARAMS
+      // A source group wider than a DMA K tile needs qparams in each tile.
+      // Let the generic qparam stage populate those slots independently.
+      && (SOURCE_TRANSPOSED == 0 || QBLK <= (1u << log2_kt))
+#endif
+      ;
 #else
       false;
 #endif
@@ -1022,7 +1174,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t logical_N = weight_N;
     const uint32_t source_groups = (logical_K + QBLK - 1u) >> log2_qblk;
     const uint32_t source_group_work = logical_N * source_groups;
-    for (uint32_t work = thread_id; work < source_group_work; work += total_threads) {
+    for (uint32_t work = prefill_work_start; work < source_group_work;
+         work += prefill_work_stride) {
 #if KV_FUSED_SOURCE_GROUP1_FAST
       const uint32_t source_row =
           source_groups == 1u ? work : work / source_groups;
@@ -1034,9 +1187,14 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, logical_K);
-      _Float16 scale = 1.0f;
-      _Float16 zero = 0.0f;
-#if KV_FUSED_SOURCE_CURSOR
+      kv_fused_arith_t scale = 1.0f;
+      kv_fused_arith_t zero = 0.0f;
+#if KV_FUSED_PREFILL_WARP_GROUP
+      compute_params_warp(
+          src, K, N, QBLK, SOURCE_QDIR, source_row, source_col_start,
+          src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+          source_view, prefill_lane, &scale, &zero);
+#elif KV_FUSED_SOURCE_CURSOR
       compute_params_qdir1_cursor(
           src, K, N, QBLK, source_row, source_col_start, src_layout,
           log2_qblk, log2_mt, log2_mxu_nt, quant_mode, source_view,
@@ -1047,7 +1205,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                      log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
 #endif
-      if (reuse_prefill_qparams) {
+      if (reuse_prefill_qparams
+          && (!KV_FUSED_PREFILL_WARP_GROUP || prefill_lane == 0u)) {
         store_reused_tiled_qparam(
             arg, scales, zeros, K, N, QBLK, GEMM_QDIR,
             SOURCE_TRANSPOSED, quant_mode, source_row, source_col_start,
@@ -1060,24 +1219,56 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
               (N + QBLK - 1u) >> log2_qblk;
           const uint32_t logical_index =
               source_row * logical_groups + group;
-          logical_scales[logical_index] = kv_fp16_to_bits(scale);
-          logical_zeros[logical_index] = kv_fp16_to_bits(zero);
+          logical_scales[logical_index] = fused_arith_to_bits(scale);
+          logical_zeros[logical_index] = fused_arith_to_bits(zero);
         }
       }
-      const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
-      const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+      const kv_fused_arith_t stored_scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+      const kv_fused_arith_t quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
 #if KV_FUSED_SOURCE_CURSOR
       source_row_cursor_t source_cursor = make_source_row_cursor(
           src, K, N, source_row, source_col_start, src_layout,
           log2_mt, log2_mxu_nt, source_view);
 #endif
+#if KV_FUSED_PREFILL_TILED_CHUNK
+      const uint32_t source_tile_size = 1u << log2_mxu_nt;
+      if (source_tile_size >= 4u && source_cursor.valid_row && source_col_end <= N
+          && source_cursor.within_tile == 0u
+          && source_cursor.tile_mask == source_tile_size - 1u
+          && source_tile_size == (1u << log2_mxu_kt)
+          && ((source_col_end - source_col_start) & (source_tile_size - 1u)) == 0u) {
+        const fp16_t* tile = src + source_cursor.offset;
+        for (uint32_t col = source_col_start; col < source_col_end;
+             col += source_tile_size) {
+          uint8_t* packed = weight + weight_offset_wtrans1(logical_K, logical_N, col, source_row, log2_kt, log2_mxu_kt, log2_mxu_nt);
+          auto packed_words = reinterpret_cast<uint16_t*>(packed);
+          for (uint32_t pair = 0; pair < source_tile_size / 2u; pair += 2u) {
+            const uint8_t q0 = quantize_loaded_value(
+                tile[2u * pair], quant_scale, zero, quant_mode);
+            const uint8_t q1 = quantize_loaded_value(
+                tile[2u * pair + 1u], quant_scale, zero, quant_mode);
+            const uint8_t q2 = quantize_loaded_value(
+                tile[2u * pair + 2u], quant_scale, zero, quant_mode);
+            const uint8_t q3 = quantize_loaded_value(
+                tile[2u * pair + 3u], quant_scale, zero, quant_mode);
+            packed_words[pair / 2u] = (uint16_t)((q0 & 0x0f)
+                | ((q1 & 0x0f) << 4) | ((q2 & 0x0f) << 8) | ((q3 & 0x0f) << 12));
+          }
+          tile += source_cursor.tile_advance + source_tile_size;
+        }
+        continue;
+      }
+#endif
 #if KV_FUSED_WEIGHT_CURSOR_WTRANS1
       weight_wtrans1_cursor_t weight_cursor = make_weight_wtrans1_cursor(
           logical_K, logical_N, source_col_start, source_row,
           log2_kt, log2_mxu_kt, log2_mxu_nt);
 #endif
-      for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
+      for (uint32_t source_col = source_col_start
+               + (KV_FUSED_PREFILL_WARP_GROUP ? 2u * prefill_lane : 0u);
+           source_col < source_col_end;
+           source_col += KV_FUSED_PREFILL_WARP_GROUP ? 2u * NUM_THREADS : 2u) {
 #if KV_FUSED_SOURCE_CURSOR
         bool valid0 = false;
         bool valid1 = false;
@@ -1118,7 +1309,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   } else if (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && SOURCE_QDIR == 1 && QBLK >= 2) {
     const uint32_t source_groups = (weight_N + QBLK - 1u) >> log2_qblk;
     const uint32_t source_group_work = weight_K * source_groups;
-    for (uint32_t work = thread_id; work < source_group_work; work += total_threads) {
+    for (uint32_t work = prefill_work_start; work < source_group_work;
+         work += prefill_work_stride) {
 #if KV_FUSED_SOURCE_GROUP1_FAST
       const uint32_t source_row =
           source_groups == 1u ? work : work / source_groups;
@@ -1130,9 +1322,14 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, weight_N);
-      _Float16 scale = 1.0f;
-      _Float16 zero = 0.0f;
-#if KV_FUSED_SOURCE_CURSOR
+      kv_fused_arith_t scale = 1.0f;
+      kv_fused_arith_t zero = 0.0f;
+#if KV_FUSED_PREFILL_WARP_GROUP
+      compute_params_warp(
+          src, K, N, QBLK, SOURCE_QDIR, source_row, source_col_start,
+          src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+          source_view, prefill_lane, &scale, &zero);
+#elif KV_FUSED_SOURCE_CURSOR
       compute_params_qdir1_cursor(
           src, K, N, QBLK, source_row, source_col_start, src_layout,
           log2_qblk, log2_mt, log2_mxu_nt, quant_mode, source_view,
@@ -1143,7 +1340,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                      log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
 #endif
-      if (reuse_prefill_qparams) {
+      if (reuse_prefill_qparams
+          && (!KV_FUSED_PREFILL_WARP_GROUP || prefill_lane == 0u)) {
         store_reused_tiled_qparam(
             arg, scales, zeros, K, N, QBLK, GEMM_QDIR,
             SOURCE_TRANSPOSED, quant_mode, source_row, source_col_start,
@@ -1156,24 +1354,56 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
               (N + QBLK - 1u) >> log2_qblk;
           const uint32_t logical_index =
               source_row * logical_groups + group;
-          logical_scales[logical_index] = kv_fp16_to_bits(scale);
-          logical_zeros[logical_index] = kv_fp16_to_bits(zero);
+          logical_scales[logical_index] = fused_arith_to_bits(scale);
+          logical_zeros[logical_index] = fused_arith_to_bits(zero);
         }
       }
-      const _Float16 stored_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
-      const _Float16 quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+      const kv_fused_arith_t stored_scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+      const kv_fused_arith_t quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
 #if KV_FUSED_SOURCE_CURSOR
       source_row_cursor_t source_cursor = make_source_row_cursor(
           src, K, N, source_row, source_col_start, src_layout,
           log2_mt, log2_mxu_nt, source_view);
 #endif
+#if KV_FUSED_PREFILL_TILED_CHUNK
+      const uint32_t source_tile_size = 1u << log2_mxu_nt;
+      if (source_tile_size >= 4u && source_cursor.valid_row && source_col_end <= N
+          && source_cursor.within_tile == 0u
+          && source_cursor.tile_mask == source_tile_size - 1u
+          && source_tile_size == (1u << log2_mxu_nt)
+          && ((source_col_end - source_col_start) & (source_tile_size - 1u)) == 0u) {
+        const fp16_t* tile = src + source_cursor.offset;
+        for (uint32_t col = source_col_start; col < source_col_end;
+             col += source_tile_size) {
+          uint8_t* packed = weight + weight_offset_wtrans0(weight_K, weight_N, source_row, col >> 1, log2_kt, log2_mxu_kt, log2_mxu_nt);
+          auto packed_words = reinterpret_cast<uint16_t*>(packed);
+          for (uint32_t pair = 0; pair < source_tile_size / 2u; pair += 2u) {
+            const uint8_t q0 = quantize_loaded_value(
+                tile[2u * pair], quant_scale, zero, quant_mode);
+            const uint8_t q1 = quantize_loaded_value(
+                tile[2u * pair + 1u], quant_scale, zero, quant_mode);
+            const uint8_t q2 = quantize_loaded_value(
+                tile[2u * pair + 2u], quant_scale, zero, quant_mode);
+            const uint8_t q3 = quantize_loaded_value(
+                tile[2u * pair + 3u], quant_scale, zero, quant_mode);
+            packed_words[pair / 2u] = (uint16_t)((q0 & 0x0f)
+                | ((q1 & 0x0f) << 4) | ((q2 & 0x0f) << 8) | ((q3 & 0x0f) << 12));
+          }
+          tile += source_cursor.tile_advance + source_tile_size;
+        }
+        continue;
+      }
+#endif
 #if KV_FUSED_WEIGHT_CURSOR_WTRANS0
       weight_wtrans0_cursor_t weight_cursor = make_weight_wtrans0_cursor(
           weight_K, weight_N, source_row, source_col_start >> 1,
           log2_kt, log2_mxu_kt, log2_mxu_nt);
 #endif
-      for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
+      for (uint32_t source_col = source_col_start
+               + (KV_FUSED_PREFILL_WARP_GROUP ? 2u * prefill_lane : 0u);
+           source_col < source_col_end;
+           source_col += KV_FUSED_PREFILL_WARP_GROUP ? 2u * NUM_THREADS : 2u) {
 #if KV_FUSED_SOURCE_CURSOR
         bool valid0 = false;
         bool valid1 = false;
@@ -1347,8 +1577,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
     const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
-    _Float16 scale = 1.0f;
-    _Float16 zero = 0.0f;
+    kv_fused_arith_t scale = 1.0f;
+    kv_fused_arith_t zero = 0.0f;
 #if KV_FUSED_QPARAM_WARP
     compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
                         source_row, source_col, src_layout,
@@ -1362,10 +1592,10 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                    source_view, &scale, &zero);
 #endif
-    store_u16(scales, dst_off, kv_fp16_to_bits(scale));
+    store_u16(scales, dst_off, fused_arith_to_bits(scale));
     store_u16(zeros, dst_off,
               quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                  ? 0u : (uint16_t)(int16_t)zero);
+                  ? 0u : fused_zero_storage(zero));
 #if KV_FUSED_QPARAM_WARP
     }
 #endif
@@ -1389,27 +1619,27 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         source_row = group_index / groups_per_row;
         source_col = (group_index % groups_per_row) << log2_qblk;
       }
-      _Float16 scale = 1.0f;
-      _Float16 zero = 0.0f;
+      kv_fused_arith_t scale = 1.0f;
+      kv_fused_arith_t zero = 0.0f;
       compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col,
                      src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
-      logical_scales[group_index] = kv_fp16_to_bits(scale);
-      logical_zeros[group_index] = kv_fp16_to_bits(zero);
+      logical_scales[group_index] = fused_arith_to_bits(scale);
+      logical_zeros[group_index] = fused_arith_to_bits(zero);
     }
   }
 }
 
 #if KV_FUSED_SPLIT_PERSISTENT
 __attribute__((noinline))
-fp16_t persistent_float_to_fp16(_Float16 value) {
-  return kv_fp16_to_bits(value);
+fp16_t persistent_float_to_fp16(kv_fused_arith_t value) {
+  return fused_arith_to_bits(value);
 }
 
 __attribute__((noinline))
 void persistent_store_qparams(kernel_arg_t *__UNIFORM__ arg,
-                              _Float16 scale,
-                              _Float16 zero,
+                              kv_fused_arith_t scale,
+                              kv_fused_arith_t zero,
                               uint32_t lane) {
   if (lane == 0) {
     auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
@@ -1422,7 +1652,7 @@ void persistent_store_qparams(kernel_arg_t *__UNIFORM__ arg,
     const uint16_t scale_bits = persistent_float_to_fp16(scale);
     const uint16_t tiled_zero_bits =
         arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-            ? 0u : (uint16_t)(int16_t)zero;
+            ? 0u : fused_zero_storage(zero);
 
     if (arg->GEMM_QDIR == 0) {
       const uint32_t nt_dma = position >> arg->log2_nt;
@@ -1478,16 +1708,16 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   const uint32_t lane = threadIdx.x;
   const fp16_t* token = src + arg->src_col_offset;
 
-  _Float16 min_v = kv_fp16_from_bits(token[0]);
-  _Float16 max_v = min_v;
+  kv_fused_arith_t min_v = fused_arith_from_bits(token[0]);
+  kv_fused_arith_t max_v = min_v;
   for (uint32_t n = lane; n < N; n += NUM_THREADS) {
-    const _Float16 value = kv_fp16_from_bits(token[n]);
+    const kv_fused_arith_t value = fused_arith_from_bits(token[n]);
     if (value < min_v) min_v = value;
     if (value > max_v) max_v = value;
   }
   for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const _Float16 other_min = shfl_down_float(min_v, offset);
-    const _Float16 other_max = shfl_down_float(max_v, offset);
+    const kv_fused_arith_t other_min = shfl_down_float(min_v, offset);
+    const kv_fused_arith_t other_max = shfl_down_float(max_v, offset);
     if (lane + offset < NUM_THREADS) {
       if (other_min < min_v) min_v = other_min;
       if (other_max > max_v) max_v = other_max;
@@ -1496,17 +1726,17 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
 
-  _Float16 scale;
-  _Float16 zero;
+  kv_fused_arith_t scale;
+  kv_fused_arith_t zero;
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const _Float16 abs_min = min_v < 0.0f ? -min_v : min_v;
-    const _Float16 abs_max = max_v < 0.0f ? -max_v : max_v;
-    _Float16 absmax = abs_min > abs_max ? abs_min : abs_max;
+    const kv_fused_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
+    const kv_fused_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
+    kv_fused_arith_t absmax = abs_min > abs_max ? abs_min : abs_max;
     if (absmax < 1e-8f) absmax = 1e-8f;
     scale = absmax / 7.5f;
     zero = 0.0f;
   } else {
-    const _Float16 range = max_v - min_v;
+    const kv_fused_arith_t range = max_v - min_v;
     scale =
         quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
     if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
@@ -1515,18 +1745,18 @@ void kernel_kv_cache_quant_layout_fused_persistent(
       scale = range / 15.0f;
     }
     if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-      zero = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+      zero = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
     } else {
-      int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
+      int32_t zp = legacy_zero(min_v, range, scale);
       if (zp < 0) zp = 0;
       if (zp > 15) zp = 15;
-      zero = (_Float16)zp;
+      zero = (kv_fused_arith_t)zp;
     }
   }
 
-  _Float16 quant_scale = scale;
+  kv_fused_arith_t quant_scale = scale;
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    quant_scale = kv_fp16_from_bits(kv_fp16_to_bits(scale));
+    quant_scale = fused_arith_from_bits(fused_arith_to_bits(scale));
   }
   const uint32_t cache_K = arg->cache_capacity;
   const uint32_t position = arg->cache_position;

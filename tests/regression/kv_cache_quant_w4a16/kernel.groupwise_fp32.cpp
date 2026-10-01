@@ -69,7 +69,7 @@ KV_QUANT_INLINE void make_qparams(float min_v,
       absmax = 1e-8f;
     }
     const float scale = absmax / 7.5f;
-    *scale_bits = float_to_fp16(scale);
+    *scale_bits = float_to_fp16_preserve(scale);
     *quant_scale = scale;
     *zp_out = 0;
     return;
@@ -94,10 +94,10 @@ KV_QUANT_INLINE void make_qparams(float min_v,
     if (zp < 0) zp = 0;
     if (zp > 15) zp = 15;
   }
-  *scale_bits = float_to_fp16(scale);
+  *scale_bits = float_to_fp16_preserve(scale);
   *quant_scale =
       quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-          ? fp16_to_float(*scale_bits)
+          ? fp16_to_float_preserve(*scale_bits)
           : scale;
   *zp_out = (int16_t)zp;
 }
@@ -114,7 +114,7 @@ KV_QUANT_INLINE void make_qparams_float(float min_v,
     float absmax = abs_min > abs_max ? abs_min : abs_max;
     if (absmax < 1e-8f) absmax = 1e-8f;
     const float scale = absmax / 7.5f;
-    *scale_bits = float_to_fp16(scale);
+    *scale_bits = float_to_fp16_preserve(scale);
     *quant_scale = scale;
     *zero_out = 0.0f;
     return;
@@ -139,10 +139,10 @@ KV_QUANT_INLINE void make_qparams_float(float min_v,
     if (zero > 15) zero = 15;
     *zero_out = (float)zero;
   }
-  *scale_bits = float_to_fp16(scale);
+  *scale_bits = float_to_fp16_preserve(scale);
   *quant_scale =
       quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-          ? fp16_to_float(*scale_bits)
+          ? fp16_to_float_preserve(*scale_bits)
           : scale;
 }
 
@@ -164,7 +164,7 @@ KV_QUANT_INLINE uint8_t quantize_loaded_value(fp16_t value_bits,
                                               float scale,
                                               float zero,
                                               uint32_t quant_mode) {
-  const float value = fp16_to_float(value_bits);
+  const float value = fp16_to_float_preserve(value_bits);
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     const float inv_scale = scale == 0.0f ? 0.0f : 1.0f / scale;
     return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
@@ -186,13 +186,13 @@ static void compute_params_baseline(const fp16_t* src,
                                     fp16_t* scale_bits_out,
                                     float* quant_scale_out,
                                     int16_t* zp_out) {
-  float min_v = fp16_to_float(src[(uint64_t)k * N + n]);
+  float min_v = fp16_to_float_preserve(src[(uint64_t)k * N + n]);
   float max_v = min_v;
   if (QDIR == 0) {
     const uint32_t k0 = (k / QBLK) * QBLK;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0; kk < k1; ++kk) {
-      const float v = fp16_to_float(src[(uint64_t)kk * N + n]);
+      const float v = fp16_to_float_preserve(src[(uint64_t)kk * N + n]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -200,7 +200,7 @@ static void compute_params_baseline(const fp16_t* src,
     const uint32_t n0 = (n / QBLK) * QBLK;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0; nn < n1; ++nn) {
-      const float v = fp16_to_float(src[(uint64_t)k * N + nn]);
+      const float v = fp16_to_float_preserve(src[(uint64_t)k * N + nn]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -238,10 +238,10 @@ static void quantize_baseline(kernel_arg_t* arg,
     zeros[qidx0] = zp0;
     zeros[qidx1] = zp1;
     const uint8_t q0 = quantize_value(
-        fp16_to_float(src[(uint64_t)k * N + n0]), scale0, zp0,
+        fp16_to_float_preserve(src[(uint64_t)k * N + n0]), scale0, zp0,
         arg->quant_mode);
     const uint8_t q1 = quantize_value(
-        fp16_to_float(src[(uint64_t)k * N + n1]), scale1, zp1,
+        fp16_to_float_preserve(src[(uint64_t)k * N + n1]), scale1, zp1,
         arg->quant_mode);
     kv_store_npair(dst, N, k, n_pair, q0, q1);
   }
@@ -265,7 +265,7 @@ static void quantize_qdir1_warp(kernel_arg_t* arg,
     float min_v = 3.402823466e+38F;
     float max_v = -3.402823466e+38F;
     for (uint32_t n = n0 + lane; n < n1; n += NUM_THREADS) {
-      const float v = fp16_to_float(src[(uint64_t)k * N + n]);
+      const float v = fp16_to_float_preserve(src[(uint64_t)k * N + n]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -295,8 +295,8 @@ static void quantize_qdir1_warp(kernel_arg_t* arg,
 }
 
 __attribute__((noinline))
-static fp16_t single_group_float_to_fp16(float value) {
-  return float_to_fp16(value);
+static fp16_t single_group_float_to_fp16_preserve(float value) {
+  return float_to_fp16_preserve(value);
 }
 
 __attribute__((noinline))
@@ -308,7 +308,7 @@ static void single_group_store_qparams(
   if (lane == 0) {
     auto scales = reinterpret_cast<fp16_t *>(arg->scale_addr);
     auto zeros = reinterpret_cast<int16_t *>(arg->zero_addr);
-    scales[0] = single_group_float_to_fp16(scale);
+    scales[0] = single_group_float_to_fp16_preserve(scale);
     zeros[0] = (int16_t)zero;
   }
 }
@@ -328,7 +328,7 @@ static void quantize_qdir1_single_group_warp(
   float min_v = 3.402823466e+38F;
   float max_v = -3.402823466e+38F;
   for (uint32_t n = lane; n < N; n += NUM_THREADS) {
-    const float value = fp16_to_float(src[n]);
+    const float value = fp16_to_float_preserve(src[n]);
     if (value < min_v) min_v = value;
     if (value > max_v) max_v = value;
   }
@@ -376,7 +376,7 @@ static void quantize_qdir1_single_group_warp(
   }
   float quant_scale = scale;
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    quant_scale = fp16_to_float(float_to_fp16(scale));
+    quant_scale = fp16_to_float_preserve(float_to_fp16_preserve(scale));
   }
   single_group_store_qparams(arg, scale, zero, lane);
 
@@ -411,10 +411,10 @@ static void quantize_qdir1_thread_group(kernel_arg_t* arg,
     const uint32_t n1 = min_u32(n0 + arg->QBLK, N);
     const fp16_t* row = src + (uint64_t)k * N;
 
-    float min_v = fp16_to_float(row[n0]);
+    float min_v = fp16_to_float_preserve(row[n0]);
     float max_v = min_v;
     for (uint32_t n = n0 + 1u; n < n1; ++n) {
-      const float value = fp16_to_float(row[n]);
+      const float value = fp16_to_float_preserve(row[n]);
       if (value < min_v) min_v = value;
       if (value > max_v) max_v = value;
     }
@@ -460,8 +460,8 @@ static void quantize_qdir0(kernel_arg_t* arg,
     float min0 = 3.402823466e+38F, max0 = -3.402823466e+38F;
     float min1 = 3.402823466e+38F, max1 = -3.402823466e+38F;
     for (uint32_t k = k0 + lane; k < k1; k += NUM_THREADS) {
-      const float v0 = fp16_to_float(src[(uint64_t)k * N + n0]);
-      const float v1 = fp16_to_float(src[(uint64_t)k * N + n1]);
+      const float v0 = fp16_to_float_preserve(src[(uint64_t)k * N + n0]);
+      const float v1 = fp16_to_float_preserve(src[(uint64_t)k * N + n1]);
       if (v0 < min0) min0 = v0;
       if (v0 > max0) max0 = v0;
       if (v1 < min1) min1 = v1;

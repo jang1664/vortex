@@ -8,14 +8,23 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 SRCS := $(SRC_DIR)/main.cpp
 
 KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT ?= prefill_reuse_inline_group1_source_weight_cursor
-KV_CACHE_QUANT_LAYOUT_FUSED_VARIANTS := baseline qparam_warp persistent_warp prefill_reuse prefill_reuse_inline_all prefill_reuse_inline_group1 prefill_reuse_inline_group1_cursor prefill_reuse_inline_group1_cursor_pow2 prefill_reuse_inline_group1_cursor_pow2_weight_cursor prefill_reuse_inline_group1_source_weight_cursor prefill_reuse_inline_group1_source_cursor_wtrans1_cursor
+KV_CACHE_QUANT_LAYOUT_FUSED_VARIANTS := baseline qparam_warp persistent_warp prefill_reuse prefill_reuse_inline_all prefill_reuse_inline_group1 prefill_reuse_inline_group1_cursor prefill_reuse_inline_group1_cursor_pow2 prefill_reuse_inline_group1_cursor_pow2_weight_cursor prefill_reuse_inline_group1_source_weight_cursor prefill_reuse_inline_group1_source_cursor_wtrans1_cursor prefill_warp_group prefill_group_fp32 prefill_tiled_chunk_fp32
 ifneq ($(filter $(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),$(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANTS)),$(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT))
   $(error Unsupported KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT=$(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT); expected one of: $(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANTS))
 endif
 
 VX_SRCS := $(SRC_DIR)/kernel.$(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT).cpp
 
-ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_reuse_inline_group1_source_cursor_wtrans1_cursor)
+ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_tiled_chunk_fp32)
+  CXXFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=13
+  VX_CFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=13
+else ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_group_fp32)
+  CXXFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=12
+  VX_CFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=12
+else ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_warp_group)
+  CXXFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=11
+  VX_CFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=11
+else ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_reuse_inline_group1_source_cursor_wtrans1_cursor)
   CXXFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=10
   VX_CFLAGS += -DKV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG=10
 else ifeq ($(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT),prefill_reuse_inline_group1_source_weight_cursor)
@@ -55,3 +64,7 @@ endif
 kernel.elf: $(SRC_DIR)/kernel.cpp
 
 include ../common.mk
+
+# Shared numeric helpers affect both source and variant wrappers.
+kernel.elf: $(VORTEX_HOME)/tests/regression/vector_common/fp16_preserve.h $(VORTEX_HOME)/tests/regression/kv_cache_common/kv_cache_w4a16.h
+$(PROJECT): $(VORTEX_HOME)/tests/regression/kv_cache_common/quant_host_patterns.h

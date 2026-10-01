@@ -1,4 +1,5 @@
 #include "host_common.h"
+#include "../kv_cache_common/quant_host_patterns.h"
 #include <vortex.h>
 #include <algorithm>
 #include <cmath>
@@ -350,7 +351,7 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out,
                             quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                                ? 0u : (uint16_t)(int16_t)fp16_to_float(zero_bits));
+                                ? 0u : kv_tiled_zero_bits(zero_bits));
               out += TILE_ELEM_BYTES;
             }
           }
@@ -374,7 +375,7 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out,
                             quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                                ? 0u : (uint16_t)(int16_t)fp16_to_float(zero_bits));
+                                ? 0u : kv_tiled_zero_bits(zero_bits));
               out += TILE_ELEM_BYTES;
             }
           }
@@ -564,6 +565,7 @@ static int run_persistent_update_test(uint32_t capacity,
 }
 
 int main(int argc, char *argv[]) {
+  const char* input_pattern = nullptr;
   uint32_t K = 32;
   uint32_t N = 32;
   uint32_t QBLK = 32;
@@ -590,6 +592,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--input-pattern") == 0) input_pattern = argv[++i];
     else if (strcmp(argv[i], "--mt") == 0) DMA_MT = atoi(argv[++i]);
     else if (strncmp(argv[i], "--mt=", 5) == 0) DMA_MT = atoi(argv[i] + 5);
     else if (strcmp(argv[i], "--kt") == 0) DMA_KT = atoi(argv[++i]);
@@ -722,6 +725,10 @@ int main(int argc, char *argv[]) {
   std::vector<uint8_t> h_zeros(scale_bytes);
   std::vector<uint8_t> h_ref_zeros(scale_bytes);
   init_src(h_src);
+  if (!set_quant_test_pattern(h_src, input_pattern)) {
+    printf("ERROR: unknown input pattern\n");
+    return 1;
+  }
   std::vector<fp16_t> h_src_combined((size_t)K * source_total_n, 0);
   for (uint32_t k = 0; k < K; ++k) {
     std::copy_n(h_src.begin() + (uint64_t)k * N, N,

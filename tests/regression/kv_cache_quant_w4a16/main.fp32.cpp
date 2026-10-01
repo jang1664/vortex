@@ -1,6 +1,7 @@
 #include "common.h"
 #include "host_variant.h"
 #include "../kv_cache_common/kv_cache_w4a16.h"
+#include "../kv_cache_common/quant_host_patterns.h"
 #include <vortex.h>
 #include <algorithm>
 #include <cstdio>
@@ -180,6 +181,7 @@ static void quantize_cpu(const std::vector<fp16_t>& src,
 }
 
 int main(int argc, char *argv[]) {
+  const char* input_pattern = nullptr;
   uint32_t K = 32;
   uint32_t N = 32;
   uint32_t QBLK = 16;
@@ -192,6 +194,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--input-pattern") == 0) input_pattern = argv[++i];
     else if (strcmp(argv[i], "--quant-mode") == 0)
       quant_mode = parse_kv_cache_quant_mode(argv[++i]);
     else if (strncmp(argv[i], "--quant-mode=", 13) == 0)
@@ -220,6 +223,10 @@ int main(int argc, char *argv[]) {
   std::vector<int16_t> h_zeros(qparam_elems);
   std::vector<int16_t> h_ref_zeros(qparam_elems);
   init_src(h_src);
+  if (!set_quant_test_pattern(h_src, input_pattern)) {
+    printf("ERROR: unknown input pattern\n");
+    return 1;
+  }
   quantize_cpu(h_src, h_ref_packed, h_ref_scales, h_ref_zeros,
                K, N, QBLK, QDIR, quant_mode);
 

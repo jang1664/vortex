@@ -2,9 +2,17 @@
 #define _KV_CACHE_W4A16_COMMON_H_
 
 #include "../vector_common/fp16.h"
+#include "../vector_common/fp16_preserve.h"
 #include <stdint.h>
 
 typedef _Float16 kv_fp16_arith_t;
+
+// Tiled zero storage follows the rounded FP16 correction parameter. Define
+// overflow explicitly instead of casting an infinity directly to int16_t.
+static inline uint16_t kv_tiled_zero_bits(fp16_t zero_bits) {
+  if ((zero_bits & 0x7c00u) == 0x7c00u) return 0;
+  return (uint16_t)(int32_t)fp16_to_float_preserve(zero_bits);
+}
 
 static inline kv_fp16_arith_t kv_fp16_from_bits(fp16_t bits) {
   union {
