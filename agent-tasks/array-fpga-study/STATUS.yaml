@@ -1,0 +1,20 @@
+
+### Native WoQ ablation — Iteration 1
+- **Status**: pass
+- **Error summary**: All requested deterministic compile/simulation checks passed.
+- **Root cause**: None reported by tools/verify_rtl.py.
+- **Fix applied**: None by verification agent. CLI simulator spelling corrected from verilator to supported vlt before iteration.
+- **Lesson**: verify_rtl.py uses --sim vlt for Verilator. Finite arithmetic models do not establish Xilinx IP or IEEE corner-case equivalence.
+- **Report**: build-array-fpga-study/array_fpga_test/verification.json
+- **Log**: /home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/logs/sim.log
+
+### Native synthesis and result reconciliation — complete
+- **Status**: pass
+- **Scope**: production-derived WoQ, native DSP mapping, U55C OOC + async RAM patch + opt_design
+- **Synthesis**: exit_code=0; 2054.9 seconds; blackboxes=0; no_clock=0; unconstrained_internal_endpoints=0
+- **Resources**: WoQ LUT=136565 FF=46280 DSP=1825 BRAM36eq=58 URAM=0
+- **Comparison**: WKV−WoQ LUT=10638 FF=4424 DSP=32; matched 256 KiB ACC
+- **Verification**: 31 synthesis-source hashes match passed bounded engine test; actual vendor IP latency/rate check passed
+- **Artifacts**: table and three PDF figures generated and visually reviewed; raw report hashes, CSV/JSON, IP parameters and C4 non-overlapping partition reconciled
+- **Artifact fixes**: historical baseline command JSONs are optional with missing provenance recorded; create nested output directories before writing new verification metadata
+- **Limits**: nominal 100 MHz arithmetic peak only; no P&R Fmax or power measurement; C4 is a separate historical routed scope; manuscript and production RTL unchanged

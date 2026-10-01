@@ -1,0 +1,15 @@
+engine,component,LUT,FF,DSP,RAMB36,RAMB18,URAM
+woq_16x16,MXU (PE + weight registers),20916,5268,416,0,0,0
+woq_16x16,Input scaler,0,0,0,0,0,0
+woq_16x16,Prealignment,4329,2398,0,0,0,0
+woq_16x16,Postprocessing,5436,3800,32,0,0,0
+woq_16x16,FP accumulation,9234,2176,0,0,0,0
+woq_16x16,ACC hard memory,0,0,0,56,4,0
+woq_16x16,Control/buffers/ACC glue,7409,5906,32,0,0,0
+wkv_16x16,MXU (PE + weight registers),22454,5268,416,0,0,0
+wkv_16x16,Input scaler,1537,1152,16,0,0,0
+wkv_16x16,Prealignment,3755,2670,0,0,0,0
+wkv_16x16,Postprocessing,6210,4113,32,0,0,0
+wkv_16x16,FP accumulation,7510,2176,0,0,0,0
+wkv_16x16,ACC hard memory,0,0,0,56,4,0
+wkv_16x16,Control/buffers/ACC glue,9604,6417,32,0,0,0

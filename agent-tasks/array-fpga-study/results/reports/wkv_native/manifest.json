@@ -1,0 +1,38 @@
+{
+  "top": "VX_gemm_unit_top",
+  "macs_per_cycle": 1024,
+  "target_clock_mhz": 100,
+  "part": "xcu55c-fsvh2892-2L-e",
+  "defines": [
+    "-DSYNTHESIS",
+    "-DNDEBUG",
+    "-DVIVADO",
+    "-DXLEN_64",
+    "-DFPU_DSP",
+    "-DTCU_DSP",
+    "-DMEM_ADDR_WIDTH=34",
+    "-DPLATFORM_MEMORY_NUM_BANKS=32",
+    "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
+    "-DPLATFORM_MERGED_MEMORY_INTERFACE",
+    "-DNUM_CLUSTERS=1",
+    "-DNUM_CORES=1",
+    "-DNUM_THREADS=32",
+    "-DEXT_TCU_ENABLE",
+    "-DDISABLE_BF16",
+    "-DDISABLE_TCU_INT",
+    "-DENABLE_GEMM_ACCEL",
+    "-DGEMM_IMPROVE",
+    "-DMXU_COL_TILE=32",
+    "-DGEMM_ACC_MEM_DEPTH=512",
+    "-DGEMM_ACC_USE_URAM=0"
+  ],
+  "ips": [
+    "xil_f16mul_latency1",
+    "xil_f32mul_latency1",
+    "xil_f32add_latency1"
+  ],
+  "ip_config_source": "/home/donghweeson/workspace/vortex/hw/scripts/xilinx_ip_gen.tcl",
+  "ip_config_sha256": "241b951de0151037df64b2a0dfa1481f0fc4b9ab0374d7374465450a18377fd6",
+  "wrapper_corrections": [],
+  "scope": "standalone compute unit including local control; GEMM includes internal ACC storage"
+}

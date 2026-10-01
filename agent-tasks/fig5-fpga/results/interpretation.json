@@ -1,0 +1,13 @@
+{
+  "engine_only_relative_GOPS_per_kLUT": 2.1918575029041527,
+  "with_memory_relative_GOPS_per_kLUT": 0.8688149256702834,
+  "relative_efficiency_retained": 0.39638294210236147,
+  "measurement": "Vivado 2025.1, U55C, OOC synthesis + existing async-RAM patch + opt_design",
+  "frequency": "100 MHz is a common reference for nominal throughput; no post-route Fmax/closure claim",
+  "integration": "Independent block cost sum, not a connected system or deployed C1/C4 measurement",
+  "memory": "512 KiB LMEM + 4 MiB cache fixed; BRAM storage reported separately; GEMM has additional 256 KiB internal ACC",
+  "topology": "LMEM full crossbar; cache retains current mixed crossbar/Omega; AXI output bank count fixed at 32",
+  "baseline": "Actual 8 x 4 x (2 x 4) FP16 TCU = 256 MAC/cycle, not an analytic 16x16 array",
+  "resource_caution": "GOPS/kLUT does not price DSP/BRAM cost; report all resources alongside it",
+  "scope": "GEMM unit including prealignment, scaling, accumulation and local control; no full SIMT core, host shell or system DMA"
+}

@@ -1,0 +1,31 @@
+{
+  "base_commit": "f1f6303b112e060e56f0512294bd86f2be373b26",
+  "changes": [
+    {
+      "file": "hw/rtl/VX_config.vh",
+      "before_sha256": "b0d1820e68c91a072f7aaf69a47a3f3363e4c434b24e37162954fc1dd5c5a785",
+      "after_sha256": "3432c8d5179f7d9642219c3e48837b0443a765b3f5568dd65909b182b1493128",
+      "edits": [
+        [
+          "(?m)^`define MXU_ROW 32",
+          "`define MXU_ROW 16"
+        ],
+        [
+          "(?m)^`define MXU_COL 32",
+          "`define MXU_COL 16"
+        ]
+      ]
+    },
+    {
+      "file": "hw/rtl/tcu/VX_tcu_pkg.sv",
+      "before_sha256": "9e382e9a26a12e5423039864b4ad0db4451100b853838be450401e7b220684d0",
+      "after_sha256": "17cc8231043a6c414db191de37f87ddb0556db045a384c898377c6b6c9169d9c",
+      "edits": [
+        [
+          "localparam TCU_DP = 0;",
+          "localparam TCU_DP = 2;"
+        ]
+      ]
+    }
+  ]
+}

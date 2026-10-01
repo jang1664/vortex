@@ -1,0 +1,36 @@
+{
+  "WKV_minus_WoQ": {
+    "LUT": 10638,
+    "FF": 4424,
+    "DSP": 32,
+    "RAMB36": 0,
+    "RAMB18": 0,
+    "URAM": 0,
+    "BRAM36eq": 0.0
+  },
+  "percent_over_WoQ": {
+    "LUT": 7.7896972137809835,
+    "FF": 9.559204840103716,
+    "DSP": 1.7534246575342465,
+    "RAMB36": 0.0,
+    "RAMB18": 0.0,
+    "URAM": null,
+    "BRAM36eq": 0.0
+  },
+  "input_scaler_counts": {
+    "LUT": 3360,
+    "FF": 2304,
+    "DSP": 32,
+    "RAMB36": 0,
+    "RAMB18": 0,
+    "URAM": 0
+  },
+  "input_scaler_percent_of_WKV": {
+    "LUT": 2.282562176042608,
+    "FF": 4.544020195645314,
+    "DSP": 1.7232094776521272,
+    "RAMB36": 0.0,
+    "RAMB18": 0.0,
+    "URAM": null
+  }
+}

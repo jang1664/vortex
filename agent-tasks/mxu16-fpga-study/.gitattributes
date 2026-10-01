@@ -1,0 +1,2 @@
+# Keep archived report/log bytes and their provenance hashes unchanged.
+results/** -text -whitespace

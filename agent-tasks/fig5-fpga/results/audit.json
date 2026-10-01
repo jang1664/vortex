@@ -1,0 +1,163 @@
+{
+  "git_commit": "f1f6303b112e060e56f0512294bd86f2be373b26",
+  "date": "2026-09-30",
+  "all_points_success": true,
+  "points": [
+    {
+      "point": "axi_2",
+      "top": "VX_axi_adapter",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "axi_2",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 134.7
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "c1462cc4f8b44da7c190545d8d72689c5f05a3eebfc051502844a15e69559a70",
+      "critical_warnings": [
+        "CRITICAL WARNING: [AsyncBRAM Patch] Read address not fully registered. Falling back to Asynchronous (Grounding)."
+      ],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/axi_2",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/axi_2/post_opt.dcp"
+    },
+    {
+      "point": "axi_8",
+      "top": "VX_axi_adapter",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "axi_8",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 196.7
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "e3276835fbe5d21a14d5a9f793e38cd12ef992fb2fc156712af9a2208d14dc22",
+      "critical_warnings": [
+        "CRITICAL WARNING: [AsyncBRAM Patch] Read address not fully registered. Falling back to Asynchronous (Grounding)."
+      ],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/axi_8",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/axi_8/post_opt.dcp"
+    },
+    {
+      "point": "cache_2",
+      "top": "VX_cache_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "cache_2",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 304.7
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "1eb168bd94689b5263ca04b0285caec6dd765315ca42354a0fc5d20dda240f3c",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/cache_2",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/cache_2/post_opt.dcp"
+    },
+    {
+      "point": "cache_8",
+      "top": "VX_cache_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "cache_8",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 681.7
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "db15f7148f2aedcb96fdc1d1a0d38a5112adc872770d92175f07f5d3ae967d1d",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/cache_8",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/cache_8/post_opt.dcp"
+    },
+    {
+      "point": "lmem_16",
+      "top": "VX_local_mem_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "lmem_16",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 164.6
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "77a621bb6b33ca7af7757295f14c8ec23d00d0edd04ee5366c86ef7123220e81",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/lmem_16",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/lmem_16/post_opt.dcp"
+    },
+    {
+      "point": "lmem_64",
+      "top": "VX_local_mem_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "lmem_64",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 728.3
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "8a8aee1893a5423f1c864e4b42baafc9d4541e16e69f8c75e481e637a6a7721a",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/lmem_64",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga/lmem_64/post_opt.dcp"
+    },
+    {
+      "point": "fpint_32x32",
+      "top": "VX_gemm_unit_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "fpint_32x32",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 1977.8
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "ec1b96134f440880664e5a36ccd1ce9d7d5965e932ffe57fdce23e14efc44340",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/post_opt.dcp"
+    },
+    {
+      "point": "tcu_fp16",
+      "top": "VX_tcu_top",
+      "part": "xcu55c-fsvh2892-2L-e",
+      "vivado": "2025.1",
+      "blackboxes": 0,
+      "status": {
+        "point": "tcu_fp16",
+        "exit_code": 0,
+        "success": true,
+        "elapsed_s": 1746.3
+      },
+      "clock_mhz": 100,
+      "unclocked_pins": 0,
+      "utilization_sha256": "24aa1b46822752659ef0ad712dc8ed74c530b648ef30995f16d52c0fd28f4c4e",
+      "critical_warnings": [],
+      "full_reports": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16",
+      "post_opt_checkpoint": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/tcu_fp16/post_opt.dcp"
+    }
+  ]
+}

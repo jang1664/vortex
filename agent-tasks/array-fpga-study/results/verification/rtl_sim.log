@@ -1,0 +1,24 @@
+QCOL equivalence and oracle: three K tiles, both weight/scale/zero banks, input gaps
+Post-reset QCOL operation checked
+WKV QROW plus column-load numerical sanity checked
+TEST PASSED seed=1234 compared_cycles=281 checked_lanes=576 low_ready_responses=4
+- /home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/tb_ablation.sv:352: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.028 2024-08-21
+- Verilator: $finish at 4us; walltime 0.667 s; speed 5.770 us/s
+- Verilator: cpu 0.666 s on 1 threads; alloced 644 MB
+QCOL equivalence and oracle: three K tiles, both weight/scale/zero banks, input gaps
+Post-reset QCOL operation checked
+WKV QROW plus column-load numerical sanity checked
+TEST PASSED seed=2027 compared_cycles=281 checked_lanes=576 low_ready_responses=4
+- /home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/tb_ablation.sv:352: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.028 2024-08-21
+- Verilator: $finish at 4us; walltime 0.785 s; speed 4.917 us/s
+- Verilator: cpu 0.782 s on 1 threads; alloced 644 MB
+QCOL equivalence and oracle: three K tiles, both weight/scale/zero banks, input gaps
+Post-reset QCOL operation checked
+WKV QROW plus column-load numerical sanity checked
+TEST PASSED seed=91 compared_cycles=281 checked_lanes=576 low_ready_responses=4
+- /home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_test/tb_ablation.sv:352: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.028 2024-08-21
+- Verilator: $finish at 4us; walltime 0.725 s; speed 5.296 us/s
+- Verilator: cpu 0.726 s on 1 threads; alloced 644 MB

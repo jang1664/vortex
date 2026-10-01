@@ -1,0 +1,58 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date         : Wed Sep 30 23:40:19 2026
+| Host         : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command      : report_utilization -hierarchical -hierarchical_depth 12 -file /home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/axi_1/hierarchy.rpt
+| Design       : VX_axi_adapter
+| Device       : xcu55c-fsvh2892-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++--------------------------------------------------------------------+--------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|                              Instance                              |                Module                | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++--------------------------------------------------------------------+--------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| VX_axi_adapter                                                     |                                (top) |       7576 |       7576 |       0 |    0 | 4270 |      0 |      0 |    0 |          0 |
+|   (VX_axi_adapter)                                                 |                                (top) |          1 |          1 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|   rsp_xbar                                                         |       VX_stream_xbar__parameterized0 |       7571 |       7571 |       0 |    0 | 4268 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_one_output.xbar_arb                           |                        VX_stream_arb |       7571 |       7571 |       0 |    0 | 4268 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.fanout_join_arb                      |        VX_stream_arb__parameterized1 |       1077 |       1077 |       0 |    0 |    4 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |   VX_generic_arbiter__parameterized0 |       1077 |       1077 |       0 |    0 |    4 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |        VX_rr_arbiter__parameterized0 |       1077 |       1077 |       0 |    0 |    4 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb     |        VX_stream_arb__parameterized0 |       1626 |       1626 |       0 |    0 | 1066 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb) |        VX_stream_arb__parameterized0 |       1061 |       1061 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |                VX_generic_arbiter_11 |        561 |        561 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |                     VX_rr_arbiter_14 |        561 |        561 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              | VX_elastic_buffer__parameterized0_12 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |                  VX_stream_buffer_13 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb     |      VX_stream_arb__parameterized0_0 |       1621 |       1621 |       0 |    0 | 1066 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb) |      VX_stream_arb__parameterized0_0 |       1061 |       1061 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |                 VX_generic_arbiter_7 |        556 |        556 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |                     VX_rr_arbiter_10 |        556 |        556 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_8 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |                   VX_stream_buffer_9 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb     |      VX_stream_arb__parameterized0_1 |       1621 |       1621 |       0 |    0 | 1066 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb) |      VX_stream_arb__parameterized0_1 |       1061 |       1061 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |                 VX_generic_arbiter_3 |        556 |        556 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |                      VX_rr_arbiter_6 |        556 |        556 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_4 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |                   VX_stream_buffer_5 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb     |      VX_stream_arb__parameterized0_2 |       1626 |       1626 |       0 |    0 | 1066 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb) |      VX_stream_arb__parameterized0_2 |       1061 |       1061 |       0 |    0 |    0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |                   VX_generic_arbiter |        561 |        561 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |                        VX_rr_arbiter |        561 |        561 |       0 |    0 |    8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |    VX_elastic_buffer__parameterized0 |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |                     VX_stream_buffer |          4 |          4 |       0 |    0 | 1058 |      0 |      0 |    0 |          0 |
++--------------------------------------------------------------------+--------------------------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+
