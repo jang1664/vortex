@@ -1,0 +1,1123 @@
+{
+  "woq_derived_native": [
+    {
+      "component": "MXU (PE + weight registers)",
+      "LUT": 83477,
+      "FF": 17533,
+      "DSP": 1696,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_mxu",
+          "line": 855
+        }
+      ]
+    },
+    {
+      "component": "Input scaler",
+      "LUT": 0,
+      "FF": 0,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": []
+    },
+    {
+      "component": "Prealignment",
+      "LUT": 9695,
+      "FF": 4850,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_in_pipe",
+          "line": 849
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_pre_proc_pipe_buffer",
+          "line": 987
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_prealign_max_exp_pipe",
+          "line": 992
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_prealigner",
+          "line": 995
+        }
+      ]
+    },
+    {
+      "component": "Postprocessing",
+      "LUT": 9488,
+      "FF": 7821,
+      "DSP": 65,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_fp32_to_fp16[6].u_f32_to_f16",
+          "line": 451
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_fp32_to_fp16[8].u_f32_to_f16",
+          "line": 452
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[0].u_int2fp",
+          "line": 453
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[10].u_int2fp",
+          "line": 458
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[11].u_int2fp",
+          "line": 463
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[12].u_int2fp",
+          "line": 468
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[13].u_int2fp",
+          "line": 473
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[14].u_int2fp",
+          "line": 478
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[15].u_int2fp",
+          "line": 483
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[16].u_int2fp",
+          "line": 488
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[17].u_int2fp",
+          "line": 493
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[18].u_int2fp",
+          "line": 498
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[19].u_int2fp",
+          "line": 503
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[1].u_int2fp",
+          "line": 512
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[20].u_int2fp",
+          "line": 517
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[21].u_int2fp",
+          "line": 522
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[22].u_int2fp",
+          "line": 527
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[23].u_int2fp",
+          "line": 532
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[24].u_int2fp",
+          "line": 537
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[25].u_int2fp",
+          "line": 542
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[26].u_int2fp",
+          "line": 547
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[27].u_int2fp",
+          "line": 552
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[28].u_int2fp",
+          "line": 557
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[29].u_int2fp",
+          "line": 562
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[2].u_int2fp",
+          "line": 567
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[30].u_int2fp",
+          "line": 572
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[31].u_int2fp",
+          "line": 577
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[3].u_int2fp",
+          "line": 582
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[4].u_int2fp",
+          "line": 587
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[5].u_int2fp",
+          "line": 592
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[6].u_int2fp",
+          "line": 597
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[7].u_int2fp",
+          "line": 602
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[8].u_int2fp",
+          "line": 607
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_int2fp[9].u_int2fp",
+          "line": 612
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[0].u_out_scaler",
+          "line": 617
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[10].u_out_scaler",
+          "line": 624
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[11].u_out_scaler",
+          "line": 631
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[12].u_out_scaler",
+          "line": 638
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[13].u_out_scaler",
+          "line": 645
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[14].u_out_scaler",
+          "line": 652
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[15].u_out_scaler",
+          "line": 659
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[16].u_out_scaler",
+          "line": 666
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[17].u_out_scaler",
+          "line": 673
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[18].u_out_scaler",
+          "line": 680
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[19].u_out_scaler",
+          "line": 687
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[1].u_out_scaler",
+          "line": 694
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[20].u_out_scaler",
+          "line": 701
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[21].u_out_scaler",
+          "line": 708
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[22].u_out_scaler",
+          "line": 715
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[23].u_out_scaler",
+          "line": 722
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[24].u_out_scaler",
+          "line": 729
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[25].u_out_scaler",
+          "line": 736
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[26].u_out_scaler",
+          "line": 743
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[27].u_out_scaler",
+          "line": 750
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[28].u_out_scaler",
+          "line": 757
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[29].u_out_scaler",
+          "line": 764
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[2].u_out_scaler",
+          "line": 771
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[30].u_out_scaler",
+          "line": 778
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[31].u_out_scaler",
+          "line": 785
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[3].u_out_scaler",
+          "line": 792
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[4].u_out_scaler",
+          "line": 799
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[5].u_out_scaler",
+          "line": 806
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[6].u_out_scaler",
+          "line": 813
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[7].u_out_scaler",
+          "line": 820
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[8].u_out_scaler",
+          "line": 827
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_out_scaler[9].u_out_scaler",
+          "line": 834
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/u_act_reduce",
+          "line": 840
+        }
+      ]
+    },
+    {
+      "component": "FP accumulation",
+      "LUT": 15205,
+      "FF": 4352,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[0].u_accumulator",
+          "line": 34
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[10].u_accumulator",
+          "line": 48
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[11].u_accumulator",
+          "line": 61
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[12].u_accumulator",
+          "line": 74
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[13].u_accumulator",
+          "line": 87
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[14].u_accumulator",
+          "line": 100
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[15].u_accumulator",
+          "line": 113
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[16].u_accumulator",
+          "line": 126
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[17].u_accumulator",
+          "line": 139
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[18].u_accumulator",
+          "line": 152
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[19].u_accumulator",
+          "line": 165
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[1].u_accumulator",
+          "line": 178
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[20].u_accumulator",
+          "line": 191
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[21].u_accumulator",
+          "line": 204
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[22].u_accumulator",
+          "line": 217
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[23].u_accumulator",
+          "line": 230
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[24].u_accumulator",
+          "line": 243
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[25].u_accumulator",
+          "line": 256
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[26].u_accumulator",
+          "line": 269
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[27].u_accumulator",
+          "line": 282
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[28].u_accumulator",
+          "line": 295
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[29].u_accumulator",
+          "line": 308
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[2].u_accumulator",
+          "line": 321
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[30].u_accumulator",
+          "line": 334
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[31].u_accumulator",
+          "line": 347
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[3].u_accumulator",
+          "line": 360
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[4].u_accumulator",
+          "line": 373
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[5].u_accumulator",
+          "line": 386
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[6].u_accumulator",
+          "line": 399
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[7].u_accumulator",
+          "line": 412
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[8].u_accumulator",
+          "line": 425
+        },
+        {
+          "path": "VX_gemm_unit_woq_top/gemm_unit/gen_accumulator[9].u_accumulator",
+          "line": 438
+        }
+      ]
+    },
+    {
+      "component": "ACC hard memory",
+      "LUT": 0,
+      "FF": 0,
+      "DSP": 0,
+      "RAMB36": 56,
+      "RAMB18": 4,
+      "URAM": 0,
+      "instances": [],
+      "note": "Only RAM primitives; all ACC glue remains in residual. Optimized hierarchy does not retain every bank."
+    },
+    {
+      "component": "Control/buffers/ACC glue",
+      "LUT": 18700,
+      "FF": 11724,
+      "DSP": 64,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [],
+      "note": "Top minus named groups; includes zero-point multiply, bypass, ACC glue, buffers, and attribution residual"
+    }
+  ],
+  "wkv_native": [
+    {
+      "component": "MXU (PE + weight registers)",
+      "LUT": 85725,
+      "FF": 17533,
+      "DSP": 1696,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_mxu",
+          "line": 1017
+        }
+      ]
+    },
+    {
+      "component": "Input scaler",
+      "LUT": 3360,
+      "FF": 2304,
+      "DSP": 32,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[0].u_in_scaler",
+          "line": 453
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[10].u_in_scaler",
+          "line": 458
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[11].u_in_scaler",
+          "line": 463
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[12].u_in_scaler",
+          "line": 468
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[13].u_in_scaler",
+          "line": 473
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[14].u_in_scaler",
+          "line": 478
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[15].u_in_scaler",
+          "line": 483
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[16].u_in_scaler",
+          "line": 488
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[17].u_in_scaler",
+          "line": 493
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[18].u_in_scaler",
+          "line": 498
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[19].u_in_scaler",
+          "line": 503
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[1].u_in_scaler",
+          "line": 508
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[20].u_in_scaler",
+          "line": 513
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[21].u_in_scaler",
+          "line": 518
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[22].u_in_scaler",
+          "line": 523
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[23].u_in_scaler",
+          "line": 528
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[24].u_in_scaler",
+          "line": 533
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[25].u_in_scaler",
+          "line": 538
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[26].u_in_scaler",
+          "line": 543
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[27].u_in_scaler",
+          "line": 548
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[28].u_in_scaler",
+          "line": 553
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[29].u_in_scaler",
+          "line": 558
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[2].u_in_scaler",
+          "line": 563
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[30].u_in_scaler",
+          "line": 568
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[31].u_in_scaler",
+          "line": 573
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[3].u_in_scaler",
+          "line": 578
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[4].u_in_scaler",
+          "line": 583
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[5].u_in_scaler",
+          "line": 588
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[6].u_in_scaler",
+          "line": 593
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[7].u_in_scaler",
+          "line": 598
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[8].u_in_scaler",
+          "line": 603
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_in_scaler[9].u_in_scaler",
+          "line": 608
+        }
+      ]
+    },
+    {
+      "component": "Prealignment",
+      "LUT": 10780,
+      "FF": 5394,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_in_pipe",
+          "line": 1011
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_pre_proc_pipe_buffer",
+          "line": 1149
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_prealign_max_exp_pipe",
+          "line": 1154
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_prealigner",
+          "line": 1157
+        }
+      ]
+    },
+    {
+      "component": "Postprocessing",
+      "LUT": 13209,
+      "FF": 8359,
+      "DSP": 65,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_fp32_to_fp16[6].u_f32_to_f16",
+          "line": 451
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_fp32_to_fp16[8].u_f32_to_f16",
+          "line": 452
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[0].u_int2fp",
+          "line": 613
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[10].u_int2fp",
+          "line": 618
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[11].u_int2fp",
+          "line": 623
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[12].u_int2fp",
+          "line": 628
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[13].u_int2fp",
+          "line": 633
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[14].u_int2fp",
+          "line": 638
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[15].u_int2fp",
+          "line": 643
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[16].u_int2fp",
+          "line": 648
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[17].u_int2fp",
+          "line": 653
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[18].u_int2fp",
+          "line": 658
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[19].u_int2fp",
+          "line": 663
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[1].u_int2fp",
+          "line": 672
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[20].u_int2fp",
+          "line": 677
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[21].u_int2fp",
+          "line": 682
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[22].u_int2fp",
+          "line": 687
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[23].u_int2fp",
+          "line": 692
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[24].u_int2fp",
+          "line": 697
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[25].u_int2fp",
+          "line": 702
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[26].u_int2fp",
+          "line": 707
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[27].u_int2fp",
+          "line": 712
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[28].u_int2fp",
+          "line": 717
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[29].u_int2fp",
+          "line": 722
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[2].u_int2fp",
+          "line": 727
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[30].u_int2fp",
+          "line": 732
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[31].u_int2fp",
+          "line": 737
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[3].u_int2fp",
+          "line": 742
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[4].u_int2fp",
+          "line": 747
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[5].u_int2fp",
+          "line": 752
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[6].u_int2fp",
+          "line": 757
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[7].u_int2fp",
+          "line": 762
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[8].u_int2fp",
+          "line": 767
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_int2fp[9].u_int2fp",
+          "line": 772
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[0].u_out_scaler",
+          "line": 777
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[10].u_out_scaler",
+          "line": 784
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[11].u_out_scaler",
+          "line": 791
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[12].u_out_scaler",
+          "line": 798
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[13].u_out_scaler",
+          "line": 805
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[14].u_out_scaler",
+          "line": 812
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[15].u_out_scaler",
+          "line": 819
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[16].u_out_scaler",
+          "line": 826
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[17].u_out_scaler",
+          "line": 833
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[18].u_out_scaler",
+          "line": 840
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[19].u_out_scaler",
+          "line": 847
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[1].u_out_scaler",
+          "line": 854
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[20].u_out_scaler",
+          "line": 861
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[21].u_out_scaler",
+          "line": 868
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[22].u_out_scaler",
+          "line": 875
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[23].u_out_scaler",
+          "line": 882
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[24].u_out_scaler",
+          "line": 889
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[25].u_out_scaler",
+          "line": 896
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[26].u_out_scaler",
+          "line": 903
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[27].u_out_scaler",
+          "line": 910
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[28].u_out_scaler",
+          "line": 917
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[29].u_out_scaler",
+          "line": 924
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[2].u_out_scaler",
+          "line": 931
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[30].u_out_scaler",
+          "line": 938
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[31].u_out_scaler",
+          "line": 945
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[3].u_out_scaler",
+          "line": 952
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[4].u_out_scaler",
+          "line": 959
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[5].u_out_scaler",
+          "line": 966
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[6].u_out_scaler",
+          "line": 973
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[7].u_out_scaler",
+          "line": 980
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[8].u_out_scaler",
+          "line": 987
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_out_scaler[9].u_out_scaler",
+          "line": 994
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_act_reduce",
+          "line": 1001
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/u_zp_mul_out_reg",
+          "line": 1173
+        }
+      ]
+    },
+    {
+      "component": "FP accumulation",
+      "LUT": 15205,
+      "FF": 4352,
+      "DSP": 0,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[0].u_accumulator",
+          "line": 34
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[10].u_accumulator",
+          "line": 48
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[11].u_accumulator",
+          "line": 61
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[12].u_accumulator",
+          "line": 74
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[13].u_accumulator",
+          "line": 87
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[14].u_accumulator",
+          "line": 100
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[15].u_accumulator",
+          "line": 113
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[16].u_accumulator",
+          "line": 126
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[17].u_accumulator",
+          "line": 139
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[18].u_accumulator",
+          "line": 152
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[19].u_accumulator",
+          "line": 165
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[1].u_accumulator",
+          "line": 178
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[20].u_accumulator",
+          "line": 191
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[21].u_accumulator",
+          "line": 204
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[22].u_accumulator",
+          "line": 217
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[23].u_accumulator",
+          "line": 230
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[24].u_accumulator",
+          "line": 243
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[25].u_accumulator",
+          "line": 256
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[26].u_accumulator",
+          "line": 269
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[27].u_accumulator",
+          "line": 282
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[28].u_accumulator",
+          "line": 295
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[29].u_accumulator",
+          "line": 308
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[2].u_accumulator",
+          "line": 321
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[30].u_accumulator",
+          "line": 334
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[31].u_accumulator",
+          "line": 347
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[3].u_accumulator",
+          "line": 360
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[4].u_accumulator",
+          "line": 373
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[5].u_accumulator",
+          "line": 386
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[6].u_accumulator",
+          "line": 399
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[7].u_accumulator",
+          "line": 412
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[8].u_accumulator",
+          "line": 425
+        },
+        {
+          "path": "VX_gemm_unit_top/gemm_unit/gen_accumulator[9].u_accumulator",
+          "line": 438
+        }
+      ]
+    },
+    {
+      "component": "ACC hard memory",
+      "LUT": 0,
+      "FF": 0,
+      "DSP": 0,
+      "RAMB36": 56,
+      "RAMB18": 4,
+      "URAM": 0,
+      "instances": [],
+      "note": "Only RAM primitives; all ACC glue remains in residual. Optimized hierarchy does not retain every bank."
+    },
+    {
+      "component": "Control/buffers/ACC glue",
+      "LUT": 18924,
+      "FF": 12762,
+      "DSP": 64,
+      "RAMB36": 0,
+      "RAMB18": 0,
+      "URAM": 0,
+      "instances": [],
+      "note": "Top minus named groups; includes zero-point multiply, bypass, ACC glue, buffers, and attribution residual"
+    }
+  ]
+}

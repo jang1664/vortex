@@ -1,0 +1,5 @@
+engine,scope,memory_points,LUT,FF,DSP,RAMB36,RAMB18,URAM,BRAM36eq,nominal_GOPS,GOPS_per_kLUT,GOPS_per_DSP
+fp_tcu_64,engine only,[],20930,32563,256,1,0,0,1.0,12.8,0.6115623506927855,0.05
+fp_tcu_64,engine + memory subsystem,"['lmem_8', 'cache_1', 'axi_1']",39064,47484,256,1202,7,0,1205.5,12.8,0.32766741757116524,0.05
+wkv_16x16,engine only,[],51070,21796,496,56,4,0,58.0,51.2,1.002545525748972,0.1032258064516129
+wkv_16x16,engine + memory subsystem,"['lmem_32', 'cache_4', 'axi_4']",190180,127852,496,1316,24,0,1328.0,51.2,0.26921863497738985,0.1032258064516129

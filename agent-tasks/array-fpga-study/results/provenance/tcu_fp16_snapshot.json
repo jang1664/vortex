@@ -1,0 +1,99 @@
+{
+  "defines": [
+    "-DSYNTHESIS",
+    "-DNDEBUG",
+    "-DVIVADO",
+    "-DXLEN_64",
+    "-DFPU_DSP",
+    "-DTCU_DSP",
+    "-DMEM_ADDR_WIDTH=34",
+    "-DPLATFORM_MEMORY_NUM_BANKS=32",
+    "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
+    "-DPLATFORM_MERGED_MEMORY_INTERFACE",
+    "-DNUM_CLUSTERS=1",
+    "-DNUM_CORES=1",
+    "-DNUM_THREADS=32",
+    "-DEXT_TCU_ENABLE",
+    "-DDISABLE_BF16",
+    "-DDISABLE_TCU_INT",
+    "-DENABLE_GEMM_ACCEL",
+    "-DGEMM_IMPROVE",
+    "-DMXU_COL_TILE=32",
+    "-DGEMM_ACC_MEM_DEPTH=512",
+    "-DGEMM_ACC_USE_URAM=0"
+  ],
+  "sources": [
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/VX_gpu_pkg.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_gpu_pkg.sv",
+      "sha256": "057cc7f6f59e69def4446066cf20fe241449c671ad95d6d97f4142c86909f5e7"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/interfaces/VX_execute_if.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_execute_if.sv",
+      "sha256": "3e2fb0538eb487f92b093cb9eac69b2a9277cf93949b3a908145ff3e988c5021"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/interfaces/VX_result_if.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_result_if.sv",
+      "sha256": "747dbba63c0d96ce5cb1094cb529ab4cd2e8c881d22ce95d21f6dd03d4ba9ed0"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_async_ram_patch.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_async_ram_patch.sv",
+      "sha256": "bd7f0d8e96ad348e62e0b418dc35e8787adb05283086124ae9d3517177d1cb01"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_dp_ram.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_dp_ram.sv",
+      "sha256": "a97296d0be219c5ffcd791dafa0e910f437e083ae19674715e024b26d7c20c1f"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_fifo_queue.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_fifo_queue.sv",
+      "sha256": "9596831371932d6e9ac50e738afc76622d49c85627129966fa47c27048b08a24"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_pending_size.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_pending_size.sv",
+      "sha256": "13a48bc0f83c24253efb1ac30970b196e90082d2322995d307e30f7a487fa811"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_pipe_register.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_pipe_register.sv",
+      "sha256": "b4b7a2ffc0135ef8d6f672de8755009084f87424452cdc4d7b9ab58a6a3d7987"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_placeholder.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_placeholder.sv",
+      "sha256": "b3d5f57412d2ff824537a7828117506bf1fe0081f904122dcdb818b5caef4920"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/libs/VX_shift_register.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_shift_register.sv",
+      "sha256": "e68d1a6b3040c7b8a306703b6baab86938d901eacc115ac213bce4d0121f9801"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/tcu/VX_tcu_fedp_dsp.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_tcu_fedp_dsp.sv",
+      "sha256": "ae08657b8d78f538ddce23cc46bf96edd9a8f00c556966118244e5e603319092"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/tcu/VX_tcu_fp.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_tcu_fp.sv",
+      "sha256": "99cfd85e0803b8f0760078ccb33cc83823aa0426c86452f01c45b666d42d73d0"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/tcu/VX_tcu_pkg.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_tcu_pkg.sv",
+      "sha256": "4f164e3ca7fc9d3f2de5e63ddd367454909e4dc5920932a73fc25c21f721052b"
+    },
+    {
+      "original": "/home/donghweeson/workspace/vortex/hw/rtl/tcu/VX_tcu_top.sv",
+      "snapshot": "/home/donghweeson/workspace/vortex/build-array-fpga-study/array_fpga_native/sources/tcu_fp16/VX_tcu_top.sv",
+      "sha256": "192d2bd44e3782d1e127fc5281abe4c2fec151901d8a762a7ea78dcbde89e4ec",
+      "before_wrapper_fix_sha256": "a90ca77e345cfa64870c726f7991ddbd6c1d0bf45eeb04824033f654f4fb1ce2",
+      "fix": "TCU execute_if instance rename (same as Fig.5)"
+    }
+  ]
+}

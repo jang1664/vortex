@@ -1,0 +1,2 @@
+# Preserve raw Vivado report bytes for the recorded SHA-256 hashes.
+results/reports/*/utilization.rpt -text -whitespace

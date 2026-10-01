@@ -1,0 +1,107 @@
+{
+  "top": "VX_gemm_unit_woq_top",
+  "point": "woq_16x16",
+  "part": "xcu55c-fsvh2892-2L-e",
+  "reference_MHz": 100,
+  "MAC_per_cycle": 256,
+  "dimensions": {
+    "TCU_M": 4,
+    "TCU_N": 4,
+    "TCU_K_packed": 2,
+    "TCU_FP16_per_word": 2,
+    "MXU_ROW": 16,
+    "MXU_COL": 16
+  },
+  "internal_ACC_KiB": 256,
+  "defines": [
+    "-DSYNTHESIS",
+    "-DNDEBUG",
+    "-DVIVADO",
+    "-DXLEN_64",
+    "-DFPU_DSP",
+    "-DTCU_DSP",
+    "-DMEM_ADDR_WIDTH=34",
+    "-DPLATFORM_MEMORY_NUM_BANKS=32",
+    "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
+    "-DPLATFORM_MERGED_MEMORY_INTERFACE",
+    "-DNUM_CLUSTERS=1",
+    "-DNUM_CORES=1",
+    "-DNUM_THREADS=16",
+    "-DEXT_TCU_ENABLE",
+    "-DDISABLE_BF16",
+    "-DDISABLE_TCU_INT",
+    "-DENABLE_GEMM_ACCEL",
+    "-DGEMM_IMPROVE",
+    "-DMXU_COL_TILE=16",
+    "-DGEMM_ACC_MEM_DEPTH=1024",
+    "-DGEMM_ACC_USE_URAM=0"
+  ],
+  "generics": {},
+  "rtl_edits": {
+    "base_commit": "f1f6303b112e060e56f0512294bd86f2be373b26",
+    "changes": [
+      {
+        "file": "hw/rtl/VX_config.vh",
+        "before_sha256": "b0d1820e68c91a072f7aaf69a47a3f3363e4c434b24e37162954fc1dd5c5a785",
+        "after_sha256": "3432c8d5179f7d9642219c3e48837b0443a765b3f5568dd65909b182b1493128",
+        "edits": [
+          [
+            "(?m)^`define MXU_ROW 32",
+            "`define MXU_ROW 16"
+          ],
+          [
+            "(?m)^`define MXU_COL 32",
+            "`define MXU_COL 16"
+          ]
+        ]
+      },
+      {
+        "file": "hw/rtl/tcu/VX_tcu_pkg.sv",
+        "before_sha256": "9e382e9a26a12e5423039864b4ad0db4451100b853838be450401e7b220684d0",
+        "after_sha256": "17cc8231043a6c414db191de37f87ddb0556db045a384c898377c6b6c9169d9c",
+        "edits": [
+          [
+            "localparam TCU_DP = 0;",
+            "localparam TCU_DP = 2;"
+          ]
+        ]
+      }
+    ]
+  },
+  "rtl_root": "/home/donghweeson/workspace/vortex-mxu16-rtl",
+  "sources": {
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gpu_pkg.sv": "334813c379a61000da6d08c9f0e2d2a665d0665dc6a8fc7c3a60453bd5459fca",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/cf_math_util_pkg.sv": "26d36c9242997178d1df7465f4969d813e67836a18adceb796d2f4689e04bf98",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_utils_pkg.sv": "6e8f7deaac8f7a86dbbe9100f72e5c3be767a6dfc50de94f00083690413b19f1",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_f32_to_f16.sv": "2108bb06c629e93a756e01a2cb89d600361d607c9b36ab3f0472c30ae10b51c3",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_fp16_mul.sv": "668d8a396cb993ba2f773f98eada6d69a0984364c52c143b58286ded56a69d55",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_fp32_add.sv": "61c00b54f7f310fba8c626be782c74dd9fdee37278184c5a31bcfea590765bdf",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_fp32_mul.sv": "835b8b84fa603425e0b6c1be40dc04e5ac661c2cc9afaff99b1a0f17b935df75",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gemm_tree_v1.sv": "35885d316950e0acea73d5665ddc540a3400c6bc08e63ae9d89458361670432b",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gemm_unit.sv": "54b171344d3c8104bcd446e76ab94353d4e0978eb595c472213459b5d6859213",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gemm_unit_if.sv": "b1cda3fe75794f62fe43528a14c0ac9151c73e579dc9e1c630255c48ecf3ce4e",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gemm_unit_woq_top.sv": "f6d888ac8ca88dcc1cb4f064d2157bb0ba5b77832537cef1cd3b332011f2b34a",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_gemm_weight_regs_v1.sv": "f76e66a91974e06b867586d2b7f5ababf8cba4c4991b49eda65f383186ab9108",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_pe_tree_new.sv": "ac5adbae3912fac363c6d35e233e150e6de089cdd315efdc8ad4887277ca574c",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_pint2fp.sv": "ea7da072585b1700292a6754792b4bc3b5eb9802919df65fe5f022a259bbb170",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_prealigner.sv": "7c97fecda01b664a59a801e86de89c02b7680af455eaf4b8b3feb2d194ff23ac",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_async_ram_patch.sv": "bd7f0d8e96ad348e62e0b418dc35e8787adb05283086124ae9d3517177d1cb01",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_dp_ram.sv": "a97296d0be219c5ffcd791dafa0e910f437e083ae19674715e024b26d7c20c1f",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_elastic_buffer.sv": "ddbcb29d97e07dd714d2bb36dd9136ab8e55156eef589321f370b080bb8bac94",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_fifo_queue.sv": "9596831371932d6e9ac50e738afc76622d49c85627129966fa47c27048b08a24",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_fifo_v2.sv": "1119c78a6837f4da18a795caedc04a9952c42e59005fa41a2107be73e86e3dca",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_find_first.sv": "59c0d77b06f4ba63c9b001fa5edf4a1b21285e80b39248246d5bd6459bdbfdca",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_lzc.sv": "35552af820d11451780e012c56e0e3d6981f795c6d230433af7ecc1439f919ca",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_pending_size.sv": "13a48bc0f83c24253efb1ac30970b196e90082d2322995d307e30f7a487fa811",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_pipe_buffer.sv": "13b0a25be12e1a8b5a1cf4cae5f68b8f220682c3907c4273a64a065418b426b9",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_pipe_register.sv": "b4b7a2ffc0135ef8d6f672de8755009084f87424452cdc4d7b9ab58a6a3d7987",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_placeholder.sv": "b3d5f57412d2ff824537a7828117506bf1fe0081f904122dcdb818b5caef4920",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_reduce_tree_pipelined_v2.sv": "0716c98d54a5762c1c6be1c88da5dff7b4a1f59e0a8ef91ceebac19f2bc8f05f",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_shift_register.sv": "e68d1a6b3040c7b8a306703b6baab86938d901eacc115ac213bce4d0121f9801",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_sp_ram.sv": "92da6c5318a83bce03cb5e0a3518895b8497c4f7734a3a2a2bf1102467564c76",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_stream_buffer.sv": "be756136162760bfdf24923443c8cf60a94403051bc8a85cde36c193296d5ffa",
+    "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/woq_16x16/VX_mem_bus_if.sv": "9863a541c5bfe71f3923e5d0bc6de76a0fa3e7ee11d28ccf7f004e7a29a9296e"
+  },
+  "ip_source_sha256": "241b951de0151037df64b2a0dfa1481f0fc4b9ab0374d7374465450a18377fd6",
+  "scope": "OOC synthesis + production async-RAM patch + opt_design; reference peak, not Fmax"
+}

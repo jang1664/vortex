@@ -1,0 +1,8 @@
+__pycache__/
+# Small, curated reference reports/plots are intentional versioned evidence.
+!results/
+!results/**
+results/**/*.dcp
+results/**/*.xpr
+results/**/*.wdb
+results/**/*.fsdb

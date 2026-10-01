@@ -1,0 +1,45 @@
+{
+  "created_utc": "2026-09-30T10:25:07.291098+00:00",
+  "git_head": "bc67d9555f9d6b31b761f4d617f04f80d33b9c0f",
+  "artifact_scope": "native OOC synthesis resource comparison plus separate historical C4 post-route attribution",
+  "checkpoint_sha256": {
+    "fp_tcu_native": "05836ecf762b3c4228581c025799854eba096b552c6396b3c6f1da83cd968355",
+    "woq_derived_native": "d5a718c22c404fd59bd3c439df5362481997545ebba2ed564bcd14a79d4ea136",
+    "wkv_native": "dff35b496aef076a2662f6abe600c2329934ee5052b5ea48245d165c68fc1b35"
+  },
+  "historical_command_available": {
+    "fp_tcu_native": false,
+    "woq_derived_native": true,
+    "wkv_native": false
+  },
+  "script_sha256": {
+    "agent-tasks/array-fpga-study/vendor_ip_sim.tcl": "1046f7bcbe68c7013bd9c5f81a336797314035481230f7c268dee768b13e3134",
+    "agent-tasks/array-fpga-study/vendor_ip_tb.sv": "772378c11fd5c7c39e38078acac4f4cedbbfe9e3a43078b6f3d476ac5eaf2265",
+    "agent-tasks/array-fpga-study/dump_dsp.tcl": "c277362765efc3709685bebeb835c1ed106c7c24364511882e91ad5382216f14",
+    "agent-tasks/array-fpga-study/collect_c4.py": "508129688fad72912b0a286a293dd40019ec985559616c6682ec4ae5c2413e9c",
+    "agent-tasks/array-fpga-study/resources.py": "865efede63a6fd7e97eb490f3af21eea08832e1961950d5d8786608d3ae92745",
+    "agent-tasks/array-fpga-study/check_vendor_ip.py": "09f81941f3a62c62b9af4a6c9fe6528133279aafa448a7a592fd799ba91d26e8",
+    "agent-tasks/array-fpga-study/plot_results.py": "c20768cf33dbcacf9629de21b29f4ae7940aa5a8cb75c1c33c3aad0bc9e1ccaa",
+    "agent-tasks/array-fpga-study/verify_results.py": "6896e01a8e490ba0b0bfbe7dbe8bb28d7797f880bf3d95a4eb7222f857805419",
+    "agent-tasks/array-fpga-study/collect_native.py": "7c6fa096b43d0a2e1229e6f3b46ceedc35972a964d04f3774202daa5da7f4975",
+    "agent-tasks/array-fpga-study/run_native.py": "08f722b8ae7ff8d45546c1bf7c4e27087820545253d1c5f27cc61c5e8d08d698",
+    "agent-tasks/array-fpga-study/prepare_test.py": "c90a5b044b6d72a7c8d6580ca586564d83616a18bc1ee38d1a60caa40c7f120e",
+    "agent-tasks/array-fpga-study/prepare_woq.py": "5ee98bbe0e8e2f307b805567c6ea6968ba8e5486b446407e9185e05ce0f40a20",
+    "agent-tasks/array-fpga-study/test/tb_ablation.sv": "115392e0ce7751a35847405f79c5c47286f3cbc7df33a97b45fc6b1308d37a6a",
+    "agent-tasks/array-fpga-study/test/fp_axis_models.sv": "b011740d2c8cb273f0f81e405c9b72b727b1cb58a74781161951092c9eba3121",
+    "agent-tasks/array-fpga-study/test/compile_test.py": "e767062cb910cb877ed97fb34c32202a6ad163a2db84a103893655879fd8bbbf",
+    "configs/array_fpga_native.sh": "ba6a7a55faee39fb317ba1613d9e18573a749827bccbbddac0ab24aa8cedd706",
+    "configs/fig5_fpga_compute.sh": "960f116308f61dce3c4bf4acc4721f7e22a7e6abded5585e21e88b8b7b565a0a",
+    "hw/scripts/xilinx_ip_gen.tcl": "241b951de0151037df64b2a0dfa1481f0fc4b9ab0374d7374465450a18377fd6",
+    "hw/scripts/xilinx_async_bram_patch.tcl": "0cfb4bcbebf5a9bca31fa23e715b0d21a76ea6c73cc0559eb8bd510ab5e31333",
+    "agent-tasks/fig5-fpga/run.py": "dcae597fbe861618a4cb77255e161e99398e43fa723a91e7422fd3267e11c813",
+    "agent-tasks/fig5-fpga/synth.tcl": "b069eceb606f70400cd115ebf45eb6288db1a7c7c86ef41570bf3f4e27f7c229",
+    "agent-tasks/fig5-fpga/report.tcl": "ebb7296c4668f83e3c1193feaa11749151a6ecaf00e0eb16d841ed815adb4a7c"
+  },
+  "frequency": "100 MHz reference only; no post-route Fmax or achieved throughput",
+  "functional_limitations": [
+    "Simulation-only finite directed arithmetic and AXI models; not Xilinx IP simulation or IEEE corner cases",
+    "Production output readout is a valid pulse independent of ready; low-ready test checks equivalence, not lossless backpressure",
+    "SYNTHESIS-preprocessed exact datapath; production simulation-only assertions are absent"
+  ]
+}

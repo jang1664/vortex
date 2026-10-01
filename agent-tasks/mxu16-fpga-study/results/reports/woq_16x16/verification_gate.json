@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "verification": {
+    "status": "pass",
+    "test_name": "array_fpga_test",
+    "error_log": "",
+    "log_file": "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/array_fpga_test/logs/sim.log"
+  },
+  "source_match": true
+}

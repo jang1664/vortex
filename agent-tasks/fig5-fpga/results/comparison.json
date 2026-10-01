@@ -1,0 +1,54 @@
+[
+  {
+    "point": "tcu_fp16",
+    "LUT": 80662,
+    "FF": 126202,
+    "DSP": 1024,
+    "BRAM_tiles": 1.0,
+    "URAM": 0,
+    "MAC_per_cycle": 256,
+    "scope": "engine only",
+    "nominal_GOPS_at_100MHz": 51.2,
+    "nominal_GOPS_per_kLUT": 0.6347474647293645,
+    "nominal_GOPS_per_DSP": 0.05
+  },
+  {
+    "point": "tcu_fp16",
+    "LUT": 128736,
+    "FF": 166843,
+    "DSP": 1024,
+    "BRAM_tiles": 1228.0,
+    "URAM": 0,
+    "MAC_per_cycle": 256,
+    "scope": "engine + memory subsystem",
+    "nominal_GOPS_at_100MHz": 51.2,
+    "nominal_GOPS_per_kLUT": 0.3977131493910018,
+    "nominal_GOPS_per_DSP": 0.05
+  },
+  {
+    "point": "fpint_32x32",
+    "LUT": 147203,
+    "FF": 50704,
+    "DSP": 1857,
+    "BRAM_tiles": 58.0,
+    "URAM": 0,
+    "MAC_per_cycle": 1024,
+    "scope": "engine only",
+    "nominal_GOPS_at_100MHz": 204.8,
+    "nominal_GOPS_per_kLUT": 1.3912759930164467,
+    "nominal_GOPS_per_DSP": 0.11028540656973614
+  },
+  {
+    "point": "fpint_32x32",
+    "LUT": 592697,
+    "FF": 363965,
+    "DSP": 1857,
+    "BRAM_tiles": 1418.0,
+    "URAM": 0,
+    "MAC_per_cycle": 1024,
+    "scope": "engine + memory subsystem",
+    "nominal_GOPS_at_100MHz": 204.8,
+    "nominal_GOPS_per_kLUT": 0.3455391203262375,
+    "nominal_GOPS_per_DSP": 0.11028540656973614
+  }
+]

@@ -1,0 +1,13 @@
+[
+  "/tool/Program/Xilinx/2025.1/Vivado/bin/vivado",
+  "-mode",
+  "batch",
+  "-source",
+  "/home/donghweeson/workspace/vortex/agent-tasks/fig5-fpga/synth.tcl",
+  "-tclargs",
+  "VX_cache_top",
+  "xcu55c-fsvh2892-2L-e",
+  "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/sources/cache_4/sources.txt",
+  "/home/donghweeson/workspace/vortex-mxu16-rtl/build-mxu16-fpga/mxu16_fpga/cache_4",
+  "NUM_REQS=4 NUM_BANKS=4 MEM_PORTS=4 CACHE_SIZE=4194304 LINE_SIZE=64 WORD_SIZE=16 NUM_WAYS=4 MSHR_SIZE=16 TAG_WIDTH=32 WRITEBACK=1 DIRTY_BYTES=0"
+]

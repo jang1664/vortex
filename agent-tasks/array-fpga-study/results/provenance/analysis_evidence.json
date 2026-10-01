@@ -1,0 +1,247 @@
+{
+  "status": "analysis_only_no_new_synthesis",
+  "date": "2026-09-30",
+  "rtl_commit": "f1f6303b112e060e56f0512294bd86f2be373b26",
+  "fig5_dataset": "agent-tasks/fig5-fpga/results/comparison.json",
+  "scaler_evidence": {
+    "report": "/home/donghweeson/workspace/vortex/build-fig5-fpga/fig5_fpga_compute/fpint_32x32/hierarchy.rpt",
+    "sha256": "77a5ed77853ad42cf01373e8b4e3fe5b1092d413fe7bcdaf00e6d9c0bcd74457",
+    "instances": [
+      {
+        "instance": "gen_in_scaler[0].u_in_scaler",
+        "line": 453,
+        "LUT": 97,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[10].u_in_scaler",
+        "line": 458,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[11].u_in_scaler",
+        "line": 463,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[12].u_in_scaler",
+        "line": 468,
+        "LUT": 108,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[13].u_in_scaler",
+        "line": 473,
+        "LUT": 126,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[14].u_in_scaler",
+        "line": 478,
+        "LUT": 104,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[15].u_in_scaler",
+        "line": 483,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[16].u_in_scaler",
+        "line": 488,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[17].u_in_scaler",
+        "line": 493,
+        "LUT": 124,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[18].u_in_scaler",
+        "line": 498,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[19].u_in_scaler",
+        "line": 503,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[1].u_in_scaler",
+        "line": 508,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[20].u_in_scaler",
+        "line": 513,
+        "LUT": 108,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[21].u_in_scaler",
+        "line": 518,
+        "LUT": 117,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[22].u_in_scaler",
+        "line": 523,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[23].u_in_scaler",
+        "line": 528,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[24].u_in_scaler",
+        "line": 533,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[25].u_in_scaler",
+        "line": 538,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[26].u_in_scaler",
+        "line": 543,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[27].u_in_scaler",
+        "line": 548,
+        "LUT": 104,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[28].u_in_scaler",
+        "line": 553,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[29].u_in_scaler",
+        "line": 558,
+        "LUT": 108,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[2].u_in_scaler",
+        "line": 563,
+        "LUT": 104,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[30].u_in_scaler",
+        "line": 568,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[31].u_in_scaler",
+        "line": 573,
+        "LUT": 112,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[3].u_in_scaler",
+        "line": 578,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[4].u_in_scaler",
+        "line": 583,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[5].u_in_scaler",
+        "line": 588,
+        "LUT": 108,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[6].u_in_scaler",
+        "line": 593,
+        "LUT": 96,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[7].u_in_scaler",
+        "line": 598,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[8].u_in_scaler",
+        "line": 603,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      },
+      {
+        "instance": "gen_in_scaler[9].u_in_scaler",
+        "line": 608,
+        "LUT": 106,
+        "FF": 72,
+        "DSP": 1
+      }
+    ],
+    "totals": {
+      "LUT": 3360,
+      "FF": 2304,
+      "DSP": 32
+    }
+  },
+  "c4_hierarchy": {
+    "report": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/hier_utilization.rpt",
+    "sha256": "db99b2b67c7e824db4c7c8f2cd652e2bb880ae875a9c3766bc9b9509e0f8c247",
+    "state": "Physopt postRoute",
+    "warning": "Separate historical build; do not mix counts with OOC engine scope"
+  }
+}
