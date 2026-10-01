@@ -1,0 +1,5 @@
+task: c1_c4_softmax_quant_compare
+status: complete
+mode: xrt-vcs-sim
+verification: All twelve runs passed CPU reference checks.
+report: SUMMARY.md

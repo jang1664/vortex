@@ -1,0 +1,69 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv",
+  "source": "/tmp/vortex_vector_compare_b5azyy67/source",
+  "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513",
+  "git_head": "58d48ee80e0c2bb3c8a3047b6df76e9b50115070",
+  "variants": {
+    "SOFTMAX_VARIANT": "rev2_shuffle_grouped",
+    "KV_CACHE_QUANT_VARIANT": "groupwise_fp16"
+  },
+  "makeflags": "FSDB_DUMP= CXX=/usr/bin/g++",
+  "first_check_seconds": 300,
+  "max_seconds": 2100,
+  "configs": [
+    {
+      "key": "C1",
+      "candidate": "C1",
+      "version": "requested",
+      "config": "tcu_th16_c1_v2.sh",
+      "alias": null,
+      "build": "/tmp/vortex_vector_compare_b5azyy67/source/build_C1",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513/C1"
+    },
+    {
+      "key": "C2",
+      "candidate": "C2",
+      "version": "requested",
+      "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2.sh",
+      "alias": null,
+      "build": "/tmp/vortex_vector_compare_b5azyy67/source/build_C2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513/C2"
+    },
+    {
+      "key": "C3",
+      "candidate": "C3",
+      "version": "requested",
+      "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh",
+      "alias": null,
+      "build": "/tmp/vortex_vector_compare_b5azyy67/source/build_C3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513/C3"
+    },
+    {
+      "key": "C4",
+      "candidate": "C4",
+      "version": "requested",
+      "config": "improve_th16_tcol16_m16_t8_bigmem_all_bram.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread",
+      "build": "/tmp/vortex_vector_compare_b5azyy67/source/build_C4",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513/C4"
+    }
+  ],
+  "workloads": [
+    {
+      "id": "softmax",
+      "app": "softmax",
+      "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1"
+    },
+    {
+      "id": "quant_k",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 0 -t 0 --quant-mode spinquant_signed_asymmetric"
+    },
+    {
+      "id": "quant_v",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+    }
+  ],
+  "c2_correction": "DMA_SPLIT_RSP_REORDER=1 was missing for two-port DMA and is now explicitly enabled."
+}

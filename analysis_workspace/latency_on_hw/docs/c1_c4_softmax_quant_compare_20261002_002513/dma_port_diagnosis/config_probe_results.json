@@ -1,0 +1,50 @@
+[
+  {
+    "candidate": "C1",
+    "values": {
+      "cpu_ports": 2,
+      "dcache_banks": 2,
+      "l1_mem_ports": 2,
+      "dma_ports": 1,
+      "lsu_lanes": 16,
+      "lsu_blocks": 1,
+      "line_bytes": 64
+    }
+  },
+  {
+    "candidate": "C2",
+    "values": {
+      "cpu_ports": 2,
+      "dcache_banks": 2,
+      "l1_mem_ports": 2,
+      "dma_ports": 2,
+      "lsu_lanes": 16,
+      "lsu_blocks": 1,
+      "line_bytes": 64
+    }
+  },
+  {
+    "candidate": "C3",
+    "values": {
+      "cpu_ports": 2,
+      "dcache_banks": 2,
+      "l1_mem_ports": 2,
+      "dma_ports": 2,
+      "lsu_lanes": 16,
+      "lsu_blocks": 1,
+      "line_bytes": 64
+    }
+  },
+  {
+    "candidate": "C4",
+    "values": {
+      "cpu_ports": 2,
+      "dcache_banks": 2,
+      "l1_mem_ports": 2,
+      "dma_ports": 1,
+      "lsu_lanes": 16,
+      "lsu_blocks": 1,
+      "line_bytes": 64
+    }
+  }
+]

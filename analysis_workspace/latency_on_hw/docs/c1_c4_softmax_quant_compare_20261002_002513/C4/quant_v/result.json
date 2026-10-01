@@ -1,0 +1,24 @@
+{
+  "key": "C4",
+  "candidate": "C4",
+  "version": "requested",
+  "config": "improve_th16_tcol16_m16_t8_bigmem_all_bram.sh",
+  "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread",
+  "workload": {
+    "id": "quant_v",
+    "app": "kv_cache_quant_w4a16",
+    "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+  },
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 197.538,
+  "build": "/tmp/vortex_vector_compare_b5azyy67/source/build_C4",
+  "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_softmax_quant_compare_20261002_002513/C4/quant_v/run.log",
+  "command": "set -e\nsource /tmp/vortex_vector_compare_b5azyy67/source/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram.sh\nci/run_black.sh xrt-vcs-sim --app kv_cache_quant_w4a16 --args '-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric'",
+  "perf_values_consistent": true,
+  "instrs": 1078114,
+  "cycles": 247016,
+  "ipc": 4.364551,
+  "kernel_sha256": "d2ed46d3ff6757abec657538226566199b11c903acce05c48bdd3a03f9d064ee"
+}
