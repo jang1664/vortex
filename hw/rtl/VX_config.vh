@@ -272,6 +272,14 @@
 `define LMEM_LOG_SIZE   21
 `endif
 
+// Physical capacity may be smaller than the power-of-two address envelope.
+// Keep this default usable by the generated software configuration header.
+`ifdef LMEM_SIZE
+`define LMEM_SIZE_OVERRIDE
+`else
+`define LMEM_SIZE (1 << `LMEM_LOG_SIZE)
+`endif
+
 `ifndef LMEM_USE_URAM
 `define LMEM_USE_URAM 1          // 0: BRAM, 1: URAM
 `endif

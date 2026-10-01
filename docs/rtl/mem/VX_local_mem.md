@@ -39,6 +39,22 @@
 
 **Static Assert**: `ADDR_WIDTH == BANK_ADDR_WIDTH + log2(NUM_BANKS)` 확인
 
+### Fractional physical capacity
+
+`SIZE` specifies the actual byte capacity, including non-power-of-two sizes.
+Each existing `VX_sp_ram` bank allocates exactly `SIZE / WORD_SIZE / NUM_BANKS`
+words; bank and interface address widths use ceiling log2. The bank count and
+word size must be positive powers of two, and the capacity must contain whole
+rows across all banks. With 1.5 MiB, 16 banks, and 8-byte words, each bank has
+12,288 words and a 14-bit address. No extra storage is allocated for the unused
+portion of the 2 MiB address envelope.
+
+At the core level, `LMEM_SIZE` defaults to `(1 << LMEM_LOG_SIZE)`. An explicit
+override must retain `LMEM_LOG_SIZE = ceil(log2(LMEM_SIZE))`. The LSU classifies
+only the actual byte range as local memory. Simulation rejects accepted
+fractional-capacity requests outside the actual word count with a fatal range
+assertion. Routing, transaction tags, and request/response buffering are unchanged.
+
 ---
 
 ## 핵심 블록 및 동작 흐름

@@ -51,14 +51,14 @@ static inline float input_float(fp16_t bits) {
 // Passing seq_len_k as the __local_mem stride lets the last resident warp run
 // past LMEM whenever seq_len_k exceeds this capacity (32768 for C4).
 static constexpr uint32_t kLocalScoreCapacity =
-    (((1u << LMEM_LOG_SIZE) / NUM_WARPS / (uint32_t)sizeof(float))
+    ((LMEM_SIZE / NUM_WARPS / (uint32_t)sizeof(float))
       / NUM_THREADS) * NUM_THREADS;
 static constexpr uint32_t kLocalScoreBytes =
     kLocalScoreCapacity * (uint32_t)sizeof(float);
 
 static_assert(kLocalScoreCapacity != 0,
               "LMEM is too small for one warp of softmax scores");
-static_assert(kLocalScoreBytes * NUM_WARPS <= (1u << LMEM_LOG_SIZE),
+static_assert(kLocalScoreBytes * NUM_WARPS <= LMEM_SIZE,
               "softmax score partitions exceed LMEM");
 
 static inline uint32_t float_to_bits(float value) {

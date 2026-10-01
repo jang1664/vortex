@@ -105,6 +105,9 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     // 0x40 : Low 32-bit Data signal of MEM
     // 0x44 : High 32-bit Data signal of MEM
     // 0x48 : Control signal of MEM
+`ifdef LMEM_SIZE_OVERRIDE
+    // 0xD0 : Exact physical local-memory capacity in bytes (Read Only)
+`endif
     // (SC = Self Clear, COR = Clear on Read, TOW = Toggle on Write, COH = Clear on Handshake)
 
     // Parameters
@@ -135,6 +138,10 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
         ADDR_DBG_CTRL   = 8'hCC,
     `endif
 
+    `ifdef LMEM_SIZE_OVERRIDE
+        ADDR_LMEM_SIZE  = 8'hD0,
+    `endif
+
         ADDR_BITS       = 8;
 
     localparam
@@ -155,11 +162,22 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     wire [63:0] dev_caps = {8'(`NUM_BARRIERS),
                             5'(MEMORY_BANK_ADDR_WIDTH-20),
                             3'(`CLOG2(`PLATFORM_MEMORY_NUM_BANKS)),
+`ifdef LMEM_SIZE_OVERRIDE
+                            {1'(`LMEM_ENABLED && (`LMEM_SIZE != (1 << `LMEM_LOG_SIZE))),
+                             7'(`LMEM_ENABLED ? `LMEM_LOG_SIZE : 0)},
+`else
                             8'(`LMEM_ENABLED ? `LMEM_LOG_SIZE : 0),
+`endif
                             16'(`NUM_CORES * `NUM_CLUSTERS),
                             8'(`NUM_WARPS),
                             8'(`NUM_THREADS),
                             8'(`IMPLEMENTATION_ID)};
+
+`ifdef LMEM_SIZE_OVERRIDE
+    if (`LMEM_LOG_SIZE >= 32 || `LMEM_SIZE <= 0) begin : g_invalid_lmem_capability
+        initial $error("LMEM capacity must fit the 32-bit exact-size capability register");
+    end
+`endif
 
     wire [63:0] isa_caps = {32'(`MISA_EXT),
                             2'(`CLOG2(`XLEN)-4),
@@ -463,6 +481,11 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
             ADDR_DEV_1: begin
                 rdata <= dev_caps[63:32];
             end
+        `ifdef LMEM_SIZE_OVERRIDE
+            ADDR_LMEM_SIZE: begin
+                rdata <= 32'(`LMEM_ENABLED ? `LMEM_SIZE : 0);
+            end
+        `endif
             ADDR_ISA_0: begin
                 rdata <= isa_caps[31:0];
             end

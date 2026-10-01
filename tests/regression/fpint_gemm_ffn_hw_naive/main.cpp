@@ -5,6 +5,9 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cerrno>
+#include <cctype>
+#include <limits>
 #include <vortex.h>
 #include "common.h"
 #include "../fpint_gemm_ffn_hw/test_vectors.h"
@@ -30,6 +33,7 @@ static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
 static bool TAGGED_VECTORS = false;
+static uint64_t LMEM_OFFSET_BYTES = 0;
 // Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
 // Used to isolate Vortex-core polling power from HW-GEMM power.
 static uint32_t POLL_ONLY_ITERS = 0;
@@ -99,16 +103,19 @@ static void show_usage() {
   std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
   std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
   std::cout << "       [--tagged] (directed A/W address-identity vectors)" << std::endl;
+  std::cout << "       [--lmem-offset BYTES] (scratch placement offset; default 0)" << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
 static constexpr int OPT_TAGGED = 0x101;
+static constexpr int OPT_LMEM_OFFSET = 0x102;
 
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
   {"tagged", no_argument, nullptr, OPT_TAGGED},
+  {"lmem-offset", required_argument, nullptr, OPT_LMEM_OFFSET},
   {nullptr, 0, nullptr, 0},
 };
 
@@ -126,6 +133,19 @@ static void parse_args(int argc, char **argv) {
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
     case OPT_TAGGED: TAGGED_VECTORS = true; break;
+    case OPT_LMEM_OFFSET: {
+      char* end = nullptr;
+      errno = 0;
+      const unsigned long long value = strtoull(optarg, &end, 0);
+      if (!std::isdigit(static_cast<unsigned char>(optarg[0]))
+          || errno == ERANGE || end == optarg || *end != '\0'
+          || value > std::numeric_limits<uint64_t>::max()) {
+        std::cerr << "Invalid --lmem-offset: " << optarg << std::endl;
+        exit(1);
+      }
+      LMEM_OFFSET_BYTES = static_cast<uint64_t>(value);
+      break;
+    }
     case OPT_POL:
       POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
       POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
@@ -303,14 +323,19 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 
   // LMEM address range: [LMEM_BASE_ADDRESS, LMEM_BASE_ADDRESS + local_mem_size)
   const uint64_t lmem_begin = LMEM_BASE_ADDRESS;
-  const uint64_t lmem_end   = LMEM_BASE_ADDRESS + local_mem_size;
-
-  uint64_t cur = lmem_begin;
+  if (local_mem_size > std::numeric_limits<uint64_t>::max() - lmem_begin
+      || LMEM_OFFSET_BYTES > local_mem_size)
+    return false;
+  const uint64_t lmem_end = lmem_begin + local_mem_size;
+  uint64_t cur = lmem_begin + LMEM_OFFSET_BYTES;
 
   auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
+    if (cur > std::numeric_limits<uint64_t>::max() - (LMEM_LAYOUT_ALIGN_BYTES - 1))
+      return false;
     cur = align_up_u64(cur, LMEM_LAYOUT_ALIGN_BYTES);
     if (cur > lmem_end) return false;
-    if (bytes > (lmem_end - cur)) return false;
+    if (bytes > (lmem_end - cur)
+        || align_up_u64(bytes, LMEM_LAYOUT_ALIGN_BYTES) > (lmem_end - cur)) return false;
     out_base = cur;
     cur += align_up_u64(bytes, LMEM_LAYOUT_ALIGN_BYTES);
     return true;
@@ -361,6 +386,7 @@ int main(int argc, char *argv[]) {
   std::cout << "M=" << M << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
             << ", QDIR=" << QDIR << ", REPS=" << REPS
+            << ", lmem_offset=" << LMEM_OFFSET_BYTES
             << ", vectors=" << (TAGGED_VECTORS ? "tagged" : "corrected-default") << std::endl;
 
   RT_CHECK(vx_dev_open(&device));
@@ -425,7 +451,8 @@ int main(int argc, char *argv[]) {
   std::cout << "  output_base=0x" << std::hex << kargs.output_base << std::dec << std::endl;
 
   if (!compute_lmem_layout(kargs, local_mem_size)) {
-    std::cerr << "LMEM layout does not fit device local memory (size=" << local_mem_size << ")" << std::endl;
+    std::cerr << "LMEM layout does not fit device local memory (size=" << local_mem_size
+              << ", offset=" << LMEM_OFFSET_BYTES << ")" << std::endl;
     cleanup();
     return -1;
   }

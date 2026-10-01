@@ -95,6 +95,12 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 `endif
 
     `VX_STATIC_ASSERT(ADDR_WIDTH == (BANK_ADDR_WIDTH + `CLOG2(NUM_BANKS)), ("invalid parameter"))
+    if (SIZE <= 0 || WORD_SIZE <= 0 || NUM_BANKS <= 0
+     || !`IS_POW2(NUM_BANKS) || !`IS_POW2(WORD_SIZE)
+     || !`IS_DIVISBLE(SIZE, WORD_SIZE * NUM_BANKS)
+     || ADDR_WIDTH != (BANK_ADDR_WIDTH + `CLOG2(NUM_BANKS))) begin : g_invalid_geometry
+        initial $error("invalid LMEM geometry: positive, whole bank rows and power-of-two banks/words with ceiling address width required");
+    end
 
 `ifndef LMEM_REQ_OMEGA_ENABLE
     `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
@@ -131,6 +137,18 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_bank_addr
         assign req_bank_addr[i] = mem_bus_if[i].req_data.addr[BANK_SEL_BITS +: BANK_ADDR_WIDTH];
         `UNUSED_VAR (mem_bus_if[i].req_data.flags)
+`ifdef SIMULATION
+        if (!`IS_POW2(SIZE)) begin : g_capacity_check
+            always @(posedge clk) begin
+                if (!reset && mem_bus_if[i].req_valid && mem_bus_if[i].req_ready) begin
+                    // Core buses carry system addresses; banks consume only local word bits.
+                    assert (int'($unsigned(ADDR_WIDTH'(mem_bus_if[i].req_data.addr))) < NUM_WORDS)
+                        else $fatal(1, "%s: LMEM access out of range: requester=%0d addr=0x%0h words=%0d",
+                                    INSTANCE_ID, i, mem_bus_if[i].req_data.addr, NUM_WORDS);
+                end
+            end
+        end
+`endif
     end
 
     // bank requests dispatch

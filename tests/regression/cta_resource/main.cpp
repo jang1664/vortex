@@ -273,7 +273,7 @@ int main() {
             << " default_num_barriers=" << NUM_BARRIERS << std::endl;
 
   if (num_threads != NUM_THREADS || num_warps != NUM_WARPS
-      || local_mem_size != (uint64_t{1} << LMEM_LOG_SIZE)) {
+      || local_mem_size != uint64_t(LMEM_SIZE)) {
     std::cerr << "Compiled resource profile does not match the device"
               << std::endl;
     cleanup();

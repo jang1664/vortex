@@ -12,7 +12,7 @@ using data_t = fp16_t;
 // align it to a full warp access.  Elements beyond the partition are
 // recomputed from input instead of spilling through the LMEM address window.
 static constexpr uint32_t kLocalScoreCapacity =
-    (((1u << LMEM_LOG_SIZE) / NUM_WARPS / (uint32_t)sizeof(float))
+    ((LMEM_SIZE / NUM_WARPS / (uint32_t)sizeof(float))
       / NUM_THREADS) * NUM_THREADS;
 static constexpr uint32_t kLocalScoreBytes =
     kLocalScoreCapacity * (uint32_t)sizeof(float);

@@ -59,6 +59,7 @@ using namespace vortex;
 #define MMIO_DCR_ADDR 0x20
 #define MMIO_SCP_ADDR 0x28
 #define MMIO_MEM_ADDR 0x30
+#define MMIO_LMEM_SIZE_ADDR 0xD0
 
 #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
 #ifndef HW_DEBUG_PC_RING_DEPTH
@@ -522,9 +523,29 @@ public:
     case VX_CAPS_GLOBAL_MEM_SIZE:
       _value = global_mem_size_;
       break;
-    case VX_CAPS_LOCAL_MEM_SIZE:
-      _value = 1ull << ((dev_caps_ >> 40) & 0xff);
+    case VX_CAPS_LOCAL_MEM_SIZE: {
+      // Legacy devices encode log2(bytes). Bit 7 advertises the exact-size
+      // register for local memories whose physical depth is not a power of two.
+      const uint32_t lmem_caps = (dev_caps_ >> 40) & 0xff;
+      const uint32_t log_size = lmem_caps & 0x7f;
+      if (log_size >= 64) {
+        fprintf(stderr, "[VXDRV] Error: invalid local memory address width: %u\n", log_size);
+        return -1;
+      }
+      _value = 1ull << log_size;
+      if (lmem_caps & 0x80) {
+        uint32_t size_bytes;
+        CHECK_ERR(this->read_register(MMIO_LMEM_SIZE_ADDR, &size_bytes), {
+          return err;
+        });
+        if (size_bytes == 0 || size_bytes > _value || size_bytes <= (_value >> 1)) {
+          fprintf(stderr, "[VXDRV] Error: invalid exact local memory size: %u\n", size_bytes);
+          return -1;
+        }
+        _value = size_bytes;
+      }
       break;
+    }
     case VX_CAPS_ISA_FLAGS:
       _value = isa_caps_;
       break;

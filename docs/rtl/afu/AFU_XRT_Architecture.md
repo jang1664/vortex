@@ -6,6 +6,22 @@
 
 **위치**: `hw/rtl/afu/xrt/`
 
+### Exact local-memory capacity capability
+
+An explicit `LMEM_SIZE` byte override selects `LMEM_SIZE_OVERRIDE` in
+`VX_config.vh`. For a fractional capacity, bit 7 of the DEV_CAPS local-memory
+byte (DEV_CAPS bit 47) is set; its lower seven bits retain `LMEM_LOG_SIZE`.
+The XRT runtime then reads the exact byte capacity from the read-only 32-bit
+register at `0xD0`. For example, 1.5 MiB reports a local-memory capability byte
+of `0x95` and returns `1572864` at `0xD0`.
+
+The `0xD0` register is compiled only for an explicit capacity override. Its
+reads return zero when local memory is disabled, and writes have no effect.
+Power-of-two overrides leave the capability marker clear. Without an override,
+the existing register decode and capability expression are selected unchanged.
+Old bitstreams remain compatible with the updated runtime; fractional-capacity
+bitstreams require that runtime to interpret the marker and read the exact size.
+
 ---
 
 ## 1. AFU의 역할

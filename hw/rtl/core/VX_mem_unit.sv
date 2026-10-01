@@ -48,8 +48,14 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
 `ifdef LMEM_ENABLE
 
-    `VX_STATIC_ASSERT(`IS_DIVISBLE((1 << `LMEM_LOG_SIZE), `MEM_BLOCK_SIZE), ("invalid parameter"))
+    `VX_STATIC_ASSERT(`IS_DIVISBLE(`LMEM_SIZE, `MEM_BLOCK_SIZE), ("invalid parameter"))
     `VX_STATIC_ASSERT(0 == (`LMEM_BASE_ADDR % (1 << `LMEM_LOG_SIZE)), ("invalid parameter"))
+`ifdef LMEM_SIZE_OVERRIDE
+    if (`LMEM_SIZE <= 0 || `LMEM_LOG_SIZE != `CLOG2(`LMEM_SIZE)
+     || !`IS_DIVISBLE(`LMEM_SIZE, `MEM_BLOCK_SIZE)) begin : g_invalid_lmem_capacity
+        initial $error("LMEM_SIZE must be positive, block aligned, and have LMEM_LOG_SIZE=ceil(log2(LMEM_SIZE))");
+    end
+`endif
 
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
     localparam CPU_LMEM_ARB_SEL_BITS = `ARB_SEL_BITS(`NUM_LSU_BLOCKS, 1);
@@ -264,7 +270,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
-        .SIZE       (1 << `LMEM_LOG_SIZE),
+        .SIZE       (`LMEM_SIZE),
 `ifdef GEMM_NAIVE
         .NUM_REQS   (`LMEM_NUM_PORTS),
 `else

@@ -82,7 +82,7 @@ Core::Core(const SimContext& ctx,
   // create local memory
   snprintf(sname, 100, "%s-lmem", this->name().c_str());
   local_mem_ = LocalMem::Create(sname, LocalMem::Config{
-    (1 << LMEM_LOG_SIZE),
+    LMEM_SIZE,
     LSU_WORD_SIZE,
     LSU_CHANNELS,
     log2ceil(LMEM_NUM_BANKS),

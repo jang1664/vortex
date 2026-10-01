@@ -758,7 +758,7 @@ inline AddrType get_addr_type(uint64_t addr) {
      return AddrType::IO;
   }
   if (LMEM_ENABLED) {
-    if (addr >= LMEM_BASE_ADDR && (addr-LMEM_BASE_ADDR) < (1 << LMEM_LOG_SIZE)) {
+    if (addr >= LMEM_BASE_ADDR && (addr-LMEM_BASE_ADDR) < LMEM_SIZE) {
         return AddrType::Shared;
     }
   }

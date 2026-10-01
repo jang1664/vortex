@@ -124,6 +124,7 @@ if { $patched_any == 1 } {
 
 set chipscope 0
 set hw_debug_module 0
+set lmem_size_override 0
 set num_banks 1
 set merged_mem_if 0
 # Top-level AXI master port count at vortex_afu.v — matches NUM_HBM_PORTS in VX_config.vh.
@@ -157,6 +158,9 @@ foreach def $vdefines_list {
     }
     if { $name == "ENABLE_HW_DEBUG_MODULE" } {
         set hw_debug_module 1
+    }
+    if { $name == "LMEM_SIZE" } {
+        set lmem_size_override 1
     }
     if { $name == "PLATFORM_MEMORY_NUM_BANKS" && $value ne "" } {
         set num_banks $value
@@ -216,6 +220,15 @@ if { $merged_mem_if == 1 } {
 
 set hw_debug_base 0xC0
 set mem_regs_end [expr {0x30 + $num_ports * 8}]
+set lmem_size_addr 0xD0
+if { $lmem_size_override == 1 } {
+    if { $mem_regs_end > $lmem_size_addr } {
+        error [format "LMEM_SIZE register 0x%02x overlaps MEM registers ending at 0x%02x" $lmem_size_addr $mem_regs_end]
+    }
+    if { (1 << $s_axi_ctrl_addr_width) < $lmem_size_addr + 4 } {
+        error "LMEM_SIZE register requires a larger C_S_AXI_CTRL_ADDR_WIDTH"
+    }
+}
 if { $hw_debug_module == 1 && $mem_regs_end > $hw_debug_base } {
     error [format "ENABLE_HW_DEBUG_MODULE register window 0x%02x overlaps MEM registers ending at 0x%02x; increase C_S_AXI_CTRL_ADDR_WIDTH and move the debug base" $hw_debug_base $mem_regs_end]
 }
@@ -617,6 +630,14 @@ set_property size           [expr {8*8}]   $reg
 # Associate the bus interface
 set regparam [::ipx::add_register_parameter ASSOCIATED_BUSIF $reg]
 set_property value m_axi_mem_$i $regparam
+}
+
+if { $lmem_size_override == 1 } {
+set reg [::ipx::add_register -quiet "LMEM_SIZE" $addr_block]
+set_property description    "Exact local memory capacity in bytes" $reg
+set_property address_offset $lmem_size_addr $reg
+set_property size           32 $reg
+set_property access         read-only $reg
 }
 
 if { $hw_debug_module == 1 } {

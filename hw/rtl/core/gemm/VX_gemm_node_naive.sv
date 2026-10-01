@@ -888,7 +888,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // LMEM consumes only its local word-address bits even though these lane
     // buses carry the full system word address.  Responses are associated by
     // the ACC adapter's read-slot tag because different slots may reorder.
-    localparam int PSUM_SHADOW_WORDS = (1 << `LMEM_LOG_SIZE) / LSU_WORD_SIZE;
+    localparam int PSUM_SHADOW_WORDS = `LMEM_SIZE / LSU_WORD_SIZE;
     localparam int PSUM_SHADOW_ADDRW = `CLOG2(PSUM_SHADOW_WORDS);
     localparam int PSUM_READ_SLOTW = `LOG2UP(GEMM_ACC_LMEM_READ_SLOTS);
     for (genvar l = 0; l < GEMM_PSUM_LANES; ++l) begin : g_psum_shadow_check
@@ -910,9 +910,20 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
           rd_addr_by_slot <= '{default:'0};
           rd_tag_by_slot <= '{default:'0};
         end else begin
-          if (psum_wr_lane_mem_if[l].req_valid && psum_wr_lane_mem_if[l].req_ready)
+          if (psum_wr_lane_mem_if[l].req_valid && psum_wr_lane_mem_if[l].req_ready) begin
+`ifdef LMEM_SIZE_OVERRIDE
+            assert (int'($unsigned(wr_shadow_addr)) < PSUM_SHADOW_WORDS)
+              else $fatal(1, "PSUM LMEM write out of range lane=%0d addr=0x%0h words=%0d",
+                          l, wr_shadow_addr, PSUM_SHADOW_WORDS);
+`endif
             psum_shadow[wr_shadow_addr] <= psum_wr_lane_mem_if[l].req_data.data;
+          end
           if (psum_rd_lane_mem_if[l].req_valid && psum_rd_lane_mem_if[l].req_ready) begin
+`ifdef LMEM_SIZE_OVERRIDE
+            assert (int'($unsigned(rd_shadow_addr)) < PSUM_SHADOW_WORDS)
+              else $fatal(1, "PSUM LMEM read out of range lane=%0d addr=0x%0h words=%0d",
+                          l, rd_shadow_addr, PSUM_SHADOW_WORDS);
+`endif
             assert (!rd_slot_valid[rd_req_slot])
               else $fatal(1, "PSUM LMEM read slot reused while live lane=%0d slot=%0d tag=0x%0h",
                           l, rd_req_slot, psum_rd_lane_mem_if[l].req_data.tag);

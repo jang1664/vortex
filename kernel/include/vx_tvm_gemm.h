@@ -133,7 +133,7 @@ static inline bool allocate_scratch(Scratch* scratch, uint32_t qblock,
   const uint64_t local_memory_base = uint64_t(LMEM_BASE_ADDR);
   uint64_t cursor = mode == VX_TVM_GEMM_MODE_NAIVE ? local_memory_base : 0;
   const uint64_t limit = mode == VX_TVM_GEMM_MODE_NAIVE
-                             ? local_memory_base + (uint64_t(1) << LMEM_LOG_SIZE)
+                             ? local_memory_base + uint64_t(LMEM_SIZE)
                              : uint64_t(TMEM_BANK_SIZE) * NUM_TMEM_BANKS;
 
   auto allocate = [&](uint64_t bytes, uint64_t* address) {

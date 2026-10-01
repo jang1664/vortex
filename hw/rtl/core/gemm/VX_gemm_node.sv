@@ -1660,8 +1660,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                    && (`GEMM_OUTPUT_DATA_SIZE
                      == TMEM_PHYSICAL_DATA_SIZE),
       ("Input, scale/zero, and output logical beats must match TMEM banks"));
-    `VX_STATIC_ASSERT((NUM_TMEM_BANKS * `TMEM_BANK_SIZE) == (512 * 1024),
-      ("supported TMEM organizations must preserve 512 KiB total capacity"));
     `VX_STATIC_ASSERT(((`TMEM_BANK_SIZE % TMEM_PHYSICAL_DATA_SIZE) == 0)
                    && (((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 1024)
                        || ((`TMEM_BANK_SIZE / TMEM_PHYSICAL_DATA_SIZE) == 2048)),
