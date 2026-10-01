@@ -49,3 +49,25 @@
 !/pnr-four-configs-20260929/*.json
 /pnr-four-configs-20260930/*/
 !/pnr-four-configs-20260930/*.json
+
+# Local September 30 PnR experiments: tool archives, config snapshots,
+# monitors, and runtime evidence. Reusable profiles live in configs/.
+/c4-vs-64300e5119-20260930/
+/implementation-directives-20260930/
+/pnr-c2-base-pnr-20260930/
+/pnr-c2-base-pnr-uram-sxbar-20260930/
+/pnr-c2-c3-spreadslls-20260930/
+/pnr-c2-c3-spreadslls-runprops-20260930/
+/pnr-c2-c3-uram-spreadlogic-high-20260930/
+/pnr-c2-spreadlogic-high-20260930/
+/pnr-c2-spreadlogic-high-tty-20260930/
+/pnr-c3-spreadlogic-high-20260930/
+/pnr-c4-bram-spreadlogic-high-20260930/
+/pnr-c4-uram-20260930/
+/pnr-c4-uram-spreadlogic-high-20260930/
+/u55c-spreadlogic-high-20260930/
+# Retain existing launch helpers/manifests, but stop tracking mutable state.
+/pnr-c4-boundary-20260930/STATUS.yaml
+/pnr-c4-boundary-20260930/events.jsonl
+/pnr-c4-boundary-20260930/status.json
+/pnr-c4-boundary-20260930/stop-*.json

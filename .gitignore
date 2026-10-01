@@ -171,3 +171,12 @@ docs/**/ooc/
 # and their generated log bundles regardless of the analysis name.
 /docs/hw_analysis/**/fsdb*/
 /docs/hw_analysis/**/logs/
+
+# Local FPGA analysis outputs; keep analysis code and authored documentation.
+/analysis_workspace/candidates_fpga_utils/reports/
+/analysis_workspace/candidates_fpga_utils/results/
+/analysis_workspace/candidates_fpga_utils/full_utilization_sources.json
+/analysis_workspace/latency_on_hw/diagnostics/*/measurement_sources.json
+/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/
+/analysis_workspace/synth_vs_pnr_utilization_20260930/inventory.json
+/analysis_workspace/synth_vs_pnr_utilization_20260930/summary.json

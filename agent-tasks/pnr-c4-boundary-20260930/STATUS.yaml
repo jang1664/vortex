@@ -1,9 +1,0 @@
-task: c4-boundary-pnr
-state: RUNNING
-updated: "2026-09-30T11:41:25+09:00"
-commit: 9522bf55e787218069425b56e525e17d175cc8a6
-details: status.json
-history: events.jsonl
-pitfalls:
-  - Platform name lookup is ambiguous; use the absolute xpfm path.
-  - Disk space is monitored; existing outputs are preserved with a unique postfix.
