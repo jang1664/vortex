@@ -462,6 +462,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)
     ) dcache_dma_lane_if[`DMA_DCACHE_PORTS]();
 
+`ifdef GEMM_NAIVE
+    `VX_STATIC_ASSERT(`DMA_DCACHE_PORTS <= 1 || `DMA_SPLIT_RSP_REORDER == 1,
+        ("DMA_DCACHE_PORTS > 1 requires DMA_SPLIT_RSP_REORDER=1"))
+`endif
+
     if (`DMA_DCACHE_PORTS == 1) begin : g_single_dma_dcache_port
         `ASSIGN_VX_MEM_BUS_IF(dcache_dma_lane_if[0], dma_global_data_if);
     end else begin : g_split_dma_dcache_ports
