@@ -61,6 +61,12 @@ ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
   requests extra compile-time defines; prefer the alias config as the source of
   truth.
 
+- If you need to run simulation with multiple configurations, make more build_<postfix> directory and run "../configure" and use it. It prevents overwriting vcs binary and kernel binary.
+
+## FPGA PnR rule
+- goto build/hw/syn/xilinx/xrt. If it doesn't exist, make. And then, run "../configure". use run_hw.sh with --config to run pnr.
+- use run_hw.sh with --postfix if default output folder already exist.
+
 ## Naive GEMM changes: preserve improve
 
 - Changes to naive must leave improve latency and hardware cost unchanged under identical configuration, workload, tools, and constraints.
