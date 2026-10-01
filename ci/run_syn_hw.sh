@@ -63,6 +63,8 @@ enable their Makefile features; omit or unset them to disable those features.
 Set PLATFORM in the environment to override the default U55C platform name,
 including with an absolute .xpfm path when platform-name lookup is ambiguous.
 CLOCK_FREQ_HZ overrides the default kernel clock of 100 (MHz in the Makefile).
+Export PLACE_DESIGN_DIRECTIVE and ROUTE_DESIGN_DIRECTIVE in the config to select
+Vivado implementation directives. Unset or empty values use the tool defaults.
 
 Configure the build root before running this script, for example from build/:
   ../configure --xlen=64 --tooldir=/opt/vortex --prefix="$HOME/tools/vortex"
@@ -214,6 +216,8 @@ fi
 
 PERF_VALUE="${PERF_VALUE:-${PERF:-}}"
 DEBUG_VALUE="${DEBUG_VALUE:-${DEBUG:-}}"
+PLACE_DESIGN_DIRECTIVE_VALUE="${PLACE_DESIGN_DIRECTIVE:-}"
+ROUTE_DESIGN_DIRECTIVE_VALUE="${ROUTE_DESIGN_DIRECTIVE:-}"
 [[ -z "${PERF_VALUE}" || "${PERF_VALUE}" =~ ^[0-9]+$ ]] || fail "PERF must be an integer"
 [[ -z "${DEBUG_VALUE}" || "${DEBUG_VALUE}" =~ ^[0-9]+$ ]] || fail "DEBUG must be an integer"
 
@@ -229,6 +233,8 @@ MAKE_ENV=(
   "TARGET=${TARGET}"
   "CLOCK_FREQ_HZ=${CLOCK_FREQ_HZ}"
   "CONGESTION_FAIL_FAST=${CONGESTION_FAIL_FAST_VALUE}"
+  "PLACE_DESIGN_DIRECTIVE=${PLACE_DESIGN_DIRECTIVE_VALUE}"
+  "ROUTE_DESIGN_DIRECTIVE=${ROUTE_DESIGN_DIRECTIVE_VALUE}"
   "PERF=${PERF_VALUE}"
   "DEBUG=${DEBUG_VALUE}"
 )
@@ -238,6 +244,8 @@ echo "Build:  ${SYNTH_DIR}"
 echo "Prefix: ${PREFIX}"
 echo "PERF:   ${PERF_VALUE:-disabled}"
 echo "DEBUG:  ${DEBUG_VALUE:-disabled}"
+echo "Place directive: ${PLACE_DESIGN_DIRECTIVE_VALUE:-default}"
+echo "Route directive: ${ROUTE_DESIGN_DIRECTIVE_VALUE:-default}"
 echo "Congestion early fail: $([[ "${CONGESTION_FAIL_FAST_VALUE}" == 1 ]] && echo enabled || echo disabled)"
 
 env "${MAKE_ENV[@]}" make 2>&1 | tee "${OUTPUT_DIR}/${PREFIX}.log"

@@ -70,6 +70,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin
     configs: configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh
 
+  th32_c1_naive_m32_tcol32_uram:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_242e92e4e7/bin
+    configs: configs/th32_c1_naive_m32_tcol32_uram.sh
+
   C3: *C3_
 
   C3_v2: *naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_

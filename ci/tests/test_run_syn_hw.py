@@ -48,7 +48,8 @@ raise SystemExit(int(os.environ.get('STUB_MAKE_EXIT', '0')))
         stub.chmod(0o755)
         self.env = os.environ.copy()
         for name in ('BUILD_DIR', 'PERF', 'DEBUG', 'CONGESTION_FAIL_FAST',
-                     'GEMM_MXU_SLR_FLOORPLAN', 'PLATFORM', 'CLOCK_FREQ_HZ'):
+                     'GEMM_MXU_SLR_FLOORPLAN', 'PLATFORM', 'CLOCK_FREQ_HZ',
+                     'PLACE_DESIGN_DIRECTIVE', 'ROUTE_DESIGN_DIRECTIVE'):
             self.env.pop(name, None)
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ['PATH'],
                         MAKE_OBSERVATION=str(self.observation))
@@ -80,10 +81,33 @@ raise SystemExit(int(os.environ.get('STUB_MAKE_EXIT', '0')))
             with self.subTest(profile=profile):
                 env = self.assert_build(self.launch(config='configs/'+profile+'.sh'), self.build)
                 self.assertEqual(env['PREFIX'], profile)
+                place, route = {
+                    PROFILES[0]: ('', ''),
+                    PROFILES[1]: ('SSI_SpreadSLLs', 'Default'),
+                    PROFILES[2]: ('SSI_SpreadSLLs', 'Default'),
+                    PROFILES[3]: ('SSI_SpreadLogic_high', 'Default'),
+                }[profile]
+                self.assertEqual(env['PLACE_DESIGN_DIRECTIVE'], place)
+                self.assertEqual(env['ROUTE_DESIGN_DIRECTIVE'], route)
                 self.assertIn('-DNUM_THREADS=32', env['CONFIGS'])
                 gemm = profile != PROFILES[0]
                 self.assertEqual('-DGEMM_SLR_PIPELINE' in env['CONFIGS'].split(), gemm)
                 self.assertEqual(env.get('GEMM_MXU_SLR_FLOORPLAN'), '1' if gemm else None)
+
+    def test_directives_are_displayed_and_can_be_cleared(self):
+        result = self.launch()
+        self.assert_build(result, self.build)
+        self.assertIn('Place directive: SSI_SpreadSLLs', result.stdout)
+        self.assertIn('Route directive: Default', result.stdout)
+        (self.repo/'configs/default_directives.sh').write_text(
+            'source configs/'+PROFILES[2]+'.sh\n'
+            'export PLACE_DESIGN_DIRECTIVE=\nexport ROUTE_DESIGN_DIRECTIVE=\n')
+        result = self.launch(config='default_directives')
+        env = self.assert_build(result, self.build)
+        self.assertEqual(env['PLACE_DESIGN_DIRECTIVE'], '')
+        self.assertEqual(env['ROUTE_DESIGN_DIRECTIVE'], '')
+        self.assertIn('Place directive: default', result.stdout)
+        self.assertIn('Route directive: default', result.stdout)
 
     def test_source_entry_from_source_defaults_to_repo_build(self):
         self.assert_build(self.launch(entry=self.script, cwd=self.repo), self.build)

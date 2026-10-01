@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import os
 import subprocess
 import tempfile
 import types
@@ -10,6 +11,7 @@ from pathlib import Path
 
 XRT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = XRT_DIR.parents[3]
+BUILD_ROOT = Path(os.environ.get("VORTEX_TEST_BUILD_DIR", REPO_ROOT / "build"))
 
 
 def load_generator():
@@ -35,6 +37,8 @@ def make_args(**overrides):
         "profile": False,
         "disable_congestion_fail_fast": False,
         "mxu_slr_floorplan": False,
+        "place_directive": None,
+        "route_directive": None,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -97,8 +101,46 @@ class GenVitisIniTest(unittest.TestCase):
         self.assertFalse(any("STEPS.OPT_DESIGN.TCL.POST" in line for line in lines))
         self.assertFalse(any("PLACE_DESIGN.TCL.POST" in line for line in lines))
 
+    def test_place_and_route_directives_are_hardware_only(self):
+        for target in ("hw", "hw_emu"):
+            with self.subTest(target=target):
+                lines = self.vivado_lines(target=target, place_directive="SSI_SpreadSLLs",
+                                          route_directive="AlternateCLBRouting")
+                for step, directive in (("PLACE_DESIGN", "SSI_SpreadSLLs"),
+                                        ("ROUTE_DESIGN", "AlternateCLBRouting")):
+                    property_line = f"prop=run.impl_1.STEPS.{step}.ARGS.DIRECTIVE={directive}"
+                    self.assertEqual(property_line in lines, target == "hw")
+        self.assertFalse(any("ARGS.DIRECTIVE" in line for line in self.vivado_lines()))
+
+    def test_active_configs_export_directives(self):
+        for name in ("tcu_th32_c1_rev3", "th32_c1_tcu_naive_m32_tcol32",
+                     "th32_c1_naive_m32_tcol32", "th32_c1_improve_m32_tcol32"):
+            with self.subTest(config=name):
+                result = subprocess.run(
+                    ["bash", "-c", 'source "$1"; python3 -c '
+                     "'import os; print(os.environ.get(\"PLACE_DESIGN_DIRECTIVE\", \"\")); "
+                     "print(os.environ.get(\"ROUTE_DESIGN_DIRECTIVE\", \"\"))'", "fixture",
+                     str(REPO_ROOT / "configs" / (name + ".sh"))],
+                    cwd=BUILD_ROOT, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {
+                    "tcu_th32_c1_rev3": ["", ""],
+                    "th32_c1_tcu_naive_m32_tcol32": ["SSI_SpreadSLLs", "Default"],
+                    "th32_c1_naive_m32_tcol32": ["SSI_SpreadSLLs", "Default"],
+                    "th32_c1_improve_m32_tcol32": ["SSI_SpreadLogic_high", "Default"],
+                }[name]
+                self.assertEqual(result.stdout.splitlines(), expected)
+
     def test_makefile_tracks_and_validates_gate_setting(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertTrue((BUILD_ROOT / "config.mk").is_file(),
+                            "Configure the build directory before running integration tests")
+            # Exercise the real Makefile from the configured build tree. Use
+            # Python only for removal of temporary stamp files in this fixture.
+            test_makefile = Path(temp_dir) / "Makefile"
+            test_makefile.write_text((XRT_DIR / "Makefile").read_text().replace(
+                'rm -f $$tmp_file',
+                'python3 -c "import os,sys; os.unlink(sys.argv[1])" $$tmp_file'))
             prefix = Path(temp_dir) / "gate"
             build_dir = Path(f"{prefix}_fixture_hw")
             generated_ini = build_dir / "xrt_backup" / "vitis.gen.ini"
@@ -110,7 +152,7 @@ class GenVitisIniTest(unittest.TestCase):
                 command = [
                     "make",
                     "-f",
-                    "Makefile",
+                    str(test_makefile),
                     str(target),
                     f"VORTEX_HOME={REPO_ROOT}",
                     f"PREFIX={prefix}",
@@ -124,7 +166,7 @@ class GenVitisIniTest(unittest.TestCase):
                 command.extend(f"{name}={value}" for name, value in overrides.items())
                 return subprocess.run(
                     command,
-                    cwd=XRT_DIR,
+                    cwd=BUILD_ROOT / "hw/syn/xilinx/xrt",
                     text=True,
                     capture_output=True,
                 )
@@ -137,7 +179,7 @@ class GenVitisIniTest(unittest.TestCase):
                 (build_dir / "xrt_backup" / "pre_init_hook.tcl").read_text(),
                 (XRT_DIR / "pre_init_hook.tcl").read_text(),
             )
-            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= ROUTE_DESIGN_DIRECTIVE=\n", link_stamp.read_text())
             stable_mtimes = tuple(
                 path.stat().st_mtime_ns
                 for path in (config_stamp, backup_stamp, link_stamp, generated_ini)
@@ -169,7 +211,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertNotIn("PLACE_DESIGN.TCL.POST", disabled_ini)
             self.assertIn("OPT_DESIGN.TCL.PRE", disabled_ini)
             self.assertIn("ROUTE_DESIGN.TCL.POST", disabled_ini)
-            self.assertEqual("CONGESTION_FAIL_FAST=0 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=0 GEMM_MXU_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= ROUTE_DESIGN_DIRECTIVE=\n", link_stamp.read_text())
             self.assertEqual(
                 compile_side_mtimes,
                 tuple(path.stat().st_mtime_ns for path in (config_stamp, backup_stamp)),
@@ -181,8 +223,41 @@ class GenVitisIniTest(unittest.TestCase):
             reenabled = run_make()
             self.assertEqual(reenabled.returncode, 0, reenabled.stderr)
             self.assertIn("PLACE_DESIGN.TCL.POST", generated_ini.read_text())
-            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0\n", link_stamp.read_text())
+            self.assertEqual("CONGESTION_FAIL_FAST=1 GEMM_MXU_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= ROUTE_DESIGN_DIRECTIVE=\n", link_stamp.read_text())
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
+
+            selected = run_make(PLACE_DESIGN_DIRECTIVE="SSI_SpreadSLLs",
+                                ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting")
+            self.assertEqual(selected.returncode, 0, selected.stderr)
+            self.assertIn("PLACE_DESIGN.ARGS.DIRECTIVE=SSI_SpreadSLLs", generated_ini.read_text())
+            self.assertIn("ROUTE_DESIGN.ARGS.DIRECTIVE=AlternateCLBRouting", generated_ini.read_text())
+            self.assertIn("PLACE_DESIGN_DIRECTIVE=SSI_SpreadSLLs", link_stamp.read_text())
+            self.assertEqual(compile_side_mtimes, tuple(
+                path.stat().st_mtime_ns for path in (config_stamp, backup_stamp)))
+            selected_check = run_make(target=xo, VIVADO="false",
+                                      PLACE_DESIGN_DIRECTIVE="SSI_SpreadSLLs",
+                                      ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting")
+            self.assertEqual(selected_check.returncode, 0, selected_check.stderr)
+            self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)
+            selected_mtimes = tuple(path.stat().st_mtime_ns for path in (link_stamp, generated_ini))
+            unchanged = run_make(PLACE_DESIGN_DIRECTIVE="SSI_SpreadSLLs",
+                                 ROUTE_DESIGN_DIRECTIVE="AlternateCLBRouting")
+            self.assertEqual(unchanged.returncode, 0, unchanged.stderr)
+            self.assertEqual(selected_mtimes, tuple(
+                path.stat().st_mtime_ns for path in (link_stamp, generated_ini)))
+            changed = run_make(PLACE_DESIGN_DIRECTIVE="Explore", ROUTE_DESIGN_DIRECTIVE="Explore")
+            self.assertEqual(changed.returncode, 0, changed.stderr)
+            self.assertIn("PLACE_DESIGN.ARGS.DIRECTIVE=Explore", generated_ini.read_text())
+            self.assertIn("ROUTE_DESIGN.ARGS.DIRECTIVE=Explore", generated_ini.read_text())
+            cleared = run_make()
+            self.assertEqual(cleared.returncode, 0, cleared.stderr)
+            self.assertNotIn("ARGS.DIRECTIVE", generated_ini.read_text())
+            for setting, value in (("PLACE_DESIGN_DIRECTIVE", "NotADirective"),
+                                   ("ROUTE_DESIGN_DIRECTIVE", "NotADirective"),
+                                   ("PLACE_DESIGN_DIRECTIVE", "Explore Default")):
+                invalid_directive = run_make(**{setting: value})
+                self.assertNotEqual(invalid_directive.returncode, 0)
+                self.assertIn(setting, invalid_directive.stderr)
 
             invalid = run_make(2)
             self.assertNotEqual(invalid.returncode, 0)
