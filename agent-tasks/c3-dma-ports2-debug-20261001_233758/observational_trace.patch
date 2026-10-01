@@ -1,0 +1,163 @@
+--- a/hw/rtl/core/VX_dma_node.sv
++++ b/hw/rtl/core/VX_dma_node.sv
+@@ -207,4 +207,95 @@
+     );
+   end
+ 
++`ifdef SIMULATION
++`ifdef GEMM_NAIVE
++`ifdef DBG_TRACE_DMA_COMPARE
++  // Observation only: aggregate byte addresses and physical LMEM lane traffic.
++  integer dbg_desc_count;
++  integer dbg_dc_req_count, dbg_dc_rsp_count;
++  integer dbg_lm_req_count, dbg_lm_rsp_count;
++  integer dbg_commit_count;
++  always @(posedge clk) begin
++    if (reset) begin
++      dbg_desc_count <= 0;
++      dbg_dc_req_count <= 0;
++      dbg_dc_rsp_count <= 0;
++      dbg_lm_req_count <= 0;
++      dbg_lm_rsp_count <= 0;
++      dbg_commit_count <= 0;
++    end else begin
++      if (cfg_reg_if.valid && cfg_reg_if.ready) begin
++        dbg_desc_count <= dbg_desc_count + 1;
++        $display("DMA_CMP DESC %m t=%0t seq=%0d entry=%0d dir=%0d src=%h dst=%h src_stride=%h,%h,%h dst_stride=%h,%h,%h bound=%0d,%0d,%0d segment=%0d padding=%0d regs=%h",
++          $time, dbg_desc_count, cfg_reg_if.entry_id, cfg_reg_if.regs[16][0],
++          {cfg_reg_if.regs[4], cfg_reg_if.regs[3]}, {cfg_reg_if.regs[2], cfg_reg_if.regs[1]},
++          cfg_reg_if.regs[5], cfg_reg_if.regs[7], cfg_reg_if.regs[9],
++          cfg_reg_if.regs[6], cfg_reg_if.regs[8], cfg_reg_if.regs[10],
++          cfg_reg_if.regs[11], cfg_reg_if.regs[12], cfg_reg_if.regs[13],
++          cfg_reg_if.regs[14], cfg_reg_if.regs[15], cfg_reg_if.regs);
++      end
++      if (dcache_bus_if.req_valid && dcache_bus_if.req_ready && dbg_dc_req_count < 4096) begin
++        dbg_dc_req_count <= dbg_dc_req_count + 1;
++        $display("DMA_CMP DC_REQ %m t=%0t seq=%0d write=%b byte_addr=%h tag=%h byteen=%h data=%h",
++          $time, dbg_dc_req_count, dcache_bus_if.req_data.rw,
++          {dcache_bus_if.req_data.addr, {`CLOG2(DCACHE_WIDE_BYTES){1'b0}}},
++          dcache_bus_if.req_data.tag, dcache_bus_if.req_data.byteen, dcache_bus_if.req_data.data);
++      end
++      if (dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready && dbg_dc_rsp_count < 4096) begin
++        dbg_dc_rsp_count <= dbg_dc_rsp_count + 1;
++        $display("DMA_CMP DC_RSP %m t=%0t seq=%0d tag=%h data=%h",
++          $time, dbg_dc_rsp_count, dcache_bus_if.rsp_data.tag, dcache_bus_if.rsp_data.data);
++      end
++      if (lmem_wide_bus_if.req_valid && lmem_wide_bus_if.req_ready && dbg_lm_req_count < 4096) begin
++        dbg_lm_req_count <= dbg_lm_req_count + 1;
++        $display("DMA_CMP LM_REQ %m t=%0t seq=%0d write=%b byte_addr=%h tag=%h byteen=%h data=%h pending=%0d reserved=%b",
++          $time, dbg_lm_req_count, lmem_wide_bus_if.req_data.rw,
++          {lmem_wide_bus_if.req_data.addr, {`CLOG2(LMEM_WIDE_BYTES){1'b0}}},
++          lmem_wide_bus_if.req_data.tag, lmem_wide_bus_if.req_data.byteen,
++          lmem_wide_bus_if.req_data.data, write_fence.pending_r, write_fence.reserved_r);
++      end
++      if (lmem_wide_bus_if.rsp_valid && lmem_wide_bus_if.rsp_ready && dbg_lm_rsp_count < 4096) begin
++        dbg_lm_rsp_count <= dbg_lm_rsp_count + 1;
++        $display("DMA_CMP LM_RSP %m t=%0t seq=%0d tag=%h data=%h",
++          $time, dbg_lm_rsp_count, lmem_wide_bus_if.rsp_data.tag, lmem_wide_bus_if.rsp_data.data);
++      end
++      if ((|dma_bank_commit) && dbg_commit_count < 4096) begin
++        dbg_commit_count <= dbg_commit_count + 1;
++        $display("DMA_CMP COMMIT %m t=%0t seq=%0d banks=%h classes=%h pending=%0d reserved=%b",
++          $time, dbg_commit_count, dma_bank_commit, naive_write_commit,
++          write_fence.pending_r, write_fence.reserved_r);
++      end
++      if (worker_done_if.valid && worker_done_if.ready)
++        $display("DMA_CMP DONE %m t=%0t entry=%0d pending=%0d reserved=%b",
++          $time, worker_done_if.entry_id, write_fence.pending_r, write_fence.reserved_r);
++    end
++  end
++  for (genvar dbg_lane = 0; dbg_lane < LMEM_NUM_LANES_P; ++dbg_lane) begin : g_dbg_lmem_lane
++    integer dbg_lane_req_count;
++    integer dbg_lane_rsp_count;
++    always @(posedge clk) begin
++      if (reset) begin
++        dbg_lane_req_count <= 0;
++        dbg_lane_rsp_count <= 0;
++      end else begin
++        if (lmem_bus_if[dbg_lane].req_valid && lmem_bus_if[dbg_lane].req_ready && dbg_lane_req_count < 2048) begin
++          dbg_lane_req_count <= dbg_lane_req_count + 1;
++          $display("DMA_CMP LM_LANE_REQ %m t=%0t seq=%0d lane=%0d write=%b word_addr=%h tag=%h byteen=%h data=%h",
++            $time, dbg_lane_req_count, dbg_lane, lmem_bus_if[dbg_lane].req_data.rw,
++            lmem_bus_if[dbg_lane].req_data.addr, lmem_bus_if[dbg_lane].req_data.tag,
++            lmem_bus_if[dbg_lane].req_data.byteen, lmem_bus_if[dbg_lane].req_data.data);
++        end
++        if (lmem_bus_if[dbg_lane].rsp_valid && lmem_bus_if[dbg_lane].rsp_ready && dbg_lane_rsp_count < 2048) begin
++          dbg_lane_rsp_count <= dbg_lane_rsp_count + 1;
++          $display("DMA_CMP LM_LANE_RSP %m t=%0t seq=%0d lane=%0d tag=%h data=%h",
++            $time, dbg_lane_rsp_count, dbg_lane, lmem_bus_if[dbg_lane].rsp_data.tag,
++            lmem_bus_if[dbg_lane].rsp_data.data);
++        end
++      end
++    end
++  end
++`endif
++`endif
++`endif
++
+ endmodule
+--- a/hw/rtl/mem/VX_mem_bus_split.sv
++++ b/hw/rtl/mem/VX_mem_bus_split.sv
+@@ -220,6 +220,22 @@
+             assign wide_bus_if.rsp_data.data[i*LANE_DATA_W +: LANE_DATA_W]
+                 = rsp_ctx_mask[i] ? skid_data[i] : '0;
+         end
++
++`ifdef SIMULATION
++`ifdef GEMM_NAIVE
++`ifdef DBG_TRACE_DMA_COMPARE
++        always @(posedge clk) begin
++            if (!reset && rsp_ctx_pop) begin
++                for (int dbg_lane = 0; dbg_lane < NUM_LANES; ++dbg_lane) begin
++                    if (rsp_ctx_mask[dbg_lane] && skid_tag[dbg_lane] != rsp_ctx_tag)
++                        $display("DMA_CMP TAG_MISMATCH %m t=%0t lane=%0d context_tag=%h returned_tag=%h context_mask=%h data=%h",
++                            $time, dbg_lane, rsp_ctx_tag, skid_tag[dbg_lane], rsp_ctx_mask, skid_data[dbg_lane]);
++                end
++            end
++        end
++`endif
++`endif
++`endif
+     end else begin : g_all_lane_response
+         wire all_skid_valid = &skid_valid;
+         wire all_skid_pop = all_skid_valid && wide_bus_if.rsp_ready;
+@@ -234,6 +250,39 @@
+             assign wide_bus_if.rsp_data.data[i*LANE_DATA_W +: LANE_DATA_W] = skid_data[i];
+         end
+     end
++
++`ifdef SIMULATION
++`ifdef GEMM_NAIVE
++`ifdef DBG_TRACE_DMA_COMPARE
++    // Narrow D-cache responses may arrive independently; retain each echoed tag.
++    if (LANE_DATA_SIZE == DCACHE_WORD_SIZE && NUM_LANES == `DMA_DCACHE_PORTS) begin : g_dbg_dcache_split
++        for (genvar dbg_lane = 0; dbg_lane < NUM_LANES; ++dbg_lane) begin : g_dbg_lane
++            integer dbg_req_count, dbg_rsp_count;
++            always @(posedge clk) begin
++                if (reset) begin
++                    dbg_req_count <= 0;
++                    dbg_rsp_count <= 0;
++                end else begin
++                    if (lane_bus_if[dbg_lane].req_valid && lane_bus_if[dbg_lane].req_ready && dbg_req_count < 4096) begin
++                        dbg_req_count <= dbg_req_count + 1;
++                        $display("DMA_CMP DC_LANE_REQ %m t=%0t seq=%0d lane=%0d write=%b line_addr=%h tag=%h byteen=%h data=%h",
++                            $time, dbg_req_count, dbg_lane, lane_bus_if[dbg_lane].req_data.rw,
++                            lane_bus_if[dbg_lane].req_data.addr, lane_bus_if[dbg_lane].req_data.tag,
++                            lane_bus_if[dbg_lane].req_data.byteen, lane_bus_if[dbg_lane].req_data.data);
++                    end
++                    if (lane_bus_if[dbg_lane].rsp_valid && lane_bus_if[dbg_lane].rsp_ready && dbg_rsp_count < 4096) begin
++                        dbg_rsp_count <= dbg_rsp_count + 1;
++                        $display("DMA_CMP DC_LANE_RSP %m t=%0t seq=%0d lane=%0d tag=%h data=%h",
++                            $time, dbg_rsp_count, dbg_lane,
++                            lane_bus_if[dbg_lane].rsp_data.tag, lane_bus_if[dbg_lane].rsp_data.data);
++                    end
++                end
++            end
++        end
++    end
++`endif
++`endif
++`endif
+ 
+ endmodule
+ 

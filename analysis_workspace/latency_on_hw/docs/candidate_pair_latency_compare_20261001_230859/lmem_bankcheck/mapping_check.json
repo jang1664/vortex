@@ -1,0 +1,11 @@
+{
+  "word_bytes": 8,
+  "banks": 16,
+  "capacities": [
+    1048576,
+    1310720,
+    1572864,
+    2097152
+  ],
+  "exhaustive_mapping": "PASS: each valid word maps uniquely to one bank/row with no gaps or collisions"
+}

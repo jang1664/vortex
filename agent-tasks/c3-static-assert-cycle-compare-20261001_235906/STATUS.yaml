@@ -1,0 +1,21 @@
+task: c3_static_assert_cycle_compare
+status: complete
+objective: Require tagged response reordering for multi-port naive D-cache DMA and complete the C3 config cycle comparison.
+changes:
+  - Add VX_STATIC_ASSERT under GEMM_NAIVE in VX_mem_unit.
+  - User confirmed ports>1 requires DMA_SPLIT_RSP_REORDER=1; ports=1 is exempt.
+verification:
+  - C3 old and fixed v2 pass both weight layouts in fresh independent configured xrt-vcs-sim builds.
+  - WTRANS=0 old=47981 v2=47446 delta=-535 (-1.115%).
+  - WTRANS=1 old=48206 v2=47671 delta=-535 (-1.110%).
+  - Actual full RTL with ports=2 and reorder=0 reports the new error at simulation time zero.
+  - Improve preprocessed selected RTL is identical before and after the guard.
+  - Improve passes at 46848 cycles, matching the earlier result with zero measured core-cycle delta.
+  - git diff --check passes; no improve synthesis was run.
+pitfalls:
+  - VX_STATIC_ASSERT reports a time-zero error under SIMULATION and is empty under synthesis; it is not a compiler rejection.
+  - Standalone simv waits for a DPI client; use the assertion diagnostic, not its supervised process exit status, as negative-test evidence.
+  - Direct simv compilation needs make -C hw config first to generate VX_config.h.
+  - VCS help must use -full64 to avoid a missing 32-bit libelf helper.
+  - Historical failing logs and results.json are retained; completed_c3_results.json holds the corrected reruns.
+report: analysis_workspace/latency_on_hw/docs/candidate_pair_latency_compare_20261001_230859/C3_COMPLETED_COMPARISON.md

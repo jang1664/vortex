@@ -1,0 +1,19 @@
+task: c3_dma_ports2_debug
+status: complete
+objective: Identify and validate the cause of C3 numerical failure with two DMA dcache ports.
+root_cause: Legacy masked cache splitter pairs out-of-order lane payloads by arrival order while attaching the oldest context tag.
+correction: Enable DMA_SPLIT_RSP_REORDER=1 in the C3 v2 config; reuse the existing tag-indexed reorder implementation.
+verification:
+  - Traced original config fails with 1024 output mismatches and 16 lane-tag mismatches.
+  - Traced reorder config passes at the same 47446 core cycles.
+  - Untraced corrected config passes both weight layouts, 47446 and 47671 cycles.
+  - Focused two-port VCS unit passes ordered legacy and reordered tag-indexed cases; injected reordering fails the legacy case as expected.
+  - Each traced run has 29696 checked LMEM lane events with zero address/data/mask discrepancies.
+  - All 18 descriptor completions in each trace have zero pending/reserved writes.
+  - All four GEMM runs use the identical kernel binary.
+repository_change: Only configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh.
+report: analysis_workspace/latency_on_hw/docs/c3_dma_ports2_root_cause_20261001.md
+pitfalls:
+  - Preserve unrelated baseline deletions and parallel worktree changes.
+  - HBM manifest rejects duplicate config defines; use a single config definition.
+  - Core DMA uses ENABLE_MISALIGN=1; inspect the actual misaligned-capable implementation.

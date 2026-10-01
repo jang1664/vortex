@@ -1,0 +1,24 @@
+{
+  "key": "C4_v2",
+  "candidate": "C4",
+  "version": "v2",
+  "config": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh",
+  "alias": null,
+  "workload": {
+    "id": "gemm_improve",
+    "app": "fpint_gemm_ffn_hw",
+    "args": "-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+  },
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 181.646,
+  "build": "/tmp/vortex_candidate_pair__k9ghv_g/source/build_6",
+  "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/candidate_pair_latency_compare_20261001_230859/C4_v2/gemm_improve/run.log",
+  "command": "set -e\nsource /tmp/vortex_candidate_pair__k9ghv_g/source/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh\nci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1'",
+  "perf_values_consistent": true,
+  "instrs": 9523,
+  "cycles": 46848,
+  "ipc": 0.203274,
+  "kernel_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+}
