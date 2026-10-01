@@ -3254,6 +3254,10 @@ def plot_model_stacked_bars(
             label for label in knobs.legend_order if label in legend_by_label
         ]
         legend_handles = [legend_by_label[label] for label in legend_labels]
+    if legend_labels is not None:
+        legend_labels = [
+            "gemm/gemv" if label == "gemm" else label for label in legend_labels
+        ]
     _add_top_legend(fig, legend_handles, legend_labels, len(stack_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)

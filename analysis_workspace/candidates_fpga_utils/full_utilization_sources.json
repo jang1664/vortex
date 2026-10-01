@@ -1,0 +1,205 @@
+{
+  "captured_at": "2026-09-30T18:13:57+09:00",
+  "candidate_input_text": "schema_version: 1\ncandidates:\n  C1: tcu_th32_c1_rev2\n  C2: build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_spreadlogic_high_20260930_1421_xilinx_u55c_gen3x16_xdma_3_202210_1_hw\n  C3: naive_gemm_th32_tcol32_hwexp_dcache\n  C4: improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem\n",
+  "candidate_input_sha256": "d95b01f650a823df1814014fb92ea484999a65992f5c67aa060407f3f9746b0a",
+  "alias_map_sha256": "e8145c028643882ee045c5efad29b98a035a794cef4fc0933ce730f5843acc9a",
+  "scope": "full level0_wrapper including shell and platform connectivity",
+  "sources": [
+    {
+      "candidate": "C1",
+      "mapping": "tcu_th32_c1_rev2",
+      "build_directory": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919",
+      "source_report": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/impl_1_full_util_routed.rpt",
+      "source_report_header": {
+        "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+        "Date": "Wed Jul 22 03:24:28 2026",
+        "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+        "Command": "report_utilization -file full_util_routed.rpt -pb full_util_routed.pb",
+        "Design": "level0_wrapper",
+        "Device": "xcu55c-fsvh2892-2L-e",
+        "Speed File": "-2L",
+        "Design State": "Routed"
+      },
+      "actual_stage": "routed",
+      "metrics": {
+        "LUT": {
+          "used": 558117.0,
+          "capacity": 1303680.0,
+          "pct": 42.810889175257735,
+          "source_line": 40
+        },
+        "FF": {
+          "used": 668331.0,
+          "capacity": 2607360.0,
+          "pct": 25.63247882916053,
+          "source_line": 45
+        },
+        "BRAM": {
+          "used": 617.5,
+          "capacity": 2016.0,
+          "pct": 30.629960317460316,
+          "source_line": 114
+        },
+        "URAM": {
+          "used": 32.0,
+          "capacity": 960.0,
+          "pct": 3.3333333333333335,
+          "source_line": 119
+        },
+        "DSP": {
+          "used": 1100.0,
+          "capacity": 9024.0,
+          "pct": 12.189716312056738,
+          "source_line": 130
+        }
+      }
+    },
+    {
+      "candidate": "C2",
+      "mapping": "build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_spreadlogic_high_20260930_1421_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "build_directory": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_spreadlogic_high_20260930_1421_xilinx_u55c_gen3x16_xdma_3_202210_1_hw",
+      "source_report": "/home/jaeyongjang/project.local/vortex_fpint/build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_spreadlogic_high_20260930_1421_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt",
+      "source_report_header": {
+        "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+        "Date": "Wed Sep 30 18:05:17 2026",
+        "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+        "Command": "report_utilization -file hier_utilization.rpt -hierarchical -hierarchical_percentages",
+        "Design": "level0_wrapper",
+        "Device": "xcu55c-fsvh2892-2L-e",
+        "Speed File": "-2L",
+        "Design State": "Physopt postRoute"
+      },
+      "actual_stage": "linked_pre_opt",
+      "metrics": {
+        "LUT": {
+          "used": 869782.0,
+          "capacity": 1303680,
+          "pct": 66.71744599901817,
+          "source_line": 25
+        },
+        "FF": {
+          "used": 851608.0,
+          "capacity": 2607360,
+          "pct": 32.66169612174767,
+          "source_line": 25
+        },
+        "DSP": {
+          "used": 3112.0,
+          "capacity": 9024,
+          "pct": 34.48581560283688,
+          "source_line": 25
+        },
+        "BRAM": {
+          "used": 1323.5,
+          "capacity": 2016,
+          "pct": 65.64980158730158,
+          "source_line": 25
+        },
+        "URAM": {
+          "used": 0.0,
+          "capacity": 960,
+          "pct": 0.0,
+          "source_line": 25
+        }
+      }
+    },
+    {
+      "candidate": "C3",
+      "mapping": "naive_gemm_th32_tcol32_hwexp_dcache",
+      "build_directory": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37",
+      "source_report": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/impl_1_full_util_routed.rpt",
+      "source_report_header": {
+        "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+        "Date": "Tue Jul 21 19:45:16 2026",
+        "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+        "Command": "report_utilization -file full_util_routed.rpt -pb full_util_routed.pb",
+        "Design": "level0_wrapper",
+        "Device": "xcu55c-fsvh2892-2L-e",
+        "Speed File": "-2L",
+        "Design State": "Routed"
+      },
+      "actual_stage": "routed",
+      "metrics": {
+        "LUT": {
+          "used": 731331.0,
+          "capacity": 1303680.0,
+          "pct": 56.09743188512518,
+          "source_line": 40
+        },
+        "FF": {
+          "used": 675852.0,
+          "capacity": 2607360.0,
+          "pct": 25.920931516936673,
+          "source_line": 45
+        },
+        "BRAM": {
+          "used": 750.5,
+          "capacity": 2016.0,
+          "pct": 37.22718253968254,
+          "source_line": 114
+        },
+        "URAM": {
+          "used": 92.0,
+          "capacity": 960.0,
+          "pct": 9.583333333333334,
+          "source_line": 119
+        },
+        "DSP": {
+          "used": 2056.0,
+          "capacity": 9024.0,
+          "pct": 22.78368794326241,
+          "source_line": 130
+        }
+      }
+    },
+    {
+      "candidate": "C4",
+      "mapping": "improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem",
+      "build_directory": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119",
+      "source_report": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/impl_1_full_util_routed.rpt",
+      "source_report_header": {
+        "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+        "Date": "Sun Aug 30 06:37:16 2026",
+        "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+        "Command": "report_utilization -file full_util_routed.rpt -pb full_util_routed.pb",
+        "Design": "level0_wrapper",
+        "Device": "xcu55c-fsvh2892-2L-e",
+        "Speed File": "-2L",
+        "Design State": "Routed"
+      },
+      "actual_stage": "routed",
+      "metrics": {
+        "LUT": {
+          "used": 779323.0,
+          "capacity": 1303680.0,
+          "pct": 59.77870336278841,
+          "source_line": 40
+        },
+        "FF": {
+          "used": 634130.0,
+          "capacity": 2607360.0,
+          "pct": 24.320768900343644,
+          "source_line": 45
+        },
+        "BRAM": {
+          "used": 733.5,
+          "capacity": 2016.0,
+          "pct": 36.38392857142857,
+          "source_line": 114
+        },
+        "URAM": {
+          "used": 156.0,
+          "capacity": 960.0,
+          "pct": 16.25,
+          "source_line": 119
+        },
+        "DSP": {
+          "used": 2275.0,
+          "capacity": 9024.0,
+          "pct": 25.21054964539007,
+          "source_line": 130
+        }
+      }
+    }
+  ]
+}

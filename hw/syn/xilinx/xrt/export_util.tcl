@@ -68,7 +68,12 @@ namespace eval ::vortex_util {
             mxu [dict create \
                 label "MXU" \
                 rgb {255 217 47} \
-                patterns [list "*/gemm_node/u_VX_gemm_unit"]] \
+                patterns [list \
+                    "*/gemm_node/u_VX_gemm_unit" \
+                    "*/gemm_node/u_VX_gemm_unit_v2" \
+                    "*/gemm_node_naive/u_VX_gemm_compute_core" \
+                    "*/gemm_node_naive/u_acc_internal" \
+                    "*/gemm_node_naive/u_VX_gemm_acc_lmem"]] \
             dma [dict create \
                 label "DMA" \
                 rgb {228 26 28} \
@@ -78,7 +83,16 @@ namespace eval ::vortex_util {
                     "*/gemm_node/u_tmem_subsystem/u_ldma_output" \
                     "*/gemm_node/u_tmem_subsystem/u_ldma_sz" \
                     "*/gemm_node/u_tmem_subsystem/u_ldma_weight" \
-                    "*/gemm_node/u_tmem_dma_ctrl"]]]
+                    "*/gemm_node/u_tmem_subsystem/u_ldma_scale" \
+                    "*/gemm_node/u_tmem_subsystem/u_ldma_zero_point" \
+                    "*/gemm_node/u_tmem_dma_ctrl" \
+                    "*/gemm_node/u_gemm_dma_transport" \
+                    "*/gemm_node_naive/dma_executor" \
+                    "*/gemm_node_naive/input_executor" \
+                    "*/gemm_node_naive/weight_executor" \
+                    "*/gemm_node_naive/quant_executor" \
+                    "*/gemm_node_naive/o_lmem_dma" \
+                    "*/u_naive_dma_slr"]]]
 
     }
 
