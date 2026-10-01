@@ -1,0 +1,4 @@
+point,unit,precision,relative_GOPS_per_kLUT,relative_GOPS_per_DSP
+fp_tcu_128,FP TCU,FP$\times$FP,1.0,1.0
+woq_16x16,WoQ \fpint{} GEMM Engine,\fpint{},1.7316372242413995,2.1333333333333333
+wkv_16x16,WKV \fpint{} GEMM Engine,\fpint{},1.6046211082827488,2.064516129032258

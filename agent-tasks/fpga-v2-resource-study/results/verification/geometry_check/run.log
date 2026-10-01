@@ -1,0 +1,5 @@
+GEOMETRY PASSED TCU=4x4x8 FP16_MAC=128 MXU=16x16 FPINT_MAC=256 ACC_bytes=262144 I_bytes=32 O_bytes=32
+- /home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/geometry_check/geometry_probe.sv:8: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.028 2024-08-21
+- Verilator: $finish at 1ps; walltime 0.003 s; speed 242.121 ps/s
+- Verilator: cpu 0.004 s on 1 threads; alloced 632 MB

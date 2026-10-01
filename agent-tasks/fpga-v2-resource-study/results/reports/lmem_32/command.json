@@ -1,0 +1,13 @@
+[
+  "/tool/Program/Xilinx/2025.1/Vivado/bin/vivado",
+  "-mode",
+  "batch",
+  "-source",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/agent-tasks/fig5-fpga/synth.tcl",
+  "-tclargs",
+  "VX_local_mem_top",
+  "xcu55c-fsvh2892-2L-e",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/lmem_32/sources.txt",
+  "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32",
+  "NUM_REQS=32 NUM_BANKS=32 SIZE=524288 WORD_SIZE=8 TAG_WIDTH=16"
+]

@@ -1,0 +1,877 @@
+[
+  {
+    "file": "reports/fp_tcu_128/hierarchy.rpt",
+    "sha256": "c47815db4bb8d4f20501bf240c1f2f28d32865068e5bc9bdc3a09e9a5e02b797",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/hierarchy.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_128/utilization.rpt",
+    "sha256": "42a1af1211a1b98aca65719d4ec498c27a238b185c1e5b487c88dbecc79cb61c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/utilization.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_128/timing_post_opt.rpt",
+    "sha256": "3980913a29a5a708c75994afc7833677d684c9052168fd8d56adad1545718c1d",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/fp_tcu_128/primitives.csv",
+    "sha256": "40d1dd387b35d0436a7cd836f937538176eafbececf48663cd2ae96123b742f9",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/primitives.csv"
+  },
+  {
+    "file": "reports/fp_tcu_128/summary.json",
+    "sha256": "3e03f192c84ac187b8ba1201794027ebeca40938b6993eb6fa57c57e8b888eb3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/summary.json"
+  },
+  {
+    "file": "reports/fp_tcu_128/status.json",
+    "sha256": "73b1f9ecf8a8548341425014878ee35a95e7bfbd25186e96ac3974b332b4ca2f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/status.json"
+  },
+  {
+    "file": "reports/fp_tcu_128/manifest.json",
+    "sha256": "f741e14a2e8334de53b3b419b33b8adb50f3260c86abc6fdc638f3270b20da15",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/manifest.json"
+  },
+  {
+    "file": "reports/fp_tcu_128/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/clock.xdc"
+  },
+  {
+    "file": "reports/fp_tcu_128/command.json",
+    "sha256": "e3b8e16cfb4aed536d5480e4575b4b00ea47e9434e23816a671348d836ea0c58",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/command.json"
+  },
+  {
+    "file": "reports/fp_tcu_128/ip_setup.tcl",
+    "sha256": "03702326223c1699fea8e18aac1a376ca8ee657937654b55b3719b2cc29a9997",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/fp_tcu_128/ip_setup.tcl"
+  },
+  {
+    "file": "reports/woq_16x16/hierarchy.rpt",
+    "sha256": "8f9e0845fe6e39f6f4c72a05f65586eb1e260797a1f1e95c4196b516581bbc37",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/hierarchy.rpt"
+  },
+  {
+    "file": "reports/woq_16x16/utilization.rpt",
+    "sha256": "20638640bef812e65e4e8d258d43bce05ae6e702ec098bbc3f49fe31d2e60bfc",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/utilization.rpt"
+  },
+  {
+    "file": "reports/woq_16x16/timing_post_opt.rpt",
+    "sha256": "09320dcee66397a565efe29a44c860ce09765c29ff7a7eab499585bc850a6e49",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/woq_16x16/primitives.csv",
+    "sha256": "4013ed9291accefeafa11c188d19e6ba61369929c944169f285a42cded6881c3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/primitives.csv"
+  },
+  {
+    "file": "reports/woq_16x16/summary.json",
+    "sha256": "c01da9516321d87a80db683e718ee8632ced49c3c2e2cca086c86a6cba99a361",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/summary.json"
+  },
+  {
+    "file": "reports/woq_16x16/status.json",
+    "sha256": "882e970ecd2cbbcb1381d6e35b15c79de52d046d6f991689ae6f1adce983df04",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/status.json"
+  },
+  {
+    "file": "reports/woq_16x16/manifest.json",
+    "sha256": "4b74f8a9a01c83b1972b939dc5e719849b0bb94ce5dcb97e846773e8cd1d9a17",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/manifest.json"
+  },
+  {
+    "file": "reports/woq_16x16/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/clock.xdc"
+  },
+  {
+    "file": "reports/woq_16x16/command.json",
+    "sha256": "f11bf65ae542c2fd553332c2f9e96b93e7e7e93479bcb4478ad87638dedde4a3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/command.json"
+  },
+  {
+    "file": "reports/woq_16x16/ip_setup.tcl",
+    "sha256": "882500a7996199746a3baf87cc3355988580afe6da9f55e20bb87828b84f6f0a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/ip_setup.tcl"
+  },
+  {
+    "file": "reports/woq_16x16/verification_gate.json",
+    "sha256": "f2469765d8b8512a039abf6cecc5f049b994e383ccdb2774d3550c6974cf0dc6",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/woq_16x16/verification_gate.json"
+  },
+  {
+    "file": "reports/wkv_16x16/hierarchy.rpt",
+    "sha256": "0f05257dfa3ed6655b940e90d14d7bad0c99bdb3c0252725acbaf94f040f1218",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/hierarchy.rpt"
+  },
+  {
+    "file": "reports/wkv_16x16/utilization.rpt",
+    "sha256": "1e5b0a76468453812a6cc580eb93c9939d25b5507d796dbdf491561baa234ea3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/utilization.rpt"
+  },
+  {
+    "file": "reports/wkv_16x16/timing_post_opt.rpt",
+    "sha256": "50d38e5667257d5c46c0cde23a6cced87aa98fe583fdf2f6cd976d3d68ac09e5",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/wkv_16x16/primitives.csv",
+    "sha256": "aa8e88f21b29c5c1766818de3bda733fe573a40b3d4b86d5b8c2e422bb6b5384",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/primitives.csv"
+  },
+  {
+    "file": "reports/wkv_16x16/summary.json",
+    "sha256": "2f63a4706e425542ab0e43b5416968a48d1f2b6c4149161ad55ff4b81c61cd28",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/summary.json"
+  },
+  {
+    "file": "reports/wkv_16x16/status.json",
+    "sha256": "9a306c2239829e8e4f638e804d8504cd9385eea411d3f91028e5fd5cc7147670",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/status.json"
+  },
+  {
+    "file": "reports/wkv_16x16/manifest.json",
+    "sha256": "ebc3524b37780f2e3d32271464f0e4b1cfcae325b7b5d76976c61e301fa8bbf6",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/manifest.json"
+  },
+  {
+    "file": "reports/wkv_16x16/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/clock.xdc"
+  },
+  {
+    "file": "reports/wkv_16x16/command.json",
+    "sha256": "d3164aa9ee7a9c9ca3f22723fa511cf68c54a08e837a30cef9ce841886c2734c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/command.json"
+  },
+  {
+    "file": "reports/wkv_16x16/ip_setup.tcl",
+    "sha256": "882500a7996199746a3baf87cc3355988580afe6da9f55e20bb87828b84f6f0a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/wkv_16x16/ip_setup.tcl"
+  },
+  {
+    "file": "reports/lmem_8/hierarchy.rpt",
+    "sha256": "c9bf4b02a76335a5e698b9fbf4ec8964f5427882d94fa167b7e7dd6e77dfba0a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/hierarchy.rpt"
+  },
+  {
+    "file": "reports/lmem_8/utilization.rpt",
+    "sha256": "219058b888881ab7b8ce9e030a52fc0ae6619c0ae2bc722509fcb7aacb71b786",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/utilization.rpt"
+  },
+  {
+    "file": "reports/lmem_8/timing_post_opt.rpt",
+    "sha256": "1f014dbfcaae4b088b6b4bc24c4600075f271f8504c1ddbd6698efd1d3789c00",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/lmem_8/primitives.csv",
+    "sha256": "e22b5ed0f8f07c4ab1dc19de64cf58b55c0e18ed59788f2b85e1c8d0169df7af",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/primitives.csv"
+  },
+  {
+    "file": "reports/lmem_8/summary.json",
+    "sha256": "6f3b41bba80d598dc79740698ece0ec231187a2db736059dbcc156e2e489061d",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/summary.json"
+  },
+  {
+    "file": "reports/lmem_8/status.json",
+    "sha256": "e1dcb8c6f0d6e8e6755dc628c867d46f4c39fb3f060ff958a6f0f7c47f4def77",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/status.json"
+  },
+  {
+    "file": "reports/lmem_8/manifest.json",
+    "sha256": "1f77db6f6292a7a38a826d107ec95449a61dd484f844737569a19c548987a7f8",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/manifest.json"
+  },
+  {
+    "file": "reports/lmem_8/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/clock.xdc"
+  },
+  {
+    "file": "reports/lmem_8/command.json",
+    "sha256": "f4636fdbf7ed322441f37445027afa08258f628734a495a76819150ca9c81740",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_8/command.json"
+  },
+  {
+    "file": "reports/lmem_32/hierarchy.rpt",
+    "sha256": "7e35bbb1417fa6bf12ebf43912556844517c8ff3c963a8a44e316ae29b835a74",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/hierarchy.rpt"
+  },
+  {
+    "file": "reports/lmem_32/utilization.rpt",
+    "sha256": "842252126c1c137c69beb3b8e9288a714329627c7c4737a0aacf9805af50a5d5",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/utilization.rpt"
+  },
+  {
+    "file": "reports/lmem_32/timing_post_opt.rpt",
+    "sha256": "1a2dde702679b7d575f236ff39fab0f1da8e28cf41a5d7f72bc1863ff92ab4df",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/lmem_32/primitives.csv",
+    "sha256": "d22aa37162643859259c9df887170a90d3947cb9943ea11b1dcd9561e6bd020e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/primitives.csv"
+  },
+  {
+    "file": "reports/lmem_32/summary.json",
+    "sha256": "6f3b41bba80d598dc79740698ece0ec231187a2db736059dbcc156e2e489061d",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/summary.json"
+  },
+  {
+    "file": "reports/lmem_32/status.json",
+    "sha256": "71267dd3c5907e7dca9477742d2b3a1c40b051a6d93f98cc6591ceb8654b1dff",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/status.json"
+  },
+  {
+    "file": "reports/lmem_32/manifest.json",
+    "sha256": "bb0bf78c2e83004db614a1e753ef304ab2db8053ac9547ec6793a41baa78b69a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/manifest.json"
+  },
+  {
+    "file": "reports/lmem_32/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/clock.xdc"
+  },
+  {
+    "file": "reports/lmem_32/command.json",
+    "sha256": "7d35d39f9104fd06d26e37610e12962d51cc5147d9f6aeb02eb5408c69485b25",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/lmem_32/command.json"
+  },
+  {
+    "file": "reports/cache_1/hierarchy.rpt",
+    "sha256": "46e804920054d0c3aae8ffbc031cea41cee164d938dedafcef8f63b60df19d1b",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/hierarchy.rpt"
+  },
+  {
+    "file": "reports/cache_1/utilization.rpt",
+    "sha256": "0f0a65fc90a7c9abe87d07eaea6d3f3aa15f7a21bdf0fbfa868c474109c652db",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/utilization.rpt"
+  },
+  {
+    "file": "reports/cache_1/timing_post_opt.rpt",
+    "sha256": "bbe7f987dd127ebbe497fab655cb1a986b7ac195e8b751c9951f655bf6aa893a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/cache_1/primitives.csv",
+    "sha256": "02782d6ecff73cec3c8d72a445bf185fda9ba9501654ed88c9c55ce050dc9ce0",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/primitives.csv"
+  },
+  {
+    "file": "reports/cache_1/summary.json",
+    "sha256": "cf5116756eebb85ccc7cfdd915a37484ee6a17c962477fba17d00b80ef4693c1",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/summary.json"
+  },
+  {
+    "file": "reports/cache_1/status.json",
+    "sha256": "8369b93e0349e28042e8d72904f7d493b1f39b57225b8a31ec5dd44f80ebbd9c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/status.json"
+  },
+  {
+    "file": "reports/cache_1/manifest.json",
+    "sha256": "307f3da401d2e58be9893457e4bd6b350e733515b04fa764ba16113324dc1311",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/manifest.json"
+  },
+  {
+    "file": "reports/cache_1/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/clock.xdc"
+  },
+  {
+    "file": "reports/cache_1/command.json",
+    "sha256": "d4762ce058ee89ac34dc555e20a6f67de2a7082b43727cfdf5a40b01d0c782e9",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_1/command.json"
+  },
+  {
+    "file": "reports/cache_4/hierarchy.rpt",
+    "sha256": "f552c28ab8d27f76c973d39f2422fbe254d606ef35b3a92b59a98c8981cf6c39",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/hierarchy.rpt"
+  },
+  {
+    "file": "reports/cache_4/utilization.rpt",
+    "sha256": "a38aa792be95fb0d4db0e75138ef74bfa9955a1b05273e89301f240e6f1ad986",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/utilization.rpt"
+  },
+  {
+    "file": "reports/cache_4/timing_post_opt.rpt",
+    "sha256": "8f0c8401f8fddc31ea482988267c93e8b57f8d9d76c333ddabfd01a7694d6146",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/cache_4/primitives.csv",
+    "sha256": "c1d1e16dd1d1d3ea8ec2d8c5e41d37abdad0914a19c3e57f9b691bac51e895ee",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/primitives.csv"
+  },
+  {
+    "file": "reports/cache_4/summary.json",
+    "sha256": "cf5116756eebb85ccc7cfdd915a37484ee6a17c962477fba17d00b80ef4693c1",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/summary.json"
+  },
+  {
+    "file": "reports/cache_4/status.json",
+    "sha256": "ff9465e65ec50ee3c65bc63ebb1148abf8bbd6d41203e258fab935727842f42e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/status.json"
+  },
+  {
+    "file": "reports/cache_4/manifest.json",
+    "sha256": "d895c0da13407eda1102f4f29c9237680beba827dc5cee401297f285c634047d",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/manifest.json"
+  },
+  {
+    "file": "reports/cache_4/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/clock.xdc"
+  },
+  {
+    "file": "reports/cache_4/command.json",
+    "sha256": "8e7b73a7889b77f087419f10fece5ba9dd93ce3699ba313bb1bd1304c3aefaa7",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/cache_4/command.json"
+  },
+  {
+    "file": "reports/axi_1/hierarchy.rpt",
+    "sha256": "bed8b6cabc591c09c40cdbb15acee865910c080e1e0005694e680895a9d2b7ae",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/hierarchy.rpt"
+  },
+  {
+    "file": "reports/axi_1/utilization.rpt",
+    "sha256": "79606d71254fb73657cf1ba9c75a5a3af2c5bf7fce6c6a910e3294443038fa83",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/utilization.rpt"
+  },
+  {
+    "file": "reports/axi_1/timing_post_opt.rpt",
+    "sha256": "73144e0aa0c1b397b73fc86d1b345f87536f40303ac14ff0273772908cf5a292",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/axi_1/primitives.csv",
+    "sha256": "db3368178f89cb354586a60f1f1684dd4d628d99259f1ea04dd14c3c391a228c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/primitives.csv"
+  },
+  {
+    "file": "reports/axi_1/summary.json",
+    "sha256": "259e4cf184f378b64cd1ae8258164e0fd4962a6fe41b2fb9a016fad604d64238",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/summary.json"
+  },
+  {
+    "file": "reports/axi_1/status.json",
+    "sha256": "58ff2505c853d701af207f8033a96d1e054176a8c31cb207e8a3ad058cf58938",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/status.json"
+  },
+  {
+    "file": "reports/axi_1/manifest.json",
+    "sha256": "fb59ea12fd9c11dac8995adc608be44ff7f877aacedef14ded90a13dd06047c9",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/manifest.json"
+  },
+  {
+    "file": "reports/axi_1/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/clock.xdc"
+  },
+  {
+    "file": "reports/axi_1/command.json",
+    "sha256": "3e3f8959e5c0593bbe3c1450f2640d721463eb39baeb2b0116afdddfb16727bd",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_1/command.json"
+  },
+  {
+    "file": "reports/axi_4/hierarchy.rpt",
+    "sha256": "987f6083a5aefd5498c588812d9c86e144b44fdb8c8bcb8790d79c063f9d1e12",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/hierarchy.rpt"
+  },
+  {
+    "file": "reports/axi_4/utilization.rpt",
+    "sha256": "74783e48adb40ed0c918520486ba435782c586235b01aa7c676ac5f3daacc916",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/utilization.rpt"
+  },
+  {
+    "file": "reports/axi_4/timing_post_opt.rpt",
+    "sha256": "2cf54dd5c319abbdb50709ca2be38faf4a9036b2315028b511ab89cf4b8f463a",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/timing_post_opt.rpt"
+  },
+  {
+    "file": "reports/axi_4/primitives.csv",
+    "sha256": "92a6f6d49e29de5e096dad66be588831cf91b4d18c581ea593e056b4c3107346",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/primitives.csv"
+  },
+  {
+    "file": "reports/axi_4/summary.json",
+    "sha256": "259e4cf184f378b64cd1ae8258164e0fd4962a6fe41b2fb9a016fad604d64238",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/summary.json"
+  },
+  {
+    "file": "reports/axi_4/status.json",
+    "sha256": "74dcb018946dac7556c2ab90d21d83465382c041a5aa24a177edf83c6b277a80",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/status.json"
+  },
+  {
+    "file": "reports/axi_4/manifest.json",
+    "sha256": "11a9c8ecc5d0b2a477632eb918f8546fcff3cbcdd9ce8c7736082342517afc39",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/manifest.json"
+  },
+  {
+    "file": "reports/axi_4/clock.xdc",
+    "sha256": "ce132ea9b61f1e7bc195d83acec22656f16ce7c914118499e652c9ea19b8aff4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/clock.xdc"
+  },
+  {
+    "file": "reports/axi_4/command.json",
+    "sha256": "61fe5aa8e7fe24d0a4ecd1b9cf038e21feef2d538da7382c3c457776cb57e184",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/command.json"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_gpu_pkg.sv",
+    "sha256": "79f70760ca7ed4a3b3509752578b39524f2d3bf427665806a88cd4f1390e2236",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_gpu_pkg.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_tcu_pkg.sv",
+    "sha256": "ed1678cc7adae18a122d60bd96f2bd6298dcfe5efc44489fe94c38437e702199",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_tcu_pkg.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_execute_if.sv",
+    "sha256": "3e2fb0538eb487f92b093cb9eac69b2a9277cf93949b3a908145ff3e988c5021",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_execute_if.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_result_if.sv",
+    "sha256": "747dbba63c0d96ce5cb1094cb529ab4cd2e8c881d22ce95d21f6dd03d4ba9ed0",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_result_if.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_async_ram_patch.sv",
+    "sha256": "bd7f0d8e96ad348e62e0b418dc35e8787adb05283086124ae9d3517177d1cb01",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_async_ram_patch.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_dp_ram.sv",
+    "sha256": "a97296d0be219c5ffcd791dafa0e910f437e083ae19674715e024b26d7c20c1f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_dp_ram.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_fifo_queue.sv",
+    "sha256": "9596831371932d6e9ac50e738afc76622d49c85627129966fa47c27048b08a24",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_fifo_queue.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_pending_size.sv",
+    "sha256": "13a48bc0f83c24253efb1ac30970b196e90082d2322995d307e30f7a487fa811",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_pending_size.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_pipe_register.sv",
+    "sha256": "b4b7a2ffc0135ef8d6f672de8755009084f87424452cdc4d7b9ab58a6a3d7987",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_pipe_register.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_placeholder.sv",
+    "sha256": "b3d5f57412d2ff824537a7828117506bf1fe0081f904122dcdb818b5caef4920",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_placeholder.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_shift_register.sv",
+    "sha256": "e68d1a6b3040c7b8a306703b6baab86938d901eacc115ac213bce4d0121f9801",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_shift_register.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_tcu_fedp_dsp.sv",
+    "sha256": "ae08657b8d78f538ddce23cc46bf96edd9a8f00c556966118244e5e603319092",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_tcu_fedp_dsp.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_tcu_fp.sv",
+    "sha256": "c92ea30c02851fedec4b52cf9641d5a740e068f1cfcddcbc36b090545bcd5cde",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_tcu_fp.sv"
+  },
+  {
+    "file": "sources/fp_tcu_128/VX_tcu_top.sv",
+    "sha256": "192d2bd44e3782d1e127fc5281abe4c2fec151901d8a762a7ea78dcbde89e4ec",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/VX_tcu_top.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gpu_pkg.sv",
+    "sha256": "bd35493716e63019f117761476123fed15f73cca8459b102aa48ecfd3229da4c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gpu_pkg.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/cf_math_util_pkg.sv",
+    "sha256": "26d36c9242997178d1df7465f4969d813e67836a18adceb796d2f4689e04bf98",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/cf_math_util_pkg.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_utils_pkg.sv",
+    "sha256": "6e8f7deaac8f7a86dbbe9100f72e5c3be767a6dfc50de94f00083690413b19f1",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_utils_pkg.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_f32_to_f16.sv",
+    "sha256": "2108bb06c629e93a756e01a2cb89d600361d607c9b36ab3f0472c30ae10b51c3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_f32_to_f16.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_fp16_mul.sv",
+    "sha256": "668d8a396cb993ba2f773f98eada6d69a0984364c52c143b58286ded56a69d55",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_fp16_mul.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_fp32_add.sv",
+    "sha256": "61c00b54f7f310fba8c626be782c74dd9fdee37278184c5a31bcfea590765bdf",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_fp32_add.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_fp32_mul.sv",
+    "sha256": "835b8b84fa603425e0b6c1be40dc04e5ac661c2cc9afaff99b1a0f17b935df75",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_fp32_mul.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gemm_tree_v1.sv",
+    "sha256": "6826422562540294b4079deeffc851c34b62362c3b1dc81fda680a23a02fdaca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gemm_tree_v1.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gemm_unit.sv",
+    "sha256": "c9eea522efcd4d97098dcd943a2dad48f171fb67c58557875b95ba1374e01d5b",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gemm_unit.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gemm_unit_if.sv",
+    "sha256": "b1cda3fe75794f62fe43528a14c0ac9151c73e579dc9e1c630255c48ecf3ce4e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gemm_unit_if.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gemm_unit_top.sv",
+    "sha256": "1573ee85333fe961b2fdb1f9a77413708169441079f339c2f6f1d80f3d5691f4",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gemm_unit_top.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_gemm_weight_regs_v1.sv",
+    "sha256": "9eef3e7de1ffc34e2bc51b9e50da1e9542f2878d9848a008b0eb5d5430da2a56",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_gemm_weight_regs_v1.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_pe_tree_new.sv",
+    "sha256": "ac5adbae3912fac363c6d35e233e150e6de089cdd315efdc8ad4887277ca574c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_pe_tree_new.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_pint2fp.sv",
+    "sha256": "ea7da072585b1700292a6754792b4bc3b5eb9802919df65fe5f022a259bbb170",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_pint2fp.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_prealigner.sv",
+    "sha256": "7c97fecda01b664a59a801e86de89c02b7680af455eaf4b8b3feb2d194ff23ac",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_prealigner.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_async_ram_patch.sv",
+    "sha256": "bd7f0d8e96ad348e62e0b418dc35e8787adb05283086124ae9d3517177d1cb01",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_async_ram_patch.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_dp_ram.sv",
+    "sha256": "a97296d0be219c5ffcd791dafa0e910f437e083ae19674715e024b26d7c20c1f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_dp_ram.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_elastic_buffer.sv",
+    "sha256": "ddbcb29d97e07dd714d2bb36dd9136ab8e55156eef589321f370b080bb8bac94",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_elastic_buffer.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_fifo_queue.sv",
+    "sha256": "9596831371932d6e9ac50e738afc76622d49c85627129966fa47c27048b08a24",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_fifo_queue.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_fifo_v2.sv",
+    "sha256": "1119c78a6837f4da18a795caedc04a9952c42e59005fa41a2107be73e86e3dca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_fifo_v2.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_find_first.sv",
+    "sha256": "59c0d77b06f4ba63c9b001fa5edf4a1b21285e80b39248246d5bd6459bdbfdca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_find_first.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_lzc.sv",
+    "sha256": "35552af820d11451780e012c56e0e3d6981f795c6d230433af7ecc1439f919ca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_lzc.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_pending_size.sv",
+    "sha256": "13a48bc0f83c24253efb1ac30970b196e90082d2322995d307e30f7a487fa811",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_pending_size.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_pipe_buffer.sv",
+    "sha256": "13b0a25be12e1a8b5a1cf4cae5f68b8f220682c3907c4273a64a065418b426b9",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_pipe_buffer.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_pipe_register.sv",
+    "sha256": "b4b7a2ffc0135ef8d6f672de8755009084f87424452cdc4d7b9ab58a6a3d7987",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_pipe_register.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_placeholder.sv",
+    "sha256": "b3d5f57412d2ff824537a7828117506bf1fe0081f904122dcdb818b5caef4920",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_placeholder.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_reduce_tree_pipelined_v2.sv",
+    "sha256": "0716c98d54a5762c1c6be1c88da5dff7b4a1f59e0a8ef91ceebac19f2bc8f05f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_reduce_tree_pipelined_v2.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_shift_register.sv",
+    "sha256": "e68d1a6b3040c7b8a306703b6baab86938d901eacc115ac213bce4d0121f9801",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_shift_register.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_sp_ram.sv",
+    "sha256": "92da6c5318a83bce03cb5e0a3518895b8497c4f7734a3a2a2bf1102467564c76",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_sp_ram.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_stream_buffer.sv",
+    "sha256": "be756136162760bfdf24923443c8cf60a94403051bc8a85cde36c193296d5ffa",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_stream_buffer.sv"
+  },
+  {
+    "file": "sources/wkv_16x16/VX_mem_bus_if.sv",
+    "sha256": "9863a541c5bfe71f3923e5d0bc6de76a0fa3e7ee11d28ccf7f004e7a29a9296e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/VX_mem_bus_if.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_gpu_pkg.sv",
+    "sha256": "bd35493716e63019f117761476123fed15f73cca8459b102aa48ecfd3229da4c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_gpu_pkg.sv"
+  },
+  {
+    "file": "sources/woq_16x16/cf_math_util_pkg.sv",
+    "sha256": "26d36c9242997178d1df7465f4969d813e67836a18adceb796d2f4689e04bf98",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/cf_math_util_pkg.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_utils_pkg.sv",
+    "sha256": "6e8f7deaac8f7a86dbbe9100f72e5c3be767a6dfc50de94f00083690413b19f1",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_utils_pkg.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_f32_to_f16.sv",
+    "sha256": "2108bb06c629e93a756e01a2cb89d600361d607c9b36ab3f0472c30ae10b51c3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_f32_to_f16.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_fp16_mul.sv",
+    "sha256": "668d8a396cb993ba2f773f98eada6d69a0984364c52c143b58286ded56a69d55",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_fp16_mul.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_fp32_add.sv",
+    "sha256": "61c00b54f7f310fba8c626be782c74dd9fdee37278184c5a31bcfea590765bdf",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_fp32_add.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_fp32_mul.sv",
+    "sha256": "835b8b84fa603425e0b6c1be40dc04e5ac661c2cc9afaff99b1a0f17b935df75",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_fp32_mul.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_gemm_tree_v1.sv",
+    "sha256": "6826422562540294b4079deeffc851c34b62362c3b1dc81fda680a23a02fdaca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_gemm_tree_v1.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_gemm_unit.sv",
+    "sha256": "c9eea522efcd4d97098dcd943a2dad48f171fb67c58557875b95ba1374e01d5b",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_gemm_unit.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_gemm_unit_if.sv",
+    "sha256": "b1cda3fe75794f62fe43528a14c0ac9151c73e579dc9e1c630255c48ecf3ce4e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_gemm_unit_if.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_woq_gemm_unit_top.sv",
+    "sha256": "88c28ec65ac6fadb45ce30d5aac4218b864ecdc806d6b95de1e665c3dac08b19",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_woq_gemm_unit_top.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_gemm_weight_regs_v1.sv",
+    "sha256": "9eef3e7de1ffc34e2bc51b9e50da1e9542f2878d9848a008b0eb5d5430da2a56",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_gemm_weight_regs_v1.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_pe_tree_new.sv",
+    "sha256": "ac5adbae3912fac363c6d35e233e150e6de089cdd315efdc8ad4887277ca574c",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_pe_tree_new.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_pint2fp.sv",
+    "sha256": "ea7da072585b1700292a6754792b4bc3b5eb9802919df65fe5f022a259bbb170",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_pint2fp.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_prealigner.sv",
+    "sha256": "7c97fecda01b664a59a801e86de89c02b7680af455eaf4b8b3feb2d194ff23ac",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_prealigner.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_async_ram_patch.sv",
+    "sha256": "bd7f0d8e96ad348e62e0b418dc35e8787adb05283086124ae9d3517177d1cb01",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_async_ram_patch.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_dp_ram.sv",
+    "sha256": "a97296d0be219c5ffcd791dafa0e910f437e083ae19674715e024b26d7c20c1f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_dp_ram.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_elastic_buffer.sv",
+    "sha256": "ddbcb29d97e07dd714d2bb36dd9136ab8e55156eef589321f370b080bb8bac94",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_elastic_buffer.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_fifo_queue.sv",
+    "sha256": "9596831371932d6e9ac50e738afc76622d49c85627129966fa47c27048b08a24",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_fifo_queue.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_fifo_v2.sv",
+    "sha256": "1119c78a6837f4da18a795caedc04a9952c42e59005fa41a2107be73e86e3dca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_fifo_v2.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_find_first.sv",
+    "sha256": "59c0d77b06f4ba63c9b001fa5edf4a1b21285e80b39248246d5bd6459bdbfdca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_find_first.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_lzc.sv",
+    "sha256": "35552af820d11451780e012c56e0e3d6981f795c6d230433af7ecc1439f919ca",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_lzc.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_pending_size.sv",
+    "sha256": "13a48bc0f83c24253efb1ac30970b196e90082d2322995d307e30f7a487fa811",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_pending_size.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_pipe_buffer.sv",
+    "sha256": "13b0a25be12e1a8b5a1cf4cae5f68b8f220682c3907c4273a64a065418b426b9",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_pipe_buffer.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_pipe_register.sv",
+    "sha256": "b4b7a2ffc0135ef8d6f672de8755009084f87424452cdc4d7b9ab58a6a3d7987",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_pipe_register.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_placeholder.sv",
+    "sha256": "b3d5f57412d2ff824537a7828117506bf1fe0081f904122dcdb818b5caef4920",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_placeholder.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_reduce_tree_pipelined_v2.sv",
+    "sha256": "0716c98d54a5762c1c6be1c88da5dff7b4a1f59e0a8ef91ceebac19f2bc8f05f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_reduce_tree_pipelined_v2.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_shift_register.sv",
+    "sha256": "e68d1a6b3040c7b8a306703b6baab86938d901eacc115ac213bce4d0121f9801",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_shift_register.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_sp_ram.sv",
+    "sha256": "92da6c5318a83bce03cb5e0a3518895b8497c4f7734a3a2a2bf1102467564c76",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_sp_ram.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_stream_buffer.sv",
+    "sha256": "be756136162760bfdf24923443c8cf60a94403051bc8a85cde36c193296d5ffa",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_stream_buffer.sv"
+  },
+  {
+    "file": "sources/woq_16x16/VX_mem_bus_if.sv",
+    "sha256": "9863a541c5bfe71f3923e5d0bc6de76a0fa3e7ee11d28ccf7f004e7a29a9296e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/VX_mem_bus_if.sv"
+  },
+  {
+    "file": "verification/fpga_v2_test/verification.json",
+    "sha256": "73c7c14f02664aeab6d029af4186675c2bc5ced59c471b39aedcb78bbf06a817",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2_test/verification.json"
+  },
+  {
+    "file": "verification/fpga_v2_test/test_manifest.json",
+    "sha256": "4d6ce0b2ae18410ecc655bb866c261d6481959d930ec3ed87748b81f41be1c2e",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2_test/test_manifest.json"
+  },
+  {
+    "file": "verification/fpga_v2_test/logs/sim.log",
+    "sha256": "788a55b4e8d0f95e1dcaecae23c13e75a37a31c9d9efc3041e93dd765d913c79",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2_test/logs/sim.log"
+  },
+  {
+    "file": "verification/vendor_ip_check/result.json",
+    "sha256": "24f5c32fa3062f478e3523cdb70edf1eb4c925b14c87b232a2943c04f3222e3f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/vendor_ip_check/result.json"
+  },
+  {
+    "file": "verification/geometry_check/result.json",
+    "sha256": "dd5dd4dcd11ade82c05859754e8b1e1c1c3b98fe94bc37454bcb19109fa72846",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/geometry_check/result.json"
+  },
+  {
+    "file": "verification/geometry_check/run.log",
+    "sha256": "3d14b21ecc6d3b3ce88400a13fb90e354712522502a3acd14a5a5befb21e6918",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/geometry_check/run.log"
+  },
+  {
+    "file": "verification/axi_geometry_check/result.json",
+    "sha256": "0e397a204d5aca70aaf1a2280fa77f3a369d074cf85ad4c6cff428157b68da79",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/axi_geometry_check/result.json"
+  },
+  {
+    "file": "verification/axi_geometry_check/1/run.log",
+    "sha256": "00212dc6a8c9f6d867b2a4c0a3164d137985b258b8f70af5915957ea17256277",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/axi_geometry_check/1/run.log"
+  },
+  {
+    "file": "verification/axi_geometry_check/4/run.log",
+    "sha256": "1afb8849d820b1b0a5928df3726d38202cd31b139f4ba7fd7f3df8cffcf85264",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/axi_geometry_check/4/run.log"
+  },
+  {
+    "file": "provenance/wkv_16x16/snapshot.json",
+    "sha256": "6824befc6079edae52626254c9165f35576b7207bf6ad5870a1c934b21c4a611",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/wkv_16x16/snapshot.json"
+  },
+  {
+    "file": "provenance/woq_16x16/ablation.json",
+    "sha256": "9b6c71f7414d99cc366d822d531a505a32a6ef954739220c7d2e546258693a3f",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/woq_16x16/ablation.json"
+  },
+  {
+    "file": "provenance/fp_tcu_128/snapshot.json",
+    "sha256": "683254cfff5559dcb24f612dca1bf39f45f54381a289a87835908dd98d1ec7d3",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/sources/fp_tcu_128/snapshot.json"
+  },
+  {
+    "file": "provenance/candidates.json",
+    "sha256": "b5ee4d84fac53854d51ad6f307e49619a9ec67d844fc843b8b614181a248a535",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/agent-tasks/fpga-v2-resource-study/candidate_provenance.json"
+  },
+  {
+    "file": "provenance/rejected_legacy_axi_parameters.json",
+    "sha256": "733bab0d260e66df2a60d303bbf4ca17ad54303178bd96a497777fdcedc27df8",
+    "original": "/home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/rejected_legacy_axi_parameters/reason.json"
+  }
+]

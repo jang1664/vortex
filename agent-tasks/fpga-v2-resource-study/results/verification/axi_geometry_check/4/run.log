@@ -1,0 +1,5 @@
+AXI GEOMETRY PASSED requests=4 groups=32 HBM_ports=32 address_bits=34
+- /home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/axi_geometry_check/4/axi_geometry_probe.sv:14: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.028 2024-08-21
+- Verilator: $finish at 1ps; walltime 0.003 s; speed 257.055 ps/s
+- Verilator: cpu 0.004 s on 1 threads; alloced 633 MB

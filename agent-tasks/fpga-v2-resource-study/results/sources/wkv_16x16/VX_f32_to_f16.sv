@@ -1,0 +1,127 @@
+`timescale 1ns / 1ps
+module VX_f32_to_f16 # (
+  parameter OUT_REG = 0
+) (
+    input logic                  clk_i,
+    input logic                  resetn_i,
+    input logic                  valid_i,
+    input logic [31:0] data_i,
+    output logic                  valid_o,
+    output logic [15:0] data_o
+);
+  localparam FP32_WIDTH = 32;
+  localparam FP32_SIGN_WIDTH = 1;
+  localparam FP32_EXP_WIDTH = 8;
+  localparam FP32_MANTISSA_WIDTH = 23;
+  localparam FP16_WIDTH = 16;
+  localparam FP16_SIGN_WIDTH = 1;
+  localparam FP16_EXP_WIDTH = 5;
+  localparam FP16_MANTISSA_WIDTH = 10;
+  localparam FP32_SIGN_BP = FP32_WIDTH - 1;
+  localparam FP32_EXP_BP = FP32_WIDTH - FP32_EXP_WIDTH - 1;
+  localparam FP32_MANT_BP = FP32_WIDTH - FP32_EXP_WIDTH - FP32_MANTISSA_WIDTH - 1;
+  localparam FP16_SIGN_BP = FP16_WIDTH - 1;
+  localparam FP16_EXP_BP = FP16_WIDTH - FP16_EXP_WIDTH - 1;
+  localparam FP16_MANT_BP = FP16_WIDTH - FP16_EXP_WIDTH - FP16_MANTISSA_WIDTH - 1;
+  localparam FP32_EXP_BIAS = 127;
+  localparam FP32_MAX_EXP = 128;
+  localparam FP32_MIN_EXP = -127;
+  localparam FP16_EXP_BIAS = 15;
+  localparam FP16_MAX_EXP = 16;
+  localparam FP16_MIN_EXP = -15;
+  logic fp32_sign;
+  logic [FP32_EXP_WIDTH-1:0] fp32_exp;
+  logic [FP32_MANTISSA_WIDTH-1:0] fp32_mant;
+  logic fp16_sign;
+  logic [FP16_EXP_WIDTH-1:0] fp16_exp;
+  logic [FP16_MANTISSA_WIDTH-1:0] fp16_mant;
+  logic fp16_sign_;
+  logic [FP16_EXP_WIDTH-1:0] fp16_exp_;
+  logic [FP16_MANTISSA_WIDTH-1:0] fp16_mant_;
+  logic fp16_overflow;
+  logic fp16_underflow;
+  logic is_fp32_nan;
+  logic is_fp32_exp_too_small;
+  logic [FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] fp32_mant_with_pad;
+  logic [FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] shifted_fp32_mant;
+  assign fp32_sign = data_i[FP32_SIGN_BP+:FP32_SIGN_WIDTH];
+  assign fp32_exp = data_i[FP32_EXP_BP+:FP32_EXP_WIDTH];
+  assign fp32_mant = data_i[FP32_MANT_BP+:FP32_MANTISSA_WIDTH];
+  assign fp16_overflow = (fp32_exp >= (FP32_EXP_BIAS + FP16_MAX_EXP));
+  assign fp16_underflow = (fp32_exp <= (FP32_EXP_BIAS + FP16_MIN_EXP));
+  assign is_fp32_nan = (fp32_exp == (FP32_EXP_BIAS + FP32_MAX_EXP)) & (fp32_mant != 0);
+  assign is_fp32_exp_too_small = (fp32_exp <= (FP32_EXP_BIAS + FP16_MIN_EXP - (FP16_MANTISSA_WIDTH+1)));
+  assign fp32_mant_with_pad = {fp32_mant, (FP16_MANTISSA_WIDTH + 1)'(1'b0)};
+  function logic [(FP16_WIDTH-1)-1:0] round_mant(
+      input logic[FP16_EXP_WIDTH+FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] fp16_with_pad);
+    localparam MSB = $bits(fp16_with_pad) - 1;
+    localparam MANT_MSB = $bits(fp16_with_pad) - 1 - FP16_EXP_WIDTH;
+    logic G, R, S, L;
+    logic [(FP16_WIDTH-1)-1:0] fp16_no_sign;
+    G = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH)];
+    R = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+1)];
+    S = |fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+2):0];
+    L = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH-1)];
+    if ((G & ~R & ~S & L) | (G & R) | (G & ~R & S)) begin
+      fp16_no_sign = fp16_with_pad[MSB-:(FP16_WIDTH-1)] + 1'b1;
+    end else begin
+      fp16_no_sign = fp16_with_pad[MSB-:(FP16_WIDTH-1)];
+    end
+    return fp16_no_sign;
+  endfunction
+  always_comb begin
+    fp16_sign         = fp32_sign;
+    fp16_exp          = '0;
+    fp16_mant         = '0;
+    fp16_exp_         = '0;
+    shifted_fp32_mant = fp32_mant_with_pad;
+    case ({fp16_overflow, fp16_underflow})
+      2'b00: begin
+        fp16_exp_ = fp32_exp - (FP32_EXP_BIAS - FP16_EXP_BIAS);
+        {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
+      end
+      2'b10: begin
+        if (is_fp32_nan) begin
+          fp16_exp                           = (FP16_EXP_BIAS + FP16_MAX_EXP);
+          fp16_mant[FP16_MANTISSA_WIDTH-1]   = 1'b1;
+          fp16_mant[FP16_MANTISSA_WIDTH-2:0] = '0;
+        end else begin
+          fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
+          fp16_mant = '0;
+        end
+      end
+      2'b01: begin
+        if (is_fp32_exp_too_small) begin
+          fp16_exp  = '0;
+          fp16_mant = '0;
+        end else begin
+          fp16_exp_ = '0;
+          shifted_fp32_mant = fp32_mant_with_pad >> (FP32_EXP_BIAS + FP16_MIN_EXP + 1 - fp32_exp);
+          {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
+        end
+      end
+      default: begin
+        fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
+        fp16_mant = '0;
+      end
+    endcase
+  end
+  generate
+    if(OUT_REG == 0) begin
+      always_comb begin
+        valid_o = valid_i;
+        data_o  = {fp16_sign, fp16_exp, fp16_mant};
+      end
+    end else begin
+      always_ff @(posedge clk_i) begin
+        if (~resetn_i) begin
+          valid_o <= 1'b0;
+          data_o  <= '0;
+        end else begin
+          valid_o <= valid_i;
+          data_o  <= {fp16_sign, fp16_exp, fp16_mant};
+        end
+      end
+    end
+  endgenerate
+endmodule

@@ -1,0 +1,285 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date         : Thu Oct  1 17:07:16 2026
+| Host         : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command      : report_utilization -hierarchical -hierarchical_depth 12 -file /home/donghweeson/workspace/vortex-fpint-fpga-v2/build-fpga-v2-study/fpga_v2/axi_4/hierarchy.rpt
+| Design       : VX_axi_adapter
+| Device       : xcu55c-fsvh2892-2L-e
+| Speed File   : -2L
+| Design State : Optimized
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++--------------------------------------------------------------------+----------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|                              Instance                              |                 Module                 | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++--------------------------------------------------------------------+----------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| VX_axi_adapter                                                     |                                  (top) |      59963 |      59915 |      48 |    0 | 61068 |      0 |      0 |    0 |          0 |
+|   (VX_axi_adapter)                                                 |                                  (top) |          9 |          9 |       0 |    0 |    32 |      0 |      0 |    0 |          0 |
+|   g_tag_buf[0].g_enabled.tag_buf                                   |                        VX_index_buffer |        100 |         88 |      12 |    0 |    21 |      0 |      0 |    0 |          0 |
+|     allocator                                                      |                       VX_allocator_321 |         88 |         88 |       0 |    0 |    21 |      0 |      0 |    0 |          0 |
+|   g_tag_buf[1].g_enabled.tag_buf                                   |                     VX_index_buffer_31 |         66 |         54 |      12 |    0 |    21 |      0 |      0 |    0 |          0 |
+|     allocator                                                      |                       VX_allocator_318 |         54 |         54 |       0 |    0 |    21 |      0 |      0 |    0 |          0 |
+|   g_tag_buf[2].g_enabled.tag_buf                                   |                     VX_index_buffer_32 |         73 |         61 |      12 |    0 |    21 |      0 |      0 |    0 |          0 |
+|     allocator                                                      |                       VX_allocator_315 |         61 |         61 |       0 |    0 |    21 |      0 |      0 |    0 |          0 |
+|   g_tag_buf[3].g_enabled.tag_buf                                   |                     VX_index_buffer_33 |        100 |         88 |      12 |    0 |    21 |      0 |      0 |    0 |          0 |
+|     allocator                                                      |                           VX_allocator |         88 |         88 |       0 |    0 |    21 |      0 |      0 |    0 |          0 |
+|   req_xbar                                                         |                         VX_stream_xbar |      30757 |      30757 |       0 |    0 | 40064 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[0].xbar_arb      |                          VX_stream_arb |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[0].xbar_arb)  |                          VX_stream_arb |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_312 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_313 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[10].xbar_arb     |                      VX_stream_arb_158 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[10].xbar_arb) |                      VX_stream_arb_158 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_308 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_309 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[11].xbar_arb     |                      VX_stream_arb_159 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[11].xbar_arb) |                      VX_stream_arb_159 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_304 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_305 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[12].xbar_arb     |                      VX_stream_arb_160 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[12].xbar_arb) |                      VX_stream_arb_160 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_300 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_301 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[13].xbar_arb     |                      VX_stream_arb_161 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[13].xbar_arb) |                      VX_stream_arb_161 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_296 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_297 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[14].xbar_arb     |                      VX_stream_arb_162 |        976 |        976 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[14].xbar_arb) |                      VX_stream_arb_162 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_292 |        331 |        331 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_293 |        331 |        331 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[15].xbar_arb     |                      VX_stream_arb_163 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[15].xbar_arb) |                      VX_stream_arb_163 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_288 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_289 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[16].xbar_arb     |                      VX_stream_arb_164 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[16].xbar_arb) |                      VX_stream_arb_164 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_284 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_285 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[17].xbar_arb     |                      VX_stream_arb_165 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[17].xbar_arb) |                      VX_stream_arb_165 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_280 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_281 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[18].xbar_arb     |                      VX_stream_arb_166 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[18].xbar_arb) |                      VX_stream_arb_166 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_276 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_277 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[19].xbar_arb     |                      VX_stream_arb_167 |        958 |        958 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[19].xbar_arb) |                      VX_stream_arb_167 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_272 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_273 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[1].xbar_arb      |                      VX_stream_arb_168 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[1].xbar_arb)  |                      VX_stream_arb_168 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_268 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_269 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[20].xbar_arb     |                      VX_stream_arb_169 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[20].xbar_arb) |                      VX_stream_arb_169 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_264 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_265 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[21].xbar_arb     |                      VX_stream_arb_170 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[21].xbar_arb) |                      VX_stream_arb_170 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_260 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_261 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[22].xbar_arb     |                      VX_stream_arb_171 |        958 |        958 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[22].xbar_arb) |                      VX_stream_arb_171 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_256 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_257 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[23].xbar_arb     |                      VX_stream_arb_172 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[23].xbar_arb) |                      VX_stream_arb_172 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_252 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_253 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[24].xbar_arb     |                      VX_stream_arb_173 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[24].xbar_arb) |                      VX_stream_arb_173 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_248 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_249 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[25].xbar_arb     |                      VX_stream_arb_174 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[25].xbar_arb) |                      VX_stream_arb_174 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_244 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_245 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[26].xbar_arb     |                      VX_stream_arb_175 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[26].xbar_arb) |                      VX_stream_arb_175 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_240 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_241 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[27].xbar_arb     |                      VX_stream_arb_176 |        958 |        958 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[27].xbar_arb) |                      VX_stream_arb_176 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_236 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_237 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[28].xbar_arb     |                      VX_stream_arb_177 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[28].xbar_arb) |                      VX_stream_arb_177 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_232 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_233 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[29].xbar_arb     |                      VX_stream_arb_178 |        958 |        958 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[29].xbar_arb) |                      VX_stream_arb_178 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_228 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_229 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[2].xbar_arb      |                      VX_stream_arb_179 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[2].xbar_arb)  |                      VX_stream_arb_179 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_224 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_225 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[30].xbar_arb     |                      VX_stream_arb_180 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[30].xbar_arb) |                      VX_stream_arb_180 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_220 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_221 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[31].xbar_arb     |                      VX_stream_arb_181 |        978 |        978 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[31].xbar_arb) |                      VX_stream_arb_181 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_216 |        343 |        343 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_217 |        343 |        343 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[3].xbar_arb      |                      VX_stream_arb_182 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[3].xbar_arb)  |                      VX_stream_arb_182 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_212 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_213 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[4].xbar_arb      |                      VX_stream_arb_183 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[4].xbar_arb)  |                      VX_stream_arb_183 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_208 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_209 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[5].xbar_arb      |                      VX_stream_arb_184 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[5].xbar_arb)  |                      VX_stream_arb_184 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_204 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_205 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[6].xbar_arb      |                      VX_stream_arb_185 |       1113 |       1113 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[6].xbar_arb)  |                      VX_stream_arb_185 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.arbiter                             |                 VX_generic_arbiter_199 |        172 |        172 |       0 |    0 |     4 |      0 |      0 |    0 |          0 |
+|         g_round_robin.rr_arbiter                                   |                      VX_rr_arbiter_202 |        172 |        172 |       0 |    0 |     4 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_200 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_201 |        320 |        320 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[7].xbar_arb      |                      VX_stream_arb_186 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[7].xbar_arb)  |                      VX_stream_arb_186 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_196 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_197 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[8].xbar_arb      |                      VX_stream_arb_187 |        954 |        954 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[8].xbar_arb)  |                      VX_stream_arb_187 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                  VX_elastic_buffer_192 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                   VX_stream_buffer_193 |        319 |        319 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[9].xbar_arb      |                      VX_stream_arb_188 |        962 |        962 |       0 |    0 |  1252 |      0 |      0 |    0 |          0 |
+|       (g_multi_inputs.g_multiple_outputs.g_xbar_arbs[9].xbar_arb)  |                      VX_stream_arb_188 |        621 |        621 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_arbiter.g_out_buf[0].out_buf                |                      VX_elastic_buffer |        321 |        321 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|         g_eb2.stream_buffer                                        |                       VX_stream_buffer |        321 |        321 |       0 |    0 |  1248 |      0 |      0 |    0 |          0 |
+|   rsp_xbar                                                         |         VX_stream_xbar__parameterized0 |      28794 |      28794 |       0 |    0 | 20824 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[0].xbar_arb      |          VX_stream_arb__parameterized0 |       7147 |       7147 |       0 |    0 |  5206 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.fanout_join_arb                      |      VX_stream_arb__parameterized2_133 |        817 |        817 |       0 |    0 |  1038 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.fanout_join_arb)                  |      VX_stream_arb__parameterized2_133 |        516 |        516 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized1_155 |        283 |        283 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized1_156 |        283 |        283 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb     |      VX_stream_arb__parameterized1_134 |       1583 |       1583 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb) |      VX_stream_arb__parameterized1_134 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_150 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_153 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_151 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_152 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb     |      VX_stream_arb__parameterized1_135 |       1582 |       1582 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb) |      VX_stream_arb__parameterized1_135 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_146 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_149 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_147 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_148 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb     |      VX_stream_arb__parameterized1_136 |       1582 |       1582 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb) |      VX_stream_arb__parameterized1_136 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_142 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_145 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_143 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_144 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb     |      VX_stream_arb__parameterized1_137 |       1583 |       1583 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb) |      VX_stream_arb__parameterized1_137 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_138 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_141 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_139 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_140 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[1].xbar_arb      |       VX_stream_arb__parameterized0_65 |       7181 |       7181 |       0 |    0 |  5206 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.fanout_join_arb                      |      VX_stream_arb__parameterized2_108 |        819 |        819 |       0 |    0 |  1038 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.fanout_join_arb)                  |      VX_stream_arb__parameterized2_108 |        516 |        516 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized1_130 |        285 |        285 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized1_131 |        285 |        285 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb     |      VX_stream_arb__parameterized1_109 |       1591 |       1591 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb) |      VX_stream_arb__parameterized1_109 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_125 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_128 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_126 |          7 |          7 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_127 |          7 |          7 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb     |      VX_stream_arb__parameterized1_110 |       1590 |       1590 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb) |      VX_stream_arb__parameterized1_110 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_121 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_124 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_122 |          6 |          6 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_123 |          6 |          6 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb     |      VX_stream_arb__parameterized1_111 |       1590 |       1590 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb) |      VX_stream_arb__parameterized1_111 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_117 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_120 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_118 |          6 |          6 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_119 |          6 |          6 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb     |      VX_stream_arb__parameterized1_112 |       1591 |       1591 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb) |      VX_stream_arb__parameterized1_112 |       1034 |       1034 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_113 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_116 |        550 |        550 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_114 |          7 |          7 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_115 |          7 |          7 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[2].xbar_arb      |       VX_stream_arb__parameterized0_66 |       7158 |       7158 |       0 |    0 |  5206 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.fanout_join_arb                      |       VX_stream_arb__parameterized2_83 |        816 |        816 |       0 |    0 |  1038 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.fanout_join_arb)                  |       VX_stream_arb__parameterized2_83 |        516 |        516 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized1_105 |        282 |        282 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized1_106 |        282 |        282 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb     |       VX_stream_arb__parameterized1_84 |       1586 |       1586 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb) |       VX_stream_arb__parameterized1_84 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           | VX_generic_arbiter__parameterized0_100 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |      VX_rr_arbiter__parameterized0_103 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |  VX_elastic_buffer__parameterized0_101 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |   VX_stream_buffer__parameterized0_102 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb     |       VX_stream_arb__parameterized1_85 |       1585 |       1585 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb) |       VX_stream_arb__parameterized1_85 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_96 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_99 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_97 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_98 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb     |       VX_stream_arb__parameterized1_86 |       1585 |       1585 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb) |       VX_stream_arb__parameterized1_86 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_92 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_95 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_93 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_94 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb     |       VX_stream_arb__parameterized1_87 |       1586 |       1586 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb) |       VX_stream_arb__parameterized1_87 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_88 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_91 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_89 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_90 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|     g_multi_inputs.g_multiple_outputs.g_xbar_arbs[3].xbar_arb      |       VX_stream_arb__parameterized0_67 |       7164 |       7164 |       0 |    0 |  5206 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.fanout_join_arb                      |          VX_stream_arb__parameterized2 |        822 |        822 |       0 |    0 |  1038 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.fanout_join_arb)                  |          VX_stream_arb__parameterized2 |        516 |        516 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |      VX_elastic_buffer__parameterized1 |        288 |        288 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |       VX_stream_buffer__parameterized1 |        288 |        288 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb     |          VX_stream_arb__parameterized1 |       1586 |       1586 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[0].fanout_slice_arb) |          VX_stream_arb__parameterized1 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_79 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_82 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_80 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_81 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb     |       VX_stream_arb__parameterized1_68 |       1585 |       1585 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[1].fanout_slice_arb) |       VX_stream_arb__parameterized1_68 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_75 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_78 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_76 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_77 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb     |       VX_stream_arb__parameterized1_69 |       1585 |       1585 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[2].fanout_slice_arb) |       VX_stream_arb__parameterized1_69 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |  VX_generic_arbiter__parameterized0_71 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |       VX_rr_arbiter__parameterized0_74 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |   VX_elastic_buffer__parameterized0_72 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |    VX_stream_buffer__parameterized0_73 |          0 |          0 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|       g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb     |       VX_stream_arb__parameterized1_70 |       1586 |       1586 |       0 |    0 |  1042 |      0 |      0 |    0 |          0 |
+|         (g_input_select.g_fanout.g_slice_arbs[3].fanout_slice_arb) |       VX_stream_arb__parameterized1_70 |       1037 |       1037 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.arbiter                           |     VX_generic_arbiter__parameterized0 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|           g_round_robin.rr_arbiter                                 |          VX_rr_arbiter__parameterized0 |        548 |        548 |       0 |    0 |     8 |      0 |      0 |    0 |          0 |
+|         g_input_select.g_arbiter.g_out_buf[0].out_buf              |      VX_elastic_buffer__parameterized0 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
+|           g_eb2.stream_buffer                                      |       VX_stream_buffer__parameterized0 |          1 |          1 |       0 |    0 |  1034 |      0 |      0 |    0 |          0 |
++--------------------------------------------------------------------+----------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+
+

@@ -1,0 +1,17 @@
+\begin{table}[t]
+\centering
+\caption{Relative nominal compute-engine efficiency at 100\,MHz,
+normalized to the 128-MAC/cycle FP TCU.
+WoQ and WKV use 16$\times$16 MXUs (256 MAC/cycle).}
+\label{tab:array-level}
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}Xccc@{}}
+\toprule
+Unit & Precision & GOPS/kLUT & GOPS/DSP \\
+\midrule
+FP TCU & FP$\times$FP & 1.00 & 1.00 \\
+WoQ \fpint{} GEMM Engine & \fpint{} & 1.73 & 2.13 \\
+WKV \fpint{} GEMM Engine & \fpint{} & 1.60 & 2.06 \\
+\bottomrule
+\end{tabularx}
+\end{table}

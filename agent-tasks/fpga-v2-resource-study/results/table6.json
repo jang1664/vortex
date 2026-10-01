@@ -1,0 +1,23 @@
+[
+  {
+    "point": "fp_tcu_128",
+    "unit": "FP TCU",
+    "precision": "FP$\\times$FP",
+    "relative_GOPS_per_kLUT": 1.0,
+    "relative_GOPS_per_DSP": 1.0
+  },
+  {
+    "point": "woq_16x16",
+    "unit": "WoQ \\fpint{} GEMM Engine",
+    "precision": "\\fpint{}",
+    "relative_GOPS_per_kLUT": 1.7316372242413995,
+    "relative_GOPS_per_DSP": 2.1333333333333333
+  },
+  {
+    "point": "wkv_16x16",
+    "unit": "WKV \\fpint{} GEMM Engine",
+    "precision": "\\fpint{}",
+    "relative_GOPS_per_kLUT": 1.6046211082827488,
+    "relative_GOPS_per_DSP": 2.064516129032258
+  }
+]
