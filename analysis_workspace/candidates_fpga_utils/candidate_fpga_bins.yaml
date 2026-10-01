@@ -1,0 +1,6 @@
+schema_version: 1
+candidates:
+  C1: tcu_th32_c1_rev2
+  C2: build/hw/syn/xilinx/xrt/th32_c1_tcu_naive_m32_tcol32_pnr_spreadlogic_high_20260930_1421_xilinx_u55c_gen3x16_xdma_3_202210_1_hw
+  C3: naive_gemm_th32_tcol32_hwexp_dcache
+  C4: improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem
