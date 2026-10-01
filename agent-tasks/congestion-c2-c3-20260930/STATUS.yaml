@@ -1,0 +1,6 @@
+task: c2-c3-congestion-location-analysis
+state: COMPLETE
+findings: findings.json
+raw_reports: parsed-reports.json
+peak_windows: hotspots.csv
+geometry: tile-slr-map.tsv

@@ -1,0 +1,1768 @@
+[
+  {
+    "design": "base_t32",
+    "aliases": [
+      "base_t32"
+    ],
+    "config": "configs/base_t32.sh",
+    "binary_path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin",
+    "checkpoint": null,
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t32",
+    "status": "missing_final_checkpoint",
+    "build_id": "75849ebace35bff276f248ef52a66ba6c34419919713d7c62ac6af35154943b6",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DEXT_TCU_ENABLE -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=32 -DLMEM_LOG_SIZE=20 -DSTACK_BASE_ADDR=64\\'h1FFF00000 -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DPLATFORM_MEMORY_DATA_SIZE=64 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "NUM_CORES": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "TARGET": "hw"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Fri Apr  3 22:46:07 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t32/kernel_postroute_utilization.rpt",
+        "header": {}
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/_x/reports/link/imp/impl_1_init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Fri Apr  3 23:03:01 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Sat Apr  4 02:07:02 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t32/full_postroute_utilization.rpt",
+        "header": {}
+      }
+    }
+  },
+  {
+    "design": "base_t8",
+    "aliases": [
+      "base_t8"
+    ],
+    "config": "configs/base_t8.sh",
+    "binary_path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t8",
+    "status": "complete",
+    "build_id": "747805ed8e73e305af93c6bb7bb949f60f2092c7e377eb4deb1cfa16093c70af",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DEXT_TCU_ENABLE -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8 -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=64\\'d8585740288 -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DPLATFORM_MEMORY_DATA_SIZE=64 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "NUM_CORES": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "TARGET": "hw"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Mar 23 15:47:33 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t8/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:53:05 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Mar 23 16:05:42 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Mar 23 17:11:35 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/base_t8/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:53:35 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "tcu_th16_c1",
+    "aliases": [
+      "tcu_th16_c1"
+    ],
+    "config": "configs/tcu_th16_c1.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_eb5745ba07/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_eb5745ba07/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c1",
+    "status": "complete",
+    "build_id": "eb5745ba070ff4f3740a7bc3f64b2dcf086bd1d74d46e5b0113b0badc50a37ec",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DL2_ENABLE -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DLMEM_LOG_SIZE=20 -DEXT_TCU_ENABLE -DDISABLE_BF16 -DDISABLE_TCU_INT -DAFU_DONE_WAIT_CACHE_DRAIN -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DJOB_MMIO_DMA_DESC_ONE_LANE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_eb5745ba07/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:06:44 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c1/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:54:55 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_eb5745ba07/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:24:48 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_eb5745ba07/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 15:53:13 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c1/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:55:51 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "tcu_th16_c2",
+    "aliases": [
+      "tcu_th16_c2"
+    ],
+    "config": "configs/tcu_th16_c2.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/bin",
+    "checkpoint": null,
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c2",
+    "status": "missing_alias_path",
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {}
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c2/kernel_postroute_utilization.rpt",
+        "header": {}
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/_x/reports/link/imp/impl_1_init_report_utilization_0.rpt",
+        "header": {}
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {}
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th16_c2/full_postroute_utilization.rpt",
+        "header": {}
+      }
+    }
+  },
+  {
+    "design": "tcu_th32_c1",
+    "aliases": [
+      "tcu_th32_c1"
+    ],
+    "config": "configs/tcu_th32_c1.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1",
+    "status": "complete",
+    "build_id": "ab7bd2824e61db92eb758fc6578fcc697843b4af3716adc7c41ee41910204532",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DL2_ENABLE -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DLMEM_LOG_SIZE=20 -DEXT_TCU_ENABLE -DDISABLE_BF16 -DDISABLE_TCU_INT -DAFU_DONE_WAIT_CACHE_DRAIN -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DJOB_MMIO_DMA_DESC_ONE_LANE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:38:07 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:01:25 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 15:03:54 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 17:37:52 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:02:56 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C1",
+    "aliases": [
+      "tcu_th32_c1_rev2",
+      "C1"
+    ],
+    "config": "configs/tcu_th32_c1_rev2.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C1",
+    "status": "complete",
+    "build_id": "94c5b39919e7b0d04b8e3c2796bc4f8b3291768e5b1dc58139fc4e68ef9a1429",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DEXT_TCU_ENABLE -DDISABLE_BF16 -DDISABLE_TCU_INT -DAFU_DONE_WAIT_CACHE_DRAIN -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DJOB_MMIO_DMA_DESC_ONE_LANE -DLMEM_REQ_OMEGA_ENABLE -DLMEM_RSP_OMEGA_ENABLE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 23:00:56 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C1/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:02:40 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 23:25:04 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 22 01:23:29 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C1/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:03:56 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "tcu_th32_c1_rev3",
+    "aliases": [
+      "tcu_th32_c1_rev3"
+    ],
+    "config": "configs/tcu_th32_c1_rev3.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_363e405e50/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_363e405e50/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1_rev3",
+    "status": "complete",
+    "build_id": "363e405e501e2ad19374b37e3543cafa1688d50e98bfdbf533c3955bcaa294ee",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=21 -DLMEM_REQ_OMEGA_ENABLE -DLMEM_RSP_OMEGA_ENABLE -DLMEM_REQ_OMEGA_ORDER_DISABLE -DLMEM_RSP_OMEGA_ORDER_DISABLE -DEXT_TCU_ENABLE -DDISABLE_BF16 -DDISABLE_TCU_INT -DAFU_DONE_WAIT_CACHE_DRAIN -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DJOB_MMIO_DMA_DESC_ONE_LANE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "NUM_CORES": "1",
+      "PLATFORM": "/opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_363e405e50/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 01:21:45 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1_rev3/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:10:29 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_363e405e50/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 01:45:14 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_363e405e50/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 03:43:52 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/tcu_th32_c1_rev3/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:11:49 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C2",
+    "aliases": [
+      "naive_gemm_simd_th16_tcol32_hwexp_dcache",
+      "naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16",
+      "naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16_perf",
+      "C2"
+    ],
+    "config": "configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin",
+    "checkpoint": null,
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C2",
+    "status": "missing_alias_path",
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {}
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C2/kernel_postroute_utilization.rpt",
+        "header": {}
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/_x/reports/link/imp/impl_1_init_report_utilization_0.rpt",
+        "header": {}
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {}
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C2/full_postroute_utilization.rpt",
+        "header": {}
+      }
+    }
+  },
+  {
+    "design": "naive_gemm_th16_tcol32_hwexp_dcache_pack16_rev1",
+    "aliases": [
+      "naive_gemm_th16_tcol32_hwexp_dcache_pack16_rev1"
+    ],
+    "config": "configs/naive_gemm_th16_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_5d4264c38f/bin",
+    "checkpoint": null,
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16_rev1",
+    "status": "missing_alias_path",
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_5d4264c38f/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {}
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16_rev1/kernel_postroute_utilization.rpt",
+        "header": {}
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_5d4264c38f/_x/reports/link/imp/impl_1_init_report_utilization_0.rpt",
+        "header": {}
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_5d4264c38f/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {}
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16_rev1/full_postroute_utilization.rpt",
+        "header": {}
+      }
+    }
+  },
+  {
+    "design": "naive_gemm_th16_tcol32_hwexp_dcache_pack16",
+    "aliases": [
+      "naive_gemm_th16_tcol32_hwexp_dcache_pack16"
+    ],
+    "config": "configs/naive_gemm_th16_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_31c69cf271/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_31c69cf271/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16",
+    "status": "complete",
+    "build_id": "31c69cf27196cd274a6d015ffc1565bb54f472d18187cf3e421783a0eed8985a",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DL2_ENABLE -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DGEMM_ACC_MEM_DEPTH=512 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_31c69cf271/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:22:05 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:10:41 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_31c69cf271/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:43:08 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_31c69cf271/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 16:39:23 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_tcol32_hwexp_dcache_pack16/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:11:50 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C3",
+    "aliases": [
+      "naive_gemm_th32_tcol32_hwexp_dcache",
+      "C3"
+    ],
+    "config": "configs/naive_gemm_th32_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3",
+    "status": "complete",
+    "build_id": "9600db3a37d8f7164aa7d7a5b5d2e495e3d8e7275b1bbce38eec2a775825ac9d",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DGEMM_ACC_MEM_DEPTH=512 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DLMEM_REQ_OMEGA_ENABLE -DLMEM_RSP_OMEGA_ENABLE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 14:18:15 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:15:24 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 14:42:52 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_9600db3a37/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 17:10:49 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:16:54 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16",
+    "aliases": [
+      "naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16"
+    ],
+    "config": "configs/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16",
+    "status": "complete",
+    "build_id": "8e3680fe1dc6677dbb7ec28b3fbe6ec94b75dcd2dae8223c433e21be2a8f4dd1",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=2 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DGEMM_ACC_MEM_DEPTH=512 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 03:30:32 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:58:50 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 03:52:53 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_8e3680fe1d_1/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 06:12:40 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/naive_gemm_th16_b32_tcol32_hwexp_dcache_sxbar_f16/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:00:13 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C3_v2",
+    "aliases": [
+      "naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16",
+      "C3_v2"
+    ],
+    "config": "configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v2",
+    "status": "complete",
+    "build_id": "b7706fbbe390d8f1f053d597d392d293187934a70a9948a1975721e009b97aef",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=8 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=1 -DLMEM_LOG_SIZE=20 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DGEMM_ACC_MEM_DEPTH=512 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 22:32:08 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v2/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:58:22 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 22:54:02 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_b7706fbbe3/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 00:51:04 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v2/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:59:37 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C3_v3",
+    "aliases": [
+      "naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem",
+      "C3_v3"
+    ],
+    "config": "configs/naive_gemm_th8_b32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v3",
+    "status": "complete",
+    "build_id": "e16628d67f56124590b811bfc15382bb38c32f513ceed4fce6c56c7f104a8645",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_INTERLEAVE=1 -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=8 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DDCACHE_NUM_BANKS=4 -DL1_MEM_PORTS=1 -DLMEM_LOG_SIZE=21 -DLMEM_NUM_PORTS=32 -DLMEM_NUM_BANKS=32 -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=16 -DDMA_RD_OUTSTANDING_SLOT=16 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 14:53:33 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v3/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:06:30 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 15:14:49 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_e16628d67f/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 17:12:33 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C3_v3/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:07:45 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "improve_th16_tcol32_hwexp_dcache_rev1",
+    "aliases": [
+      "improve_th16_tcol32_hwexp_dcache_rev1"
+    ],
+    "config": "configs/improve_th16_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin",
+    "checkpoint": null,
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev1",
+    "status": "missing_alias_path",
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {}
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev1/kernel_postroute_utilization.rpt",
+        "header": {}
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/_x/reports/link/imp/impl_1_init_report_utilization_0.rpt",
+        "header": {}
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {}
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev1/full_postroute_utilization.rpt",
+        "header": {}
+      }
+    }
+  },
+  {
+    "design": "improve_th16_tcol32_hwexp_dcache_rev2",
+    "aliases": [
+      "improve_th16_tcol32_hwexp_dcache_rev2"
+    ],
+    "config": "configs/improve_th16_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_0f466ad169/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_0f466ad169/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev2",
+    "status": "complete",
+    "build_id": "0f466ad1697a80b7ef6de819e9bf98fea75e7c8fb3112ddb55134e08a81541f5",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DL2_ENABLE -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=16 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_0f466ad169/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:17:48 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev2/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:07:16 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_0f466ad169/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 14:40:28 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_L2cache_0f466ad169/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Mon Jul 20 16:51:47 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th16_tcol32_hwexp_dcache_rev2/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:08:31 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C4",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache",
+      "C4"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4",
+    "status": "complete",
+    "build_id": "6de40e376bfd6e710c5a4b188a630879fb6da0f2e92c508ea7c3c9e36d9fa34b",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DLMEM_REQ_OMEGA_ENABLE -DLMEM_RSP_OMEGA_ENABLE -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 14:11:17 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:53:01 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 14:34:49 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 21 16:47:59 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 14:54:27 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "improve_th32_tcol32_hwexp_dcache_sxbar",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache_sxbar"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache_sxbar.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar",
+    "status": "complete",
+    "build_id": "101b1bb017e5a41eed3ad40a64513ad10e2b551477a4e6682ef500b211a7a4d2",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Fri Jul 24 16:10:27 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:15:30 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Fri Jul 24 16:35:04 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_101b1bb017/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Fri Jul 24 18:58:21 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:17:00 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "improve_th32_tcol32_hwexp_dcache_sxbar_f16",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache_sxbar_f16"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar_f16",
+    "status": "complete",
+    "build_id": "dc0f62036190cc26596f5320aaaa2e931464473f2a9052e4466eefa5d3a9d9ca",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 28 03:05:58 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar_f16/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:16:06 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 28 03:31:13 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_dc0f620361/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Tue Jul 28 05:50:00 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/improve_th32_tcol32_hwexp_dcache_sxbar_f16/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:17:40 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C4_2",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4",
+      "C4_2"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_2",
+    "status": "complete",
+    "build_id": "edd9bc9b90148c2c4a05e3699d3039201810625dc9ed2ced9fc6a511675bfd60",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PERF": "1",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 18:02:41 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_2/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:16:50 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 18:28:00 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_edd9bc9b90_1/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Jul 29 20:47:50 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_2/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:18:24 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C4_v2_noperf",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache_sxbar_f16_v4_noperf",
+      "C4_v2_noperf"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v2_noperf",
+    "status": "complete",
+    "build_id": "356f9f71fe6a73fa17cd6acd0a0737453089dd3d764ed81410e17731f506c44b",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=19 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=32768 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=512 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 01:47:30 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v2_noperf/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:20:02 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 02:12:11 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_356f9f71fe/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Thu Jul 30 04:36:04 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v2_noperf/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:21:34 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  },
+  {
+    "design": "C4_v3",
+    "aliases": [
+      "improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem",
+      "C4_v3"
+    ],
+    "config": "configs/improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem.sh",
+    "binary_path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin",
+    "checkpoint": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/_x/link/vivado/vpl/prj/prj.runs/impl_1/level0_wrapper_postroute_physopt.dcp",
+    "reports_dir": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v3",
+    "status": "complete",
+    "build_id": "64300e51192c5fd72a5b1b6b35ff86694bb8186a54edc5c73bf142945bd206e8",
+    "build_params": {
+      "CLOCK_FREQ_HZ": "100",
+      "CONFIGS": "-DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DBANK_INTERLEAVE -DPLATFORM_MEMORY_REMAP -DNUM_CLUSTERS=1 -DNUM_CORES=1 -DNUM_THREADS=32 -DICACHE_SIZE=32768 -DDCACHE_SIZE=32768 -DLMEM_LOG_SIZE=20 -DENABLE_GEMM_ACCEL -DGEMM_IMPROVE -DTMEM_BANK_SIZE=65536 -DNUM_DMA_CHANNELS=8 -DGEMM_ACC_MEM_DEPTH=1024 -DMXU_COL_TILE=32 -DAFU_DONE_WAIT_CACHE_DRAIN -DJOB_MMIO_DMA_DESC_ONE_LANE -DVIVADO -DEXT_D_DISABLE -DEXT_ZFH_ENABLE -DVX_ENABLE_HW_EXPF -DFPU_DSP -DVX_FPU_EXP_LUT -DFEXP_PE_RATIO=16 -DLMEM_DMA_RD_OUTSTANDING_SLOTS=8 -DDMA_RD_OUTSTANDING_SLOT=8 -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MERGED_MEMORY_INTERFACE",
+      "DEVICE_PART": "xcu55c-fsvh2892-2L-e",
+      "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+      "SIMULATOR": "xsim",
+      "TARGET": "hw",
+      "VCS_GCC_INSTALL_DIR": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux/gcc-9.2.0_64-shared/xbin",
+      "VCS_INSTALL_DIR": "/tool/Program/synopsys/vcs/W-2024.09-SP1/bin",
+      "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint/build/vcs_simlib",
+      "VG_GNU_PACKAGE": "/tool/Program/synopsys/vcs_gnu/W-2024.09-SP1/linux"
+    },
+    "report_metadata": {
+      "kernel_synth": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Sun Aug 30 01:31:34 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file ulp_vortex_afu_1_0_utilization_synth.rpt -pb ulp_vortex_afu_1_0_utilization_synth.pb",
+          "Design": "ulp_vortex_afu_1_0",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Synthesized"
+        }
+      },
+      "kernel_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v3/kernel_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:20:05 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -cells [get_cells -quiet level0_i/ulp/vortex_afu_1] -file kernel_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_linked_pre_opt": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_report_utilization_0.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Sun Aug 30 01:56:02 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file init_report_utilization_0.rpt -pb init_report_utilization_0.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      },
+      "full_placed": {
+        "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_64300e5119/bin/impl_1_hw_bb_locked_utilization_placed.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Sun Aug 30 04:14:41 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file hw_bb_locked_utilization_placed.rpt -pb hw_bb_locked_utilization_placed.pb",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Fully Placed"
+        }
+      },
+      "full_final": {
+        "path": "/home/jaeyongjang/project.local/vortex_fpint/analysis_workspace/synth_vs_pnr_utilization_20260930/reports/C4_v3/full_postroute_utilization.rpt",
+        "header": {
+          "Tool Version": "Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025",
+          "Date": "Wed Sep 30 15:21:40 2026",
+          "Host": "fpga running 64-bit Ubuntu 24.04.4 LTS",
+          "Command": "report_utilization -file full_postroute_utilization.rpt",
+          "Design": "level0_wrapper",
+          "Device": "xcu55c-fsvh2892-2L-e",
+          "Speed File": "-2L",
+          "Design State": "Physopt postRoute"
+        }
+      }
+    }
+  }
+]

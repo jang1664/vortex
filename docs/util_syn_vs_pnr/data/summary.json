@@ -1,0 +1,62 @@
+[
+  {
+    "resource": "LUT",
+    "design_count": 17,
+    "relative_defined_count": 17,
+    "mean_relative_pct": -2.1071935057901046,
+    "median_relative_pct": -1.6223837573630782,
+    "min_relative_pct": -4.003347747245083,
+    "max_relative_pct": -1.0688718485611612,
+    "mean_util_delta_pp": -0.7105948049322824,
+    "min_delta_used": -16445.0,
+    "max_delta_used": -4018.0
+  },
+  {
+    "resource": "FF",
+    "design_count": 17,
+    "relative_defined_count": 17,
+    "mean_relative_pct": -0.6547859833275198,
+    "median_relative_pct": -0.4424582109083726,
+    "min_relative_pct": -1.8910524917758116,
+    "max_relative_pct": -0.06333638922465525,
+    "mean_util_delta_pp": -0.09175384071154209,
+    "min_delta_used": -5633.0,
+    "max_delta_used": -295.0
+  },
+  {
+    "resource": "BRAM tile",
+    "design_count": 17,
+    "relative_defined_count": 17,
+    "mean_relative_pct": -0.2465551100144607,
+    "median_relative_pct": -0.2331002331002331,
+    "min_relative_pct": -0.4767580452920143,
+    "max_relative_pct": 0.0,
+    "mean_util_delta_pp": -0.07002801120448154,
+    "min_delta_used": -2.0,
+    "max_delta_used": 0.0
+  },
+  {
+    "resource": "URAM",
+    "design_count": 17,
+    "relative_defined_count": 15,
+    "mean_relative_pct": 0.0,
+    "median_relative_pct": 0.0,
+    "min_relative_pct": 0.0,
+    "max_relative_pct": 0.0,
+    "mean_util_delta_pp": 0.0,
+    "min_delta_used": 0.0,
+    "max_delta_used": 0.0
+  },
+  {
+    "resource": "DSP",
+    "design_count": 17,
+    "relative_defined_count": 17,
+    "mean_relative_pct": 0.0,
+    "median_relative_pct": 0.0,
+    "min_relative_pct": 0.0,
+    "max_relative_pct": 0.0,
+    "mean_util_delta_pp": 0.0,
+    "min_delta_used": 0.0,
+    "max_delta_used": 0.0
+  }
+]
