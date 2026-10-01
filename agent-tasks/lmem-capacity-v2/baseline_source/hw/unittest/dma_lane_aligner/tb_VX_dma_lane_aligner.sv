@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/dma_lane_aligner/tb_VX_dma_lane_aligner.sv

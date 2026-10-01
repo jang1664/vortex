@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv

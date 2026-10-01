@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/syn/xilinx/gemm_node_ooc/README.md

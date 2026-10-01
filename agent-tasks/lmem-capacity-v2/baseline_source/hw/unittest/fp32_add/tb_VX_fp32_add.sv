@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/fp32_add/tb_VX_fp32_add.sv

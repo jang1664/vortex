@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/gemm_dma_slr_bridge/vcs.mk

@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/syn/synopsys/gemm_unit_breakdown/scripts/run.sh

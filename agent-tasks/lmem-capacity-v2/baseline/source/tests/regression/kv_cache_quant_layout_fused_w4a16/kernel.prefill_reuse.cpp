@@ -1,3 +1,0 @@
-#define KV_FUSED_PERSISTENT_WARP 1
-#define KV_FUSED_PREFILL_QPARAM_REUSE 1
-#include "kernel.cpp"

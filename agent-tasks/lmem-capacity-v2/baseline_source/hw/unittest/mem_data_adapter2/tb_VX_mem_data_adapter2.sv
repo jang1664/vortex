@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/mem_data_adapter2/tb_VX_mem_data_adapter2.sv

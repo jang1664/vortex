@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/syn/synopsys/models/memory/cln28hpm/convert_lib_to_db.tcl

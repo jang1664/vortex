@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/axi_write_drain/tb_VX_axi_write_drain.sv

@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/naive_external_dma_executor/tb_VX_naive_external_dma_executor.sv

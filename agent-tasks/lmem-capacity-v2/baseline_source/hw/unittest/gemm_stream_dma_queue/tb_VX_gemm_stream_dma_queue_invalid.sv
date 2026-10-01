@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/gemm_stream_dma_queue/tb_VX_gemm_stream_dma_queue_invalid.sv

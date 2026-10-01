@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/dma_gearbox/tb_VX_dma_gearbox.sv

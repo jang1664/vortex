@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/dma_padding_optional/tb_VX_dma_padding_width_invalid.sv

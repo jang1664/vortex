@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/slr_mem_bus/tb_slr_mem_bus.sv

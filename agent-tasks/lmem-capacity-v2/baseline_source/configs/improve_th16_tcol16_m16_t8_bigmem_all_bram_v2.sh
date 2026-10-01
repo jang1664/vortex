@@ -1,1 +1,0 @@
-/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/lmem-capacity-v2/baseline/source/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh
