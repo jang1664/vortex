@@ -71,6 +71,7 @@ namespace eval ::vortex_util {
                 patterns [list \
                     "*/gemm_node/u_VX_gemm_unit" \
                     "*/gemm_node/u_VX_gemm_unit_v2" \
+                    "*/gemm_node_naive/u_VX_gemm_unit" \
                     "*/gemm_node_naive/u_VX_gemm_compute_core" \
                     "*/gemm_node_naive/u_acc_internal" \
                     "*/gemm_node_naive/u_VX_gemm_acc_lmem"]] \
@@ -87,6 +88,11 @@ namespace eval ::vortex_util {
                     "*/gemm_node/u_tmem_subsystem/u_ldma_zero_point" \
                     "*/gemm_node/u_tmem_dma_ctrl" \
                     "*/gemm_node/u_gemm_dma_transport" \
+                    "*/gemm_node_naive/u_VX_gemm_dma_ctrl_naive" \
+                    "*/gemm_node_naive/u_input_lmem_dma" \
+                    "*/gemm_node_naive/u_output_lmem_dma" \
+                    "*/gemm_node_naive/u_quant_param_lmem_dma" \
+                    "*/gemm_node_naive/u_weight_gather_dma" \
                     "*/gemm_node_naive/dma_executor" \
                     "*/gemm_node_naive/input_executor" \
                     "*/gemm_node_naive/weight_executor" \
@@ -115,7 +121,18 @@ namespace eval ::vortex_util {
         if {[llength [get_runs -quiet $impl_run]] == 0} {
             error "Implementation run '$impl_run' does not exist in $xpr_path"
         }
-        open_run $impl_run
+        if {[catch {open_run $impl_run} message options]} {
+            # Repackaged --reuse_impl outputs retain routed.dcp but no run state.
+            set checkpoint [file join [file dirname [file dirname $xpr_path]] routed.dcp]
+            if {$impl_run ne "impl_1" ||
+                ![string match "*has not been launched*" $message] ||
+                ![file isfile $checkpoint]} {
+                return -options $options $message
+            }
+            puts "Opening saved routed checkpoint: $checkpoint"
+            close_project
+            open_checkpoint $checkpoint
+        }
     }
 
     proc parse_utilization_number {value context} {

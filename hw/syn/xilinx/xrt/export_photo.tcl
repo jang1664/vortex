@@ -22,6 +22,9 @@ namespace eval ::vortex_floorplan {
     namespace path ::vortex_util
 
     proc collect_leaf_cells {roots} {
+        if {[llength $roots] == 0} {
+            return {}
+        }
         set name_filters {}
         foreach root $roots {
             lappend name_filters "NAME =~ $root/*"
@@ -48,7 +51,9 @@ namespace eval ::vortex_floorplan {
     }
 
     proc highlight_category {label rgb cells} {
-        highlight_objects -rgb $rgb $cells
+        if {[llength $cells] != 0} {
+            highlight_objects -rgb $rgb $cells
+        }
         puts [format "%-42s cells=%d RGB={%s}" \
             $label [llength $cells] [join $rgb " "]]
     }
@@ -120,7 +125,18 @@ namespace eval ::vortex_floorplan {
         }
         open_implementation [lindex $args 0] $impl_run
         set specs [category_specs]
-        set roots [category_roots $specs]
+        # Baseline builds have no GEMM MXU/DMA hierarchy. Keep utilization's
+        # strict category checks, but allow these categories to be empty here.
+        set roots [dict create]
+        foreach key {misc simt memory mxu dma} {
+            set spec [dict get $specs $key]
+            if {$key in {mxu dma}} {
+                dict set roots $key [collect_hier_cells [dict get $spec patterns]]
+            } else {
+                dict set roots $key [require_category_roots \
+                    [dict get $spec label] [dict get $spec patterns]]
+            }
+        }
 
         # Run with `vivado -mode gui`: start_gui in batch mode blocks until the
         # GUI closes, and highlighting before start_gui is reset on initialization.
