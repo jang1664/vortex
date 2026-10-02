@@ -5,6 +5,43 @@
 *.png
 *.svg
 
+# Reproducible experiment binaries, FPGA tool outputs, and waveform captures.
+# Apply across all current/future analyses; retain scripts and compact metadata.
+*.vxbin
+*.elf
+*.o
+*.a
+*.so
+*.bin
+*.bit
+*.xclbin
+*.dcp
+*.xpr
+*.rpt
+*.fsdb*
+*.vcd
+*.vpd
+*.wdb
+*.wlf
+*.fst
+*.pptx
+
+# Large serialized datasets and packaged captures are regenerated locally.
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.parquet
+*.h5
+*.hdf5
+*.zarr/
+*.sqlite*
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
 # Portable SRAM physical dimensions used by top_breakdown area estimation.
 !top_breakdown/lpp28_sram_macro_areas.csv
 
