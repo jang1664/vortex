@@ -1,0 +1,17 @@
+{
+  "candidate": "C4",
+  "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+  "app": "rope",
+  "args": "-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 9.028,
+  "command": "ci/run_black.sh hw --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2 --app rope --args '-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0'",
+  "instrs": 101479,
+  "cycles": 52894,
+  "ipc": 1.918535,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "48c1423349a65eb346ca571d06b463b90dee7be7aac813cc217a248beddee1ab"
+}

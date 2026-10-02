@@ -1,0 +1,17 @@
+{
+  "candidate": "C1",
+  "alias": "tcu_th16_c1_v2_rev2",
+  "app": "silu",
+  "args": "-n 4096",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 8.328,
+  "command": "ci/run_black.sh hw --fpga-bin tcu_th16_c1_v2_rev2 --app silu --args '-n 4096'",
+  "instrs": 88930,
+  "cycles": 51281,
+  "ipc": 1.734171,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "f7064f7e627ffb3c075f623f8cd037961461a132428867738bd6dacdce683140"
+}

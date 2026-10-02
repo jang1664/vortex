@@ -1,0 +1,17 @@
+{
+  "candidate": "C2",
+  "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+  "app": "softmax",
+  "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 8.328,
+  "command": "ci/run_black.sh hw --fpga-bin naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2 --app softmax --args '-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1'",
+  "instrs": 1294112,
+  "cycles": 562072,
+  "ipc": 2.302395,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "f86f9560ffb3353e709aa762fbfdd136a083adbd16e206402194170b9710a618"
+}

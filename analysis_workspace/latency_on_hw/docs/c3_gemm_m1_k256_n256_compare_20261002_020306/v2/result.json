@@ -1,0 +1,15 @@
+{
+  "candidate": "v2",
+  "config": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh",
+  "app": "fpint_gemm_ffn_hw_naive",
+  "args": "-m 1 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1",
+  "returncode": 0,
+  "timed_out": false,
+  "passed": true,
+  "perf_values_consistent": true,
+  "seconds": 55.111,
+  "instrs": 6605,
+  "cycles": 10321,
+  "ipc": 0.639957,
+  "kernel_sha256": "e02e64ff8a4e42ca33c0fe4d43dba867ee7e03c803c2c6206dc038715fd62ed2"
+}

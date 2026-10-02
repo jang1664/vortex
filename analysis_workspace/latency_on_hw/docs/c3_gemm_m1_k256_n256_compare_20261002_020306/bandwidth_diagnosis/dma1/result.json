@@ -1,0 +1,15 @@
+{
+  "candidate": "dma1",
+  "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c3_gemm_m1_k256_n256_compare_20261002_020306/bandwidth_diagnosis/config_dma1.sh",
+  "app": "fpint_gemm_ffn_hw_naive",
+  "args": "-m 1 -k 256 -n 256 -q 32 -t 0 -d 0 -r 1",
+  "returncode": 0,
+  "timed_out": false,
+  "passed": true,
+  "perf_values_consistent": true,
+  "seconds": 54.605,
+  "instrs": 6599,
+  "cycles": 10248,
+  "ipc": 0.64393,
+  "kernel_sha256": "e02e64ff8a4e42ca33c0fe4d43dba867ee7e03c803c2c6206dc038715fd62ed2"
+}

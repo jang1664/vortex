@@ -1,0 +1,17 @@
+{
+  "candidate": "C4",
+  "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+  "app": "eladd",
+  "args": "-n 4096",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 9.779,
+  "command": "ci/run_black.sh hw --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2 --app eladd --args '-n 4096'",
+  "instrs": 95794,
+  "cycles": 108914,
+  "ipc": 0.879538,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "d06b4bbef67ee12412dda817a01f8f427c62713247a2956f3f612c243bd8be8d"
+}

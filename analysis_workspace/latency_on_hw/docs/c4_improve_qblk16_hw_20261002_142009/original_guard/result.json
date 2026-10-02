@@ -1,0 +1,11 @@
+{
+  "returncode": 2,
+  "timed_out": false,
+  "seconds": 1.617,
+  "passed": false,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "notable_lines": [
+    "Invalid parameters: QBLK=16 WTRANS=0 QDIR=0"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "candidate": "C3",
+  "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+  "app": "silu",
+  "args": "-n 4096",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 9.63,
+  "command": "ci/run_black.sh hw --fpga-bin naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2 --app silu --args '-n 4096'",
+  "instrs": 88930,
+  "cycles": 50836,
+  "ipc": 1.749351,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "f7064f7e627ffb3c075f623f8cd037961461a132428867738bd6dacdce683140"
+}

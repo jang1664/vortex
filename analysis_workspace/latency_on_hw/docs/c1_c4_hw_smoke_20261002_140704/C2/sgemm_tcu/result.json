@@ -1,0 +1,27 @@
+{
+  "candidate": "C2",
+  "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+  "app": "sgemm_tcu",
+  "args": "-m 64 -n 64 -k 128",
+  "returncode": 2,
+  "passed": false,
+  "timed_out": false,
+  "seconds": 8.98,
+  "command": "ci/run_black.sh hw --fpga-bin naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2 --app sgemm_tcu --args '-m 64 -n 64 -k 128'",
+  "instrs": 514419,
+  "cycles": 155861,
+  "ipc": 3.300498,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "edb4b3e0732a5d9f062ef6dbcf4ff22e69a6d74435d9f47ecad00b1e4b160103",
+  "error_lines": [
+    "srun: error: ioctl(TIOCGWINSZ): Inappropriate ioctl for device",
+    "srun: error: Not using a pseudo-terminal, disregarding --pty option",
+    "[VXDRV] waiting for kernel completion (timeout=86400000 ms)...",
+    "*** error: [1969] expected=29.671875, actual=29.687500, diff=0.015625 (th=0.001000)",
+    "Found 1 / 4096 errors!",
+    "FAILED!",
+    "make: *** [../common.mk:194: run-xrt] Error 1",
+    "srun: error: fpga: task 0: Exited with exit code 2"
+  ]
+}

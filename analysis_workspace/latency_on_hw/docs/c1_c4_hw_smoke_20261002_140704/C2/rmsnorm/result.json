@@ -1,0 +1,30 @@
+{
+  "candidate": "C2",
+  "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+  "app": "rmsnorm",
+  "args": "-batch 1 -seq 32 -hidden 128",
+  "returncode": 2,
+  "passed": false,
+  "timed_out": false,
+  "seconds": 19.095,
+  "command": "ci/run_black.sh hw --fpga-bin naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2 --app rmsnorm --args '-batch 1 -seq 32 -hidden 128'",
+  "instrs": 210597,
+  "cycles": 133004,
+  "ipc": 1.583388,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "c0754773cff73a74e30cbffadef0d7ca3ccc4caf0ae27ea4cbbf4a9e66101a3f",
+  "error_lines": [
+    "srun: error: ioctl(TIOCGWINSZ): Inappropriate ioctl for device",
+    "srun: error: Not using a pseudo-terminal, disregarding --pty option",
+    "/opt/xilinx/xrt/include/experimental/xrt_error.h:3:92: note: \u2018#pragma message: please replace experimental/xrt_error.h with xrt/experimental/xrt_error.h\u2019",
+    "    3 | #pragma message(\"please replace experimental/xrt_error.h with xrt/experimental/xrt_error.h\")",
+    "[VXDRV] waiting for kernel completion (timeout=86400000 ms)...",
+    "Error at 1403: GPU=0.000000, CPU=0.000027, diff=0.000027, rel_err=100.00%",
+    "Error at 1961: GPU=0.000000, CPU=0.000060, diff=0.000060, rel_err=100.00%",
+    "  Max relative error: 100.00%",
+    "FAILED! (2 errors)",
+    "make: *** [../common.mk:194: run-xrt] Error 255",
+    "srun: error: fpga: task 0: Exited with exit code 2"
+  ]
+}

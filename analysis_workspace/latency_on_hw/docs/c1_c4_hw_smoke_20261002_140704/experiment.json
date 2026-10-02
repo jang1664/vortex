@@ -1,0 +1,251 @@
+{
+  "repo": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv",
+  "build": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build",
+  "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/c1_c4_hw_smoke_20261002_140704",
+  "candidates": {
+    "C1": {
+      "alias": "tcu_th16_c1_v2_rev2",
+      "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_201d6f8d64/bin",
+      "configs": "configs/tcu_th16_c1_v2.sh"
+    },
+    "C2": {
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_e6ea541b82/bin",
+      "configs": "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2.sh"
+    },
+    "C3": {
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin",
+      "configs": "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh"
+    },
+    "C4": {
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_1380038964/bin",
+      "configs": "configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh"
+    }
+  },
+  "variants": {
+    "RMSNORM_VARIANT": "adaptive_m_rows",
+    "ROPE_VARIANT": "task_chunk16",
+    "SOFTMAX_VARIANT": "rev2_shuffle_grouped",
+    "SILU_VARIANT": "linear",
+    "ELADD_VARIANT": "row_coalesced_cursor",
+    "ELMUL_VARIANT": "row_coalesced_cursor",
+    "KV_CACHE_QUANT_VARIANT": "groupwise_fp16",
+    "SGEMM_TCU_VARIANT": "b_colmajor"
+  },
+  "workloads": [
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "rmsnorm",
+      "args": "-batch 1 -seq 32 -hidden 128"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "rope",
+      "args": "-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "softmax",
+      "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "silu",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "eladd",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "elmul",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "sgemm_tcu",
+      "args": "-m 64 -n 64 -k 128"
+    },
+    {
+      "candidate": "C1",
+      "alias": "tcu_th16_c1_v2_rev2",
+      "app": "gemm_fpint",
+      "args": "-m 64 -n 64 -k 128 -g 32"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "rmsnorm",
+      "args": "-batch 1 -seq 32 -hidden 128"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "rope",
+      "args": "-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "softmax",
+      "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "silu",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "eladd",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "elmul",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "sgemm_tcu",
+      "args": "-m 64 -n 64 -k 128"
+    },
+    {
+      "candidate": "C2",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "args": "-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "rmsnorm",
+      "args": "-batch 1 -seq 32 -hidden 128"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "rope",
+      "args": "-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "softmax",
+      "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "silu",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "eladd",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "elmul",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+    },
+    {
+      "candidate": "C3",
+      "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "args": "-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "rmsnorm",
+      "args": "-batch 1 -seq 32 -hidden 128"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "rope",
+      "args": "-batch 1 -seq 32 -heads 2 -headdim 64 -maxseq 64 -offset 0"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "softmax",
+      "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "silu",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "eladd",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "elmul",
+      "args": "-n 4096"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "kv_cache_quant_w4a16",
+      "args": "-k 128 -n 128 -q 32 -d 1 -t 0 --quant-mode spinquant_signed_symmetric"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "fpint_gemm_ffn_hw",
+      "args": "-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+    },
+    {
+      "candidate": "C4",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2",
+      "app": "fpint_gemm_eladd_fused_hw",
+      "args": "-m 128 -n 256 -k 256 -q 32 -t 0 -d 0 -r 1"
+    }
+  ],
+  "max_seconds": 300,
+  "git_head": "749294d6491db2b887cf83600d9bc6b27162244f"
+}

@@ -1,0 +1,26 @@
+{
+  "C1": {
+    "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_201d6f8d64/bin/vortex_afu.xclbin",
+    "bytes": 61268632,
+    "sha256": "7cdd5d38045067ed0c353b49c9f64140f3a5f333a823247e73fdc7618def778f",
+    "config_sha256": "3a38f86126f5e10584db2734187ccc8d16cd22bfd796c045039687e5e779c7bf"
+  },
+  "C2": {
+    "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_e6ea541b82/bin/vortex_afu.xclbin",
+    "bytes": 73737588,
+    "sha256": "2e2d61a11fa50e2f5095746a78428fdf26362bd7e9595288d5ebaeeda24475ee",
+    "config_sha256": "76eb10cbca9615b4ea4695810989362e8ca422c731099af6a89d7fc719bd689c"
+  },
+  "C3": {
+    "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin/vortex_afu.xclbin",
+    "bytes": 74143579,
+    "sha256": "55205e933f602f51ba26c666d1d564ea96880cb1ca91873a0b31213b09332349",
+    "config_sha256": "9970a261eb038fa68dd1237d05ac9139e362852b60c86cee73dc003ad551d8c6"
+  },
+  "C4": {
+    "path": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_1380038964/bin/vortex_afu.xclbin",
+    "bytes": 66100305,
+    "sha256": "3c05eb4a18c921691901e46f7fa81701b46413cd6b4f4a60b88cbd675bc86f35",
+    "config_sha256": "532ce49cbfcce00e8faf159c6cdb4a41d829d545de85c37f85a4f4c4d35c92fd"
+  }
+}

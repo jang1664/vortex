@@ -1,0 +1,82 @@
+[
+  {
+    "returncode": 0,
+    "timed_out": false,
+    "seconds": 7.278,
+    "passed": true,
+    "instrs": 9622,
+    "cycles": 51060,
+    "ipc": 0.188445,
+    "device_index": "0",
+    "device_bdf": "0000:2a:00.1",
+    "notable_lines": [
+      "M=128 (padded to 128), N=256 (execution 256), K=256 (execution 256), QBLK=16, WTRANS=0, QDIR=0, REPS=1, vectors=corrected-default",
+      "Active MXU profile: MXU_ROW=16 MXU_COL=16 MXU_COL_TILE=16",
+      "Verified job 1/1",
+      "PASSED"
+    ],
+    "id": "t0_d0",
+    "args": "-m 128 -n 256 -k 256 -q 16 -t 0 -d 0 -r 1",
+    "kernel_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  },
+  {
+    "returncode": 0,
+    "timed_out": false,
+    "seconds": 6.775,
+    "passed": true,
+    "instrs": 9628,
+    "cycles": 51163,
+    "ipc": 0.188183,
+    "device_index": "0",
+    "device_bdf": "0000:2a:00.1",
+    "notable_lines": [
+      "M=128 (padded to 128), N=256 (execution 256), K=256 (execution 256), QBLK=16, WTRANS=1, QDIR=0, REPS=1, vectors=corrected-default",
+      "Active MXU profile: MXU_ROW=16 MXU_COL=16 MXU_COL_TILE=16",
+      "Verified job 1/1",
+      "PASSED"
+    ],
+    "id": "t1_d0",
+    "args": "-m 128 -n 256 -k 256 -q 16 -t 1 -d 0 -r 1",
+    "kernel_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  },
+  {
+    "returncode": 0,
+    "timed_out": false,
+    "seconds": 7.827,
+    "passed": true,
+    "instrs": 9628,
+    "cycles": 51224,
+    "ipc": 0.187959,
+    "device_index": "0",
+    "device_bdf": "0000:2a:00.1",
+    "notable_lines": [
+      "M=128 (padded to 128), N=256 (execution 256), K=256 (execution 256), QBLK=16, WTRANS=0, QDIR=1, REPS=1, vectors=corrected-default",
+      "Active MXU profile: MXU_ROW=16 MXU_COL=16 MXU_COL_TILE=16",
+      "Verified job 1/1",
+      "PASSED"
+    ],
+    "id": "t0_d1",
+    "args": "-m 128 -n 256 -k 256 -q 16 -t 0 -d 1 -r 1",
+    "kernel_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  },
+  {
+    "returncode": 0,
+    "timed_out": false,
+    "seconds": 8.33,
+    "passed": true,
+    "instrs": 9628,
+    "cycles": 51133,
+    "ipc": 0.188293,
+    "device_index": "0",
+    "device_bdf": "0000:2a:00.1",
+    "notable_lines": [
+      "M=128 (padded to 128), N=256 (execution 256), K=256 (execution 256), QBLK=16, WTRANS=1, QDIR=1, REPS=1, vectors=corrected-default",
+      "Active MXU profile: MXU_ROW=16 MXU_COL=16 MXU_COL_TILE=16",
+      "Verified job 1/1",
+      "PASSED"
+    ],
+    "id": "t1_d1",
+    "args": "-m 128 -n 256 -k 256 -q 16 -t 1 -d 1 -r 1",
+    "kernel_sha256": "15a7783de33cc9d65bfe66dad44848dc51d442837abfb49b4de933fd436d0177"
+  }
+]

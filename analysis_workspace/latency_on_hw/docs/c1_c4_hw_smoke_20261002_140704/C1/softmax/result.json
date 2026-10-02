@@ -1,0 +1,17 @@
+{
+  "candidate": "C1",
+  "alias": "tcu_th16_c1_v2_rev2",
+  "app": "softmax",
+  "args": "-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1",
+  "returncode": 0,
+  "passed": true,
+  "timed_out": false,
+  "seconds": 9.131,
+  "command": "ci/run_black.sh hw --fpga-bin tcu_th16_c1_v2_rev2 --app softmax --args '-batch 1 -heads 1 -seqq 128 -seqk 128 -seqk-stride 128 -mask 1'",
+  "instrs": 1294112,
+  "cycles": 563984,
+  "ipc": 2.29459,
+  "device_index": "0",
+  "device_bdf": "0000:2a:00.1",
+  "kernel_sha256": "9e1e458fa5dd3d937b62bb6633109fcb6727d69c6aa08e576d32618611678d82"
+}

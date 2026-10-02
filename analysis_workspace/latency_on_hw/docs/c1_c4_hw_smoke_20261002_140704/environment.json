@@ -1,0 +1,13 @@
+{
+  "RMSNORM_VARIANT": "adaptive_m_rows",
+  "ROPE_VARIANT": "task_chunk16",
+  "SOFTMAX_VARIANT": "rev2_shuffle_grouped",
+  "SILU_VARIANT": "linear",
+  "ELADD_VARIANT": "row_coalesced_cursor",
+  "ELMUL_VARIANT": "row_coalesced_cursor",
+  "KV_CACHE_QUANT_VARIANT": "groupwise_fp16",
+  "SGEMM_TCU_VARIANT": "b_colmajor",
+  "CC": "/usr/bin/gcc",
+  "CXX": "/usr/bin/g++",
+  "MAKEFLAGS": "-j4"
+}
