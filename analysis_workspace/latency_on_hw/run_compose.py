@@ -69,9 +69,8 @@ LATENCY_DIR = REPO_ROOT / "analysis_workspace" / "latency_on_hw"
 DEFAULT_RAW_DB_SUBDIRS = ("C1", "C3", "C4")
 GENERATED_SUITE_STAGES = ("prefill", "generation")
 REQUIRED_POWER_COLUMNS = (
-    "power_avg_w",
-    "power_vcc_avg_w",
-    "power_dynamic_avg_w",
+    "power_pcie_avg_w",
+    "power_idle_pcie_avg_w",
 )
 
 

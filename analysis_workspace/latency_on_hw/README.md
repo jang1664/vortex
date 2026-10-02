@@ -307,3 +307,39 @@ checks, and missing sources are measured. Removing candidates or changing an
 existing selection still requires a new tag. Power plots use the generated workload
 snapshot when present, so a reused C1 manifest with a partial snapshot cannot
 exclude C3/C4 rows from a full plot.
+
+Energy preparation and rendering produce four power modes for flat, stacked,
+GEMM/layout/vector, and GEMM-only plots, with and without area normalization:
+
+| `power_metric` | Kernel power used for energy | Dequantization discount |
+| --- | --- | --- |
+| `power_avg_W` | `power_pcie_avg_w` (measured board power) | None |
+| `power_dynamic_avg_W` | `power_pcie_avg_w - power_idle_pcie_avg_w` for every kernel | Existing weight/KV rules |
+| `power_fpga_avg_W` | Fixed FPGA idle + PCIe dynamic power for every kernel | None |
+| `power_fpga_dequant_dynamic_W` | PCIe dynamic power for dequantization; fixed FPGA idle + PCIe dynamic power for other kernels | Existing weight/KV rules |
+
+PCIe readings already represent board input power. VCC power is not added;
+the historical `power_avg_w` and `power_dynamic_avg_w` columns are not used
+to calculate these energy modes. Compose carries `power_idle_pcie_avg_w`
+through measured, reused, and interpolated rows. Older composed CSVs without
+this column must be rebuilt from raw measurements before energy preparation.
+
+FPGA idle power uses `FPGA_IDLE_POWER` in `prepare.py`, currently
+`0.854 * 6.300 + 0.852 * 0.200 = 5.5506 W`. Energy remains kernel FPGA time
+times power, divided by the existing prefill/decode token count. The discount
+scales dynamic dequantization energy by `0.48263` for weights and `0.28516`
+for both K and V caches. Missing dynamic measurements remain missing in the
+two new modes.
+
+Rerun `prepare.py` on the composed CSV to create the new mode CSVs, then run
+`plot.py` as usual; all four modes render by default with distinct filenames.
+Image filenames for `power_fpga_avg_W` include `_fixed_idle` to identify the
+constant idle baseline; the prepared CSV and CLI power-metric names stay the same.
+To render just one of the new modes, from this directory:
+
+```bash
+"$HOME/.conda/envs/vortex/bin/python" plot.py \
+  --plot llama_energy_no_area_norm_stacked --out-tokens 128 \
+  --prepared-root "figure_prepare.<tag>" --out-dir "figure_output.<tag>" \
+  --power-metric power_fpga_dequant_dynamic_W
+```

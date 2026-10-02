@@ -25,6 +25,7 @@ POWER_METRIC_COLUMNS = (
     "power_avg_w",
     "power_vcc_avg_w",
     "power_pcie_avg_w",
+    "power_idle_pcie_avg_w",
     "power_dynamic_avg_w",
 )
 SELECT_POLICIES = ("median", "latest", "mean", "min", "strict")

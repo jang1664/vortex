@@ -64,6 +64,8 @@ def _decode_frame(*, out_tokens: int = 4) -> pd.DataFrame:
                 "power_avg_w": 1.0,
                 "power_vcc_avg_w": 1.0,
                 "power_dynamic_avg_w": 1.0,
+                "power_pcie_avg_w": 1.0,
+                "power_idle_pcie_avg_w": 0.0,
                 "fpga_period_s": 1e-6,
                 "source_raw_dbs": "raw.csv",
                 "expected_fpga_bin_label": "C1",
@@ -166,6 +168,7 @@ class ComposedPipelineTest(unittest.TestCase):
                 frame.to_dict("records"),
                 (),
                 power_metric=power_metric,
+                idle_power_w=prepare.ENERGY_IDLE_POWER_W,
                 fpga_period_s=1.0,
                 allow_generic_power_estimate=False,
             )
@@ -176,19 +179,31 @@ class ComposedPipelineTest(unittest.TestCase):
             ].tolist()
             self.assertEqual(legacy_energy, vectorized_energy)
 
-    def test_default_energy_export_uses_total_and_dynamic_board_power(self) -> None:
+    def test_default_energy_export_includes_fpga_power_modes(self) -> None:
         frame = _decode_frame(out_tokens=1)
-        frame["power_avg_w"] = 4.0
-        frame["power_dynamic_avg_w"] = 1.0
+        frame["power_pcie_avg_w"] = 4.0
+        frame["power_idle_pcie_avg_w"] = 3.0
+        frame["power_avg_w"] = 100.0
+        frame["power_vcc_avg_w"] = 96.0
+        frame["power_dynamic_avg_w"] = 99.0
 
         rows = prepare._vectorized_energy_rows(frame)
 
         self.assertEqual(
-            ["power_avg_W", "power_dynamic_avg_W"],
+            [
+                "power_avg_W", "power_dynamic_avg_W",
+                "power_fpga_avg_W", "power_fpga_dequant_dynamic_W",
+            ],
             rows["power_metric"].tolist(),
         )
         self.assertAlmostEqual(80e-6, rows.iloc[0]["kernel_energy_j"])
         self.assertAlmostEqual(20e-6, rows.iloc[1]["kernel_energy_j"])
+        for index in (2, 3):
+            self.assertAlmostEqual(
+                20e-6 * (prepare.ENERGY_IDLE_POWER_W + 1.0),
+                rows.iloc[index]["kernel_energy_j"],
+            )
+            self.assertTrue(rows.iloc[index]["include_idle_power"])
 
     def test_vectorized_energy_discounts_dequant_without_new_columns(self) -> None:
         frame = _decode_frame(out_tokens=3)
@@ -200,11 +215,14 @@ class ComposedPipelineTest(unittest.TestCase):
         vectorized = prepare._vectorized_energy_rows(frame)
 
         self.assertEqual(
-            ("power_avg_W", "power_dynamic_avg_W"),
+            (
+                "power_avg_W", "power_dynamic_avg_W",
+                "power_fpga_avg_W", "power_fpga_dequant_dynamic_W",
+            ),
             prepare.ENERGY_POWER_METRICS,
         )
         self.assertEqual(
-            ("power_avg_W", "power_dynamic_avg_W"),
+            prepare.ENERGY_POWER_METRICS,
             plot.ENERGY_POWER_METRICS,
         )
         total = vectorized[vectorized["power_metric"].eq("power_avg_W")]
@@ -228,8 +246,89 @@ class ComposedPipelineTest(unittest.TestCase):
             60e-6 * 0.28516,
             dynamic.iloc[2]["kernel_energy_j"],
         )
+        fpga = vectorized[vectorized["power_metric"].eq("power_fpga_avg_W")]
+        mixed = vectorized[
+            vectorized["power_metric"].eq("power_fpga_dequant_dynamic_W")
+        ]
+        for actual, time in zip(fpga["kernel_energy_j"], (20e-6, 40e-6, 60e-6)):
+            self.assertAlmostEqual(time * (prepare.ENERGY_IDLE_POWER_W + 1.0), actual)
+        self.assertEqual(dynamic["kernel_energy_j"].tolist(), mixed["kernel_energy_j"].tolist())
+        self.assertFalse(mixed["include_idle_power"].any())
         self.assertNotIn("_latency_scale_factor", vectorized.columns)
         self.assertNotIn("_latency_scale_rules", vectorized.columns)
+
+    def test_mixed_fpga_energy_keeps_idle_only_for_other_kernels(self) -> None:
+        frame = _decode_frame(out_tokens=3)
+        frame.loc[0, ["kind", "name"]] = [
+            "dequantization", "dequant_q_proj_weight_to_fp16",
+        ]
+        frame.loc[1, ["kind", "name"]] = [
+            "dequantization", "kv_cache_dequant_k_to_attn_qkT",
+        ]
+        frame.loc[2, ["kind", "name"]] = ["gemm", "q_proj"]
+        frame["power_avg_w"] = 100.0  # The FPGA modes must use dynamic + idle.
+        frame["power_pcie_avg_w"] = [12.0, 13.0, 14.0]
+        frame["power_idle_pcie_avg_w"] = 10.0
+        frame["power_dynamic_avg_w"] = 99.0  # Legacy summed-rail dynamic is ignored.
+
+        rows = prepare._vectorized_energy_rows(frame)
+        mixed = rows[rows["power_metric"].eq("power_fpga_dequant_dynamic_W")]
+        expected = (
+            20e-6 * 2.0 * 0.48263,
+            40e-6 * 3.0 * 0.28516,
+            60e-6 * (prepare.ENERGY_IDLE_POWER_W + 4.0),
+        )
+        for actual, energy in zip(mixed["kernel_energy_j"], expected):
+            self.assertAlmostEqual(energy, actual)
+        self.assertEqual([False, False, True], mixed["include_idle_power"].tolist())
+        summary = energy_per_token.summarize_energy_rows(mixed.to_dict("records"))
+        self.assertAlmostEqual(sum(expected) / 6.0, summary[0]["joules_per_token"])
+
+    def test_fpga_modes_do_not_fill_missing_dynamic_power_with_idle(self) -> None:
+        frame = _decode_frame(out_tokens=1)
+        frame["power_idle_pcie_avg_w"] = float("nan")
+        rows = prepare._vectorized_energy_rows(frame)
+        for power_metric in ("power_fpga_avg_W", "power_fpga_dequant_dynamic_W"):
+            selected = rows[rows["power_metric"].eq(power_metric)]
+            self.assertTrue(selected["kernel_energy_j"].isna().all())
+            self.assertTrue(selected["energy_missing_power"].all())
+
+    def test_energy_requires_only_pcie_power_readings(self) -> None:
+        frame = _decode_frame(out_tokens=1).drop(columns=[
+            "power_avg_w", "power_vcc_avg_w", "power_dynamic_avg_w",
+        ])
+        prepare._validate_prepare_composed(frame, 1)
+        rows = prepare._vectorized_energy_rows(frame)
+        self.assertTrue(rows["kernel_energy_j"].notna().all())
+        for metric in prepare.ENERGY_POWER_METRICS:
+            scalar = energy_per_token.energy_rows_from_records(
+                frame.to_dict("records"), (), power_metric=metric,
+                idle_power_w=prepare.ENERGY_IDLE_POWER_W,
+                allow_generic_power_estimate=False,
+            )
+            self.assertFalse(scalar[0]["energy_missing_power"])
+
+    def test_prepare_rejects_old_composed_data_without_pcie_idle(self) -> None:
+        frame = _decode_frame().drop(columns=["power_idle_pcie_avg_w"])
+        with self.assertRaisesRegex(ValueError, "power_idle_pcie_avg_w"):
+            prepare._validate_prepare_composed(frame, 4)
+
+    def test_new_fpga_modes_are_selectable_and_discoverable_for_rendering(self) -> None:
+        for metric in ("power_fpga_avg_W", "power_fpga_dequant_dynamic_W"):
+            args = plot.parse_args([
+                "--plot", "llama_energy_no_area_norm_gemm_layout_vector_stacked",
+                "--out-tokens", "128", "--power-metric", metric,
+            ])
+            self.assertEqual(metric, args.power_metric)
+            path = Path(prepare.energy_stacked_out_name("llama2_7b", metric)) / plot.EXCEL_FIGURE_DATA_CSV
+            self.assertEqual(metric, plot._energy_csv_power_metric(path))
+            self.assertTrue(plot._candidate_matches_kind(path, "energy_stacked"))
+            outputs = plot.expected_plot_outputs(
+                args.plot, formats=("png", "pdf", "svg"), power_metric=metric,
+            )
+            self.assertEqual(4, len(outputs))
+            self.assertTrue(all(metric in str(output) for output in outputs))
+            self.assertIn((args.plot, metric), plot.selected_plot_jobs(args.plot))
 
     def test_energy_output_names_identify_pure_dequant_adjustment(self) -> None:
         name = prepare.energy_stacked_out_name(
@@ -277,7 +376,7 @@ class ComposedPipelineTest(unittest.TestCase):
 
     def test_compose_rejects_missing_power(self) -> None:
         frame = _decode_frame()
-        frame.loc[0, "power_dynamic_avg_w"] = float("nan")
+        frame.loc[0, "power_idle_pcie_avg_w"] = float("nan")
         with self.assertRaisesRegex(ValueError, "incomplete"):
             run_compose._validate_complete_composed(frame, label="test")
 

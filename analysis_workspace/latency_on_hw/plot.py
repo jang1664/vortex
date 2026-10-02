@@ -33,6 +33,11 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from analysis_workspace.latency_on_hw.energy_per_token import (
+    DEFAULT_ENERGY_POWER_METRICS,
+    FPGA_TOTAL_POWER_METRIC,
+)
+
 
 DEFAULT_OUT_BASE = "output_figure"
 DEFAULT_PREPARED_ROOT = f"{DEFAULT_OUT_BASE}/figures_prepare"
@@ -90,6 +95,12 @@ _PLOT_IMAGE_OUTPUTS = {
 }
 
 
+def _energy_plot_metric_label(power_metric: str) -> str:
+    if power_metric == FPGA_TOTAL_POWER_METRIC:
+        return f"{power_metric}_fixed_idle"
+    return power_metric
+
+
 def expected_plot_outputs(
     plot_name: str,
     *,
@@ -122,7 +133,7 @@ def expected_plot_outputs(
             raise ValueError(f"{plot_name} requires one supported power metric")
         directory = plot_name
         stem = (
-            f"llama_energy_per_token_{power_metric}_no_area_norm_"
+            f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}_no_area_norm_"
             "gemm_layout_vector_stacked"
         )
     else:
@@ -202,12 +213,11 @@ E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 # behavior of normalizing against the smallest positive value at each x tick.
 RELATIVE_BASELINE_CANDIDATE: str | None = "C4"
 SUPPORTED_ENERGY_POWER_METRICS = (
-    "power_avg_W",
+    *DEFAULT_ENERGY_POWER_METRICS,
     "power_vcc_avg_W",
-    "power_dynamic_avg_W",
 )
-# Export both total board energy and idle-subtracted dynamic energy by default.
-ENERGY_POWER_METRICS = ("power_avg_W", "power_dynamic_avg_W")
+# Render every prepared energy mode by default.
+ENERGY_POWER_METRICS = DEFAULT_ENERGY_POWER_METRICS
 STAGE_ORDER = ("Prefill", "Decode")
 RAW_DB_SUBDIRS = ("C1", "C3", "C4")
 RAW_DB_ROOT_NAMES = (
@@ -374,6 +384,7 @@ class WideBarKnobs:
     y_lim: tuple[float | None, float | None] | None = None
     stage_y_lims: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
     grid_alpha: float = 0.25
+    grid_linewidth_scale: float = 1.0
     legend_position: str = "top"  # top, bottom, or none
     legend_title: str | None = LEGEND_TITLE
     legend_ncol: int | None = LEGEND_NCOL
@@ -434,8 +445,10 @@ def _llama_compact_kwargs(
     y_label: str,
     *,
     legend_y: float = 0.950,
+    grid_linewidth_scale: float = 0.4,
 ) -> dict[str, Any]:
     return {
+        "grid_linewidth_scale": grid_linewidth_scale,
         "figsize": LLAMA_E2E_STACKED_FIGSIZE,
         "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / 4,
         "title": None,
@@ -586,7 +599,7 @@ class PlotKnobs:
     )
     llama_gemm_only: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970),
+            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970, grid_linewidth_scale=1.0),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -595,7 +608,7 @@ class PlotKnobs:
     )
     llama_gemm_only_no_area_norm: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970),
+            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970, grid_linewidth_scale=1.0),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -604,7 +617,7 @@ class PlotKnobs:
     )
     llama_gemm_only_energy: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970, grid_linewidth_scale=1.0),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -612,7 +625,7 @@ class PlotKnobs:
     )
     llama_gemm_only_energy_no_area_norm: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
+            **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970, grid_linewidth_scale=1.0),
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -739,7 +752,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--power-metric",
         choices=SUPPORTED_ENERGY_POWER_METRICS,
         default=None,
-        help=argparse.SUPPRESS,
+        help="energy power mode; defaults to rendering all four modes",
     )
     parser.add_argument(
         "--latency-dir",
@@ -3036,7 +3049,10 @@ def plot_model_wide_candidate_bars(
                 labelpad=1.0,
             )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
-        ax.grid(axis="y", alpha=knobs.grid_alpha)
+        ax.grid(
+            axis="y", alpha=knobs.grid_alpha,
+            linewidth=plt.rcParams["grid.linewidth"] * knobs.grid_linewidth_scale,
+        )
         ymax = max((float(value) for column in value_columns for value in stage_df[column].fillna(0.0)), default=1.0)
         _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
@@ -3243,7 +3259,10 @@ def plot_model_stacked_bars(
                 labelpad=1.0,
             )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
-        ax.grid(axis="y", alpha=knobs.grid_alpha)
+        ax.grid(
+            axis="y", alpha=knobs.grid_alpha,
+            linewidth=plt.rcParams["grid.linewidth"] * knobs.grid_linewidth_scale,
+        )
         ymax = max(bottoms, default=1.0)
         _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
@@ -3377,7 +3396,7 @@ def plot_model_gemm_energy_stacked_bars(
     plot_model_stacked_bars(
         model_csvs,
         out_dir,
-        filename=f"llama_gemm_only_energy_per_token_{power_metric}{suffix}.png",
+        filename=f"llama_gemm_only_energy_per_token_{_energy_plot_metric_label(power_metric)}{suffix}.png",
         data_label=f"Llama GEMM-only energy{qualifier} ({power_metric})",
         knobs=knobs,
     )
@@ -3572,7 +3591,7 @@ def run_llama_energy_plot(
     plot_model_wide_candidate_bars(
         model_csvs,
         output_root / "llama_energy",
-        filename=f"llama_energy_per_token_{power_metric}.png",
+        filename=f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}.png",
         knobs=metric_knobs,
     )
 
@@ -3592,7 +3611,7 @@ def run_llama_energy_no_area_norm_plot(
     plot_model_wide_candidate_bars(
         model_csvs,
         output_root / "llama_energy_no_area_norm",
-        filename=f"llama_energy_per_token_{power_metric}_no_area_norm.png",
+        filename=f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}_no_area_norm.png",
         knobs=metric_knobs,
     )
 
@@ -3607,7 +3626,7 @@ def run_llama_energy_stacked_plot(
     plot_model_stacked_bars(
         model_csvs,
         output_root / "llama_energy_stacked",
-        filename=f"llama_energy_per_token_{power_metric}_stacked.png",
+        filename=f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}_stacked.png",
         data_label=f"Llama stacked energy ({power_metric})",
         knobs=knobs,
     )
@@ -3623,7 +3642,7 @@ def run_llama_energy_no_area_norm_stacked_plot(
     plot_model_stacked_bars(
         model_csvs,
         output_root / "llama_energy_no_area_norm_stacked",
-        filename=f"llama_energy_per_token_{power_metric}_no_area_norm_stacked.png",
+        filename=f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}_no_area_norm_stacked.png",
         data_label=(
             "Llama stacked energy without area normalization "
             f"({power_metric})"
@@ -3643,7 +3662,7 @@ def run_llama_energy_gemm_layout_vector_stacked_plot(
         model_csvs,
         output_root / "llama_energy_gemm_layout_vector_stacked",
         filename=(
-            f"llama_energy_per_token_{power_metric}"
+            f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}"
             "_gemm_layout_vector_stacked.png"
         ),
         data_label=(
@@ -3666,7 +3685,7 @@ def run_llama_energy_no_area_norm_gemm_layout_vector_stacked_plot(
         model_csvs,
         output_root / "llama_energy_no_area_norm_gemm_layout_vector_stacked",
         filename=(
-            f"llama_energy_per_token_{power_metric}_no_area_norm_"
+            f"llama_energy_per_token_{_energy_plot_metric_label(power_metric)}_no_area_norm_"
             "gemm_layout_vector_stacked.png"
         ),
         data_label=(

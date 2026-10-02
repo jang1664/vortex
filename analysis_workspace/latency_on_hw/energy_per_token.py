@@ -24,10 +24,24 @@ SHARE_Y_SCOPE_CHOICES = ("none", "global", "row")
 FIGURE_TITLE_LAYOUT_TOP = 0.97
 DEFAULT_POWER_METRIC = "power_avg_W"
 DEFAULT_FPGA_PERIOD_S = 10e-9
+FPGA_TOTAL_POWER_METRIC = "power_fpga_avg_W"
+FPGA_DEQUANT_DYNAMIC_POWER_METRIC = "power_fpga_dequant_dynamic_W"
+DEFAULT_ENERGY_POWER_METRICS = (
+    "power_avg_W",
+    "power_dynamic_avg_W",
+    FPGA_TOTAL_POWER_METRIC,
+    FPGA_DEQUANT_DYNAMIC_POWER_METRIC,
+)
 POWER_METRIC_COLUMN_ALIASES = {
-    "power_avg_W": ("power_avg_W", "power_avg_w"),
+    # Keep the existing plot metric names, but board power is measured at PCIe.
+    "power_avg_W": ("power_pcie_avg_W", "power_pcie_avg_w"),
+    "power_pcie_avg_W": ("power_pcie_avg_W", "power_pcie_avg_w"),
+    "power_idle_pcie_avg_W": ("power_idle_pcie_avg_W", "power_idle_pcie_avg_w"),
     "power_vcc_avg_W": ("power_vcc_avg_W", "power_vcc_avg_w"),
-    "power_dynamic_avg_W": ("power_dynamic_avg_W", "power_dynamic_avg_w"),
+    # Dynamic modes are derived from PCIe run/idle readings in _power_value.
+    "power_dynamic_avg_W": (),
+    FPGA_TOTAL_POWER_METRIC: (),
+    FPGA_DEQUANT_DYNAMIC_POWER_METRIC: (),
 }
 XCLBIN_INFO_FILENAMES = ("vortex_xclbin.info", "vortex_afu.xclbin.info")
 POWER_SUMMARY_FIELDS = (
@@ -265,6 +279,13 @@ def energy_row_from_record(
         raw_power_W = candidate.power_values_W.get(canonical_power_metric)
         effective_power_W = raw_power_W
 
+    uses_idle_power = canonical_power_metric == FPGA_TOTAL_POWER_METRIC or (
+        canonical_power_metric == FPGA_DEQUANT_DYNAMIC_POWER_METRIC
+        and _text(row.get("kind")) != "dequantization"
+    )
+    if uses_idle_power and effective_power_W is not None:
+        effective_power_W += idle_power_w
+
     energy_time_s: float | None = None
     kernel_energy_j: float | None = None
     joules_per_token_component: float | None = None
@@ -297,7 +318,7 @@ def energy_row_from_record(
             "raw_power_W": raw_power_W,
             "raw_power_w": raw_power_W,
             "idle_power_w": idle_power_w,
-            "include_idle_power": include_idle_power,
+            "include_idle_power": include_idle_power or uses_idle_power,
             "effective_power_W": effective_power_W,
             "effective_power_w": effective_power_W,
             "fpga_cycle_avg": _fpga_cycle_avg(row, exact_candidate),
@@ -1036,6 +1057,13 @@ def _power_metric_columns(metric: str) -> tuple[str, ...]:
 
 
 def _power_value(row: Mapping[str, Any], metric: str) -> float | None:
+    if _canonical_power_metric(metric) in (
+        "power_dynamic_avg_W", FPGA_TOTAL_POWER_METRIC,
+        FPGA_DEQUANT_DYNAMIC_POWER_METRIC,
+    ):
+        run = _power_value(row, "power_pcie_avg_W")
+        idle = _power_value(row, "power_idle_pcie_avg_W")
+        return run - idle if run is not None and idle is not None else None
     for column in _power_metric_columns(metric):
         value = _to_float(row.get(column))
         if value is not None:

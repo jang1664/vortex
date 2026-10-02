@@ -31,6 +31,10 @@ RAW_COLUMNS = [
     "power_avg_w",
     "power_vcc_avg_w",
     "power_dynamic_avg_w",
+    "power_pcie_avg_W",
+    "power_pcie_avg_w",
+    "power_idle_pcie_avg_W",
+    "power_idle_pcie_avg_w",
     "power_samples",
     "fpga_cycle_avg",
     "fpga_bin_dir",
@@ -57,6 +61,8 @@ def _raw_row(**overrides: str) -> dict[str, str]:
         "power_avg_W": "12.0",
         "power_vcc_avg_W": "7.0",
         "power_dynamic_avg_W": "2.0",
+        "power_pcie_avg_W": "12.0",
+        "power_idle_pcie_avg_W": "10.0",
         "power_samples": "7",
         "fpga_cycle_avg": "1000",
         "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint/bin",
@@ -89,7 +95,7 @@ class EnergyPerTokenTest(unittest.TestCase):
     def test_exact_power_match_uses_fpga_cycle_period_and_selected_power_metric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
-            _write_raw_db(raw_db, [_raw_row(power_avg_W="5.0", power_samples="5")])
+            _write_raw_db(raw_db, [_raw_row(power_pcie_avg_W="5.0", power_samples="5")])
 
             rows = energy_per_token.energy_rows_from_records(
                 [_composed_row()],
@@ -112,16 +118,17 @@ class EnergyPerTokenTest(unittest.TestCase):
             self.assertEqual(1024, rows[0]["energy_tokens"])
             self.assertAlmostEqual(0.0001 / 1024.0, rows[0]["joules_per_token_component"])
 
-    def test_power_metric_selection_uses_vcc_and_dynamic_columns(self) -> None:
+    def test_power_metric_selection_derives_dynamic_from_pcie_run_and_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
             _write_raw_db(
                 raw_db,
                 [
                     _raw_row(
-                        power_avg_W="9.0",
+                        power_pcie_avg_W="9.0",
                         power_vcc_avg_W="7.0",
-                        power_dynamic_avg_W="1.25",
+                        power_dynamic_avg_W="99.0",
+                        power_idle_pcie_avg_W="7.75",
                         power_samples="5",
                     )
                 ],
@@ -154,8 +161,8 @@ class EnergyPerTokenTest(unittest.TestCase):
                 raw_db,
                 [
                     _raw_row(
-                        power_avg_W="",
-                        power_avg_w="6.0",
+                        power_pcie_avg_W="",
+                        power_pcie_avg_w="6.0",
                         power_samples="5",
                     )
                 ],
@@ -203,7 +210,7 @@ class EnergyPerTokenTest(unittest.TestCase):
                 [
                     _raw_row(
                         fpga_bin_label="custom_alias",
-                        power_avg_W="5.0",
+                        power_pcie_avg_W="5.0",
                         fpga_bin_dir="",
                     )
                 ],
@@ -236,7 +243,7 @@ class EnergyPerTokenTest(unittest.TestCase):
                 raw_db,
                 [
                     _raw_row(
-                        power_avg_W="5.0",
+                        power_pcie_avg_W="5.0",
                         fpga_bin_dir=str(bin_dir),
                     )
                 ],
@@ -262,14 +269,14 @@ class EnergyPerTokenTest(unittest.TestCase):
                         case_id="near",
                         args="-m 512 -n 128 -k 512",
                         shape_json='{"M": 512, "N": 128, "K": 512}',
-                        power_avg_W="11.0",
+                        power_pcie_avg_W="11.0",
                         power_samples="6",
                     ),
                     _raw_row(
                         case_id="far",
                         args="-m 4096 -n 128 -k 512",
                         shape_json='{"M": 4096, "N": 128, "K": 512}',
-                        power_avg_W="20.0",
+                        power_pcie_avg_W="20.0",
                         power_samples="100",
                     ),
                 ],
@@ -299,10 +306,10 @@ class EnergyPerTokenTest(unittest.TestCase):
             raw_db = Path(tmp) / "raw_db.csv"
             _write_raw_db(
                 raw_db,
-                [_raw_row(power_avg_W="99.0", power_samples="5")],
+                [_raw_row(power_pcie_avg_W="99.0", power_samples="5")],
             )
             row = _composed_row(
-                power_avg_w="12.0",
+                power_pcie_avg_w="12.0",
                 power_resolution_kind="interpolated",
                 power_interpolation_upper_ratio="0.25",
             )
@@ -324,12 +331,12 @@ class EnergyPerTokenTest(unittest.TestCase):
             _write_raw_db(
                 raw_db,
                 [
-                    _raw_row(case_id="invalid", power_avg_W="99.0", power_samples="0"),
+                    _raw_row(case_id="invalid", power_pcie_avg_W="99.0", power_samples="0"),
                     _raw_row(
                         case_id="valid",
                         args="-m 256",
                         shape_json='{"M": 256}',
-                        power_avg_W="9.0",
+                        power_pcie_avg_W="9.0",
                         power_samples="5",
                     ),
                 ],

@@ -49,7 +49,10 @@ from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data
 from tools.latency_bench.report import sha256_file
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
 from energy_per_token import (
+    DEFAULT_ENERGY_POWER_METRICS,
     DEFAULT_FPGA_PERIOD_S,
+    FPGA_DEQUANT_DYNAMIC_POWER_METRIC,
+    FPGA_TOTAL_POWER_METRIC,
     _fpga_period_s as resolve_energy_fpga_period_s,
     add_relative_energy_component_values,
     add_relative_energy_values,
@@ -1325,10 +1328,9 @@ main_all_result: PlotRunResult | None = None
 # Energy per token.
 ENERGY_IDLE_POWER_W = FPGA_IDLE_POWER
 INCLUDE_IDLE_POWER = False
-# Export both total board energy and idle-subtracted dynamic energy.  Total
-# energy is less sensitive to idle-baseline sampling noise, while dynamic
-# energy isolates the measured power increase attributable to the kernel.
-ENERGY_POWER_METRICS = ("power_avg_W", "power_dynamic_avg_W")
+# Use PCIe board/dynamic readings and also export FPGA idle + dynamic,
+# with a mixed mode that charges only discounted dynamic energy for dequant.
+ENERGY_POWER_METRICS = DEFAULT_ENERGY_POWER_METRICS
 
 # Plot policy override: weight dequantization uses the minimum 48.263% ratio
 # observed in the completed QDIR=0, QBLK=32 asymmetric shape sweep.  KV
@@ -1449,6 +1451,8 @@ def export_energy_figure_data_pair(
         fpga_period_s=fpga_period_s,
         allow_generic_power_estimate=False,
     )
+    if power_metric == FPGA_DEQUANT_DYNAMIC_POWER_METRIC:
+        rows = _apply_dequant_pure_energy_rules(pd.DataFrame(rows)).to_dict("records")
     split_energy_dequantization_kinds(rows)
     totals = summarize_energy_rows(rows)
     label_maps = plot_label_maps(include_c4_alone=INCLUDE_C4_ALONE)
@@ -1669,15 +1673,27 @@ def _vectorized_energy_rows(
 
     frames: list[pd.DataFrame] = []
     for power_metric in power_metrics:
-        power_column = power_metric.replace("_W", "_w")
-        power = numeric(power_column)
+        if power_metric == "power_avg_W":
+            power = numeric("power_pcie_avg_w")
+        elif power_metric in (
+            "power_dynamic_avg_W", FPGA_TOTAL_POWER_METRIC,
+            FPGA_DEQUANT_DYNAMIC_POWER_METRIC,
+        ):
+            power = numeric("power_pcie_avg_w") - numeric("power_idle_pcie_avg_w")
+        else:
+            power = numeric(power_metric.replace("_W", "_w"))
+        uses_idle = pd.Series(power_metric == FPGA_TOTAL_POWER_METRIC, index=base.index)
+        if power_metric == FPGA_DEQUANT_DYNAMIC_POWER_METRIC:
+            uses_idle = ~base["kind"].astype(str).eq("dequantization")
+        effective_power = power + uses_idle.astype(float) * ENERGY_IDLE_POWER_W
         current = base.copy()
         current["power_metric"] = power_metric
+        current["include_idle_power"] = uses_idle | INCLUDE_IDLE_POWER
         current["raw_power_W"] = power
         current["raw_power_w"] = power
-        current["effective_power_W"] = power
-        current["effective_power_w"] = power
-        current["kernel_energy_j"] = energy_time * power
+        current["effective_power_W"] = effective_power
+        current["effective_power_w"] = effective_power
+        current["kernel_energy_j"] = energy_time * effective_power
         current["joules_per_token_component"] = (
             current["kernel_energy_j"] / tokens.where(tokens.gt(0.0))
         )
@@ -1689,7 +1705,9 @@ def _vectorized_energy_rows(
 
 def _apply_dequant_pure_energy_rules(rows: pd.DataFrame) -> pd.DataFrame:
     """Apply measured pure-dequant discounts to dynamic energy only."""
-    dynamic = rows["power_metric"].astype(str).eq("power_dynamic_avg_W")
+    dynamic = rows["power_metric"].astype(str).isin(
+        ("power_dynamic_avg_W", FPGA_DEQUANT_DYNAMIC_POWER_METRIC)
+    )
     if not bool(dynamic.any()):
         return rows
     adjusted_dynamic = apply_latency_scale_rules(
@@ -2193,8 +2211,7 @@ def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
         "batch", "prefill_seq_len", "gen_kv_len", "out_tokens",
         "output_token_index", "calls_per_forward", "fpga_cycle",
         "fpga_cycle_latency", "fpga_period_s", "latency_us",
-        "compose_status", "power_avg_w", "power_vcc_avg_w",
-        "power_dynamic_avg_w",
+        "compose_status", "power_pcie_avg_w", "power_idle_pcie_avg_w",
     }
     missing = sorted(required - set(frame.columns))
     if missing:
@@ -2212,7 +2229,7 @@ def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
     incomplete = ~status.isin({"pass", "estimated"})
     for column in (
         "fpga_cycle", "fpga_cycle_latency", "fpga_period_s", "latency_us",
-        "power_avg_w", "power_vcc_avg_w", "power_dynamic_avg_w",
+        "power_pcie_avg_w", "power_idle_pcie_avg_w",
     ):
         incomplete |= pd.to_numeric(frame[column], errors="coerce").isna()
     if bool(incomplete.any()):

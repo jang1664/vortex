@@ -86,6 +86,8 @@ class ComposeTest(unittest.TestCase):
                 "max_us": "17",
                 "fpga_cycle": "140",
                 "power_avg_w": "10",
+                "power_pcie_avg_w": "8",
+                "power_idle_pcie_avg_w": "3",
             },
             {
                 "run_id": "run_b",
@@ -102,6 +104,8 @@ class ComposeTest(unittest.TestCase):
                 "max_us": "23",
                 "fpga_cycle": "200",
                 "power_avg_w": "20",
+                "power_pcie_avg_w": "16",
+                "power_idle_pcie_avg_w": "5",
             },
             {
                 "run_id": "wrong_bin",
@@ -307,6 +311,8 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual("interpolated", middle["latency_resolution_kind"])
             self.assertEqual("estimated", middle["compose_status"])
             self.assertEqual(15.0, float(middle["power_avg_w"]))
+            self.assertEqual(12.0, float(middle["power_pcie_avg_w"]))
+            self.assertEqual(4.0, float(middle["power_idle_pcie_avg_w"]))
             self.assertEqual("interpolated", middle["power_resolution_kind"])
 
     def test_decode_reuse_resolves_varying_logical_args_from_representative(self) -> None:
@@ -374,6 +380,8 @@ class ComposeTest(unittest.TestCase):
                 "rope_first", reused["latency_reuse_representative_case_id"]
             )
             self.assertEqual(10.0, float(reused["power_avg_w"]))
+            self.assertEqual(8.0, float(reused["power_pcie_avg_w"]))
+            self.assertEqual(3.0, float(reused["power_idle_pcie_avg_w"]))
             self.assertEqual("invariant_reused", reused["power_resolution_kind"])
             self.assertEqual(
                 "rope_first", reused["power_reuse_representative_case_id"]
