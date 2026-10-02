@@ -27,6 +27,10 @@ aliases:
   tcu_th16_c1_v2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_296f1c41bb/bin
     configs: configs/tcu_th16_c1.sh
+
+  tcu_th16_c1_v2_rev2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_201d6f8d64/bin
+    configs: configs/tcu_th16_c1_v2.sh
   
   C1: *C1_
 
@@ -46,7 +50,11 @@ aliases:
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_3051772acc/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr.sh
-  
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_e6ea541b82/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2.sh
+
   C2: *C2_
 
   # ------------------------------------ C3 -------------------------------------------------
@@ -77,6 +85,26 @@ aliases:
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_c26f196986/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2_sll_fix:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh
+
+  naive_th16_c3_v2_slr0_acc_bram:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_c467ba0091/bin
+    configs: configs/naive_th16_c3_v2_slr0_acc_bram.sh
+
+  naive_th16_c3_v2_slr0_acc_uram:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_70ccec2741/bin
+    configs: configs/naive_th16_c3_v2_slr0_acc_uram.sh
+
+  naive_th16_c3_v2_slr1_acc_uram:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_a116372112/bin
+    configs: configs/naive_th16_c3_v2_slr1_acc_uram.sh
   
   C3: *C3_
 
@@ -124,6 +152,10 @@ aliases:
   improve_th16_tcol16_m16_t8_bigmem_all_bram_v2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_4f7285d4f5/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_v2.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_1380038964/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh
 
   C4: *C4_
 
