@@ -41,6 +41,27 @@ from being associated with an older tag or lane mask.
 | Single divide | `xil_fdiv` | 28 |
 | Single square root | `xil_fsqrt` | 28 |
 
+`VX_fpu_f2f` corrects the conversion IP's subnormal behavior in a parallel RTL
+path. Nonzero half subnormals are normalized exactly when widened to single.
+Finite single values with magnitude below `2^-14` are rounded to half with
+gradual underflow, including signed zero and rounding up to the minimum normal
+half value. This path uses the resolved RISC-V rounding mode and reports NX for
+inexact conversion and UF when the result is tiny after precision rounding
+assuming an unbounded exponent range. At the normal boundary, UF can therefore
+be set even when the final half result rounds up to the minimum normal value.
+Exact subnormal conversions raise neither flag.
+
+The correction uses the existing rounding, leading-zero-count, and pipeline
+helpers. It advances under the same PE enable as the IP, preserving the listed
+latencies, serialization, lane masks, tags, and output backpressure behavior.
+Normal and special-value conversions still use the existing IP path and retain
+its rounding/exception limitations. Half arithmetic IPs still flush subnormal
+inputs and results to zero; the conversion correction does not alter them.
+
+Vivado's `C_Has_UNDERFLOW` option enables an exception output, not subnormal
+support. The Floating-Point Operator v7.1 IP has no gradual-underflow switch for
+these conversions, so the existing XCI generation settings remain unchanged.
+
 The scalar IP names are distinct from the existing `xil_f16add` and
 `xil_f16mul` tensor/GEMM IPs. Generate or refresh all XCI files with:
 
@@ -61,6 +82,16 @@ integer conversions implement the Zfh W/WU forms; use FPNEW for L/LU
 conversions.
 
 ## Regression scope
+
+`hw/unittest/fpu_f2f_subnormal` checks conversion results and exception flags
+against SoftFloat, including signed half subnormals, narrowing boundaries,
+rounding modes, and serializer stalls. Run it with VCS from a configured build
+directory after sourcing the DSP/Vivado configuration:
+
+```sh
+python3 ../tools/verify_rtl.py unittest \
+  --path hw/unittest/fpu_f2f_subnormal --sim vcs
+```
 
 `tests/regression/fp16_zfh` always checks the backend-independent Zfh baseline:
 half add/multiply, H-to-S and S-to-H conversion, and comparison. When

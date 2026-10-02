@@ -62,9 +62,23 @@ module VX_fpu_f2f import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     end
 
 `ifdef VIVADO
+    localparam S_EXP_BITS = 8;
+    localparam S_MAN_BITS = 23;
+    localparam H_EXP_BITS = 5;
+    localparam H_MAN_BITS = 10;
+    localparam S_EXP_BIAS = 2**(S_EXP_BITS-1)-1;
+    localparam H_EXP_BIAS = 2**(H_EXP_BITS-1)-1;
+    localparam H_MIN_NORMAL_EXP = S_EXP_BIAS - H_EXP_BIAS + 1;
+    localparam SUBNORMAL_SHIFT_BIAS = S_EXP_BIAS + S_MAN_BITS
+                                   - H_EXP_BIAS - H_MAN_BITS + 1;
+
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_convert
         // Float-to-float conversion exposes overflow and underflow status.
         wire [1:0] tuser;
+        wire [31:0] ip_result;
+        wire correction_select;
+        wire [31:0] correction_result;
+        wire [`FP_FLAGS_BITS-1:0] correction_fflags;
         if (DST_FORMAT == 2) begin : g_to_half
             wire [15:0] result_h;
             xil_f32_to_f16 convert (
@@ -75,19 +89,123 @@ module VX_fpu_f2f import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
                 .m_axis_result_tdata(result_h),
                 .m_axis_result_tuser(tuser)
             );
-            assign pe_data_out[i][0 +: 32] = {16'hffff, result_h};
+            assign ip_result = {16'hffff, result_h};
+
+            // The IP flushes subnormal results. Quantize small finite inputs
+            // in units of the half-precision minimum subnormal (2^-24).
+            wire input_sign = pe_data_in[i][31];
+            wire [S_EXP_BITS-1:0] input_exp = pe_data_in[i][S_MAN_BITS +: S_EXP_BITS];
+            wire [S_MAN_BITS:0] input_mant = {
+                (| input_exp), pe_data_in[i][S_MAN_BITS-1:0]
+            };
+            assign correction_select = (input_exp < S_EXP_BITS'(H_MIN_NORMAL_EXP));
+
+            // FP32 subnormals have effective exponent 1 and no hidden bit.
+            // Clamp shifts beyond the significand to one guard-zero/sticky
+            // case, so even the smallest nonzero FP32 inputs round correctly.
+            wire [S_EXP_BITS-1:0] denorm_shift = correction_select
+                ? S_EXP_BITS'(SUBNORMAL_SHIFT_BIAS) - ((input_exp == 0) ? S_EXP_BITS'(1) : input_exp)
+                : S_EXP_BITS'(S_MAN_BITS - H_MAN_BITS + 1);
+            wire [S_EXP_BITS-1:0] round_shift = (denorm_shift > S_EXP_BITS'(S_MAN_BITS + 2))
+                ? S_EXP_BITS'(S_MAN_BITS + 2) : denorm_shift;
+            wire [S_MAN_BITS:0] shifted_mant = input_mant >> round_shift;
+            wire [S_MAN_BITS:0] guard_mant = input_mant >> (round_shift - S_EXP_BITS'(1));
+            wire [S_MAN_BITS:0] sticky_mask = {(S_MAN_BITS+1){1'b1}}
+                >> (S_EXP_BITS'(S_MAN_BITS + 2) - round_shift);
+            wire [1:0] round_sticky = {guard_mant[0], (| (input_mant & sticky_mask))};
+            wire [H_MAN_BITS:0] rounded_mant;
+            wire rounded_sign;
+
+            VX_fp_rounding #(
+                .DAT_WIDTH (H_MAN_BITS + 1)
+            ) fp_rounding (
+                .abs_value_i (shifted_mant[H_MAN_BITS:0]),
+                .sign_i (input_sign),
+                .round_sticky_bits_i (round_sticky),
+                .rnd_mode_i (pe_data_in[i][32 +: INST_FRM_BITS]),
+                .effective_subtraction_i (1'b0),
+                .abs_rounded_o (rounded_mant),
+                .sign_o (rounded_sign),
+                `UNUSED_PIN (exact_zero_o)
+            );
+
+            // Detect tininess after rounding to half precision with an
+            // unbounded exponent, before the subnormal right shift. A stored
+            // result of 0x0400 can still be tiny by this IEEE definition.
+            wire [H_MAN_BITS+1:0] normal_precision_rounded;
+            VX_fp_rounding #(
+                .DAT_WIDTH (H_MAN_BITS + 2)
+            ) tininess_rounding (
+                .abs_value_i ({1'b0, input_mant[S_MAN_BITS:S_MAN_BITS-H_MAN_BITS]}),
+                .sign_i (input_sign),
+                .round_sticky_bits_i ({input_mant[S_MAN_BITS-H_MAN_BITS-1],
+                                      (| input_mant[S_MAN_BITS-H_MAN_BITS-2:0])}),
+                .rnd_mode_i (pe_data_in[i][32 +: INST_FRM_BITS]),
+                .effective_subtraction_i (1'b0),
+                .abs_rounded_o (normal_precision_rounded),
+                `UNUSED_PIN (sign_o),
+                `UNUSED_PIN (exact_zero_o)
+            );
+
+            wire tiny = (input_exp < S_EXP_BITS'(H_MIN_NORMAL_EXP - 1))
+                || ((input_exp == S_EXP_BITS'(H_MIN_NORMAL_EXP - 1))
+                    && ~normal_precision_rounded[H_MAN_BITS+1]);
+            wire inexact = (| round_sticky);
+            assign correction_result = {16'hffff, rounded_sign,
+                                        {(H_EXP_BITS-1){1'b0}}, rounded_mant};
+            assign correction_fflags = {3'b0, (inexact && tiny), inexact};
+            `UNUSED_VAR ({shifted_mant[S_MAN_BITS:H_MAN_BITS+1], guard_mant[S_MAN_BITS:1]})
+            `UNUSED_VAR (normal_precision_rounded[H_MAN_BITS:0])
         end else begin : g_to_single
             xil_f16_to_f32 convert (
                 .aclk(clk), .aclken(pe_enable),
                 .s_axis_a_tvalid(1'b1),
                 .s_axis_a_tdata(pe_data_in[i][0 +: 16]),
                 `UNUSED_PIN(m_axis_result_tvalid),
-                .m_axis_result_tdata(pe_data_out[i][0 +: 32]),
+                .m_axis_result_tdata(ip_result),
                 .m_axis_result_tuser(tuser)
             );
+
+            wire [H_EXP_BITS-1:0] input_exp = pe_data_in[i][H_MAN_BITS +: H_EXP_BITS];
+            wire [H_MAN_BITS-1:0] input_mant = pe_data_in[i][H_MAN_BITS-1:0];
+            wire [`LOG2UP(H_MAN_BITS)-1:0] leading_zeros;
+            wire mant_nonzero;
+            VX_lzc #(
+                .N (H_MAN_BITS)
+            ) lzc (
+                .data_in (input_mant),
+                .data_out (leading_zeros),
+                .valid_out (mant_nonzero)
+            );
+
+            // Every half subnormal widens exactly to a normal FP32 value.
+            wire [H_MAN_BITS-1:0] normalized_mant = input_mant
+                << (leading_zeros + `LOG2UP(H_MAN_BITS)'(1));
+            wire [S_EXP_BITS-1:0] normalized_exp = S_EXP_BITS'(S_EXP_BIAS - H_EXP_BIAS)
+                - S_EXP_BITS'(leading_zeros);
+            assign correction_select = (input_exp == 0) && mant_nonzero;
+            assign correction_result = {pe_data_in[i][15], normalized_exp,
+                                        normalized_mant, {(S_MAN_BITS-H_MAN_BITS){1'b0}}};
+            assign correction_fflags = '0;
         end
-        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] =
-            {1'b0, 1'b0, tuser[1], tuser[0], 1'b0};
+
+        wire correction_select_out;
+        wire [31:0] correction_result_out;
+        wire [`FP_FLAGS_BITS-1:0] correction_fflags_out;
+        VX_shift_register #(
+            .DATAW (1 + 32 + `FP_FLAGS_BITS),
+            .RESETW (1),
+            .DEPTH (LATENCY)
+        ) correction_pipe (
+            .clk (clk),
+            .reset (reset),
+            .enable (pe_enable),
+            .data_in ({correction_select, correction_fflags, correction_result}),
+            .data_out ({correction_select_out, correction_fflags_out, correction_result_out})
+        );
+        assign pe_data_out[i] = correction_select_out
+            ? {correction_fflags_out, correction_result_out}
+            : {1'b0, 1'b0, tuser[1], tuser[0], 1'b0, ip_result};
     end
 `else
     // EXT_ZFH_ENABLE is rejected for non-Vivado DSP configurations.
