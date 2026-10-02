@@ -1345,7 +1345,8 @@ class PartialCandidatePipelineTest(unittest.TestCase):
         self.assertEqual(0, code)
         result = json.loads(output.getvalue())
         self.assertEqual(["C1"], result["settings"]["candidates"])
-        self.assertEqual(2, len(result["blocked"]))  # Both C1 workload suites are absent.
+        self.assertEqual(1, len(result["blocked"]))  # Generation reports the missing candidate map first.
+        self.assertIn("generate:", result["blocked"][0])
         self.assertNotIn(":C3", " ".join(result["blocked"]))
         self.assertEqual([], list(self.root.iterdir()))
 

@@ -25,35 +25,94 @@ See the subset workflow below when some images are not yet available.
 
 ## Generate the workload
 
-The pipeline consumes generated workload indexes; it does not create them. Use a
-new tag when replacing candidate images, and use that tag throughout:
+The pipeline now starts with `generate`, followed by
+`run -> refine -> compose -> prepare -> plot`. Generation calls the existing
+`make_cases.sh` for the selected models and records its options, source identity,
+candidate snapshot, and generated output contents in receipts. Use a new tag
+when replacing candidate images:
 
 ```bash
 cd analysis_workspace/latency_on_hw
-export EXPERIMENT_TAG=C3_C4_v3_pipeline
+export EXPERIMENT_TAG=th16_20261002_v2_pipeline
 export PYTHON=$HOME/.conda/envs/vortex/bin/python
-./make_case.sh full
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full --to generate
 ```
 
-`make_case.sh quick` generates a smaller workload; pass `--suite-size quick` to
-the pipeline. Configure `build_latency_llama2` and `build_latency_llama3` once
+`--suite-size quick` generates a smaller workload. `make_case.sh` remains a
+compatibility entry for `workflow.py pipeline --from generate --to generate`.
+Its three positional arguments map to `--suite-size`, `--decode-measurement`
+(`exact`/`sampled`), and `--decode-sample-interval`. The defaults remain full/quick
+presets, sampled decode, and interval 32.
+
+The workflow also accepts the workload overrides supported by `make_cases.sh`:
+`--batches`, `--seq-lens`, `--prefill-batches`, `--prefill-seq-lens`,
+`--generation-batches`, `--generation-seq-lens`, `--generation-out-tokens`,
+`--generation-max-seq-len`, `--candidate-map`, `--candidates`, and
+`--output-format`. Routing overrides are `--fpga-bin-default` and repeatable
+`--fpga-bin-remap`, `--fpga-bin-by-app`, `--fpga-bin-by-backend`, and
+`--fpga-bin-by-kind`. Model input directories and generated output roots are
+selected by `--workspace`, `--models`, `--suite-size`, and `--tag`.
+Use the same generation options when resuming; changing them invalidates the
+generation receipt.
+
+Configure `build_latency_llama2` and `build_latency_llama3` once
 before hardware execution:
 
 ```bash
 ../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex
 ```
 
-Run that command from each build directory. Hardware stages use the existing
-Slurm allocation and `ci/run_black.sh hw`, with the selected alias config and no
-extra compile defines.
+Run that command from each build directory. Start the workflow outside Slurm.
+It rejects an existing `SLURM_JOB_ID`/`SLURM_STEP_ID`; internal model workers
+receive the allocations created by the coordinator. Hardware stages use
+`ci/run_black.sh hw`, with the selected alias config and no extra compile defines.
 
 ## Run and resume the full pipeline
 
-The supported sequence is `run -> refine -> compose -> prepare -> plot`:
+The default sequence includes workload generation. Serial execution uses one
+FPGA allocation for both models, processing each model's run and refinement
+tasks in order:
 
 ```bash
-"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full \
+  --model-execution serial
 ```
+
+For concurrent models on two FPGA boards:
+
+```bash
+"$PYTHON" workflow.py pipeline --tag "$EXPERIMENT_TAG" --suite-size full \
+  --model-execution parallel --parallel-fallback error
+```
+
+The coordinator first counts free U55C GRES with sufficient CPU and memory on
+usable nodes in the selected partition. If two slots are unavailable,
+`--parallel-fallback error` stops before hardware execution;
+`--parallel-fallback serial` switches to a single allocation. Availability is
+checked again after generation. Actual allocation races stop after
+`--allocation-wait` seconds rather than silently queueing indefinitely.
+
+Each parallel worker requests one FPGA and owns it through all of its model's
+prefill, generation, candidate, power, and refinement measurements. Serial mode
+uses the same FPGA for both models. Generation, composition, preparation, and
+plotting run on the host outside Slurm. Refinement requires hardware for its
+additional probe shapes, so it shares the model's run allocation.
+
+`--slurm-partition`, `--slurm-cpus`, `--slurm-mem`, `--slurm-time`, and
+`--allocation-wait` control allocation requests. Defaults are `fpga`, 4 CPUs,
+16G memory, seven days, and 30 seconds respectively. These flags apply only to
+model measurement sessions. Do not wrap the top-level command in `srun` or
+`sbatch`.
+
+The board identity (`hostname` and user-function PCI BDF) is pinned per model in
+`outputs_<model>_main.<tag>/model_fpga.json`, and historical run identity files
+are checked too. A resume allocated a different board stops before measuring;
+it cannot mix boards in one model's results. Successful historical rows without
+run identity evidence are rejected too. The pin and model ownership follow the
+result root even if `--state-root` changes. Use a new tag to measure on another
+board. Fully completed measurement tasks reuse their receipts without acquiring
+an FPGA. Session commands and logs are in
+`pipeline_state.<tag>/model_sessions/<session-id>/`.
 
 Every task has a versioned receipt under
 `pipeline_state.<tag>/receipts/`. Attempt stdout and stderr are under
@@ -167,14 +226,14 @@ therefore recorded with C1 as its physical source. Composition keeps expected
 image identity and actual source provenance; prepared totals retain aggregated
 provenance.
 
-## Slurm campaign wrapper
+## Campaign wrapper
 
-`agent-tasks/latency_on_hw-refine/run_campaign.sh` only establishes the repository
-and allocation environment, writes `campaign_status.json`, and enters
+`agent-tasks/latency_on_hw-refine/run_campaign.sh` establishes the repository
+and compiler environment, writes `campaign_status.json`, and enters
 `workflow.py pipeline`. Pass range, rerun, adoption, or convergence flags as
 wrapper arguments; set the tag and suite size through `EXPERIMENT_TAG` and
-`SUITE_SIZE`. It resolves the repository from `SLURM_SUBMIT_DIR` because Slurm
-executes a copied script from its spool directory.
+`SUITE_SIZE`. Run this wrapper from the host without a Slurm allocation as well;
+the workflow owns model allocations.
 
 Do not start this wrapper against an output root still owned by an older shell
 campaign. The pipeline detects its `latest/run_state.json` writer and blocks.
@@ -233,8 +292,9 @@ marked explicitly and skipped by the merger.
 Results are `outputs_llama2_main.<tag>/C1/raw_db.csv` and
 `outputs_llama3_main.<tag>/C1/raw_db.csv`. Use `--to refine` to include refinement,
 or `--from refine --to refine --candidates C1` to refine existing C1 results.
-Hardware execution still requires configured build directories and the normal
-Slurm environment. Neither `--dry-run` nor `status` starts hardware work.
+Hardware execution requires configured build directories and a working Slurm
+installation. Launch the workflow without an allocation; it creates its own
+model sessions. Neither `--dry-run` nor `status` starts hardware work.
 
 Partial snapshots use schema version 2; historical full snapshots remain
 supported. Adding unrelated aliases does not invalidate an existing partial

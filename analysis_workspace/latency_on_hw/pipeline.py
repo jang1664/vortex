@@ -56,7 +56,7 @@ class ResourceBusyError(RuntimeError):
     """A canonical output resource already has a live writer."""
 
 
-STAGES = ("run", "refine", "compose", "prepare", "plot")
+STAGES = ("generate", "run", "refine", "compose", "prepare", "plot")
 MODEL_NAMES = ("llama2", "llama3")
 EXECUTION_BINS = ("C1", "C3", "C4")
 MEASUREMENT_ACQUISITION = {"warmup": 0, "iterations": 1}
@@ -1007,6 +1007,9 @@ class OwnedProcess:
     def pid(self) -> int:
         return self._process.pid
 
+    def poll(self) -> int | None:
+        return self._process.poll()
+
     def wait(self, timeout: float | None = None, *, release: bool = True) -> int:
         try:
             return self._process.wait(timeout=timeout)
@@ -1064,6 +1067,12 @@ class PipelineSettings:
     case_filters: tuple[str, ...] = ()
     kernel_variants: tuple[str, ...] = ()
     force_measurement: bool = False
+    candidate_map: Path | None = None
+    decode_measurement: str = "sampled"
+    decode_sample_interval: int = 32
+    output_format: str = "pkl"
+    generation_options: tuple[str, ...] = ()
+    require_generation_receipt: bool = False
 
     def __post_init__(self) -> None:
         from tools.latency_bench.candidate_map import parse_execution_candidates
@@ -1103,6 +1112,10 @@ class PipelineSettings:
     @property
     def application_source_root(self) -> Path:
         return self.workspace.parents[1] / "tests" / "regression"
+
+    @property
+    def candidate_map_path(self) -> Path:
+        return self.candidate_map or self.workspace / "candidate_fpga_bins.yaml"
 
 
 def _path_identity(path: Path) -> ContentIdentity:
@@ -1158,6 +1171,39 @@ def _refinement_checkpoint(settings: PipelineSettings, model: str, label: str) -
 
 def _raw_dbs(settings: PipelineSettings, model: str) -> tuple[Path, ...]:
     return tuple(settings.result_root(model) / label / "raw_db.csv" for label in EXECUTION_BINS)
+
+
+def _generate_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
+    from generation import workload_arguments
+    from tools.latency_bench.candidate_map import resolve_candidate_map
+
+    snapshot = resolve_candidate_map(settings.candidate_map_path,
+                                     None if settings.candidates == EXECUTION_BINS else settings.candidates)
+    arguments = workload_arguments(settings.suite_size, settings.decode_measurement,
+                                   settings.decode_sample_interval, settings.generation_options)
+    script = settings.workspace / "make_cases.sh"
+    return tuple(TaskSpec(
+        key=f"generate:{model}", stage="generate",
+        inputs={"source_suites": _path_identity(settings.workspace / "suites" / settings.model_key(model)),
+                "generator": _path_identity(script),
+                "generation_options_code": _path_identity(settings.workspace / "generation.py"),
+                "generation_source": json_identity({
+                    path.name: _path_identity(path).sha256
+                    for path in sorted((settings.workspace.parents[1] / "tools/latency_bench").glob("*.py"))
+                    if not path.name.startswith("test_")}),
+                "candidate_selection": json_identity(snapshot)},
+        effective_parameters={"suite_size": settings.suite_size, "arguments": list(arguments),
+                              "output_format": settings.output_format, "candidates": list(settings.candidates)},
+        outputs=(OutputSpec(settings.suite_root(model), "directory"),),
+        resources=(settings.suite_root(model),),
+        command=("bash", str(script), "--input", str(settings.workspace / "suites" / settings.model_key(model)),
+                 "--output", str(settings.suite_root(model)), "--candidate-map", str(settings.candidate_map_path),
+                 "--output-format", settings.output_format,
+                 *(("--candidates", ",".join(settings.candidates)) if settings.candidates != EXECUTION_BINS else ()),
+                 *arguments),
+        metadata={"environment": {"PYTHON": settings.python, "CANDIDATE_MAP": str(settings.candidate_map_path),
+                                  "CANDIDATES": "", "OUTPUT_FORMAT": settings.output_format}},
+    ) for model in settings.models)
 
 
 def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
@@ -1225,6 +1271,8 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                     command=command,
                     metadata={
                         "environment": {
+                            "CANDIDATE_MAP": str(settings.candidate_map_path),
+                            "PYTHON": settings.python,
                             "STAGES": stage,
                             "FPGA_BINS": label,
                             "BUILD_DIR": str(settings.build_root(model)),
@@ -1251,6 +1299,8 @@ def _refine_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             refinement_id = f"{settings.tag}.{model}.{label}.latency"
             measure = (
                 f"env STAGE=generation SUITE={{suite}} OUT_DIR={{out}} "
+                f"CANDIDATE_MAP={shlex.quote(str(settings.candidate_map_path))} "
+                f"PYTHON={shlex.quote(settings.python)} "
                 f"BUILD_DIR={settings.build_root(model)} SKIP_EXISTING=1 "
                 f"BLACKBOX_TIMEOUT=24h {settings.workspace / 'run_fpga_bin.sh'} "
                 f"{label} --latency --no-power --retry --strict-measurement-reuse "
@@ -1492,6 +1542,7 @@ def _plot_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
 
 def build_stage_tasks(settings: PipelineSettings, stage: str) -> tuple[TaskSpec, ...]:
     return {
+        "generate": _generate_tasks,
         "run": _run_tasks,
         "refine": _refine_tasks,
         "compose": _compose_tasks,
@@ -1700,6 +1751,8 @@ def _validate_excluded_prerequisites(
     if first >= STAGES.index("compose"):
         settings = replace(settings, candidates=EXECUTION_BINS, case_filters=(), force_measurement=False)
     for stage in STAGES[:first]:
+        if stage == "generate" and not settings.require_generation_receipt:
+            continue
         try:
             tasks = build_stage_tasks(
                 replace(settings, case_filters=requested_filters) if stage == "refine" else settings,
@@ -1964,17 +2017,19 @@ def _parse_formats(value: str) -> tuple[str, ...]:
 
 def cli_main(argv: Sequence[str] | None = None) -> int:
     from tools.latency_bench.candidate_map import execution_candidates_argument
+    from generation import add_arguments as add_generation_arguments, options_from_args
+    from model_sessions import SlurmSettings, add_arguments as add_slurm_arguments, coordinate, memory_mb, reject_allocation
 
     parser = argparse.ArgumentParser(prog="workflow.py")
     parser.add_argument("action", choices=("pipeline", "status"))
     parser.add_argument("--tag", required=True)
     parser.add_argument("--state-root", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--workspace", type=Path, default=Path(__file__).resolve().parent)
-    parser.add_argument("--suite-size", default=os.environ.get("SUITE_SIZE", "full"))
+    parser.add_argument("--suite-size", choices=("full", "quick"), default=os.environ.get("SUITE_SIZE", "full"))
     parser.add_argument("--models", type=_parse_models, default=MODEL_NAMES)
     parser.add_argument("--candidates", type=execution_candidates_argument, default=EXECUTION_BINS,
                         help="Execution sources for run/refine (comma-separated C1,C3,C4); downstream stages still require all sources.")
-    parser.add_argument("--from", dest="from_stage", choices=STAGES, default="run")
+    parser.add_argument("--from", dest="from_stage", choices=STAGES, default="generate")
     parser.add_argument("--to", dest="to_stage", choices=STAGES, default="plot")
     parser.add_argument("--rerun", choices=STAGES, nargs="?", const="run")
     parser.add_argument("--filter", action="append", default=[], help="Expanded-case condition; app=~pattern uses glob matching.")
@@ -1983,19 +2038,40 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--require-convergence", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--status", action="store_true")
-    parser.add_argument("--out-tokens", type=int, default=128)
+    parser.add_argument("--out-tokens", type=int)
     parser.add_argument("--formats", type=_parse_formats, default=("png", "pdf", "svg"))
     parser.add_argument("--target-error", type=float, default=0.05)
     parser.add_argument("--validation-samples", type=int, default=3)
     parser.add_argument("--max-iterations", type=int, default=3)
     parser.add_argument("--python", default=sys.executable)
+    add_generation_arguments(parser)
+    add_slurm_arguments(parser)
     args = parser.parse_args(argv)
+    try:
+        reject_allocation()
+        memory_mb(args.slurm_mem)
+        if args.slurm_cpus < 1 or args.allocation_wait < 1 or args.decode_sample_interval < 1:
+            raise ValueError("slurm-cpus, allocation-wait and decode-sample-interval must be positive")
+    except ValueError as error:
+        parser.error(str(error))
     if any(separator in args.tag for separator in (os.sep, os.altsep) if separator):
         parser.error("--tag must not contain path separators")
     try:
         _stage_range(args.from_stage, args.to_stage, args.rerun)
     except ValueError as error:
         parser.error(str(error))
+    if args.generation_out_tokens is None and args.out_tokens is not None:
+        args.generation_out_tokens = str(args.out_tokens)
+    if args.out_tokens is None:
+        try:
+            counts = [int(value) for value in (args.generation_out_tokens or "128").split(",")]
+        except ValueError:
+            parser.error("--generation-out-tokens must contain positive integer counts")
+        if not counts or min(counts) < 1:
+            parser.error("--generation-out-tokens must contain positive integer counts")
+        if len(counts) > 1 and STAGES.index(args.to_stage) >= STAGES.index("compose"):
+            parser.error("multiple --generation-out-tokens values require --out-tokens to select the plotted count")
+        args.out_tokens = counts[0]
     if args.out_tokens < 1 or args.validation_samples < 1 or args.max_iterations < 0:
         parser.error("out-tokens/validation-samples must be positive and max-iterations nonnegative")
     settings = PipelineSettings(
@@ -2007,6 +2083,12 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         python=args.python,
         candidates=args.candidates,
         case_filters=tuple(args.filter), kernel_variants=tuple(args.kernel_variant),
+        candidate_map=(args.candidate_map or Path(os.environ.get("CANDIDATE_MAP", str(args.workspace / "candidate_fpga_bins.yaml")))).resolve(),
+        decode_measurement=args.decode_measurement,
+        decode_sample_interval=args.decode_sample_interval,
+        output_format=args.output_format,
+        generation_options=options_from_args(args),
+        require_generation_receipt=True,
     )
     from tools.latency_bench.kernel_variants import parse_variants
     from tools.latency_bench.suite import compile_case_filter
@@ -2016,10 +2098,17 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
             compile_case_filter(expression)
     except ValueError as error:
         parser.error(str(error))
-    code, summary = run_pipeline(
-        settings, first=args.from_stage, last=args.to_stage, rerun=args.rerun,
-        inspect_only=(args.dry_run or args.status or args.action == "status"),
-    )
+    slurm = SlurmSettings(model_execution=args.model_execution, parallel_fallback=args.parallel_fallback,
+                          partition=args.slurm_partition, cpus=args.slurm_cpus, memory=args.slurm_mem,
+                          time_limit=args.slurm_time, allocation_wait=args.allocation_wait)
+    try:
+        code, summary = coordinate(
+            settings, slurm, first=args.from_stage, last=args.to_stage, rerun=args.rerun,
+            inspect_only=(args.dry_run or args.status or args.action == "status"),
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(json.dumps({"tag": settings.tag, "blocked": [str(error)]}, sort_keys=True))
+        return 2
     print(json.dumps(summary, sort_keys=True))
     return code
 

@@ -33,6 +33,15 @@ def _suite_entries(input_root: Path, stage: str) -> list[tuple[str, Path]]:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    from model_sessions import WORKER_ENV, reject_allocation, worker_main
+    if arguments and arguments[0] == "_model-worker":
+        return worker_main(arguments[1:])
+    if not (arguments and arguments[0] == "run" and os.environ.get(WORKER_ENV) == "1"):
+        try:
+            reject_allocation()
+        except ValueError as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 2
     if arguments and arguments[0] in ("pipeline", "status"):
         from pipeline import cli_main
 
