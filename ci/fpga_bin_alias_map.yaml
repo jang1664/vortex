@@ -31,6 +31,10 @@ aliases:
   tcu_th16_c1_v2_rev2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_201d6f8d64/bin
     configs: configs/tcu_th16_c1_v2.sh
+
+  tcu_th16_c1_v3:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67/bin
+    configs: configs/tcu_th16_c1_v3.sh
   
   C1: *C1_
 
@@ -54,6 +58,10 @@ aliases:
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_e6ea541b82/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v2.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh
 
   C2: *C2_
 
@@ -89,6 +97,10 @@ aliases:
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2_sll_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin
@@ -156,6 +168,14 @@ aliases:
   improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_1380038964/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v3:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_2748d26354/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v3.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
 
   C4: *C4_
 
