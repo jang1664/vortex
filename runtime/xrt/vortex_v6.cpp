@@ -322,13 +322,17 @@ public:
 
   #ifdef CPP_API
 
-    auto xrtDevice = xrt::device(device_index);
+    // Hot reset can reorder indexes; open the board assigned to this session.
+    const char* assigned_bdf = getenv("XRT_DEVICE_BDF");
+    auto xrtDevice = assigned_bdf != nullptr && assigned_bdf[0] != '\0'
+                  ? xrt::device(std::string(assigned_bdf))
+                  : xrt::device(device_index);
     auto uuid = xrtDevice.load_xclbin(std::string(xlbin_path_s));
     auto xrtKernel = xrt::ip(xrtDevice, uuid, KERNEL_NAME);
     auto xclbin = xrt::xclbin(std::string(xlbin_path_s));
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
     device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
-    printf("[VXDRV] XRT device: index=%d, bdf=%s, name=%s\n",
+    printf("[VXDRV] XRT device: index_hint=%d, bdf=%s, name=%s\n",
            device_index, device_bdf.c_str(), device_name.c_str());
 
   #else
@@ -1030,6 +1034,9 @@ public:
 #endif
 
   int ready_wait(uint64_t timeout) {
+    const char* trace_setting = getenv("VX_BENCH_POWER_TRACE");
+    const bool trace_power = trace_setting && *trace_setting && strcmp(trace_setting, "0") != 0;
+    uint64_t completion_polls = 0;
     struct timespec sleep_time;
   #ifndef NDEBUG
     // If you want slow polling for easier debugging, set VORTEX_READY_WAIT_SLOW=1 MACRO
@@ -1066,6 +1073,13 @@ public:
       });
       // printf("[VXDRV] status=0x%08x\n", status);
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
+      if (trace_power && (completion_polls % 1000 == 0 || is_done)) {
+        fprintf(stderr, "[power-trace-xrt] pid=%ld wait=AP_DONE poll=%llu status=0x%08x done=%d idle=%d\n",
+                static_cast<long>(getpid()), static_cast<unsigned long long>(completion_polls),
+                status, is_done, (status & CTL_AP_IDLE) != 0);
+        fflush(stderr);
+      }
+      ++completion_polls;
       if (is_done)
         break;
     #ifdef VX_HW_DEBUG_READY_WAIT_POLL
@@ -1096,12 +1110,19 @@ public:
       const uint32_t idle_retries = 200;
       // for (uint32_t i = 0; i < idle_retries; ++i) {
       printf("[VXDRV] waiting for AP_IDLE...\n");
+      uint64_t idle_polls = 0;
       while(true) {
         uint32_t status = 0;
         CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
           return err;
         });
         bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
+        if (trace_power && (idle_polls % 10000 == 0 || is_idle)) {
+          fprintf(stderr, "[power-trace-xrt] pid=%ld wait=AP_IDLE poll=%llu status=0x%08x idle=%d\n",
+                  static_cast<long>(getpid()), static_cast<unsigned long long>(idle_polls), status, is_idle);
+          fflush(stderr);
+        }
+        ++idle_polls;
         if (is_idle)
           break;
         nanosleep(&idle_poll, nullptr);

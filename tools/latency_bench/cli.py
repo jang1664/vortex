@@ -99,6 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--latency", dest="measure_latency", action="store_true", help="Enable normal latency measurement.")
     run.add_argument("--no-latency", dest="measure_latency", action="store_false", help="Skip the normal latency measurement phase.")
     run.add_argument("--power", dest="measure_power", action="store_true", help="Enable separate power measurement.")
+    run.add_argument("--skip-power-app", action="append", default=[], metavar="APP",
+                     help="Keep latency but omit power for this app; repeatable.")
     run.add_argument("--no-power", dest="measure_power", action="store_false", help="Disable power measurement.")
     run.set_defaults(power_measure_latency=False)
     run.add_argument(
@@ -842,6 +844,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_skip_apps=tuple(args.skip_power_app),
         power_measure_latency=args.power_measure_latency,
         power_auto_duration=args.power_auto_duration,
         power_min_run_sec=args.power_min_run_sec,

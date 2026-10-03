@@ -337,6 +337,7 @@ def append_raw_execution(
     elapsed_wall_s: str,
     mode: str,
     provenance: dict | None = None,
+    power_skip_reason: str = "",
 ) -> int:
     cases = _case_rows_for_exec(cases_csv, exec_key)
     if not cases:
@@ -428,7 +429,7 @@ def append_raw_execution(
             "power_kernel_iterations": power.get("power_kernel_iterations", ""),
             "power_kernel_iterations_auto": power.get("power_kernel_iterations_auto", ""),
             "power_target_sec": power.get("power_target_sec", ""),
-            "power_source": power.get("power_source", ""),
+            "power_source": power_skip_reason if not measure_power else power.get("power_source", ""),
             "power_raw_truncated": power.get("power_raw_truncated", ""),
             "power_parse_error": power.get("power_parse_error", ""),
             "log_file": str(log_file),
@@ -475,6 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--power-csv", default=None, type=Path, help="Raw per-execution power CSV, when enabled.")
     parser.add_argument("--power-summary", default=None, type=Path, help="Per-execution power summary CSV, when enabled.")
     parser.add_argument("--measure-latency", required=True, type=_parse_bool_arg, help="Whether latency was enabled.")
+    parser.add_argument("--power-skip-reason", default="")
     parser.add_argument("--measure-power", required=True, type=_parse_bool_arg, help="Whether power was enabled.")
     parser.add_argument(
         "--power-min-samples",
@@ -515,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         power_summary=args.power_summary,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_skip_reason=args.power_skip_reason,
         power_min_samples=args.power_min_samples,
         log_file=args.log_file,
         elapsed_wall_s=args.elapsed_wall_s,

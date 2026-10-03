@@ -132,6 +132,33 @@ aliases:
             self.assertTrue((out_root / "runs" / "cli_run" / "results.csv").exists())
             self.assertFalse((out_root / "runs" / "cli_run" / "figures").exists())
 
+    def test_skip_power_app_keeps_latency_and_other_apps_power(self) -> None:
+        import csv
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build, image, suite = self._write_fake_inputs(root)
+            with suite.open("a") as fp:
+                fp.write('  - id: vector\n    app: eladd\n    args: "-n 128"\n')
+            out = root / "out"
+            rc = main(["run", "--build-dir", str(build), "--fpga-bin", str(image),
+                       "--suite", str(suite), "--out", str(out), "--no-srun",
+                       "--no-program-fpga", "--skip-power-app", "fpint_gemm_ffn_hw"])
+            self.assertEqual(0, rc)
+            with (out / "raw_db.csv").open(newline="") as fp:
+                rows = {r["app"]: r for r in csv.DictReader(fp)}
+            skipped = rows["fpint_gemm_ffn_hw"]
+            measured = rows["eladd"]
+            self.assertEqual("pass", skipped["status"])
+            self.assertEqual("1", skipped["measure_latency"])
+            self.assertEqual("0", skipped["measure_power"])
+            self.assertEqual("skipped_stalled", skipped["power_source"])
+            self.assertEqual("", skipped["power_avg_w"])
+            self.assertEqual("", skipped["power_summary"])
+            self.assertGreater(float(skipped["avg_us"]), 0)
+            self.assertEqual("pass", measured["status"])
+            self.assertEqual("1", measured["measure_power"])
+            self.assertGreater(float(measured["power_avg_w"]), 0)
+
     def test_run_writes_fpga_programming_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

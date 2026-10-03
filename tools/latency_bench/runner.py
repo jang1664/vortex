@@ -140,6 +140,7 @@ class StrictMeasurementPolicy:
     application_source_identity: str
     measure_latency: bool = True
     measure_power: bool = True
+    power_skip_apps: tuple[str, ...] = ()
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
     acquisition_settings: Mapping[str, object] = field(default_factory=dict)
     adopt_legacy: bool = False
@@ -236,6 +237,7 @@ class RunOptions:
     program_fpga: bool = True
     measure_latency: bool = True
     measure_power: bool = True
+    power_skip_apps: tuple[str, ...] = ()
     power_measure_latency: bool = False
     power_auto_duration: bool = True
     power_min_run_sec: float = 10.0
@@ -431,6 +433,7 @@ def find_existing_pass_exec_keys(
     measure_power: bool,
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
     skip_existing_columns: tuple[str, ...] = DEFAULT_SKIP_EXISTING_COLUMNS,
+    power_skip_apps: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     if not raw_db.exists():
         return ()
@@ -450,7 +453,7 @@ def find_existing_pass_exec_keys(
                         fpga_bin_label=fpga_bin_label,
                         xclbin_sha256=xclbin_sha256,
                         measure_latency=measure_latency,
-                        measure_power=measure_power,
+                        measure_power=measure_power and unit.app not in power_skip_apps,
                         power_min_samples=power_min_samples,
                     )
                     for column in skip_existing_columns
@@ -562,9 +565,10 @@ def _strict_row_decision(
             if not matches:
                 pending.append(f"{name} differs")
 
+    require_power = policy.measure_power and unit.app not in policy.power_skip_apps
     for capability, required in (
         ("measure_latency", policy.measure_latency),
-        ("measure_power", policy.measure_power),
+        ("measure_power", require_power),
     ):
         if not required:
             continue
@@ -580,7 +584,7 @@ def _strict_row_decision(
                 pending.append(f"latency metric {metric} is missing or nonfinite")
         if _finite_number(row.get("samples")) and float(row["samples"]) <= 0:
             pending.append("latency samples must be positive")
-    if policy.measure_power:
+    if require_power:
         if power_samples_below_threshold(dict(row), policy.power_min_samples):
             pending.append(f"power samples are below {policy.power_min_samples}")
         for metric in POWER_REUSE_METRICS:
@@ -774,6 +778,7 @@ def strict_measurement_policy(
         application_source_identity=options.application_source_identity,
         measure_latency=options.measure_latency,
         measure_power=options.measure_power,
+        power_skip_apps=options.power_skip_apps,
         power_min_samples=options.power_min_samples,
         acquisition_settings=measurement_acquisition_settings(options),
         adopt_legacy=options.adopt_legacy,
@@ -827,6 +832,7 @@ def seed_raw_db_cases(
 
     rows: list[dict[str, object]] = []
     for exec_key, unit in unit_by_exec_key.items():
+        measure_power = options.measure_power and unit.app not in options.power_skip_apps
         cases = cases_by_exec.get(exec_key, [])
         if not cases:
             continue
@@ -857,10 +863,10 @@ def seed_raw_db_cases(
             "warmup": unit.warmup,
             "iterations": unit.iterations,
             "raw_csv": str(unit.raw_csv),
-            "power_csv": str(unit.power_csv) if options.measure_power else "",
-            "power_summary": str(unit.power_summary) if options.measure_power else "",
+            "power_csv": str(unit.power_csv) if measure_power else "",
+            "power_summary": str(unit.power_summary) if measure_power else "",
             "measure_latency": _bool_csv(options.measure_latency),
-            "measure_power": _bool_csv(options.measure_power),
+            "measure_power": _bool_csv(measure_power),
             "log_file": str(unit.log_file),
         })
         rows.append(row)
@@ -1381,7 +1387,9 @@ def write_run_script(
         "    fi",
         "    reset_cmd+=(\"-d\" \"$reset_bdf\")",
         "  fi",
+        "  # Concurrent hot resets can exchange DRM minors and invalidate Slurm device permissions.",
         "  printf '[latency-bench] retry reset: direct %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
+        "  reset_cmd=(flock -x \"/tmp/vortex_fpga_reset_${UID}.lock\" \"${reset_cmd[@]}\")",
         "  printf 'y\\n' | timeout --kill-after=10s 60s \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
         "  reset_rc=$?",
         "  set -u",
@@ -1532,6 +1540,7 @@ def write_run_script(
     ])
 
     for idx, unit in enumerate(units, start=1):
+        measure_power = options.measure_power and unit.app not in options.power_skip_apps
         bench_arg_parts = [
             f"--warmup={unit.warmup}",
             f"--iterations={unit.iterations}",
@@ -1540,7 +1549,7 @@ def write_run_script(
         ]
         if not options.measure_latency:
             bench_arg_parts.append("--no-latency")
-        if options.measure_power:
+        if measure_power:
             bench_arg_parts.extend([
                 "--power=separate",
                 f"--power-csv={unit.power_csv}",
@@ -1578,17 +1587,19 @@ def write_run_script(
         if unit.args:
             bench_arg_parts.append(unit.args)
         bench_args = " ".join(bench_arg_parts)
-        status_power_csv = unit.power_csv if options.measure_power else ""
-        status_power_summary = unit.power_summary if options.measure_power else ""
+        status_power_csv = unit.power_csv if measure_power else ""
+        status_power_summary = unit.power_summary if measure_power else ""
         progress_power_args = ""
         raw_db_power_args = ""
-        if options.measure_power:
+        if measure_power:
             progress_power_args = (
                 f"--power-csv {_q(unit.power_csv)} "
                 f"--power-summary {_q(unit.power_summary)} "
                 f"--power-min-samples {_q(str(options.power_min_samples))} "
             )
             raw_db_power_args = progress_power_args
+        elif options.measure_power and unit.app in options.power_skip_apps:
+            raw_db_power_args = "--power-skip-reason skipped_stalled "
         run_only_arg = "--run-only " if options.prebuild else ""
         blackbox_cmd = (
             f"{blackbox_entry} {blackbox_args}{driver_arg}--bench {run_only_arg}"
@@ -1680,7 +1691,7 @@ def write_run_script(
             "  if [[ \"$rc\" != \"0\" ]]; then failure_phase=\"run\"; fi",
             "  failure_reason=$(latency_bench_failure_reason \"$rc\" \"$failure_phase\" \"$final_attempt_log\")",
             f"  if [[ \"$rc\" == \"0\" && -z \"$failure_reason\" ]]; then",
-            f"    power_failure_reason=$(latency_bench_power_failure_reason {_q(_bool_csv(options.measure_power))} {_q(status_power_summary)} {_q(str(options.power_min_samples))})",
+            f"    power_failure_reason=$(latency_bench_power_failure_reason {_q(_bool_csv(measure_power))} {_q(status_power_summary)} {_q(str(options.power_min_samples))})",
             "    if [[ -n \"$power_failure_reason\" ]]; then failure_reason=\"$power_failure_reason\"; fi",
             "  fi",
             "fi",
@@ -1699,7 +1710,7 @@ def write_run_script(
                 f"printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\\n' "
                 f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" "
                 f"{_q(unit.raw_csv)} {_q(status_power_csv)} {_q(status_power_summary)} "
-                f"{_q(_bool_csv(options.measure_latency))} {_q(_bool_csv(options.measure_power))} "
+                f"{_q(_bool_csv(options.measure_latency))} {_q(_bool_csv(measure_power))} "
                 f"{_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
             ),
@@ -1748,7 +1759,7 @@ def write_run_script(
                 f"--raw-csv {_q(unit.raw_csv)} "
                 f"{raw_db_power_args}"
                 f"--measure-latency {_q(_bool_csv(options.measure_latency))} "
-                f"--measure-power {_q(_bool_csv(options.measure_power))} "
+                f"--measure-power {_q(_bool_csv(measure_power))} "
                 f"--log-file {_q(unit.log_file)} "
                 f"--elapsed-wall-s \"$elapsed_wall_s\" "
                 f"--mode {_q(raw_db_mode)}"
@@ -1892,6 +1903,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
                 measure_power=run_options.measure_power,
                 power_min_samples=run_options.power_min_samples,
                 skip_existing_columns=run_options.skip_existing_columns,
+                power_skip_apps=run_options.power_skip_apps,
             )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
@@ -1953,6 +1965,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "program_fpga": options.program_fpga and bool(units_to_run),
         "measure_latency": run_options.measure_latency,
         "measure_power": run_options.measure_power,
+        "power_skip_apps": list(run_options.power_skip_apps),
         "power_measure_latency": run_options.power_measure_latency if run_options.measure_power else False,
         "power_mode": "separate" if run_options.measure_power else "off",
         "power_auto_duration": run_options.power_auto_duration if run_options.measure_power else False,

@@ -46,6 +46,29 @@
 
 namespace vx_bench {
 
+// Diagnostic only: enabling this adds host I/O inside measured intervals.
+inline bool power_trace_enabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("VX_BENCH_POWER_TRACE");
+        return value && *value && std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
+template <typename... Values>
+inline void power_trace(const char* event, const char* format, Values... values) {
+    if (!power_trace_enabled()) return;
+    const int saved_errno = errno;
+    const double timestamp = std::chrono::duration<double>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::fprintf(stderr, "[power-trace] timestamp_s=%.6f pid=%ld event=%s ",
+                 timestamp, static_cast<long>(::getpid()), event);
+    std::fprintf(stderr, format, values...);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    errno = saved_errno;
+}
+
 enum class PowerMode {
     Off,
     Separate,
@@ -751,7 +774,9 @@ public:
         std::snprintf(max_bytes, sizeof(max_bytes), "%llu",
                       static_cast<unsigned long long>(args.power_csv_max_bytes));
 
+        const bool trace_child = power_trace_enabled();
         const pid_t parent_pid = ::getpid();
+        power_trace("sampler_fork_begin", "csv=%s interval=%s", args.power_csv.c_str(), interval);
         pid_t child = ::fork();
         if (child < 0) {
             std::fprintf(err, "[power] ERROR: fork failed: %s\n", std::strerror(errno));
@@ -769,11 +794,18 @@ public:
             ::dup2(log_fd, STDOUT_FILENO);
             ::dup2(log_fd, STDERR_FILENO);
             ::close(log_fd);
+            // Only async-signal-safe operations between fork and exec.
+            if (trace_child) {
+                constexpr char marker[] = "[power-trace-child] sampler_exec_begin\n";
+                const ssize_t written = ::write(STDERR_FILENO, marker, sizeof(marker) - 1);
+                (void)written;
+            }
             ::execl(script.c_str(), script.c_str(), fpga_id, interval,
                     args.power_csv.c_str(), max_bytes, static_cast<char*>(nullptr));
             _exit(127);
         }
 
+        power_trace("sampler_fork_end", "child_pid=%ld", static_cast<long>(child));
         ::close(log_fd);
         ::setpgid(child, child);
         pid_ = child;
@@ -785,9 +817,11 @@ public:
             return;
         }
 
+        power_trace("sampler_stop_begin", "child_pid=%ld", static_cast<long>(pid_));
         int status = 0;
         pid_t ret = ::waitpid(pid_, &status, WNOHANG);
         if (ret == pid_) {
+            power_trace("sampler_stop_end", "child_pid=%ld status=%d", static_cast<long>(pid_), status);
             pid_ = -1;
             return;
         }
@@ -797,6 +831,7 @@ public:
         for (int i = 0; i < 20; ++i) {
             ret = ::waitpid(pid_, &status, WNOHANG);
             if (ret == pid_ || (ret < 0 && errno == ECHILD)) {
+                power_trace("sampler_stop_end", "child_pid=%ld status=%d", static_cast<long>(pid_), status);
                 pid_ = -1;
                 return;
             }
@@ -805,7 +840,9 @@ public:
 
         ::kill(-pid_, SIGKILL);
         ::kill(pid_, SIGKILL);
+        power_trace("sampler_kill_wait_begin", "child_pid=%ld", static_cast<long>(pid_));
         ::waitpid(pid_, &status, 0);
+        power_trace("sampler_stop_end", "child_pid=%ld status=%d", static_cast<long>(pid_), status);
         pid_ = -1;
     }
 
@@ -904,9 +941,11 @@ inline bool capture_idle_phase(const Args& args,
     phase->mode = "idle";
     phase->phase = "idle";
     if (args.power_idle_policy.empty()) {
+        power_trace("idle_sleep_begin", "label=%s seconds=%.6f", label, args.power_idle_sec);
         phase->start_s = epoch_seconds();
         sleep_seconds(args.power_idle_sec);
         phase->end_s = epoch_seconds();
+        power_trace("idle_sleep_end", "label=%s", label);
         return true;
     }
     if (!is_executable(args.power_idle_guard_script)) {
@@ -929,12 +968,19 @@ inline bool capture_idle_phase(const Args& args,
         not_before);
     std::fflush(msg);
 
+    const bool trace_child = power_trace_enabled();
+    power_trace("idle_guard_fork_begin", "label=%s", label);
     const pid_t child = ::fork();
     if (child < 0) {
         std::fprintf(msg, "[power] idle guard fork failed: %s\n", std::strerror(errno));
         return false;
     }
     if (child == 0) {
+        if (trace_child) {
+            constexpr char marker[] = "[power-trace-child] idle_guard_exec_begin\n";
+            const ssize_t written = ::write(STDERR_FILENO, marker, sizeof(marker) - 1);
+            (void)written;
+        }
         ::execl(
             args.power_idle_guard_script.c_str(),
             args.power_idle_guard_script.c_str(),
@@ -950,11 +996,14 @@ inline bool capture_idle_phase(const Args& args,
             static_cast<char*>(nullptr));
         _exit(127);
     }
+    power_trace("idle_guard_fork_end", "label=%s child_pid=%ld", label, static_cast<long>(child));
     int status = 0;
+    power_trace("idle_guard_wait_begin", "label=%s child_pid=%ld", label, static_cast<long>(child));
     if (::waitpid(child, &status, 0) != child) {
         std::fprintf(msg, "[power] idle guard waitpid failed: %s\n", std::strerror(errno));
         return false;
     }
+    power_trace("idle_guard_wait_end", "label=%s status=%d", label, status);
     const int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
     if (rc != 0) {
         std::fprintf(msg,
@@ -1344,6 +1393,9 @@ public:
     // Fork the sampler before opening XRT; inherited BO mappings break later
     // device-write/host-rewrite synchronization on hardware.
     bool prestart() {
+        power_trace("latency_prestart", "power=%s latency=%s adaptive_idle=%s",
+                    power_mode_name(args_.power_mode), latency_enabled(args_) ? "on" : "off",
+                    args_.power_idle_policy.empty() ? "off" : "on");
         if (!power_enabled(args_) || !latency_enabled(args_)) {
             return true;
         }
@@ -1494,7 +1546,10 @@ inline bool prepare_power_kernel_iterations(Args& args,
     kernel_args.power_kernel_iterations =
         static_cast<uint32_t>(args.power_kernel_iterations);
 
+    power_trace("power_args_copy_begin", "label=%s kernel_iterations=%d bytes=%zu",
+                label, args.power_kernel_iterations, sizeof(kernel_args));
     const int ret = vx_copy_to_dev(args_buffer, &kernel_args, 0, sizeof(kernel_args));
+    power_trace("power_args_copy_end", "label=%s ret=%d", label, ret);
     if (ret != 0) {
         std::fprintf(msg,
                      "[power] vx_copy_to_dev failed while enabling power kernel "
@@ -1512,14 +1567,18 @@ inline bool run_vx_kernel_once(vx_device_h device,
                                const char* phase,
                                int iter,
                                FILE* msg = stderr) {
+    power_trace("vx_start_begin", "phase=%s iter=%d", phase, iter);
     int ret = vx_start(device, kernel_buffer, args_buffer);
+    power_trace("vx_start_end", "phase=%s iter=%d ret=%d", phase, iter, ret);
     if (ret != 0) {
         std::fprintf(msg, "[power] vx_start failed during %s iter=%d: ret=%d\n",
                      phase, iter, ret);
         return false;
     }
 
+    power_trace("vx_ready_wait_begin", "phase=%s iter=%d", phase, iter);
     ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    power_trace("vx_ready_wait_end", "phase=%s iter=%d ret=%d", phase, iter, ret);
     if (ret != 0) {
         std::fprintf(msg, "[power] vx_ready_wait failed during %s iter=%d: ret=%d\n",
                      phase, iter, ret);

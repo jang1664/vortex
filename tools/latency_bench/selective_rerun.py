@@ -25,12 +25,17 @@ def row_signature(row: dict) -> str:
 def selected_suite(suite: BenchSuite, raw_db: Path, filters: tuple[str, ...],
                    label: str, stage: str) -> BenchSuite:
     cases = list(suite.cases)
+    current_apps = {case.app for case in cases}
     seen = {(c.app, _normalize_args(c.measurement_args or c.args)) for c in cases if c.measurement_kind == "measured"}
     snapshot = suite.experiment.get("candidates", {}).get(label, {})
     archive_cache = {}
     if raw_db.is_file():
         with raw_db.open(newline="") as source:
             for row in csv.DictReader(source):
+                # Historical probes may extend a current kernel's shapes, but
+                # cannot resurrect apps removed or routed to another FPGA.
+                if row.get("app") not in current_apps:
+                    continue
                 if row.get("fpga_bin_label") != label:
                     continue
                 if snapshot and row.get("xclbin_sha256") != snapshot["xclbin_sha256"]:
@@ -151,6 +156,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--application-source-identity", required=True)
     parser.add_argument("--warmup", type=int, default=0)
     parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument("--blackbox-timeout", default="24h",
+                        help="per-case timeout, matching run_fpga_bin.sh (default: 24h)")
+    parser.add_argument("--skip-power-app", action="append", default=[])
     parser.add_argument("--power-idle-stability-policy", type=Path)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -162,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     suite = selected_suite(original, args.out / "raw_db.csv", tuple(args.filter), args.fpga_bin, args.stage)
     summary = dict(stage=args.stage, apps=sorted({c.app for c in suite.cases}),
                    unique_executions=len({c.exec_key for c in suite.cases if c.measurement_kind == "measured"}),
-                   kernel_variants=args.kernel_variant, force=args.force)
+                   kernel_variants=args.kernel_variant, power_skip_apps=args.skip_power_app, force=args.force)
     if not args.force and suite.cases:
         from .runner import RunOptions
         candidate = suite.experiment["candidates"][args.fpga_bin]
@@ -172,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             configs=Path(candidate["config"]), strict_measurement_reuse=True, adopt_legacy=True,
             application_source_identity=args.application_source_identity,
             kernel_variants=tuple(args.kernel_variant), skip_existing=True,
+            power_skip_apps=tuple(args.skip_power_app),
             power_auto_duration=False, power_min_interval=0.01, power_latency_interval=0.1,
             power_idle_stability_policy=args.power_idle_stability_policy or
                 repo / "analysis_workspace/latency_on_hw/idle_stability_policy.json",
@@ -204,10 +213,12 @@ def main(argv: list[str] | None = None) -> int:
                "--power-latency-interval", "0.1", "--no-power-auto-duration",
                "--power-idle-stability-policy", str(args.power_idle_stability_policy or
                     repo / "analysis_workspace/latency_on_hw/idle_stability_policy.json"),
-               "--blackbox-timeout", "15m", "--retry", "--retry-max-rounds", "2",
+               "--blackbox-timeout", args.blackbox_timeout, "--retry", "--retry-max-rounds", "2",
                "--retry-timeout-growth", "1.01"]
     if os.environ.get("SLURM_JOB_ID"):
         command.append("--no-srun")
+    for app in args.skip_power_app:
+        command.extend(["--skip-power-app", app])
     for value in args.kernel_variant:
         command.extend(["--kernel-variant", value])
     from .cli import main as bench_main

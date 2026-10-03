@@ -430,6 +430,29 @@ esac
         values.update(overrides)
         self._write_raw_db_row(raw_db, **values)
 
+    def test_skipped_power_reusable_only_when_app_is_explicitly_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "raw_db.csv"
+            self._write_strict_row(db, measure_power="0", power_samples="", power_avg_w="",
+                                   power_vcc_avg_w="", power_pcie_avg_w="", power_dynamic_avg_w="",
+                                   power_source="skipped_stalled")
+            unit = self._strict_unit(root)
+            manifests = {"existing_run": self._strict_manifest(root)}
+            ordinary = evaluate_measurement_coverage(db, [unit], self._strict_policy(), manifests=manifests)
+            other_app = evaluate_measurement_coverage(db, [unit],
+                self._strict_policy(power_skip_apps=("rope_layout_fused",)), manifests=manifests)
+            allowed = evaluate_measurement_coverage(db, [unit],
+                self._strict_policy(power_skip_apps=(unit.app,)), manifests=manifests)
+            self.assertFalse(ordinary.complete)
+            self.assertFalse(other_app.complete)
+            self.assertTrue(allowed.complete)
+            invalid_db = root / "invalid.csv"
+            self._write_strict_row(invalid_db, measure_latency="0", measure_power="0")
+            invalid_latency = evaluate_measurement_coverage(invalid_db, [unit],
+                self._strict_policy(power_skip_apps=(unit.app,)), manifests=manifests)
+            self.assertFalse(invalid_latency.complete)
+
     def test_strict_measurement_reuse_is_capability_based_and_ignores_scheduling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

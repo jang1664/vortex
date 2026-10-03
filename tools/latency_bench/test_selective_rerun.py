@@ -53,10 +53,29 @@ class SelectiveRerunTests(unittest.TestCase):
                 experiment={"candidates": {"C4": {"xclbin_sha256": "sha"}}})
             selected = selected_suite(suite, db, ("app=~softmax*",), "C4", "prefill")
             self.assertEqual(1, len(selected.cases))
-            generation = replace(suite, cases=[])
+            generation = replace(suite, cases=[BenchCase("estimate", app,
+                "-seqq 1 -seqk 31", stage="generation", measurement_kind="interpolated")])
             selected = selected_suite(generation, db, ("app=~softmax*",), "C4", "generation")
-            self.assertEqual(1, len(selected.cases))
-            self.assertEqual("historical_raw_db", selected.cases[0].source)
+            measured = [case for case in selected.cases if case.measurement_kind == "measured"]
+            self.assertEqual(1, len(measured))
+            self.assertEqual("historical_raw_db", measured[0].source)
+
+    def test_historical_rows_cannot_restore_fused_app_moved_to_c4(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "raw_db.csv"
+            archive = db.parent / "runs/old/cases.csv"
+            archive.parent.mkdir(parents=True)
+            archive.write_text("app,args,stage\nhadamard,-rows 64 -dim 128,prefill\n"
+                               "hadamard_layout_fused,-m 64 -k 128,prefill\n")
+            write_rows(db, [dict(app=app, args=args, exec_key=app,
+                fpga_bin_label="C1", xclbin_sha256="sha", run_id="old")
+                for app, args in (("hadamard", "-rows 64 -dim 128"),
+                                  ("hadamard_layout_fused", "-m 64 -k 128"))])
+            suite = BenchSuite("current", BenchDefaults(), [
+                BenchCase("base", "hadamard", "-rows 1 -dim 128", stage="prefill")],
+                experiment={"candidates": {"C1": {"xclbin_sha256": "sha"}}})
+            selected = selected_suite(suite, db, (), "C1", "prefill")
+            self.assertEqual(["hadamard", "hadamard"], [case.app for case in selected.cases])
 
     def test_rerun_promotes_historical_probe_even_when_suite_interpolates_it(self):
         with tempfile.TemporaryDirectory() as directory:
