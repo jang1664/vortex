@@ -16,22 +16,23 @@ fpga_bins:
   by_app:
     fpint_gemm_ffn_hw: C4
     fpint_gemm_ffn_hw_naive: C3
-    rms_norm_layout_fused: C1
-    rope_layout_fused: C1
-    softmax_layout_fused: C1
+    rms_norm_layout_fused: C4
+    rope_layout_fused: C4
+    softmax_layout_fused: C4
     hadamard: C1
+    hadamard_layout_fused: C4
     silu: C1
     elmul: C1
     tile_input_a: C1
-    silu_layout_fused: C1
-    eladd_layout_fused: C1
-    elmul_layout_fused: C1
+    silu_layout_fused: C4
+    eladd_layout_fused: C4
+    elmul_layout_fused: C4
     kv_cache_quant_w4a16: C1
-    kv_cache_quant_layout_fused_w4a16: C1
+    kv_cache_quant_layout_fused_w4a16: C4
     tile_weight_w4a16: C1
     tile_scale_zp_w4a16: C1
     detile_output: C1
-    head_concat_layout_fused: C1
+    head_concat_layout_fused: C4
 
 workloads:
   - id: llama2_7b_generation_C4_fused

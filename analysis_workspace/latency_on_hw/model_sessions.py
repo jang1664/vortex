@@ -106,6 +106,7 @@ def _settings_from_payload(payload: dict) -> pipeline.PipelineSettings:
             values[key] = Path(values[key])
     for key in ("models", "formats", "candidates", "case_filters", "kernel_variants", "generation_options"):
         values[key] = tuple(values[key])
+    values["power_skip_apps"] = tuple(values.get("power_skip_apps", ()))
     return pipeline.PipelineSettings(**values)
 
 

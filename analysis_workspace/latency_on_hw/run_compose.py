@@ -183,7 +183,9 @@ def _count_summary(frame: pd.DataFrame, column: str) -> str:
     return ",".join(f"{value}:{int(count)}" for value, count in counts.items())
 
 
-def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str, object]:
+def _validate_complete_composed(
+    frame: pd.DataFrame, *, label: str, power_skip_apps: tuple[str, ...] = (),
+) -> dict[str, object]:
     required = {
         "model",
         "case_id",
@@ -251,8 +253,10 @@ def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str,
     for column in REQUIRED_POWER_COLUMNS:
         missing_power |= pd.to_numeric(frame[column], errors="coerce").isna()
 
-    if bool(missing_latency.any()) or bool(missing_power.any()):
-        bad = frame.loc[missing_latency | missing_power, ["model", "case_id"]].copy()
+    allowed_missing_power = missing_power & frame["app"].astype(str).isin(power_skip_apps)
+    rejected_power = missing_power & ~allowed_missing_power
+    if bool(missing_latency.any()) or bool(rejected_power.any()):
+        bad = frame.loc[missing_latency | rejected_power, ["model", "case_id"]].copy()
         bad["missing_latency"] = missing_latency.loc[bad.index]
         bad["missing_power"] = missing_power.loc[bad.index]
         preview = ", ".join(
@@ -265,10 +269,13 @@ def _validate_complete_composed(frame: pd.DataFrame, *, label: str) -> dict[str,
 
     generation = frame[frame["stage"].astype(str).eq("generation")]
     return {
-        "complete": True,
+        "complete": not bool(missing_power.any()),
+        "latency_complete": True,
+        "power_complete": not bool(missing_power.any()),
+        "power_skip_apps": list(power_skip_apps),
         "duplicate_case_count": 0,
         "missing_latency_count": 0,
-        "missing_power_count": 0,
+        "missing_power_count": int(missing_power.sum()),
         "generation_out_tokens": _positive_int_values(generation, "out_tokens"),
     }
 
@@ -283,6 +290,7 @@ def compose_model(
     missing: str,
     warmup: int | None,
     iterations: int | None,
+    power_skip_apps: tuple[str, ...] = (),
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     model_started = time.monotonic()
     suite_paths = _suite_paths(model)
@@ -343,7 +351,7 @@ def compose_model(
         )
 
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    completeness = _validate_complete_composed(combined, label=model.key)
+    completeness = _validate_complete_composed(combined, label=model.key, power_skip_apps=power_skip_apps)
     model_out = out_root / model.key
     composed_path, summary_path = write_compose_outputs(combined, model_out)
     manifest = {
@@ -407,6 +415,7 @@ def combine_model_artifacts(
     metric: str,
     select: str,
     missing: str,
+    power_skip_apps: tuple[str, ...] = (),
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Aggregate only the explicitly selected, already validated model CSVs."""
 
@@ -422,7 +431,7 @@ def combine_model_artifacts(
             raise ValueError(
                 f"{composed_path} contains models {observed}, expected [{model_key!r}]"
             )
-        completeness = _validate_complete_composed(frame, label=model_key)
+        completeness = _validate_complete_composed(frame, label=model_key, power_skip_apps=power_skip_apps)
         frames.append(frame)
         manifest_path = out_root / model_key / "manifest.json"
         if manifest_path.is_file():
@@ -441,7 +450,7 @@ def combine_model_artifacts(
                 "completeness": completeness,
             })
     combined = pd.concat(frames, ignore_index=True)
-    combined_completeness = _validate_complete_composed(combined, label="combined")
+    combined_completeness = _validate_complete_composed(combined, label="combined", power_skip_apps=power_skip_apps)
     composed_path, summary_path = write_compose_outputs(combined, out_root / "combined")
     top_manifest: dict[str, object] = {
         "type": "vortex-latency-compose-aggregate",
@@ -520,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--metric", choices=METRIC_COLUMNS, default="fpga_cycle_latency"
     )
     parser.add_argument("--select", choices=SELECT_POLICIES, default="latest")
+    parser.add_argument("--skip-power-app", action="append", default=[], metavar="APP")
     parser.add_argument("--missing", choices=MISSING_POLICIES, default="error")
     parser.add_argument(
         "--warmup",
@@ -568,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
                 missing=args.missing,
                 warmup=args.warmup,
                 iterations=args.iterations,
+                power_skip_apps=tuple(args.skip_power_app),
             )
             print(
                 f"{model.key}: wrote {args.out / model.key / 'composed.csv'} "
@@ -582,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
             metric=args.metric,
             select=args.select,
             missing=args.missing,
+            power_skip_apps=tuple(args.skip_power_app),
         )
         composed_path = Path(str(top_manifest["composed_csv"]))
         print(

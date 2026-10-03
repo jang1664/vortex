@@ -582,7 +582,7 @@ def add_relative_energy_values(
     grouped_values: dict[tuple[Any, ...], list[float]] = {}
     for row in rows:
         value = _to_float(row.get("joules_per_token"))
-        if value is None:
+        if value is None or not row.get("complete", True):
             continue
         grouped_values.setdefault(_relative_group_key(row, relative_scope), []).append(value)
 
@@ -595,7 +595,10 @@ def add_relative_energy_values(
         value = _to_float(row.get("joules_per_token"))
         row["relative_baseline_joules_per_token"] = baseline
         row["relative_scope"] = relative_scope
-        row["relative_joules_per_token"] = value / baseline if value is not None and baseline > 0 else None
+        row["relative_joules_per_token"] = (
+            value / baseline
+            if row.get("complete", True) and value is not None and baseline > 0 else None
+        )
     return rows
 
 
@@ -613,15 +616,21 @@ def add_relative_energy_component_values(
         for row in totals
     }
 
+    total_fields = ("power_metric", "stage", "batch", "seq_len", "variant")
+    completeness = {tuple(row.get(field) for field in total_fields): row.get("complete", True)
+                    for row in totals}
     rows = [dict(row) for row in component_summary]
     for row in rows:
+        total_complete = completeness.get(tuple(row.get(field) for field in total_fields), True)
+        row["total_complete"] = total_complete
         baseline = baselines.get(_relative_group_key(row, relative_scope))
         value = _to_float(row.get("joules_per_token"))
         row["relative_baseline_joules_per_token"] = baseline
         row["relative_scope"] = relative_scope
         row["relative_joules_per_token"] = (
             value / baseline
-            if value is not None and baseline is not None and baseline > 0
+            if total_complete and row.get("complete", True) and value is not None
+            and baseline is not None and baseline > 0
             else None
         )
     return rows

@@ -3,14 +3,74 @@
 `candidate_fpga_bins.yaml` selects the C1–C4 aliases from
 `ci/fpga_bin_alias_map.yaml`. The workflow does not change the global C1–C4
 aliases. TCU GEMM comes from C1, naive GEMM from C3, and improved GEMM from C4.
-All vector, layout, and quantization kernels (including fused variants) execute
-on C1. Logical C2 combines C1 TCU/vector results with C3 naive GEMM results.
+Plain vector, layout, and quantization kernels execute on C1. Layout-fused
+kernels execute on C4, including fused Hadamard and KV-cache quantization.
+Logical C2 combines C1 TCU/vector results with C3 naive GEMM results.
 Registering a C2 image never creates a C2
 measurement or refinement task. C4_fused remains included and C4_alone remains
 excluded.
 
 The local `candidate_fpga_bins.yaml` is the source of truth for image aliases.
 Execution sources are C1, C3, and C4; logical C2 has no independent raw database.
+
+## Kernel regression gate
+
+Run the correctness and fused-overhead checks before starting a measurement
+pipeline:
+
+```bash
+python3 ../../ci/test_llm_regression.py hw
+python3 ../../ci/test_llm_regression.py hw --static-only
+python3 ../../ci/test_llm_regression.py xrt-vcs-sim --apps 'softmax*'
+```
+
+The script tests the 22 measured applications with at least three shapes each
+(76 correctness cases). Additional cases cover factor-172 Hadamard and the
+actual tiled K/V quantization inputs, including a larger prefill shape.
+TCU and standalone vector kernels use C1, fused vector kernels and improved
+GEMM use C4, and naive GEMM uses C3. Defaults come from
+`../candidates_fpga_utils/candidate_fpga_bins.yaml`. All hardware cases share one FPGA allocation;
+candidate builds are isolated under `build_llm_regression/C1`, `C3`, and `C4`.
+Before hardware allocation or simulation, the script compile-checks each
+selected host and device source under its actual config. `--static-only` stops after these checks.
+MXU-enabled LLM builds enforce `NUM_THREADS == MXU_ROW == MXU_COL` through
+`static_assert`, with no whitelist of supported widths. C1 TCU/standalone
+builds with GEMM disabled do not use the MXU and are exempt from that equality.
+All selected correctness cases must pass before any benchmark starts.
+Correctness uses the reference-checking host, then the nine standalone/fused
+pairs are benchmarked on matched logical shapes (32 comparisons). Benchmark
+cycles are the median of three measured iterations after one warmup. The
+default overhead limit is 50% for general pairs and 30% for softmax and
+quantization, including decode shapes. The bounds are inclusive.
+`--max-overhead-pct`, `--softmax-max-overhead-pct`, and
+`--quant-max-overhead-pct` override these limits independently.
+
+`--config C1=ALIAS_OR_CONFIG_PATH` (repeat for C3/C4) overrides candidates.
+An unqualified `--config ALIAS_OR_CONFIG_PATH` selects only its inferred
+candidate. Hardware config paths must resolve to one registered image; if
+multiple images share a config, select an alias explicitly. Simulation needs
+only the config file. `--apps`, `--shapes`, `--candidates`, `--kernel-variant`,
+`--timeout`, `--fail-fast`, `--list`, and `--dry-run` support focused checks.
+`--case-file PATH` loads a JSON list of `Case` fields (`candidate`, `app`,
+`shape`, `args`, optional `pair` and `bench_args`) to reproduce measured
+pipeline inputs. Candidate routing remains enforced for these cases.
+`--output` names a new result directory containing logs, CSV, JSON, and
+`SUMMARY.md`; otherwise results go under `build_llm_regression/results/`.
+
+Quantization checks packed weights, scales, and zero points exactly. The CPU
+reference follows the selected kernel's FP16 or FP32 arithmetic; packed-output
+mismatches are never waived.
+
+Near-zero FP16 mismatches can receive `PASS_FP16_EXCEPTION` when both values
+are at most 0.001 in magnitude, each failing comparison differs by at most 0.0001,
+and every reported mismatch is accounted for (at most ten). NaNs, padding
+corruption, row-sum errors, unreported mismatches, quantization errors, and
+runtime failures cannot receive this exception. `--fp16-small-value 0` disables
+it; `--fp16-abs-tol` adjusts its absolute error bound. Failed correctness prevents
+speed approval for that pair. Filtered runs are marked `PARTIAL_PASS`, never a
+full pipeline gate. During optimization, omit `--notify` and resolve failures locally.
+Use `notify-me alarm -m "MESSAGE"` when work stops or needs user intervention.
+The optional `--notify` flag sends one terminal gate-failure alarm with details.
 
 The default experiment tag is `C3_C4_v3_pipeline`. Results use logical execution
 labels (`C1`, `C3`, `C4`), so C4 measurements are saved under `C4/` regardless of
@@ -246,13 +306,13 @@ pending stage.
 Use `--candidates C1` or a comma-separated list such as `--candidates C1,C3`
 with `workflow.py pipeline` or `status`. It selects physical execution sources,
 not logical model variants. C2 has no independent measurement; selecting C2
-directly is an error. `--candidates C1` collects TCU GEMM and all vector/layout/
-quantization kernels; `--candidates C4` collects the improved GEMM kernels.
+directly is an error. `--candidates C1` collects TCU GEMM and plain vector/layout/
+quantization kernels; `--candidates C4` collects improved GEMM and layout-fused kernels.
 The complete logical C1 workload now executes on C1. The downstream pipeline
 still produces the full candidate comparison and therefore requires C3/C4.
 Regenerate suites after this routing change: existing generated suites and raw
-rows keep their original hardware provenance. Historical C4 vector timings are
-not relabeled or reused as C1 measurements.
+rows keep their original hardware provenance. Old C1 fused measurements remain
+historical evidence; regenerated suites select C4 fused measurements for composition.
 
 | Phase | Candidate subset behavior |
 | --- | --- |
@@ -343,3 +403,44 @@ To render just one of the new modes, from this directory:
   --prepared-root "figure_prepare.<tag>" --out-dir "figure_output.<tag>" \
   --power-metric power_fpga_dequant_dynamic_W
 ```
+
+### E2E figures with and without Hadamard
+
+`plot.py --plot all` renders both versions of the default latency E2E figures,
+with and without area normalization. Existing figure names include Hadamard;
+the added directories and image names end in `_without_hadamard`.
+
+The additional version excludes exactly the `hadamard` and
+`hadamard_layout_fused` backends for every candidate before GEMM/vector/layout
+aggregation. Layout overhead and E2E totals are recomputed from the remaining
+kernels, then normalized to the remaining C4 total at each workload. Prepared
+CSV inputs and the existing figures' calculations are preserved.
+
+To render just the two versions without area normalization from this directory:
+
+```bash
+EXPERIMENT_TAG=th16_20260920_c4_slots16_v2r1
+for PLOT in llama_e2e_no_area_norm_stacked llama_e2e_no_area_norm_stacked_without_hadamard; do
+  "$HOME/.conda/envs/vortex/bin/python" plot.py \
+    --plot "$PLOT" --out-tokens 128 --models llama2_7b,llama3_8b \
+    --prepared-root "figure_prepare.${EXPERIMENT_TAG}" \
+    --out-dir "figure_output.${EXPERIMENT_TAG}.hadamard_versions" \
+    --formats png,pdf,svg
+done
+```
+
+The area-normalized equivalents are
+`llama_e2e_gemm_layout_vector_stacked` and
+`llama_e2e_gemm_layout_vector_stacked_without_hadamard`. The workflow pipeline
+tracks both versions using the same prepared inputs and separate render receipts.
+
+### Skip a stalled application's power measurements
+
+Add `--skip-power-app rope_layout_fused` to `workflow.py pipeline` to keep measuring
+latency while omitting separate power repetitions for that app. The option is
+repeatable and is also accepted by `tools.latency_bench run`. Other apps still
+measure power. Compatible existing measurements, including measured power, are
+reused. New latency-only rows have `measure_power=0`, blank power metrics, and
+`power_source=skipped_stalled`; ordinary runs that require power cannot reuse
+those rows without explicitly allowing this app to skip power. Energy summaries
+with missing power are marked `complete=false`; they are partial results.

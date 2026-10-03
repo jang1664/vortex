@@ -2205,7 +2205,9 @@ def _configure_out_tokens(out_tokens: int) -> None:
     )
 
 
-def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
+def _validate_prepare_composed(
+    frame: pd.DataFrame, out_tokens: int, *, power_skip_apps: tuple[str, ...] = (),
+) -> None:
     required = {
         "model", "case_id", "stage", "variant", "kind", "name", "backend",
         "batch", "prefill_seq_len", "gen_kv_len", "out_tokens",
@@ -2229,9 +2231,11 @@ def _validate_prepare_composed(frame: pd.DataFrame, out_tokens: int) -> None:
     incomplete = ~status.isin({"pass", "estimated"})
     for column in (
         "fpga_cycle", "fpga_cycle_latency", "fpga_period_s", "latency_us",
-        "power_pcie_avg_w", "power_idle_pcie_avg_w",
     ):
         incomplete |= pd.to_numeric(frame[column], errors="coerce").isna()
+    allowed_power_skip = frame["app"].astype(str).isin(power_skip_apps)
+    for column in ("power_pcie_avg_w", "power_idle_pcie_avg_w"):
+        incomplete |= pd.to_numeric(frame[column], errors="coerce").isna() & ~allowed_power_skip
     if bool(incomplete.any()):
         ids = frame.loc[incomplete, "case_id"].astype(str).tolist()
         raise ValueError(f"composed CSV is incomplete: {ids[:10]} ({len(ids)} total)")
@@ -2328,6 +2332,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Prepare plot CSVs from a complete combined composed.csv."
     )
     parser.add_argument("--composed-csv", required=True, type=Path)
+    parser.add_argument("--skip-power-app", action="append", default=[], metavar="APP")
     parser.add_argument("--out-tokens", required=True, type=int)
     parser.add_argument(
         "--models",
@@ -2425,7 +2430,7 @@ def main(argv: list[str] | None = None) -> int:
         FIGURE_OUTPUT_ROOT = args.output_root
     _configure_out_tokens(args.out_tokens)
     COMPOSED_INPUT = pd.read_csv(args.composed_csv)
-    _validate_prepare_composed(COMPOSED_INPUT, args.out_tokens)
+    _validate_prepare_composed(COMPOSED_INPUT, args.out_tokens, power_skip_apps=tuple(args.skip_power_app))
     if args.exact_model_input:
         _validate_exact_model_input(COMPOSED_INPUT, selected_models[0])
 

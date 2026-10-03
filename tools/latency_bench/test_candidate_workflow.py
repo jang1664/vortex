@@ -232,9 +232,12 @@ class CandidateWorkflowTest(unittest.TestCase):
                 validate_run_selection(suite.experiment)
                 if selected == "C1":
                     apps = {case.app for case in suite.cases}
-                    self.assertTrue({"sgemm_tcu", "rmsnorm", "eladd", "rms_norm_layout_fused", "kv_cache_quant_layout_fused_w4a16"} <= apps, apps)
+                    self.assertTrue({"sgemm_tcu", "rmsnorm", "eladd"} <= apps, apps)
+                    self.assertFalse(any("layout_fused" in app for app in apps), apps)
                 else:
-                    self.assertTrue(all(case.kind == "gemm" and case.app == "fpint_gemm_ffn_hw" for case in suite.cases))
+                    apps = {case.app for case in suite.cases}
+                    self.assertTrue({"fpint_gemm_ffn_hw", "rms_norm_layout_fused", "kv_cache_quant_layout_fused_w4a16", "hadamard_layout_fused"} <= apps, apps)
+                    self.assertTrue(all(case.app == "fpint_gemm_ffn_hw" or "layout_fused" in case.app for case in suite.cases))
 
     def test_make_cases_generates_c1_with_unavailable_other_images(self):
         self._check_make_cases_selected_source("C1")
@@ -242,7 +245,7 @@ class CandidateWorkflowTest(unittest.TestCase):
     def test_make_cases_generates_c4_without_vector_images(self):
         self._check_make_cases_selected_source("C4")
 
-    def test_all_model_suites_route_non_gemm_to_c1_and_preserve_gemm_sources(self):
+    def test_all_model_suites_route_fused_to_c4_and_preserve_other_sources(self):
         repo = Path(__file__).resolve().parents[2]
         sources = sorted((repo / "analysis_workspace/latency_on_hw/suites").glob("llama*/*.yaml"))
         self.assertTrue(sources)
@@ -258,7 +261,8 @@ class CandidateWorkflowTest(unittest.TestCase):
                 self.assertTrue(suite.cases)
                 for case in suite.cases:
                     kinds.add(case.kind)
-                    expected = gemm_sources[case.app] if case.kind == "gemm" else "C1"
+                    expected = (gemm_sources[case.app] if case.kind == "gemm"
+                                else "C4" if "layout_fused" in case.app else "C1")
                     self.assertEqual(expected, resolve_case_fpga_bin(suite, case), case.case_id)
         self.assertTrue({"gemm", "rmsnorm", "eladd", "layout", "dequantization", "quantization"} <= kinds)
 

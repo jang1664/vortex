@@ -1066,6 +1066,7 @@ class PipelineSettings:
     candidates: tuple[str, ...] = EXECUTION_BINS
     case_filters: tuple[str, ...] = ()
     kernel_variants: tuple[str, ...] = ()
+    power_skip_apps: tuple[str, ...] = ()
     force_measurement: bool = False
     candidate_map: Path | None = None
     decode_measurement: str = "sampled"
@@ -1229,7 +1230,7 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                     "--no-power-auto-duration",
                     "--retry",
                 ) + (("--adopt-legacy",) if settings.adopt_legacy else ())
-                if settings.case_filters or settings.kernel_variants or settings.force_measurement:
+                if settings.case_filters or settings.kernel_variants or settings.power_skip_apps or settings.force_measurement:
                     command = (
                         settings.python, "-m", "tools.latency_bench.selective_rerun",
                         "--suite", str(suite), "--out", str(settings.result_root(model) / label),
@@ -1246,6 +1247,8 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                         command += ("--kernel-variant", variant)
                     if settings.force_measurement:
                         command += ("--force",)
+                for app in settings.power_skip_apps:
+                    command += ("--skip-power-app", app)
                 tasks.append(TaskSpec(
                     key=f"run:{model}:{stage}:{label}", stage="run",
                     inputs={"suite": _path_identity(suite),
@@ -1254,6 +1257,7 @@ def _run_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
                         "model": model, "stage": stage, "label": label,
                         "case_filters": list(settings.case_filters),
                         "kernel_variants": list(settings.kernel_variants),
+                        "power_skip_apps": list(settings.power_skip_apps),
                         "force_measurement": settings.force_measurement,
                         **MEASUREMENT_ACQUISITION,
                         "measure_latency": True, "measure_power": True,
@@ -1373,10 +1377,13 @@ def _compose_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             "--models", key, "--no-combine", "--out", "{attempt_root}",
             "--raw-db-subdirs", ",".join(EXECUTION_BINS),
         )
+        for app in settings.power_skip_apps:
+            command += ("--skip-power-app", app)
         tasks.append(TaskSpec(
             key=f"compose:{model}", stage="compose", inputs=inputs,
             effective_parameters={"model": key, "metric": "fpga_cycle_latency",
-                                  "select": "latest", "missing": "error"},
+                                  "select": "latest", "missing": "error",
+                                  "power_skip_apps": list(settings.power_skip_apps)},
             outputs=outputs, resources=(settings.composed_root,), command=command,
             metadata={"publication_root": str(settings.composed_root)},
         ))
@@ -1406,9 +1413,12 @@ def _combined_compose_task(settings: PipelineSettings) -> TaskSpec:
         "--models", ",".join(settings.model_key(model) for model in settings.models),
         "--aggregate-only", "--out", "{attempt_root}",
     )
+    for app in settings.power_skip_apps:
+        combine_command += ("--skip-power-app", app)
     return TaskSpec(
         key="compose:combined:" + "+".join(settings.models), stage="compose",
-        inputs=model_outputs, effective_parameters={"models": list(settings.models)},
+        inputs=model_outputs, effective_parameters={"models": list(settings.models),
+                                                    "power_skip_apps": list(settings.power_skip_apps)},
         outputs=combined_outputs, resources=(settings.composed_root,), command=combine_command,
         metadata={"publication_root": str(settings.composed_root),
                   "seed_model_dirs": [settings.model_key(model) for model in settings.models]},
@@ -1430,11 +1440,14 @@ def _prepare_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             "--models", key, "--workers", "1", "--exact-model-input",
             "--output-root", "{attempt_root}",
         )
+        for app in settings.power_skip_apps:
+            command += ("--skip-power-app", app)
         tasks.append(TaskSpec(
             key=f"prepare:{model}", stage="prepare",
             inputs={"composed": _path_identity(composed)},
             effective_parameters={"model": key, "out_tokens": settings.out_tokens,
-                                  "workers": 1, "exact_model_input": True},
+                                  "workers": 1, "exact_model_input": True,
+                                  "power_skip_apps": list(settings.power_skip_apps)},
             outputs=outputs, resources=(settings.prepared_root,), command=command,
             metadata={"publication_root": str(settings.prepared_root)},
         ))
@@ -1473,7 +1486,9 @@ def _plot_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
     raw_dbs = tuple(path for model in settings.models for path in _raw_dbs(settings, model))
     latency_names = {
         "llama_e2e_gemm_layout_vector_stacked": e2e_gemm_layout_stacked_out_name,
+        "llama_e2e_gemm_layout_vector_stacked_without_hadamard": e2e_gemm_layout_stacked_out_name,
         "llama_e2e_no_area_norm_stacked": e2e_no_area_norm_stacked_out_name,
+        "llama_e2e_no_area_norm_stacked_without_hadamard": e2e_no_area_norm_stacked_out_name,
         "llama_gemm_only": gemm_only_out_name,
         "llama_gemm_only_no_area_norm": gemm_only_no_area_norm_out_name,
     }
@@ -1624,6 +1639,7 @@ def _strict_coverage_for_run_task(
         skip_existing=True,
         measure_latency=True,
         measure_power=True,
+        power_skip_apps=tuple(task.effective_parameters.get("power_skip_apps", ())),
         power_auto_duration=False,
         power_min_interval=0.01,
         power_latency_interval=0.1,
@@ -2033,6 +2049,8 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--to", dest="to_stage", choices=STAGES, default="plot")
     parser.add_argument("--rerun", choices=STAGES, nargs="?", const="run")
     parser.add_argument("--filter", action="append", default=[], help="Expanded-case condition; app=~pattern uses glob matching.")
+    parser.add_argument("--skip-power-app", action="append", default=[], metavar="APP",
+                        help="Omit power for this app while retaining latency (repeatable).")
     parser.add_argument("--kernel-variant", action="append", default=[], metavar="APP=NAME")
     parser.add_argument("--adopt-legacy", action="store_true")
     parser.add_argument("--require-convergence", action="store_true")
@@ -2083,6 +2101,7 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         python=args.python,
         candidates=args.candidates,
         case_filters=tuple(args.filter), kernel_variants=tuple(args.kernel_variant),
+        power_skip_apps=tuple(args.skip_power_app),
         candidate_map=(args.candidate_map or Path(os.environ.get("CANDIDATE_MAP", str(args.workspace / "candidate_fpga_bins.yaml")))).resolve(),
         decode_measurement=args.decode_measurement,
         decode_sample_interval=args.decode_sample_interval,

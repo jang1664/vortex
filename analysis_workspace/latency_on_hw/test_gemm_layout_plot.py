@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -82,6 +83,35 @@ class GemmLayoutPlotTests(unittest.TestCase):
         self.assertEqual(result.loc["C4", "layout"], 2.0)
         self.assertEqual(result.loc["C4", "vector"], 3.0 + 1.0 + 9.0 - 2.0)
         self.assertEqual(result.loc["C4", "total"], 17.0)
+
+    def test_without_hadamard_recomputes_layout_totals_and_c4_baseline(self) -> None:
+        rows = self._backend_rows().assign(out_tokens=128)
+        rows["total"] = rows[plot._stack_value_columns(pd, rows)].sum(axis=1)
+        rows.loc[rows["candidate"].eq("C1"), "q_hadamard::hadamard"] = 5.0
+        rows.loc[rows["candidate"].eq("C2"), "r4_hadamard::hadamard"] = 6.0
+        original = rows.copy(deep=True)
+
+        result = plot._build_latency_stack_without_hadamard(pd, rows)
+        indexed = result.set_index("candidate")
+        self.assertEqual(indexed["total"].tolist(), [20.0, 15.0, 11.0, 7.0])
+        self.assertEqual(indexed.loc["C4", "layout"], 2.0)
+        self.assertEqual(indexed.loc["C4", "vector"], 1.0)
+        self.assertEqual(indexed.loc["C3", "vector"], 1.0)
+        pd.testing.assert_frame_equal(rows, original)
+
+        relative = plot._apply_relative_stack_values(
+            pd, result, plot._stack_value_columns(pd, result), "C4"
+        ).set_index("candidate")
+        self.assertEqual(relative.loc["C4", "total"], 1.0)
+        self.assertAlmostEqual(relative.loc["C3", "total"], 11.0 / 7.0)
+        self.assertAlmostEqual(relative.loc["C4", "layout"], 2.0 / 7.0)
+
+    def test_without_hadamard_matches_backend_not_operation_name(self) -> None:
+        rows = self._backend_rows().assign(**{"hadamard_label::elmul": 0.5})
+        result = plot._build_latency_stack_without_hadamard(pd, rows).set_index("candidate")
+        self.assertEqual(result.loc["C3", "total"], 11.5)
+        self.assertEqual(result.loc["C4", "total"], 7.5)
+        self.assertEqual(result.loc["C4", "vector"], 1.5)
 
     def test_out_tokens_is_not_counted_as_latency_or_vector(self) -> None:
         rows = self._backend_rows(stage="Generation").assign(out_tokens=128)
@@ -493,6 +523,33 @@ class GemmLayoutPlotTests(unittest.TestCase):
                     / "llama_e2e_gemm_layout_vector_latency_stacked.png"
                 ).is_file()
             )
+
+    def test_without_hadamard_cli_writes_both_e2e_styles_and_manifests(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            csv_path = root / plot.EXCEL_FIGURE_DATA_CSV
+            pd.concat(
+                [self._backend_rows(stage).drop(columns="model") for stage in plot.STAGE_ORDER],
+                ignore_index=True,
+            ).assign(out_tokens=128).to_csv(csv_path, index=False)
+            for family in (
+                "llama_e2e_gemm_layout_vector_stacked_without_hadamard",
+                "llama_e2e_no_area_norm_stacked_without_hadamard",
+            ):
+                self.assertIn((family, None), plot.selected_plot_jobs("all"))
+                arguments = [
+                    "--plot", family, "--out-tokens", "128", "--workers", "1",
+                    "--models", "llama3_8b", "--model-data", f"llama3_8b={csv_path}",
+                    "--formats", "png", "--out-dir", str(root),
+                ]
+                # Use the real CLI path, including input selection and receipts.
+                with patch.object(plot, "REQUESTED_LLAMA_MODELS", plot.REQUESTED_LLAMA_MODELS), \
+                     patch.object(plot, "REQUESTED_MODEL_DATA", plot.REQUESTED_MODEL_DATA), \
+                     patch.object(plot, "REQUESTED_OUT_TOKENS", plot.REQUESTED_OUT_TOKENS), \
+                     patch.object(plot, "REQUESTED_POWER_METRIC", plot.REQUESTED_POWER_METRIC):
+                    self.assertEqual(plot.main(arguments), 0)
+                for relative in plot.expected_plot_outputs(family, formats=("png",), power_metric=None):
+                    self.assertGreater((root / relative).stat().st_size, 0)
 
 
 if __name__ == "__main__":

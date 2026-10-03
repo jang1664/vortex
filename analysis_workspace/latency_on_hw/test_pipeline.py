@@ -1184,6 +1184,23 @@ class PipelineOrchestrationTest(unittest.TestCase):
             }
             self.assertEqual(prepared, model_data)
 
+    def test_hadamard_versions_track_same_inputs_and_separate_outputs(self) -> None:
+        tasks = {task.key: task for task in pipeline._plot_tasks(self.settings)}
+        for family in (
+            "llama_e2e_gemm_layout_vector_stacked",
+            "llama_e2e_no_area_norm_stacked",
+        ):
+            included = tasks[f"plot:{family}:default"]
+            excluded = tasks[f"plot:{family}_without_hadamard:default"]
+            self.assertEqual(included.inputs, excluded.inputs)
+            self.assertEqual(len(self.settings.models), len(excluded.inputs))
+            self.assertTrue(all(name.startswith("prepared_") for name in excluded.inputs))
+            self.assertTrue(
+                {output.path for output in included.outputs}.isdisjoint(
+                    output.path for output in excluded.outputs
+                )
+            )
+
     def test_plot_cli_applies_single_model_and_exact_input_selection(self) -> None:
         import plot
 

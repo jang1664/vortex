@@ -24,6 +24,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -49,8 +50,10 @@ PLOT_CHOICES = (
     "llama_e2e",
     "llama_e2e_no_area_norm",
     "llama_e2e_no_area_norm_stacked",
+    "llama_e2e_no_area_norm_stacked_without_hadamard",
     "llama_e2e_gemm_layout_stacked",
     "llama_e2e_gemm_layout_vector_stacked",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard",
     "llama_e2e_stacked",
     "llama_gemm_only",
     "llama_gemm_only_no_area_norm",
@@ -69,7 +72,9 @@ PLOT_CHOICES = (
 ALL_PLOTS = (
     "kernel_dynamic_power",
     "llama_e2e_gemm_layout_vector_stacked",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard",
     "llama_e2e_no_area_norm_stacked",
+    "llama_e2e_no_area_norm_stacked_without_hadamard",
     "llama_energy_no_area_norm_gemm_layout_vector_stacked",
     "llama_gemm_only",
     "llama_gemm_only_no_area_norm",
@@ -93,6 +98,17 @@ _PLOT_IMAGE_OUTPUTS = {
         "llama_gemm_only_latency_no_area_norm",
     ),
 }
+WITHOUT_HADAMARD_SUFFIX = "_without_hadamard"
+HADAMARD_BACKENDS = frozenset({"hadamard", "hadamard_layout_fused"})
+for _plot_name in (
+    "llama_e2e_gemm_layout_vector_stacked",
+    "llama_e2e_no_area_norm_stacked",
+):
+    _directory, _stem = _PLOT_IMAGE_OUTPUTS[_plot_name]
+    _PLOT_IMAGE_OUTPUTS[_plot_name + WITHOUT_HADAMARD_SUFFIX] = (
+        _directory + WITHOUT_HADAMARD_SUFFIX,
+        _stem + WITHOUT_HADAMARD_SUFFIX,
+    )
 
 
 def _energy_plot_metric_label(power_metric: str) -> str:
@@ -2593,6 +2609,21 @@ def _build_latency_gemm_vector_layout_stack(pd: Any, df: Any) -> Any:
     return _build_gemm_layout_vector_stack(pd, df)
 
 
+def _build_latency_stack_without_hadamard(pd: Any, df: Any) -> Any:
+    """Remove both Hadamard backends before layout attribution and normalization.
+
+    Prepared values already share a per-workload denominator.  Dropping kernel
+    columns preserves that scale; the usual relative-stack step then recomputes
+    the C4 denominator from the remaining kernels.
+    """
+    excluded = [
+        column
+        for column in _stack_value_columns(pd, df)
+        if _split_name_backend(column)[1] in HADAMARD_BACKENDS
+    ]
+    return _build_latency_gemm_vector_layout_stack(pd, df.drop(columns=excluded))
+
+
 def _build_gemm_layout_vector_dequant_stack(pd: Any, df: Any) -> Any:
     """Separate energy into GEMM, layout, vector, W dequant, and KV dequant."""
     return _build_gemm_layout_stack(
@@ -3326,14 +3357,19 @@ def plot_llama_e2e_gemm_layout_vector_stacked_bars(
     out_dir: Path,
     *,
     knobs: StackedBarKnobs,
+    exclude_hadamard: bool = False,
 ) -> None:
+    suffix = WITHOUT_HADAMARD_SUFFIX if exclude_hadamard else ""
     plot_model_stacked_bars(
         model_csvs,
         out_dir,
-        filename="llama_e2e_gemm_layout_vector_latency_stacked.png",
+        filename=f"llama_e2e_gemm_layout_vector_latency_stacked{suffix}.png",
         data_label="Llama E2E GEMM + layout + vector stacked",
         knobs=knobs,
-        stack_transform=_build_latency_gemm_vector_layout_stack,
+        stack_transform=(
+            _build_latency_stack_without_hadamard
+            if exclude_hadamard else _build_latency_gemm_vector_layout_stack
+        ),
     )
 
 
@@ -3342,14 +3378,19 @@ def plot_llama_e2e_no_area_norm_stacked_bars(
     out_dir: Path,
     *,
     knobs: StackedBarKnobs,
+    exclude_hadamard: bool = False,
 ) -> None:
+    suffix = WITHOUT_HADAMARD_SUFFIX if exclude_hadamard else ""
     plot_model_stacked_bars(
         model_csvs,
         out_dir,
-        filename="llama_e2e_latency_no_area_norm_stacked.png",
+        filename=f"llama_e2e_latency_no_area_norm_stacked{suffix}.png",
         data_label="Llama E2E stacked without area normalization",
         knobs=knobs,
-        stack_transform=_build_latency_gemm_vector_layout_stack,
+        stack_transform=(
+            _build_latency_stack_without_hadamard
+            if exclude_hadamard else _build_latency_gemm_vector_layout_stack
+        ),
     )
 
 
@@ -3500,11 +3541,14 @@ def run_llama_e2e_gemm_layout_vector_stacked_plot(
     output_root: Path,
     *,
     knobs: StackedBarKnobs,
+    exclude_hadamard: bool = False,
 ) -> None:
+    suffix = WITHOUT_HADAMARD_SUFFIX if exclude_hadamard else ""
     plot_llama_e2e_gemm_layout_vector_stacked_bars(
         model_csvs,
-        output_root / "llama_e2e_gemm_layout_vector_stacked",
+        output_root / f"llama_e2e_gemm_layout_vector_stacked{suffix}",
         knobs=knobs,
+        exclude_hadamard=exclude_hadamard,
     )
 
 
@@ -3513,11 +3557,14 @@ def run_llama_e2e_no_area_norm_stacked_plot(
     output_root: Path,
     *,
     knobs: StackedBarKnobs,
+    exclude_hadamard: bool = False,
 ) -> None:
+    suffix = WITHOUT_HADAMARD_SUFFIX if exclude_hadamard else ""
     plot_llama_e2e_no_area_norm_stacked_bars(
         model_csvs,
-        output_root / "llama_e2e_no_area_norm_stacked",
+        output_root / f"llama_e2e_no_area_norm_stacked{suffix}",
         knobs=knobs,
+        exclude_hadamard=exclude_hadamard,
     )
 
 
@@ -4215,10 +4262,15 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_no_area_norm_plot,
         )
 
-    if "llama_e2e_no_area_norm_stacked" in selected_plots:
+    for plot_name in (
+        "llama_e2e_no_area_norm_stacked",
+        "llama_e2e_no_area_norm_stacked_without_hadamard",
+    ):
+        if plot_name not in selected_plots:
+            continue
         run_optional_llama_model_plot(
             selected_plot=plot,
-            plot_name="llama_e2e_no_area_norm_stacked",
+            plot_name=plot_name,
             explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_no_area_norm_stacked_data,
                 "llama3_8b": args.llama3_no_area_norm_stacked_data,
@@ -4231,7 +4283,11 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             kind="e2e_no_area_norm_stacked",
             label="E2E stacked without area normalization",
             knobs=knobs.llama_e2e_no_area_norm_stacked,
-            runner=run_llama_e2e_no_area_norm_stacked_plot,
+            runner=(
+                partial(run_llama_e2e_no_area_norm_stacked_plot, exclude_hadamard=True)
+                if plot_name.endswith(WITHOUT_HADAMARD_SUFFIX)
+                else run_llama_e2e_no_area_norm_stacked_plot
+            ),
         )
 
     if "llama_e2e_gemm_layout_stacked" in selected_plots:
@@ -4253,10 +4309,15 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             runner=run_llama_e2e_gemm_layout_stacked_plot,
         )
 
-    if "llama_e2e_gemm_layout_vector_stacked" in selected_plots:
+    for plot_name in (
+        "llama_e2e_gemm_layout_vector_stacked",
+        "llama_e2e_gemm_layout_vector_stacked_without_hadamard",
+    ):
+        if plot_name not in selected_plots:
+            continue
         run_optional_llama_model_plot(
             selected_plot=plot,
-            plot_name="llama_e2e_gemm_layout_vector_stacked",
+            plot_name=plot_name,
             explicit_by_model=_provided_model_inputs({
                 "llama2_7b": args.llama2_e2e_gemm_layout_stacked_data,
                 "llama3_8b": args.llama3_e2e_gemm_layout_stacked_data,
@@ -4269,7 +4330,11 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             kind="e2e_gemm_layout_stacked",
             label="E2E GEMM + layout + vector stacked",
             knobs=knobs.llama_e2e_gemm_layout_vector_stacked,
-            runner=run_llama_e2e_gemm_layout_vector_stacked_plot,
+            runner=(
+                partial(run_llama_e2e_gemm_layout_vector_stacked_plot, exclude_hadamard=True)
+                if plot_name.endswith(WITHOUT_HADAMARD_SUFFIX)
+                else run_llama_e2e_gemm_layout_vector_stacked_plot
+            ),
         )
 
     if "llama_e2e_stacked" in selected_plots:
