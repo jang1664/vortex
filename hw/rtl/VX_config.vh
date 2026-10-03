@@ -172,6 +172,10 @@
 `define MEM_BLOCK_SIZE 64
 `endif
 
+`ifndef AXI_WRITE_PENDING_SIZE
+`define AXI_WRITE_PENDING_SIZE 16
+`endif
+
 `ifndef MEM_ADDR_WIDTH
 `ifdef XLEN_64
 `define MEM_ADDR_WIDTH 34

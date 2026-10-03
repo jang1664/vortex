@@ -28,7 +28,8 @@ module VX_axi_adapter #(
     parameter ARBITER        = "R",
     parameter REQ_OUT_BUF    = 0,
     parameter RSP_OUT_BUF    = 0,
-    parameter DATA_SIZE      = DATA_WIDTH/8
+    parameter DATA_SIZE      = DATA_WIDTH/8,
+    parameter WRITE_PENDING_SIZE = `AXI_WRITE_PENDING_SIZE
  ) (
     input  wire                     clk,
     input  wire                     reset,
@@ -120,6 +121,7 @@ module VX_axi_adapter #(
     `VX_STATIC_ASSERT ((ADDR_WIDTH_OUT >= `PLATFORM_MEMORY_ADDR_WIDTH), ("output address width cannot represent the physical HBM map"))
     `VX_STATIC_ASSERT ((TAG_WIDTH_OUT >= DST_TAG_WIDTH), ("invalid output tag width: current=%0d, expected=%0d", TAG_WIDTH_OUT, DST_TAG_WIDTH))
     `VX_STATIC_ASSERT ((TAG_BUFFER_SIZE > 0 && (TAG_BUFFER_SIZE & (TAG_BUFFER_SIZE-1)) == 0), ("TAG_BUFFER_SIZE must be a positive power of two"))
+    `VX_STATIC_ASSERT ((WRITE_PENDING_SIZE > 0), ("WRITE_PENDING_SIZE must be positive"))
     `VX_STATIC_ASSERT ((NUM_PORTS_IN > 0), ("NUM_PORTS_IN must be positive"))
     `VX_STATIC_ASSERT ((NUM_BANKS_OUT > 0 && (NUM_BANKS_OUT & (NUM_BANKS_OUT-1)) == 0), ("NUM_BANKS_OUT must be a positive power of two"))
     `VX_STATIC_ASSERT ((NUM_HBM_PORTS > 0 && (NUM_HBM_PORTS & (NUM_HBM_PORTS-1)) == 0), ("NUM_HBM_PORTS must be a positive power of two"))
@@ -248,9 +250,24 @@ module VX_axi_adapter #(
             assign group_arready = ar_ready[slot];
         end
         wire aw_ack, w_ack, write_ready;
-        wire group_awvalid = req_xbar_valid_out[g] && xbar_rw_out && ~aw_ack;
-        wire group_wvalid = req_xbar_valid_out[g] && xbar_rw_out && ~w_ack;
-        wire group_arvalid = req_xbar_valid_out[g] && ~xbar_rw_out;
+        wire [PORTS_PER_GROUP-1:0] hazard_write_ready, hazard_read_allowed;
+        // A partial write owns its slot until both channels complete. In
+        // particular, an AW that fills the table must not block its own W.
+        wire write_allowed = hazard_write_ready[slot] || aw_ack || w_ack;
+        reg read_admitted;
+        wire read_allowed = hazard_read_allowed[slot] || read_admitted;
+        wire group_awvalid = req_xbar_valid_out[g] && xbar_rw_out && ~aw_ack && write_allowed;
+        wire group_wvalid = req_xbar_valid_out[g] && xbar_rw_out && ~w_ack && write_allowed;
+        wire group_arvalid = req_xbar_valid_out[g] && ~xbar_rw_out && read_allowed;
+        // Preserve an asserted ARVALID through backpressure. Each physical
+        // port has one owning group, whose head remains fixed until handshake.
+        always @(posedge clk) begin
+            if (reset) begin
+                read_admitted <= 0;
+            end else begin
+                read_admitted <= group_arvalid && ~group_arready;
+            end
+        end
         VX_axi_write_ack axi_write_ack (
             .clk (clk), .reset (reset),
             .awvalid (group_awvalid), .awready (group_awready),
@@ -258,7 +275,9 @@ module VX_axi_adapter #(
             .aw_ack (aw_ack), .w_ack (w_ack), .tx_rdy (write_ready),
             `UNUSED_PIN (tx_ack)
         );
-        assign req_xbar_ready_out[g] = xbar_rw_out ? write_ready : group_arready;
+        assign req_xbar_ready_out[g] = xbar_rw_out
+                                    ? (write_ready && write_allowed)
+                                    : (group_arready && read_allowed);
 
         wire [READ_FULL_TAG_WIDTH-1:0] read_id;
         if (NUM_PORTS_IN > 1) begin : g_read_id
@@ -270,6 +289,18 @@ module VX_axi_adapter #(
         for (genvar s = 0; s < PORTS_PER_GROUP; ++s) begin : g_hbm
             localparam P = g + s * NUM_BANKS_OUT;
             wire selected = (PORTS_PER_GROUP == 1) || (slot == SLOT_WIDTH'(s));
+            VX_axi_write_hazards #(
+                .ADDRW (ADDR_WIDTH_IN), .IDW (WRITE_TAG_WIDTH), .SIZE (WRITE_PENDING_SIZE)
+            ) write_hazards (
+                .clk (clk), .reset (reset),
+                .write_fire (m_axi_awvalid[P] && m_axi_awready[P]),
+                .write_addr (xbar_addr_out), .write_id (WRITE_TAG_WIDTH'(m_axi_awid[P])),
+                .write_ready (hazard_write_ready[s]),
+                .b_fire (m_axi_bvalid[P] && m_axi_bready[P]), .b_id (WRITE_TAG_WIDTH'(m_axi_bid[P])),
+                .read_valid (selected && req_xbar_valid_out[g] && ~xbar_rw_out),
+                .read_addr (xbar_addr_out), .read_fire (m_axi_arvalid[P] && m_axi_arready[P]),
+                .read_allowed (hazard_read_allowed[s])
+            );
             assign aw_ready[s] = m_axi_awready[P];
             assign w_ready[s] = m_axi_wready[P];
             assign ar_ready[s] = m_axi_arready[P];
@@ -302,10 +333,9 @@ module VX_axi_adapter #(
         end
     end
 
-    // AXI write response channel (ignore)
+    // AXI write response channel (retire pending writes; no cache response).
 
     for (genvar i = 0; i < NUM_HBM_PORTS; ++i) begin : g_axi_write_rsp
-        `UNUSED_VAR (m_axi_bvalid[i])
         `UNUSED_VAR (m_axi_bid[i])
         `UNUSED_VAR (m_axi_bresp[i])
         assign m_axi_bready[i] = 1'b1;

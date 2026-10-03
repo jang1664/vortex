@@ -31,6 +31,29 @@ width to 34 bits, independently of the sourced kernel profile. It tests:
   and for `DATA_WIDTH=1024` with an inconsistent `DATA_SIZE=64` override.
   These two checks require their specific assertion diagnostics after successful
   compilation; unrelated compile failures do not count as a pass.
+- Every AR handshake requires no outstanding same-address AW-to-B write on its
+  physical HBM port. Unrelated lines on the same port may continue before B.
+  Additional 1-, 2-, and 3-credit cases hold B for 128 cycles, fill the write
+  capacity, split AW/W handshakes, and read previously written addresses after
+  the write burst. These cases require credit saturation and both AW-first and
+  W-first coverage. Existing sustained-bandwidth checks remain unchanged.
+- A same-port unrelated-read case requires all reads to pass before delayed B.
+  A direct helper case checks B reordering across IDs, repeated IDs, repeated
+  addresses, simultaneous allocate/retire with the same ID, circular capacity
+  backpressure, and read admission held through downstream backpressure.
+
+The adapter's `WRITE_PENDING_SIZE` (default 16) bounds outstanding writes per
+physical port. `VX_axi_write_hazards` stores their cache-line addresses in a
+synchronous `VX_dp_ram`; ID metadata, valid bits and scan masks remain registers.
+Reads bypass the table when empty, otherwise scan live entries at one per cycle
+and wait only for matching writes' B completions. Circular allocation stalls at
+an occupied next slot, even if other slots are free. This keeps live slots in
+age order and lets a B retire the oldest matching ID without assuming globally
+ordered responses. Writes retain independent AW/W handshakes, and a partially
+accepted write can complete its other channel even after using the final slot.
+An admitted AR stays stable through backpressure. The request head remains
+shared by all ports in a transport group, so a checking/waiting read can delay
+later requests within that group.
 
 `BANDWIDTH` lines contain measured counts and expected bytes/cycle. These
 adapter-boundary measurements exclude the output cuts, DMA arbitration and

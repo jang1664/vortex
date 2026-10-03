@@ -1,8 +1,8 @@
 `timescale 1ns/1ps
 // End-to-end identity and bandwidth checks at the cache/AXI adapter boundary.
 // The reference mapping below is arithmetic, independent of VX_mem_remap.
-module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=2, RSPBUF=2, FULL_SUITE=1)(output logic done=0);
-    localparam NMAX=512;
+module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=2, RSPBUF=2, FULL_SUITE=1, WRITE_SLOTS=16, RAW_ONLY=0, B_LATENCY=128)(output logic done=0);
+    localparam NMAX=(RAW_ONLY==8)?4096:512;
     logic clk=0;
     always #5 clk=~clk;
     logic reset=1;
@@ -62,7 +62,8 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         .DATA_WIDTH(512), .ADDR_WIDTH_IN(28), .ADDR_WIDTH_OUT(34),
         .TAG_WIDTH_IN(12), .TAG_WIDTH_OUT(TAGO), .TAG_BUFFER_SIZE(TAG_SLOTS),
         .NUM_PORTS_IN(P), .NUM_BANKS_OUT(K), .NUM_HBM_PORTS(H),
-        .INTERLEAVE(1), .REQ_OUT_BUF(REQBUF), .RSP_OUT_BUF(RSPBUF)
+        .INTERLEAVE(1), .REQ_OUT_BUF(REQBUF), .RSP_OUT_BUF(RSPBUF),
+        .WRITE_PENDING_SIZE(WRITE_SLOTS)
     ) dut (
         .clk(clk), .reset(reset), .busy(busy),
         .mem_req_valid(mem_req_valid),
@@ -121,15 +122,19 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
     int accepted[P], retired[P], active[P], peak_active[P];
     bit seen[P][NMAX], ar_seen[P][NMAX], aw_seen[P][NMAX];
     bit w_seen[P][NMAX], rsp_seen[P][NMAX], pending[P][NMAX];
+    bit write_retired[P][NMAX];
     int read_id[P][NMAX], read_order[P][NMAX];
     int r_owner[H], r_tag[H];
     int b_count[H], b_rd[H], b_wr[H], b_ids[H][NMAX*P];
+    int b_due[H][NMAX*P];
     int aw_rd[H], aw_wr[H], w_rd[H], w_wr[H];
     int aw_items[H][NMAX*P], w_items[H][NMAX*P];
     int req_total, ar_total, aw_total, w_total, r_total, rsp_total, b_total;
     int exhausted_cycles, reorder_count, last_return_order;
     int aw_first_count, w_first_count;
     int id_reuses, same_input_contenders, within_group_reorders;
+    int inflight_writes[H], peak_writes[H], write_full_cycles, independent_reads, bypass_reads;
+    int demand_stall_cycles;
     bit id_used[P][1<<TAGO];
     int last_group_order[K];
     int measure_req, measure_ar, measure_aw, measure_w, measure_rsp;
@@ -139,7 +144,7 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
     logic [523:0] held_rsp[P];
 
     function automatic bit is_write(input int t);
-        return phase==3 || (phase==1 && t%4==3);
+        return phase==3 || phase==8 || (phase==1 && t%4==3) || (phase==6 && t<8) || (phase==7 && t%2==0);
     endfunction
     function automatic longint unsigned block_addr(input int owner, t);
         longint unsigned result;
@@ -147,6 +152,9 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
             // At least two complete 32-bank rotations, followed by high rows.
             result=t+owner*129;
             if (t>=64) result=result+(64'h1<<24);
+        end else if (phase==6) begin
+            // Repeated reads revisit addresses written by the preceding burst.
+            result=(t%8)*32+owner;
         end else if (phase==4) begin
             result=t*32+owner*2; // {0,2}: conflict at K=2, independent at K>=4.
         end else if (phase==5) begin
@@ -191,8 +199,8 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         end
         for (int h=0;h<H;h++) begin
             m_axi_arready[h]=!reset && (phase!=1 || (cycle+h)%7!=0);
-            m_axi_awready[h]=!reset && (phase!=1 || (cycle+h)%12<6);
-            m_axi_wready[h]=!reset && (phase!=1 || (cycle+h)%12>=6);
+            m_axi_awready[h]=!reset && ((phase!=1 && phase!=6) || (cycle+h)%12<6);
+            m_axi_wready[h]=!reset && ((phase!=1 && phase!=6) || (cycle+h)%12>=6);
             m_axi_bresp[h]=0;
             m_axi_rresp[h]=0;
             m_axi_rlast[h]=1;
@@ -227,7 +235,9 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                         r_owner[h]=best_p; r_tag[h]=best_t;
                     end
                 end
-                m_axi_bvalid[h]=(b_count[h]>0) && (phase!=1 || cycle%9==0);
+                m_axi_bvalid[h]=(b_count[h]>0) && (phase!=1 || cycle%9==0)
+                    && ((phase!=6 && phase!=7) || (cycle>128 && (cycle+h)%9==0))
+                    && (phase!=8 || cycle>=b_due[h][b_rd[h]]);
                 m_axi_bid[h]=TAGO'(b_ids[h][b_rd[h]]);
             end
         end
@@ -243,6 +253,7 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         if (!reset) begin
             cycle++;
             for (int p=0;p<P;p++) begin
+                if (phase==8 && mem_req_valid[p] && !mem_req_ready[p]) demand_stall_cycles++;
                 if (mem_req_valid[p] && mem_req_ready[p]) begin
                     tag=int'(mem_req_tag[p]);
                     if (tag!=accepted[p] || seen[p][tag]) $fatal(1,"request identity duplication P%0d K%0d H%0d",P,K,H);
@@ -285,6 +296,14 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                 hold_ar[h]=m_axi_arvalid[h]&&!m_axi_arready[h]; held_ar[h]={m_axi_arid[h],m_axi_araddr[h]};
                 hold_w[h]=m_axi_wvalid[h]&&!m_axi_wready[h]; held_w[h]={m_axi_wlast[h],m_axi_wstrb[h],m_axi_wdata[h]};
                 if (m_axi_arvalid[h] && m_axi_arready[h]) begin
+                    for (int wp=0;wp<P;wp++)
+                        for (int wt=0;wt<count;wt++)
+                            if (aw_seen[wp][wt] && !write_retired[wp][wt] && destination(wp,wt)==h
+                                && physical_addr(wp,wt)==m_axi_araddr[h])
+                                $fatal(1,"RAW same-address read before B completion K%0d H%0d port%0d",K,H,h);
+                    if (inflight_writes[h]!=0) bypass_reads++;
+                    for (int other=0;other<H;other++)
+                        if (other!=h && inflight_writes[other]!=0) independent_reads++;
                     owner=P==1?0:int'(m_axi_arid[h]&1);
                     found=-1;
                     for (int t=0;t<count;t++)
@@ -315,6 +334,10 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                     aw_items[h][aw_wr[h]++]=owner*NMAX+found;
                     b_ids[h][b_wr[h]++]=int'(m_axi_awid[h]);
                     aw_total++; nw++;
+                    inflight_writes[h]++;
+                    if (inflight_writes[h]>WRITE_SLOTS)
+                        $fatal(1,"write credit overflow port%0d capacity%0d",h,WRITE_SLOTS);
+                    if (inflight_writes[h]>peak_writes[h]) peak_writes[h]=inflight_writes[h];
                 end
                 if (m_axi_wvalid[h] && m_axi_wready[h]) begin
                     found=-1;
@@ -332,12 +355,17 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                 if (w_wr[h]>w_rd[h] && aw_wr[h]==aw_rd[h]) w_first_count++;
                 if (aw_rd[h]<aw_wr[h] && w_rd[h]<w_wr[h]) begin
                     if (aw_items[h][aw_rd[h]]!=w_items[h][w_rd[h]]) $fatal(1,"AW/W pair identity mismatch K%0d H%0d port%0d",K,H,h);
+                    b_due[h][aw_rd[h]]=cycle+B_LATENCY;
                     aw_rd[h]++; w_rd[h]++; b_count[h]++;
                 end
                 if (m_axi_bvalid[h] && m_axi_bready[h]) begin
                     if (b_count[h]<=0) $fatal(1,"duplicate B");
+                    item=aw_items[h][b_rd[h]];
+                    write_retired[item/NMAX][item%NMAX]=1;
                     b_count[h]--; b_rd[h]++; b_total++;
+                    inflight_writes[h]--;
                 end
+                if (inflight_writes[h]==WRITE_SLOTS) write_full_cycles++;
                 if (m_axi_rvalid[h] && m_axi_rready[h]) begin
                     owner=r_owner[h]; tag=r_tag[h];
                     if (!pending[owner][tag]) $fatal(1,"duplicate AXI R");
@@ -349,14 +377,17 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                 end
             end
             // Measure a contiguous 64-cycle interval, beyond all queue depths.
-            if (phase!=1 && cycle>=65 && cycle<=128) begin
+            if (phase>=2 && phase<=5 && cycle>=65 && cycle<=128) begin
                 measure_req+=nr; measure_ar+=na; measure_aw+=nw; measure_w+=nd; measure_rsp+=ns;
                 if (nr!=expected_rate() || (phase==3 ? (nw!=expected_rate() || nd!=expected_rate()) : (na!=expected_rate() || ns!=expected_rate())))
                     $fatal(1,"sustained throughput mismatch P%0d K%0d H%0d phase%0d cycle%0d rate%0d req%0d ar%0d aw%0d w%0d rsp%0d",P,K,H,phase,cycle,expected_rate(),nr,na,nw,nd,ns);
             end
+            if (phase==8 && cycle>=513 && cycle<=1536) begin
+                measure_req+=nr; measure_aw+=nw; measure_w+=nd;
+            end
             if ((ar_total>rsp_total || aw_total>b_total || w_total>b_total) && !busy)
                 $fatal(1,"busy deasserted with unfinished transport P%0d K%0d H%0d",P,K,H);
-            if (cycle>12000) $fatal(1,"timeout P%0d K%0d H%0d phase%0d req%0d ar%0d aw%0d w%0d rsp%0d",P,K,H,phase,req_total,ar_total,aw_total,w_total,rsp_total);
+            if (cycle>(phase==8?100000:12000)) $fatal(1,"timeout P%0d K%0d H%0d phase%0d req%0d ar%0d aw%0d w%0d rsp%0d",P,K,H,phase,req_total,ar_total,aw_total,w_total,rsp_total);
         end
     end
 
@@ -365,11 +396,13 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         @(negedge clk); #1; reset=1;
         repeat (4) @(posedge clk);
         @(negedge clk); #1;
-        phase=next_phase; cycle=0; count=phase==1?96:256;
+        phase=next_phase; cycle=0; count=phase==1?96:(phase==6?12:(phase==7?4:(phase==8?2048:256)));
         req_total=0; ar_total=0; aw_total=0; w_total=0; r_total=0; rsp_total=0; b_total=0;
         exhausted_cycles=0; reorder_count=0; last_return_order=-1;
         aw_first_count=0; w_first_count=0;
         id_reuses=0; same_input_contenders=0; within_group_reorders=0;
+        write_full_cycles=0; independent_reads=0; bypass_reads=0;
+        demand_stall_cycles=0;
         for (int g=0;g<K;g++) last_group_order[g]=-1;
         measure_req=0; measure_ar=0; measure_aw=0; measure_w=0; measure_rsp=0;
         reads=0; writes=0;
@@ -379,6 +412,7 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
             for (int t=0;t<NMAX;t++) begin
                 seen[p][t]=0; ar_seen[p][t]=0; aw_seen[p][t]=0;
                 w_seen[p][t]=0; rsp_seen[p][t]=0; pending[p][t]=0;
+                write_retired[p][t]=0;
                 if (t<count) begin
                     if (is_write(t)) writes++; else reads++;
                 end
@@ -386,6 +420,7 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         end
         for (int h=0;h<H;h++) begin
             b_count[h]=0; b_rd[h]=0; b_wr[h]=0;
+            inflight_writes[h]=0; peak_writes[h]=0;
             aw_rd[h]=0; aw_wr[h]=0; w_rd[h]=0; w_wr[h]=0;
             hold_aw[h]=0; hold_w[h]=0; hold_ar[h]=0;
         end
@@ -411,6 +446,20 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
                 $fatal(1,"missing stress coverage P%0d K%0d H%0d exhaustion%0d reorder%0d AWfirst%0d Wfirst%0d",P,K,H,exhausted_cycles,reorder_count,aw_first_count,w_first_count);
             $display("IDENTITY P=%0d K=%0d H=%0d tag_out=%0d slots=%0d reused=%0d same_input_contenders=%0d within_group_reorders=%0d",P,K,H,TAGO,TAG_SLOTS,id_reuses,same_input_contenders,within_group_reorders);
             $display("STRESS P=%0d K=%0d H=%0d exhaustion=%0d reordered=%0d AW_before_W=%0d W_before_AW=%0d",P,K,H,exhausted_cycles,reorder_count,aw_first_count,w_first_count);
+        end else if (phase==8) begin
+            if (WRITE_SLOTS>=B_LATENCY+2 && measure_aw!=1024*expected_rate())
+                $fatal(1,"large write table failed to sustain full bandwidth depth%0d writes%0d",WRITE_SLOTS,measure_aw);
+            if (WRITE_SLOTS<B_LATENCY && write_full_cycles==0)
+                $fatal(1,"small write table did not reach capacity depth%0d",WRITE_SLOTS);
+            $display("WRITE_DEPTH_BENCH depth=%0d b_latency=%0d requests=%0d cycles=%0d window_cycles=1024 window_req=%0d window_aw=%0d window_w=%0d peak_occupancy=%0d full_cycles=%0d demand_stall_cycles=%0d",WRITE_SLOTS,B_LATENCY,req_total,cycle,measure_req,measure_aw,measure_w,peak_writes[0],write_full_cycles,demand_stall_cycles);
+        end else if (phase==7) begin
+            if (bypass_reads!=2*P)
+                $fatal(1,"unrelated reads failed to bypass pending writes: got%0d expected%0d",bypass_reads,2*P);
+            $display("RAW UNRELATED PASS reads_before_B=%0d",bypass_reads);
+        end else if (phase==6) begin
+            if (write_full_cycles==0 || aw_first_count==0 || w_first_count==0)
+                $fatal(1,"missing RAW credit/partial-write coverage capacity%0d",WRITE_SLOTS);
+            $display("RAW PASS capacity=%0d full_cycles=%0d independent_reads=%0d AW_first=%0d W_first=%0d",WRITE_SLOTS,write_full_cycles,independent_reads,aw_first_count,w_first_count);
         end else begin
             $display("BANDWIDTH P=%0d K=%0d H=%0d phase=%0d window_cycles=64 req=%0d ar=%0d aw=%0d w=%0d rsp=%0d expected_bytes_per_cycle=%0d",P,K,H,phase,measure_req,measure_ar,measure_aw,measure_w,measure_rsp,expected_rate()*64);
         end
@@ -418,7 +467,7 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
         reset=1;
     endtask
     initial begin
-        run_phase(1);
+        run_phase(RAW_ONLY?RAW_ONLY:1);
         if (FULL_SUITE) begin
             run_phase(2);
             run_phase(3);
@@ -429,8 +478,98 @@ module axi_adapter_case #(parameter P=2, K=2, H=8, TAGO=5, TAG_SLOTS=16, REQBUF=
     end
 endmodule
 
+// Small direct table test: unlike the adapter memory model above, deliberately
+// retire B out of allocation order across IDs, with repeated IDs and addresses.
+module axi_write_hazards_case(output logic done=0);
+    logic clk=0, reset=1;
+    always #5 clk=~clk;
+    logic write_fire=0, b_fire=0, read_valid=0, read_ready=0;
+    logic [7:0] write_addr=0, read_addr=0;
+    logic [1:0] write_id=0, b_id=0;
+    wire write_ready, read_allowed;
+    wire read_fire=read_valid && read_ready && read_allowed;
+    VX_axi_write_hazards #(.ADDRW(8),.IDW(2),.SIZE(4)) dut (
+        .clk(clk),.reset(reset),.write_fire(write_fire),.write_addr(write_addr),
+        .write_id(write_id),.write_ready(write_ready),.b_fire(b_fire),.b_id(b_id),
+        .read_valid(read_valid),.read_addr(read_addr),.read_fire(read_fire),.read_allowed(read_allowed)
+    );
+    task automatic add_write(input int addr, id);
+        @(negedge clk);
+        if (!write_ready) $fatal(1,"unexpected occupied allocation slot");
+        write_addr=8'(addr); write_id=2'(id); write_fire=1;
+        @(negedge clk); write_fire=0;
+    endtask
+    task automatic retire_write(input int id);
+        @(negedge clk); b_id=2'(id); b_fire=1;
+        @(negedge clk); b_fire=0;
+    endtask
+    task automatic start_read(input int addr);
+        @(negedge clk); read_addr=8'(addr); read_valid=1; read_ready=0;
+    endtask
+    task automatic require_blocked;
+        repeat (8) begin
+            @(posedge clk); #1;
+            if (read_allowed) $fatal(1,"same-address read admitted before its final write B addr%0d",read_addr);
+        end
+    endtask
+    task automatic finish_read;
+        int waited;
+        waited=0;
+        while (!read_allowed) begin
+            @(posedge clk); #1;
+            waited++;
+            if (waited>12) $fatal(1,"unrelated read did not pass the write address scan");
+        end
+        // Admission must remain asserted while downstream ARREADY is low.
+        repeat (3) begin
+            @(posedge clk); #1;
+            if (!read_allowed) $fatal(1,"read admission dropped under backpressure");
+        end
+        @(negedge clk); read_ready=1;
+        @(negedge clk); read_valid=0; read_ready=0;
+    endtask
+    initial begin
+        repeat (4) @(negedge clk);
+        reset=0;
+        add_write(10,1);
+        add_write(20,2);
+        add_write(30,1);
+        add_write(10,1);
+        if (write_ready) $fatal(1,"full hazard table accepted a fifth write");
+        start_read(99); finish_read(); // Same port, unrelated line, no B yet.
+        start_read(10); require_blocked();
+        retire_write(2); // Cross-ID reordering: free slot 1 ahead of slot 0.
+        if (write_ready) $fatal(1,"allocation skipped an occupied circular slot");
+        require_blocked();
+        retire_write(1); // First address 10 write; its later duplicate remains.
+        require_blocked();
+        retire_write(1); // Address 30; duplicate address 10 must still block.
+        require_blocked();
+        retire_write(1); finish_read();
+
+        add_write(50,1);
+        add_write(60,1);
+        // Retire the oldest ID while a new write reuses that ID concurrently.
+        @(negedge clk);
+        if (!write_ready) $fatal(1,"no room for simultaneous allocate/retire");
+        write_addr=70; write_id=1; write_fire=1; b_id=1; b_fire=1;
+        @(negedge clk); write_fire=0; b_fire=0;
+        start_read(50); finish_read();
+        start_read(60); require_blocked();
+        retire_write(1); finish_read();
+        start_read(70); require_blocked();
+        retire_write(1); finish_read();
+        $display("WRITE HAZARDS PASS: synchronous RAM, unrelated bypass, duplicate addresses, reordered IDs, ID reuse, simultaneous B/AW, held admission");
+        done=1;
+    end
+    initial begin
+        #20000;
+        if (!done) $fatal(1,"write hazard helper timeout");
+    end
+endmodule
+
 module tb_VX_axi_adapter;
-    wire [8:0] done;
+    wire [13:0] done;
     axi_adapter_case #(.P(2),.K(1),.H(8)) k1(done[0]);
     axi_adapter_case #(.P(2),.K(2),.H(8)) k2(done[1]);
     axi_adapter_case #(.P(2),.K(4),.H(8)) k4(done[2]);
@@ -440,6 +579,11 @@ module tb_VX_axi_adapter;
     axi_adapter_case #(.P(2),.K(2),.H(8),.TAGO(13)) direct_tags(done[6]);
     axi_adapter_case #(.P(2),.K(2),.H(8),.REQBUF(0),.RSPBUF(0)) zero_buffer_request(done[7]);
     axi_adapter_case #(.P(2),.K(2),.H(8),.TAG_SLOTS(1),.FULL_SUITE(0)) one_tag_slot(done[8]);
+    axi_adapter_case #(.WRITE_SLOTS(1),.RAW_ONLY(6),.FULL_SUITE(0)) raw_one(done[9]);
+    axi_adapter_case #(.WRITE_SLOTS(2),.RAW_ONLY(6),.FULL_SUITE(0)) raw_two(done[10]);
+    axi_adapter_case #(.WRITE_SLOTS(3),.RAW_ONLY(6),.FULL_SUITE(0)) raw_three(done[11]);
+    axi_adapter_case #(.RAW_ONLY(7),.FULL_SUITE(0)) raw_unrelated(done[12]);
+    axi_write_hazards_case hazards(done[13]);
     initial begin
         wait (&done);
         $display("TEST PASSED: grouped AXI adapter identity, mapping, stalls, drain and sustained bandwidth");
