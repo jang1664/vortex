@@ -86,7 +86,7 @@ KV_QUANT_INLINE void make_qparams(_Float16 min_v,
 
   int32_t zp;
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    zp = round_half_even(-min_v / scale) - 8;
+    zp = round_half_even(kv_spinquant_ratio_fp16(-min_v, scale)) - 8;
   } else {
     zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
     if (zp < 0) zp = 0;
@@ -128,7 +128,7 @@ KV_QUANT_INLINE void make_qparams_float(_Float16 min_v,
   }
 
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    *zero_out = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (_Float16)round_half_even(kv_spinquant_ratio_fp16(-min_v, scale)) - 8.0f;
   } else {
     int32_t zero = kv_round_half_away_from_zero_fp16(-min_v / scale);
     if (zero < 0) zero = 0;
@@ -149,7 +149,7 @@ KV_QUANT_INLINE uint8_t quantize_value(_Float16 value,
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     return kv_quantize_value_scale_fp16(value, scale, zero);
   }
-  int32_t q = round_half_even(value / scale) + (int32_t)zero;
+  int32_t q = round_half_even(kv_spinquant_ratio_fp16(value, scale)) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -163,7 +163,7 @@ KV_QUANT_INLINE uint8_t quantize_loaded_value(fp16_t value_bits,
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     return kv_quantize_value_scale_fp16(value, scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / scale) + (int32_t)zero;
+  int32_t q = round_half_even(kv_spinquant_ratio_fp16(value, scale)) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -358,7 +358,7 @@ static void quantize_qdir1_single_group_warp(
       scale = range / 15.0f;
     }
     if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-      zero = (_Float16)round_half_even(-min_v / scale) - 8.0f;
+      zero = (_Float16)round_half_even(kv_spinquant_ratio_fp16(-min_v, scale)) - 8.0f;
     } else {
       int32_t zp = kv_round_half_away_from_zero_fp16(-min_v / scale);
       if (zp < 0) zp = 0;

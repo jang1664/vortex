@@ -292,7 +292,7 @@ int main(int argc, char *argv[]) {
   const uint32_t total_pairs = batch * seq * heads * (head_dim >> 1);
   const uint32_t blocks = std::min(
       (total_pairs + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+      std::max(1u, (uint32_t)num_cores));
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_ROPE_LAYOUT_FUSED;

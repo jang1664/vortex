@@ -243,7 +243,8 @@ int main(int argc, char *argv[]) {
   const bool use_multiwarp =
       rows < num_warps && (base_k == 0 || width > num_threads);
 #if HADAMARD_VARIANT_TAG == 2
-  const bool use_r3_shuffle = base_k == 1u && dim == 128u;
+  const bool use_r3_shuffle = base_k == 1u && dim == 128u
+      && (num_threads == 16u || num_threads == 32u);
   const uint32_t threads_per_block = use_r3_shuffle
       ? static_cast<uint32_t>(num_threads)
       : (use_multiwarp

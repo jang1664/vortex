@@ -103,6 +103,21 @@ CXXFLAGS += -I$(VORTEX_HOME)/runtime/include -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR)
 CXXFLAGS += -DXLEN_$(XLEN)
 CXXFLAGS += $(CONFIGS)
 
+# latency_on_hw kernels share a thread/MXU-width contract. Check both the
+# reference host and device compilation; unrelated regression apps keep their
+# existing configuration support.
+LLM_REGRESSION_APPS := eladd elmul silu rmsnorm hadamard head_concat rope softmax \
+  kv_cache_quant_w4a16 kv_cache_dequant_w4a16 sgemm_tcu \
+  eladd_layout_fused elmul_layout_fused silu_layout_fused rms_norm_layout_fused \
+  hadamard_layout_fused head_concat_layout_fused rope_layout_fused \
+  softmax_layout_fused kv_cache_quant_layout_fused_w4a16 \
+  fpint_gemm_ffn_hw_naive fpint_gemm_ffn_hw
+ifneq (,$(filter $(PROJECT),$(LLM_REGRESSION_APPS)))
+LLM_CONFIG_CHECK := $(VORTEX_HOME)/tests/regression/vector_common/config_check.h
+CXXFLAGS += -include $(LLM_CONFIG_CHECK)
+VX_CFLAGS += -include $(LLM_CONFIG_CHECK)
+endif
+
 LDFLAGS += -L$(VORTEX_RT_PATH) -lvortex
 
 # Debugging

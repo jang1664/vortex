@@ -112,7 +112,7 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
   }
   int32_t zpi;
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    zpi = round_half_even_cpu(kv_fp16_div(-min_v, scale)) - 8;
+    zpi = round_half_even_cpu(kv_spinquant_ratio_fp16(-min_v, scale)) - 8;
   } else {
     zpi = kv_round_half_away_from_zero_fp16(
         kv_fp16_div(-min_v, scale));
@@ -136,7 +136,7 @@ static uint8_t quantize_cpu_value(kv_fp16_arith_t value,
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     return kv_quantize_value_scale_fp16(value, scale, zero);
   }
-  int32_t q = round_half_even_cpu(kv_fp16_div(value, scale))
+  int32_t q = round_half_even_cpu(kv_spinquant_ratio_fp16(value, scale))
       + (int32_t)zero;
   q = std::max(-8, std::min(7, q));
   return (uint8_t)(q & 0x0f);

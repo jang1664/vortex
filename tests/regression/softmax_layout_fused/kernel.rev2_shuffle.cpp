@@ -26,7 +26,7 @@ struct TiledAccessor {
   data_t load(uint32_t k) const {
 #if SOFTMAX_REV2_SHUFFLE_ADDR32
     const uint32_t within_matrix =
-        (k >> 5) * input_group_stride + (k & 31u);
+        (k >> log2_mxu_nt) * input_group_stride + (k & mxu_nt_mask);
     const uint64_t offset = input_row_prefix + within_matrix;
 #else
     const uint64_t offset = input_row_prefix
@@ -39,7 +39,7 @@ struct TiledAccessor {
   void store(uint32_t k, data_t value) const {
 #if SOFTMAX_REV2_SHUFFLE_ADDR32
     const uint32_t within_matrix =
-        (k >> 5) * output_group_stride + (k & 31u);
+        (k >> log2_mxu_kt) * output_group_stride + (k & mxu_kt_mask);
     const uint64_t offset = output_row_prefix + within_matrix;
 #else
     const uint64_t offset = output_row_prefix

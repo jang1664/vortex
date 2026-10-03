@@ -8,7 +8,7 @@
 #define KV_FUSED_FP32_PARAMS 0
 #endif
 
-// CPU SpinQuant reference retains the scale in FP32 until the tiled store.
+// The host reference follows the selected FP16 or FP32 parameter arithmetic.
 #if KV_FUSED_FP32_PARAMS
 using kv_fused_arith_t = float;
 #else
@@ -131,7 +131,16 @@ KV_FUSED_SMALL_HELPER int32_t round_half_even(kv_fused_arith_t value) {
   return floor_value + round_up;
 }
 
-// Legacy uses a rounded stored scale, while SpinQuant retains FP32 qparams.
+KV_FUSED_SMALL_HELPER kv_fused_arith_t spinquant_ratio(
+    kv_fused_arith_t value, kv_fused_arith_t scale) {
+#if KV_FUSED_FP32_PARAMS
+  return value / scale;
+#else
+  return kv_spinquant_ratio_fp16(value, scale);
+#endif
+}
+
+// Legacy uses a rounded stored scale; SpinQuant uses the selected precision.
 KV_FUSED_HELPER int32_t legacy_zero(kv_fused_arith_t min_v,
                                     kv_fused_arith_t range,
                                     kv_fused_arith_t scale) {
@@ -393,7 +402,7 @@ KV_FUSED_HELPER void compute_params_qdir1_cursor(
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (kv_fused_arith_t)round_half_even(spinquant_ratio(-min_v, scale)) - 8.0f;
   } else {
     int32_t zp = legacy_zero(min_v, range, scale);
     if (zp < 0) zp = 0;
@@ -472,7 +481,40 @@ KV_FUSED_HELPER void compute_params(const fp16_t* src,
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
+    *zero_out = (kv_fused_arith_t)round_half_even(spinquant_ratio(-min_v, scale)) - 8.0f;
+  } else {
+    int32_t zp = legacy_zero(min_v, range, scale);
+    if (zp < 0) zp = 0;
+    if (zp > 15) zp = 15;
+    *scale_out = scale;
+    *zero_out = (kv_fused_arith_t)zp;
+  }
+}
+
+KV_FUSED_HELPER void make_warp_qparams(kv_fused_arith_t min_v,
+                                      kv_fused_arith_t max_v,
+                                      uint32_t quant_mode,
+                                      kv_fused_arith_t* scale_out,
+                                      kv_fused_arith_t* zero_out) {
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    const kv_fused_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
+    const kv_fused_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
+    const kv_fused_arith_t absmax = abs_min > abs_max ? abs_min : abs_max;
+    const kv_fused_arith_t clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
+    *scale_out = clamped_absmax / 7.5f;
+    *zero_out = 0.0f;
+    return;
+  }
+  const kv_fused_arith_t range = max_v - min_v;
+  kv_fused_arith_t scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+  if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
+      || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+          && range / 15.0f > 1e-8f)) {
+    scale = range / 15.0f;
+  }
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+    *scale_out = scale;
+    *zero_out = (kv_fused_arith_t)round_half_even(spinquant_ratio(-min_v, scale)) - 8.0f;
   } else {
     int32_t zp = legacy_zero(min_v, range, scale);
     if (zp < 0) zp = 0;
@@ -537,32 +579,7 @@ KV_FUSED_HELPER void compute_params_warp(const fp16_t* src,
   }
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
-  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const kv_fused_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
-    const kv_fused_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
-    const kv_fused_arith_t absmax = abs_min > abs_max ? abs_min : abs_max;
-    const kv_fused_arith_t clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
-    *scale_out = clamped_absmax / 7.5f;
-    *zero_out = 0.0f;
-    return;
-  }
-  const kv_fused_arith_t range = max_v - min_v;
-  kv_fused_arith_t scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
-  if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
-      || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-          && range / 15.0f > 1e-8f)) {
-    scale = range / 15.0f;
-  }
-  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    *scale_out = scale;
-    *zero_out = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
-  } else {
-    int32_t zp = legacy_zero(min_v, range, scale);
-    if (zp < 0) zp = 0;
-    if (zp > 15) zp = 15;
-    *scale_out = scale;
-    *zero_out = (kv_fused_arith_t)zp;
-  }
+  make_warp_qparams(min_v, max_v, quant_mode, scale_out, zero_out);
 }
 
 KV_FUSED_HELPER uint8_t quant_at(const fp16_t* src,
@@ -597,7 +614,7 @@ KV_FUSED_HELPER uint8_t quant_at(const fp16_t* src,
   }
   int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
       ? value * (1.0f / quant_scale)
-      : value / quant_scale) + (int32_t)zero;
+      : spinquant_ratio(value, quant_scale)) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -626,7 +643,7 @@ KV_FUSED_HELPER uint8_t quant_with_params(const fp16_t* src,
   }
   int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
       ? value * (1.0f / scale)
-      : value / scale) + (int32_t)zero;
+      : spinquant_ratio(value, scale)) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -642,7 +659,7 @@ KV_FUSED_HELPER uint8_t quantize_loaded_value(fp16_t value_bits,
   }
   int32_t q = round_half_even(KV_FUSED_FP32_PARAMS
       ? value * (1.0f / scale)
-      : value / scale) + (int32_t)zero;
+      : spinquant_ratio(value, scale)) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -888,16 +905,16 @@ KV_FUSED_HELPER uint64_t scale_slot_base(
 }
 
 KV_FUSED_HELPER void store_u16(uint8_t* dst, uint64_t off, uint16_t value) {
-#if KV_FUSED_PREFILL_TILED_CHUNK
-  // Qparam slot bases and element offsets are always aligned to two bytes.
+  // Tiled qparam offsets and slot bases are aligned to two bytes.
   *reinterpret_cast<uint16_t*>(dst + off) = value;
-#else
-  dst[off] = (uint8_t)(value & 0xffu);
-  dst[off + 1] = (uint8_t)(value >> 8);
-#endif
 }
 
-KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
+#if KV_FUSED_PREFILL_TILED_CHUNK
+KV_FUSED_SMALL_HELPER
+#else
+__attribute__((noinline)) static
+#endif
+void store_reused_tiled_qparam(const kernel_arg_t* arg,
                                       uint8_t* scales,
                                       uint8_t* zeros,
                                       uint32_t K,
@@ -1007,6 +1024,688 @@ KV_FUSED_HELPER void store_reused_tiled_qparam(const kernel_arg_t* arg,
     store_u16(scales, dst_off, scale_bits);
     store_u16(zeros, dst_off, zero_bits);
   }
+}
+
+template <bool Reuse>
+__attribute__((noinline))
+static void store_prefill_qparams(kernel_arg_t *__UNIFORM__ arg) {
+  auto src = reinterpret_cast<fp16_t *>(arg->src_addr);
+  auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
+  auto zeros = reinterpret_cast<uint8_t *>(arg->zero_addr);
+  auto logical_scales = reinterpret_cast<fp16_t *>(arg->logical_scale_addr);
+  auto logical_zeros = reinterpret_cast<fp16_t *>(arg->logical_zero_addr);
+
+  const uint32_t K = arg->K;
+  const uint32_t N = arg->N;
+  const uint32_t QBLK = arg->QBLK;
+  const uint32_t SOURCE_QDIR = arg->QDIR;
+  const uint32_t GEMM_QDIR = arg->GEMM_QDIR;
+  const uint32_t src_layout = arg->src_layout;
+  const uint32_t SOURCE_TRANSPOSED = arg->SOURCE_TRANSPOSED;
+  const uint32_t quant_mode = arg->quant_mode;
+  const source_view_t source_view = {
+      arg->src_total_K == 0 ? K : arg->src_total_K,
+      arg->src_total_N == 0 ? N : arg->src_total_N,
+      arg->src_row_offset,
+      arg->src_col_offset,
+  };
+  const uint32_t log2_mt = arg->log2_mt;
+  const uint32_t log2_kt = arg->log2_kt;
+  const uint32_t log2_nt = arg->log2_nt;
+  const uint32_t log2_mxu_nt = arg->log2_mxu_nt;
+  const uint32_t log2_qblk = arg->log2_qblk;
+  const uint32_t log2_ng_per_mxu_nt = arg->log2_ng_per_mxu_nt;
+  const uint32_t kt_size = 1u << log2_kt;
+  const uint32_t nt_size = 1u << log2_nt;
+  const uint32_t total_threads = gridDim.x * blockDim.x;
+  const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+  const uint32_t out_K = padded_qparam_K(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t max_slot_elems = arg->max_slot_bytes / TILE_ELEM_BYTES;
+  const uint32_t qparam_work = arg->k_tiles * arg->n_dma_tiles * max_slot_elems;
+#if KV_FUSED_QPARAM_WARP
+  const uint32_t warp_slot = threadIdx.x / NUM_THREADS;
+  const uint32_t lane = threadIdx.x - warp_slot * NUM_THREADS;
+  const uint32_t warps_per_block = blockDim.x / NUM_THREADS;
+  const uint32_t warp_id = blockIdx.x * warps_per_block + warp_slot;
+  const uint32_t total_warps = gridDim.x * warps_per_block;
+  for (uint32_t work = warp_id; work < qparam_work; work += total_warps) {
+#else
+  for (uint32_t work = thread_id; work < qparam_work; work += total_threads) {
+#endif
+    const uint32_t slot = work / max_slot_elems;
+    const uint32_t elem_in_slot = work - slot * max_slot_elems;
+    const uint32_t kt = slot / arg->n_dma_tiles;
+    const uint32_t nt_dma = slot - kt * arg->n_dma_tiles;
+    const uint32_t kt_start = kt << log2_kt;
+    const uint32_t nt_start = nt_dma << log2_nt;
+    const uint32_t cur_k = min_u32(out_K - kt_start, kt_size);
+    const uint32_t cur_n = min_u32(out_N - nt_start, nt_size);
+    const uint32_t body_bytes = scale_slot_body_bytes(cur_k, cur_n, log2_qblk,
+                                                      log2_mxu_nt,
+                                                      log2_ng_per_mxu_nt,
+                                                      GEMM_QDIR);
+    const uint32_t body_elems = body_bytes >> 1;
+    const uint32_t slot_bytes = align_up_u32(body_bytes, TILE_SCALE_SLOT_ALIGN);
+    const uint32_t byte_in_slot = elem_in_slot * TILE_ELEM_BYTES;
+    if (byte_in_slot >= slot_bytes) {
+      continue;
+    }
+
+    const uint64_t dst_off = scale_slot_base(arg, kt, nt_dma) + byte_in_slot;
+    if (elem_in_slot >= body_elems) {
+#if KV_FUSED_QPARAM_WARP
+      if (lane == 0) {
+#endif
+      store_u16(scales, dst_off, 0);
+      store_u16(zeros, dst_off, 0);
+#if KV_FUSED_QPARAM_WARP
+      }
+#endif
+      continue;
+    }
+    if (Reuse) {
+      continue;
+    }
+
+    uint32_t param_k = kt_start;
+    uint32_t param_n = nt_start;
+    if (GEMM_QDIR == 0) {
+      const uint32_t col = elem_in_slot & (TILE_DMA_MXU_NT - 1u);
+      const uint32_t nb_g = elem_in_slot >> log2_mxu_nt;
+      const uint32_t cur_groups =
+          (cur_k + (1u << log2_qblk) - 1u) >> log2_qblk;
+      uint32_t g;
+      uint32_t nb;
+      if (cur_k == kt_size) {
+        const uint32_t log2_groups_per_kt = log2_kt - log2_qblk;
+        g = nb_g & ((1u << log2_groups_per_kt) - 1u);
+        nb = nb_g >> log2_groups_per_kt;
+      } else {
+        g = nb_g % cur_groups;
+        nb = nb_g / cur_groups;
+      }
+      param_k = kt_start + (g << log2_qblk);
+      param_n = nt_start + (nb << log2_mxu_nt) + col;
+    } else {
+      const uint32_t ng_per_mxu_nt = 1u << log2_ng_per_mxu_nt;
+      const uint32_t ng_loc = elem_in_slot & (ng_per_mxu_nt - 1u);
+      const uint32_t nb_k = elem_in_slot >> log2_ng_per_mxu_nt;
+      uint32_t k_loc;
+      uint32_t nb;
+      if (cur_k == kt_size) {
+        k_loc = nb_k & (kt_size - 1u);
+        nb = nb_k >> log2_kt;
+      } else {
+        k_loc = nb_k % cur_k;
+        nb = nb_k / cur_k;
+      }
+      const uint32_t mxu_per_dma_nt = nt_size >> log2_mxu_nt;
+      const uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
+      const uint32_t global_ng = ((global_nt_mxu << log2_mxu_nt) >> log2_qblk) + ng_loc;
+      param_k = kt_start + k_loc;
+      param_n = global_ng << log2_qblk;
+    }
+
+    const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
+    const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
+    kv_fused_arith_t scale = 1.0f;
+    kv_fused_arith_t zero = 0.0f;
+#if KV_FUSED_QPARAM_WARP
+    compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
+                        source_row, source_col, src_layout,
+                        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                        source_view, lane,
+                        &scale, &zero);
+    if (lane == 0) {
+#else
+    compute_params(src, K, N, QBLK, SOURCE_QDIR,
+                   source_row, source_col, src_layout,
+                   log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                   source_view, &scale, &zero);
+#endif
+    store_u16(scales, dst_off, fused_arith_to_bits(scale));
+    store_u16(zeros, dst_off,
+              quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                  ? 0u : fused_zero_storage(zero));
+#if KV_FUSED_QPARAM_WARP
+    }
+#endif
+  }
+
+  if (!Reuse
+      && arg->logical_scale_addr != 0
+      && arg->logical_zero_addr != 0) {
+    const uint32_t logical_groups = SOURCE_QDIR == 0
+        ? ((K + QBLK - 1u) >> log2_qblk) * N
+        : K * ((N + QBLK - 1u) >> log2_qblk);
+    for (uint32_t group_index = thread_id; group_index < logical_groups;
+         group_index += total_threads) {
+      uint32_t source_row;
+      uint32_t source_col;
+      if (SOURCE_QDIR == 0) {
+        source_row = (group_index / N) << log2_qblk;
+        source_col = group_index % N;
+      } else {
+        const uint32_t groups_per_row = (N + QBLK - 1u) >> log2_qblk;
+        source_row = group_index / groups_per_row;
+        source_col = (group_index % groups_per_row) << log2_qblk;
+      }
+      kv_fused_arith_t scale = 1.0f;
+      kv_fused_arith_t zero = 0.0f;
+      compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col,
+                     src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                     source_view, &scale, &zero);
+      logical_scales[group_index] = fused_arith_to_bits(scale);
+      logical_zeros[group_index] = fused_arith_to_bits(zero);
+    }
+  }
+}
+
+struct cross_qparams_t {
+  kv_fused_arith_t scale;
+  kv_fused_arith_t zero;
+};
+
+template <bool AlongN, bool RowMajor>
+__attribute__((noinline))
+static cross_qparams_t compute_cross_qparams(kernel_arg_t *__UNIFORM__ arg,
+                                            uint32_t k, uint32_t n) {
+  const source_view_t view = {
+      arg->src_total_K == 0 ? arg->K : arg->src_total_K,
+      arg->src_total_N == 0 ? arg->N : arg->src_total_N,
+      arg->src_row_offset, arg->src_col_offset};
+  cross_qparams_t result;
+  compute_params_warp(reinterpret_cast<fp16_t*>(arg->src_addr),
+      arg->K, arg->N, arg->QBLK, AlongN ? 1u : 0u, k, n,
+      RowMajor ? SRC_LAYOUT_ROW_MAJOR : arg->src_layout,
+      arg->log2_qblk, arg->log2_mt, __builtin_ctz(TILE_DMA_MXU_NT),
+      arg->quant_mode, view, threadIdx.x % NUM_THREADS,
+      &result.scale, &result.zero);
+  return result;
+}
+
+__attribute__((noinline))
+static void store_cross_qparams(kernel_arg_t *__UNIFORM__ arg,
+                               uint32_t k, uint32_t n,
+                               kv_fused_arith_t scale, kv_fused_arith_t zero) {
+  const uint32_t lane = threadIdx.x % NUM_THREADS;
+  if (arg->GEMM_QDIR == 1u && arg->QBLK >= TILE_DMA_MXU_NT) {
+    const uint32_t out_K = padded_qparam_K(arg->K, arg->N, arg->QBLK, 1u, 0u);
+    const uint32_t out_N = padded_qparam_N(arg->K, arg->N, arg->QBLK, 1u, 0u);
+    const uint32_t kt = k >> arg->log2_kt;
+    const uint32_t cur_k = min_u32(out_K - (kt << arg->log2_kt), 1u << arg->log2_kt);
+    const uint32_t row = k & ((1u << arg->log2_kt) - 1u);
+    const uint32_t replicas = arg->QBLK >> __builtin_ctz(TILE_DMA_MXU_NT);
+    for (uint32_t replica = lane; replica < replicas; replica += NUM_THREADS) {
+      const uint32_t col = n + replica * TILE_DMA_MXU_NT;
+      if (k >= out_K || col >= out_N) continue;
+      const uint32_t nt = col >> arg->log2_nt;
+      const uint32_t nb = (col & ((1u << arg->log2_nt) - 1u)) >> __builtin_ctz(TILE_DMA_MXU_NT);
+      const uint64_t offset = scale_slot_base(arg, kt, nt)
+          + (uint64_t)(nb * cur_k + row) * TILE_ELEM_BYTES;
+      store_u16(reinterpret_cast<uint8_t*>(arg->scale_addr), offset, fused_arith_to_bits(scale));
+      store_u16(reinterpret_cast<uint8_t*>(arg->zero_addr), offset,
+          arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC ? 0u : fused_zero_storage(zero));
+    }
+  } else if (lane == 0u) {
+    store_reused_tiled_qparam(arg, reinterpret_cast<uint8_t*>(arg->scale_addr),
+        reinterpret_cast<uint8_t*>(arg->zero_addr), arg->K, arg->N, arg->QBLK,
+        arg->GEMM_QDIR, 0, arg->quant_mode, k, n, scale, zero);
+  }
+}
+
+__attribute__((noinline))
+static cross_qparams_t compute_row_qparams(kernel_arg_t *__UNIFORM__ arg,
+                                          uint32_t row, uint32_t col) {
+  cross_qparams_t result = {};
+  if (row >= arg->K || col >= arg->N) return result;
+  const uint32_t source_N = arg->src_total_N == 0u ? arg->N : arg->src_total_N;
+  auto src = reinterpret_cast<fp16_t*>(arg->src_addr)
+      + (uint64_t)(row + arg->src_row_offset) * source_N + arg->src_col_offset;
+  kv_fused_arith_t min_v = fused_arith_from_bits(src[col]);
+  kv_fused_arith_t max_v = min_v;
+  const uint32_t end = min_u32(col + arg->QBLK, arg->N);
+  for (uint32_t n = col + 1u; n < end; ++n) {
+    const kv_fused_arith_t value = fused_arith_from_bits(src[n]);
+    if (value < min_v) min_v = value;
+    if (value > max_v) max_v = value;
+  }
+  make_warp_qparams(min_v, max_v, arg->quant_mode, &result.scale, &result.zero);
+  return result;
+}
+
+__attribute__((noinline))
+static void store_row_qparams(kernel_arg_t *__UNIFORM__ arg,
+                             uint32_t row, uint32_t col,
+                             kv_fused_arith_t scale, kv_fused_arith_t zero) {
+  const uint32_t out_K = padded_qparam_K(arg->K, arg->N, arg->QBLK, 1u, 0u);
+  const uint32_t out_N = padded_qparam_N(arg->K, arg->N, arg->QBLK, 1u, 0u);
+  const uint32_t kt = row >> arg->log2_kt;
+  const uint32_t cur_k = min_u32(out_K - (kt << arg->log2_kt), 1u << arg->log2_kt);
+  const uint32_t local_row = row & ((1u << arg->log2_kt) - 1u);
+  const uint32_t replicas = arg->QBLK >> __builtin_ctz(TILE_DMA_MXU_NT);
+  for (uint32_t replica = 0; replica < replicas; ++replica) {
+    const uint32_t n = col + replica * TILE_DMA_MXU_NT;
+    if (row >= out_K || n >= out_N) continue;
+    const uint32_t nt = n >> arg->log2_nt;
+    const uint32_t nb = (n & ((1u << arg->log2_nt) - 1u)) >> __builtin_ctz(TILE_DMA_MXU_NT);
+    const uint64_t offset = scale_slot_base(arg, kt, nt)
+        + (uint64_t)(nb * cur_k + local_row) * TILE_ELEM_BYTES;
+    store_u16(reinterpret_cast<uint8_t*>(arg->scale_addr), offset, fused_arith_to_bits(scale));
+    store_u16(reinterpret_cast<uint8_t*>(arg->zero_addr), offset,
+        arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC ? 0u : fused_zero_storage(zero));
+  }
+}
+
+template <uint32_t Mode, bool FullTiles>
+__attribute__((noinline))
+static void quantize_row_pair_threads(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t K = arg->K, N = arg->N;
+  const uint32_t qblk = arg->QBLK, log2_qblk = arg->log2_qblk;
+  const uint32_t weight_K = padded_weight_K(K, N, 0u);
+  const uint32_t weight_N = padded_weight_N(K, N, 0u);
+  const uint32_t groups = (weight_N + qblk - 1u) >> log2_qblk;
+  const uint32_t tasks = weight_K * groups;
+  const uint32_t threads = gridDim.x * blockDim.x;
+  const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t lane = threadIdx.x % NUM_THREADS;
+  const uint32_t parity = lane & 1u;
+  auto src = reinterpret_cast<fp16_t*>(arg->src_addr);
+  auto weight = reinterpret_cast<uint8_t*>(arg->weight_addr);
+  const uint32_t source_N = arg->src_total_N == 0u ? N : arg->src_total_N;
+  for (uint32_t task = tid; task < tasks; task += threads) {
+    const uint32_t work = task >> 1;
+    const uint32_t pair = work / groups;
+    const uint32_t group = work - pair * groups;
+    const uint32_t row = (pair << 1) + parity;
+    const uint32_t start = group << log2_qblk;
+    const uint32_t end = min_u32(start + qblk, weight_N);
+    const cross_qparams_t params = compute_row_qparams(arg, row, start);
+    store_row_qparams(arg, row, start, params.scale, params.zero);
+    if (arg->logical_scale_addr != 0u && arg->logical_zero_addr != 0u && row < K && start < N) {
+      const uint32_t index = row * ((N + qblk - 1u) >> log2_qblk) + group;
+      reinterpret_cast<fp16_t*>(arg->logical_scale_addr)[index] = fused_arith_to_bits(params.scale);
+      reinterpret_cast<fp16_t*>(arg->logical_zero_addr)[index] = fused_arith_to_bits(params.zero);
+    }
+    kv_fused_arith_t scale = params.scale;
+    constexpr uint32_t mode = Mode;
+    if (mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC)
+      scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+    const uint64_t source_base = (uint64_t)(row + arg->src_row_offset) * source_N
+        + arg->src_col_offset;
+    const uint32_t row_pair = row & ~1u;
+    const uint32_t kt_start = row_pair & ~((1u << arg->log2_kt) - 1u);
+    const uint32_t cur_k = min_u32(weight_K - kt_start, 1u << arg->log2_kt);
+    uint64_t offset = weight_offset_wtrans1(weight_K, weight_N, row_pair, start,
+        arg->log2_kt, __builtin_ctz(TILE_DMA_MXU_KT), __builtin_ctz(TILE_DMA_MXU_NT));
+    for (uint32_t n = start; n < end; ++n) {
+      const uint32_t q = FullTiles || (row < K && n < N)
+          ? quantize_loaded_value(src[source_base + n], scale, params.zero, mode) : 0u;
+      uint32_t partner = vx_shfl_bfly(q, 1u, NUM_THREADS - 1u, 0);
+      // The exchange needs both row lanes active. Keep it ahead of the
+      // even-lane writer predicate instead of letting the compiler sink it.
+      asm volatile("" : "+r"(partner) : : "memory");
+      if (parity == 0u) weight[offset] = (uint8_t)((q & 0x0fu) | ((partner & 0x0fu) << 4));
+      offset += TILE_DMA_MXU_KT >> 1;
+      if ((n & (TILE_DMA_MXU_NT - 1u)) == TILE_DMA_MXU_NT - 1u)
+        offset += (cur_k - TILE_DMA_MXU_KT) * (TILE_DMA_MXU_NT >> 1);
+    }
+  }
+  store_prefill_qparams<true>(arg);
+}
+
+// Single-row quantization uses one warp, including all padded output writes.
+__attribute__((noinline))
+static void zero_single_group_outputs(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t lane = threadIdx.x;
+  auto weight = reinterpret_cast<uint32_t*>(arg->weight_addr);
+  const uint32_t weight_words = padded_weight_K(1u, arg->N, 0u)
+      * (padded_weight_N(1u, arg->N, 0u) >> 1) / sizeof(uint32_t);
+  for (uint32_t i = lane; i < weight_words; i += NUM_THREADS) weight[i] = 0;
+  auto scales = reinterpret_cast<uint32_t*>(arg->scale_addr);
+  auto zeros = reinterpret_cast<uint32_t*>(arg->zero_addr);
+  const uint32_t out_K = padded_qparam_K(1u, arg->N, arg->QBLK, 1u, 0u);
+  const uint32_t out_N = padded_qparam_N(1u, arg->N, arg->QBLK, 1u, 0u);
+  for (uint32_t nt = 0; nt < arg->n_dma_tiles; ++nt) {
+    const uint32_t cur_n = min_u32(out_N - (nt << arg->log2_nt), 1u << arg->log2_nt);
+    const uint32_t body = scale_slot_body_bytes(out_K, cur_n, arg->log2_qblk,
+        __builtin_ctz(TILE_DMA_MXU_NT), arg->log2_ng_per_mxu_nt, 1u);
+    const uint32_t words = align_up_u32(body, TILE_SCALE_SLOT_ALIGN) / sizeof(uint32_t);
+    const uint64_t base = scale_slot_base(arg, 0u, nt) / sizeof(uint32_t);
+    for (uint32_t i = lane; i < words; i += NUM_THREADS) {
+      scales[base + i] = 0;
+      zeros[base + i] = 0;
+    }
+  }
+}
+
+__attribute__((noinline))
+static void quantize_single_group_row(kernel_arg_t *__UNIFORM__ arg) {
+  const cross_qparams_t params = compute_cross_qparams<true, true>(arg, 0u, 0u);
+  const uint32_t N = arg->N;
+  const uint32_t mode = arg->quant_mode;
+  kv_fused_arith_t scale = params.scale;
+  if (mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC)
+    scale = fused_arith_from_bits(fused_arith_to_bits(scale));
+  const uint32_t source_N = arg->src_total_N == 0 ? N : arg->src_total_N;
+  auto src = reinterpret_cast<fp16_t*>(arg->src_addr)
+      + (uint64_t)arg->src_row_offset * source_N + arg->src_col_offset;
+  auto weight = reinterpret_cast<uint8_t*>(arg->weight_addr);
+  const uint32_t weight_K = padded_weight_K(1u, N, 0u);
+  const uint32_t weight_N = padded_weight_N(1u, N, 0u);
+  const uint32_t lane = threadIdx.x;
+  for (uint32_t n = lane; n < N; n += NUM_THREADS) {
+    const uint8_t value = quantize_loaded_value(src[n], scale, params.zero, mode);
+    const uint64_t offset = weight_offset_wtrans1(weight_K, weight_N, 0u, n,
+        arg->log2_kt, __builtin_ctz(TILE_DMA_MXU_KT), __builtin_ctz(TILE_DMA_MXU_NT));
+    weight[offset] = value & 0x0fu;
+  }
+  store_cross_qparams(arg, 0u, 0u, params.scale, params.zero);
+  if (lane == 0u) {
+    if (arg->logical_scale_addr != 0 && arg->logical_zero_addr != 0) {
+      *reinterpret_cast<fp16_t*>(arg->logical_scale_addr) = fused_arith_to_bits(params.scale);
+      *reinterpret_cast<fp16_t*>(arg->logical_zero_addr) = fused_arith_to_bits(params.zero);
+    }
+  }
+}
+
+struct cross_pair_qparams_t {
+  cross_qparams_t first;
+  cross_qparams_t second;
+};
+
+__attribute__((noinline))
+static cross_pair_qparams_t compute_column_pair_qparams(kernel_arg_t *__UNIFORM__ arg,
+                                                       uint32_t k, uint32_t n) {
+  cross_pair_qparams_t result = {};
+  if (k >= arg->K || n >= arg->N) return result;
+  const uint32_t lane = threadIdx.x % NUM_THREADS;
+  const uint32_t source_N = arg->src_total_N == 0u ? arg->N : arg->src_total_N;
+  auto src = reinterpret_cast<fp16_t*>(arg->src_addr)
+      + (uint64_t)arg->src_row_offset * source_N + arg->src_col_offset + n;
+  kv_fused_arith_t min0 = fused_arith_from_bits(src[(uint64_t)k * source_N]);
+  kv_fused_arith_t max0 = min0;
+  kv_fused_arith_t min1 = n + 1u < arg->N
+      ? fused_arith_from_bits(src[(uint64_t)k * source_N + 1u]) : 0.0f;
+  kv_fused_arith_t max1 = min1;
+  const uint32_t end = min_u32(k + arg->QBLK, arg->K);
+  if (end > k + 1u) {
+    for (uint32_t row = k + lane; row < end; row += NUM_THREADS) {
+      const kv_fused_arith_t v0 = fused_arith_from_bits(src[(uint64_t)row * source_N]);
+      const kv_fused_arith_t v1 = n + 1u < arg->N
+          ? fused_arith_from_bits(src[(uint64_t)row * source_N + 1u]) : 0.0f;
+      if (v0 < min0) min0 = v0;
+      if (v0 > max0) max0 = v0;
+      if (v1 < min1) min1 = v1;
+      if (v1 > max1) max1 = v1;
+    }
+    for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
+      const kv_fused_arith_t other_min0 = shfl_down_float(min0, offset);
+      const kv_fused_arith_t other_max0 = shfl_down_float(max0, offset);
+      const kv_fused_arith_t other_min1 = shfl_down_float(min1, offset);
+      const kv_fused_arith_t other_max1 = shfl_down_float(max1, offset);
+      if (lane + offset < NUM_THREADS) {
+        if (other_min0 < min0) min0 = other_min0;
+        if (other_max0 > max0) max0 = other_max0;
+        if (other_min1 < min1) min1 = other_min1;
+        if (other_max1 > max1) max1 = other_max1;
+      }
+    }
+    min0 = shfl_idx_float(min0, 0);
+    max0 = shfl_idx_float(max0, 0);
+    min1 = shfl_idx_float(min1, 0);
+    max1 = shfl_idx_float(max1, 0);
+  }
+  make_warp_qparams(min0, max0,
+      arg->quant_mode, &result.first.scale, &result.first.zero);
+  if (n + 1u < arg->N)
+    make_warp_qparams(min1, max1,
+        arg->quant_mode, &result.second.scale, &result.second.zero);
+  return result;
+}
+
+__attribute__((noinline))
+static void zero_column_pair_padding(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t weight_K = padded_weight_K(arg->K, arg->N, 0u);
+  if (weight_K == arg->K) return;
+  const uint32_t weight_N = padded_weight_N(arg->K, arg->N, 0u);
+  const uint32_t kt = (arg->K - 1u) >> arg->log2_kt;
+  const uint32_t start = kt << arg->log2_kt;
+  const uint32_t cur_k = weight_K - start;
+  const uint32_t words_per_row = TILE_DMA_MXU_NT / 8u;
+  const uint32_t words = cur_k * (weight_N >> 1) / sizeof(uint32_t);
+  const uint64_t base = (uint64_t)start * (weight_N >> 1) / sizeof(uint32_t);
+  auto output = reinterpret_cast<uint32_t*>(arg->weight_addr);
+  const uint32_t threads = gridDim.x * blockDim.x;
+  const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+  for (uint32_t i = tid; i < words; i += threads) {
+    const uint32_t row = (i / words_per_row) % cur_k;
+    if (start + row >= arg->K) output[base + i] = 0;
+  }
+}
+
+__attribute__((noinline))
+static void store_column_pair_qparams(kernel_arg_t *__UNIFORM__ arg,
+    uint32_t k, uint32_t n, cross_pair_qparams_t params) {
+  if (threadIdx.x % NUM_THREADS != 0u) return;
+  const uint32_t out_K = padded_qparam_K(arg->K, arg->N, arg->QBLK, 0u, 0u);
+  const uint32_t kt = k >> arg->log2_kt;
+  const uint32_t nt = n >> arg->log2_nt;
+  const uint32_t cur_k = min_u32(out_K - (kt << arg->log2_kt), 1u << arg->log2_kt);
+  const uint32_t groups = (cur_k + arg->QBLK - 1u) >> arg->log2_qblk;
+  const uint32_t nb = (n & ((1u << arg->log2_nt) - 1u)) >> __builtin_ctz(TILE_DMA_MXU_NT);
+  const uint32_t group = (k & ((1u << arg->log2_kt) - 1u)) >> arg->log2_qblk;
+  const uint32_t col = n & (TILE_DMA_MXU_NT - 1u);
+  const uint64_t offset = scale_slot_base(arg, kt, nt)
+      + (uint64_t)((nb * groups + group) * TILE_DMA_MXU_NT + col) * TILE_ELEM_BYTES;
+  const uint32_t scales = fused_arith_to_bits(params.first.scale)
+      | ((uint32_t)fused_arith_to_bits(params.second.scale) << 16);
+  const uint32_t zeros = arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC ? 0u
+      : fused_zero_storage(params.first.zero) | ((uint32_t)fused_zero_storage(params.second.zero) << 16);
+  *reinterpret_cast<uint32_t*>(arg->scale_addr + offset) = scales;
+  *reinterpret_cast<uint32_t*>(arg->zero_addr + offset) = zeros;
+  if (arg->logical_scale_addr != 0u && arg->logical_zero_addr != 0u && k < arg->K && n < arg->N) {
+    const uint32_t index = (k >> arg->log2_qblk) * arg->N + n;
+    reinterpret_cast<fp16_t*>(arg->logical_scale_addr)[index] = fused_arith_to_bits(params.first.scale);
+    reinterpret_cast<fp16_t*>(arg->logical_zero_addr)[index] = fused_arith_to_bits(params.first.zero);
+    if (n + 1u < arg->N) {
+      reinterpret_cast<fp16_t*>(arg->logical_scale_addr)[index + 1u] = fused_arith_to_bits(params.second.scale);
+      reinterpret_cast<fp16_t*>(arg->logical_zero_addr)[index + 1u] = fused_arith_to_bits(params.second.zero);
+    }
+  }
+}
+
+template <uint32_t Mode>
+__attribute__((noinline))
+static void quantize_column_pair_warp(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t K = arg->K, N = arg->N;
+  const uint32_t qblk = arg->QBLK;
+  const uint32_t weight_K = padded_weight_K(K, N, 0u);
+  const uint32_t weight_N = padded_weight_N(K, N, 0u);
+  const uint32_t pairs = weight_N >> 1;
+  const uint32_t tasks = ((K + qblk - 1u) >> arg->log2_qblk) * pairs;
+  const uint32_t threads = gridDim.x * blockDim.x;
+  const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t lane = threadIdx.x % NUM_THREADS;
+  const uint32_t source_N = arg->src_total_N == 0u ? N : arg->src_total_N;
+  auto src = reinterpret_cast<fp16_t*>(arg->src_addr)
+      + (uint64_t)arg->src_row_offset * source_N + arg->src_col_offset;
+  auto output = reinterpret_cast<uint8_t*>(arg->weight_addr);
+  for (uint32_t work = tid / NUM_THREADS; work < tasks; work += threads / NUM_THREADS) {
+    const uint32_t group = work / pairs;
+    const uint32_t n = (work - group * pairs) << 1;
+    const uint32_t start = group << arg->log2_qblk;
+    const uint32_t end = min_u32(start + qblk, K);
+    const cross_pair_qparams_t params = compute_column_pair_qparams(arg, start, n);
+    store_column_pair_qparams(arg, start, n, params);
+    kv_fused_arith_t scale0 = params.first.scale, scale1 = params.second.scale;
+    if (Mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
+      scale0 = fused_arith_from_bits(fused_arith_to_bits(scale0));
+      scale1 = fused_arith_from_bits(fused_arith_to_bits(scale1));
+    }
+    uint64_t offset = weight_offset_wtrans0(weight_K, weight_N, start + lane,
+        n >> 1, arg->log2_kt, __builtin_ctz(TILE_DMA_MXU_KT), __builtin_ctz(TILE_DMA_MXU_NT));
+    for (uint32_t row = start + lane; row < end; row += NUM_THREADS) {
+      const uint8_t q0 = n < N ? quantize_loaded_value(src[(uint64_t)row * source_N + n],
+          scale0, params.first.zero, Mode) : 0u;
+      const uint8_t q1 = n + 1u < N ? quantize_loaded_value(src[(uint64_t)row * source_N + n + 1u],
+          scale1, params.second.zero, Mode) : 0u;
+      output[offset] = (uint8_t)((q0 & 0x0fu) | ((q1 & 0x0fu) << 4));
+      offset += NUM_THREADS * (TILE_DMA_MXU_NT >> 1);
+    }
+  }
+  store_prefill_qparams<true>(arg);
+}
+
+template <bool AlongN, bool RowMajor>
+__attribute__((noinline))
+static void quantize_cross_group_pack(kernel_arg_t *__UNIFORM__ arg) {
+  auto src = reinterpret_cast<fp16_t *>(arg->src_addr);
+  auto weight = reinterpret_cast<uint8_t *>(arg->weight_addr);
+  auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
+  auto zeros = reinterpret_cast<uint8_t *>(arg->zero_addr);
+  auto logical_scales = reinterpret_cast<fp16_t *>(arg->logical_scale_addr);
+  auto logical_zeros = reinterpret_cast<fp16_t *>(arg->logical_zero_addr);
+
+  const uint32_t K = arg->K;
+  const uint32_t N = arg->N;
+  const uint32_t QBLK = arg->QBLK;
+  constexpr uint32_t SOURCE_QDIR = AlongN ? 1u : 0u;
+  const uint32_t GEMM_QDIR = arg->GEMM_QDIR;
+  constexpr uint32_t WTRANS = AlongN ? 1u : 0u;
+  const uint32_t src_layout = RowMajor ? SRC_LAYOUT_ROW_MAJOR : arg->src_layout;
+  constexpr uint32_t SOURCE_TRANSPOSED = 0;
+  const uint32_t quant_mode = arg->quant_mode;
+  const source_view_t source_view = {
+      arg->src_total_K == 0 ? K : arg->src_total_K,
+      arg->src_total_N == 0 ? N : arg->src_total_N,
+      arg->src_row_offset,
+      arg->src_col_offset,
+  };
+  const uint32_t log2_mt = arg->log2_mt;
+  const uint32_t log2_kt = arg->log2_kt;
+  const uint32_t log2_nt = arg->log2_nt;
+  constexpr uint32_t log2_mxu_kt = __builtin_ctz(TILE_DMA_MXU_KT);
+  constexpr uint32_t log2_mxu_nt = __builtin_ctz(TILE_DMA_MXU_NT);
+  const uint32_t log2_qblk = arg->log2_qblk;
+  const uint32_t log2_ng_per_mxu_nt = arg->log2_ng_per_mxu_nt;
+  const uint32_t kt_size = 1u << log2_kt;
+  const uint32_t nt_size = 1u << log2_nt;
+  const uint32_t total_threads = gridDim.x * blockDim.x;
+  const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+  const uint32_t weight_K = padded_weight_K(K, N, 0);
+  const uint32_t weight_N = padded_weight_N(K, N, 0);
+  const bool reuse_prefill_qparams =
+#if KV_FUSED_PREFILL_QPARAM_REUSE
+      ((SOURCE_QDIR == 1
+        && ((SOURCE_TRANSPOSED != 0 && WTRANS != 0 && GEMM_QDIR == 0)
+            || (SOURCE_TRANSPOSED == 0 && GEMM_QDIR == 1)))
+       || (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && SOURCE_QDIR == 0
+           && GEMM_QDIR == 0 && QBLK <= (1u << log2_kt)))
+#if KV_FUSED_FP32_PARAMS
+      // A source group wider than a DMA K tile needs qparams in each tile.
+      // Let the generic qparam stage populate those slots independently.
+      && (SOURCE_TRANSPOSED == 0 || QBLK <= (1u << log2_kt))
+#endif
+      ;
+#else
+      false;
+#endif
+    constexpr bool along_n = AlongN;
+    const uint32_t axis_size = along_n ? weight_N : weight_K;
+    const uint32_t pairs = (along_n ? weight_K : weight_N) >> 1;
+    const uint32_t groups = (axis_size + QBLK - 1u) >> log2_qblk;
+    const uint32_t warp = thread_id / NUM_THREADS;
+    const uint32_t warps = total_threads / NUM_THREADS;
+    const uint32_t lane = threadIdx.x % NUM_THREADS;
+    for (uint32_t work = warp; work < pairs * groups; work += warps) {
+      const uint32_t pair = work / groups;
+      const uint32_t group = work - pair * groups;
+      const uint32_t axis_start = group << log2_qblk;
+      const uint32_t axis_end = min_u32(axis_start + QBLK, axis_size);
+      const uint32_t k0 = along_n ? pair << 1 : axis_start;
+      const uint32_t n0 = along_n ? axis_start : pair << 1;
+      cross_qparams_t params0, params1;
+      if (!AlongN && RowMajor) {
+        const cross_pair_qparams_t pair_params = compute_column_pair_qparams(arg, k0, n0);
+        params0 = pair_params.first;
+        params1 = pair_params.second;
+      } else {
+        params0 = compute_cross_qparams<AlongN, RowMajor>(arg, k0, n0);
+        params1 = compute_cross_qparams<AlongN, RowMajor>(arg,
+            k0 + (along_n ? 1u : 0u), n0 + (along_n ? 0u : 1u));
+      }
+      kv_fused_arith_t scale0 = params0.scale, zero0 = params0.zero;
+      kv_fused_arith_t scale1 = params1.scale, zero1 = params1.zero;
+      if (reuse_prefill_qparams) {
+        store_cross_qparams(arg, k0, n0, scale0, zero0);
+        store_cross_qparams(arg, k0 + (along_n ? 1u : 0u),
+            n0 + (along_n ? 0u : 1u), scale1, zero1);
+        if (lane == 0u && logical_scales != nullptr && logical_zeros != nullptr) {
+          const uint32_t logical_groups = along_n
+              ? (N + QBLK - 1u) >> log2_qblk : N;
+          for (uint32_t part = 0; part < 2u; ++part) {
+            const uint32_t row = k0 + (along_n ? part : 0u);
+            const uint32_t col = n0 + (along_n ? 0u : part);
+            if (row < K && col < N) {
+              const uint32_t index = along_n
+                  ? row * logical_groups + group : group * N + col;
+              logical_scales[index] = fused_arith_to_bits(part ? scale1 : scale0);
+              logical_zeros[index] = fused_arith_to_bits(part ? zero1 : zero0);
+            }
+          }
+        }
+      }
+      if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
+        scale0 = fused_arith_from_bits(fused_arith_to_bits(scale0));
+        scale1 = fused_arith_from_bits(fused_arith_to_bits(scale1));
+      }
+      const uint32_t first_k = along_n ? k0 : axis_start + lane;
+      const uint32_t first_n = along_n ? axis_start + lane : n0;
+      uint64_t source_offset = (uint64_t)(first_k + source_view.row_offset)
+          * source_view.total_n + first_n + source_view.col_offset;
+      const uint64_t source_step = along_n ? NUM_THREADS : (uint64_t)NUM_THREADS * source_view.total_n;
+      const uint64_t second_offset = along_n ? source_view.total_n : 1u;
+      uint64_t weight_offset = along_n
+          ? weight_offset_wtrans1(weight_K, weight_N, first_k, first_n,
+              log2_kt, log2_mxu_kt, log2_mxu_nt)
+          : weight_offset_wtrans0(weight_K, weight_N, first_k, first_n >> 1,
+              log2_kt, log2_mxu_kt, log2_mxu_nt);
+      const uint32_t cur_k = min_u32(weight_K - (k0 & ~((1u << log2_kt) - 1u)), 1u << log2_kt);
+      const uint32_t weight_step = along_n
+          ? cur_k * (NUM_THREADS >> 1) : NUM_THREADS * (TILE_DMA_MXU_NT >> 1);
+      for (uint32_t axis = axis_start + lane; axis < axis_end; axis += NUM_THREADS) {
+        if (RowMajor) {
+          const bool valid0 = along_n ? k0 < K && axis < N : axis < K && n0 < N;
+          const bool valid1 = along_n ? k0 + 1u < K && axis < N : axis < K && n0 + 1u < N;
+          const uint8_t q0 = valid0 ? quantize_loaded_value(src[source_offset], scale0, zero0, quant_mode) : 0u;
+          const uint8_t q1 = valid1 ? quantize_loaded_value(src[source_offset + second_offset], scale1, zero1, quant_mode) : 0u;
+          weight[weight_offset] = (uint8_t)((q0 & 0x0fu) | ((q1 & 0x0fu) << 4));
+          source_offset += source_step;
+          weight_offset += weight_step;
+        } else {
+        const uint32_t k = along_n ? k0 : axis;
+        const uint32_t n = along_n ? axis : n0;
+        const uint8_t q0 = quant_with_params(src, K, N, k, n, src_layout,
+            log2_mt, log2_mxu_nt, scale0, zero0, quant_mode, source_view);
+        const uint8_t q1 = quant_with_params(src, K, N,
+            k + (along_n ? 1u : 0u), n + (along_n ? 0u : 1u), src_layout,
+            log2_mt, log2_mxu_nt, scale1, zero1, quant_mode, source_view);
+        const uint64_t offset = along_n
+            ? weight_offset_wtrans1(weight_K, weight_N, k, n,
+                log2_kt, log2_mxu_kt, log2_mxu_nt)
+            : weight_offset_wtrans0(weight_K, weight_N, k, n >> 1,
+                log2_kt, log2_mxu_kt, log2_mxu_nt);
+        weight[offset] = (uint8_t)((q0 & 0x0fu) | ((q1 & 0x0fu) << 4));
+        }
+      }
+    }
+
+  if (reuse_prefill_qparams) store_prefill_qparams<true>(arg);
+  else store_prefill_qparams<false>(arg);
 }
 
 void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
@@ -1487,147 +2186,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     }
   }
 
-  const uint32_t out_K = padded_qparam_K(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
-  const uint32_t out_N = padded_qparam_N(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
-  const uint32_t max_slot_elems = arg->max_slot_bytes / TILE_ELEM_BYTES;
-  const uint32_t qparam_work = arg->k_tiles * arg->n_dma_tiles * max_slot_elems;
-#if KV_FUSED_QPARAM_WARP
-  const uint32_t warp_slot = threadIdx.x / NUM_THREADS;
-  const uint32_t lane = threadIdx.x - warp_slot * NUM_THREADS;
-  const uint32_t warps_per_block = blockDim.x / NUM_THREADS;
-  const uint32_t warp_id = blockIdx.x * warps_per_block + warp_slot;
-  const uint32_t total_warps = gridDim.x * warps_per_block;
-  for (uint32_t work = warp_id; work < qparam_work; work += total_warps) {
-#else
-  for (uint32_t work = thread_id; work < qparam_work; work += total_threads) {
-#endif
-    const uint32_t slot = work / max_slot_elems;
-    const uint32_t elem_in_slot = work - slot * max_slot_elems;
-    const uint32_t kt = slot / arg->n_dma_tiles;
-    const uint32_t nt_dma = slot - kt * arg->n_dma_tiles;
-    const uint32_t kt_start = kt << log2_kt;
-    const uint32_t nt_start = nt_dma << log2_nt;
-    const uint32_t cur_k = min_u32(out_K - kt_start, kt_size);
-    const uint32_t cur_n = min_u32(out_N - nt_start, nt_size);
-    const uint32_t body_bytes = scale_slot_body_bytes(cur_k, cur_n, log2_qblk,
-                                                      log2_mxu_nt,
-                                                      log2_ng_per_mxu_nt,
-                                                      GEMM_QDIR);
-    const uint32_t body_elems = body_bytes >> 1;
-    const uint32_t slot_bytes = align_up_u32(body_bytes, TILE_SCALE_SLOT_ALIGN);
-    const uint32_t byte_in_slot = elem_in_slot * TILE_ELEM_BYTES;
-    if (byte_in_slot >= slot_bytes) {
-      continue;
-    }
-
-    const uint64_t dst_off = scale_slot_base(arg, kt, nt_dma) + byte_in_slot;
-    if (elem_in_slot >= body_elems) {
-#if KV_FUSED_QPARAM_WARP
-      if (lane == 0) {
-#endif
-      store_u16(scales, dst_off, 0);
-      store_u16(zeros, dst_off, 0);
-#if KV_FUSED_QPARAM_WARP
-      }
-#endif
-      continue;
-    }
-    if (reuse_prefill_qparams) {
-      continue;
-    }
-
-    uint32_t param_k = kt_start;
-    uint32_t param_n = nt_start;
-    if (GEMM_QDIR == 0) {
-      const uint32_t col = elem_in_slot & (TILE_DMA_MXU_NT - 1u);
-      const uint32_t nb_g = elem_in_slot >> log2_mxu_nt;
-      const uint32_t cur_groups =
-          (cur_k + (1u << log2_qblk) - 1u) >> log2_qblk;
-      uint32_t g;
-      uint32_t nb;
-      if (cur_k == kt_size) {
-        const uint32_t log2_groups_per_kt = log2_kt - log2_qblk;
-        g = nb_g & ((1u << log2_groups_per_kt) - 1u);
-        nb = nb_g >> log2_groups_per_kt;
-      } else {
-        g = nb_g % cur_groups;
-        nb = nb_g / cur_groups;
-      }
-      param_k = kt_start + (g << log2_qblk);
-      param_n = nt_start + (nb << log2_mxu_nt) + col;
-    } else {
-      const uint32_t ng_per_mxu_nt = 1u << log2_ng_per_mxu_nt;
-      const uint32_t ng_loc = elem_in_slot & (ng_per_mxu_nt - 1u);
-      const uint32_t nb_k = elem_in_slot >> log2_ng_per_mxu_nt;
-      uint32_t k_loc;
-      uint32_t nb;
-      if (cur_k == kt_size) {
-        k_loc = nb_k & (kt_size - 1u);
-        nb = nb_k >> log2_kt;
-      } else {
-        k_loc = nb_k % cur_k;
-        nb = nb_k / cur_k;
-      }
-      const uint32_t mxu_per_dma_nt = nt_size >> log2_mxu_nt;
-      const uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
-      const uint32_t global_ng = ((global_nt_mxu << log2_mxu_nt) >> log2_qblk) + ng_loc;
-      param_k = kt_start + k_loc;
-      param_n = global_ng << log2_qblk;
-    }
-
-    const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
-    const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
-    kv_fused_arith_t scale = 1.0f;
-    kv_fused_arith_t zero = 0.0f;
-#if KV_FUSED_QPARAM_WARP
-    compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
-                        source_row, source_col, src_layout,
-                        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
-                        source_view, lane,
-                        &scale, &zero);
-    if (lane == 0) {
-#else
-    compute_params(src, K, N, QBLK, SOURCE_QDIR,
-                   source_row, source_col, src_layout,
-                   log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
-                   source_view, &scale, &zero);
-#endif
-    store_u16(scales, dst_off, fused_arith_to_bits(scale));
-    store_u16(zeros, dst_off,
-              quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
-                  ? 0u : fused_zero_storage(zero));
-#if KV_FUSED_QPARAM_WARP
-    }
-#endif
-  }
-
-  if (!reuse_prefill_qparams
-      && arg->logical_scale_addr != 0
-      && arg->logical_zero_addr != 0) {
-    const uint32_t logical_groups = SOURCE_QDIR == 0
-        ? ((K + QBLK - 1u) >> log2_qblk) * N
-        : K * ((N + QBLK - 1u) >> log2_qblk);
-    for (uint32_t group_index = thread_id; group_index < logical_groups;
-         group_index += total_threads) {
-      uint32_t source_row;
-      uint32_t source_col;
-      if (SOURCE_QDIR == 0) {
-        source_row = (group_index / N) << log2_qblk;
-        source_col = group_index % N;
-      } else {
-        const uint32_t groups_per_row = (N + QBLK - 1u) >> log2_qblk;
-        source_row = group_index / groups_per_row;
-        source_col = (group_index % groups_per_row) << log2_qblk;
-      }
-      kv_fused_arith_t scale = 1.0f;
-      kv_fused_arith_t zero = 0.0f;
-      compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col,
-                     src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
-                     source_view, &scale, &zero);
-      logical_scales[group_index] = fused_arith_to_bits(scale);
-      logical_zeros[group_index] = fused_arith_to_bits(zero);
-    }
-  }
+  if (reuse_prefill_qparams) store_prefill_qparams<true>(arg);
+  else store_prefill_qparams<false>(arg);
 }
 
 #if KV_FUSED_SPLIT_PERSISTENT
@@ -1745,7 +2305,7 @@ void kernel_kv_cache_quant_layout_fused_persistent(
       scale = range / 15.0f;
     }
     if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-      zero = (kv_fused_arith_t)round_half_even(-min_v / scale) - 8.0f;
+      zero = (kv_fused_arith_t)round_half_even(spinquant_ratio(-min_v, scale)) - 8.0f;
     } else {
       int32_t zp = legacy_zero(min_v, range, scale);
       if (zp < 0) zp = 0;
@@ -1800,7 +2360,51 @@ void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
           && arg->QBLK >= arg->N) {
         kernel_kv_cache_quant_layout_fused_persistent(arg);
       } else {
-        kernel_kv_cache_quant_layout_fused(arg);
+        if (KV_FUSED_PREFILL_QPARAM_REUSE && arg->persistent_mode == 0
+            && arg->SOURCE_TRANSPOSED == 0 && arg->QBLK >= 2u
+            && ((arg->QDIR == 1u && arg->WTRANS != 0)
+                || (arg->QDIR == 0u && arg->WTRANS == 0))) {
+          if (arg->grid_dim[0] == 1u && arg->block_dim[0] == NUM_THREADS
+              && kv_fused_single_group_shape(arg->K, arg->N, arg->QBLK,
+                  arg->QDIR, arg->WTRANS, arg->GEMM_QDIR,
+                  arg->SOURCE_TRANSPOSED, arg->src_layout)) {
+            zero_single_group_outputs(arg);
+            quantize_single_group_row(arg);
+          } else if (arg->QDIR == 1u && arg->GEMM_QDIR == 1u
+                     && arg->QBLK >= TILE_DMA_MXU_NT && NUM_THREADS >= 2
+                     && arg->src_layout == SRC_LAYOUT_ROW_MAJOR) {
+            const bool full_tiles = arg->K == padded_weight_K(arg->K, arg->N, 0u)
+                && arg->N == padded_weight_N(arg->K, arg->N, 0u);
+            if (arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+              if (full_tiles) quantize_row_pair_threads<KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC, true>(arg);
+              else quantize_row_pair_threads<KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC, false>(arg);
+            } else if (arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+              if (full_tiles) quantize_row_pair_threads<KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC, true>(arg);
+              else quantize_row_pair_threads<KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC, false>(arg);
+            } else {
+              if (full_tiles) quantize_row_pair_threads<KV_QUANT_LEGACY_UINT4_ASYMMETRIC, true>(arg);
+              else quantize_row_pair_threads<KV_QUANT_LEGACY_UINT4_ASYMMETRIC, false>(arg);
+            }
+          } else if (arg->QDIR == 1u) {
+            if (arg->src_layout == SRC_LAYOUT_ROW_MAJOR)
+              quantize_cross_group_pack<true, true>(arg);
+            else quantize_cross_group_pack<true, false>(arg);
+          } else if (arg->src_layout == SRC_LAYOUT_ROW_MAJOR && arg->GEMM_QDIR == 0u
+                     && arg->QBLK <= (1u << arg->log2_kt) && TILE_DMA_MXU_NT >= 8u) {
+            zero_column_pair_padding(arg);
+            if (arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC)
+              quantize_column_pair_warp<KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC>(arg);
+            else if (arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC)
+              quantize_column_pair_warp<KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC>(arg);
+            else quantize_column_pair_warp<KV_QUANT_LEGACY_UINT4_ASYMMETRIC>(arg);
+          } else {
+            if (arg->src_layout == SRC_LAYOUT_ROW_MAJOR && arg->QBLK <= (1u << arg->log2_kt))
+              quantize_cross_group_pack<false, true>(arg);
+            else quantize_cross_group_pack<false, false>(arg);
+          }
+        } else {
+          kernel_kv_cache_quant_layout_fused(arg);
+        }
       }
 #else
       kernel_kv_cache_quant_layout_fused(arg);

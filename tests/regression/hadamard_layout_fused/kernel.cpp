@@ -8,6 +8,7 @@
 using data_t = fp16_t;
 
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
+#include "../vector_common/hadamard_shuffle16.h"
 static inline uint32_t float_to_bits(float value) {
   union {
     float f;
@@ -51,7 +52,7 @@ static inline uint64_t tiled_row_base(uint64_t matrix_base, uint32_t row,
 
 static inline uint64_t tiled_column_offset(uint32_t column,
                                            uint64_t group_stride) {
-  return static_cast<uint64_t>(column >> 5) * group_stride
+  return static_cast<uint64_t>(column / HADAMARD_TILE_MXU_KT) * group_stride
        + (column & (HADAMARD_TILE_MXU_KT - 1u));
 }
 
@@ -61,6 +62,23 @@ static inline void kernel_hadamard_r3_shuffle_incremental(
   const uint32_t lane = threadIdx.x;
   const uint64_t input_base =
       (static_cast<uint64_t>(matrix_idx) * arg->rows + row) * 128u;
+
+  if (blockDim.x == 16u) {
+    float values[8];
+#pragma unroll
+    for (uint32_t index = 0; index < 8; ++index)
+      values[index] = fp16_to_float(input[input_base + lane + index * 16u]);
+    hadamard_shuffle16(values, lane);
+    const uint64_t group_stride = static_cast<uint64_t>(
+        tiled_row_count(row, arg->m_pad)) * HADAMARD_TILE_MXU_KT;
+    const uint64_t row_base = tiled_row_base(output_base, row, 128u);
+#pragma unroll
+    for (uint32_t index = 0; index < 8; ++index) {
+      const uint64_t offset = row_base + tiled_column_offset(lane + index * 16u, group_stride);
+      output[offset] = float_to_fp16(values[index] * arg->inv_sqrt_dim);
+    }
+    return;
+  }
 
   float value0 = fp16_to_float(input[input_base + lane]);
   float value1 = fp16_to_float(input[input_base + lane + 32u]);
@@ -95,13 +113,15 @@ static inline void kernel_hadamard_r3_shuffle_incremental(
   const uint32_t rows_in_tile = tiled_row_count(row, arg->m_pad);
   const uint64_t group_stride =
       static_cast<uint64_t>(rows_in_tile) * HADAMARD_TILE_MXU_KT;
-  uint64_t output_offset = tiled_row_base(output_base, row, 128u) + lane;
+  uint64_t output_offset = tiled_row_base(output_base, row, 128u)
+                         + tiled_column_offset(lane, group_stride);
+  const uint64_t output_step = (32u / HADAMARD_TILE_MXU_KT) * group_stride;
   output[output_offset] = float_to_fp16(value0 * arg->inv_sqrt_dim);
-  output_offset += group_stride;
+  output_offset += output_step;
   output[output_offset] = float_to_fp16(value1 * arg->inv_sqrt_dim);
-  output_offset += group_stride;
+  output_offset += output_step;
   output[output_offset] = float_to_fp16(value2 * arg->inv_sqrt_dim);
-  output_offset += group_stride;
+  output_offset += output_step;
   output[output_offset] = float_to_fp16(value3 * arg->inv_sqrt_dim);
 }
 #endif
@@ -117,7 +137,8 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   // avoids paying one workgroup launch per matrix while preserving the 2D
   // decomposition used by larger prefill shapes.
   if (arg->base_k == 1u && arg->dim == 128u
-      && blockDim.x == 32u
+      && blockDim.x == NUM_THREADS
+      && (NUM_THREADS == 16u || NUM_THREADS == 32u)
       && arg->input_layout == HADAMARD_INPUT_ROW_MAJOR
       && arg->padded_row_launch == 0u
       && arg->matrix_count > 1u
@@ -159,11 +180,10 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         static_cast<uint64_t>(rows_in_tile) * HADAMARD_TILE_MXU_KT;
     uint64_t offset = tiled_row_base(output_base, row, arg->dim)
                     + tiled_column_offset(tid, group_stride);
-    const uint64_t offset_step =
-        static_cast<uint64_t>(blockDim.x >> 5) * group_stride;
     for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
       output[offset] = 0;
-      offset += offset_step;
+      offset = tiled_row_base(output_base, row, arg->dim)
+             + tiled_column_offset(column + blockDim.x, group_stride);
     }
 #else
     for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
@@ -178,7 +198,8 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
   if (arg->base_k == 1u && arg->dim == 128u
-      && blockDim.x == 32u
+      && blockDim.x == NUM_THREADS
+      && (NUM_THREADS == 16u || NUM_THREADS == 32u)
       && arg->input_layout == HADAMARD_INPUT_ROW_MAJOR) {
     if (arg->padded_row_launch == 0u) {
       for (uint32_t persistent_row = row; persistent_row < arg->rows;
@@ -208,8 +229,6 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   uint64_t input_offset = input_matrix_base
                         + tiled_row_base(0, row, arg->dim)
                         + tiled_column_offset(tid, group_stride);
-  const uint64_t input_offset_step =
-      static_cast<uint64_t>(blockDim.x >> 5) * group_stride;
 #endif
   for (uint32_t column = tid; column < scratch_dim; column += blockDim.x) {
     if (column >= arg->dim) {
@@ -229,7 +248,8 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                               + column]);
     }
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
-    input_offset += input_offset_step;
+    input_offset = input_matrix_base + tiled_row_base(0, row, arg->dim)
+                 + tiled_column_offset(column + blockDim.x, group_stride);
 #endif
   }
   __syncthreads();
@@ -264,14 +284,13 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
     uint64_t offset = tiled_row_base(output_base, row, arg->dim)
                     + tiled_column_offset(tid, group_stride);
-    const uint64_t offset_step =
-        static_cast<uint64_t>(blockDim.x >> 5) * group_stride;
 #endif
     for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
       const float transformed = scratch[column] * arg->inv_sqrt_dim;
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
       output[offset] = float_to_fp16(transformed);
-      offset += offset_step;
+      offset = tiled_row_base(output_base, row, arg->dim)
+             + tiled_column_offset(column + blockDim.x, group_stride);
 #else
       const uint64_t offset = output_base + gemm_a_tiled_elem_offset(
           row, column, arg->m_pad, arg->dim,
@@ -288,11 +307,11 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   for (uint32_t width_col = tid; width_col < arg->width;
        width_col += blockDim.x) {
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
-    const bool incremental_output = (arg->width & 31u) == 0u;
+    const bool incremental_output = (arg->width % HADAMARD_TILE_MXU_KT) == 0u;
     uint64_t output_offset = tiled_row_base(output_base, row, arg->dim)
                            + tiled_column_offset(width_col, group_stride);
     const uint64_t output_k_stride =
-        static_cast<uint64_t>(arg->width >> 5) * group_stride;
+        static_cast<uint64_t>(arg->width / HADAMARD_TILE_MXU_KT) * group_stride;
 #endif
     uint32_t out_k = 0;
     for (; out_k + 3 < arg->base_k; out_k += 4) {

@@ -35,7 +35,8 @@ static inline float warp_sum(float value, uint32_t lane) {
     const float other = shfl_down_float(value, offset);
     if (lane + offset < NUM_THREADS) value += other;
   }
-  return shfl_idx_float(value, 0);
+  // Only lane zero consumes this sum before broadcasting the final RMS.
+  return value;
 }
 
 static inline float warp_rms(float sum_sq, uint32_t lane,
@@ -174,6 +175,24 @@ void kernel_rms_norm_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t cm = ((M_pad - (mt_idx << log2_mt)) < mt)
                     ? (M_pad - (mt_idx << log2_mt))
                     : mt;
+
+  if ((bdim & mxu_kt_mask) == 0u) {
+    // Equal warp/MXU widths let each lane advance its tiled cursor by a
+    // fixed number of microtiles, rather than decoding i on every store.
+    const uint64_t group_stride = static_cast<uint64_t>(cm) * mxu_kt;
+    uint64_t out_off = static_cast<uint64_t>(mt_idx) * mt * K
+                     + static_cast<uint64_t>(m0) * mxu_kt
+                     + static_cast<uint64_t>(tid >> log2_mxu_kt) * group_stride
+                     + (tid & mxu_kt_mask);
+    const uint64_t step = static_cast<uint64_t>(bdim >> log2_mxu_kt) * group_stride;
+    for (uint32_t i = tid; i < K; i += bdim) {
+      const float v = fp16_to_float(pInputRow[i]);
+      const float g = fp16_to_float(pGamma[i]);
+      pOutput[out_off] = float_to_fp16(v * rms * g);
+      out_off += step;
+    }
+    return;
+  }
 
   // Phase 2: normalize + gamma, tile-major write.
   for (uint32_t i = tid; i < K; i += bdim) {

@@ -22,7 +22,9 @@ vx_buffer_h sin_buffer = nullptr;
 
 #define RT_CHECK(_expr)                                                     \
   do {                                                                      \
+    vx_bench::power_trace("rt_call_begin", "call=%s", #_expr);               \
     int _ret = _expr;                                                       \
+    vx_bench::power_trace("rt_call_end", "call=%s ret=%d", #_expr, _ret);     \
     if (0 == _ret)                                                          \
       break;                                                                \
     printf("Error: '%s' returned %d!\n", #_expr, (int)_ret);                \
@@ -31,6 +33,7 @@ vx_buffer_h sin_buffer = nullptr;
   } while (false)
 
 static void cleanup() {
+  vx_bench::power_trace("cleanup_begin", "%s", "rope_layout_fused");
   if (input_buffer) vx_mem_free(input_buffer);
   if (output_buffer) vx_mem_free(output_buffer);
   if (cos_buffer) vx_mem_free(cos_buffer);
@@ -38,6 +41,7 @@ static void cleanup() {
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
   if (device) vx_dev_close(device);
+  vx_bench::power_trace("cleanup_end", "%s", "rope_layout_fused");
 }
 
 static uint32_t log2_u32(uint32_t v) {
@@ -205,7 +209,7 @@ int main(int argc, char *argv[]) {
   const uint32_t total_pairs = batch * seq * heads * (head_dim >> 1);
   const uint32_t blocks = std::min(
       (total_pairs + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+      std::max(1u, (uint32_t)num_cores));
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_ROPE_LAYOUT_FUSED;

@@ -7,6 +7,7 @@
 using data_t = fp16_t;
 
 #if HADAMARD_VARIANT_TAG == 2
+#include "../vector_common/hadamard_shuffle16.h"
 static inline uint32_t float_to_bits(float value) {
   union {
     float f;
@@ -38,6 +39,18 @@ static inline void kernel_hadamard_r3_shuffle(
     const data_t* input, data_t* output, uint32_t row, float scale) {
   const uint32_t lane = threadIdx.x;
   const uint64_t row_offset = static_cast<uint64_t>(row) * 128u;
+
+  if (blockDim.x == 16u) {
+    float values[8];
+#pragma unroll
+    for (uint32_t index = 0; index < 8; ++index)
+      values[index] = fp16_to_float(input[row_offset + lane + index * 16u]);
+    hadamard_shuffle16(values, lane);
+#pragma unroll
+    for (uint32_t index = 0; index < 8; ++index)
+      output[row_offset + lane + index * 16u] = float_to_fp16(values[index] * scale);
+    return;
+  }
 
   float value0 = fp16_to_float(input[row_offset + lane]);
   float value1 = fp16_to_float(input[row_offset + lane + 32u]);
@@ -98,7 +111,9 @@ void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
   }
 
 #if HADAMARD_VARIANT_TAG == 2
-  if (arg->base_k == 1u && dim == 128u && block_size == 32u) {
+  if (arg->base_k == 1u && dim == 128u
+      && block_size == NUM_THREADS
+      && (NUM_THREADS == 16u || NUM_THREADS == 32u)) {
     for (uint32_t persistent_row = row; persistent_row < arg->rows;
          persistent_row += gridDim.x) {
       kernel_hadamard_r3_shuffle(

@@ -21,6 +21,21 @@
 #define TILE_SCALE_SLOT_ALIGN 512
 #define TILE_ELEM_BYTES        2
 
+// Cross-group packing uses a warp per pair of quantization groups.
+static inline bool kv_fused_cross_group_shape(uint32_t qdir, uint32_t wtrans,
+                                              uint32_t source_transposed,
+                                              uint32_t qblk) {
+  return source_transposed == 0u && qblk >= 2u
+      && ((qdir == 1u && wtrans != 0u) || (qdir == 0u && wtrans == 0u));
+}
+
+static inline bool kv_fused_single_group_shape(uint32_t k, uint32_t n,
+    uint32_t qblk, uint32_t qdir, uint32_t wtrans, uint32_t gemm_qdir,
+    uint32_t source_transposed, uint32_t layout) {
+  return k == 1u && qblk >= n && qdir == 1u && wtrans != 0u
+      && gemm_qdir == 1u && source_transposed == 0u && layout == SRC_LAYOUT_ROW_MAJOR;
+}
+
 typedef struct {
   uint32_t kernel_id;
   uint32_t grid_dim[3];

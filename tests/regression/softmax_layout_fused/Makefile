@@ -7,7 +7,7 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 
 SRCS := $(SRC_DIR)/main.cpp
 
-SOFTMAX_LAYOUT_FUSED_VARIANT ?= rev2_shuffle_grouped
+SOFTMAX_LAYOUT_FUSED_VARIANT ?= rev2_shuffle_cursor
 SOFTMAX_LAYOUT_FUSED_VARIANTS := rev1 rev2 rev2_chunked rev2_addrgen rev2_shuffle rev2_shuffle_unroll2 rev2_shuffle_addr32 rev2_shuffle_grouped rev2_shuffle_cursor rev2_shuffle_safe opt opt_warp
 ifneq ($(filter $(SOFTMAX_LAYOUT_FUSED_VARIANT),$(SOFTMAX_LAYOUT_FUSED_VARIANTS)),$(SOFTMAX_LAYOUT_FUSED_VARIANT))
   $(error Unsupported SOFTMAX_LAYOUT_FUSED_VARIANT=$(SOFTMAX_LAYOUT_FUSED_VARIANT); expected one of: $(SOFTMAX_LAYOUT_FUSED_VARIANTS))

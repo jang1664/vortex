@@ -226,7 +226,8 @@ int main(int argc, char** argv) {
 #if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 3
   const bool use_r3_shuffle =
       factorized && base_k == 1u && dim == 128u
-      && input_layout == HADAMARD_INPUT_ROW_MAJOR;
+      && input_layout == HADAMARD_INPUT_ROW_MAJOR
+      && (num_threads == 16u || num_threads == 32u);
   const bool use_r3_persistent =
       use_r3_shuffle && !padded_row_launch;
   const uint64_t r3_worker_count = num_cores * num_warps;

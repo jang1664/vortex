@@ -224,8 +224,19 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb =
-      append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+  const bool cross_group = !append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 3
+      && kv_fused_cross_group_shape(QDIR, WTRANS, SOURCE_TRANSPOSED, QBLK);
+  const bool single_group = cross_group && kv_fused_single_group_shape(
+      K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED, src_layout);
+  const bool row_pair_threads = cross_group && !single_group && QDIR == 1u
+      && GEMM_QDIR == 1u && QBLK >= TILE_DMA_MXU_NT && num_threads >= 2u
+      && src_layout == SRC_LAYOUT_ROW_MAJOR;
+  const uint32_t row_work = padded_weight_K_host(K, N, 0u)
+      * ((padded_weight_N_host(K, N, 0u) + QBLK - 1u) / QBLK);
+  const uint32_t row_tpb = std::min(std::min(256u, (uint32_t)(num_warps * num_threads)),
+      ((row_work + (uint32_t)num_threads - 1u) / (uint32_t)num_threads) * (uint32_t)num_threads);
+  const uint32_t tpb = row_pair_threads ? row_tpb :
+      (cross_group || (append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2))
           ? (uint32_t)num_threads
           : std::min(256u, (uint32_t)(num_warps * num_threads));
 
@@ -243,15 +254,15 @@ int main(int argc, char *argv[]) {
   const uint32_t full_work_items =
       std::max((uint32_t)weight_bytes, qparam_work);
   const uint32_t append_work_items =
-      std::max(N >> 1, GEMM_QDIR == 0 ? 1u : N >> 5);
+      std::max(N >> 1, GEMM_QDIR == 0 ? 1u : N / TILE_DMA_MXU_NT);
   const uint32_t work_items =
-      append_update ? append_work_items : full_work_items;
+      append_update ? append_work_items : row_pair_threads ? row_work : full_work_items;
   const uint32_t blocks =
-      append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+      (single_group || (append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2))
           ? 1u
           : std::min(
                 (work_items + tpb - 1u) / tpb,
-                std::max(1u, (uint32_t)num_cores * 4u));
+                std::max(1u, (uint32_t)num_cores * (cross_group ? (uint32_t)num_warps : 4u)));
   if (!init_kernel_arg(arg, output_K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                        SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
                        blocks, tpb, quant_mode, source_total_n, head_col_offset)) {

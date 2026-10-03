@@ -76,6 +76,15 @@ static inline kv_fp16_arith_t kv_fp16_div(
 #endif
 }
 
+// A zero-only SpinQuant group can have a scale that underflows to FP16 zero.
+// Its normalized zero is defined as zero, avoiding NaN-to-integer conversion.
+static inline kv_fp16_arith_t kv_spinquant_ratio_fp16(
+    kv_fp16_arith_t value,
+    kv_fp16_arith_t scale) {
+  return value == 0.0f && scale == 0.0f
+      ? (kv_fp16_arith_t)0.0f : kv_fp16_div(value, scale);
+}
+
 #ifndef KV_QUANT_LEGACY_UINT4_ASYMMETRIC
 #define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
 #define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1

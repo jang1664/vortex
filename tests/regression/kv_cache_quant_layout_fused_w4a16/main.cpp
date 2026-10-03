@@ -44,11 +44,31 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
+// Tags 12/13 retain FP32 parameters; the other variants use native FP16.
+// Match the reference arithmetic to the selected device implementation.
+static constexpr bool reference_fp32 =
+    KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG == 12
+    || KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG == 13;
+
+static float reference_round(float value) {
+  return reference_fp32 ? value : (float)(kv_fp16_arith_t)value;
+}
+
+static float reference_sub(float a, float b) {
+  return reference_fp32 ? a - b
+      : (float)kv_fp16_sub((kv_fp16_arith_t)a, (kv_fp16_arith_t)b);
+}
+
+static float reference_div(float a, float b) {
+  return reference_fp32 ? a / b
+      : (float)kv_spinquant_ratio_fp16((kv_fp16_arith_t)a, (kv_fp16_arith_t)b);
+}
+
 static int32_t round_half_even_cpu(float value) {
   const int32_t truncated = (int32_t)value;
   const float truncated_f = (float)truncated;
   const int32_t floor_value = truncated - (int32_t)(truncated_f > value);
-  const float fraction = value - (float)floor_value;
+  const float fraction = reference_sub(value, (float)floor_value);
   return floor_value + (int32_t)(fraction > 0.5f)
       + (int32_t)(fraction == 0.5f && (floor_value & 1));
 }
@@ -94,7 +114,7 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
   }
 
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
-    const float scale = std::max(absmax, 1e-8f) / 7.5f;
+    const float scale = reference_div(reference_round(std::max(absmax, 1e-8f)), 7.5f);
     scale_bits = float_to_fp16(scale);
     zero_bits = 0;
     if (scale_fp32) *scale_fp32 = scale;
@@ -102,23 +122,26 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     return;
   }
 
-  const float range = max_v - min_v;
-  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+  const float range = reference_sub(max_v, min_v);
+  float scale = reference_round(quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f);
   float inv_for_zp = 1.0f;
   if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
       || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-          && range / 15.0f > 1e-8f)) {
-    scale = range / 15.0f;
+          && reference_div(range, 15.0f) > 1e-8f)) {
+    scale = reference_div(range, 15.0f);
     inv_for_zp = 15.0f / range;
   }
   scale_bits = float_to_fp16(scale);
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    const float zero = (float)round_half_even_cpu(-min_v / scale) - 8.0f;
+    const float zero = reference_round(reference_round((float)round_half_even_cpu(
+        reference_div(-min_v, scale))) - 8.0f);
     zero_bits = float_to_fp16(zero);
     if (scale_fp32) *scale_fp32 = scale;
     if (zero_fp32) *zero_fp32 = zero;
   } else {
-    int32_t zpi = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    int32_t zpi = reference_fp32
+        ? kv_round_half_away_from_zero(-min_v * inv_for_zp)
+        : kv_round_half_away_from_zero_fp16((kv_fp16_arith_t)reference_div(-min_v, scale));
     if (zpi < 0) zpi = 0;
     if (zpi > 15) zpi = 15;
     zero_bits = float_to_fp16((float)zpi);
@@ -152,9 +175,13 @@ static uint8_t quant_cpu(const std::vector<fp16_t>& src,
   const float zero = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
       ? fp16_to_float(zero_bits) : zero_fp32;
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
-    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+    return reference_fp32
+        ? kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero)
+        : kv_quantize_value_scale_fp16((kv_fp16_arith_t)value,
+                                      (kv_fp16_arith_t)quant_scale, (int16_t)zero);
   }
-  int32_t q = round_half_even_cpu(value * inv_scale) + (int32_t)zero;
+  int32_t q = round_half_even_cpu(reference_fp32
+      ? value * inv_scale : reference_div(value, quant_scale)) + (int32_t)zero;
   q = std::max(-8, std::min(7, q));
   return (uint8_t)(q & 0x0f);
 }
@@ -485,7 +512,8 @@ static int run_persistent_update_test(uint32_t capacity,
   const uint32_t tpb = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
       ? (uint32_t)num_threads
       : std::min(256u, (uint32_t)(num_warps * num_threads));
-  const uint32_t work_items = std::max(N >> 1, gemm_qdir == 0 ? 1u : N >> 5);
+  const uint32_t work_items = std::max(
+      N >> 1, gemm_qdir == 0 ? 1u : N / TILE_DMA_MXU_NT);
   const uint32_t blocks = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
       ? 1u
       : std::min(
@@ -778,7 +806,19 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const bool cross_group = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 3
+      && kv_fused_cross_group_shape(QDIR, WTRANS, SOURCE_TRANSPOSED, QBLK);
+  const bool single_group = cross_group && kv_fused_single_group_shape(
+      K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED, src_layout);
+  const bool row_pair_threads = cross_group && !single_group && QDIR == 1u
+      && GEMM_QDIR == 1u && QBLK >= TILE_DMA_MXU_NT && num_threads >= 2u
+      && src_layout == SRC_LAYOUT_ROW_MAJOR;
+  const uint32_t row_work = padded_weight_K_host(K, N, 0u)
+      * ((padded_weight_N_host(K, N, 0u) + QBLK - 1u) / QBLK);
+  const uint32_t row_tpb = std::min(std::min(256u, (uint32_t)(num_warps * num_threads)),
+      ((row_work + (uint32_t)num_threads - 1u) / (uint32_t)num_threads) * (uint32_t)num_threads);
+  const uint32_t tpb = row_pair_threads ? row_tpb : cross_group ? (uint32_t)num_threads
+      : std::min(256u, (uint32_t)(num_warps * num_threads));
 
   kernel_arg_t arg = {};
   const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR,
@@ -789,10 +829,10 @@ int main(int argc, char *argv[]) {
   const uint32_t n_dma_tiles = ceil_div_pow2_u32(out_N, DMA_NT);
   const uint32_t k_tiles = ceil_div_pow2_u32(out_K, DMA_KT);
   const uint32_t qparam_work = k_tiles * n_dma_tiles * max_slot_elems;
-  const uint32_t work_items = std::max((uint32_t)weight_bytes, qparam_work);
-  const uint32_t blocks = std::min(
+  const uint32_t work_items = row_pair_threads ? row_work : std::max((uint32_t)weight_bytes, qparam_work);
+  const uint32_t blocks = single_group ? 1u : std::min(
       (work_items + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+      std::max(1u, (uint32_t)num_cores * (cross_group ? (uint32_t)num_warps : 4u)));
   if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                        SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
                        blocks, tpb, quant_mode, source_total_n, head_col_offset)) {

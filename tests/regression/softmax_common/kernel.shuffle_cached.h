@@ -152,12 +152,12 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
       scores[k] = value;
     if (value > local_max) local_max = value;
   }
-#elif SOFTMAX_REV2_SHUFFLE_UNROLL2
+#elif SOFTMAX_REV2_SHUFFLE_UNROLL2 && NUM_THREADS == TILE_DMA_MXU_NT
   uint32_t load_k = lane;
   if (load_k < k_end) {
     const uint64_t load_offset = accessor.input_row_prefix
-        + (uint64_t)(load_k >> 5) * accessor.input_group_stride
-        + (load_k & 31u);
+        + (uint64_t)(load_k >> accessor.log2_mxu_nt) * accessor.input_group_stride
+        + (load_k & accessor.mxu_nt_mask);
     data_t *load0 = accessor.input + load_offset;
     data_t *load1 = load0 + accessor.input_group_stride;
     const uint32_t two_group_stride = accessor.input_group_stride << 1;
@@ -299,8 +299,8 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
         output_fp16(exp_value * inv_sum);
   }
   uint32_t zero_k = k_end + lane;
-  const uint32_t zero_lane = zero_k & 31u;
-  uint32_t zero_group = zero_k >> 5;
+  const uint32_t zero_lane = zero_k & accessor.mxu_kt_mask;
+  uint32_t zero_group = zero_k >> accessor.log2_mxu_kt;
   for (; zero_k < seq_len_k;
        zero_k += NUM_THREADS, ++zero_group) {
     const uint32_t within_matrix =
@@ -308,12 +308,12 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
     accessor.output[accessor.output_row_prefix + within_matrix] =
         float_to_fp16(0.0f);
   }
-#elif SOFTMAX_REV2_SHUFFLE_UNROLL2
+#elif SOFTMAX_REV2_SHUFFLE_UNROLL2 && NUM_THREADS == TILE_DMA_MXU_KT
   uint32_t store_k = lane;
   if (store_k < k_end) {
     const uint64_t store_offset = accessor.output_row_prefix
-        + (uint64_t)(store_k >> 5) * accessor.output_group_stride
-        + (store_k & 31u);
+        + (uint64_t)(store_k >> accessor.log2_mxu_kt) * accessor.output_group_stride
+        + (store_k & accessor.mxu_kt_mask);
     data_t *store0 = accessor.output + store_offset;
     data_t *store1 = store0 + accessor.output_group_stride;
     const uint32_t two_group_stride = accessor.output_group_stride << 1;
@@ -340,8 +340,8 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
   uint32_t zero_k = k_end + lane;
   if (zero_k < seq_len_k) {
     const uint64_t zero_offset = accessor.output_row_prefix
-        + (uint64_t)(zero_k >> 5) * accessor.output_group_stride
-        + (zero_k & 31u);
+        + (uint64_t)(zero_k >> accessor.log2_mxu_kt) * accessor.output_group_stride
+        + (zero_k & accessor.mxu_kt_mask);
     data_t *zero0 = accessor.output + zero_offset;
     data_t *zero1 = zero0 + accessor.output_group_stride;
     const uint32_t two_group_stride = accessor.output_group_stride << 1;
