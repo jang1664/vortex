@@ -1,0 +1,68 @@
+[
+  {
+    "candidate": "C1",
+    "app": "softmax",
+    "shape": "prefill_1k",
+    "args": "-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1 -scale 0.125",
+    "pair": "softmax/prefill_1k"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "prefill_1k",
+    "args": "-batch 1 -heads 1 -seqq 1024 -seqk 1024 -seqk-stride 1024 -mask 1 -scale 0.125",
+    "pair": "softmax/prefill_1k"
+  },
+  {
+    "candidate": "C1",
+    "app": "softmax",
+    "shape": "overflow",
+    "args": "-batch 1 -heads 1 -seqq 1 -seqk 32769 -seqk-stride 32800 -mask 0 -scale 0.125",
+    "pair": "softmax/overflow"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "overflow",
+    "args": "-batch 1 -heads 1 -seqq 1 -seqk 32769 -seqk-stride 32800 -mask 0 -scale 0.125",
+    "pair": "softmax/overflow"
+  },
+  {
+    "candidate": "C1",
+    "app": "softmax",
+    "shape": "mask_tail",
+    "args": "-batch 1 -heads 1 -seqq 65 -seqk 129 -seqk-stride 160 -mask 1 -scale 0.125",
+    "pair": "softmax/mask_tail"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "mask_tail",
+    "args": "-batch 1 -heads 1 -seqq 65 -seqk 129 -seqk-stride 160 -mask 1 -scale 0.125",
+    "pair": "softmax/mask_tail"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "seed_0",
+    "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 -seed 0"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "seed_1",
+    "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 -seed 1"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "seed_2986547050",
+    "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 -seed 2986547050"
+  },
+  {
+    "candidate": "C4",
+    "app": "softmax_layout_fused",
+    "shape": "seed_4294967295",
+    "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 -seed 4294967295"
+  }
+]

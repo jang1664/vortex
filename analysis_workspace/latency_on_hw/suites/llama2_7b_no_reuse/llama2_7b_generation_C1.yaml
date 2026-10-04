@@ -1,0 +1,35 @@
+name: llama2_7b_generation_C1_no_reuse
+defaults:
+  warmup: 1
+  iterations: 3
+  app: sgemm_tcu
+  fpga_bin: C1
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: C1
+
+  by_backend:
+    sgemm_tcu: C1
+
+  by_app:
+    fpint_gemm_ffn_hw: C1
+    fpint_gemm_ffn_hw_naive: C1
+    rmsnorm: C1
+    rope: C1
+    softmax: C1
+    silu: C1
+    eladd: C1
+    elmul: C1
+
+workloads:
+  - id: llama2_7b_generation_C1_no_reuse
+    model: llama2-7b
+    stage: generation
+    variant: all_sgemm_tcu_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 2, 4, 8]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

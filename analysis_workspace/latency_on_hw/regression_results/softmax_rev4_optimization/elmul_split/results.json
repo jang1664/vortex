@@ -1,0 +1,353 @@
+{
+  "metadata": {
+    "mode": "hw",
+    "gate": "PARTIAL_PASS",
+    "overhead_limit_pct": 50,
+    "overhead_limits_pct": {
+      "default": 50,
+      "softmax": 30,
+      "quantization": 30
+    },
+    "fp16_small_value": 0.001,
+    "fp16_abs_tol": 0.0001,
+    "configs": {
+      "C1": {
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+        "alias": "tcu_th16_c1_v3_axi_fix"
+      },
+      "C4": {
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+        "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+      }
+    },
+    "variants": {},
+    "slurm_job_id": "5222",
+    "cases": [
+      {
+        "candidate": "C1",
+        "app": "elmul",
+        "shape": "decode",
+        "args": "-n 128",
+        "pair": "elmul/decode",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "elmul_layout_fused",
+        "shape": "decode",
+        "args": "-m 1 -k 128",
+        "pair": "elmul/decode",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "elmul",
+        "shape": "prefill",
+        "args": "-n 4096",
+        "pair": "elmul/prefill",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "elmul_layout_fused",
+        "shape": "prefill",
+        "args": "-m 32 -k 128",
+        "pair": "elmul/prefill",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "elmul",
+        "shape": "tail_rows",
+        "args": "-n 4224",
+        "pair": "elmul/tail_rows",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "elmul_layout_fused",
+        "shape": "tail_rows",
+        "args": "-m 33 -k 128",
+        "pair": "elmul/tail_rows",
+        "bench_args": null
+      }
+    ],
+    "source_identities": {
+      "elmul": "9dfbc72897df76ff521fba649b52e10281075f32b984dcdd31712c34abdd20b7",
+      "elmul_layout_fused": "10d9814ec06a3eecceba4039c4921a885ddfc9bd1c57fa56d7bb3fa44245a236"
+    },
+    "kernel_variants": {
+      "elmul": {
+        "configured": "default",
+        "selected": "default",
+        "sources": [
+          "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/tests/regression/elmul/kernel.cpp"
+        ]
+      },
+      "elmul_layout_fused": {
+        "configured": "linear_skip_pad_rows",
+        "selected": "linear_skip_pad_rows",
+        "sources": [
+          "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/tests/regression/elmul_layout_fused/kernel.linear_skip_pad_rows.cpp"
+        ]
+      }
+    },
+    "phase": "benchmark",
+    "functionality_gate": "PASS"
+  },
+  "results": [
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "configured",
+      "phase": "static",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": "",
+      "cycle_samples": "",
+      "elapsed_s": 1.316,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.configured.static.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' static /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh make --no-print-directory -C /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llm_regression_rev4/C1/tests/regression/elmul --eval '.PHONY: llm-static-check\nllm-static-check:\n\t$(VX_CXX) $(VX_CFLAGS) -fsyntax-only $(VX_SRCS)\n\t$(CXX) $(CXXFLAGS) -fsyntax-only $(SRCS)\n\t$(if $(BENCH_SRCS),$(CXX) $(BENCH_CXXFLAGS) -fsyntax-only $(BENCH_SRCS),:)\n' llm-static-check",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "configured",
+      "phase": "static",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": "",
+      "cycle_samples": "",
+      "elapsed_s": 0.615,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.configured.static.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' static /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh make --no-print-directory -C /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llm_regression_rev4/C4/tests/regression/elmul_layout_fused --eval '.PHONY: llm-static-check\nllm-static-check:\n\t$(VX_CXX) $(VX_CFLAGS) -fsyntax-only $(VX_SRCS)\n\t$(CXX) $(CXXFLAGS) -fsyntax-only $(SRCS)\n\t$(if $(BENCH_SRCS),$(CXX) $(BENCH_CXXFLAGS) -fsyntax-only $(BENCH_SRCS),:)\n' llm-static-check",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "decode",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 28591,
+      "cycle_samples": 2,
+      "elapsed_s": 16.737,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.decode.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --args '-n 128' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "decode",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 34714,
+      "cycle_samples": 2,
+      "elapsed_s": 17.539,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.decode.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --args '-m 1 -k 128' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "prefill",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 60938,
+      "cycle_samples": 2,
+      "elapsed_s": 16.988,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.prefill.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --args '-n 4096' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "prefill",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 68221,
+      "cycle_samples": 2,
+      "elapsed_s": 17.438,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.prefill.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --args '-m 32 -k 128' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "tail_rows",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 60234,
+      "cycle_samples": 2,
+      "elapsed_s": 17.338,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.tail_rows.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --args '-n 4224' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "tail_rows",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 84001,
+      "cycle_samples": 2,
+      "elapsed_s": 17.739,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.tail_rows.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --args '-m 33 -k 128' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "decode",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 28023,
+      "cycle_samples": 3,
+      "elapsed_s": 19.591,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.decode.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --bench --args '-n 128 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.decode.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "decode",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 34657,
+      "cycle_samples": 3,
+      "elapsed_s": 19.341,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.decode.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --bench --args '-m 1 -k 128 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.decode.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "prefill",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 60383,
+      "cycle_samples": 3,
+      "elapsed_s": 19.691,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.prefill.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --bench --args '-n 4096 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.prefill.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "prefill",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 68101,
+      "cycle_samples": 3,
+      "elapsed_s": 19.291,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.prefill.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --bench --args '-m 32 -k 128 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.prefill.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "elmul",
+      "shape": "tail_rows",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 61259,
+      "cycle_samples": 3,
+      "elapsed_s": 20.291,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.tail_rows.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app elmul --perf 0 --bench --args '-n 4224 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C1.elmul.tail_rows.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "elmul_layout_fused",
+      "shape": "tail_rows",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 84668,
+      "cycle_samples": 3,
+      "elapsed_s": 19.541,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.tail_rows.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app elmul_layout_fused --perf 0 --bench --args '-m 33 -k 128 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/elmul_split/C4.elmul_layout_fused.tail_rows.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    }
+  ],
+  "comparisons": [
+    {
+      "pair": "elmul/decode",
+      "status": "PASS",
+      "overhead_pct": 23.673411126574596,
+      "standalone_cycle": 28023,
+      "fused_cycle": 34657,
+      "limit_pct": 50,
+      "reason": ""
+    },
+    {
+      "pair": "elmul/prefill",
+      "status": "PASS",
+      "overhead_pct": 12.781743205869201,
+      "standalone_cycle": 60383,
+      "fused_cycle": 68101,
+      "limit_pct": 50,
+      "reason": ""
+    },
+    {
+      "pair": "elmul/tail_rows",
+      "status": "PASS",
+      "overhead_pct": 38.213160515189614,
+      "standalone_cycle": 61259,
+      "fused_cycle": 84668,
+      "limit_pct": 50,
+      "reason": ""
+    }
+  ]
+}

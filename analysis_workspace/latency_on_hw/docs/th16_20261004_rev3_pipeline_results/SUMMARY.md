@@ -1,0 +1,10 @@
+# 분석할 figure 목록
+llama_gemm_only
+llama_e2e_no_area_norm_stacked
+llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.*
+
+# llama_gemm_only 분석
+
+# llama_e2e_no_area_norm_stacked 분석
+
+# llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked

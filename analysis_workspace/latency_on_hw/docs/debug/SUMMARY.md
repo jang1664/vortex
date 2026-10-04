@@ -348,3 +348,19 @@ slots16→8 변화는 각각 분리 측정한 효과가 아니다. Board running
 `c1_c4_*`, `c4_improve_qblk16_*`, `llm_regression_*`, `quant_*`, `rope_*`,
 `elmul_opt_*`, `pipeline_fix_*`, `power_*`, `hadamard_*`, `softmax_*`,
 `raw_db_compare_*`, `gemm_c3v3_c4v4_20261004`. 중간 실패·가설보다 검증된 후속 결과를 우선했다.
+
+## 9. Rev4 layout-fused 최적화 (2026-10-04 후속)
+
+Rev4 HW에서 softmax cursor의 불필요한 행별 barrier/fence를 제거했다.
+One-warp block의 score는 lane별 private slot이며 reduction은 register shuffle이다.
+수학 연산, full-warp exp와 FP16 변환은 유지했다.
+Softmax overhead는 decode 41.53→16.66%, prefill 80.16→-3.47%, tail 53.50→4.80%로 개선했다.
+추가 B1/H1/Q=K=1024 causal prefill은 2.13%, K32769 overflow는 4.11%, mask tail은 1.88%다.
+기본·추가 기능 16/16 PASS이며 과거 재현 seed 2986547050도 포함한다.
+
+Elmul은 padding stride 계산과 register pressure를 줄여 decode overhead를 56.76→23.67%로 개선했다.
+기능 6/6, overhead 3/3 PASS. Tail fused cycles는 10.05% 증가했지만 overhead 38.21%로 50% 이내다.
+기존 pipeline DB/figure를 이 측정으로 덮어쓰지 않았다. 위 과거 pipeline의 1K 초과 기록은 그대로 유효하다.
+관련 kernel만 재검증했으며 전체 regression 재실행으로 표시하지 않는다.
+
+[상세 수치·검증 범위·원자료](../../regression_results/softmax_rev4_optimization/SUMMARY.md)

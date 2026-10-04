@@ -1,0 +1,355 @@
+{
+  "metadata": {
+    "mode": "hw",
+    "gate": "PARTIAL_PASS",
+    "overhead_limit_pct": 50,
+    "overhead_limits_pct": {
+      "default": 50,
+      "softmax": 30,
+      "quantization": 30
+    },
+    "fp16_small_value": 0.001,
+    "fp16_abs_tol": 0.0001,
+    "configs": {
+      "C4": {
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+        "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+      },
+      "C1": {
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+        "alias": "tcu_th16_c1_v3_axi_fix"
+      }
+    },
+    "variants": {
+      "SOFTMAX_LAYOUT_FUSED_VARIANT": "rev2_shuffle_cursor"
+    },
+    "slurm_job_id": "5219",
+    "cases": [
+      {
+        "candidate": "C1",
+        "app": "softmax",
+        "shape": "decode",
+        "args": "-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125",
+        "pair": "softmax/decode",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "softmax_layout_fused",
+        "shape": "decode",
+        "args": "-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125",
+        "pair": "softmax/decode",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "softmax",
+        "shape": "prefill",
+        "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125",
+        "pair": "softmax/prefill",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "softmax_layout_fused",
+        "shape": "prefill",
+        "args": "-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125",
+        "pair": "softmax/prefill",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "softmax",
+        "shape": "tail_columns",
+        "args": "-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125",
+        "pair": "softmax/tail_columns",
+        "bench_args": null
+      },
+      {
+        "candidate": "C4",
+        "app": "softmax_layout_fused",
+        "shape": "tail_columns",
+        "args": "-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125",
+        "pair": "softmax/tail_columns",
+        "bench_args": null
+      }
+    ],
+    "source_identities": {
+      "softmax": "820ed3a856443993ec334eeb20182a62f149d1b6051011c2e11f43e608b54631",
+      "softmax_layout_fused": "5d4334c1e4662d28980a58f22f03fe9577eff9a8d436a67d6ac6f3321cbb32d6"
+    },
+    "kernel_variants": {
+      "softmax": {
+        "configured": "rev2_shuffle_grouped",
+        "selected": "rev2_shuffle_grouped",
+        "sources": [
+          "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/tests/regression/softmax/kernel.rev2_shuffle_grouped.cpp"
+        ]
+      },
+      "softmax_layout_fused": {
+        "configured": "rev2_shuffle_cursor",
+        "selected": "rev2_shuffle_cursor",
+        "sources": [
+          "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/tests/regression/softmax_layout_fused/kernel.rev2_shuffle_cursor.cpp"
+        ]
+      }
+    },
+    "phase": "benchmark",
+    "functionality_gate": "PASS"
+  },
+  "results": [
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "configured",
+      "phase": "static",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": "",
+      "cycle_samples": "",
+      "elapsed_s": 1.466,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.configured.static.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' static /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh make --no-print-directory -C /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llm_regression_rev4/C1/tests/regression/softmax --eval '.PHONY: llm-static-check\nllm-static-check:\n\t$(VX_CXX) $(VX_CFLAGS) -fsyntax-only $(VX_SRCS)\n\t$(CXX) $(CXXFLAGS) -fsyntax-only $(SRCS)\n\t$(if $(BENCH_SRCS),$(CXX) $(BENCH_CXXFLAGS) -fsyntax-only $(BENCH_SRCS),:)\n' llm-static-check",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "configured",
+      "phase": "static",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": "",
+      "cycle_samples": "",
+      "elapsed_s": 0.715,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.configured.static.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' static /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh make --no-print-directory -C /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llm_regression_rev4/C4/tests/regression/softmax_layout_fused --eval '.PHONY: llm-static-check\nllm-static-check:\n\t$(VX_CXX) $(VX_CFLAGS) -fsyntax-only $(VX_SRCS)\n\t$(CXX) $(CXXFLAGS) -fsyntax-only $(SRCS)\n\t$(if $(BENCH_SRCS),$(CXX) $(BENCH_CXXFLAGS) -fsyntax-only $(BENCH_SRCS),:)\n' llm-static-check",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "decode",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 31250,
+      "cycle_samples": 2,
+      "elapsed_s": 18.188,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.decode.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --args '-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "decode",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 36292,
+      "cycle_samples": 2,
+      "elapsed_s": 17.789,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.decode.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --args '-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "prefill",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 128942,
+      "cycle_samples": 2,
+      "elapsed_s": 17.338,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.prefill.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --args '-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "prefill",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 127181,
+      "cycle_samples": 2,
+      "elapsed_s": 17.238,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.prefill.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --args '-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "tail_columns",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 74480,
+      "cycle_samples": 2,
+      "elapsed_s": 17.088,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.tail_columns.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --args '-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "tail_columns",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 76992,
+      "cycle_samples": 2,
+      "elapsed_s": 16.137,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.tail_columns.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --args '-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "decode",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 31119,
+      "cycle_samples": 3,
+      "elapsed_s": 19.992,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.decode.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --bench --args '-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.decode.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "decode",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 36304,
+      "cycle_samples": 3,
+      "elapsed_s": 19.291,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.decode.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --bench --args '-batch 1 -heads 2 -seqq 1 -seqk 128 -seqk-stride 128 -mask 0 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.decode.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "prefill",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 130689,
+      "cycle_samples": 3,
+      "elapsed_s": 18.59,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.prefill.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --bench --args '-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.prefill.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "prefill",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 126148,
+      "cycle_samples": 3,
+      "elapsed_s": 19.04,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.prefill.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --bench --args '-batch 1 -heads 1 -seqq 32 -seqk 32 -seqk-stride 32 -mask 1 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.prefill.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "softmax",
+      "shape": "tail_columns",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 73096,
+      "cycle_samples": 3,
+      "elapsed_s": 20.142,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.tail_columns.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app softmax --perf 0 --bench --args '-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C1.softmax.tail_columns.benchmark.csv' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C4",
+      "app": "softmax_layout_fused",
+      "shape": "tail_columns",
+      "phase": "benchmark",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 76607,
+      "cycle_samples": 3,
+      "elapsed_s": 19.19,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.tail_columns.benchmark.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh bash ci/run_black.sh hw --app softmax_layout_fused --perf 0 --bench --args '-batch 2 -heads 2 -seqq 3 -seqk 17 -seqk-stride 32 -mask 0 -scale 0.125 --warmup=1 --iterations=3 --csv --output=/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/regression_results/softmax_rev4_optimization/no_sync/C4.softmax_layout_fused.tail_columns.benchmark.csv' --fpga-bin improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+      "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix"
+    }
+  ],
+  "comparisons": [
+    {
+      "pair": "softmax/decode",
+      "status": "PASS",
+      "overhead_pct": 16.66184646036184,
+      "standalone_cycle": 31119,
+      "fused_cycle": 36304,
+      "limit_pct": 30,
+      "reason": ""
+    },
+    {
+      "pair": "softmax/prefill",
+      "status": "PASS",
+      "overhead_pct": -3.474661218618247,
+      "standalone_cycle": 130689,
+      "fused_cycle": 126148,
+      "limit_pct": 30,
+      "reason": ""
+    },
+    {
+      "pair": "softmax/tail_columns",
+      "status": "PASS",
+      "overhead_pct": 4.803272408886938,
+      "standalone_cycle": 73096,
+      "fused_cycle": 76607,
+      "limit_pct": 30,
+      "reason": ""
+    }
+  ]
+}
