@@ -1,5 +1,0 @@
-status: complete
-mode: xrt-vcs-sim
-build: build/
-execution: sequential
-reference_checks: PASS / PASS

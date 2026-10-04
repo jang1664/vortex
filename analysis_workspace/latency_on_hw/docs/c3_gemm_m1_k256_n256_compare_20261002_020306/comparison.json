@@ -1,8 +1,0 @@
-{
-  "old_cycles": 9806,
-  "v2_cycles": 10321,
-  "delta_cycles": 515,
-  "delta_percent": 5.251886600040791,
-  "kernel_identical": true,
-  "both_passed": true
-}

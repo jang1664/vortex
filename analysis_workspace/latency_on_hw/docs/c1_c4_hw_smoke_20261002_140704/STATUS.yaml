@@ -1,8 +1,0 @@
-status: complete
-mode: hw
-completed: 35
-planned: 35
-passed: 25
-numerical_failures: 10
-timeouts: 0
-report: SUMMARY.md

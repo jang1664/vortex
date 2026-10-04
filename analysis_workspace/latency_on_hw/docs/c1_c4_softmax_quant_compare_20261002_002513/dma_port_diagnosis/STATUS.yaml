@@ -1,5 +1,0 @@
-status: complete
-experiment: C3_DMA_DCACHE_PORTS_2_to_1
-reference_checks: PASS
-functional_rtl_changed: false
-report: ROOT_CAUSE.md

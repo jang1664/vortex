@@ -1,9 +1,0 @@
-{
-  "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr.sh": "0e1032a3e3f9922b17f3b05287b98a4baa63988a39fe237c67f6f4f531e8559d",
-  "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh": "9970a261eb038fa68dd1237d05ac9139e362852b60c86cee73dc003ad551d8c6",
-  "tests/regression/fpint_gemm_ffn_hw_naive/main.cpp": "08a88580c19d3fb0bad6107ee41902fddf4c3579e951f61a29dfeb7e67989ec5",
-  "tests/regression/fpint_gemm_ffn_hw_naive/kernel.cpp": "13ea353c40cf9ff0d4efce76d4a753e623007d660cad1fa5ad06b1876fceee25",
-  "tests/regression/fpint_gemm_ffn_hw_naive/common.h": "dfa69c5ae5faf16700bc72377e0e4f9f444929b2d4a7a4f8d72a6e869f5f27b8",
-  "hw/rtl/core/VX_mem_unit.sv": "b1e627144c9ff854c946949089688b06fa59e16bebc4faa76b33918c26be529a",
-  "ci/run_black.sh": "113b9ecb3a05a71582cf81cb667884a4cb07f646831b6e6fd3ae7656d7912032"
-}

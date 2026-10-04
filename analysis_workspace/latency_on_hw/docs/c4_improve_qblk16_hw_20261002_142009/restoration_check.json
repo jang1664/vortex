@@ -1,6 +1,0 @@
-{
-  "original_source_unchanged": true,
-  "original_host_restored": true,
-  "returncode": 255,
-  "stderr": "Invalid parameters: QBLK=16 WTRANS=0 QDIR=0\n"
-}

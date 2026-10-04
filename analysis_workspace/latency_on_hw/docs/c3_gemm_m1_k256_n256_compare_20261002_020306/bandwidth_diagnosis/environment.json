@@ -1,8 +1,0 @@
-{
-  "CC": "/usr/bin/gcc",
-  "CXX": "/usr/bin/g++",
-  "MAKEFLAGS": "-j8",
-  "SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build/vcs_simlib",
-  "VCS_SIMLIB_DIR": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build/vcs_simlib",
-  "XILINX_IP_DIR": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_lmem_capacity_verify/sim/xrtsim_vcs/xilinx_ip"
-}
