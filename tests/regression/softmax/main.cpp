@@ -134,6 +134,7 @@ int main(int argc, char *argv[]) {
   uint32_t seq_len_k_stride = 0;
   uint32_t use_mask = 1;  // Causal masking by default
   float scale = 1.0f / std::sqrt(64.0f);  // 1/sqrt(d_k), assuming head_dim=64
+  uint32_t seed = std::random_device{}();
   
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
@@ -151,9 +152,14 @@ int main(int argc, char *argv[]) {
       use_mask = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-scale") == 0) {
       scale = atof(argv[++i]);
+    } else if (strcmp(argv[i], "-seed") == 0) {
+      if (i + 1 >= argc || !parse_softmax_seed(argv[++i], seed)) {
+        printf("ERROR: -seed requires an integer in [0, 4294967295]\n");
+        return 1;
+      }
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch N] [-heads H] [-seqq Q] [-seqk K] "
-             "[-seqk-stride KS] [-mask 0|1] [-scale S]\n", argv[0]);
+             "[-seqk-stride KS] [-mask 0|1] [-scale S] [-seed U32]\n", argv[0]);
       return 0;
     }
   }
@@ -187,7 +193,8 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_output_cpu(input_size);
   
   // Initialize data
-  initialize_softmax_scores(h_input);
+  printf("Input: uniform random [-2, 2), seed=%u\n", seed);
+  initialize_softmax_scores(h_input, seed);
   
   // Run CPU reference
   printf("Running CPU reference...\n");

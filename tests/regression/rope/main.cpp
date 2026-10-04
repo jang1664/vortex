@@ -3,6 +3,7 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
@@ -290,6 +291,7 @@ int main(int argc, char *argv[]) {
   printf("Verifying results...\n");
   
   int errors = 0;
+  const int error_limit = std::getenv("VX_REGRESSION_REPORT_ERRORS") ? 1024 : 10;
   float max_diff = 0.0f;
   float max_rel_error = 0.0f;
   
@@ -305,7 +307,7 @@ int main(int argc, char *argv[]) {
     float threshold = std::max(abs_threshold, rel_threshold);
     
     if (diff > threshold) {
-      if (errors < 10) {
+      if (errors < error_limit) {
         float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
         max_rel_error = std::max(max_rel_error, rel_error);
         printf("Error at %d: GPU=%.6f, CPU=%.6f, diff=%.6f, rel_err=%.2f%%\n", 

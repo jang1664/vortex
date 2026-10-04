@@ -113,6 +113,15 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual("FAIL", self.classify(text.replace("0.000020", "1.000020")))
         self.assertEqual("FAIL", self.classify(text + "Modified padding at k=17\n"))
 
+    def test_extended_mismatch_log_requires_every_failed_value(self):
+        records = [f"Error at {i}: GPU=0.000000, CPU=0.000040, diff=0.000040\n"
+                   for i in range(18)]
+        summary = "FAILED! (18 errors)\n"
+        self.assertEqual("PASS_FP16_EXCEPTION", self.classify("".join(records) + summary))
+        self.assertEqual("FAIL", self.classify("".join(records[:-1]) + summary))
+        records[-1] = "Error at 17: GPU=0.000000, CPU=1.000000, diff=1.000000\n"
+        self.assertEqual("FAIL", self.classify("".join(records) + summary))
+
     def test_config_paths_require_unambiguous_hardware_image(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "test.sh"

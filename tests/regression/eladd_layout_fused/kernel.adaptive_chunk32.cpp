@@ -82,7 +82,9 @@ static __attribute__((noinline)) void run_warp_coalesced_chunk32(
 }
 
 void kernel_eladd_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
-  if (arg->M_real < 8u)
+  // Enough rows to occupy the physical warps: avoid decoding a new tiled
+  // offset for every chunk of a long row, even when fewer blocks do work.
+  if (arg->M_real < NUM_CORES * NUM_WARPS)
     run_warp_coalesced_chunk32(arg);
   else
     run_row_coalesced_cursor(arg);

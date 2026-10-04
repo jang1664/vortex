@@ -133,6 +133,7 @@ int main(int argc, char *argv[]) {
   uint32_t seq_k_stride = 0;
   uint32_t use_mask = 1;
   float scale = 1.0f;
+  uint32_t seed = std::random_device{}();
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
@@ -142,9 +143,15 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-seqk-stride") == 0) seq_k_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mask") == 0) use_mask = atoi(argv[++i]);
     else if (strcmp(argv[i], "-scale") == 0) scale = atof(argv[++i]);
+    else if (strcmp(argv[i], "-seed") == 0) {
+      if (i + 1 >= argc || !parse_softmax_seed(argv[++i], seed)) {
+        printf("ERROR: -seed requires an integer in [0, 4294967295]\n");
+        return 1;
+      }
+    }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-heads H] [-seqq Q] [-seqk K] "
-             "[-seqk-stride KS] [-mask 0|1] [-scale S]\n", argv[0]);
+             "[-seqk-stride KS] [-mask 0|1] [-scale S] [-seed U32]\n", argv[0]);
       return 0;
     }
   }
@@ -180,7 +187,8 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_ref(tiled_elems);
   const data_t padding_sentinel = float_to_fp16(-123.0f);
   std::vector<data_t> h_out(tiled_elems, padding_sentinel);
-  initialize_softmax_scores(h_input_row);
+  printf("Input: uniform random [-2, 2), seed=%u\n", seed);
+  initialize_softmax_scores(h_input_row, seed);
   pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
   softmax_reference(h_input_row, h_ref, batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask != 0, scale);
 

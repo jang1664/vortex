@@ -46,8 +46,9 @@ static void zero_output_padding(kernel_arg_t *__UNIFORM__ arg) {
 
 }
 
-__attribute__((noinline))
-static void rope_gemm_a_cursor(kernel_arg_t *__UNIFORM__ arg) {
+template <uint32_t Layout>
+__attribute__((always_inline))
+static inline void rope_chunk_cursor(kernel_arg_t *__UNIFORM__ arg) {
   auto input = reinterpret_cast<data_t *>(arg->input_addr);
   auto output = reinterpret_cast<data_t *>(arg->output_addr);
   auto cos_table = reinterpret_cast<data_t *>(arg->cos_addr);
@@ -70,8 +71,13 @@ static void rope_gemm_a_cursor(kernel_arg_t *__UNIFORM__ arg) {
   const uint64_t k_matrix_elems = (uint64_t)head_dim * arg->max_seq_len;
 
   for (uint32_t task = thread_id; task < total_tasks; task += total_threads) {
-    const uint32_t bs = task / tasks_per_seq;
-    const uint32_t hc = task - bs * tasks_per_seq;
+    // Adjacent threads read adjacent GEMM-C rows, rather than widely
+    // separated column microtiles that contend for the same cache banks.
+    const uint32_t rows = arg->batch_size * seq_len;
+    const uint32_t bs = Layout == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW
+        ? task % rows : task / tasks_per_seq;
+    const uint32_t hc = Layout == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW
+        ? task / rows : task - bs * tasks_per_seq;
     const uint32_t b = bs / seq_len;
     const uint32_t s = bs - b * seq_len;
     const uint32_t h = hc / chunks;
@@ -89,11 +95,17 @@ static void rope_gemm_a_cursor(kernel_arg_t *__UNIFORM__ arg) {
             __builtin_ctz(TILE_DMA_MT), __builtin_ctz(TILE_DMA_MXU_NT));
         const uint32_t input_cm = min_u32(arg->input_m_pad - (input_m & ~(TILE_DMA_MT - 1u)), TILE_DMA_MT);
         const uint64_t x1_base = x0_base + (uint64_t)half_dim * input_cm;
-        const uint64_t y0_base = out_base + gemm_a_tiled_elem_offset(
-            s, p_begin, arg->output_m_pad, head_dim,
-            __builtin_ctz(TILE_DMA_MT), __builtin_ctz(TILE_DMA_MXU_KT));
-        const uint32_t output_cm = min_u32(arg->output_m_pad - (s & ~(TILE_DMA_MT - 1u)), TILE_DMA_MT);
-        const uint64_t y1_base = y0_base + (uint64_t)half_dim * output_cm;
+        uint64_t y0_base, y1_base;
+        if (Layout == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW) {
+          y0_base = ((uint64_t)matrix_idx * seq_len + s) * head_dim + p_begin;
+          y1_base = y0_base + half_dim;
+        } else {
+          y0_base = out_base + gemm_a_tiled_elem_offset(
+              s, p_begin, arg->output_m_pad, head_dim,
+              __builtin_ctz(TILE_DMA_MT), __builtin_ctz(TILE_DMA_MXU_KT));
+          const uint32_t output_cm = min_u32(arg->output_m_pad - (s & ~(TILE_DMA_MT - 1u)), TILE_DMA_MT);
+          y1_base = y0_base + (uint64_t)half_dim * output_cm;
+        }
         const uint64_t freq_base = (uint64_t)pos * half_dim + p_begin;
         for (uint32_t d = 0; d < p_end - p_begin; ++d) {
           const float c = fp16_to_float(cos_table[freq_base + d]);
@@ -210,12 +222,16 @@ void kernel_rope_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   if (arg->kernel_id == KERNEL_ROPE_LAYOUT_FUSED) {
-    zero_output_padding(arg);
+    if (arg->layout_to == ROPE_LAYOUT_TO_GEMM_A && arg->output_m_pad > arg->seq_len)
+      zero_output_padding(arg);
     constexpr uint32_t pairs = TILE_DMA_MXU_NT < TILE_DMA_MXU_KT
         ? TILE_DMA_MXU_NT : TILE_DMA_MXU_KT;
-    if (arg->layout_to == ROPE_LAYOUT_TO_GEMM_A
+    if (arg->layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW
         && ((arg->head_dim >> 1) & (pairs - 1u)) == 0u)
-      rope_gemm_a_cursor(arg);
+      rope_chunk_cursor<ROPE_LAYOUT_TO_HEAD_MAJOR_ROW>(arg);
+    else if (arg->layout_to == ROPE_LAYOUT_TO_GEMM_A
+        && ((arg->head_dim >> 1) & (pairs - 1u)) == 0u)
+      rope_chunk_cursor<ROPE_LAYOUT_TO_GEMM_A>(arg);
     else
       kernel_rope_layout_fused(arg);
   }

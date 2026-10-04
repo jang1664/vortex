@@ -326,6 +326,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
 
   int errors = 0;
+  const int error_limit = std::getenv("VX_REGRESSION_REPORT_ERRORS") ? 1024 : 10;
   float max_diff = 0.0f;
   for (size_t i = 0; i < output_elems; ++i) {
     float got = fp16_to_float(h_out[i]);
@@ -333,7 +334,7 @@ int main(int argc, char *argv[]) {
     float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);
     if (diff > 1e-4f) {
-      if (errors < 10) {
+      if (errors < error_limit) {
         printf("Error at %zu: got=%f expected=%f diff=%f\n", i, got, expected, diff);
       }
       ++errors;

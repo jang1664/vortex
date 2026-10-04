@@ -211,7 +211,7 @@ EXCEPTION_APPS = {"eladd", "elmul", "silu", "rmsnorm", "rope", "softmax",
 
 def correctness(log: Path, returncode: int, app: str, small_value: float,
                 absolute_tolerance: float) -> tuple[str, str]:
-    # Hosts print at most ten mismatch records. Never waive unreported errors.
+    # Only waive fully reported failures; bounded host logs may omit records.
     text = log.read_text(errors="replace")
     if app == "silu_layout_fused" and returncode == 0:
         checks = re.findall(r"^\s*fused output \(real rows only\):.*?errors=(\d+)\b", text, re.M)
@@ -230,7 +230,7 @@ def correctness(log: Path, returncode: int, app: str, small_value: float,
         count = int(next(part for part in counts[-1] if part)) if counts else 0
         records = [line for line in text.splitlines() if line.strip().startswith("Error at")]
         forbidden = re.search(r"Row sum error|Modified padding|returned -?\d+!|FATAL|Segmentation fault|REGRESSION:", text)
-        valid = 0 < count <= 10 and len(records) == count and not forbidden
+        valid = count > 0 and len(records) == count and not forbidden
         # The aggregate max also includes valid relative-tolerance comparisons
         # at larger magnitudes. Bound every failed comparison itself instead.
         for line in records:
@@ -609,7 +609,8 @@ def main(argv=None):
                 command = command_for(args.mode, selection, case, phase == "benchmark", args.iterations,
                                       log.with_suffix(".csv"))
                 started = time.monotonic()
-                code = execute(command, build, log, args.timeout, env)
+                case_env = dict(env, VX_REGRESSION_REPORT_ERRORS="1") if phase == "correctness" else env
+                code = execute(command, build, log, args.timeout, case_env)
                 stats = parse_fpga_cycle_stats(log)
                 if phase == "correctness":
                     status, reason = correctness(log, code, case.app, args.fp16_small_value, args.fp16_abs_tol)
