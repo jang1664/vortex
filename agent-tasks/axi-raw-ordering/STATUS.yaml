@@ -1,0 +1,81 @@
+task: axi-raw-ordering
+state: complete
+updated: "2026-10-04 04:03"
+confirmed: true
+iterations:
+  - iteration: 1
+    timestamp: "2026-10-04 03:07"
+    status: pass
+    test: axi_adapter VCS unit
+    result: 44 cases plus 1/2/3-credit RAW scenarios passed.
+    report: verify_phase1.json
+  - iteration: 2
+    timestamp: "2026-10-04 03:25"
+    status: pass
+    test: axi_adapter VCS unit with synchronous RAM helper
+    result: 45 cases plus helper ordering, duplicate IDs/addresses, simultaneous AW/B, and held admission passed.
+    report: verify_phase2.json
+  - iteration: 3
+    timestamp: "2026-10-04 03:49"
+    status: pass
+    test: axi_adapter configurable depth default16
+    result: 45 cases and helper checks PASS; RTL behavior unchanged at default.
+    report: verify_depth_config.json
+  - iteration: 4
+    timestamp: "2026-10-04 03:53"
+    status: pass
+    test: depth16..512 fixed-latency write pressure and ordinary adapter regression
+    result: All PASS; throughput plateaus at256 with peak130; ordinary45 cases PASS.
+    report: verify_depth_bench.json, verify_depth_regression.json
+  - iteration: 5
+    timestamp: "2026-10-04 03:55"
+    status: pass
+    test: precise write-pressure depth boundary129/130
+    result: All8 depths PASS;129=1016/1024 writes;130=1024/1024, matching256/512.
+    report: verify_depth_boundary.json
+pitfalls:
+  - SystemVerilog reserves matches; use hazard_matches for a scan match mask.
+  - Fresh direct simv precompile lacked generated VX_config.h; use run_black.sh prerequisite flow.
+  - Diagnostic global gate can change ARVALID under stall; production logic must hold admission.
+  - AW/W acceptance into downstream cuts is not write completion. Retire hazards at B.
+  - Existing response-reordering TB is diagnostic-only and must be selected explicitly.
+  - Performance controls must use the same kernel/config/memory flags.
+  - Do not disturb the two active FPGA pipeline allocations.
+
+log:
+  - timestamp: "2026-10-04 03:04"
+    action: Repeated original adapter baseline in isolated VCS build.
+    result: PASS, 164179 cycles, baseline source identical to HEAD.
+  - timestamp: "2026-10-04 03:07"
+    action: Port counters implemented; verification agent running extended VCS adapter unit.
+    result: Full-system RTL precompilation running independently.
+  - timestamp: "2026-10-04 03:15"
+    action: Completed phase1 full-system correctness/performance comparisons.
+    result: "Normal PASS 164299 (+0.07309%); reordered PASS306482; matched inorder stress PASS304410 vs286220 (+6.355%)."
+  - timestamp: "2026-10-04 03:15"
+    action: Triggered user-authorized VX_dp_ram inflight-write tracker because matched stress exceeds 3%.
+    result: RTL implementation agent preparing address-specific protection.
+  - timestamp: "2026-10-04 03:20"
+    action: Phase2 full VCS precompile exposed a SystemVerilog reserved identifier.
+    result: Implementation agent renamed matches to hazard_matches; precompile resumed.
+  - timestamp: "2026-10-04 03:25"
+    action: Phase2 unit PASS and full-system RTL precompile PASS.
+    result: Running reordered, normal, and matched in-order stress softmax measurements.
+  - timestamp: "2026-10-04 03:26"
+    action: Phase2 reordered-response full-system VCS completed.
+    result: PASS, 296909 cycles, zero errors; normal/in-order measurements continue.
+  - timestamp: "2026-10-04 03:29"
+    action: Completed final RAM-tracker full-system VCS comparisons and diff review.
+    result: "All PASS: normal164269 (+0.05482%); inorder291410 (+1.81329%); reordered296909, zero errors. Both correct baseline overheads below3%."
+  - timestamp: "2026-10-04 03:49"
+    action: Added configurable depth and experiment-only occupancy bind monitor.
+    result: Instrumented depth16 full-system compilation in progress.
+  - timestamp: "2026-10-04 03:53"
+    action: Instrumented softmax depth16 control completed.
+    result: PASS291410 unchanged; all four ports reach occupancy16; full depth32/64/128 sweep running.
+  - timestamp: "2026-10-04 03:59"
+    action: Completed depth16/32/64/128 matched in-order VCS sweep.
+    result: "All PASS; cycles291410/288731/289512/288731; max occupancy16/32/36/36. Capacity blocking disappears at64; normal/reordered64 confirmation running."
+  - timestamp: "2026-10-04 04:03"
+    action: Finished64 normal/reordered confirmation, source-hash verification and diff review.
+    result: "All PASS; normal164276 and reordered286589 cycles, zero errors. Depth64 sufficient for tested softmax; write-only latency128 saturates at130. Default16 preserved; override available."

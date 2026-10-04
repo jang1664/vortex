@@ -56,6 +56,7 @@ TEST_DIRS += \
 	kv_cache_dequant_w4a16 \
 	kv_cache_quant_layout_fused_w4a16 \
 	kv_cache_quant_w4a16 \
+	lmem_reduction_raw \
 	madmax \
 	mmio_burst_proto \
 	mstress \
