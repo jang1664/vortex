@@ -1,0 +1,71 @@
+task: fp16-subnormal-conversion
+state: complete
+spec: fp16-subnormal-conversion-spec.md
+scope: DSP/Vivado scalar FP32/FP16 subnormal conversion
+iterations:
+  - iteration: 1
+    timestamp: '2026-10-03 02:17'
+    status: compile_error
+    test_name: fpu_f2f_subnormal
+    error_summary: New unit test lacked mixed-language library binding and helper module search.
+    root_cause: Standalone VCS setup did not mirror the existing xrt vlogan-to-vcs flow.
+    fix_applied: Added existing mixed-language configuration and helper library search to the new test Makefile.
+    lesson: Reuse the xrt two-stage compile flow for actual Xilinx VHDL IP tests.
+    report: ../../build_fp16_softmax_debug_20261003/fp16_f2f_unit_iteration1.json
+  - iteration: 2
+    timestamp: '2026-10-03 02:18'
+    status: compile_error
+    test_name: fpu_f2f_subnormal
+    error_summary: SoftFloat reference symbols were unresolved at link time.
+    root_cause: VCS placed the static reference archive before DPI objects.
+    fix_applied: Reused the xrt whole-archive linker flags in the new test Makefile.
+    lesson: The SoftFloat reference archive needs the existing VCS whole-archive link convention.
+    report: ../../build_fp16_softmax_debug_20261003/fp16_f2f_unit_iteration2.json
+  - iteration: 3
+    timestamp: '2026-10-03 02:19'
+    status: sim_fail
+    test_name: fpu_f2f_subnormal
+    error_summary: Output data matched, but negative boundary conversion under RDN omitted UF.
+    root_cause: Final half exponent alone does not implement tininess after precision rounding with an unbounded exponent range.
+    fix_applied: Requested an independent full-precision rounding check for the minimum-normal boundary.
+    lesson: SoftFloat can report UF when final rounding yields the minimum normal half; use its unbounded-exponent precision rule.
+    report: ../../build_fp16_softmax_debug_20261003/fp16_f2f_unit_iteration3.json
+  - iteration: 4
+    timestamp: '2026-10-03 02:22'
+    status: pass
+    test_name: fpu_f2f_subnormal
+    error_summary: none
+    root_cause: none
+    fix_applied: Used precision rounding with an unbounded exponent to determine tininess.
+    lesson: All 92420 SoftFloat result/flag comparisons pass with serializer stalls, masks, tags and bubbles.
+    report: ../../build_fp16_softmax_debug_20261003/fp16_f2f_unit_iteration4.json
+history:
+  - timestamp: '2026-10-03 02:11'
+    action: Confirmed scope from user request and started RTL correction and focused verification.
+    evidence: Original C4 xrt-vcs-sim softmax scale 3 fails; output-only software preservation passes.
+  - timestamp: '2026-10-03 02:15'
+    action: Reviewed the initial RTL correction before simulation and requested a constant correction.
+    evidence: The draft half-unit shift bias evaluated to 128; the derived shift must be 126 minus the effective FP32 exponent.
+  - timestamp: '2026-10-03 02:25'
+    action: Completed original-kernel xrt-vcs-sim blackbox verification with the C4 config and software preservation disabled.
+    evidence: Softmax scale 3 and scale 1 and fp16_zfh all pass; original softmax kernel ELF hash is unchanged, and all four formerly flushed outputs match CPU bits.
+    performance: Softmax remains 17142 instructions and 11642 cycles for both scales.
+verification:
+  configured_build: build_fp16_softmax_debug_20261003
+  config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v2.sh
+  unit_values: 92420
+  softmax_scale3_log: ../../build_fp16_softmax_debug_20261003/softmax_scale3_rtl_fix.log
+  softmax_scale1_log: ../../build_fp16_softmax_debug_20261003/softmax_scale1_rtl_fix.log
+  fp16_zfh_log: ../../build_fp16_softmax_debug_20261003/fp16_zfh_rtl_fix.log
+limitations:
+  - FP16 arithmetic IPs still flush subnormal operands and results.
+  - Existing normal/special conversion IP rounding and exception behavior is unchanged.
+  - No synthesis, place-and-route, or updated FPGA bitstream was produced.
+pitfalls:
+  - Xilinx C_Has_UNDERFLOW enables an exception output; it does not enable gradual underflow.
+  - The softmax absolute tolerance hides one of four flushed subnormal outputs.
+  - Build-side diagnostic software conversion must be disabled when validating the RTL correction.
+  - Existing normal-path rounding and flag limitations are outside the subnormal-only correction.
+  - Derive the half-unit shift from mantissa times 2^(FP32_exp-127-23+24); its bias is 126, not 128.
+  - Do not infer UF only from the final half exponent; tininess after rounding assumes an unbounded exponent range before the denormal precision reduction.
+  - Force recompilation of the full-system simv after a leaf RTL edit; its make target does not list every RTL leaf as a dependency.
