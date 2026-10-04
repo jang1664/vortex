@@ -124,6 +124,10 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
                                          uint32_t use_mask,
                                          float scale,
                                          uint32_t lane) {
+  // Cursor launches one warp per block. Each lane owns scores[lane + n*NT];
+  // reductions exchange registers, not scores. No cross-warp producer or
+  // consumer needs a barrier, and draining global writes with a fence per
+  // reduction only serializes unrelated output/stack traffic.
   const uint32_t k_end = use_mask && q + 1u < seq_len_k
       ? q + 1u
       : seq_len_k;
@@ -190,11 +194,11 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
     }
   }
 #endif
-#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP
+#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP && !SOFTMAX_REV2_SHUFFLE_CURSOR
   __syncthreads();
 #endif
   const float global_max = warp_reduce_max(local_max, lane);
-#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP
+#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP && !SOFTMAX_REV2_SHUFFLE_CURSOR
   vx_fence();
 #endif
 
@@ -252,11 +256,11 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
     local_sum += exp_value;
   }
 #endif
-#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP
+#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP && !SOFTMAX_REV2_SHUFFLE_CURSOR
   __syncthreads();
 #endif
   const float inv_sum = 1.0f / warp_reduce_sum(local_sum, lane);
-#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP
+#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP && !SOFTMAX_REV2_SHUFFLE_CURSOR
   vx_fence();
 #endif
 
@@ -264,7 +268,9 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
   if (k_end > kLocalScoreCapacity) {
     softmax_write_cache_overflow(accessor, scores, kLocalScoreCapacity,
         seq_len_k, k_end, scale, global_max, inv_sum, lane);
+#if !SOFTMAX_REV2_SHUFFLE_CURSOR
     __syncthreads();
+#endif
     return;
   }
 #endif
@@ -371,7 +377,7 @@ static inline void softmax_shuffle_cached(const Accessor& accessor,
     accessor.store(k, float_to_fp16(0.0f));
   }
 #endif
-#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP
+#if SOFTMAX_REV2_SHUFFLE_FULL_WARP_EXP && !SOFTMAX_REV2_SHUFFLE_CURSOR
   // A later row reuses this warp's score partition.
   __syncthreads();
 #endif

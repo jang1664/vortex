@@ -49,7 +49,7 @@ class RegressionTests(unittest.TestCase):
         cases = regression.cases()
         apps = {case.app for case in cases}
         self.assertEqual(22, len(apps))
-        self.assertEqual(76, len(cases))
+        self.assertEqual(78, len(cases))
         for app in apps:
             self.assertGreaterEqual(len([case for case in cases if case.app == app]), 3)
         for case in cases:

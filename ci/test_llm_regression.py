@@ -130,8 +130,10 @@ def cases() -> list[Case]:
     for index, (m, n, k) in enumerate(((8, 16, 32), (16, 32, 64), (17, 33, 64)), 1):
         out.append(Case("C1", "sgemm_tcu", f"case{index}", f"-m {m} -n {n} -k {k}"))
     for candidate, app in (("C3", "fpint_gemm_ffn_hw_naive"), ("C4", "fpint_gemm_ffn_hw")):
+        # Include multiple 128x128 tiles and multiple K tiles.
         for index, (m, n, k, d, t) in enumerate(((1, 32, 32, 0, 0),
-                                              (8, 64, 64, 1, 0), (9, 64, 64, 0, 1)), 1):
+                                              (8, 64, 64, 1, 0), (9, 64, 64, 0, 1),
+                                              (256, 256, 256, 0, 0)), 1):
             out.append(Case(candidate, app, f"case{index}",
                             f"-m {m} -n {n} -k {k} -q 32 -d {d} -t {t}"))
     return out
