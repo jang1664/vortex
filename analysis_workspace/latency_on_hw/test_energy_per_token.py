@@ -381,6 +381,60 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflict with summary columns"):
             summarize_energy_rows([], group_by=("stage",))
 
+    def test_decode_power_resolutions_remain_plottable(self) -> None:
+        for resolution in (
+            "measured", "promoted", "imputed", "invariant_reused",
+            "bucket_reused", "interpolated",
+        ):
+            with self.subTest(resolution=resolution):
+                row = {
+                    **self._name_backend_energy_rows()[0],
+                    "energy_stage": "generation",
+                    "energy_tokens": 128,
+                    "power_resolution": resolution,
+                    "energy_missing_power": False,
+                }
+                totals = summarize_energy_rows([row])
+                components = add_relative_energy_component_values(
+                    summarize_energy_rows([row], group_by=("kind",)),
+                    totals,
+                )
+
+                self.assertTrue(totals[0]["complete"])
+                self.assertEqual(totals[0]["missing_power_count"], 0)
+                count = (
+                    "measured_power_count"
+                    if resolution in {"measured", "promoted"}
+                    else "imputed_power_count"
+                )
+                self.assertEqual(totals[0][count], 1)
+                self.assertTrue(components[0]["total_complete"])
+                self.assertEqual(components[0]["relative_joules_per_token"], 1.0)
+                self.assertEqual(row["power_resolution"], resolution)
+
+    def test_missing_power_still_excludes_energy_comparison(self) -> None:
+        for resolution, missing_power in (
+            ("missing", True), ("unknown", False),
+            ("measured", True), ("promoted", True),
+            ("imputed", True), ("invariant_reused", True),
+            ("bucket_reused", True), ("interpolated", True),
+        ):
+            with self.subTest(resolution=resolution, missing_power=missing_power):
+                row = {
+                    **self._name_backend_energy_rows()[0],
+                    "power_resolution": resolution,
+                    "energy_missing_power": missing_power,
+                }
+                totals = summarize_energy_rows([row])
+                components = add_relative_energy_component_values(
+                    summarize_energy_rows([row], group_by=("kind",)),
+                    totals,
+                )
+
+                self.assertFalse(totals[0]["complete"])
+                self.assertEqual(totals[0]["missing_power_count"], 1)
+                self.assertIsNone(components[0]["relative_joules_per_token"])
+
     def test_component_relative_values_sum_to_candidate_total(self) -> None:
         common = {
             "power_metric": "power_avg_W",

@@ -418,9 +418,15 @@ def summarize_energy_rows(
             group["missing_cycle_count"] += 1
             group["missing_latency_count"] += 1
         resolution = _text(row.get("power_resolution"))
-        if resolution == "measured":
+        if row.get("energy_missing_power") is True:
+            group["missing_power_count"] += 1
+        elif resolution in {"measured", "promoted"}:
             group["measured_power_count"] += 1
-        elif resolution == "imputed":
+        elif resolution in {
+            "imputed", "invariant_reused", "bucket_reused", "interpolated",
+        }:
+            # Keep the source resolution on each row; count reused/interpolated
+            # values with the existing imputed-power summary field.
             group["imputed_power_count"] += 1
         else:
             group["missing_power_count"] += 1
