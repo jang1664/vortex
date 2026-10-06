@@ -434,6 +434,51 @@ The area-normalized equivalents are
 `llama_e2e_gemm_layout_vector_stacked_without_hadamard`. The workflow pipeline
 tracks both versions using the same prepared inputs and separate render receipts.
 
+### Batch-1 input/output sweeps with Prefill/Decode breakdown
+
+`llama_input_output_stacked` reads composed per-step data directly and produces
+two relative stacked-bar figures: E2E latency and energy per output token.
+Each `[input:output]` group contains C1–C4, with Prefill and Decode as the
+two stack colors. Batch is fixed to 1. Hadamard kernels are included, and area
+normalization is disabled. This explicit plot family is separate from `--plot all`.
+Both segments are divided by the C4 total at the same model/input/output pair,
+so C4's stack sums to 1. Numeric labels show each candidate's relative total
+to two decimal places. Use `--no-value-labels` to hide them.
+
+From this directory, render the rev3 dataset with:
+
+```bash
+"$HOME/.conda/envs/vortex/bin/python" plot.py \
+  --plot llama_input_output_stacked --out-tokens 128 \
+  --models llama2_7b,llama3_8b \
+  --composed-csv composed_results.th16_20261004_rev3_pipeline/combined/composed.csv \
+  --power-metric power_fpga_dequant_dynamic_W \
+  --out-dir figure_output.th16_20261004_rev3_pipeline.input_output \
+  --formats png,pdf,svg
+```
+
+The default inputs are the batch-1 input lengths shared by the requested models;
+the default outputs are `1,4,16,64,128`. Override them using
+`--sweep-input-tokens 1024,2048` and `--sweep-output-tokens 1,16,128`.
+Axes use a linear scale by default; `--sweep-y-scale log` switches to log.
+Use `--figure-width` to override the width chosen for the number of groups.
+
+Here `--out-tokens` identifies the source workload's number of *additional*
+decode steps. The sweep output length includes the first token produced by
+prefill. For an output length O, the latency segments are prefill latency and
+the sum of decode steps 1 through O−1. The energy segments are prefill joules/O
+and decode-prefix joules/O. Thus O=1 has no Decode segment. Decode prefixes
+are summed from individual steps, rather than scaling full-run average TPOT.
+Energy uses the existing power and dequantization policies in `prepare.py`.
+
+Outputs live under `llama_input_output_stacked/`: PNG/PDF/SVG figures,
+`input_output_breakdown.csv` with the absolute totals and both contributions,
+absolute per-model tables under `data/` (normalized by the renderer),
+and `manifest.json` describing the source and formulas.
+Composed measured, reused, and interpolated (`estimated`)
+components are accepted. Missing candidates, duplicate components, incomplete
+decode prefixes, or missing latency/clock/power data raise errors.
+
 ### Skip a stalled application's power measurements
 
 Add `--skip-power-app rope_layout_fused` to `workflow.py pipeline` to keep measuring

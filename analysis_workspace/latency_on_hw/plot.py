@@ -55,6 +55,7 @@ PLOT_CHOICES = (
     "llama_e2e_gemm_layout_vector_stacked",
     "llama_e2e_gemm_layout_vector_stacked_without_hadamard",
     "llama_e2e_stacked",
+    "llama_input_output_stacked",
     "llama_gemm_only",
     "llama_gemm_only_no_area_norm",
     "llama_gemm_only_energy",
@@ -731,7 +732,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "llama_energy_no_area_norm_stacked, "
             "llama_energy_gemm_layout_vector_stacked, "
             "llama_energy_no_area_norm_gemm_layout_vector_stacked, "
-            "kernel_dynamic_power, "
+            "kernel_dynamic_power, llama_input_output_stacked, "
             "latency, or all"
         ),
     )
@@ -740,6 +741,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         type=int,
         help="scalar decode output-token count represented by every prepared CSV.",
+    )
+    parser.add_argument(
+        "--composed-csv", type=Path,
+        help="Composed kernel data for --plot llama_input_output_stacked (batch 1).",
+    )
+    parser.add_argument(
+        "--sweep-input-tokens", default=None,
+        help="Comma-separated input lengths; defaults to available batch-1 inputs.",
+    )
+    parser.add_argument(
+        "--sweep-output-tokens", default="1,4,16,64,128",
+        help="Total output lengths including the first token produced by prefill.",
+    )
+    parser.add_argument(
+        "--sweep-y-scale", choices=("linear", "log"), default="linear",
+        help="Axis scale for the relative input/output latency and energy breakdowns.",
     )
     parser.add_argument(
         "--workers",
@@ -3137,6 +3154,10 @@ def plot_model_stacked_bars(
     data_label: str,
     knobs: StackedBarKnobs,
     stack_transform: Any | None = None,
+    row_specs: Sequence[tuple[str, str]] | None = None,
+    seq_sort_key: Any = _seq_sort_key,
+    candidate_tick_labels: bool = False,
+    y_scale: str = "linear",
 ) -> None:
     pd, plt = _import_plot_modules()
     frames = _read_model_excel_frames(model_csvs)
@@ -3168,7 +3189,7 @@ def plot_model_stacked_bars(
             knobs.relative_baseline_candidate,
         )
 
-    row_specs = list(requested_llama_row_order())
+    row_specs = list(requested_llama_row_order() if row_specs is None else row_specs)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
     axes_list = list(axes[:, 0])
     x_axis_rows = _share_model_x_axes_by_stage(axes_list, row_specs)
@@ -3225,7 +3246,7 @@ def plot_model_stacked_bars(
             ax.set_yticks([])
             continue
 
-        stage_df["__seq_sort"] = stage_df["seq"].map(_seq_sort_key)
+        stage_df["__seq_sort"] = stage_df["seq"].map(seq_sort_key)
         stage_df["__batch_sort"] = pd.to_numeric(stage_df["batch"], errors="coerce")
         stage_df["__candidate_sort"] = stage_df["candidate"].map(lambda value: candidate_order.get(str(value), len(candidate_order)))
         stage_df = stage_df.sort_values(["__batch_sort", "__seq_sort", "__candidate_sort", "candidate"])
@@ -3283,6 +3304,14 @@ def plot_model_stacked_bars(
             knobs=knobs,
             show_labels=show_x_axis,
         )
+        if candidate_tick_labels:
+            ax.set_xticks(positions, minor=True)
+            ax.set_xticklabels(
+                stage_df["candidate"].astype(str), minor=True,
+                fontsize=max(5.0, knobs.tick_label_fontsize - 2.0),
+            )
+            ax.tick_params(axis="x", which="minor", length=0, pad=1)
+            ax.tick_params(axis="x", which="major", pad=15)
         if knobs.x_label and row_index == x_label_row:
             ax.set_xlabel(
                 knobs.x_label,
@@ -3297,6 +3326,14 @@ def plot_model_stacked_bars(
         ymax = max(bottoms, default=1.0)
         _apply_subplot_x_margin(ax, knobs)
         _apply_y_limits(ax, stage, ymax, knobs)
+        if y_scale == "log":
+            positive_totals = [value for value in bottoms if value > 0.0]
+            if not positive_totals:
+                raise ValueError(f"{data_label} has no positive totals for a log axis")
+            ax.set_yscale("log")
+            ax.set_ylim(min(positive_totals) * 0.65, ymax * knobs.y_lim_top_scale)
+        elif y_scale != "linear":
+            raise ValueError(f"unsupported y-axis scale: {y_scale}")
 
     if knobs.legend_order and legend_handles is not None and legend_labels is not None:
         legend_by_label = dict(zip(legend_labels, legend_handles))
@@ -4154,6 +4191,24 @@ def run_selected_plots(args: argparse.Namespace) -> None:
     plot = args.plot
     selected_plots = ALL_PLOTS if plot == "all" else (plot,)
     knobs = _plot_knobs_from_args(args)
+
+    if "llama_input_output_stacked" in selected_plots:
+        if args.composed_csv is None:
+            raise ValueError("llama_input_output_stacked requires --composed-csv")
+        from input_output_sweep import run_input_output_sweep
+
+        run_input_output_sweep(
+            resolve_under_latency_dir(str(args.composed_csv), latency_dir, prefer_existing=True),
+            output_root / "llama_input_output_stacked",
+            models=tuple(key for key, _label in requested_llama_models()),
+            source_out_tokens=args.out_tokens,
+            input_tokens=args.sweep_input_tokens,
+            output_tokens=args.sweep_output_tokens,
+            power_metric=args.power_metric or "power_fpga_dequant_dynamic_W",
+            knobs=knobs.llama_e2e_no_area_norm_stacked,
+            y_scale=args.sweep_y_scale,
+            figure_width=args.figure_width,
+        )
 
     if "kernel_dynamic_power" in selected_plots:
         explicit_raw_dbs = tuple(args.kernel_raw_db or ())
