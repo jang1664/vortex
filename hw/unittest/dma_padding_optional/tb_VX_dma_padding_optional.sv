@@ -60,6 +60,7 @@ module tb_VX_dma_padding_optional import VX_gpu_pkg::*; #(
   logic mul_test_done;
 
   VX_mul_u32_pipe #(
+    .USE_DSP(`DMA_ALIGN_USE_DSP),
     .A_WIDTH(32),
     .B_WIDTH(`DMA_BOUND_WIDTH)
   ) u_mul_native (

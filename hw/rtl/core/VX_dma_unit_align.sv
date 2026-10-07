@@ -28,6 +28,9 @@
 //    - holds valid until done_if.ready handshake
 //==============================================================================
 
+`ifdef DMA_ALIGN_NO_DSP
+(* use_dsp = "no" *)
+`endif
 module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_PADDING = 1'b1,
@@ -686,6 +689,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   // MAX_DIMS=3 needs D0/D1. D2 never has a higher dimension to carry into.
   if (MAX_DIMS > 1) begin : g_precalc_d0
     VX_mul_u32_pipe #(
+      .USE_DSP (`DMA_ALIGN_USE_DSP),
       .OUT_REGS(0),
       .A_WIDTH (32),
       .B_WIDTH (BOUND_WIDTH)
@@ -700,6 +704,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     );
 
     VX_mul_u32_pipe #(
+      .USE_DSP (`DMA_ALIGN_USE_DSP),
       .OUT_REGS(0),
       .A_WIDTH (32),
       .B_WIDTH (BOUND_WIDTH)
@@ -721,6 +726,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
   if (MAX_DIMS > 2) begin : g_precalc_d1
     VX_mul_u32_pipe #(
+      .USE_DSP (`DMA_ALIGN_USE_DSP),
       .OUT_REGS(0),
       .A_WIDTH (32),
       .B_WIDTH (BOUND_WIDTH)
@@ -735,6 +741,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     );
 
     VX_mul_u32_pipe #(
+      .USE_DSP (`DMA_ALIGN_USE_DSP),
       .OUT_REGS(0),
       .A_WIDTH (32),
       .B_WIDTH (BOUND_WIDTH)

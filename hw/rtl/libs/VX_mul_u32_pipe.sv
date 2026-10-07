@@ -4,7 +4,8 @@
 module VX_mul_u32_pipe #(
     parameter integer OUT_REGS = 0,
     parameter integer A_WIDTH = 32,
-    parameter integer B_WIDTH = 32
+    parameter integer B_WIDTH = 32,
+    parameter bit USE_DSP = 1'b1
 ) (
     input  wire                       clk,
     input  wire                       reset,
@@ -47,10 +48,10 @@ module VX_mul_u32_pipe #(
 
     // Stage 1: 16-bit-limb partial products. With B_WIDTH=21, the upper B
     // limb is five bits, so no 32-bit extension occurs before multiplication.
-    (* use_dsp = "yes" *) reg [P00_WIDTH-1:0] p00_s1;
-    (* use_dsp = "yes" *) reg [P01_WIDTH-1:0] p01_s1;
-    (* use_dsp = "yes" *) reg [P10_WIDTH-1:0] p10_s1;
-    (* use_dsp = "yes" *) reg [P11_WIDTH-1:0] p11_s1;
+    reg [P00_WIDTH-1:0] p00_s1;
+    reg [P01_WIDTH-1:0] p01_s1;
+    reg [P10_WIDTH-1:0] p10_s1;
+    reg [P11_WIDTH-1:0] p11_s1;
     reg                  v_s1;
 
     wire [A_LO_WIDTH-1:0] a_lo_s0 = A_LO_WIDTH'(a_s0);
@@ -69,6 +70,47 @@ module VX_mul_u32_pipe #(
     // Stage 3: final accumulation
     reg [RESULT_WIDTH-1:0] prod_s3;
     reg                    v_s3;
+
+    // Select literal synthesis attributes at elaboration time. Keep the
+    // pipeline registers and valid/enable behavior shared between mappings.
+    wire [P00_WIDTH-1:0] p00_next;
+    wire [P01_WIDTH-1:0] p01_next;
+    wire [P10_WIDTH-1:0] p10_next;
+    wire [P11_WIDTH-1:0] p11_next;
+    wire [MID_WIDTH-1:0] mid_next;
+    wire [RESULT_WIDTH-1:0] prod_next;
+
+    if (USE_DSP) begin : g_dsp
+        (* use_dsp = "yes" *) wire [P00_WIDTH-1:0] p00 = a_lo_s0 * b_lo_s0;
+        (* use_dsp = "yes" *) wire [P01_WIDTH-1:0] p01 = a_lo_s0 * b_hi_s0;
+        (* use_dsp = "yes" *) wire [P10_WIDTH-1:0] p10 = a_hi_s0 * b_lo_s0;
+        (* use_dsp = "yes" *) wire [P11_WIDTH-1:0] p11 = a_hi_s0 * b_hi_s0;
+        assign p00_next = p00;
+        assign p01_next = p01;
+        assign p10_next = p10;
+        assign p11_next = p11;
+        assign mid_next = MID_WIDTH'(p01_s1) + MID_WIDTH'(p10_s1);
+        assign prod_next = RESULT_WIDTH'(p00_s2)
+                         + (RESULT_WIDTH'(mid_s2) << LIMB_WIDTH)
+                         + (RESULT_WIDTH'(p11_s2) << (2 * LIMB_WIDTH));
+    end else begin : g_lut
+        (* use_dsp = "no" *) wire [P00_WIDTH-1:0] p00 = a_lo_s0 * b_lo_s0;
+        (* use_dsp = "no" *) wire [P01_WIDTH-1:0] p01 = a_lo_s0 * b_hi_s0;
+        (* use_dsp = "no" *) wire [P10_WIDTH-1:0] p10 = a_hi_s0 * b_lo_s0;
+        (* use_dsp = "no" *) wire [P11_WIDTH-1:0] p11 = a_hi_s0 * b_hi_s0;
+        (* use_dsp = "no" *) wire [MID_WIDTH-1:0] mid
+            = MID_WIDTH'(p01_s1) + MID_WIDTH'(p10_s1);
+        (* use_dsp = "no" *) wire [RESULT_WIDTH-1:0] prod
+            = RESULT_WIDTH'(p00_s2)
+            + (RESULT_WIDTH'(mid_s2) << LIMB_WIDTH)
+            + (RESULT_WIDTH'(p11_s2) << (2 * LIMB_WIDTH));
+        assign p00_next = p00;
+        assign p01_next = p01;
+        assign p10_next = p10;
+        assign p11_next = p11;
+        assign mid_next = mid;
+        assign prod_next = prod;
+    end
 
     always_ff @(posedge clk) begin
         if (reset) begin
@@ -99,10 +141,10 @@ module VX_mul_u32_pipe #(
 
             // stage 1
             if (v_s0) begin
-                p00_s1 <= a_lo_s0 * b_lo_s0;
-                p01_s1 <= a_lo_s0 * b_hi_s0;
-                p10_s1 <= a_hi_s0 * b_lo_s0;
-                p11_s1 <= a_hi_s0 * b_hi_s0;
+                p00_s1 <= p00_next;
+                p01_s1 <= p01_next;
+                p10_s1 <= p10_next;
+                p11_s1 <= p11_next;
             end
             v_s1 <= v_s0;
 
@@ -110,15 +152,13 @@ module VX_mul_u32_pipe #(
             if (v_s1) begin
                 p00_s2 <= p00_s1;
                 p11_s2 <= p11_s1;
-                mid_s2 <= MID_WIDTH'(p01_s1) + MID_WIDTH'(p10_s1);
+                mid_s2 <= mid_next;
             end
             v_s2 <= v_s1;
 
             // stage 3
             if (v_s2) begin
-                prod_s3 <= RESULT_WIDTH'(p00_s2)
-                         + (RESULT_WIDTH'(mid_s2) << LIMB_WIDTH)
-                         + (RESULT_WIDTH'(p11_s2) << (2 * LIMB_WIDTH));
+                prod_s3 <= prod_next;
             end
             v_s3 <= v_s2;
         end

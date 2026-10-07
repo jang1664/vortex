@@ -1306,6 +1306,13 @@ for block_size in range(1, full_bitwidth+1):
 `define W_LMEM_DMA_RESPONSE_SLOTS (2 * `W_LMEM_DMA_CMD_BEATS)
 `endif
 
+// Define DMA_ALIGN_NO_DSP to disable DSP inference at the aligned DMA module
+// level. Set DMA_ALIGN_USE_DSP=0 as well to disable the multiplier overrides.
+// Aligned DMA stride/bound multipliers: 1 selects DSPs, 0 selects LUT logic.
+`ifndef DMA_ALIGN_USE_DSP
+`define DMA_ALIGN_USE_DSP 1
+`endif
+
 // DMA descriptors retain 32-bit software-visible bound words, while the
 // internal iterator contract uses only the range required by MM_MAX_LOG_DIM.
 `ifndef DMA_BOUND_WIDTH
