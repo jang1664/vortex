@@ -513,6 +513,7 @@ class StackedBarKnobs(WideBarKnobs):
     bar_width: float = 0.76
     bar_linewidth: float = 0.0
     relative: bool = True
+    decode_batch_separators: bool = False
     y_lim_top_scale: float = 1.18
     legend_title: str | None = GEMM_LEGEND_TITLE
     legend_ncol: int | None = 6
@@ -587,7 +588,8 @@ class PlotKnobs:
     )
     llama_e2e_no_area_norm_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL),
+            **_llama_compact_kwargs(Y_LABEL, grid_linewidth_scale=0.2),
+            decode_batch_separators=True,
             legend_ncol=3,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_STACK_PALETTE,
             legend_order=("gemm", "vector", "layout"),
@@ -625,7 +627,8 @@ class PlotKnobs:
     )
     llama_gemm_only_no_area_norm: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970, grid_linewidth_scale=1.0),
+            **_llama_compact_kwargs(Y_LABEL, legend_y=0.970, grid_linewidth_scale=0.2),
+            decode_batch_separators=True,
             legend_ncol=3,
             stack_palette=GEMM_ONLY_GROUP_PALETTE,
             stack_groups=GEMM_ONLY_STACK_GROUPS,
@@ -687,6 +690,7 @@ class PlotKnobs:
     llama_energy_no_area_norm_gemm_layout_vector_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL, legend_y=0.970),
+            decode_batch_separators=True,
             legend_ncol=5,
             stack_palette=E2E_GEMM_LAYOUT_VECTOR_DEQUANT_STACK_PALETTE,
             legend_order=("gemm", "vector", "layout", "W dequant", "KV dequant"),
@@ -3262,6 +3266,16 @@ def plot_model_stacked_bars(
             positions.append(current)
             current += 1.0
             previous_group = group
+
+        if stage == "Decode" and knobs.decode_batch_separators:
+            batches = stage_df["__batch_sort"].tolist()
+            for index in range(1, len(positions)):
+                if batches[index] != batches[index - 1]:
+                    ax.axvline(
+                        (positions[index - 1] + positions[index]) / 2,
+                        color="0.5", linewidth=0.2,
+                        linestyle=(0, (2, 3)), alpha=0.65, zorder=0.5,
+                    )
 
         width = _stage_bar_width(
             knobs,
