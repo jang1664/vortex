@@ -131,6 +131,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh
 
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ff747c45af/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw.sh
+
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2_sll_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_80c33b0e7a/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2.sh
@@ -212,6 +216,10 @@ aliases:
 
   improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673_2/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_fix_pad:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
 
   C4: *C4_
