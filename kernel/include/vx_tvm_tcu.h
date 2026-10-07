@@ -13,7 +13,7 @@
 #define VX_TVM_TCU_ABI_VERSION 1
 
 // TVM's first TCU lowering deliberately exposes a narrow, versioned kernel
-// contract.  A single 32-thread Vortex workgroup computes one 16x16 output
+// contract.  A single NUM_THREADS workgroup computes the context output
 // tile from row-major FP16 operands, accumulating in FP32 and storing FP16.
 // Tail tiles and other TCU data modes remain on TVM's ordinary TIR lowering.
 #if defined(EXT_TCU_ENABLE) && !defined(DISABLE_TCU_FP)
@@ -22,11 +22,12 @@ static inline int vx_tvm_tcu_fp16_tile(const void* a, const void* b, void* c,
   namespace vt = vortex::tensor;
   using context = vt::wmma_context<NUM_THREADS, vt::fp16, vt::fp16, vt::fp32>;
 
-  if (context::tileM != 16 || context::tileN != 16 || context::tileK != 32 ||
-      (m % context::tileM) != 0 || (n % context::tileN) != 0 ||
-      (k % context::tileK) != 0) {
-    return -1;
-  }
+  static_assert(NUM_THREADS >= 2 && (NUM_THREADS & (NUM_THREADS - 1)) == 0,
+                "TCU thread count must be a power of two >= 2");
+  // The compiler pads these extents using this same context geometry.
+  assert(blockDim.x == NUM_THREADS && blockDim.y == 1 && blockDim.z == 1);
+  assert((m % context::tileM) == 0 && (n % context::tileN) == 0 &&
+         (k % context::tileK) == 0);
 
   const auto* lhs = reinterpret_cast<const context::input_t*>(a);
   const auto* rhs = reinterpret_cast<const context::input_t*>(b);

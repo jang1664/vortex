@@ -31,7 +31,9 @@ static constexpr uint32_t kTileK = 128;
 static constexpr uint32_t kMxuK = MXU_ROW;
 static constexpr uint32_t kMxuN = MXU_COL;
 
-static_assert(kMxuK != 0 && kMxuN != 0, "MXU dimensions must be nonzero");
+static_assert(kMxuK >= 2 && kMxuK == kMxuN && (kMxuK & (kMxuK - 1)) == 0,
+              "MXU must be square with power-of-two A >= 2 for packed INT4");
+static_assert(NUM_THREADS == kMxuK, "NUM_THREADS must equal MXU A");
 static_assert((kTileK % kMxuK) == 0,
               "DMA K tile must be divisible by MXU_ROW");
 static_assert((kTileN % kMxuN) == 0,
@@ -254,7 +256,9 @@ static inline int vx_tvm_gemm_w4a16_v2(
     uint32_t mode, uint32_t logical_n, uint32_t logical_k,
     uint32_t layout_abi_version) {
   if (mode != VX_TVM_GEMM_MODE_IMPROVE || layout_abi_version != 2u ||
-      (qblock != 32u && qblock != 64u && qblock != 128u) ||
+      (qblock == 0u || (qblock & (qblock - 1)) != 0u ||
+       qblock < (quant_direction == 0u ? MXU_ROW : MXU_COL) ||
+       (128u % qblock) != 0u) ||
       logical_n == 0u || logical_k == 0u ||
       logical_n > execution_n || logical_k > execution_k ||
       (execution_n % MXU_COL) != 0u || (execution_k % MXU_ROW) != 0u) {
