@@ -28,3 +28,9 @@ figure_prepare*/
 figure_output*/
 pipeline_state*/
 backups/
+
+# Renamed attempt logs are generated acquisition artifacts.
+*.log.attempt*
+
+# Compiled host checker; retain its source and verification reports.
+/docs/gemm_c_to_a_layout_64b_store_results/metadata/host_layout_check
