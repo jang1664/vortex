@@ -1,0 +1,23 @@
+{
+  "source_tag": "th16_20261004_rev4_pipeline",
+  "tag": "th16_20261007_rev5_pipeline",
+  "models": {
+    "llama2": {
+      "replaced": 84,
+      "preserved_c4": 336,
+      "C1_C3_byte_identical": true,
+      "board": "0000:2a:00.1",
+      "published_raw_sha256": "d9bb69dac133d0eabcd1761e3c77bcd2c189d47f7c8540bd7ee9f93f25cac4bb"
+    },
+    "llama3": {
+      "replaced": 92,
+      "preserved_c4": 369,
+      "C1_C3_byte_identical": true,
+      "board": "0000:3d:00.1",
+      "published_raw_sha256": "e19a28133b424457de332bb06a63ac27988136279c662137cbb2d30ddb582987"
+    }
+  },
+  "status": "complete",
+  "provenance": "Only C4 fpint_gemm_ffn_hw rows use the new image; all other rows retain original rev4 metadata and values.",
+  "pv_workflow_refresh": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_pv_workflow_refresh/completion.json"
+}

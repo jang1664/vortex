@@ -1,0 +1,26 @@
+{
+  "llama2": {
+    "prefill": {
+      "logical_cases": 6,
+      "physical_cases": 6
+    },
+    "generation": {
+      "logical_cases": 2304,
+      "physical_cases": 24
+    },
+    "missing": [],
+    "extra": []
+  },
+  "llama3": {
+    "prefill": {
+      "logical_cases": 6,
+      "physical_cases": 6
+    },
+    "generation": {
+      "logical_cases": 2304,
+      "physical_cases": 24
+    },
+    "missing": [],
+    "extra": []
+  }
+}

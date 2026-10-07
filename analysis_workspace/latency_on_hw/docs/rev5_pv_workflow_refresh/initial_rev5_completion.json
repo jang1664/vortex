@@ -1,0 +1,22 @@
+{
+  "source_tag": "th16_20261004_rev4_pipeline",
+  "tag": "th16_20261007_rev5_pipeline",
+  "models": {
+    "llama2": {
+      "replaced": 84,
+      "preserved_c4": 336,
+      "C1_C3_byte_identical": true,
+      "board": "0000:2a:00.1",
+      "published_raw_sha256": "80f490b24de3a0809de496c116d9989bbcf7aea445d3667768dcf27850fbc8c3"
+    },
+    "llama3": {
+      "replaced": 92,
+      "preserved_c4": 369,
+      "C1_C3_byte_identical": true,
+      "board": "0000:3d:00.1",
+      "published_raw_sha256": "b32f022c38e0d2afdf0ffe2dbc05c48adefa74ceac6977b4ee6b9c7a8e39190b"
+    }
+  },
+  "status": "complete",
+  "provenance": "Only C4 fpint_gemm_ffn_hw rows use the new image; all other rows retain original rev4 metadata and values."
+}
