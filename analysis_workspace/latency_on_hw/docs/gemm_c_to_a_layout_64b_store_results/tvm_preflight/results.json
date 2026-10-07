@@ -1,0 +1,283 @@
+{
+  "scope": "Lowering preflight only; descriptor override is process-local. No TVM source edits or new device execution.",
+  "tvm_source": "/home/jaeyongjang/project.local/tvm/python/tvm/__init__.py",
+  "chains": [
+    {
+      "m": 1,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 0,
+        "a_pack_calls": 2,
+        "c_detile_calls": 2,
+        "gemm_calls": 2,
+        "direct_c_to_a": false,
+        "calls": [
+          "vortex_gemm_a_tiled_1_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile",
+          "vortex_gemm_a_tiled_1_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_1_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    },
+    {
+      "m": 4,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 0,
+        "a_pack_calls": 2,
+        "c_detile_calls": 2,
+        "gemm_calls": 2,
+        "direct_c_to_a": false,
+        "calls": [
+          "vortex_gemm_a_tiled_4_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile",
+          "vortex_gemm_a_tiled_4_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_4_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    },
+    {
+      "m": 8,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_8_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_8_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    },
+    {
+      "m": 9,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 0,
+        "a_pack_calls": 2,
+        "c_detile_calls": 2,
+        "gemm_calls": 2,
+        "direct_c_to_a": false,
+        "calls": [
+          "vortex_gemm_a_tiled_9_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile",
+          "vortex_gemm_a_tiled_9_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_9_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    },
+    {
+      "m": 132,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 0,
+        "a_pack_calls": 2,
+        "c_detile_calls": 2,
+        "gemm_calls": 2,
+        "direct_c_to_a": false,
+        "calls": [
+          "vortex_gemm_a_tiled_132_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile",
+          "vortex_gemm_a_tiled_132_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_132_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    },
+    {
+      "m": 256,
+      "k": 256,
+      "n": 256,
+      "current_tvm": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_256_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      },
+      "new_c_descriptor_only": {
+        "reused_c": 1,
+        "a_pack_calls": 1,
+        "c_detile_calls": 1,
+        "gemm_calls": 2,
+        "direct_c_to_a": true,
+        "calls": [
+          "vortex_gemm_a_tiled_256_256",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_w_tiled",
+          "vortex_gemm_scale_tiled",
+          "vortex_gemm_zero_point_tiled",
+          "vortex_mm_w4a16_improve",
+          "vortex_gemm_c_detile"
+        ]
+      }
+    }
+  ],
+  "execution_padding_mismatch": {
+    "producer_execution_n": 48,
+    "consumer_execution_k": 64,
+    "reuse": false
+  },
+  "dma_width_check_gap": {
+    "producer_dma_nt": 64,
+    "consumer_dma_kt": 128,
+    "current_checker_accepts": true,
+    "safe_to_reuse": false
+  }
+}

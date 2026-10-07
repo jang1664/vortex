@@ -1,0 +1,26 @@
+[
+  {
+    "m": 1,
+    "k": 256,
+    "n": 256,
+    "pass_check": true,
+    "gemm_cycles": 2378,
+    "core_cycles": 9618
+  },
+  {
+    "m": 4,
+    "k": 256,
+    "n": 256,
+    "pass_check": true,
+    "gemm_cycles": 2446,
+    "core_cycles": 9690
+  },
+  {
+    "m": 256,
+    "k": 256,
+    "n": 256,
+    "pass_check": true,
+    "gemm_cycles": 72375,
+    "core_cycles": 79591
+  }
+]

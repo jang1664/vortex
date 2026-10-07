@@ -1,0 +1,69 @@
+task: gemm-c-to-a-64b-store
+state: complete
+confirmed: true
+iterations:
+- iteration: 1
+  timestamp: '2026-10-06T21:39:08+09:00'
+  status: pass
+  test: gemm_fsm via tools/verify_rtl.py, VCS TH16/MXU16
+  error_summary: null
+  fix_applied: Packed output addresses and minimum block-aligned store groups; separate
+    copy/store completion targets.
+  lesson: Existing TB assumed one copy per store; extended independent oracle covers
+    groups/tails/reset.
+- iteration: 1
+  timestamp: '2026-10-06T21:47:54+09:00'
+  status: pass
+  test: Three modified performance blackboxes, six directed blackboxes, 64-shape host
+    layout check
+  error_summary: null
+  fix_applied: No fixes required after the first implementation.
+  lesson: Group whole microtiles until byte-count alignment, not merely >=64 bytes.
+pitfalls:
+- Application shape flags are lowercase -m/-k/-n.
+- PERF jobs counts internal GEMM completion events, not host invocations.
+- Current unit TB assumes one copy per store; grouped output requires a directed TB
+  update.
+- An initial metadata setup used build/ as cwd; moved artifacts to source-root task/results
+  paths before measurements.
+- M256 baseline exceeded initial 300-second wall timeout without an RTL fatal; retry
+  with 1800 seconds before any RTL edit.
+- VCS simv Makefile omits library RTL dependencies. Force rebuild with make -W canonical_absolute_tb_vcs_xrtsim.sv
+  simv after RTL edits; a path containing build/../ does not match the prerequisite.
+updated: '2026-10-06T21:47:54+09:00'
+baseline:
+  m1:
+    status: pass
+    gemm_cycles: 2378
+    core_cycles: 9618
+  m4:
+    status: pass
+    gemm_cycles: 2446
+    core_cycles: 9690
+  m256:
+    status: pass
+    gemm_cycles: 72375
+    core_cycles: 79591
+host_layout_check:
+  status: pass
+  shapes: 64
+  method: Production A packer fed into production C verifier; only device readback
+    mocked.
+modified:
+  m1:
+    status: pass
+    gemm_cycles: 2233
+    core_cycles: 9468
+  m4:
+    status: pass
+    gemm_cycles: 2446
+    core_cycles: 9690
+  m256:
+    status: pass
+    gemm_cycles: 72375
+    core_cycles: 79591
+directed:
+  status: pass
+  cases: 6
+  repeated_jobs: 2
+results: analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/SUMMARY.md

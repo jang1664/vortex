@@ -1,0 +1,7 @@
+{
+  "hw/rtl/core/gemm/VX_gemm_fsm.sv": "59809d29e0f1837830a4b3c6ea13062d7729ab46d16f5bd1510b6e6f959c473b",
+  "hw/unittest/gemm_fsm/tb_VX_gemm_fsm.sv": "33759b71f46fb8f003e05af8008ddc04750bc477b2f03a97a12a039bd1e923d2",
+  "tests/regression/fpint_gemm_ffn_hw/main.cpp": "cd668588753812287c1681ef6a99d1b9f66346a0babd3148aef8a243cb1ce487",
+  "tests/regression/fpint_gemm_ffn_hw/layout.h": "098e55cbfa74f2379b179afa4c377e57ef457e6e90bc89f74ce60e5d9e642450",
+  "tests/regression/fpint_gemm_ffn_hw/bench_main.cpp": "eef1f4c5c333caec82e8d3d1a372f9512fe8b73a4b0d710aef7da5566cf14c79"
+}

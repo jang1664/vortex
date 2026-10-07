@@ -347,6 +347,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
     bit pending_copy_valid;
     int unsigned pending_copy_group;
     int unsigned pending_copy_target;
+    int unsigned pending_copy_bytes;
+    logic [63:0] pending_copy_addr;
     int final_arm_count;
     int dma_prior_g_count;
     int w_consume_wait_count;
@@ -399,6 +401,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       pending_copy_valid = 1'b0;
       pending_copy_group = 0;
       pending_copy_target = 0;
+      pending_copy_bytes = 0;
+      pending_copy_addr = '0;
       final_arm_count = 0;
       dma_prior_g_count = 0;
       w_consume_wait_count = 0;
@@ -800,8 +804,14 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
 
             acc_group = (cmd_log[i].rs2 >= (TB_ACC_DBUF_STRIDE >> 1));
             copy_target = acc_copy_target[acc_group] + 1;
-            if (pending_copy_valid)
-              $fatal(1, "ACC2LMEM #%0d issued before prior copy was paired with DMA_ST", i);
+            if (pending_copy_valid
+                && ((pending_copy_bytes % `MEM_BLOCK_SIZE) == 0
+                 || pending_copy_group != acc_group
+                 || cmd_log[i].rs1 != pending_copy_addr + pending_copy_bytes))
+              $fatal(1, "ACC2LMEM #%0d did not extend the minimal contiguous output group", i);
+            if (!pending_copy_valid)
+              pending_copy_addr = cmd_log[i].rs1;
+            pending_copy_bytes += cmd_log[i].size;
             if (!cmd_log[i].waits[0].valid
                 || cmd_log[i].waits[0].reg_id != 4
                 || cmd_log[i].waits[0].target != output_store_issue
@@ -843,7 +853,12 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                 || cmd_log[i].notify.reg_id != 4
                 || cmd_log[i].notify.value != 1)
               $fatal(1, "DMA store #%0d lacks RID_O PLUS-1", i);
+            if (cmd_log[i].rs2 != pending_copy_addr
+                || cmd_log[i].size != ((pending_copy_bytes + `MEM_BLOCK_SIZE - 1)
+                                     / `MEM_BLOCK_SIZE) * `MEM_BLOCK_SIZE)
+              $fatal(1, "DMA store #%0d does not cover its complete copy group", i);
             pending_copy_valid = 1'b0;
+            pending_copy_bytes = 0;
             output_store_issue++;
           end
           default: ;
@@ -864,7 +879,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                expected_output_tiles, final_arm_count);
       if (n_w == 0 || n_sc == 0 || n_zp == 0
           || output_store_issue != n_dma_st
-          || n_acc2lmem != n_dma_st)
+          || n_acc2lmem < n_dma_st)
         $fatal(1, "Full command matrix coverage counters are incomplete");
       if (!first_arm_seen[0])
         $fatal(1, "Invocation did not exercise ACC group 0 first-owner target");
@@ -1007,6 +1022,156 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
                MXU16_TAIL_WEIGHT_XFER_BYTES, MXU16_TAIL_WEIGHT_BYTES,
                `GEMM_SCALE_ZERO_DATA_SIZE, `GEMM_SCALE_ZERO_DATA_SIZE,
                `GEMM_OUTPUT_DATA_SIZE);
+    end
+  endtask
+
+  // Independent address/command oracle: iterate logical DMA tiles and
+  // consume copies/stores from the log without consulting DUT geometry.
+  task automatic check_packed_output(
+    input int unsigned M,
+    input int unsigned N,
+    input logic [63:0] dram_base,
+    input logic [63:0] lmem_base,
+    input int unsigned issued_stores
+  );
+    int unsigned m_start, n_start, nb;
+    int unsigned cur_m, cur_n, m_pad, nb_count, micro_bytes;
+    int unsigned pending_bytes, group_start, stores, copies;
+    int unsigned copy_target[2];
+    int unsigned g_target[2];
+    int unsigned acc_group, observed_group, wait_group;
+    int unsigned xfer_bytes;
+    logic [63:0] slot_base;
+    begin
+      m_start = 0;
+      n_start = 0;
+      nb = 0;
+      pending_bytes = 0;
+      group_start = 0;
+      stores = 0;
+      copies = 0;
+      copy_target[0] = 0;
+      copy_target[1] = 0;
+      g_target[0] = 0;
+      g_target[1] = 0;
+      foreach (cmd_log[i]) begin
+        cur_m = ((M - m_start) < 128) ? M - m_start : 128;
+        cur_n = ((N - n_start) < 128) ? N - n_start : 128;
+        m_pad = ((cur_m + 7) / 8) * 8;
+        nb_count = cur_n / `MXU_COL;
+        micro_bytes = cur_m * `MXU_COL * 2;
+        acc_group = ((m_start / 128) * ((N + 127) / 128)
+                    + n_start / 128) % 2;
+        slot_base = dram_base + 64'(m_start) * N * 2
+                  + 64'(n_start) * m_pad * 2;
+        case (cmd_log[i].op)
+          OP_I_LDMA_ARM: begin
+            observed_group = (cmd_log[i].rs1 >= TB_ACC_DBUF_STRIDE);
+            if (observed_group != acc_group
+                || !cmd_log[i].input_admit_waits[3].valid
+                || cmd_log[i].input_admit_waits[3].reg_id != (acc_group ? 10 : 9)
+                || cmd_log[i].input_admit_waits[3].target != copy_target[acc_group])
+              $fatal(1, "Packed-output ARM #%0d has stale ACC reuse dependency", i);
+            wait_group = (cmd_log[i].notify.reg_id == 8);
+            g_target[wait_group]++;
+          end
+          OP_O_ACC2LMEM: begin
+            if (m_start >= M || nb >= nb_count)
+              $fatal(1, "Packed-output copy #%0d exceeds matrix geometry", i);
+            if (pending_bytes != 0 && pending_bytes % `MEM_BLOCK_SIZE == 0)
+              $fatal(1, "Packed-output copy #%0d delayed an already aligned store", i);
+            if (cmd_log[i].size != micro_bytes
+                || cmd_log[i].rs1 != lmem_base + 64'(nb) * micro_bytes)
+              $fatal(1, "Packed-output copy #%0d address/size mismatch", i);
+            observed_group = (cmd_log[i].rs2 >= (TB_ACC_DBUF_STRIDE >> 1));
+            if (observed_group != acc_group
+                || !cmd_log[i].waits[0].valid
+                || cmd_log[i].waits[0].reg_id != 4
+                || cmd_log[i].waits[0].target != stores)
+              $fatal(1, "Packed-output copy #%0d lost prior-store protection", i);
+            wait_group = (cmd_log[i].waits[1].reg_id == 8);
+            if (!cmd_log[i].waits[1].valid
+                || !(cmd_log[i].waits[1].reg_id inside {5'd3, 5'd8})
+                || cmd_log[i].waits[1].target != g_target[wait_group])
+              $fatal(1, "Packed-output copy #%0d lost final compute wait", i);
+            copy_target[acc_group]++;
+            if (!cmd_log[i].notify.valid || !cmd_log[i].notify.set_mode
+                || cmd_log[i].notify.reg_id != (acc_group ? 10 : 9)
+                || cmd_log[i].notify.value != copy_target[acc_group])
+              $fatal(1, "Packed-output copy #%0d has incorrect copy target", i);
+            if (pending_bytes == 0)
+              group_start = nb * micro_bytes;
+            pending_bytes += micro_bytes;
+            nb++;
+            copies++;
+          end
+          OP_DMA_ST: begin
+            xfer_bytes = ((pending_bytes + `MEM_BLOCK_SIZE - 1)
+                         / `MEM_BLOCK_SIZE) * `MEM_BLOCK_SIZE;
+            if (pending_bytes == 0
+                || (pending_bytes % `MEM_BLOCK_SIZE != 0 && nb != nb_count))
+              $fatal(1, "Packed-output store #%0d did not wait for alignment/tail", i);
+            if (cmd_log[i].rs1 != slot_base + group_start
+                || cmd_log[i].rs2 != lmem_base + group_start
+                || cmd_log[i].size != xfer_bytes
+                || cmd_log[i].rs1 % `MEM_BLOCK_SIZE != 0
+                || cmd_log[i].rs2 % `MEM_BLOCK_SIZE != 0
+                || group_start + xfer_bytes > m_pad * cur_n * 2)
+              $fatal(1, "Packed-output store #%0d address/length/slot bound mismatch", i);
+            if (!cmd_log[i].waits[0].valid
+                || cmd_log[i].waits[0].reg_id != (acc_group ? 10 : 9)
+                || cmd_log[i].waits[0].target != copy_target[acc_group])
+              $fatal(1, "Packed-output store #%0d does not wait for latest group copy", i);
+            if (!cmd_log[i].notify.valid || cmd_log[i].notify.set_mode
+                || cmd_log[i].notify.reg_id != 4 || cmd_log[i].notify.value != 1)
+              $fatal(1, "Packed-output store #%0d does not increment store completion", i);
+            stores++;
+            pending_bytes = 0;
+            if (nb == nb_count) begin
+              nb = 0;
+              n_start += cur_n;
+              if (n_start == N) begin
+                n_start = 0;
+                m_start += cur_m;
+              end
+            end
+          end
+          default:;
+        endcase
+      end
+      if (m_start != M || n_start != 0 || nb != 0 || pending_bytes != 0
+          || stores != issued_stores || copies != ((M + 127) / 128) * (N / `MXU_COL))
+        $fatal(1, "Packed-output command coverage mismatch M=%0d N=%0d copies=%0d stores=%0d issued=%0d",
+               M, N, copies, stores, issued_stores);
+      $display("FSM_PACKED_OUTPUT_PASS M=%0d K=%0d N=%0d copies=%0d stores=%0d",
+               M, `MXU_ROW, N, copies, stores);
+    end
+  endtask
+
+  task automatic run_packed_output_case(
+    input int unsigned M,
+    input int unsigned N
+  );
+    int unsigned stores;
+    begin
+      cmd_log.delete();
+      @(negedge clk);
+      completed_output_store_count = 0;
+      drive_cfg_once(
+        64'h1200_0000, 64'h2200_0000, 64'h3200_0000,
+        64'h4200_0000, 64'h5200_0000,
+        64'h6200_0000, 64'h7200_0000,
+        64'h8200_0000, 64'h9200_0000,
+        64'hA200_0000, 64'hB200_0000,
+        64'hC200_0000, 64'hD200_0000,
+        64'hE200_0000,
+        M, N, `MXU_ROW, 5, 1'b0
+      );
+      if (dut.o_store_issue_q != 0 || dut.output_group_bytes_q != 0
+          || dut.acc_copy_issue_q[0] != 0 || dut.acc_copy_issue_q[1] != 0)
+        $fatal(1, "Packed-output invocation failed to reset group/copy/store state");
+      hold_and_release_final_drain(stores);
+      check_packed_output(M, N, 64'h3200_0000, 64'hE200_0000, stores);
     end
   endtask
 
@@ -1158,9 +1323,17 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; #(
       );
       hold_and_release_final_drain(qcol_tail_store_count);
       check_mxu16_qcol_tail_sizes();
+      check_packed_output(MXU16_TAIL_M, MXU16_TAIL_N,
+                          64'h3200_0000, 64'hE200_0000, qcol_tail_store_count);
       if (qcol_tail_store_count != 1)
         $fatal(1, "MXU16 QCOL tail issued %0d stores, expected 1",
                qcol_tail_store_count);
+      run_packed_output_case(1, 32);
+      run_packed_output_case(1, 32); // Identical buffers and shape, new job.
+      run_packed_output_case(1, 48);
+      run_packed_output_case(3, 48);
+      run_packed_output_case(1, 144);
+      run_packed_output_case(132, 144);
     end
 
     $display("FSM_OUTPUT_DOUBLE_BUFFER_METADATA_PASS first_stores=%0d second_stores=%0d",

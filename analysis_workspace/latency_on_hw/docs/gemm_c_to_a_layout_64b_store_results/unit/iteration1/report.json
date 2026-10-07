@@ -1,0 +1,6 @@
+{
+  "status": "pass",
+  "test_name": "gemm_fsm",
+  "error_log": "",
+  "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_gemm_c_to_a_unit/hw/unittest/gemm_fsm/logs/sim.log"
+}

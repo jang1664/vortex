@@ -1,0 +1,44 @@
+[
+  {
+    "phase": "baseline",
+    "m": 1,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/baseline/m1/run.log"
+  },
+  {
+    "phase": "modified",
+    "m": 1,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/modified/m1/run.log"
+  },
+  {
+    "phase": "baseline",
+    "m": 4,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/baseline/m4/run.log"
+  },
+  {
+    "phase": "modified",
+    "m": 4,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/modified/m4/run.log"
+  },
+  {
+    "phase": "baseline",
+    "m": 256,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/baseline/m256/run.log"
+  },
+  {
+    "phase": "modified",
+    "m": 256,
+    "status": "pass",
+    "exit_code": 0,
+    "log": "analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/modified/m256/run.log"
+  }
+]

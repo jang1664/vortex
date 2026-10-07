@@ -1,0 +1,44 @@
+[
+  {
+    "status": "pass",
+    "test_name": "m1_k16_n16_r1",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m1_k16_n16_r1/run.log"
+  },
+  {
+    "status": "pass",
+    "test_name": "m1_k16_n48_r1",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m1_k16_n48_r1/run.log"
+  },
+  {
+    "status": "pass",
+    "test_name": "m3_k16_n48_r1",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m3_k16_n48_r1/run.log"
+  },
+  {
+    "status": "pass",
+    "test_name": "m1_k16_n144_r1",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m1_k16_n144_r1/run.log"
+  },
+  {
+    "status": "pass",
+    "test_name": "m132_k16_n144_r1",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m132_k16_n144_r1/run.log"
+  },
+  {
+    "status": "pass",
+    "test_name": "m1_k16_n32_r2",
+    "exit_code": 0,
+    "error_log": "",
+    "log_file": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/gemm_c_to_a_layout_64b_store_results/directed/m1_k16_n32_r2/run.log"
+  }
+]
