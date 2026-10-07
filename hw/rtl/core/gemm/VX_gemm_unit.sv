@@ -42,6 +42,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam FP32_EXP_WIDTH = 8;
     localparam FP32_EXP_BIAS  = 127;
     localparam FP32_MAN_WIDTH = 23;
+    localparam logic quant_dir = `QDIR_COL;
 
     localparam FP16_WIDTH     = 16;
     localparam FP16_EXP_WIDTH = 5;
@@ -149,6 +150,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     gemm_state_t                state, next_state;
     gemm_unit_ctrl_t            gemm_unit_ctrl, next_gemm_unit_ctrl;
+    wire                        quant_dir_;
+`ifdef GEMM_UNIT_FORCE_QDIR_COL
+    assign quant_dir_ = quant_dir;
+`else
+    assign quant_dir_ = gemm_unit_ctrl.quant_dir;
+`endif
     logic                       in_flight;
     logic                       is_qcol;
     logic                       gemm_done;
@@ -539,7 +546,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // ----- Combinational Logic -----
     always_comb begin
         in_flight = (state == COMPUTE);
-        is_qcol   = (gemm_unit_ctrl.quant_dir == `QDIR_COL);
+        is_qcol   = (quant_dir_ == `QDIR_COL);
 
         next_state          = state;
         next_gemm_unit_ctrl = gemm_unit_ctrl;
@@ -1102,7 +1109,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             logic a_valid, b_valid;
             logic [`IFP_WIDTH-1:0] a_data, b_data;
 
-            assign activated = (gemm_unit_ctrl.quant_dir == `QDIR_ROW) & in_flight;
+            assign activated = (quant_dir_ == `QDIR_ROW) & in_flight;
             assign a_valid   = in_pipe_valid_out & activated;
             assign b_valid   = a_valid;
             assign a_data    = activated ? in_pipe_data_out[`IFP_WIDTH*i +: `IFP_WIDTH] : '0;
@@ -1912,7 +1919,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         zp_reg_wr_req,
         zp_reg_wr_en,
         is_qcol,
-        32'(gemm_unit_ctrl.quant_dir),
+        32'(quant_dir_),
         32'(gemm_unit_ctrl.wreg_use_idx),
         32'(gemm_unit_ctrl.sreg_use_idx),
         32'(gemm_unit_ctrl.zreg_use_idx)
@@ -1962,10 +1969,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             // GEMM start event
             if (gemm_unit_if.start) begin
+                logic start_quant_dir;
+`ifdef GEMM_UNIT_FORCE_QDIR_COL
+                start_quant_dir = quant_dir;
+`else
+                start_quant_dir = gemm_unit_if.gemm_unit_ctrl.quant_dir;
+`endif
                 `TRACE(1, ("%m : [%0t] | GEMM_START | {inst=%s, is_load=%b, quant_dir=%b, acc_cnt=%0d, acc_base=0x%0h, wreg=%0d, sreg=%0d, zreg=%0d}\n",
                     $time, INSTANCE_ID,
                     gemm_unit_if.gemm_unit_ctrl.is_load,
-                    gemm_unit_if.gemm_unit_ctrl.quant_dir,
+                    start_quant_dir,
                     gemm_unit_if.gemm_unit_ctrl.acc_cnt,
                     gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr,
                     gemm_unit_if.gemm_unit_ctrl.wreg_use_idx,

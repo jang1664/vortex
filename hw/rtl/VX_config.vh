@@ -1220,6 +1220,9 @@
 `define SCALE_WIDTH 16            // Scale factor bitwidth (FP16)
 
 // Quantization direction modes
+// Define GEMM_UNIT_FORCE_QDIR_COL to force per-column quantization in
+// VX_gemm_unit and the packet pipeline in VX_gemm_compute_core.
+// Also force row-direction weight loading in VX_gemm_tree_v1.
 `define QDIR_COL 0                // Per-column quantization (scale applied at output)
 `define QDIR_ROW 1                // Per-row quantization (scale applied at input)
 

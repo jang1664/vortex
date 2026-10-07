@@ -616,6 +616,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 
     always_comb begin
         admitted_ctrl = gemm_unit_if.packet_ctrl;
+`ifdef GEMM_UNIT_FORCE_QDIR_COL
+        admitted_ctrl.quant_dir = `QDIR_COL;
+`endif
         admitted_ctrl.valid = input_fire;
         admitted_ctrl.acc_txn_tag = acc_txn_tag_q;
         in_pipe_payload_in.data = input_bus_if.req_data.data;

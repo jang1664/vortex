@@ -44,6 +44,14 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
   `VX_STATIC_ASSERT(COL_SIZE%TILE_COL_SIZE == 0, ("COL_SIZE (%0d) must be multiple of TILE_COL_SIZE (%0d)", 
                                                COL_SIZE, TILE_COL_SIZE))
 
+  localparam logic weight_load_dir = 1'b0; // Row loading direction
+  wire weight_load_dir_;
+`ifdef GEMM_UNIT_FORCE_QDIR_COL
+  assign weight_load_dir_ = weight_load_dir;
+`else
+  assign weight_load_dir_ = weight_load_dir_i;
+`endif
+
   //internal siganls
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_q;
@@ -103,7 +111,7 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
       .clk_i(clk_i),
       .weight_i(weight_i),
       .ready_weight_i(ready_weight_i),
-      .weight_load_dir_i(weight_load_dir_i),  // Use input directly
+      .weight_load_dir_i(weight_load_dir_),
       .in_weight_sel_i(in_weight_sel_i),
       .out_weight_sel_i(out_weight_sel_i),
       .weight_o(weights)
@@ -179,7 +187,7 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
       // Weight loading event
       if (ready_weight_i) begin
         `TRACE(2, ("%m : [%0t] | GEMM_TREE_WEIGHT_LOAD | {dir=%0d, in_sel=%0d, out_sel=%0d}\n",
-            $time, weight_load_dir_i, in_weight_sel_i, out_weight_sel_i))
+            $time, weight_load_dir_, in_weight_sel_i, out_weight_sel_i))
         `TRACE(4, ("%m : [%0t] | GEMM_TREE_WEIGHT_SAMPLE | {w00=0x%0h, w01=0x%0h, w02=0x%0h, w03=0x%0h}\n",
             $time, weight_i[0][0], weight_i[0][1], weight_i[0][2], weight_i[0][3]))
       end
