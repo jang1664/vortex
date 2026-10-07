@@ -89,13 +89,10 @@ inline SlotBytes input_slot_bytes(uint32_t cur_m, uint32_t cur_k) {
   return bytes;
 }
 
-inline SlotBytes output_slot_bytes(uint32_t cur_m, uint32_t mxu_nt) {
-  const uint64_t payload = checked_mul3(cur_m, mxu_nt, kFp16Bytes);
-  const uint64_t reserved = checked_mul3(
-      align_up(cur_m, kStripeRows), mxu_nt, kFp16Bytes);
-  const SlotBytes bytes = checked_slot(payload, reserved);
-  assert(bytes.transfer <= bytes.reserved);
-  return bytes;
+inline SlotBytes output_slot_bytes(uint32_t cur_m, uint32_t cur_n) {
+  // Like input, reserve padding at the DMA tile end, not between microtiles.
+  // The same calculation also gives the total reservation for an M tile.
+  return input_slot_bytes(cur_m, cur_n);
 }
 
 inline SlotBytes weight_microtile_bytes(uint32_t mxu_kt, uint32_t mxu_nt) {

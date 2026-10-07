@@ -79,15 +79,20 @@
           # writeback completion before output copies are allowed to run.
 
       if kt == kt_dim - 1:
-          # Drain only after all K tiles, one N microtile at a time:
-          # ACC -> output TMEM (S_O_ACC2LMEM), then TMEM -> HBM (S_O_LMEM2DRAM).
+          # Drain after all K tiles. Pack real rows contiguously within the
+          # output DMA tile and store the smallest block-aligned copy group.
+          group_bytes = 0
           for nb in range(ceil_div(nt_eff, MXU_NT)):
               copy_done = enqueue_acc_to_tmem(
                   acc_region=(acc_group, nb), output_slice=nb, rows=mt_eff,
                   after=(g_done, last_store))
               acc_free[acc_group] = copy_done
-              last_store = enqueue_tmem_to_hbm(
-                  output_tile=(mt, nt), output_slice=nb, after=copy_done)
+              group_bytes += mt_eff * MXU_NT * FP16_BYTES
+              if group_bytes % MEM_BLOCK_SIZE == 0 or nb == last_nb:
+                  last_store = enqueue_tmem_to_hbm(
+                      output_tile=(mt, nt), output_group=group_bytes,
+                      after=copy_done)
+                  group_bytes = 0
           # ACC reuse waits for its copies, not the later HBM store completion.
           # Output copies wait for the preceding store to protect output TMEM.
 
@@ -934,6 +939,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   u32_t output_global_nt_base_q, output_global_nt_base_d;
   u32_t output_nb_stride_q, output_nb_stride_d;
   u32_t output_nb_bytes_q, output_nb_bytes_d;
+  u32_t output_group_bytes_q, output_group_bytes_d;
   mm_mxu_dim_t output_nt_mxu_dim_q, output_nt_mxu_dim_d;
   logic [63:0] output_dram_addr_q, output_dram_addr_d;
   logic [63:0] output_lmem_addr_q, output_lmem_addr_d;
@@ -1133,6 +1139,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       output_global_nt_base_q <= '0;
       output_nb_stride_q <= '0;
       output_nb_bytes_q <= '0;
+      output_group_bytes_q <= '0;
       output_nt_mxu_dim_q <= '0;
       output_dram_addr_q <= '0;
       output_lmem_addr_q <= '0;
@@ -1177,11 +1184,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       output_global_nt_base_q <= output_global_nt_base_d;
       output_nb_stride_q <= output_nb_stride_d;
       output_nb_bytes_q <= output_nb_bytes_d;
+      output_group_bytes_q <= output_group_bytes_d;
       output_nt_mxu_dim_q <= output_nt_mxu_dim_d;
       output_dram_addr_q <= output_dram_addr_d;
       output_lmem_addr_q <= output_lmem_addr_d;
       if (gemm_invocation_accept) begin
         o_store_issue_q <= '0;
+        output_group_bytes_q <= '0;
         acc_copy_issue_q[0] <= '0;
         acc_copy_issue_q[1] <= '0;
         tile_acc_group_q <= 1'b0;
@@ -1397,7 +1406,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t acc_group_base;
     logic acc_group;
     u32_t acc_base_nb;
-    u32_t output_global_nt_mxu;
     logic [63:0] output_lmem_addr;
     logic [63:0] output_dram_addr;
 
@@ -1435,6 +1443,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output_global_nt_base_d = output_global_nt_base_q;
     output_nb_stride_d = output_nb_stride_q;
     output_nb_bytes_d = output_nb_bytes_q;
+    output_group_bytes_d = output_group_bytes_q;
     output_nt_mxu_dim_d = output_nt_mxu_dim_q;
     output_dram_addr_d = output_dram_addr_q;
     output_lmem_addr_d = output_lmem_addr_q;
@@ -1600,13 +1609,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     out_bytes_acc  = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
     out_bytes_fp16 = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
     output_nt_mxu_dim = nt_mxu_dim;
-    output_global_nt_mxu = output_global_nt_base_q
-                         + u32_t'(o_nt_mxu_q);
+    // Keep the padded reservation between DMA tiles, but pack real rows
+    // contiguously between microtiles, exactly like the input A layout.
     output_lmem_addr = output_lmem_base_q
-                     + 64'(o_nt_mxu_q) * 64'(output_nb_stride_q);
+                     + 64'(o_nt_mxu_q) * 64'(output_nb_bytes_q);
     output_dram_addr = output_tile_row_base_q
-                     + 64'(output_global_nt_mxu)
-                     * 64'(output_nb_stride_q);
+                     + 64'(output_global_nt_base_q)
+                     * 64'(output_nb_stride_q)
+                     + 64'(o_nt_mxu_q) * 64'(output_nb_bytes_q);
 
     gemm_start_o = 1'b0;
 
@@ -2303,6 +2313,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             output_nb_bytes_d = u32_t'(mt_eff_cur)
                               * u32_t'(MXU_NT * FP16_BYTES);
             output_nt_mxu_dim_d = output_nt_mxu_dim;
+            output_group_bytes_d = '0;
             state_d = S_O_ACC2LMEM;
           end else begin
             state_d = S_ADVANCE_TILES;
@@ -2323,10 +2334,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         gemm_unified_cmd_t c;
         logic [7:0] flags;
         u32_t copy_target;
+        u32_t group_bytes;
 
         c = '0;
         flags      = {7'd0, buf_cur};
         copy_target = acc_copy_issue_q[tile_acc_group_q] + 32'd1;
+        group_bytes = output_group_bytes_q + output_nb_bytes_q;
 
         c.flags    = flags;
         c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes_q);
@@ -2348,13 +2361,20 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             rid_acc_free(tile_acc_group_q), copy_target, 1'b1);
         out_start_d = 1'b1;
         if (can_emit) begin
-          // Boundary B: the accepted ACC2LMEM command selects the exact N
-          // microtile whose final LMEM/DRAM addresses the following store
-          // consumes.  A stalled ACC2LMEM leaves both registers unchanged.
-          output_dram_addr_d = output_dram_addr;
-          output_lmem_addr_d = output_lmem_addr;
+          // Boundary B: preserve the first copy's addresses until the
+          // grouped store is accepted. A stalled copy changes no state.
+          if (output_group_bytes_q == 0) begin
+            output_dram_addr_d = output_dram_addr;
+            output_lmem_addr_d = output_lmem_addr;
+          end
+          output_group_bytes_d = group_bytes;
           acc_copy_issue_d[tile_acc_group_q] = copy_target;
-          state_d     = S_O_LMEM2DRAM;
+          if (((group_bytes & u32_t'(`MEM_BLOCK_SIZE - 1)) == 0)
+           || (o_nt_mxu_q + 1 == output_nt_mxu_dim_q)) begin
+            state_d = S_O_LMEM2DRAM;
+          end else begin
+            o_nt_mxu_d = o_nt_mxu_q + 1;
+          end
         end
       end
 
@@ -2369,7 +2389,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_O_LMEM2DRAM: begin
         out_cmd_d   = make_dma_st(output_dram_addr_q,
                                   output_lmem_addr_q,
-                                  output_nb_bytes_q,
+                                  output_group_bytes_q,
                                   buf_cur, gen_cur);
         out_cmd_d.rs1 = mt_cur;
         out_cmd_d.rs2 = o_nt_mxu_q;
@@ -2381,6 +2401,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         out_start_d = 1'b1;
         if (can_emit) begin
           o_store_issue_d = o_store_issue_q + 1;
+          output_group_bytes_d = '0;
           if (o_nt_mxu_q + 1 < output_nt_mxu_dim_q) begin
             o_nt_mxu_d = o_nt_mxu_q + 1;
             state_d = S_O_ACC2LMEM;
@@ -2869,12 +2890,24 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
        && state_q == S_O_LMEM2DRAM) begin
         assert (o_store_issue_q != 32'hffff_ffff)
           else $fatal(1, "GEMM output store issue count overflow");
+        assert (output_group_bytes_q != 0
+             && ((output_group_bytes_q & u32_t'(`MEM_BLOCK_SIZE - 1)) == 0
+              || (o_nt_mxu_q + 1 == output_nt_mxu_dim_q)))
+          else $fatal(1, "GEMM output group is neither block-aligned nor a tile tail");
+        assert ((output_dram_addr_q & 64'(`MEM_BLOCK_SIZE - 1)) == 0
+             && (output_lmem_addr_q & 64'(`MEM_BLOCK_SIZE - 1)) == 0)
+          else $fatal(1, "GEMM grouped output DMA start is not block-aligned");
+        assert (output_lmem_addr_q - output_lmem_base_q
+                + 64'(align_hbm_bytes(output_group_bytes_q))
+             <= 64'(output_nt_mxu_dim_q) * 64'(output_nb_stride_q))
+          else $fatal(1, "GEMM output DMA tail exceeds its reserved tile slot");
+
         assert (out_cmd_d.waits[0].valid
              && out_cmd_d.waits[0].reg_id
                 == GEMM_SYNC_REG_ID_WIDTH'(rid_acc_free(tile_acc_group_q))
              && out_cmd_d.waits[0].target
                 == acc_copy_issue_q[tile_acc_group_q])
-          else $fatal(1, "GEMM DMA store lacks paired ACC2LMEM dependency");
+          else $fatal(1, "GEMM DMA store lacks latest grouped ACC2LMEM dependency");
         assert (out_cmd_d.notify.valid
              && !out_cmd_d.notify.set_mode
              && out_cmd_d.notify.reg_id == GEMM_SYNC_REG_ID_WIDTH'(RID_O)

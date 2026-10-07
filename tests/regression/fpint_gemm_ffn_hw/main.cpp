@@ -64,10 +64,6 @@ static constexpr uint32_t DMA_MXU_COL_TILE = GEMM_MXU_COL_TILE;
 static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 512;
 static constexpr uint64_t DRAM_ALIGN_BYTES = 512;
 
-static constexpr uint32_t align_up8_u32(uint32_t x) {
-  return (x + 7u) & ~7u;
-}
-
 static void cleanup() {
   if (A_buffer) vx_mem_free(A_buffer);
   if (W_int4_buffer) vx_mem_free(W_int4_buffer);
@@ -479,7 +475,8 @@ static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
 
 // ============================================================================
 // Tiled output verification (matching tb check_output_tiled layout)
-// Output tiled: for each (mt, nt), store [cur_m][MXU_NT] fp16
+// Output tiled: [mt][nt_dma][nt_micro][cur_m][MXU_NT] fp16.
+// Padding is reserved only at the end of each (mt, nt_dma) slot, as for A.
 // ============================================================================
 
 static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
@@ -496,15 +493,15 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
   uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
   uint32_t n_tiles = N / DMA_MXU_NT;
 
-  // Reserve padded output slots; the kernel writes only real M rows in each slot.
+  // Aggregate reservation is unchanged; padding now follows each DMA tile.
   uint64_t total_bytes_u64 = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, DMA_MXU_NT);
+    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, N);
     assert(bytes.transfer <= bytes.reserved);
     total_bytes_u64 = fpint_gemm_layout::checked_add(
         total_bytes_u64,
-        fpint_gemm_layout::checked_mul(n_tiles, bytes.reserved));
+        bytes.reserved);
   }
   const size_t total_bytes = fpint_gemm_layout::to_size(total_bytes_u64);
 
@@ -512,21 +509,23 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
   RT_CHECK(vx_copy_from_dev(raw.data(), out_buffer, 0, total_bytes));
 
   int errors = 0;
-  size_t idx = 0;
-
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    uint32_t cur_m_pad = align_up8_u32(cur_m);
+    const auto slot = fpint_gemm_layout::output_slot_bytes(cur_m, DMA_NT);
+    const uint32_t micros_per_tile = DMA_NT / DMA_MXU_NT;
+    const size_t mt_base = size_t(mt) * DMA_MT * N * 2;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      for (uint32_t m = 0; m < cur_m_pad; m++) {
+      size_t idx = mt_base + (nt / micros_per_tile) * slot.reserved
+                 + size_t(nt % micros_per_tile) * cur_m * DMA_MXU_NT * 2;
+      for (uint32_t m = 0; m < cur_m; m++) {
         uint32_t gm = mt * DMA_MT + m;
         for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
           uint32_t gn = nt * DMA_MXU_NT + n;
           uint16_t got = uint16_t(raw[idx]) | (uint16_t(raw[idx + 1]) << 8);
           idx += 2;
 
-          // Skip padded rows: kernel didn't compute these (MXU bound = real M).
-          if (gm >= M || gn >= N_logical) continue;
+          // N is rounded to the MXU width; skip only non-logical columns.
+          if (gn >= N_logical) continue;
 
           uint16_t exp = ref[gm * N + gn];
           if (!compare_fp16(got, exp, FP16_TOL)) {
@@ -723,17 +722,16 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Reserve padded output slots; the kernel writes only real M rows in each slot.
+  // Reserve padded DMA tiles, aggregated over N for each M tile.
   uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
-  uint32_t n_tiles = N / DMA_MXU_NT;
   uint64_t out_total_bytes_u64 = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, DMA_MXU_NT);
+    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, N);
     assert(bytes.transfer <= bytes.reserved);
     out_total_bytes_u64 = fpint_gemm_layout::checked_add(
         out_total_bytes_u64,
-        fpint_gemm_layout::checked_mul(n_tiles, bytes.reserved));
+        bytes.reserved);
   }
   const size_t out_total_bytes =
       fpint_gemm_layout::to_size(out_total_bytes_u64);

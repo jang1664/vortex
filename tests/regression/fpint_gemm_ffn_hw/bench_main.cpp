@@ -608,17 +608,16 @@ int main(int argc, char *argv[]) {
   const size_t weight_bytes = weight_total_bytes();
   const size_t qparam_bytes = scale_total_bytes();
 
-  // Reserve padded output slots; the kernel writes only real M rows in each slot.
+  // Reserve padded DMA tiles, aggregated over N for each M tile.
   uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
-  uint32_t n_tiles = N / DMA_MXU_NT;
   uint64_t out_total_bytes_u64 = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, DMA_MXU_NT);
+    const auto bytes = fpint_gemm_layout::output_slot_bytes(cur_m, N);
     assert(bytes.transfer <= bytes.reserved);
     out_total_bytes_u64 = fpint_gemm_layout::checked_add(
         out_total_bytes_u64,
-        fpint_gemm_layout::checked_mul(n_tiles, bytes.reserved));
+        bytes.reserved);
   }
   const size_t out_total_bytes =
       fpint_gemm_layout::to_size(out_total_bytes_u64);
