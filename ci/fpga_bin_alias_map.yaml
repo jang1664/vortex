@@ -80,6 +80,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh
 
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_b110994320/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol.sh
+
   naive_th16_c2_v3_slr0_acc_uram_fp16_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_ae63d50993/bin
     configs: configs/naive_th16_c2_v3_slr0_acc_uram.sh
@@ -133,6 +137,11 @@ aliases:
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ff747c45af/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw.sh
+
+  # New xclbin from the recovered final DCP; kernel auto-scaled to 87.5 MHz.
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw_resource_recovery_20261007:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ff747c45af_1/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw.sh
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v2_sll_fix:
