@@ -1,0 +1,9 @@
+# Reproducible simulator captures and full per-window metric dumps stay local.
+/raw/
+/measurements.json
+/source_worktree.patch
+
+# Compact reviewed evidence and the figures embedded in the report.
+!/measurements.csv
+!/overview.png
+!/hbm_windows.png

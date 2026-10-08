@@ -1,0 +1,15 @@
+{
+  "head": "44e04b48f2978f7a67c8d55e724d4df6b67f6d87",
+  "source_hashes": {
+    "ci/fpga_bin_alias_map.yaml": "5b90c82eff1f8ef5508609dcaff5f1217b99f41d555a2c34c1b90f00a1c18e7f",
+    "hw/rtl/core/gemm/VX_gemm_fsm.sv": "d3b1a900aff0f058dcb47f49ad369cba5e7b6313587e8fd0df22cf9f7e7c407c",
+    "kernel/include/vx_tvm_gemm.h": "82ba2343384400d6ae7aa3e23674c7ac2b5a4bff2a8f4ab9af0bf3c2aa096289",
+    "tests/regression/fpint_gemm_ffn_hw/common.h": "d9a0d34652d19ee8aa7f956d787f18879d84d9bb95cd321ec0bcccbe0b8a15c2",
+    "tests/regression/fpint_gemm_ffn_hw/kernel.cpp": "1ec5ba8b1e4b0e3cbde6da842346a75fef9ee918c65ceeab929fb11f12d919b5",
+    "tests/regression/fpint_gemm_ffn_hw/main.cpp": "3d795b2168a0a121c9b2604a9165509a2d984566023c93943af77cd413d31f15",
+    "hw/rtl/core/gemm/VX_gemm_compute_core.sv": "535f1256a1eab815725a568948734f51fd7d61f712df3b71e0a70d4bc5bbbb5c",
+    "runtime/stub/utils.cpp": "e92f33c7f6452ac0c593fc6de6e0b900314e1aeeefcf1915865ebe263a377bba"
+  },
+  "candidate_map": "schema_version: 1\ncandidates:\n  C1: tcu_th16_c1_v3_axi_fix\n  C2: naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol\n  C3: naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_axi_fix\n  C4: improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fsm_update\n",
+  "baseline_dirty_status": " M analysis_workspace/candidates_fpga_utils/candidate_fpga_bins.yaml\n M analysis_workspace/candidates_fpga_utils/results/summary.md\n M ci/fpga_bin_alias_map.yaml\n M hw/rtl/core/gemm/VX_gemm_fsm.sv\n M hw/syn/xilinx/xrt/Makefile\n M hw/syn/xilinx/xrt/gen_vitis_ini.py\n M hw/syn/xilinx/xrt/run_hw.sh.in\n M kernel/include/vx_tvm_gemm.h\n M paper/overleaf_fpga\n M tests/regression/fpint_gemm_ffn_hw/common.h\n M tests/regression/fpint_gemm_ffn_hw/kernel.cpp\n M tests/regression/fpint_gemm_ffn_hw/main.cpp\n"
+}
