@@ -71,6 +71,28 @@ class GenVitisIniTest(unittest.TestCase):
             lines,
         )
 
+    def test_qor_skip_is_opt_in_and_keeps_other_hooks(self):
+        default = self.vivado_lines()
+        enabled = self.vivado_lines(skip_post_route_qor=True)
+        hook = "prop=run.impl_1.STEPS.ROUTE_DESIGN.TCL.PRE=/tmp/xrt-hooks/skip_post_route_qor.tcl"
+        self.assertNotIn(hook, default)
+        self.assertIn(hook, enabled)
+        self.assertEqual([line for line in enabled if line != hook], default)
+
+    def test_qor_skip_cli_rejects_emulation_or_missing_hook_directory(self):
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for extra in (["--target", "hw_emu", "--hook-dir", tmp],
+                          ["--target", "hw"]):
+                result = subprocess.run(
+                    [sys.executable, str(XRT_DIR / "gen_vitis_ini.py"),
+                     "-o", str(Path(tmp) / "vitis.ini"), "--skip-post-route-qor", *extra],
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("requires --target hw and --hook-dir", result.stderr)
+
     def test_hw_opt_out_removes_only_post_place_hook(self):
         enabled = self.vivado_lines()
         disabled = self.vivado_lines(disable_congestion_fail_fast=True)
@@ -424,6 +446,7 @@ class GenVitisIniTest(unittest.TestCase):
                 # sourced exploration config exports CONGESTION_FAIL_FAST=0.
                 fixture_env = os.environ.copy()
                 fixture_env.pop("CONGESTION_FAIL_FAST", None)
+                fixture_env.pop("SKIP_POST_ROUTE_QOR", None)
                 return subprocess.run(
                     command,
                     cwd=BUILD_XRT_DIR,
@@ -438,7 +461,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
                 "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
-                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0 SKIP_POST_ROUTE_QOR=0\n",
                 link_stamp.read_text(),
             )
             stable_mtimes = tuple(
@@ -475,7 +498,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=0 "
                 "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
-                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0 SKIP_POST_ROUTE_QOR=0\n",
                 link_stamp.read_text(),
             )
             self.assertEqual(
@@ -492,7 +515,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(
                 "FAST_MODE=0 VPP_OPTIMIZE=3 CONGESTION_FAIL_FAST=1 "
                 "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
-                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0\n",
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=0 SKIP_POST_ROUTE_QOR=0\n",
                 link_stamp.read_text(),
             )
 
@@ -530,7 +553,7 @@ class GenVitisIniTest(unittest.TestCase):
             self.assertEqual(
                 "FAST_MODE=1 VPP_OPTIMIZE=0 CONGESTION_FAIL_FAST=1 "
                 "GEMM_SLR_FLOORPLAN=0 PLACE_DESIGN_DIRECTIVE= "
-                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=1\n",
+                "ROUTE_DESIGN_DIRECTIVE= IMPL_ULTRATHREADS=1 SKIP_POST_ROUTE_QOR=0\n",
                 link_stamp.read_text(),
             )
             self.assertEqual(xo_mtime, xo.stat().st_mtime_ns)

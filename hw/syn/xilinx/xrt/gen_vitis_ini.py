@@ -12,6 +12,8 @@ Options:
     --sp SPEC        Memory connectivity (repeatable)
     --hook-dir DIR   Directory containing hook TCL scripts
     --clock-freq MHZ  Kernel clock frequency in MHz (optional)
+    --skip-post-route-qor
+                     Skip post-route QoR assessment through a route PRE hook
     --place-directive NAME
                      Select the place_design directive
     --route-directive NAME
@@ -62,6 +64,8 @@ def build_ini(args):
             hooks.insert(2, ("PLACE_DESIGN", "POST", "post_place_hook.tcl"))
         if args.target == "hw":
             hooks.insert(0, ("INIT_DESIGN", "PRE", "pre_init_hook.tcl"))
+            if getattr(args, "skip_post_route_qor", False):
+                hooks.append(("ROUTE_DESIGN", "PRE", "skip_post_route_qor.tcl"))
         for step, when, tcl in hooks:
             vivado.append(f"prop=run.impl_1.STEPS.{step}.TCL.{when}={args.hook_dir}/{tcl}")
     if args.target == "hw":
@@ -202,6 +206,8 @@ def main():
                         help="route_design directive (hardware only)")
     parser.add_argument("--clock-freq", default=None, metavar="MHZ",
                         help="Kernel clock frequency in MHz")
+    parser.add_argument("--skip-post-route-qor", action="store_true",
+                        help="Skip post-route QoR assessment (hardware only)")
     parser.add_argument("--simulator", default="xsim", choices=["xsim", "vcs"],
                         help="RTL simulator for hw_emu (default: xsim)")
     parser.add_argument("--vcs-install-dir", default=None, metavar="DIR",
@@ -211,6 +217,8 @@ def main():
     parser.add_argument("--vcs-gcc-dir", default=None, metavar="DIR",
                         help="GCC bin/ directory compatible with VCS (required when --simulator=vcs)")
     args = parser.parse_args()
+    if args.skip_post_route_qor and (args.target != "hw" or not args.hook_dir):
+        parser.error("--skip-post-route-qor requires --target hw and --hook-dir")
 
     sections = build_ini(args)
     write_ini(sections, args.o)

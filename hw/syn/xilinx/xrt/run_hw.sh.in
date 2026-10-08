@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}"
 TARGET=hw
 CLOCK_FREQ_HZ=100
+CLOCK_FREQ_ARG=""
+SKIP_POST_ROUTE_QOR_ARG=""
 
 CONFIG_ARG=""
 POSTFIX=""
@@ -19,12 +21,15 @@ GEMM_SLR_FLOORPLAN_ARG=""
 
 usage() {
   cat <<'EOF'
-Usage: run_hw.sh --config NAME_OR_PATH [--postfix VALUE] [--perf [VALUE]] [--debug [VALUE]] [--fast_mode] [--no-early-fail] [--slr-floorplan 0|1]
+Usage: run_hw.sh --config NAME_OR_PATH [--postfix VALUE] [--clock-freq MHZ] [--skip-post-route-qor] [--perf [VALUE]] [--debug [VALUE]] [--fast_mode] [--no-early-fail] [--slr-floorplan 0|1]
 
 Options:
   -c, --config NAME_OR_PATH  Config name or path. A bare name is resolved from
                              the repository's configs/ directory.
       --postfix VALUE        Append _VALUE to the config-derived PREFIX.
+      --clock-freq MHZ       Target kernel frequency in MHz (default: 100).
+      --skip-post-route-qor  Skip post-route report_qor_assessment; preserve
+                             the other reports and implementation checkpoints.
       --perf [VALUE]         Pass PERF to make (default value: 1).
       --debug [VALUE]        Pass DEBUG to make (default value: 3).
       --fast_mode            Pass FAST_MODE=1 to make, enabling optimize=0,
@@ -80,6 +85,21 @@ while (($# > 0)); do
     --postfix=*)
       POSTFIX="${1#*=}"
       [[ -n "${POSTFIX}" ]] || fail "--postfix requires a non-empty value"
+      shift
+      ;;
+    --clock-freq)
+      (($# >= 2)) || fail "$1 requires a frequency in MHz"
+      CLOCK_FREQ_ARG="$2"
+      [[ "${CLOCK_FREQ_ARG}" =~ ^[1-9][0-9]*$ ]] || fail "clock frequency must be a positive integer in MHz"
+      shift 2
+      ;;
+    --clock-freq=*)
+      CLOCK_FREQ_ARG="${1#*=}"
+      [[ "${CLOCK_FREQ_ARG}" =~ ^[1-9][0-9]*$ ]] || fail "clock frequency must be a positive integer in MHz"
+      shift
+      ;;
+    --skip-post-route-qor)
+      SKIP_POST_ROUTE_QOR_ARG=1
       shift
       ;;
     --perf)
@@ -196,6 +216,11 @@ cd "${REPO_ROOT}"
 source "${CONFIG_FILE}"
 cd "${SCRIPT_DIR}"
 
+CLOCK_FREQ_HZ="${CLOCK_FREQ_ARG:-${CLOCK_FREQ_HZ}}"
+SKIP_POST_ROUTE_QOR_VALUE="${SKIP_POST_ROUTE_QOR_ARG:-${SKIP_POST_ROUTE_QOR:-0}}"
+[[ "${CLOCK_FREQ_HZ}" =~ ^[1-9][0-9]*$ ]] || fail "clock frequency must be a positive integer in MHz"
+[[ "${SKIP_POST_ROUTE_QOR_VALUE}" =~ ^[01]$ ]] || fail "SKIP_POST_ROUTE_QOR must be 0 or 1"
+
 if [[ "${FAST_MODE_VALUE}" == 1 ]]; then
   CONGESTION_FAIL_FAST_VALUE=1
 elif ((NO_EARLY_FAIL)); then
@@ -230,6 +255,7 @@ MAKE_ENV=(
   "CONFIGS=${CONFIGS:-}"
   "TARGET=${TARGET}"
   "CLOCK_FREQ_HZ=${CLOCK_FREQ_HZ}"
+  "SKIP_POST_ROUTE_QOR=${SKIP_POST_ROUTE_QOR_VALUE}"
   "FAST_MODE=${FAST_MODE_VALUE}"
   "CONGESTION_FAIL_FAST=${CONGESTION_FAIL_FAST_VALUE}"
   "GEMM_SLR_FLOORPLAN=${GEMM_SLR_FLOORPLAN_VALUE}"
@@ -242,6 +268,8 @@ MAKE_ENV=(
 
 echo "Config: ${CONFIG_FILE}"
 echo "Prefix: ${PREFIX}"
+echo "Target kernel clock: ${CLOCK_FREQ_HZ} MHz"
+echo "Skip post-route QoR: $([[ "${SKIP_POST_ROUTE_QOR_VALUE}" == 1 ]] && echo enabled || echo disabled)"
 echo "PERF:   ${PERF_VALUE:-disabled}"
 echo "DEBUG:  ${DEBUG_VALUE:-disabled}"
 echo "Fast mode: $([[ "${FAST_MODE_VALUE}" == 1 ]] && echo enabled || echo disabled)"
