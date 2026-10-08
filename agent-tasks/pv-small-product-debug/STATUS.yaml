@@ -1,0 +1,19 @@
+task: pv-small-product-debug
+state: complete
+objective: Isolate long-PV numerical errors with length and input-pattern experiments.
+artifacts: /home/jaeyongjang/project.local/tvm/build/pv_debug_20261008
+log:
+  - timestamp: "2026-10-08 00:21"
+    action: Compared saved PV outputs with FP16 input-scaling and FTZ arithmetic models.
+    result: K=320 and K=512 match input-scaler FTZ models exactly; K=511 needs boundary analysis.
+pitfalls:
+  - Torch export in this environment requires a tuple return rather than a bare tensor.
+  - Shared build/runtime is configured for VCS; hardware runs use the isolated runtime from the prior C4 validation.
+
+conclusion:
+  primary: QROW FP16 input scaler flushes subnormal P-times-scale products.
+  secondary: GEMM output FP32-to-FP16 converter omits the hidden bit for subnormal outputs.
+  evidence: Combined arithmetic model matches all four original failing outputs bitwise and all 120 isolated hardware cases.
+  production_fix: Not applied; this task diagnosed the root cause.
+completed_at: "2026-10-08 00:33"
+report: /home/jaeyongjang/project.local/tvm/docs/vortex_pv_numerics_debug.md
