@@ -166,7 +166,9 @@ static inline bool allocate_scratch(Scratch* scratch, uint32_t qblock,
 static inline int submit(const void* input, const void* weight, const void* scale,
                          const void* zero_point, void* output, uint32_t m, uint32_t n,
                          uint32_t k, uint32_t qblock, uint32_t weight_transpose,
-                         uint32_t quant_direction, uint32_t mode) {
+                         uint32_t quant_direction, uint32_t mode,
+                         uint32_t target_m = 0, uint32_t target_n = 0,
+                         uint32_t target_k = 0) {
 #if defined(GEMM_NAIVE)
   if (mode != VX_TVM_GEMM_MODE_NAIVE) return -2;
 #elif defined(GEMM_IMPROVE)
@@ -180,6 +182,13 @@ static inline int submit(const void* input, const void* weight, const void* scal
       (quant_direction == 0 && (kTileK % qblock) != 0)) {
     return -3;
   }
+
+  target_m = target_m ? target_m : m;
+  target_n = target_n ? target_n : n;
+  target_k = target_k ? target_k : k;
+  if (target_m > m || target_n > n || target_k > k ||
+      (mode == VX_TVM_GEMM_MODE_IMPROVE &&
+       (target_n % kMxuN || target_k % kMxuK))) return -7;
 
   Scratch scratch = {};
   if (!allocate_scratch(&scratch, qblock, quant_direction, mode)) return -4;
@@ -209,9 +218,9 @@ static inline int submit(const void* input, const void* weight, const void* scal
   write32(entry, kN, n);
   write32(entry, kK, k);
   write32(entry, kLog2QBlock, log2_pow2(qblock));
-  write32(entry, kTargetM, m);
-  write32(entry, kTargetN, n);
-  write32(entry, kTargetK, k);
+  write32(entry, kTargetM, target_m);
+  write32(entry, kTargetN, target_n);
+  write32(entry, kTargetK, target_k);
   write32(entry, kMStart, 0);
   write32(entry, kNStart, 0);
   write32(entry, kWeightTranspose, weight_transpose);
@@ -267,5 +276,18 @@ static inline int vx_tvm_gemm_w4a16_v2(
   return vortex::tvm_gemm::submit(input, weight, scale, zero_point, output, m,
                                   execution_n, execution_k, qblock,
                                   weight_transpose, quant_direction, mode);
+}
+// Submission ABI v3: original dimensions describe physical parent storage;
+// target dimensions describe the prefix to compute. Both use the same origin.
+static inline int vx_tvm_gemm_w4a16_region(
+    const void* input, const void* weight, const void* scale, const void* zero_point,
+    void* output, uint32_t m, uint32_t n, uint32_t k, uint32_t qblock,
+    uint32_t weight_transpose, uint32_t quant_direction,
+    uint32_t target_m, uint32_t target_n, uint32_t target_k) {
+  if (!target_m || !target_n || !target_k || n % MXU_COL || k % MXU_ROW)
+    return -7;
+  return vortex::tvm_gemm::submit(input, weight, scale, zero_point, output,
+      m, n, k, qblock, weight_transpose, quant_direction,
+      VX_TVM_GEMM_MODE_IMPROVE, target_m, target_n, target_k);
 }
 #endif

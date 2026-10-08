@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <vortex.h>
 #include "common.h"
 #include "../fpint_gemm_ffn_hw/test_vectors.h"
@@ -35,6 +36,9 @@ static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
 static bool TAGGED_VECTORS = false;
+static uint32_t TARGET_M = 0, TARGET_N = 0, TARGET_K = 0;
+static uint32_t M_START = 0, N_START = 0;
+static std::vector<uint32_t> TARGET_K_LIST, TARGET_N_LIST;
 // Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
 // Used to isolate Vortex-core polling power from HW-GEMM power.
 static uint32_t POLL_ONLY_ITERS = 0;
@@ -89,16 +93,50 @@ static void show_usage() {
   std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
   std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
   std::cout << "       [--tagged] (directed A/W address-identity vectors)" << std::endl;
+  std::cout << "       [--target-m M] [--target-n N] [--target-k K]" << std::endl;
+  std::cout << "       [--m-start M] [--n-start N] (DMA-tile-aligned region origin)" << std::endl;
+  std::cout << "       [--target-k-list K1,K2,... | --target-n-list N1,N2,...]" << std::endl;
+  std::cout << "         Sequence jobs reuse the same original packed input buffers." << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
 static constexpr int OPT_TAGGED = 0x101;
+enum { OPT_TM = 0x102, OPT_TN, OPT_TK, OPT_MS, OPT_NS, OPT_K_LIST, OPT_N_LIST };
+
+static uint32_t parse_extent(const char* text, bool allow_zero = false) {
+  char* end = nullptr;
+  const unsigned long value = strtoul(text, &end, 10);
+  if (!*text || *text == '-' || *end || value > UINT32_MAX || (!allow_zero && !value)) {
+    std::cerr << "Invalid region extent: " << text << std::endl;
+    exit(1);
+  }
+  return uint32_t(value);
+}
+
+static std::vector<uint32_t> parse_extents(const char* text) {
+  std::vector<uint32_t> values;
+  std::stringstream stream(text);
+  std::string item;
+  while (std::getline(stream, item, ',')) values.push_back(parse_extent(item.c_str()));
+  if (values.empty() || !*text || text[strlen(text) - 1] == ',') {
+    std::cerr << "Empty extent in sequence" << std::endl;
+    exit(1);
+  }
+  return values;
+}
 
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
   {"tagged", no_argument, nullptr, OPT_TAGGED},
+  {"target-m", required_argument, nullptr, OPT_TM},
+  {"target-n", required_argument, nullptr, OPT_TN},
+  {"target-k", required_argument, nullptr, OPT_TK},
+  {"m-start", required_argument, nullptr, OPT_MS},
+  {"n-start", required_argument, nullptr, OPT_NS},
+  {"target-k-list", required_argument, nullptr, OPT_K_LIST},
+  {"target-n-list", required_argument, nullptr, OPT_N_LIST},
   {nullptr, 0, nullptr, 0},
 };
 
@@ -116,6 +154,13 @@ static void parse_args(int argc, char **argv) {
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
     case OPT_TAGGED: TAGGED_VECTORS = true; break;
+    case OPT_TM: TARGET_M = parse_extent(optarg); break;
+    case OPT_TN: TARGET_N = parse_extent(optarg); break;
+    case OPT_TK: TARGET_K = parse_extent(optarg); break;
+    case OPT_MS: M_START = parse_extent(optarg, true); break;
+    case OPT_NS: N_START = parse_extent(optarg, true); break;
+    case OPT_K_LIST: TARGET_K_LIST = parse_extents(optarg); break;
+    case OPT_N_LIST: TARGET_N_LIST = parse_extents(optarg); break;
     case OPT_POL:
       POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
       POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
@@ -254,7 +299,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
     std::vector<uint8_t> packed;
     convert_weight_tiled(h_W_raw, packed);
     auto weight = [&](uint32_t k, uint32_t n) { return tiled_weight_at(packed, k, n); };
-    fpint_gemm_test::reference(M, K, N, K_logical, N_logical, QBLK, QDIR,
+    fpint_gemm_test::reference(M, K, N, std::min(K_logical, TARGET_K), N_logical, QBLK, QDIR,
         h_A, h_scales, h_zeros, weight, fp16_to_float, float_to_fp16, h_ref_out_fp16);
   }
 }
@@ -527,6 +572,16 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
           // N is rounded to the MXU width; skip only non-logical columns.
           if (gn >= N_logical) continue;
 
+          const bool in_region = gm >= M_START && gm - M_START < TARGET_M
+                              && gn >= N_START && gn - N_START < TARGET_N;
+          if (!in_region) {
+            if (got != 0xffffu) {
+              if (errors < 10) printf("Outside-region overwrite[m=%u,n=%u]: 0x%04x\n", gm, gn, got);
+              ++errors;
+            }
+            continue;
+          }
+
           uint16_t exp = ref[gm * N + gn];
           if (!compare_fp16(got, exp, FP16_TOL)) {
             if (errors < 10) {
@@ -607,7 +662,8 @@ int main(int argc, char *argv[]) {
   }
 
   // Validate constraints
-  if (QBLK != 32 || WTRANS > 1 || QDIR > 1) {
+  if ((QBLK != 16 && QBLK != 32 && QBLK != 64 && QBLK != 128)
+      || QBLK < (QDIR ? DMA_MXU_NT : DMA_MXU_KT) || WTRANS > 1 || QDIR > 1) {
     std::cerr << "Invalid parameters: QBLK=" << QBLK
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
     return -1;
@@ -625,6 +681,29 @@ int main(int argc, char *argv[]) {
   }
   N = uint32_t(fpint_gemm_layout::align_up(N_logical, DMA_MXU_NT));
   K = uint32_t(fpint_gemm_layout::align_up(K_logical, DMA_MXU_KT));
+  const bool sequence = !TARGET_K_LIST.empty() || !TARGET_N_LIST.empty();
+  if ((!TARGET_K_LIST.empty() && !TARGET_N_LIST.empty()) || (sequence && REPS != 1)
+      || (sequence && POWER_MODE) || M_START >= M || N_START >= N
+      || M_START % DMA_MT || N_START % DMA_NT) {
+    std::cerr << "Invalid sequence or unaligned/out-of-range region start" << std::endl;
+    return 1;
+  }
+  TARGET_M = TARGET_M ? TARGET_M : M - M_START;
+  TARGET_N = TARGET_N ? TARGET_N : N - N_START;
+  TARGET_K = TARGET_K ? TARGET_K : K;
+  if (TARGET_M > M - M_START || TARGET_N > N - N_START || TARGET_K > K
+      || TARGET_N % DMA_MXU_NT || TARGET_K % DMA_MXU_KT) {
+    std::cerr << "Target must fit original storage; N/K must align to MXU" << std::endl;
+    return 1;
+  }
+  for (auto value : TARGET_K_LIST) {
+    if (value > K || value % DMA_MXU_KT) return 1;
+  }
+  for (auto value : TARGET_N_LIST) {
+    if (value > N - N_START || value % DMA_MXU_NT) return 1;
+  }
+  if (!TARGET_K_LIST.empty()) { TARGET_K = TARGET_K_LIST.front(); REPS = TARGET_K_LIST.size(); }
+  if (!TARGET_N_LIST.empty()) { TARGET_N = TARGET_N_LIST.front(); REPS = TARGET_N_LIST.size(); }
   // Pad M up to multiple of 8 for DMA stripe alignment (NUM_DMA_CHANNELS=8).
   // DRAM slots reserve M_pad rows for address alignment; compute/DMA use real M.
   M_pad = (M + 7u) & ~7u;
@@ -741,7 +820,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_weight.size(), DRAM_ALIGN_BYTES, VX_MEM_READ, &W_int4_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_scale.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ, &scales_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_zp.size(),     DRAM_ALIGN_BYTES, VX_MEM_READ, &zeros_buffer));
-  RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_WRITE, &C_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_READ_WRITE, &C_buffer));
 
   // ---- Upload kernel ----
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
@@ -768,6 +847,11 @@ int main(int argc, char *argv[]) {
   kargs.QBLK   = QBLK;
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;
+  kargs.target_M = TARGET_M;
+  kargs.target_N = TARGET_N;
+  kargs.target_K = TARGET_K;
+  kargs.m_start = M_START;
+  kargs.n_start = N_START;
   kargs.status = STATUS_INIT;
 
   std::cout << "TMEM layout (double-buffered):" << std::hex
@@ -788,7 +872,7 @@ int main(int argc, char *argv[]) {
             << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")
             << ", poll_iters=" << POLL_ONLY_ITERS << ")" << std::endl;
   for (uint32_t rep = 0; rep < REPS; ++rep) {
-    if (rep != 0) {
+    if (rep != 0 && !sequence) {
       build_test_vectors(h_A, h_W_raw, h_scales, h_zeros, h_ref_out_fp16,
                          !POWER_MODE, rep);
       convert_input_tiled(h_A, tiled_input);
@@ -796,10 +880,24 @@ int main(int argc, char *argv[]) {
       convert_scale_tiled(h_scales, tiled_scale);
       convert_zp_tiled(h_zeros, tiled_zp);
     }
-    RT_CHECK(vx_copy_to_dev(A_buffer, tiled_input.data(), 0, tiled_input.size()));
-    RT_CHECK(vx_copy_to_dev(W_int4_buffer, tiled_weight.data(), 0, tiled_weight.size()));
-    RT_CHECK(vx_copy_to_dev(scales_buffer, tiled_scale.data(), 0, tiled_scale.size()));
-    RT_CHECK(vx_copy_to_dev(zeros_buffer, tiled_zp.data(), 0, tiled_zp.size()));
+    if (!TARGET_K_LIST.empty()) TARGET_K = TARGET_K_LIST[rep];
+    if (!TARGET_N_LIST.empty()) TARGET_N = TARGET_N_LIST[rep];
+    kargs.target_K = TARGET_K;
+    kargs.target_N = TARGET_N;
+    if (sequence && rep != 0) {
+      auto weight = [&](uint32_t k, uint32_t n) { return tiled_weight_at(tiled_weight, k, n); };
+      fpint_gemm_test::reference(M, K, N, std::min(K_logical, TARGET_K), N_logical, QBLK, QDIR,
+          h_A, h_scales, h_zeros, weight, fp16_to_float, float_to_fp16, h_ref_out_fp16);
+    }
+    if (!sequence || rep == 0) {
+      RT_CHECK(vx_copy_to_dev(A_buffer, tiled_input.data(), 0, tiled_input.size()));
+      RT_CHECK(vx_copy_to_dev(W_int4_buffer, tiled_weight.data(), 0, tiled_weight.size()));
+      RT_CHECK(vx_copy_to_dev(scales_buffer, tiled_scale.data(), 0, tiled_scale.size()));
+      RT_CHECK(vx_copy_to_dev(zeros_buffer, tiled_zp.data(), 0, tiled_zp.size()));
+    }
+    printf("GEMM region: orig=%ux%ux%u start=%u,%u target=%ux%ux%u inputs=%s\n",
+           M, N, K, M_START, N_START, TARGET_M, TARGET_N, TARGET_K,
+           sequence && rep ? "reused" : "uploaded");
     // Every FP16 lane is NaN, including reserved padding between output slots.
     const std::vector<uint8_t> poison_out(out_total_bytes, 0xffu);
     RT_CHECK(vx_copy_to_dev(C_buffer, poison_out.data(), 0, poison_out.size()));

@@ -206,7 +206,7 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   // Partition sizes/offsets for this job
   job_write_reg32(eid, REG_M_TARGET, part.target_M);
   job_write_reg32(eid, REG_N_TARGET, part.target_N);
-  job_write_reg32(eid, REG_K_TARGET, arg->K);
+  job_write_reg32(eid, REG_K_TARGET, arg->target_K ? arg->target_K : arg->K);
   job_write_reg32(eid, REG_M_START, part.m_start);
   job_write_reg32(eid, REG_N_START, part.n_start);
 
@@ -303,7 +303,11 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  tb_partition_t part = compute_partition(core_id, num_cores, arg->M, arg->N);
+  tb_partition_t part = compute_partition(core_id, num_cores,
+      arg->target_M ? arg->target_M : arg->M,
+      arg->target_N ? arg->target_N : arg->N);
+  part.m_start += arg->m_start;
+  part.n_start += arg->n_start;
 #ifdef GEMM_PARTITION_LOG
   vx_printf("[gemm-part] cid=%u/%u tbs=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
             core_id, num_cores, num_cores,

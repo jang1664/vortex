@@ -1,0 +1,65 @@
+task: gemm-submatrix-orig-target
+state: complete
+spec: gemm-submatrix-spec.md
+config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
+iterations:
+- iteration: 1
+  status: pass
+  test: existing gemm_fsm unit (initial RTL)
+  note: Partial-N preservation added after first unit pass; focused rerun pending.
+- iteration: 2
+  status: pass
+  test: existing gemm_fsm unit after partial-N preservation
+- iteration: 3
+  status: sim_fail
+  test: partial_m integrated xrt-vcs-sim
+  error: DMA child dependency slots above waits[0] unsupported (VX_gemm_ctrl.sv:1150).
+  passed:
+  - normal_m1
+  - kv_pv
+  - kv_qk
+  - pv_storage_tail
+  fix: Output preservation load locally drains prior output DMA, notifies DMA-owned
+    RID_O, and uses existing ACC2LMEM RID_O wait; no scheduler changes.
+- iteration: 4
+  status: pass
+  test: final focused VCS gemm_fsm unit
+  log: unittest-gemm-fsm-v3.log
+- iteration: 5
+  status: pass
+  test: Final integrated wrapper blackbox suite
+  cases: 13
+  verified_jobs: 20
+  results: RESULTS.md
+  logs:
+  - bb_v3
+  - bb_v3_multitile
+pitfalls:
+- Existing orig/target semantics are parent matrices and per-core job regions, not
+  LLM cache fields.
+- Current K-tail weight and qparam strides incorrectly conflate storage and compute
+  tails.
+- Shared physical output tiles require preserving data outside the target region.
+- verify_rtl.py blackbox invokes blackbox.sh directly; user requires run_black.sh
+  wrapper.
+- run_black.sh may reuse stale simv; runner explicitly invokes make simv with -W testbench
+  before blackbox tests.
+- An app CLI failure before device open left wrapper-owned simv on port47615; confirmed
+  PID/cwd/socket against our initial log and terminated only that orphan.
+log:
+- timestamp: 2026-10-07 16:10
+  action: Confirmed user scope; began RTL implementation and host regression preparation.
+- timestamp: '2026-10-07T16:15:57'
+  action: Host/kernel compile and initial VCS FSM unit passed; wrapper blackbox normal_m1
+    running.
+- timestamp: '2026-10-07T16:18:31'
+  action: Stale pre-change simv failed capacity512/targetK288 with 112/128 output
+    mismatches; rebuilt current RTL and started full directed suite.
+- timestamp: '2026-10-07T16:21:37'
+  action: Integrated test found partial-output DMA dependency contract violation;
+    numerical prefix cases passed.
+- timestamp: '2026-10-07T16:24:38'
+  action: Started final 12-case/19-job directed suite and focused FSM unit rerun.
+- timestamp: '2026-10-07T16:33:53'
+  action: Completed all directed GEMM/TVM-KV-shaped cases and final unit check; reviewed
+    diff; no PnR, TVM edits, or commit.

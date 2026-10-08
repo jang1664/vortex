@@ -402,9 +402,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   // Tile dims and last sizes (latched at start)
   mm_dim_t     mt_dim_q, nt_dim_q, kt_dim_q;
-  mm_dim_t     nt_orig_dim_q;
+  mm_dim_t     mt_orig_dim_q, nt_orig_dim_q, kt_orig_dim_q;
   mm_tile_sz_t m_last_q, n_last_q, k_last_q;
-  mm_tile_sz_t n_orig_last_q;
+  mm_tile_sz_t m_orig_last_q, n_orig_last_q, k_orig_last_q;
   mm_tile_sz_t MT_q, NT_q, KT_q;
   logic [5:0]  LOG2_MT_q, LOG2_NT_q, LOG2_KT_q;
 
@@ -423,15 +423,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   logic [31:0] nt_base_q;            // (n_start >> log2_dma_nt)
   logic [63:0] I_MT_STRIDE_q;        // MT * orig_K * FP16
   logic [63:0] I_KT_STRIDE_FULL_q;   // MT * KT * FP16   (cm = MT)
-  logic [63:0] I_KT_STRIDE_LAST_q;   // align8(m_last)*KT*FP16 (cm = m_last)
+  logic [63:0] I_KT_STRIDE_LAST_q;   // align8(m_orig_last)*KT*FP16
   logic [63:0] W_KT_STRIDE_q;        // (KT * orig_N) / 2
   logic [63:0] W_NT_STRIDE_FULL_q;   // (KT * NT) / 2  (ck = KT)
-  logic [63:0] W_NT_STRIDE_LAST_q;   // (k_last * NT) / 2 (ck = k_last)
+  logic [63:0] W_NT_STRIDE_LAST_q;   // (k_orig_last * NT) / 2
   logic [63:0] O_MT_STRIDE_q;        // MT * orig_N * FP16 (per dma mt-tile)
   logic [63:0] O_BASE_OFF_q;         // (m_start*orig_N + n_start) * FP16
   logic [63:0] SCALE_FK_FN_q;        // scale_slot_bytes(KT,    NT)
   logic [63:0] SCALE_FK_PN_q;        // scale_slot_bytes(KT,    n_orig_last)
-  logic [63:0] SCALE_PK_FN_q;        // scale_slot_bytes(k_last,NT)
+  logic [63:0] SCALE_PK_FN_q;        // scale_slot_bytes(k_orig_last,NT)
   logic [63:0] SCALE_PER_KT_FULL_K_q;// (nt_orig_dim-1)*FK_FN + FK_PN
 
   // --------------------------------------------------------------------------
@@ -516,7 +516,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     return mm_rid_t'(acc_group ? RID_ACC_FREE1 : RID_ACC_FREE0);
   endfunction
 
-  mm_rid_t rid_o = mm_rid_t'(RID_O);  // completed output DMA store count
+  // RID_O counts output DMA operations: stores and optional preservation loads.
+  mm_rid_t rid_o = mm_rid_t'(RID_O);
   u32_t o_store_issue_q, o_store_issue_d;
   u32_t acc_copy_issue_q [2];
   u32_t acc_copy_issue_d [2];
@@ -678,7 +679,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endtask
 
-  task automatic tile_eff_sizes(
+  // DMA transfers retain the original physical tile shape. Job extents only
+  // bound execution; a job tail is not necessarily an original storage tail.
+  task automatic tile_storage_sizes(
     input  mm_dim_t nt,
     input  mm_dim_t mt,
     input  mm_dim_t kt,
@@ -687,9 +690,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output mm_tile_sz_t kt_eff
   );
     begin
-      mt_eff = (mt == mt_dim_q-1) ? m_last_q : MT_q;
-      nt_eff = (nt == nt_dim_q-1) ? n_last_q : NT_q;
-      kt_eff = (kt == kt_dim_q-1) ? k_last_q : KT_q;
+      mt_eff = (mt_base_q + u32_t'(mt) == u32_t'(mt_orig_dim_q)-1) ? m_orig_last_q : MT_q;
+      nt_eff = (nt_base_q + u32_t'(nt) == u32_t'(nt_orig_dim_q)-1) ? n_orig_last_q : NT_q;
+      kt_eff = (kt == kt_orig_dim_q-1) ? k_orig_last_q : KT_q;
     end
   endtask
 
@@ -752,7 +755,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       nt_idx = nt_base_q + u32_t'(nt);
       kt_idx = u32_t'(kt);
 
-      slot_full_N = (kt == kt_dim_q - 1) ? SCALE_PK_FN_q : SCALE_FK_FN_q;
+      slot_full_N = (kt == kt_orig_dim_q - 1) ? SCALE_PK_FN_q : SCALE_FK_FN_q;
 
       scale_slot_offset = 64'(kt_idx) * SCALE_PER_KT_FULL_K_q
                         + 64'(nt_idx) * slot_full_N;
@@ -767,7 +770,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // mt_base_q = (j.m_start >> j.log2_dma_mt), pre-computed.
       mt_idx    = mt_base_q + u32_t'(mt);
       kt_idx    = u32_t'(kt);
-      kt_stride = (mt == mt_dim_q - 1) ? I_KT_STRIDE_LAST_q : I_KT_STRIDE_FULL_q;
+      kt_stride = (mt_idx == u32_t'(mt_orig_dim_q) - 1) ? I_KT_STRIDE_LAST_q : I_KT_STRIDE_FULL_q;
 
       input_tile_addr = j.input_base
                       + 64'(mt_idx) * I_MT_STRIDE_q
@@ -783,7 +786,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // nt_base_q = (j.n_start >> j.log2_dma_nt), pre-computed.
       nt_idx    = nt_base_q + u32_t'(nt);
       kt_idx    = u32_t'(kt);
-      nt_stride = (kt == kt_dim_q - 1) ? W_NT_STRIDE_LAST_q : W_NT_STRIDE_FULL_q;
+      nt_stride = (kt == kt_orig_dim_q - 1) ? W_NT_STRIDE_LAST_q : W_NT_STRIDE_FULL_q;
 
       weight_tile_addr = j.weight_base
                        + 64'(kt_idx) * W_KT_STRIDE_q
@@ -873,7 +876,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // advance + optionally preload next tile
     S_ADVANCE_TILES, S_O_WAIT_LMEM2DRAM_FINAL, S_FINAL_CLEAR, // 35
 
-    S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W, S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP, S_PRE_NEXT_LD_DONE_NTF // 39
+    S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W, S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP, S_PRE_NEXT_LD_DONE_NTF, // 39
+
+    // Preserve uncomputed rows or a partially covered final output DMA beat.
+    S_O_PRELOAD
   } state_t;
 
   state_t state_q, state_d;
@@ -898,7 +904,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP,
       S_MXU_PRE_CUR_W, S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP,
       S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP,
-      S_MXU_ARM_GEMM, S_O_ACC2LMEM, S_O_LMEM2DRAM,
+      S_MXU_ARM_GEMM, S_O_ACC2LMEM, S_O_LMEM2DRAM, S_O_PRELOAD,
       S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W,
       S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP: state_emits_work = 1'b1;
       default: state_emits_work = 1'b0;
@@ -939,6 +945,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   u32_t output_global_nt_base_q, output_global_nt_base_d;
   u32_t output_nb_stride_q, output_nb_stride_d;
   u32_t output_nb_bytes_q, output_nb_bytes_d;
+  u32_t output_nb_storage_bytes_q, output_nb_storage_bytes_d;
+  logic output_preserve_q, output_preserve_d;
   u32_t output_group_bytes_q, output_group_bytes_d;
   mm_mxu_dim_t output_nt_mxu_dim_q, output_nt_mxu_dim_d;
   logic [63:0] output_dram_addr_q, output_dram_addr_d;
@@ -1102,9 +1110,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       job_q <= '0;
       mt_dim_q <= 0; nt_dim_q <= 0; kt_dim_q <= 0;
-      nt_orig_dim_q <= 0;
+      mt_orig_dim_q <= 0; nt_orig_dim_q <= 0; kt_orig_dim_q <= 0;
       m_last_q <= 0; n_last_q <= 0; k_last_q <= 0;
-      n_orig_last_q <= 0;
+      m_orig_last_q <= 0; n_orig_last_q <= 0; k_orig_last_q <= 0;
       MT_q <= mm_tile_sz_t'(MT_DEFAULT);
       NT_q <= mm_tile_sz_t'(NT_DEFAULT);
       KT_q <= mm_tile_sz_t'(KT_DEFAULT);
@@ -1139,6 +1147,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       output_global_nt_base_q <= '0;
       output_nb_stride_q <= '0;
       output_nb_bytes_q <= '0;
+      output_nb_storage_bytes_q <= '0;
+      output_preserve_q <= 1'b0;
       output_group_bytes_q <= '0;
       output_nt_mxu_dim_q <= '0;
       output_dram_addr_q <= '0;
@@ -1184,6 +1194,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       output_global_nt_base_q <= output_global_nt_base_d;
       output_nb_stride_q <= output_nb_stride_d;
       output_nb_bytes_q <= output_nb_bytes_d;
+      output_nb_storage_bytes_q <= output_nb_storage_bytes_d;
+      output_preserve_q <= output_preserve_d;
       output_group_bytes_q <= output_group_bytes_d;
       output_nt_mxu_dim_q <= output_nt_mxu_dim_d;
       output_dram_addr_q <= output_dram_addr_d;
@@ -1211,7 +1223,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mm_tile_sz_t mt_rem;
         mm_tile_sz_t nt_rem;
         mm_tile_sz_t kt_rem;
-        mm_tile_sz_t nt_orig_rem;
+        mm_tile_sz_t mt_orig_rem, nt_orig_rem, kt_orig_rem;
         logic [5:0] log2_mt_n;
         logic [5:0] log2_nt_n;
         logic [5:0] log2_kt_n;
@@ -1234,7 +1246,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mt_dim_q <= mt_dim_n;
         nt_dim_q <= nt_dim_n;
         kt_dim_q <= kt_dim_n;
+        mt_orig_dim_q <= mm_dim_t'(ceil_div_log2(job_d.orig_M, log2_mt_n));
         nt_orig_dim_q <= nt_orig_dim_n;
+        kt_orig_dim_q <= mm_dim_t'(ceil_div_log2(job_d.orig_K, log2_kt_n));
         MT_q <= mt_n;
         NT_q <= nt_n;
         KT_q <= kt_n;
@@ -1245,12 +1259,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mt_rem = mm_tile_sz_t'(job_d.target_M & (u32_t'(mt_n) - 1));
         nt_rem = mm_tile_sz_t'(job_d.target_N & (u32_t'(nt_n) - 1));
         kt_rem = mm_tile_sz_t'(job_d.target_K & (u32_t'(kt_n) - 1));
+        mt_orig_rem = mm_tile_sz_t'(job_d.orig_M & (u32_t'(mt_n) - 1));
         nt_orig_rem = mm_tile_sz_t'(job_d.orig_N & (u32_t'(nt_n) - 1));
+        kt_orig_rem = mm_tile_sz_t'(job_d.orig_K & (u32_t'(kt_n) - 1));
 
         m_last_q <= (mt_rem == 0) ? mt_n : mt_rem;
         n_last_q <= (nt_rem == 0) ? nt_n : nt_rem;
         k_last_q <= (kt_rem == 0) ? kt_n : kt_rem;
+        m_orig_last_q <= (mt_orig_rem == 0) ? mt_n : mt_orig_rem;
         n_orig_last_q <= (nt_orig_rem == 0) ? nt_n : nt_orig_rem;
+        k_orig_last_q <= (kt_orig_rem == 0) ? kt_n : kt_orig_rem;
       end
 
       // Stride pre-compute stage 0: latch from job_q / *_q registers.
@@ -1261,11 +1279,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
         I_MT_STRIDE_q       <= 64'(u32_t'(MT_q)) * 64'(job_q.orig_K) * FP16_BYTES;
         I_KT_STRIDE_FULL_q  <= 64'(align8_u32(u32_t'(MT_q)))     * 64'(u32_t'(KT_q)) * FP16_BYTES;
-        I_KT_STRIDE_LAST_q  <= 64'(align8_u32(u32_t'(m_last_q))) * 64'(u32_t'(KT_q)) * FP16_BYTES;
+        I_KT_STRIDE_LAST_q  <= 64'(align8_u32(u32_t'(m_orig_last_q))) * 64'(u32_t'(KT_q)) * FP16_BYTES;
 
         W_KT_STRIDE_q       <= (64'(u32_t'(KT_q))     * 64'(job_q.orig_N)) >> 1;
         W_NT_STRIDE_FULL_q  <= (64'(u32_t'(KT_q))     * 64'(u32_t'(NT_q))) >> 1;
-        W_NT_STRIDE_LAST_q  <= (64'(u32_t'(k_last_q)) * 64'(u32_t'(NT_q))) >> 1;
+        W_NT_STRIDE_LAST_q  <= (64'(u32_t'(k_orig_last_q)) * 64'(u32_t'(NT_q))) >> 1;
 
         O_MT_STRIDE_q <= (64'(u32_t'(MT_q)) * 64'(job_q.orig_N)) << 1;
         O_BASE_OFF_q  <= (64'(job_q.m_start) * 64'(job_q.orig_N)
@@ -1273,7 +1291,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
         SCALE_FK_FN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(NT_q));
         SCALE_FK_PN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(n_orig_last_q));
-        SCALE_PK_FN_q <= scale_slot_bytes(job_q, u32_t'(k_last_q), u32_t'(NT_q));
+        SCALE_PK_FN_q <= scale_slot_bytes(job_q, u32_t'(k_orig_last_q), u32_t'(NT_q));
       end
 
       // Stride pre-compute stage 1: combine stage-0 registers (no fresh
@@ -1352,6 +1370,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     mm_dim_t nt_cur, mt_cur, kt_cur;
     mm_dim_t nt1_init, mt1_init, kt1_init;
     mm_tile_sz_t mt_eff_cur, nt_eff_cur, kt_eff_cur;
+    mm_tile_sz_t mt_storage_cur, nt_storage_cur, kt_storage_cur;
     logic        buf_cur;
     logic        has_tile1_init;
     u32_t gen_cur;
@@ -1408,6 +1427,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t acc_base_nb;
     logic [63:0] output_lmem_addr;
     logic [63:0] output_dram_addr;
+    logic output_preserve_cur;
 
     groups_tile = mm_group_t'(ceil_div_log2(u32_t'(KT_q), job_q.orig_qblk[5:0]));
     groups_mxu  = mm_group_t'(ceil_div_log2(MXU_KT, job_q.orig_qblk[5:0]));
@@ -1443,6 +1463,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output_global_nt_base_d = output_global_nt_base_q;
     output_nb_stride_d = output_nb_stride_q;
     output_nb_bytes_d = output_nb_bytes_q;
+    output_nb_storage_bytes_d = output_nb_storage_bytes_q;
+    output_preserve_d = output_preserve_q;
     output_group_bytes_d = output_group_bytes_q;
     output_nt_mxu_dim_d = output_nt_mxu_dim_q;
     output_dram_addr_d = output_dram_addr_q;
@@ -1466,6 +1488,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     mt_eff_cur = (mt_cur == mt_dim_q-1) ? m_last_q : MT_q;
     nt_eff_cur = (nt_cur == nt_dim_q-1) ? n_last_q : NT_q;
     kt_eff_cur = (kt_cur == kt_dim_q-1) ? k_last_q : KT_q;
+    mt_storage_cur = (mt_base_q + u32_t'(mt_cur) == u32_t'(mt_orig_dim_q)-1)
+                   ? m_orig_last_q : MT_q;
+    nt_storage_cur = (nt_base_q + u32_t'(nt_cur) == u32_t'(nt_orig_dim_q)-1)
+                   ? n_orig_last_q : NT_q;
+    kt_storage_cur = (kt_cur == kt_orig_dim_q-1) ? k_orig_last_q : KT_q;
 
     buf_cur = tile_cur_q[0];
     gen_cur = buf_gen(tile_cur_q);
@@ -1528,17 +1555,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     // group row offset inside this KT tile
     g0 = mm_group_t'(div_log2((kt_mxu_q * MXU_KT), job_q.orig_qblk[5:0]));
-    groups_eff_cur   = mm_group_t'(ceil_div_log2(u32_t'(kt_eff_cur), job_q.orig_qblk[5:0]));
-    weight_nb_stride = u32_t'(kt_eff_cur) * u32_t'(MXU_NT >> 1);
-    scale_nb_stride  = job_q.qdir ? (u32_t'(kt_eff_cur) * u32_t'(ng_mxu) * u32_t'(FP16_BYTES))
+    groups_eff_cur   = mm_group_t'(ceil_div_log2(u32_t'(kt_storage_cur), job_q.orig_qblk[5:0]));
+    weight_nb_stride = u32_t'(kt_storage_cur) * u32_t'(MXU_NT >> 1);
+    scale_nb_stride  = job_q.qdir ? (u32_t'(kt_storage_cur) * u32_t'(ng_mxu) * u32_t'(FP16_BYTES))
                                   : (u32_t'(groups_eff_cur) * u32_t'(MXU_NT) * u32_t'(FP16_BYTES));
     qparam_kb_offset = job_q.qdir ? (u32_t'(MXU_KT) * u32_t'(ng_mxu) * u32_t'(FP16_BYTES)) : 32'd0;
     w_seg_bytes      = u32_t'(MXU_KT * (MXU_NT >> 1));
 
     // Input tile layout is [kb][m][MXU_KT]. Each kb slice contains all M rows,
-    // so the microtile offset scales by the effective M, not just by K.
+    // so the microtile offset uses physical M even for a shorter row job.
     lmem_in_mxu = ibuf_base(buf_cur)
-                + 64'(kt_mxu_q) * 64'(mt_eff_cur) * 64'(MXU_KT * FP16_BYTES);
+                + 64'(kt_mxu_q) * 64'(mt_storage_cur) * 64'(MXU_KT * FP16_BYTES);
 
     dma_nt_mxu_dim   = u32_t'(NT_q) >> `CLOG2(MXU_NT);
     acc_nb_stride    = u32_t'(ACC_DBUF_STRIDE) >> (LOG2_NT_q - `CLOG2(MXU_NT));
@@ -1609,14 +1636,21 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     out_bytes_acc  = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
     out_bytes_fp16 = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
     output_nt_mxu_dim = nt_mxu_dim;
+    // A partial N tile can end halfway through a DMA beat even when every
+    // physical M row is computed (e.g. M=1, MXU_NT=16, target_N=16).
+    // Preserve that beat's inactive columns as well as any inactive M rows.
+    output_preserve_cur = (mt_eff_cur != mt_storage_cur)
+        || ((nt_eff_cur < nt_storage_cur)
+         && (((u32_t'(mt_storage_cur) * u32_t'(nt_eff_cur) * FP16_BYTES)
+             & u32_t'(`MEM_BLOCK_SIZE - 1)) != 0));
     // Keep the padded reservation between DMA tiles, but pack real rows
     // contiguously between microtiles, exactly like the input A layout.
     output_lmem_addr = output_lmem_base_q
-                     + 64'(o_nt_mxu_q) * 64'(output_nb_bytes_q);
+                     + 64'(o_nt_mxu_q) * 64'(output_nb_storage_bytes_q);
     output_dram_addr = output_tile_row_base_q
                      + 64'(output_global_nt_base_q)
                      * 64'(output_nb_stride_q)
-                     + 64'(o_nt_mxu_q) * 64'(output_nb_bytes_q);
+                     + 64'(o_nt_mxu_q) * 64'(output_nb_storage_bytes_q);
 
     gemm_start_o = 1'b0;
 
@@ -1708,7 +1742,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt0 = '0;
         mt0 = '0;
         kt0 = '0;
-        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        tile_storage_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
         out_cmd_d   = make_dma_ld(job_q.lmem_ibuf0_base,
                                  input_tile_addr(job_q, mt0, kt0),
@@ -1728,7 +1762,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt0 = '0;
         mt0 = '0;
         kt0 = '0;
-        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        tile_storage_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
         out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
                                  weight_tile_addr(job_q, nt0, kt0),
@@ -1749,7 +1783,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt0 = '0;
         mt0 = '0;
         kt0 = '0;
-        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        tile_storage_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
         if (!job_q.qdir) begin
           groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
@@ -1780,7 +1814,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt0 = '0;
         mt0 = '0;
         kt0 = '0;
-        tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
+        tile_storage_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
         if (!job_q.qdir) begin
           groups_eff = ceil_div_log2(u32_t'(kt_eff0), job_q.orig_qblk[5:0]);
@@ -1836,7 +1870,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt1 = nt1_init;
         mt1 = mt1_init;
         kt1 = kt1_init;
-        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        tile_storage_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
         out_cmd_d   = make_dma_ld(job_q.lmem_ibuf1_base,
                                  input_tile_addr(job_q, mt1, kt1),
@@ -1856,7 +1890,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt1 = nt1_init;
         mt1 = mt1_init;
         kt1 = kt1_init;
-        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        tile_storage_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
         out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
                                  weight_tile_addr(job_q, nt1, kt1),
@@ -1877,7 +1911,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt1 = nt1_init;
         mt1 = mt1_init;
         kt1 = kt1_init;
-        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        tile_storage_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
         if (!job_q.qdir) begin
           groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
@@ -1908,7 +1942,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt1 = nt1_init;
         mt1 = mt1_init;
         kt1 = kt1_init;
-        tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
+        tile_storage_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
         if (!job_q.qdir) begin
           groups_eff = ceil_div_log2(u32_t'(kt_eff1), job_q.orig_qblk[5:0]);
@@ -2308,13 +2342,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             output_lmem_base_d = job_q.lmem_obuf_base;
             output_global_nt_base_d
                 = (nt_base_q + u32_t'(nt_cur)) * dma_nt_mxu_dim;
-            output_nb_stride_d = align8_u32(u32_t'(mt_eff_cur))
+            output_nb_stride_d = align8_u32(u32_t'(mt_storage_cur))
                                * u32_t'(MXU_NT * FP16_BYTES);
             output_nb_bytes_d = u32_t'(mt_eff_cur)
                               * u32_t'(MXU_NT * FP16_BYTES);
+            output_nb_storage_bytes_d = u32_t'(mt_storage_cur)
+                                      * u32_t'(MXU_NT * FP16_BYTES);
+            output_preserve_d = output_preserve_cur;
             output_nt_mxu_dim_d = output_nt_mxu_dim;
             output_group_bytes_d = '0;
-            state_d = S_O_ACC2LMEM;
+            state_d = output_preserve_cur ? S_O_PRELOAD : S_O_ACC2LMEM;
           end else begin
             state_d = S_ADVANCE_TILES;
           end
@@ -2323,13 +2360,38 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       // ----------------------------------------------------------------------
       // Output (only at last-kt tile): acc->lmem then lmem->dram
-      // RID_O tracks completed DMA stores. RID_ACC_FREE tracks completed
-      // ACC2LMEM copies independently for each physical accumulator group.
+      // RID_O tracks completed output DMA operations, including preservation
+      // loads. RID_ACC_FREE tracks completed ACC2LMEM copies per accumulator.
       // ----------------------------------------------------------------------
       S_O_WAIT_LMEM2DRAM_DONE: begin
         state_d = S_O_ACC2LMEM;
       end
       
+      S_O_PRELOAD: begin
+        // Retain inactive rows and any inactive columns sharing the final
+        // rounded DMA beat. Read bytes without interpreting them as FP values.
+        // DMA-tile-aligned job starts guarantee exclusive output-tile ownership.
+        out_cmd_d = make_dma_ld(output_lmem_base_q, output_dram_addr,
+            u32_t'(output_nt_mxu_dim_q) * output_nb_storage_bytes_q,
+            buf_cur, gen_cur);
+        // The DMA child has one dependency slot and does not consume RID_O.
+        // Drain previous output stores at the FSM before enqueueing this load;
+        // each store also fences its copies, so no previous output-buffer
+        // reader or writer remains active when the preservation load starts.
+        if (prior_g_wait_valid_q) begin
+          out_cmd_d.waits[0] = make_wait_meta(prior_g_wait_rid_q,
+                                             prior_g_wait_target_q);
+        end
+        // DMA owns RID_O; subsequent ACC2LMEM already waits for this counter.
+        // Count this preservation load as one output DMA operation as well.
+        out_cmd_d.notify = make_notify_meta(rid_o, 32'd1, 1'b0);
+        out_start_d = (completed_output_store_count_i >= o_store_issue_q);
+        if (out_start_d && can_emit) begin
+          o_store_issue_d = o_store_issue_q + 32'd1;
+          state_d = S_O_ACC2LMEM;
+        end
+      end
+
       S_O_ACC2LMEM: begin
         gemm_unified_cmd_t c;
         logic [7:0] flags;
@@ -2339,7 +2401,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         c = '0;
         flags      = {7'd0, buf_cur};
         copy_target = acc_copy_issue_q[tile_acc_group_q] + 32'd1;
-        group_bytes = output_group_bytes_q + output_nb_bytes_q;
+        group_bytes = output_group_bytes_q + output_nb_storage_bytes_q;
 
         c.flags    = flags;
         c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes_q);
@@ -2478,7 +2540,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         ntp = tile_pre_nt_q;
         mtp = tile_pre_mt_q;
         ktp = tile_pre_kt_q;
-        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        tile_storage_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
         buf_pre = tile_pre_q[0];
         gen_pre = buf_gen(tile_pre_q);
 
@@ -2508,7 +2570,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         ntp = tile_pre_nt_q;
         mtp = tile_pre_mt_q;
         ktp = tile_pre_kt_q;
-        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        tile_storage_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
         buf_pre = tile_pre_q[0];
         gen_pre = buf_gen(tile_pre_q);
 
@@ -2534,7 +2596,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         ntp = tile_pre_nt_q;
         mtp = tile_pre_mt_q;
         ktp = tile_pre_kt_q;
-        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        tile_storage_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
         buf_pre = tile_pre_q[0];
         gen_pre = buf_gen(tile_pre_q);
 
@@ -2569,7 +2631,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         ntp = tile_pre_nt_q;
         mtp = tile_pre_mt_q;
         ktp = tile_pre_kt_q;
-        tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
+        tile_storage_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
         buf_pre = tile_pre_q[0];
         gen_pre = buf_gen(tile_pre_q);
 
@@ -2657,6 +2719,39 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   always @(posedge clk) begin
     if (reset === 1'b0) begin
+      if (state_q == S_INIT_STRIDE_0) begin
+        assert (job_q.target_M != 0 && job_q.target_N != 0 && job_q.target_K != 0
+             && (64'(job_q.m_start) + 64'(job_q.target_M) <= 64'(job_q.orig_M))
+             && (64'(job_q.n_start) + 64'(job_q.target_N) <= 64'(job_q.orig_N))
+             && job_q.target_K <= job_q.orig_K)
+          else $fatal(1, "GEMM job exceeds its original matrix bounds");
+        assert (((job_q.m_start & (u32_t'(MT_q)-1)) == 0)
+             && ((job_q.n_start & (u32_t'(NT_q)-1)) == 0))
+          else $fatal(1, "GEMM submatrix starts must be DMA-tile aligned");
+        assert (((job_q.target_K & u32_t'(MXU_KT-1)) == 0)
+             && ((job_q.target_N & u32_t'(MXU_NT-1)) == 0)
+             && ((job_q.orig_K & u32_t'(MXU_KT-1)) == 0)
+             && ((job_q.orig_N & u32_t'(MXU_NT-1)) == 0))
+          else $fatal(1, "GEMM original/target K and N must be MXU aligned");
+      end
+
+      if (out_start_d && state_child_ready && state_q == S_O_PRELOAD) begin
+        assert (output_preserve_q && o_nt_mxu_q == 0
+             && o_store_issue_q != 32'hffff_ffff)
+          else $fatal(1, "GEMM invalid partial-output preload");
+        assert (completed_output_store_count_i >= o_store_issue_q
+             && !out_cmd_d.waits[1].valid && !out_cmd_d.waits[2].valid
+             && (!prior_g_wait_valid_q
+              || (out_cmd_d.waits[0].valid
+               && out_cmd_d.waits[0].reg_id == GEMM_SYNC_REG_ID_WIDTH'(prior_g_wait_rid_q)
+               && out_cmd_d.waits[0].target == prior_g_wait_target_q))
+             && out_cmd_d.notify.valid && !out_cmd_d.notify.set_mode
+             && out_cmd_d.notify.reg_id == GEMM_SYNC_REG_ID_WIDTH'(RID_O)
+             && out_cmd_d.notify.value == 32'd1
+             && o_store_issue_d == o_store_issue_q + 32'd1)
+          else $fatal(1, "GEMM output preload lacks reuse/completion fence");
+      end
+
       if (gemm_arm_parent_accept) begin
         assert (gemm_expected_count_q[g_buf_q] != 32'hffff_ffff)
           else $fatal(1, "GEMM expected completion count overflow");

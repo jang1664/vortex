@@ -90,6 +90,13 @@ typedef struct {
   uint32_t WTRANS;
   uint32_t QDIR;
 
+  // Parent storage dimensions above are independent of this job's region.
+  uint32_t target_M;
+  uint32_t target_N;
+  uint32_t target_K;
+  uint32_t m_start;
+  uint32_t n_start;
+
   uint32_t status;
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
