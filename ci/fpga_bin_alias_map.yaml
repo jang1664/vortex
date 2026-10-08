@@ -222,6 +222,18 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
 
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_96c0f69b12_1/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_fsm_update:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965_1/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fsm_update:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_96c0f69b12/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh
+
   C4: *C4_
 
   C4_2: *C4_2_

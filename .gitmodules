@@ -28,3 +28,6 @@
 [submodule "paper/overleaf_fpga"]
 	path = paper/overleaf_fpga
 	url = https://git@git.overleaf.com/6abca5c26d48efed2ff1f834
+[submodule "third_party/tvm"]
+	path = third_party/tvm
+	url = git@github.com:jang1664/tvm.git
