@@ -65,7 +65,6 @@ static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;
 static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;
 static constexpr uint32_t DMA_MXU_COL_TILE = GEMM_MXU_COL_TILE;
 
-static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 512;
 static constexpr uint64_t DRAM_ALIGN_BYTES = 512;
 
 static void cleanup() {
@@ -605,49 +604,8 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
 // ============================================================================
 
 static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
-  uint32_t groups_tile = DMA_KT / QBLK;
-  uint32_t nb_per_nt = DMA_NT / DMA_MXU_NT;
-  uint32_t ng_per_mxu_nt =
-      fpint_gemm_layout::qrow_groups_per_mxu_nt(DMA_MXU_NT, QBLK);
-
-  uint64_t tmem_ibuf_bytes =
-      fpint_gemm_layout::checked_mul3(DMA_MT, DMA_KT, 2);
-  uint64_t tmem_wbuf_bytes = fpint_gemm_layout::checked_mul(
-      DMA_KT, (DMA_NT + 1) / 2);
-  uint64_t tmem_scbuf_bytes = (QDIR == 0)
-      ? fpint_gemm_layout::checked_mul3(groups_tile, DMA_NT, 2)
-      : fpint_gemm_layout::checked_mul3(
-            fpint_gemm_layout::checked_mul(DMA_KT, nb_per_nt),
-            ng_per_mxu_nt, 2);
-  uint64_t tmem_zpbuf_bytes = tmem_scbuf_bytes;
-  uint64_t tmem_obuf_bytes =
-      fpint_gemm_layout::checked_mul3(DMA_MT, DMA_NT, 2);
-
-  uint64_t cur = 0;
-
-  auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
-    cur = fpint_gemm_layout::align_up(cur, TMEM_LAYOUT_ALIGN_BYTES);
-    if (cur > tensor_mem_size || bytes > (tensor_mem_size - cur)) return false;
-    out_base = cur;
-    cur = fpint_gemm_layout::checked_add(
-        cur, fpint_gemm_layout::align_up(bytes, TMEM_LAYOUT_ALIGN_BYTES));
-    return true;
-  };
-
-  // Double-buffered: buf0, buf1 consecutive for each category.
-  // scbuf_bytes == zpbuf_bytes, so zpbuf[i] - scbuf[i] is constant = 2 * scbuf_slot.
-  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
-  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
-  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
-  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
-  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
-  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
-  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
-  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
-  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
-  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;
-
-  return true;
+  return fpint_gemm_layout::allocate_tmem_buffers(kargs, tensor_mem_size,
+      DMA_MT, DMA_KT, DMA_NT, DMA_MXU_NT, QBLK, QDIR);
 }
 
 // ============================================================================

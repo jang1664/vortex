@@ -76,6 +76,12 @@ class Llama3ExportConfig:
     kv_group_size: int = KV_GROUP_SIZE
     quantization_policy: str = ALL_ASYMMETRIC_WKV4
     vocabulary_size: int = 128256
+    # Match the separate C++ SiLU and elementwise-multiply kernels when requested.
+    round_silu_before_multiply: bool = False
+    kv_quantize_fp16_arithmetic: bool = False
+    # Optional lane-strided partial sums followed by a binary tree, as in the
+    # handwritten RMSNorm kernel. Zero preserves the ordinary eager reduction.
+    rms_reduction_width: int = 0
 
     def __post_init__(self) -> None:
         if min(self.batch_size, self.query_length, self.cache_capacity) <= 0:
@@ -90,6 +96,9 @@ class Llama3ExportConfig:
             raise ValueError("C4 v1 requires one KV quantization group per head")
         if self.hidden_size % self.weight_group_size:
             raise ValueError("hidden size must be divisible by weight group size")
+        width = self.rms_reduction_width
+        if width < 0 or (width and (width & (width - 1) or self.hidden_size % width)):
+            raise ValueError("RMS reduction width must be zero or a power-of-two divisor of hidden size")
         if self.intermediate_size % self.weight_group_size:
             raise ValueError("intermediate size must be divisible by weight group size")
         if self.quantization_policy != ALL_ASYMMETRIC_WKV4:
@@ -325,10 +334,19 @@ def _layer_parameters(
     }
 
 
-def _rms_norm(hidden: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
-    normalized = hidden.float() * torch.rsqrt(
-        hidden.float().pow(2).mean(dim=-1, keepdim=True) + eps
-    )
+def _rms_norm(hidden: torch.Tensor, weight: torch.Tensor, eps: float,
+              reduction_width: int = 0) -> torch.Tensor:
+    squared = hidden.float().pow(2)
+    if reduction_width:
+        partial = squared.reshape(*hidden.shape[:-1], -1, reduction_width).sum(dim=-2)
+        stride = reduction_width // 2
+        while stride:
+            partial = partial[..., :stride] + partial[..., stride:2*stride]
+            stride //= 2
+        mean = partial / hidden.shape[-1]
+    else:
+        mean = squared.mean(dim=-1, keepdim=True)
+    normalized = hidden.float() * torch.rsqrt(mean + eps)
     return (normalized * weight.float()).to(torch.float16)
 
 
@@ -444,7 +462,9 @@ class _Llama3LayerBase(torch.nn.Module):
             1,
             self.config.kv_group_size,
             1,
-            "signed_asymmetric_int4",
+            "signed_asymmetric_int4_fp16"
+            if self.config.kv_quantize_fp16_arithmetic
+            else "signed_asymmetric_int4",
         )
         leading_shape = logical_shape[:-1]
         return (
@@ -632,10 +652,14 @@ class _Llama3LayerBase(torch.nn.Module):
             attention_residual,
             parameters["post_attention_norm.weight"],
             config.rms_norm_eps,
+            config.rms_reduction_width,
         )
         gate = self._linear("gate_proj", normalized, parameters)
         up = self._linear("up_proj", normalized, parameters)
-        activated_mlp = (F.silu(gate.float()) * up.float()).to(torch.float16)
+        activated_gate = F.silu(gate.float())
+        if config.round_silu_before_multiply:
+            activated_gate = activated_gate.to(torch.float16).float()
+        activated_mlp = (activated_gate * up.float()).to(torch.float16)
         transformed_mlp = _hadamard(
             activated_mlp,
             self.r4_base,
@@ -700,6 +724,7 @@ class Llama3LayerPrefill(_Llama3LayerBase):
             hidden,
             parameters["input_norm.weight"],
             config.rms_norm_eps,
+            config.rms_reduction_width,
         )
         key_update, value_update = self._project_kv(
             attention_normalized, position_ids, parameters
@@ -759,6 +784,7 @@ class Llama3LayerPrefillCheckpoints(Llama3LayerPrefill):
             hidden,
             parameters["input_norm.weight"],
             config.rms_norm_eps,
+            config.rms_reduction_width,
         )
         key_update, value_update = self._project_kv(
             attention_normalized, position_ids, parameters
@@ -842,6 +868,7 @@ class Llama3LayerDecode(_Llama3LayerBase):
             hidden,
             parameters["input_norm.weight"],
             self.config.rms_norm_eps,
+            self.config.rms_reduction_width,
         )
         key_update, value_update = self._project_kv(
             attention_normalized, position_ids, parameters
@@ -899,6 +926,7 @@ class Llama3LayerDecodeCheckpoints(Llama3LayerDecode):
             hidden,
             parameters["input_norm.weight"],
             self.config.rms_norm_eps,
+            self.config.rms_reduction_width,
         )
         key_update, value_update = self._project_kv(
             attention_normalized, position_ids, parameters
@@ -1112,6 +1140,7 @@ class _Llama3ModelBase(torch.nn.Module):
             hidden,
             parameters["final_norm.weight"],
             self.config.rms_norm_eps,
+            self.config.rms_reduction_width,
         )
         flattened = normalized.reshape(-1, self.config.hidden_size)
         if self.linear_compute == "fp16":

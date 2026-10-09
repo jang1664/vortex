@@ -132,6 +132,57 @@ inline SlotBytes qparam_slot_bytes(uint32_t cur_k, uint32_t cur_n,
   return bytes;
 }
 
+// Shared host TMEM allocation for the standalone GEMM and decoder app.
+// Keep double-buffer order and capacities identical to the original host.
+template <typename Args>
+inline bool allocate_tmem_buffers(Args& kargs, uint64_t tensor_mem_size,
+    uint32_t dma_mt, uint32_t dma_kt, uint32_t dma_nt, uint32_t mxu_nt,
+    uint32_t qblk, uint32_t qdir) {
+  uint32_t groups_tile = dma_kt / qblk;
+  uint32_t nb_per_nt = dma_nt / mxu_nt;
+  uint32_t ng_per_mxu_nt =
+      fpint_gemm_layout::qrow_groups_per_mxu_nt(mxu_nt, qblk);
+
+  uint64_t tmem_ibuf_bytes =
+      fpint_gemm_layout::checked_mul3(dma_mt, dma_kt, 2);
+  uint64_t tmem_wbuf_bytes = fpint_gemm_layout::checked_mul(
+      dma_kt, (dma_nt + 1) / 2);
+  uint64_t tmem_scbuf_bytes = (qdir == 0)
+      ? fpint_gemm_layout::checked_mul3(groups_tile, dma_nt, 2)
+      : fpint_gemm_layout::checked_mul3(
+            fpint_gemm_layout::checked_mul(dma_kt, nb_per_nt),
+            ng_per_mxu_nt, 2);
+  uint64_t tmem_zpbuf_bytes = tmem_scbuf_bytes;
+  uint64_t tmem_obuf_bytes =
+      fpint_gemm_layout::checked_mul3(dma_mt, dma_nt, 2);
+
+  uint64_t cur = 0;
+
+  auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
+    cur = fpint_gemm_layout::align_up(cur, kSlotAlignmentBytes);
+    if (cur > tensor_mem_size || bytes > (tensor_mem_size - cur)) return false;
+    out_base = cur;
+    cur = fpint_gemm_layout::checked_add(
+        cur, fpint_gemm_layout::align_up(bytes, kSlotAlignmentBytes));
+    return true;
+  };
+
+  // Double-buffered: buf0, buf1 consecutive for each category.
+  // scbuf_bytes == zpbuf_bytes, so zpbuf[i] - scbuf[i] is constant = 2 * scbuf_slot.
+  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
+  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
+  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
+  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
+  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
+  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
+  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
+  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
+  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
+  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;
+
+  return true;
+}
+
 }  // namespace fpint_gemm_layout
 
 #endif  // _FPINT_GEMM_FFN_HW_LAYOUT_H_

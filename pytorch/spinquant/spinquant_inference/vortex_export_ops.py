@@ -64,7 +64,11 @@ def _validate_quant_args(
         raise ValueError(f"group_size must be positive, got {group_size}")
     quant_axis = _normalize_axis(quant_axis, x.ndim, "quant_axis")
     pack_axis = _normalize_axis(pack_axis, x.ndim, "pack_axis")
-    _validate_scheme(scheme)
+    if scheme == "signed_asymmetric_int4_fp16":
+        if x.dtype != torch.float16:
+            raise TypeError("FP16 quantization arithmetic requires FP16 input")
+    else:
+        _validate_scheme(scheme)
     return quant_axis, pack_axis
 
 
@@ -130,7 +134,15 @@ def _quantize_reference(
     minimum = torch.where(real, groups, positive_inf).amin(dim=-1)
     maximum = torch.where(real, groups, negative_inf).amax(dim=-1)
 
-    if scheme == "signed_symmetric_int4":
+    if scheme == "signed_asymmetric_int4_fp16":
+        # Match the existing C++ SpinQuant kernel's observable FP16 operations.
+        # No zero-inclusive range expansion is performed by that kernel.
+        scale = ((maximum - minimum).half() / 15.0).half()
+        if torch.any((scale == 0) & (minimum != 0)):
+            raise ValueError("nonzero constant/underflow groups are unsupported by the C++ FP16 policy")
+        ratio = torch.where(scale == 0, torch.zeros_like(scale), (-minimum.half() / scale).half())
+        zero = (torch.round(ratio).half() - 8.0).half().to(torch.int16)
+    elif scheme == "signed_symmetric_int4":
         scale = torch.maximum(minimum.abs(), maximum.abs()) / 7.0
         scale = torch.where(scale == 0, torch.ones_like(scale), scale)
         zero = torch.zeros_like(scale, dtype=torch.int16)
@@ -150,9 +162,10 @@ def _quantize_reference(
     # that is actually stored and consumed, rather than an unobservable FP32
     # temporary that can select a different INT4 code at a tie boundary.
     scale = scale.to(torch.float16)
-    quantized = torch.round(
-        groups / scale.float().unsqueeze(-1)
-    ) + zero.float().unsqueeze(-1)
+    ratio = groups / scale.float().unsqueeze(-1)
+    if scheme == "signed_asymmetric_int4_fp16":
+        ratio = torch.where(scale.unsqueeze(-1) == 0, torch.zeros_like(ratio), ratio.half().float())
+    quantized = torch.round(ratio) + zero.float().unsqueeze(-1)
     quantized = quantized.clamp(-8, 7).reshape(*moved.shape[:-1], padded_extent)
     quantized = quantized[..., :logical_extent].to(torch.int8).movedim(-1, quant_axis)
     scale = scale.movedim(-1, quant_axis)
