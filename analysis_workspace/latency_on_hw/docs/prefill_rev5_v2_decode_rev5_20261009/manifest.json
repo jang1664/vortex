@@ -1,0 +1,225 @@
+{
+  "prefill_source": "rev5_v2",
+  "decode_source": "th16_20261007_rev5_pipeline",
+  "decode_scope": "Historical estimates retain omitted standalone head-reorder/V-transpose costs. No decode validation claim added.",
+  "inputs": [
+    {
+      "model": "llama2_7b",
+      "metric": "gemm",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama2_7b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama2_7b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama2_7b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "old_sha256": "519196ecaadecfee3f29c71808618638de501c694ecb3ba76fe2bc510c07a325",
+      "new_sha256": "4efb835ac943283f44af69176d99e143a25e3abbd0db8f8b76f92f1944ce3fda",
+      "hybrid_sha256": "f84df4ece349b0b7a77a77d426199cc603ac457b87f3e081a7abe8d547ff5fe0"
+    },
+    {
+      "model": "llama2_7b",
+      "metric": "e2e",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama2_7b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama2_7b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama2_7b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "old_sha256": "5de7775a0e21bf468434b479ee1030de5b8e8ab7fbae24f4390b2302b49b1318",
+      "new_sha256": "3fba07e11c7b2df2ff23d0f97f5b6e22b916f4a8adc43f8f1359b5bc87e2ddda",
+      "hybrid_sha256": "5bc16db3b01dbed5fa628c175fd0f7ada38427f51478b51825ba41ea20ca923e"
+    },
+    {
+      "model": "llama2_7b",
+      "metric": "energy",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama2_7b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama2_7b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama2_7b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "old_sha256": "7cb250cf8827d19a0d3ef3f66a62cd2a0390d7a78ef7f33f6da410989bdab49e",
+      "new_sha256": "5fb90cc6cd82071f8525747fee9f930054af85295c84caf4061ac50b55ac1658",
+      "hybrid_sha256": "9ed20c2c07a817b103c2be3ffe2bb68dd2929290da29d08d311782c2fd331970"
+    },
+    {
+      "model": "llama3_8b",
+      "metric": "gemm",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama3_8b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama3_8b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama3_8b_gemm_only_no_area_norm_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "old_sha256": "e21cf74c8319bd8a2fd187680609504e34d8ca6878ff6fea2ff3b39b777a3648",
+      "new_sha256": "26e2e148137912f3cae1de18741acb550963c5848834da4951fd5abd8e6c8aef",
+      "hybrid_sha256": "0a35d5eb62bf28ffffef6f72299f76fa49d97c78af7b3e27d3a75c8d2bfa051d"
+    },
+    {
+      "model": "llama3_8b",
+      "metric": "e2e",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama3_8b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama3_8b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama3_8b_e2e_no_area_norm_gemm_layout_vector_stacked_by_name_backend_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128/excel_figure_data.csv",
+      "old_sha256": "ad8c5f3240bfd5dbf08cab1d1de57caf79bc893a0edaa0ab311f8dd8a46eab9c",
+      "new_sha256": "7b8ebbb958c4cfab6c77e65a8819cffce7caf0a064fad3ed20a2d9add4ef8a24",
+      "hybrid_sha256": "57e1f8ada4cec6e95732fd57d7bc14c49281d54595553709dc6fdd22e0171e44"
+    },
+    {
+      "model": "llama3_8b",
+      "metric": "energy",
+      "old": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.th16_20261007_rev5_pipeline/llama3_8b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "new": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.rev5_v2/llama3_8b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "hybrid": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_prepare.prefill_rev5_v2_decode_rev5_20261009/llama3_8b_energy_per_token_no_area_norm_gemm_layout_vector_stacked_by_name_backend_power_fpga_dequant_dynamic_W_prefill_b1_s1024-2048-4096-8192-16384-32768__generation_b1-4-64_s1024-2048-4096-8192-16384-32768_o128_dequant_pure/excel_figure_data.csv",
+      "old_sha256": "2ef1c4cdbbcf924d95dbdd5d97e2bdd50d3599dfdec2fe1e710318775a339e09",
+      "new_sha256": "2ceafb272ab85c5f418e7f376f2dc3a76d08833758f66fe1d65481b70021d4ef",
+      "hybrid_sha256": "71e53e5ba83e30a6b8197e5a1610a69028e5817712d60ae16cd46f867f502760"
+    }
+  ],
+  "ranges": {
+    "llama2_7b_gemm": {
+      "Prefill_C1": [
+        29.24,
+        43.28
+      ],
+      "Prefill_C2": [
+        2.67,
+        30.01
+      ],
+      "Prefill_C3": [
+        1.07,
+        1.15
+      ],
+      "Generation_C1": [
+        22.99,
+        47.84
+      ],
+      "Generation_C2": [
+        4.91,
+        40.53
+      ],
+      "Generation_C3": [
+        1.41,
+        2.37
+      ]
+    },
+    "llama2_7b_e2e": {
+      "Prefill_C1": [
+        5.96,
+        7.13
+      ],
+      "Prefill_C2": [
+        1.38,
+        5.21
+      ],
+      "Prefill_C3": [
+        1.03,
+        1.09
+      ],
+      "Generation_C1": [
+        6.38,
+        25.9
+      ],
+      "Generation_C2": [
+        3.06,
+        18.31
+      ],
+      "Generation_C3": [
+        1.07,
+        1.7
+      ]
+    },
+    "llama2_7b_energy": {
+      "Prefill_C1": [
+        6.13,
+        7.07
+      ],
+      "Prefill_C2": [
+        1.41,
+        5.17
+      ],
+      "Prefill_C3": [
+        1.06,
+        1.12
+      ],
+      "Generation_C1": [
+        6.86,
+        27.77
+      ],
+      "Generation_C2": [
+        3.08,
+        19.13
+      ],
+      "Generation_C3": [
+        1.11,
+        1.7
+      ]
+    },
+    "llama3_8b_gemm": {
+      "Prefill_C1": [
+        28.29,
+        42.08
+      ],
+      "Prefill_C2": [
+        2.56,
+        29.12
+      ],
+      "Prefill_C3": [
+        1.07,
+        1.14
+      ],
+      "Generation_C1": [
+        25.61,
+        46.42
+      ],
+      "Generation_C2": [
+        3.56,
+        33.97
+      ],
+      "Generation_C3": [
+        1.23,
+        2.94
+      ]
+    },
+    "llama3_8b_e2e": {
+      "Prefill_C1": [
+        8.02,
+        9.26
+      ],
+      "Prefill_C2": [
+        1.49,
+        5.83
+      ],
+      "Prefill_C3": [
+        1.0,
+        1.04
+      ],
+      "Generation_C1": [
+        8.25,
+        32.9
+      ],
+      "Generation_C2": [
+        2.34,
+        8.15
+      ],
+      "Generation_C3": [
+        1.02,
+        2.34
+      ]
+    },
+    "llama3_8b_energy": {
+      "Prefill_C1": [
+        8.06,
+        9.5
+      ],
+      "Prefill_C2": [
+        1.53,
+        5.82
+      ],
+      "Prefill_C3": [
+        1.03,
+        1.07
+      ],
+      "Generation_C1": [
+        8.81,
+        34.89
+      ],
+      "Generation_C2": [
+        2.51,
+        8.66
+      ],
+      "Generation_C3": [
+        1.06,
+        2.23
+      ]
+    }
+  }
+}

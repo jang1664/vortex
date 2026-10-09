@@ -1,0 +1,82 @@
+[
+  {
+    "line": 81,
+    "old": "$1.35$--$5.19\\times$",
+    "new": "$1.49$--$5.83\\times$"
+  },
+  {
+    "line": 82,
+    "old": "$1.39$--$5.18\\times$",
+    "new": "$1.53$--$5.82\\times$"
+  },
+  {
+    "line": 1011,
+    "old": "using batch size 1 and an input sequence length of 1,024.",
+    "new": "using batch size 1 and a prefill sequence length of 1,024."
+  },
+  {
+    "line": 1013,
+    "old": "underestimating them by only 1.61\\%, 1.16\\%, 0.44\\%, and 2.45\\%",
+    "new": "underestimating them by only 1.68\\%, 1.69\\%, 1.19\\%, and 2.45\\%"
+  },
+  {
+    "line": 1161,
+    "old": "$28.95$--$39.65\\times$",
+    "new": "$29.24$--$43.28\\times$"
+  },
+  {
+    "line": 1161,
+    "old": "$28.02$--$38.51\\times$",
+    "new": "$28.29$--$42.08\\times$"
+  },
+  {
+    "line": 1164,
+    "old": "$2.38$--$26.38\\times$",
+    "new": "$2.67$--$30.01\\times$"
+  },
+  {
+    "line": 1164,
+    "old": "$2.29$--$25.55\\times$",
+    "new": "$2.56$--$29.12\\times$"
+  },
+  {
+    "line": 1185,
+    "old": "$5.83$--$6.57\\times$",
+    "new": "$5.96$--$7.13\\times$"
+  },
+  {
+    "line": 1185,
+    "old": "$7.43$--$9.12\\times$",
+    "new": "$8.02$--$9.26\\times$"
+  },
+  {
+    "line": 1185,
+    "old": "$1.24$--$4.65\\times$",
+    "new": "$1.38$--$5.21\\times$"
+  },
+  {
+    "line": 1185,
+    "old": "$1.35$--$5.19\\times$",
+    "new": "$1.49$--$5.83\\times$"
+  },
+  {
+    "line": 1263,
+    "old": "$5.96$--$6.52\\times$",
+    "new": "$6.13$--$7.07\\times$"
+  },
+  {
+    "line": 1263,
+    "old": "$7.43$--$9.36\\times$",
+    "new": "$8.06$--$9.50\\times$"
+  },
+  {
+    "line": 1494,
+    "old": "$1.35$--$5.19\\times$",
+    "new": "$1.49$--$5.83\\times$"
+  },
+  {
+    "line": 1494,
+    "old": "$1.39$--$5.18\\times$",
+    "new": "$1.53$--$5.82\\times$"
+  }
+]

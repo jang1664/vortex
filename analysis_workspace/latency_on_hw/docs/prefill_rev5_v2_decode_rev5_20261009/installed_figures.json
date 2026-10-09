@@ -1,0 +1,38 @@
+[
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.svg",
+    "sha256": "b777e2dc900925da45e36ad87d24fa750de8259ec7b85b2eea00b05af4af8932"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.png",
+    "sha256": "d76c422df5b5c81ff98dc6b31491cce5e7b13176633c205b7df41d5f81dc84eb"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.pdf",
+    "sha256": "2fd26f5d95352219f05de7565dab3fc676d271d906434acf8565ba5833549426"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.svg",
+    "sha256": "78edb49a19044313d2a72fa63201a31951a41b6c079bcad2bfa36e50858e15fa"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.pdf",
+    "sha256": "758e4f3155abe3996e384dd8eaee0ddd6d58b3541275477c7e64ce1a7e605de3"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.png",
+    "sha256": "94e3471d7a3178bc2cd897ed943455fbff5e46bd2238b4f67b56598986475906"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.pdf",
+    "sha256": "68fb871e115b308c57c6ed268613185a2cb3a4788ef6bcc69bee2aa422797185"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.png",
+    "sha256": "58ee11f7c24c49ebeef06fdb2faaaecd2d83716ba24343e778976282232ca065"
+  },
+  {
+    "path": "paper/overleaf_fpga/figures/llama2_3/figure_output/llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.svg",
+    "sha256": "f8887a5d6399b1bd8e9ac32fca490ac468a031160028e4d537888b6eb0d995cb"
+  }
+]
