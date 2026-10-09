@@ -383,7 +383,8 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
         if (!reset && start_fire) begin
             assert (cfg_reg_if.regs[33][31:0] != 0 && cfg_reg_if.regs[34][31:0] != 0
                  && cfg_reg_if.regs[35][31:0] != 0 && cfg_reg_if.regs[35][31:0] % MK == 0
-                 && cfg_reg_if.regs[32][31:0] == 5
+                 // Config stores log2(QBLK): support 16, 32, 64, and 128.
+                 && cfg_reg_if.regs[32][31:0] >= 4 && cfg_reg_if.regs[32][31:0] <= 7
                  && (cfg_reg_if.regs[37][31:0] & 31) == 0)
                 else $fatal(1, "%s: unsupported dimensions/qblock/alignment", INSTANCE_ID);
         end
