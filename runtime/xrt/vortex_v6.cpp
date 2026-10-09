@@ -31,6 +31,7 @@
 #endif
 
 #include <limits>
+#include <chrono>
 #include <cstring>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -1034,30 +1035,13 @@ public:
 #endif
 
   int ready_wait(uint64_t timeout) {
+    const auto wait_started = std::chrono::steady_clock::now();
     const char* trace_setting = getenv("VX_BENCH_POWER_TRACE");
     const bool trace_power = trace_setting && *trace_setting && strcmp(trace_setting, "0") != 0;
     uint64_t completion_polls = 0;
-    struct timespec sleep_time;
-  #ifndef NDEBUG
-    // If you want slow polling for easier debugging, set VORTEX_READY_WAIT_SLOW=1 MACRO
-  #ifdef VORTEX_READY_WAIT_SLOW
-    sleep_time.tv_sec = 1;
-    sleep_time.tv_nsec = 0;
-  #else
-    sleep_time.tv_sec = 0;
-    sleep_time.tv_nsec = 1000000;
-  #endif
-  #else
-    sleep_time.tv_sec = 0;
-    sleep_time.tv_nsec = 1000000;
-  #endif
-
-    uint64_t sleep_time_ms = (sleep_time.tv_sec * 1000) + (sleep_time.tv_nsec / 1000000);
-
   #ifdef VX_HW_DEBUG_READY_WAIT_POLL
     vx_hw_debug_flag_snapshot_t hw_debug_previous = {};
-    uint64_t hw_debug_poll_elapsed_ms = 0;
-    const uint64_t hw_debug_poll_period_ms = 1000;
+    auto hw_debug_last_poll = wait_started;
   #endif
 
     printf("[VXDRV] waiting for kernel completion (timeout=%lu ms)...\n", timeout);
@@ -1082,33 +1066,26 @@ public:
       ++completion_polls;
       if (is_done)
         break;
+      const auto now = std::chrono::steady_clock::now();
     #ifdef VX_HW_DEBUG_READY_WAIT_POLL
-      if (hw_debug_poll_elapsed_ms == 0 || hw_debug_poll_elapsed_ms >= hw_debug_poll_period_ms) {
+      if (completion_polls == 1 || now - hw_debug_last_poll >= std::chrono::seconds(1)) {
         this->poll_hw_debug_flags(&hw_debug_previous);
         this->dump_hw_debug();
-        hw_debug_poll_elapsed_ms = 0;
+        hw_debug_last_poll = now;
       }
     #endif
-      if (0 == timeout) {
+      if (static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+              now - wait_started).count()) >= timeout) {
       #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
         this->dump_hw_debug();
       #endif
         return -1;
       }
-      nanosleep(&sleep_time, nullptr);
-    #ifdef VX_HW_DEBUG_READY_WAIT_POLL
-      hw_debug_poll_elapsed_ms += sleep_time_ms;
-    #endif
-      timeout -= sleep_time_ms;
     };
 
-    // Wait briefly for AP_IDLE and allow outstanding write path to settle
-    // before host-side download starts.
+    // Confirm AP_IDLE before returning to the caller. Completion is determined
+    // by the hardware status; do not add a fixed delay to every kernel launch.
     {
-      const struct timespec idle_poll = {0, 100000};
-      const struct timespec settle_wait = {0, 500000};
-      const uint32_t idle_retries = 200;
-      // for (uint32_t i = 0; i < idle_retries; ++i) {
       printf("[VXDRV] waiting for AP_IDLE...\n");
       uint64_t idle_polls = 0;
       while(true) {
@@ -1125,9 +1102,14 @@ public:
         ++idle_polls;
         if (is_idle)
           break;
-        nanosleep(&idle_poll, nullptr);
+        if (static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - wait_started).count()) >= timeout) {
+        #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
+          this->dump_hw_debug();
+        #endif
+          return -1;
+        }
       }
-      nanosleep(&settle_wait, nullptr);
     }
 
     shm_.set_state(VX_STATE_IDLE);
