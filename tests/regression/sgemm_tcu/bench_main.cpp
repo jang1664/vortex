@@ -61,20 +61,22 @@ static void cleanup() {
 
 template <typename T>
 static auto gen_value() {
-  if constexpr (std::is_integral_v<typename T::dtype>) {
-    return (typename T::dtype)rand();
-  } else {
-    auto fv = float(rand()) / RAND_MAX;
+  // FP16/BF16 storage is integral, but arbitrary bits include NaN/Inf.
+  // Those values take a shorter FP32-to-FP16 store path than finite QK scores.
+  // Keep floating inputs centered and bounded; srand(50) makes runs repeatable.
+  // Binary-exact steps also avoid nonzero FP16 subnormals in the inputs.
+  const float fv = float(int(rand() % 2049) - 1024) / 4096.0f;
+  if constexpr (std::is_same_v<T, vt::fp16>) {
     return rv_ftoh_s(bit_cast<uint32_t>(fv), 0, nullptr);
+  } else if constexpr (std::is_same_v<T, vt::bf16>) {
+    return rv_ftob_s(bit_cast<uint32_t>(fv), 0, nullptr);
+  } else if constexpr (std::is_same_v<T, vt::fp32>) {
+    return fv;
+  } else if constexpr (std::is_same_v<T, vt::tf32>) {
+    return bit_cast<uint32_t>(fv) & 0xffffe000u;
+  } else {
+    return static_cast<typename T::dtype>(rand());
   }
-}
-
-// Trivial generator that works for all template instantiations: just memset
-// random bytes. We don't need numerical fidelity — only need the kernel to
-// have something to compute on so its memory traffic is realistic.
-static void random_bytes(void* p, size_t n) {
-  auto* b = static_cast<uint8_t*>(p);
-  for (size_t i = 0; i < n; ++i) b[i] = static_cast<uint8_t>(rand());
 }
 
 int main(int argc, char *argv[]) {
@@ -166,10 +168,17 @@ int main(int argc, char *argv[]) {
     std::vector<itype_t> h_A(sizeA, 0);
     std::vector<itype_t> h_B(sizeB, 0);
     for (uint32_t m = 0; m < M; ++m) {
-      random_bytes(&h_A[m * K_exec], K * sizeof(itype_t));
+      for (uint32_t k = 0; k < K; ++k)
+        h_A[m * K_exec + k] = gen_value<vt::ITYPE>();
     }
     for (uint32_t k = 0; k < K; ++k) {
-      random_bytes(&h_B[k * N_exec], N * sizeof(itype_t));
+      for (uint32_t n = 0; n < N; ++n) {
+#if SGEMM_TCU_USE_B_COLMAJOR
+        h_B[n * K_exec + k] = gen_value<vt::ITYPE>();
+#else
+        h_B[k * N_exec + n] = gen_value<vt::ITYPE>();
+#endif
+      }
     }
     RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
     RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));

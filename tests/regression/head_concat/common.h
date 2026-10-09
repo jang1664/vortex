@@ -4,14 +4,16 @@
 #include <stdint.h>
 
 #define KERNEL_HEAD_CONCAT 0
+#define KERNEL_HEAD_REORDER 1
+#define KERNEL_HEAD_TRANSPOSE 2
 
 typedef struct {
   uint32_t kernel_id;
   uint32_t grid_dim[3];
   uint32_t block_dim[3];
 
-  uint64_t input_addr;   // fp16 row-major [batch, heads, seq, headdim]
-  uint64_t output_addr;  // fp16 row-major [batch, seq, heads * headdim]
+  uint64_t input_addr;   // fp16; layout selected by kernel_id
+  uint64_t output_addr;  // concat/reorder invert token/head order; transpose swaps S/D
 
   uint32_t batch;
   uint32_t seq;

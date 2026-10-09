@@ -8,6 +8,47 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class QuantReferenceTests(unittest.TestCase):
+    def test_padded_append_source_pitch_and_head_offset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "VX_config.h").write_text("")
+            header = REPO / "tests/regression/kv_cache_quant_layout_fused_w4a16/host_common.h"
+            source = root / "padded.cpp"
+            source.write_text(f'''#include "{header}"
+#include <cassert>
+int main() {{
+  const uint32_t width = 4 * 128;
+  for (uint32_t rows : {{1u, 8u, 16u, 128u}}) {{
+    for (uint32_t layout : {{SRC_LAYOUT_GEMM_A_TILED, SRC_LAYOUT_GEMM_C_TILED}}) {{
+      std::vector<fp16_t> row(width), packed(rows * width);
+      for (uint32_t i = 0; i < width; ++i) row[i] = float_to_fp16(float(i % 17) - 8);
+      pack_src_for_layout(row, packed, 1, width, layout, 128, rows);
+      kernel_arg_t arg{{}}; arg.src_total_K = rows;
+      std::vector<bool> visited(packed.size(), false);
+      for (uint32_t head = 0; head < 4; ++head) {{
+        arg.src_col_offset = head * 128;
+        for (uint32_t n = 0; n < 128; ++n) {{
+          uint32_t index = kv_fused_padded_append_offset(&arg, n);
+          assert(index < packed.size());
+          assert(!visited[index]); visited[index] = true;
+          assert(packed[index] == row[head * 128 + n]);
+        }}
+      }}
+      for (uint32_t i = 0; i < packed.size(); ++i)
+        if (!visited[i]) assert(packed[i] == 0x7e00);
+    }}
+  }}
+}}
+''')
+            binary = root / "padded"
+            command = ["/usr/bin/g++", "-std=c++17", "-O2", "-I" + directory,
+                       "-DMXU_ROW=16", "-DMXU_COL=16", "-DNUM_THREADS=16",
+                       str(source), "-o", str(binary)]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, result.returncode, result.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(0, result.returncode, result.stderr)
+
     def test_fp16_fp32_rounding_and_zero_groups(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

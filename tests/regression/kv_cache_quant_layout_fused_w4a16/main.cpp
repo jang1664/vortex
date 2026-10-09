@@ -420,7 +420,11 @@ static int run_persistent_update_test(uint32_t capacity,
                                       uint32_t QBLK,
                                       uint32_t DMA_MT,
                                       uint32_t DMA_KT,
-                                      uint32_t DMA_NT) {
+                                      uint32_t DMA_NT,
+                                      uint32_t src_layout,
+                                      uint32_t source_total_k,
+                                      uint32_t source_total_n,
+                                      uint32_t head_col_offset) {
   constexpr uint32_t QDIR = 1;
   const uint32_t source_transposed = persistent_kind == 1 ? 1u : 0u;
   const uint32_t wtrans = source_transposed;
@@ -437,6 +441,19 @@ static int run_persistent_update_test(uint32_t capacity,
 
   std::vector<fp16_t> token(N);
   init_src(token);
+  if (source_total_n == 0) source_total_n = N;
+  if (source_total_k == 0 || source_total_n < N
+      || head_col_offset > source_total_n - N
+      || (src_layout != SRC_LAYOUT_ROW_MAJOR && source_total_n % TILE_DMA_MXU_NT)) {
+    printf("ERROR: invalid persistent source extent or head offset\n");
+    return 1;
+  }
+  std::vector<fp16_t> source_row(source_total_n, 0);
+  std::copy(token.begin(), token.end(), source_row.begin() + head_col_offset);
+  std::vector<fp16_t> device_source((size_t)source_total_k * source_total_n);
+  pack_src_for_layout(source_row, device_source, 1, source_total_n,
+                      src_layout, DMA_MT, source_total_k);
+
   std::vector<fp16_t> initial_src((size_t)capacity * N, 0);
   std::vector<fp16_t> reference_src = initial_src;
   std::copy(token.begin(), token.end(),
@@ -478,9 +495,11 @@ static int run_persistent_update_test(uint32_t capacity,
 
   printf("persistent KV update kind=%s N=%u QBLK=%u capacity=%u position=%u\n",
          persistent_kind == 1 ? "K" : "V", N, QBLK, capacity, position);
+  printf("source_total_k=%u source_total_n=%u head_col_offset=%u layout_from=%s\n",
+         source_total_k, source_total_n, head_col_offset, src_layout_name(src_layout));
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, token.size() * sizeof(fp16_t),
+  RT_CHECK(vx_mem_alloc(device, device_source.size() * sizeof(fp16_t),
                         VX_MEM_READ, &src_buffer));
   RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_READ_WRITE, &weight_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_READ_WRITE, &scale_buffer));
@@ -491,8 +510,8 @@ static int run_persistent_update_test(uint32_t capacity,
     RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
                           VX_MEM_READ_WRITE, &logical_zero_buffer));
   }
-  RT_CHECK(vx_copy_to_dev(src_buffer, token.data(), 0,
-                          token.size() * sizeof(fp16_t)));
+  RT_CHECK(vx_copy_to_dev(src_buffer, device_source.data(), 0,
+                          device_source.size() * sizeof(fp16_t)));
   RT_CHECK(vx_copy_to_dev(weight_buffer, initial_weight.data(), 0, weight_bytes));
   RT_CHECK(vx_copy_to_dev(scale_buffer, initial_scale.data(), 0, scale_bytes));
   RT_CHECK(vx_copy_to_dev(zero_buffer, initial_zero.data(), 0, scale_bytes));
@@ -522,14 +541,14 @@ static int run_persistent_update_test(uint32_t capacity,
 
   kernel_arg_t arg = {};
   if (!init_kernel_arg(arg, capacity, N, QBLK, QDIR, wtrans, gemm_qdir,
-                       source_transposed, SRC_LAYOUT_ROW_MAJOR,
-                       DMA_MT, DMA_KT, DMA_NT, blocks, tpb, quant_mode, N, 0)) {
+                       source_transposed, src_layout,
+                       DMA_MT, DMA_KT, DMA_NT, blocks, tpb, quant_mode, source_total_n, head_col_offset)) {
     printf("ERROR: failed to initialize persistent kernel args\n");
     cleanup();
     return 1;
   }
   arg.K = 1;
-  arg.src_total_K = 1;
+  arg.src_total_K = source_total_k;
   arg.persistent_mode = 1;
   arg.cache_capacity = capacity;
   arg.cache_position = position;
@@ -606,6 +625,7 @@ int main(int argc, char *argv[]) {
   uint32_t SOURCE_TRANSPOSED = 0;
   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   uint32_t source_total_n = 0;
+  uint32_t source_total_k = 0;
   uint32_t head_col_offset = 0;
   bool emit_correction_qparams = false;
   bool gemm_qdir_set = false;
@@ -638,6 +658,8 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "--source-transposed") == 0) SOURCE_TRANSPOSED = 1;
     else if (strcmp(argv[i], "--quant-mode") == 0) quant_mode = parse_quant_mode(argv[++i]);
     else if (strncmp(argv[i], "--quant-mode=", 13) == 0) quant_mode = parse_quant_mode(argv[i] + 13);
+    else if (strcmp(argv[i], "--source-total-k") == 0) source_total_k = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--source-total-k=", 17) == 0) source_total_k = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--source-total-n") == 0) source_total_n = atoi(argv[++i]);
     else if (strncmp(argv[i], "--source-total-n=", 17) == 0) source_total_n = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--head-col-offset") == 0) head_col_offset = atoi(argv[++i]);
@@ -677,18 +699,26 @@ int main(int argc, char *argv[]) {
              "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
-             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams] "
+             "[--source-total-n N] [--source-total-k K] [--head-col-offset N] [--emit-correction-qparams] "
              "[--cache-update full|append] "
              "[--persistent-kind k|v --cache-capacity N --cache-position N]\n", argv[0]);
       return 0;
     }
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
+  if (persistent_kind != 0) K = 1;
+  if (source_total_k == 0) source_total_k = K;
+  if (source_total_k < K || (source_total_k != K && !append_update && persistent_kind == 0)) {
+    printf("ERROR: --source-total-k must cover K; padded sources require append mode\n");
+    return 1;
+  }
+
   if (persistent_kind != 0) {
     return run_persistent_update_test(cache_capacity, cache_position,
                                       persistent_kind, true, 128, 128,
                                       DEFAULT_DMA_MT, DEFAULT_DMA_KT,
-                                      DEFAULT_DMA_NT);
+                                      DEFAULT_DMA_NT, src_layout, source_total_k,
+                                      source_total_n, head_col_offset);
   }
   if (append_update) {
     if (K != 1 || QDIR != 1 || QBLK < N
@@ -721,7 +751,8 @@ int main(int argc, char *argv[]) {
     return run_persistent_update_test(cache_capacity, cache_position,
                                       persistent_kind,
                                       emit_correction_qparams, N, QBLK,
-                                      DMA_MT, DMA_KT, DMA_NT);
+                                      DMA_MT, DMA_KT, DMA_NT, src_layout, source_total_k,
+                                      source_total_n, head_col_offset);
   }
   if (source_total_n == 0) source_total_n = N;
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,

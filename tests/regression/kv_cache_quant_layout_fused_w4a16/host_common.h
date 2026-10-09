@@ -162,15 +162,18 @@ static inline void pack_src_for_layout(const std::vector<fp16_t>& row_major,
                                        uint32_t K,
                                        uint32_t N,
                                        uint32_t src_layout,
-                                       uint32_t dma_mt) {
-  std::fill(device_src.begin(), device_src.end(), 0);
+                                       uint32_t dma_mt,
+                                       uint32_t source_total_k = 0) {
+  const uint32_t physical_rows = source_total_k ? source_total_k : K;
+  // Poison inactive rows so correctness checks detect accidental padding loads.
+  std::fill(device_src.begin(), device_src.end(), physical_rows > K ? fp16_t(0x7e00) : fp16_t(0));
   if (src_layout == SRC_LAYOUT_ROW_MAJOR) {
     std::copy(row_major.begin(), row_major.end(), device_src.begin());
     return;
   }
   for (uint32_t k = 0; k < K; ++k) {
     for (uint32_t n = 0; n < N; ++n) {
-      device_src[gemm_c_tiled_offset_host(K, N, k, n, dma_mt)] =
+      device_src[gemm_c_tiled_offset_host(physical_rows, N, k, n, dma_mt)] =
           row_major[(uint64_t)k * N + n];
     }
   }

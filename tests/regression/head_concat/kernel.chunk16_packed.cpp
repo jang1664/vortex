@@ -1,6 +1,7 @@
 #include "common.h"
 #include <vx_intrinsics.h>
 #include <vx_spawn.h>
+#include "reorder.h"
 
 using data_t = uint16_t;
 
@@ -57,6 +58,9 @@ void kernel_head_concat(kernel_arg_t *__UNIFORM__ arg) {
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   if (arg->kernel_id == KERNEL_HEAD_CONCAT) {
     kernel_head_concat(arg);
+  } else if (arg->kernel_id == KERNEL_HEAD_REORDER
+             || arg->kernel_id == KERNEL_HEAD_TRANSPOSE) {
+    kernel_head_reorder(arg);
   }
 }
 

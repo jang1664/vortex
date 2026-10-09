@@ -49,7 +49,8 @@ static void build_reference(const std::vector<data_t>& input,
                             uint32_t batch,
                             uint32_t seq,
                             uint32_t heads,
-                            uint32_t headdim) {
+                            uint32_t headdim,
+                            uint32_t mode) {
   const uint32_t hidden = heads * headdim;
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t s = 0; s < seq; ++s) {
@@ -59,7 +60,15 @@ static void build_reference(const std::vector<data_t>& input,
               (((uint64_t)b * heads + h) * seq + s) * headdim + d;
           const uint64_t out_off =
               ((uint64_t)b * seq + s) * hidden + h * headdim + d;
-          ref[out_off] = input[in_off];
+          if (mode == KERNEL_HEAD_REORDER) {
+            ref[in_off] = input[out_off];
+          } else if (mode == KERNEL_HEAD_TRANSPOSE) {
+            const uint64_t transposed =
+                (((uint64_t)b * heads + h) * headdim + d) * seq + s;
+            ref[transposed] = input[in_off];
+          } else {
+            ref[out_off] = input[in_off];
+          }
         }
       }
     }
@@ -71,16 +80,24 @@ int main(int argc, char *argv[]) {
   uint32_t seq = 4;
   uint32_t heads = 2;
   uint32_t headdim = 32;
+  uint32_t mode = KERNEL_HEAD_CONCAT;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seq") == 0) seq = atoi(argv[++i]);
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-mode") == 0) mode = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D]\n", argv[0]);
+      printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
+             "[-mode 0=concat|1=head-reorder|2=transpose]\n", argv[0]);
       return 0;
     }
+  }
+
+  if (!batch || !seq || !heads || !headdim || mode > KERNEL_HEAD_TRANSPOSE) {
+    fprintf(stderr, "Expected positive dimensions and mode 0, 1, or 2\n");
+    return 1;
   }
 
   const uint32_t hidden = heads * headdim;
@@ -90,18 +107,20 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_ref(elems);
   std::vector<data_t> h_out(elems);
   init_input(h_input);
-  build_reference(h_input, h_ref, batch, seq, heads, headdim);
+  build_reference(h_input, h_ref, batch, seq, heads, headdim, mode);
 
 #if HEAD_CONCAT_VARIANT_TAG == 1
   const char* variant = "chunk16_packed";
   const uint32_t work_items =
-      batch * seq * heads * ((headdim + 15u) >> 4);
+      mode == KERNEL_HEAD_CONCAT
+          ? batch * seq * heads * ((headdim + 15u) >> 4)
+          : static_cast<uint32_t>(elems);
 #else
   const char* variant = "baseline";
   const uint32_t work_items = static_cast<uint32_t>(elems);
 #endif
-  printf("head_concat batch=%u seq=%u heads=%u headdim=%u variant=%s\n",
-         batch, seq, heads, headdim, variant);
+  printf("head_concat batch=%u seq=%u heads=%u headdim=%u variant=%s mode=%u\n",
+         batch, seq, heads, headdim, variant, mode);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -121,7 +140,7 @@ int main(int argc, char *argv[]) {
       std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
-  arg.kernel_id = KERNEL_HEAD_CONCAT;
+  arg.kernel_id = mode;
   arg.grid_dim[0] = blocks;
   arg.grid_dim[1] = 1;
   arg.grid_dim[2] = 1;

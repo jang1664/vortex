@@ -2254,9 +2254,20 @@ void persistent_store_qparams(kernel_arg_t *__UNIFORM__ arg,
   }
 }
 
-// Append updates are a single contiguous source row launched as one warp.
-// Keep this hot path out of the much larger full-cache/prefill function so its
-// register frame and instruction footprint contain only append-update work.
+// Both append layouts share quantization and stores. Specialize only source
+// loads so the padded first-row path has the decoder's direct tiled addressing.
+template<bool PaddedSource>
+static inline fp16_t kv_fused_append_load(const fp16_t* token, uint32_t n,
+                                         const kernel_arg_t* arg) {
+  if constexpr (PaddedSource) {
+    return reinterpret_cast<const fp16_t*>(arg->src_addr)[
+        kv_fused_padded_append_offset(arg, n)];
+  } else {
+    return token[n];
+  }
+}
+
+template<bool PaddedSource = false>
 __attribute__((noinline))
 void kernel_kv_cache_quant_layout_fused_persistent(
     kernel_arg_t *__UNIFORM__ arg) {
@@ -2268,10 +2279,10 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   const uint32_t lane = threadIdx.x;
   const fp16_t* token = src + arg->src_col_offset;
 
-  kv_fused_arith_t min_v = fused_arith_from_bits(token[0]);
+  kv_fused_arith_t min_v = fused_arith_from_bits(kv_fused_append_load<PaddedSource>(token, 0, arg));
   kv_fused_arith_t max_v = min_v;
   for (uint32_t n = lane; n < N; n += NUM_THREADS) {
-    const kv_fused_arith_t value = fused_arith_from_bits(token[n]);
+    const kv_fused_arith_t value = fused_arith_from_bits(kv_fused_append_load<PaddedSource>(token, n, arg));
     if (value < min_v) min_v = value;
     if (value > max_v) max_v = value;
   }
@@ -2331,9 +2342,9 @@ void kernel_kv_cache_quant_layout_fused_persistent(
   for (uint32_t pair = lane; pair < (N >> 1); pair += NUM_THREADS) {
     const uint32_t d0 = pair << 1;
     const uint8_t q0 =
-        quantize_loaded_value(token[d0], quant_scale, zero, quant_mode);
+        quantize_loaded_value(kv_fused_append_load<PaddedSource>(token, d0, arg), quant_scale, zero, quant_mode);
     const uint8_t q1 =
-        quantize_loaded_value(token[d0 + 1u], quant_scale, zero, quant_mode);
+        quantize_loaded_value(kv_fused_append_load<PaddedSource>(token, d0 + 1u, arg), quant_scale, zero, quant_mode);
     const uint8_t packed =
         (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
     if (source_transposed != 0) {
@@ -2359,6 +2370,16 @@ void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
           && arg->QDIR == 1u
           && arg->QBLK >= arg->N) {
         kernel_kv_cache_quant_layout_fused_persistent(arg);
+      } else if (arg->persistent_mode != 0 && arg->K == 1u
+          && arg->src_total_K > 1u && arg->src_total_K <= (1u << arg->log2_mt)
+          && arg->src_row_offset == 0u
+          && (1u << arg->log2_mxu_nt) == TILE_DMA_MXU_NT
+          && (arg->src_layout == SRC_LAYOUT_GEMM_A_TILED
+              || arg->src_layout == SRC_LAYOUT_GEMM_C_TILED)
+          && arg->QDIR == 1u && arg->QBLK >= arg->N
+          && arg->grid_dim[0] == 1u && arg->grid_dim[1] == 1u && arg->grid_dim[2] == 1u
+          && arg->block_dim[0] == NUM_THREADS && arg->block_dim[1] == 1u && arg->block_dim[2] == 1u) {
+        kernel_kv_cache_quant_layout_fused_persistent<true>(arg);
       } else {
         if (KV_FUSED_PREFILL_QPARAM_REUSE && arg->persistent_mode == 0
             && arg->SOURCE_TRANSPOSED == 0 && arg->QBLK >= 2u

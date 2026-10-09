@@ -50,18 +50,26 @@ int main(int argc, char *argv[]) {
   uint32_t seq = 128;
   uint32_t heads = 32;
   uint32_t headdim = 128;
+  uint32_t mode = KERNEL_HEAD_CONCAT;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seq") == 0) seq = atoi(argv[++i]);
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-mode") == 0) mode = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-batch B] [-seq S] [-heads H] [-headdim D]\n", argv[0]);
+             "[-batch B] [-seq S] [-heads H] [-headdim D] "
+             "[-mode 0=concat|1=head-reorder|2=transpose]\n", argv[0]);
       return 0;
     }
+  }
+
+  if (!batch || !seq || !heads || !headdim || mode > KERNEL_HEAD_TRANSPOSE) {
+    fprintf(stderr, "Expected positive dimensions and mode 0, 1, or 2\n");
+    return 1;
   }
 
   const uint32_t hidden = heads * headdim;
@@ -98,7 +106,7 @@ int main(int argc, char *argv[]) {
       std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
-  arg.kernel_id = KERNEL_HEAD_CONCAT;
+  arg.kernel_id = mode;
   arg.grid_dim[0] = blocks;
   arg.grid_dim[1] = 1;
   arg.grid_dim[2] = 1;

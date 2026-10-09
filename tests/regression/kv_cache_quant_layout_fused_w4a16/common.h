@@ -82,4 +82,11 @@ typedef struct {
   uint32_t cache_position;
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
+
+// First physical row within one M tile; columns span MXU-width groups.
+static inline uint32_t kv_fused_padded_append_offset(const kernel_arg_t* arg, uint32_t n) {
+  const uint32_t col = arg->src_col_offset + n;
+  const uint32_t mask = TILE_DMA_MXU_NT - 1u;
+  return (col & ~mask) * arg->src_total_K + (col & mask);
+}
 #endif // _KV_CACHE_QUANT_LAYOUT_FUSED_W4A16_COMMON_H_

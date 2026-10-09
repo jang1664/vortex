@@ -60,6 +60,7 @@ int main(int argc, char *argv[]) {
   uint32_t SOURCE_TRANSPOSED = 0;
   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   uint32_t source_total_n = 0;
+  uint32_t source_total_k = 0;
   uint32_t head_col_offset = 0;
   bool emit_correction_qparams = false;
   bool append_update = false;
@@ -90,6 +91,8 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "--source-transposed") == 0) SOURCE_TRANSPOSED = 1;
     else if (strcmp(argv[i], "--quant-mode") == 0) quant_mode = parse_quant_mode(argv[++i]);
     else if (strncmp(argv[i], "--quant-mode=", 13) == 0) quant_mode = parse_quant_mode(argv[i] + 13);
+    else if (strcmp(argv[i], "--source-total-k") == 0) source_total_k = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--source-total-k=", 17) == 0) source_total_k = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--source-total-n") == 0) source_total_n = atoi(argv[++i]);
     else if (strncmp(argv[i], "--source-total-n=", 17) == 0) source_total_n = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--head-col-offset") == 0) head_col_offset = atoi(argv[++i]);
@@ -127,13 +130,19 @@ int main(int argc, char *argv[]) {
              "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
-             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams] "
+             "[--source-total-n N] [--source-total-k K] [--head-col-offset N] [--emit-correction-qparams] "
              "[--cache-update full|append] [--cache-capacity K] [--cache-position K]\n",
              argv[0]);
       return 0;
     }
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
+  if (source_total_k == 0) source_total_k = K;
+  if (source_total_k < K || (source_total_k != K && !append_update)) {
+    printf("ERROR: --source-total-k must cover K; padded sources require append mode\n");
+    return 1;
+  }
+
   if (source_total_n == 0) source_total_n = N;
   if (append_update
       && (K != 1 || QDIR != 1 || QBLK < N
@@ -158,7 +167,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  const size_t src_elems = (size_t)K * source_total_n;
+  const size_t src_elems = (size_t)source_total_k * source_total_n;
   const uint32_t output_K = append_update ? cache_capacity : K;
   const size_t weight_bytes = weight_total_bytes_host(
       output_K, N, SOURCE_TRANSPOSED);
@@ -169,14 +178,14 @@ int main(int argc, char *argv[]) {
   if (bench.copy_inputs) {
     std::vector<fp16_t> h_src((size_t)K * N);
     init_src(h_src);
-    std::vector<fp16_t> h_src_combined(src_elems, 0);
+    std::vector<fp16_t> h_src_combined((size_t)K * source_total_n, 0);
     for (uint32_t k = 0; k < K; ++k) {
       std::copy_n(h_src.begin() + (uint64_t)k * N, N,
                   h_src_combined.begin() + (uint64_t)k * source_total_n + head_col_offset);
     }
     h_src_device.resize(src_elems);
     pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n,
-                        src_layout, DMA_MT);
+                        src_layout, DMA_MT, source_total_k);
   }
   std::vector<uint8_t> initial_weight, initial_scale, initial_zero;
   if (append_update) {
@@ -272,7 +281,7 @@ int main(int argc, char *argv[]) {
   }
   if (append_update) {
     arg.K = 1;
-    arg.src_total_K = 1;
+    arg.src_total_K = source_total_k;
     arg.persistent_mode = 1;
     arg.cache_capacity = cache_capacity;
     arg.cache_position = cache_position;
@@ -290,6 +299,8 @@ int main(int argc, char *argv[]) {
 
   printf("cache_update=%s cache_capacity=%u cache_position=%u\n",
          append_update ? "append" : "full", output_K, cache_position);
+  printf("source_total_k=%u source_total_n=%u head_col_offset=%u layout_from=%s\n",
+         source_total_k, source_total_n, head_col_offset, src_layout_name(src_layout));
   printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
