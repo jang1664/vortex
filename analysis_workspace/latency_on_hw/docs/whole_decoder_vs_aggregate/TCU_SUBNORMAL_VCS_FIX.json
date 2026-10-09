@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-09",
+  "baseline_commit": "a2ca51e4e6391ee347c958ce503bb8e7b0cba56f",
+  "scope": "TCU input converter only; no MXU changes or new FPGA image",
+  "source_sha256": {
+    "hw/rtl/tcu/VX_tcu_fedp_dsp.sv": "94a839a436198662cbfc08312b553dc4114932bdc1761db62702f7d70a116e6a",
+    "tests/regression/sgemm_tcu/main.cpp": "8f2fa42011c3d1f1e99e30bc02778155656f2f94bf09c153c15fc5c49a57e84a",
+    "hw/unittest/tcu_fp16_convert/Makefile": "f562a9724ad4281093360ee3ef6049e927d65eafb7cec6642f30be050528823c",
+    "hw/unittest/tcu_fp16_convert/tb_tcu_fp16_convert.sv": "972c68588196feb3ce8bcfaa4535d6e33b47047748c8e27d88d1899368dd804b",
+    "hw/unittest/tcu_fp16_convert/reference.cpp": "5cfd9170d688d10cbae4ab09c2fad74d9189674574296f560d808e787e3c8aa2",
+    "configs/tcu_th16_c1_v3.sh": "423d7efd12868ec620665afc4f3cfcbf251e60dfa71ebc51a89f59c85b1cea7d",
+    "configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh": "268a166a39d003502f85ca366fb4c0a4108cf722748121393304e0d114871516"
+  },
+  "logs": {
+    "build_tcu_subnormal_c1/unit_baseline.log": {
+      "sha256": "314e3a340ccaceb6ec5f51988e60272b6949c6faeee25f2d8fb96e6f689dec2e",
+      "evidence": [
+        "TCU converter: inputs=65536 subnormals=2046 NaNs=2046 mismatches=2046 subnormal_mismatches=2046"
+      ]
+    },
+    "build_tcu_subnormal_c1/unit_fixed.log": {
+      "sha256": "570dddc73b77994e1023a606f6f0d58bdc27b80f847e0abe7783a0a27445881c",
+      "evidence": [
+        "TCU converter: inputs=65536 subnormals=2046 NaNs=2046 mismatches=0 subnormal_mismatches=0",
+        "PASSED: TCU FP16 widening (finite/Inf/zero bit-exact; NaN class)"
+      ]
+    },
+    "build_tcu_subnormal_c1/bb_baseline.log": {
+      "sha256": "7bb782ac907ec43816c5622f64c4dce4115da95cf8aa20fc88b9b73118ce5a13",
+      "evidence": [
+        "PERF: instrs=28686, cycles=15707, IPC=1.826319",
+        "Found 64 / 64 errors!",
+        "FAILED!"
+      ]
+    },
+    "build_tcu_subnormal_c1/bb_fixed_subnormal-a.log": {
+      "sha256": "bdb541fcd45568146c88b32530f2c1c4ef671526f87e4dad75c4a84667bdf261",
+      "evidence": [
+        "PERF: instrs=28686, cycles=15707, IPC=1.826319",
+        "PASSED!"
+      ]
+    },
+    "build_tcu_subnormal_c1/bb_fixed_subnormal-b.log": {
+      "sha256": "27b8414448730b72fa1d1e8a159ce3cc7f29b2b6fe52fc9593ab9ba19e6d0e03",
+      "evidence": [
+        "PERF: instrs=28686, cycles=15707, IPC=1.826319",
+        "PASSED!"
+      ]
+    },
+    "build_tcu_subnormal_c1/bb_fixed_random.log": {
+      "sha256": "e6b1ee55cf20781a36895ca7ffe478f6db2afd031ca556db11cdd0e8b2c46ce9",
+      "evidence": [
+        "PERF: instrs=28406, cycles=15720, IPC=1.806997",
+        "PASSED!"
+      ]
+    },
+    "build_tcu_subnormal_c2/bb_fixed_b.log": {
+      "sha256": "58924df06f1bf95d41553f60b0433773d1858ab972856f03d3e158a35cd53b5c",
+      "evidence": [
+        "PERF: instrs=28686, cycles=15706, IPC=1.826436",
+        "PASSED!"
+      ]
+    }
+  }
+}

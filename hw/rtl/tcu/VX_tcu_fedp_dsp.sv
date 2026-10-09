@@ -54,9 +54,10 @@ module fp16_to_fp32 (
     // Normalize denormal fraction
     assign normalized_frac = fraction << leading_zeros;
 
-    // Calculate FP32 exponent
+    // A half subnormal is fraction * 2^-24. With a 10-bit leading-zero
+    // count, its leading one has exponent -15 - leading_zeros.
     wire [7:0] exp32 =
-        is_denormal ? 8'd127 - 8'd14 - {3'b0, leading_zeros} + 8'd1 :  // 2^(-14 - (10 - leading_zeros))
+        is_denormal ? 8'd127 - 8'd15 - {3'b0, leading_zeros} :
         is_zero     ? 8'b0 :
         is_infinity ? 8'b11111111 :
         is_nan      ? 8'b11111111 :

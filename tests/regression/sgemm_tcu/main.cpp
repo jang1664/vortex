@@ -30,6 +30,7 @@ using namespace vortex;
 namespace vt = tensor;
 
 static bool g_enable_sparse = false;
+static std::string g_input_pattern = "random";
 ///////////////////////////////////////////////////////////////////////////////
 
 static const char* sgemm_tcu_variant_name() {
@@ -476,13 +477,13 @@ std::string last_build_options;
 
 static void show_usage() {
   std::cout << "Vortex Sgemm TCU Test." << std::endl;
-  std::cout << "Usage: [-m: m] [-n N] [-k: K] [-s] [-h: help]" << std::endl;
+  std::cout << "Usage: [-m: m] [-n N] [-k: K] [-s] [-p random|subnormal-a|subnormal-b] [-h: help]" << std::endl;
   std::cout << "  -s  Enable 2:4 structured sparsity " << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:i:o:hs")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:i:o:p:hs")) != -1) {
     switch (c) {
     case 'm':
       xm = atoi(optarg);
@@ -492,6 +493,9 @@ static void parse_args(int argc, char **argv) {
       break;
     case 'k':
       xk = atoi(optarg);
+      break;
+    case 'p':
+      g_input_pattern = optarg;
       break;
     case 's':
       g_enable_sparse = true;
@@ -582,6 +586,18 @@ void test_pruneA() {
 int main(int argc, char *argv[]) {
   // parse command arguments
   parse_args(argc, argv);
+
+  if (g_input_pattern != "random" && g_input_pattern != "subnormal-a"
+      && g_input_pattern != "subnormal-b") {
+    std::cerr << "Unknown input pattern: " << g_input_pattern << std::endl;
+    return 1;
+  }
+  const bool directed = g_input_pattern != "random";
+  if (directed && (g_enable_sparse || !std::is_same_v<vt::ITYPE, vt::fp16>
+      || !(std::is_same_v<vt::OTYPE, vt::fp16> || std::is_same_v<vt::OTYPE, vt::fp32>))) {
+    std::cerr << "Subnormal patterns require dense FP16 inputs and FP16/FP32 output" << std::endl;
+    return 1;
+  }
 
   if(g_enable_sparse) {
     test_pruneA(); // Test the pruning function
@@ -711,6 +727,22 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  if (directed) {
+    // Exact binary products: subnormal * 1024 produces normal outputs.
+    // Row/column signs exercise both converter signs without cancellation.
+    // The bit-exact check below catches this bug even for tiny output values.
+    const uint16_t small[] = {0x0001, 0x0002, 0x0100, 0x0200, 0x03ff};
+    for (uint32_t m = 0; m < M; ++m)
+      for (uint32_t k = 0; k < K; ++k)
+        h_A[m * K_exec + k] = ((m & 1u) << 15)
+            | (g_input_pattern == "subnormal-a" ? small[k % 5] : 0x6400);
+    for (uint32_t k = 0; k < K; ++k)
+      for (uint32_t n = 0; n < N; ++n)
+        h_B[k * N_exec + n] = ((n & 1u) << 15)
+            | (g_input_pattern == "subnormal-b" ? small[k % 5] : 0x6400);
+    std::cout << "Directed FP16 pattern: " << g_input_pattern << "; bit-exact output check" << std::endl;
+  }
+
   // upload matrix A buffer
   {
     std::cout << "upload matrix A buffer" << std::endl;
@@ -776,7 +808,15 @@ int main(int argc, char *argv[]) {
       for (uint32_t n = 0; n < N; ++n) {
         uint32_t logical_idx = m * N + n;
         uint32_t padded_idx = m * N_exec + n;
-        if (!Comparator<vt::OTYPE>::compare(h_C[padded_idx], h_ref[logical_idx], logical_idx, errors)) {
+        bool match;
+        if (directed) {
+          match = memcmp(&h_C[padded_idx], &h_ref[logical_idx], sizeof(otype_t)) == 0;
+          if (!match && errors < MAX_ERRORS)
+            std::cout << "Directed mismatch at output " << std::dec << logical_idx << std::endl;
+        } else {
+          match = Comparator<vt::OTYPE>::compare(h_C[padded_idx], h_ref[logical_idx], logical_idx, errors);
+        }
+        if (!match) {
           ++errors;
         }
       }
