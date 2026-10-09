@@ -9,7 +9,8 @@ OUT=Path(__file__).resolve().parents[1]
 DOC=OUT.parent/'c3_c4_rev6_fine_grained_analysis.md'
 rows=json.loads((OUT/'measurements.json').read_text())
 by={r['key']:r for r in rows}
-order=['small','llama3_kv_decode','llama3_kv_decode_m4','llama3_attention_decode','llama2_ffn_decode','llama2_ffn_decode_m4']
+batch64_kv='llama3_kv_decode_b64_20261009'
+order=['small','llama3_kv_decode','llama3_kv_decode_m4',batch64_kv,'llama3_attention_decode','llama2_ffn_decode','llama2_ffn_decode_m4']
 rows=sorted(rows,key=lambda r:(order.index(r['case']['id']),r['candidate']))
 def fmt(v):return f'{v:,.3f}' if isinstance(v,float) else f'{v:,}'
 def table(headers,body):
@@ -17,7 +18,7 @@ def table(headers,body):
 def ratio(a,b):return a/b if b else 0.0
 s='## 측정 결과\n\n'
 s+=table(['case','backend','GEMM cycles','GEMM µs','core µs','MXU 유효 util. %','input fire %','pipeline %','유효 GFLOP/s'],[[r['case']['id'],r['candidate'].upper(),fmt(r['gemm_cycles']),fmt(r['gemm_us']),fmt(r['core_us']),fmt(r['effective_peak_pct']),fmt(r['input_util_pct']),fmt(r['pipeline_util_pct']),fmt(r['useful_gflops'])] for r in rows])
-s+='MXU 유효 utilization은 `100 × 2MNK / (GEMM cycles × 512)`이며 논리 M/N/K만 사용하고 padding 연산을 제외한다. pipeline %는 nonempty 비율이며 이 utilization과 다르다. 모든 수치는 reference 검증에 통과한 실행만 포함한다. input %와 nominal 유효 peak %는 N/K가 16의 배수이면 같다. ragged attention에서는 padding 때문에 유효 peak %가 조금 더 낮다.\n\n'
+s+='MXU 유효 utilization은 `100 × 2MNK / (GEMM cycles × 512)`이며 논리 M/N/K만 사용하고 padding 연산을 제외한다. pipeline %는 nonempty 비율이며 이 utilization과 다르다. 모든 수치는 reference 검증에 통과한 실행만 포함한다. 실행 shape와 논리 shape가 같고 N/K가 16의 배수이면 input %와 유효 peak %가 같다. ragged attention이나 canonical padding 실행은 input fire에 추가 연산이 포함되어 두 값이 다르다.\n\n'
 s+='### Weight 공급을 고려한 MXU 해석\n\n'
 body=[]
 for r in rows:
@@ -76,7 +77,7 @@ if complete_projection_comparison:
             bytes_a=a['hbm_gemm_rd_bytes']+a['hbm_gemm_wr_bytes'];bytes_b=b['hbm_gemm_rd_bytes']+b['hbm_gemm_wr_bytes']
             changes.append([w,c.upper(),fmt(a['gemm_cycles']/b['gemm_cycles']),fmt(b['useful_gflops']/a['useful_gflops']),fmt(b['effective_peak_pct']/a['effective_peak_pct']),fmt(bytes_b/bytes_a),fmt(b['weight_fire']/a['weight_fire']),fmt(b['dma_pipeline_overlap_pct']-a['dma_pipeline_overlap_pct'])])
     s+=table(['projection','M','backend','GEMM cycles','MXU 유효 util. %','GEMM AXI GB/s','DMA–pipeline overlap %','C4/C3 GEMM speedup'],comparison)
-    s+='MXU utilization은 `2MNK/(cycles×512)`다. overlap은 `overlap_dma_mxu/dma_union_active_cycles`이며 reset 이후 DMA-active 시간 중 pipeline-nonempty와 겹친 비율이다. DMA-active는 CPU/HBM/input/weight/scale-zero/output DMA busy의 OR이므로 동시 엔진은 cycle당 한 번만 센다. pipeline-nonempty는 MAC-active가 아니므로 overlap/occupancy를 array utilization으로 표시하지 않는다.\n\n'
+    s+='C4/C3 GEMM speedup은 `C3 cycles / C4 cycles`다. MXU utilization은 `2MNK/(cycles×512)`다. overlap은 `overlap_dma_mxu/dma_union_active_cycles`이며 reset 이후 DMA-active 시간 중 pipeline-nonempty와 겹친 비율이다. DMA-active는 CPU/HBM/input/weight/scale-zero/output DMA busy의 OR이므로 동시 엔진은 cycle당 한 번만 센다. pipeline-nonempty는 MAC-active가 아니므로 overlap/occupancy를 array utilization으로 표시하지 않는다.\n\n'
     s+=table(['projection','backend','M1/M4 latency speedup','M4/M1 useful throughput','M4/M1 MXU util.','M4/M1 AXI bytes','M4/M1 weight beats','overlap 변화 pp'],changes)
     s+='latency speedup이 1 미만이면 M=4 한 invocation이 더 느린 것이다. throughput은 연산량 4배를 포함하므로 latency speedup과 구별한다. HBM bandwidth의 비율은 `AXI bytes 비율 × latency speedup`이어서 speedup의 독립적인 원인 증거가 아니다.\n\n'
     s+=table(['projection','M','backend','input fire','weight beats','GEMM AXI read B','GEMM AXI write B','local physical read B','local physical write B','useful FLOPs / GEMM AXI B'],traffic)
@@ -126,11 +127,45 @@ if 'c3_llama3_attention_decode' in by:
     s+='실제 Llama3 attention shape `4×1025×128, QBLK=128, WTRANS=1, QDIR=0`은 C3와 C4 모두 reference 검증을 통과했다. C3의 최초 실패는 QBLK register를 log2=5(32)로 고정한 simulation assertion이었다. 2026-10-09에 허용 범위를 log2=4–7(16·32·64·128)로 넓힌 후 동일 shape를 `xrt-vcs-sim --perf 3`으로 다시 측정해 위 모든 표와 그림에 반영했다. 차원/alignment 검사는 유지했고 하드웨어 데이터 경로는 변경하지 않았다. 최초 실패 기록은 `perf_rev6/raw/attempts/c3_attention_qblk32_assertion_20261008/`에 보존하고 집계에서 제외했다. 작은 QBLK별 검증은 [별도 재실행 문서](perf_rev6/qblk_support_rerun_20261009/README.md)에 있다.\n\n'
 else:
     s+='C3 attention의 passing capture가 아직 없어 비교에서 제외했다. 실패 로그를 지원 범위나 성능값으로 대체하지 않는다.\n\n'
+complete_batch64=all(c+'_'+batch64_kv in by for c in ['c3','c4'])
+if complete_batch64:
+    batch64_section='## Llama3 decode batch 64: K/V projection\n\n'
+    batch64_section+='KV cache 1024의 첫 decode token을 기준으로 K/V projection 각각의 shape는 `M=64, N=1024, K=4096, QBLK=32, WTRANS=0, QDIR=0`이다. 동일 shape의 standalone deterministic vector 실행 하나를 K/V 공통 microbenchmark로 사용했다. 두 후보 모두 실제 M=64, REPS=1, CPU reference PASSED이고 accepted input fire=1,048,576을 확인했다. 두 다른 학습 weight를 각각 실행하거나 전체 batch decoder를 실행한 결과는 아니다. [생성 workload manifest](perf_rev6/raw/llama3_decode_b64_shape_manifest_20261009.json)에 shape와 호출 수를 보존했다.\n\n'
+    batch64_comparison=[];batch64_traffic=[]
+    for label,workload in [('KV M=1','llama3_kv_decode'),('KV M=4','llama3_kv_decode_m4'),('KV M=64',batch64_kv)]:
+        speed=by['c3_'+workload]['gemm_cycles']/by['c4_'+workload]['gemm_cycles']
+        for c in ['c3','c4']:
+            r=by[c+'_'+workload];mem=r['lmem_physical'] if c=='c3' else r['tmem']
+            batch64_comparison.append([label,c.upper(),fmt(r['gemm_cycles']),fmt(r['gemm_us']),fmt(r['effective_peak_pct']),fmt(r['hbm_gemm_gbps']),fmt(r['dma_pipeline_overlap_pct']),fmt(speed)])
+            batch64_traffic.append([label,c.upper(),fmt(r['input_fire']),fmt(r['weight_fire']),fmt(4*r['input_fire']/r['weight_fire']),fmt(r['hbm_gemm_rd_bytes']),fmt(r['hbm_gemm_wr_bytes']),fmt(mem['rd_bytes']),fmt(mem['wr_bytes'])])
+    batch64_section+=table(['측정 단위','backend','GEMM cycles','GEMM µs','유효 MXU %','GEMM AXI GB/s','DMA–pipeline overlap %','C4/C3 speedup'],batch64_comparison)
+    batch64_section+=table(['측정 단위','backend','input fire','weight beats','input rows / 4-beat weight tile','GEMM AXI read B','write B','local physical read B','write B'],batch64_traffic)
+    for c in ['c3','c4']:
+        a=by[c+'_llama3_kv_decode_m4'];b=by[c+'_'+batch64_kv]
+        byte_ratio=(b['hbm_gemm_rd_bytes']+b['hbm_gemm_wr_bytes'])/(a['hbm_gemm_rd_bytes']+a['hbm_gemm_wr_bytes'])
+        batch64_section+=f"{c.upper()} K/V M=4→64: 연산량은 16배, latency는 {b['gemm_cycles']/a['gemm_cycles']:.3f}배, 유효 throughput은 {b['useful_gflops']/a['useful_gflops']:.3f}배다. input fire는 {a['input_fire']:,}→{b['input_fire']:,}, weight beats는 {a['weight_fire']:,}→{b['weight_fire']:,}다. Weight tile당 관측 input rows는 {4*a['input_fire']/a['weight_fire']:.1f}→{4*b['input_fire']/b['weight_fire']:.1f}로 변했다. 이 관측 비율로 weight tile의 64-row 재사용 여부를 확인한다. AXI bytes는 {byte_ratio:.3f}배, bandwidth는 {b['hbm_gemm_gbps']/a['hbm_gemm_gbps']:.3f}배이고 후자는 bytes/time에서 계산되므로 독립적인 speedup 원인 증거가 아니다.\n\n"
+    a=by['c3_'+batch64_kv];b=by['c4_'+batch64_kv]
+    batch64_section+=f"Batch 64 K/V에서 C4/C3 GEMM speedup은 {a['gemm_cycles']/b['gemm_cycles']:.3f}배이며 유효 MXU utilization은 C3 {a['effective_peak_pct']:.2f}%, C4 {b['effective_peak_pct']:.2f}%다. M=4에서의 C4/C3 speedup {by['c3_llama3_kv_decode_m4']['gemm_cycles']/by['c4_llama3_kv_decode_m4']['gemm_cycles']:.3f}배와 함께 보고, 작은 M의 공급·스케줄링 이점이 batch 64에서도 유지되는지 판단한다. Pipeline overlap {a['dma_pipeline_overlap_pct']:.2f}%/{b['dma_pipeline_overlap_pct']:.2f}%는 pipeline-nonempty가 DMA-active와 겹친 비율이며 MAC-active 비율이 아니다. 미구현 stall counter의 0은 stall 부재로 해석하지 않는다.\n\n"
+    old_speed=by['c3_llama3_kv_decode_m4']['gemm_cycles']/by['c4_llama3_kv_decode_m4']['gemm_cycles']
+    new_speed=a['gemm_cycles']/b['gemm_cycles']
+    direction='줄었다' if new_speed<old_speed else '늘었다'
+    winner='C4가 더 빠르다' if new_speed>1 else 'C3가 더 빠르거나 같다'
+    batch64_section+=f"M=4→64에서 C4/C3 speedup은 {old_speed:.3f}→{new_speed:.3f}배로 {direction}. Batch64에서는 {winner}. 큰 M에서 공급·스케줄링 경로의 상대 이점을 작은 M과 같은 배수로 일반화하지 않는다. M64의 유효 peak 비율 자체는 C3 {a['effective_peak_pct']:.2f}%, C4 {b['effective_peak_pct']:.2f}%로 관측했으며, 이 결과를 M1/M4에서도 같은 utilization을 유지했다는 증거로 사용하지 않는다.\n\n"
+    for c in ['c3','c4']:
+        old=by[c+'_llama3_kv_decode_m4'];new=by[c+'_'+batch64_kv]
+        batch64_section+=f"{c.upper()}는 M=4→64에서 유효 utilization {old['effective_peak_pct']:.2f}%→{new['effective_peak_pct']:.2f}%, GEMM AXI bandwidth {old['hbm_gemm_gbps']:.3f}→{new['hbm_gemm_gbps']:.3f} GB/s다. Array utilization 증가와 HBM bandwidth 변화의 방향을 함께 확인해야 하며, bandwidth만으로 compute 활용도나 memory 병목을 판단하지 않는다.\n\n"
+    batch64_section+='Model manifest, config·monitor 및 kernel binary 해시가 기존 cohort와 일치한다. 기존 C4 host의 TMEM allocator helper 추출은 할당식·순서·512 B 정렬·용량을 보존하고 이번 실행에서 제품 RTL/kernel을 변경하지 않았다. 이 근거로 기존 M1/M4를 비교에 재사용했다. 실행 시점 source snapshot과 실제 바이너리 및 비교 증거는 [provenance.json](perf_rev6/provenance.json)에 보존한다.\n\n'
+    batch64_section+=f"전체 출력 DMA endpoint는 두 후보 모두 131,072 B로 검증됐다. GEMM-active AXI write는 C3 {a['hbm_gemm_wr_bytes']:,} B, C4 {b['hbm_gemm_wr_bytes']:,} B이며, C3에서는 GEMM-active gate가 마지막 output drain의 일부를 제외한다. Core-active AXI write는 각각 {a['hbm_core_wr_bytes']:,}/{b['hbm_core_wr_bytes']:,} B로 epilogue·부수 traffic도 포함한다. 따라서 output 진행 중 16,384 B 단위의 write milestone은 간접 지표이며 직접 tile-done signal이 아니다. 최종 종료·출력 DMA 전체 byte·CPU reference PASSED를 함께 확인했다. AXI window/tail 합계는 각각의 관찰 구간 합계와 정확히 일치한다.\n\n"
+    batch64_section+='### QKᵀ 추가 실행 제외와 benchmark의 M 정렬 문제\n\n'
+    batch64_section+='사용자 요청에 따라 QKᵀ 추가 측정은 시작 전에 제외했다. GQA 논리 shape는 batch 64여도 `4×1025×128`이고 호출 수가 layer당 `64×8=512`로 늘어난다. 기존 perf_rev6의 QKᵀ 결과는 CLI `-m 4`를 주고 실제 input 4 rows를 공급한 측정이다. 반면 현재 `latency_on_hw` canonicalization은 M을 8, N을 32의 배수로 올리고 runner가 변환된 `measurement_args`를 전달한다. 기존 C4 rev4/rev5 raw DB에서도 **`-m 8 -n 1056 -k 128 -q 128 -t 1 -d 0`**를 확인했다. 이것은 저장 공간만 M_pad=8로 잡고 실제 M=4를 연산하는 host 동작과 다르며, 실제 8 rows를 실행한 benchmark다. 따라서 그 latency를 실제 4-row QKᵀ의 측정값으로 표현하거나 두 결과를 혼합하지 않는다. 본 작업에서는 해당 pipeline 설정이나 kernel을 변경하지 않았다. K/V M=64는 정렬 전후 인자가 같아 이 M 증가 문제의 영향을 받지 않는다.\n\n'
+    batch64_section+='Batch 전체 QKT 시간이나 전체 decoder latency는 이번에 측정하지 않았다. 기존 단일 호출 latency×512는 직렬 합산 추정으로만 사용할 수 있고 host launch·cache residency·fusion·서로 다른 KV 데이터 효과를 측정한 값은 아니다.\n\n'
+    batch64_section+='![Llama3 decode batch64 K/V 비교](perf_rev6/llama3_decode_batch64.png)\n\n'
+    s+=batch64_section
 s+='## 검증과 재실행\n\n'
 s+='small 원래 perf-only 실행과 최종 관찰 실행의 GEMM cycle 및 host PERF core cycle가 각각 C3 773 / 8,870, C4 303 / 7,610으로 같았다. host PERF instr cycle(MCYCLE)은 C3 8,845, C4 7,585로 busy cycle와 구별된다. reference verification과 window 합계 invariant도 통과했다. raw core final cycles는 profiling epilogue까지 포함해 C3 10,497, C4 9,237이다.\n\n'
-s+='```bash\n# 프로젝트 root에서 최초 1회 준비; configure를 다시 하면 monitor 설정을 재추가해야 한다\npython3 analysis_workspace/latency/docs/perf_rev6/tools/setup_builds.py\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case small\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama2_ffn_decode --timeout 5400\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_attention_decode\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode_m4 --case llama2_ffn_decode_m4 --timeout 7200\npython3 analysis_workspace/latency/docs/perf_rev6/tools/analyze.py\n/home/jaeyongjang/.conda/envs/vortex/bin/python analysis_workspace/latency/docs/perf_rev6/tools/render_results.py\n```\n\n'
+s+='```bash\n# 프로젝트 root에서 최초 1회 준비; configure를 다시 하면 monitor 설정을 재추가해야 한다\npython3 analysis_workspace/latency/docs/perf_rev6/tools/setup_builds.py\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case small\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama2_ffn_decode --timeout 5400\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_attention_decode\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode_m4 --case llama2_ffn_decode_m4 --timeout 7200\npython3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode_b64_20261009 --timeout 10800\npython3 analysis_workspace/latency/docs/perf_rev6/tools/analyze.py\n/home/jaeyongjang/.conda/envs/vortex/bin/python analysis_workspace/latency/docs/perf_rev6/tools/render_results.py\n```\n\n'
 s+='full FFN의 초기 C4 실행은 VCS 진행 속도를 보고 timeout을 연장하기 위해 중단했다. 그 기록은 `raw/attempts/`에 있고 최종 분석에서는 제외한다. 각 정량 결과는 최종 단일 실행이며 실행 간 분산을 측정하지 않았다.\n\n'
-s+='## 추가로 유용한 계측\n\n1. input/weight/scale/zero 공급 ready/valid 원인별 stall 및 accumulator hazard의 실제 카운터를 채우면 pipeline-active와 input-fire 사이의 공백을 설명할 수 있다. 현재 perf의 0만으로는 원인을 분해할 수 없다.\n2. per-bank read/write hotspot과 per-port backpressure를 함께 보면 충돌이 특정 bank/address mapping에 집중되는지 확인할 수 있다. 이미 수집한 raw 자료에 포함되어 있다.\n3. useful FLOPs/AXI byte와 A/weight/scale read amplification은 데이터 재사용 효율을 표현한다. physical SRAM traffic과 DMA endpoint traffic을 구분해야 한다.\n4. prefill의 큰 M, generation batch 변화, QDIR=1, FFN down projection 등으로 확장하면 compute/memory balance가 달라지는 범위를 검증할 수 있다. 이번 측정은 해당 범위를 커버하지 않는다.\n'
+s+='## 추가로 유용한 계측\n\n1. input/weight/scale/zero 공급 ready/valid 원인별 stall 및 accumulator hazard의 실제 카운터를 채우면 pipeline-active와 input-fire 사이의 공백을 설명할 수 있다. 현재 perf의 0만으로는 원인을 분해할 수 없다.\n2. per-bank read/write hotspot과 per-port backpressure를 함께 보면 충돌이 특정 bank/address mapping에 집중되는지 확인할 수 있다. 이미 수집한 raw 자료에 포함되어 있다.\n3. useful FLOPs/AXI byte와 A/weight/scale read amplification은 데이터 재사용 효율을 표현한다. physical SRAM traffic과 DMA endpoint traffic을 구분해야 한다.\n4. 이번 generation K/V M=64 확장 외에 prefill의 큰 M, 다른 KV cache 길이, QDIR=1, FFN down projection 등을 측정하면 compute/memory balance의 다른 범위를 검증할 수 있다. 이번 측정은 그 추가 범위를 커버하지 않는다.\n'
 # Place figures near the measured tables.
 colors={'c3':'#4477AA','c4':'#EE7733'}
 actual=[c for c in order if c!='small' and any(r['case']['id']==c for r in rows)]
@@ -140,7 +175,8 @@ for ax,key,label in zip(axes,['gemm_us','effective_peak_pct','hbm_gemm_gbps'],['
         for i,case in enumerate(actual):
             r=by.get(c+'_'+case)
             if r:ax.bar(i+shift,r[key],width=.34,color=colors[c],label=c.upper() if i==0 else None)
-    ax.set_xticks(range(len(actual)),[c.replace('llama','L').replace('_decode','').replace('_',' ') for c in actual],rotation=18,ha='right')
+    labels={batch64_kv:'L3 KV batch64'}
+    ax.set_xticks(range(len(actual)),[labels.get(c,c.replace('llama','L').replace('_decode','').replace('_',' ')) for c in actual],rotation=25,ha='right')
     ax.set_ylabel(label);ax.grid(axis='y',alpha=.25);ax.set_axisbelow(True)
 axes[0].set_yscale('log');axes[0].legend();
 for ax in axes:
@@ -168,6 +204,18 @@ if complete_projection_comparison:
         ax.set_ylabel(label);ax.grid(axis='y',alpha=.25);ax.set_axisbelow(True);ax.legend()
         if key=='gemm_us':ax.set_yscale('log')
     fig.savefig(OUT/'projection_m1_m4.png',dpi=180);fig.savefig(OUT/'projection_m1_m4.svg');plt.close(fig)
+if complete_batch64:
+    groups=[('llama3_kv_decode','KV M1'),('llama3_kv_decode_m4','KV M4'),(batch64_kv,'KV M64')]
+    fig,axes=plt.subplots(2,2,figsize=(12,8),layout='constrained')
+    for ax,key,label in zip(axes.flat,['gemm_us','effective_peak_pct','hbm_gemm_gbps','dma_pipeline_overlap_pct'],['Per-invocation GEMM latency (µs)','Effective MXU utilization (%)','Simulated GEMM-phase AXI bandwidth (GB/s)','DMA–pipeline-nonempty overlap (%)']):
+        for c,shift in [('c3',-.18),('c4',.18)]:
+            bars=ax.bar([i+shift for i in range(len(groups))],[by[c+'_'+w][key] for w,_ in groups],width=.34,label=c.upper(),color=colors[c])
+            ax.bar_label(bars,fmt='%.2f',padding=3,fontsize=8)
+        ax.set_xticks(range(len(groups)),[label for _,label in groups]);ax.set_ylabel(label)
+        ax.grid(axis='y',alpha=.25);ax.set_axisbelow(True);ax.legend();ax.margins(y=.15)
+        if key=='gemm_us':ax.set_yscale('log')
+    fig.suptitle('Llama3 decode K/V projection: batch 1 / 4 / 64, actual M = batch')
+    fig.savefig(OUT/'llama3_decode_batch64.png',dpi=180);fig.savefig(OUT/'llama3_decode_batch64.svg');plt.close(fig)
 s=s.replace('## 분석\n\n','![GEMM 성능 비교](perf_rev6/overview.png)\n\n![HBM 1024-cycle window bandwidth](perf_rev6/hbm_windows.png)\n\n## 분석\n\n')
 s=s.replace('(raw/c3_llama3_attention_decode.simv.log)','(perf_rev6/raw/c3_llama3_attention_decode.simv.log)')
 prefix=DOC.read_text().split('<!-- RESULTS -->')[0]
@@ -181,6 +229,27 @@ if all(key in by for key in ['c3_llama3_kv_decode','c4_llama3_kv_decode','c3_lla
         c3=[by['c3_'+w+'_m4']['effective_peak_pct'] for w in projection_pairs]
         c4=[by['c4_'+w+'_m4']['effective_peak_pct'] for w in projection_pairs]
         summary=summary.replace('HBM 모델은',f"M=4 projection의 유효 MXU utilization은 C3 **{min(c3):.2f}–{max(c3):.2f}%**, C4 **{min(c4):.2f}–{max(c4):.2f}%**이며 M1/M4 비교·traffic·overlap은 본문에 함께 제시한다. HBM 모델은")
+    if complete_batch64:
+        a=by['c3_'+batch64_kv];b=by['c4_'+batch64_kv]
+        summary=summary.replace('HBM 모델은',f"Batch64 K/V의 C4/C3 GEMM speedup은 **{a['gemm_cycles']/b['gemm_cycles']:.3f}배**, 유효 utilization은 C3 **{a['effective_peak_pct']:.2f}%**, C4 **{b['effective_peak_pct']:.2f}%**다. QKᵀ 추가 측정은 사용자 요청으로 제외했고, 기존 latency_on_hw가 논리 M=4를 실제 M=8로 실행하는 차이를 기록했다. HBM 모델은")
     prefix=prefix.replace('## 측정 조건과 재현 자료',summary+'## 측정 조건과 재현 자료')
 DOC.write_text(prefix+'<!-- RESULTS -->\n'+s)
+if complete_projection_comparison:
+    index=OUT/'README.md'
+    block='<!-- M4_PROJECTION -->\n## Projection M=1/M=4 비교\n\n'
+    block+=table(['projection','M','backend','GEMM cycles','MXU 유효 util. %','GEMM AXI GB/s','DMA–pipeline overlap %','C4/C3 GEMM speedup'],comparison)
+    block+='MXU 유효 utilization은 `100×2MNK/(cycles×512)`이며 padding 연산을 제외한다. overlap은 DMA-active 시간 중 pipeline-nonempty와 겹친 비율이고 실제 MAC-active 비율이 아니다. C4/C3 speedup은 C3 cycles/C4 cycles이다. input/weight beats·traffic·M 변화 해석은 [전체 분석](../c3_c4_rev6_fine_grained_analysis.md)에 있다.\n\n![M1/M4 projection 비교](projection_m1_m4.png)\n<!-- /M4_PROJECTION -->\n'
+    text=index.read_text()
+    if '<!-- M4_PROJECTION -->' in text:
+        text=re.sub(r'<!-- M4_PROJECTION -->.*?<!-- /M4_PROJECTION -->\n?',lambda _:block,text,flags=re.S)
+    else:text=text.rstrip()+'\n\n'+block
+    index.write_text(text)
+if complete_batch64:
+    index=OUT/'README.md'
+    block='<!-- BATCH64_DECODE -->\n'+batch64_section.replace('(perf_rev6/','(')+'<!-- /BATCH64_DECODE -->\n'
+    text=index.read_text()
+    if '<!-- BATCH64_DECODE -->' in text:
+        text=re.sub(r'<!-- BATCH64_DECODE -->.*?<!-- /BATCH64_DECODE -->\n?',lambda _:block,text,flags=re.S)
+    else:text=text.rstrip()+'\n\n'+block
+    index.write_text(text)
 print('Rendered',len(rows),'passing cases into',DOC)

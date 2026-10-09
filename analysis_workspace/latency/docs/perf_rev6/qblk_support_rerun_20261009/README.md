@@ -36,4 +36,8 @@ timeout 1800 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-
 
 ## 전체 분석 반영
 
-2026-10-09 C3 attention을 같은 조건으로 다시 실행해 GEMM 7,596 cycles 및 정답 검증 통과를 재확인했다. 이 문서의 최초 재실행 데이터는 그대로 보존하고 전체 8-case 집계에는 상위 `raw/`의 최신 실행을 사용한다. HBM min/max/mean/median, MXU·pipeline utilization, LMEM read/write·bank conflict, DMA stage bandwidth·중첩 정보는 전체 분석 본문에 채웠다.
+2026-10-09 C3 attention을 같은 조건으로 다시 실행해 GEMM 7,596 cycles 및 정답 검증 통과를 재확인했다. 이 문서의 최초 재실행 데이터는 그대로 보존하고 전체 집계에는 상위 `raw/`의 최신 실행을 사용한다. HBM min/max/mean/median, MXU·pipeline utilization, LMEM read/write·bank conflict, DMA stage bandwidth·중첩 정보는 전체 분석 본문에 채웠다.
+
+2026-10-09 추가 갱신: M=4 K/V·FFN projection의 C3/C4 네 실행도 통과해 상위 전체 집계는 12개 passing case가 됐다. 이 폴더의 QBLK 검증 5개 기록은 별도로 유지하며 M=1/M=4 비교는 [상위 자료 안내](../README.md)와 [전체 분석](../../c3_c4_rev6_fine_grained_analysis.md)에 있다.
+
+2026-10-09 batch64 추가 갱신: 실제 M=64 K/V projection의 C3/C4 두 실행이 PASSED여서 상위 전체 집계는 14개가 됐다. 기존 12개 값과 이 폴더의 검증 기록은 보존했다. QKᵀ 추가 실행은 제외했으며 실제 CLI M=8과 storage padding의 차이는 [전체 분석](../../c3_c4_rev6_fine_grained_analysis.md)에 기록했다.

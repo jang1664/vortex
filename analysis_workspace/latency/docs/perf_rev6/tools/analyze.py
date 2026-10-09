@@ -25,7 +25,7 @@ def main():
     for status in sorted((OUT/'raw').glob('*.json')):
         if status.name.endswith('.model.json'):continue
         rec=json.loads(status.read_text())
-        if rec['status']!='passed':continue
+        if not isinstance(rec,dict) or rec.get('status')!='passed' or 'case' not in rec:continue
         key=status.stem
         g=parse(OUT/'raw'/f'{key}.simv.log')
         model=json.loads((OUT/'raw'/f'{key}.model.json').read_text())
@@ -46,10 +46,22 @@ def main():
             lmem_physical=g['LMEM_PHYSICAL'][0],lmem_perf=g['lmem'][0],
             tmem={k:sum(x[k] for x in g.get('TMEM',[])) for k in ['rd_bytes','wr_bytes','collision_cycles','collision_denied','blocked']})
         row.update(weight_fire=mx['weight_fire'],
+            logical_m=case.get('logical_m',case['m']),logical_n=case.get('logical_n',case['n']),logical_k=case.get('logical_k',case['k']),
+            argument_m=case['m'],argument_n=case['n'],argument_k=case['k'],
             dma_union_active_cycles=core['dma_union_active_cycles'],
             overlap_dma_pipeline_cycles=core['overlap_dma_mxu'],
             dma_pipeline_overlap_pct=100*ratio(core['overlap_dma_mxu'],core['dma_union_active_cycles']))
         assert core['overlap_dma_mxu'] <= core['dma_union_active_cycles']
+        if 'b64_' in case['id']:
+            assert peak==512
+            assert case['m']==64 and case['q']==32 and case['t']==0 and case['d']==0
+            expected_inputs=case['m']*math.ceil(case['n']/16)*math.ceil(case['k']/16)
+            assert mx['input_fire']==expected_inputs,(key,'batch64 invocation geometry')
+            headers=[line for line in (OUT/'raw'/f'{key}.log').open() if line.startswith('M=')]
+            assert len(headers)==1
+            for name,value in [('M',case['m']),('N',case['n']),('K',case['k']),('QBLK',case['q']),('WTRANS',case['t']),('QDIR',case['d']),('REPS',1)]:
+                match=re.search(r'\b'+name+r'=(\d+)',headers[0])
+                assert match and int(match[1])==value,(key,'host geometry',name)
         if case['id'].endswith('_m4'):
             assert case['m']==4 and case['q']==32 and case['t']==0 and case['d']==0
             assert peak==512
@@ -57,7 +69,10 @@ def main():
             # distinguish real M=4 from execution rounded to M=8 or M=16.
             assert mx['input_fire']==4*(case['n']//16)*(case['k']//16), (key,'real M=4 input count')
             headers=[line for line in (OUT/'raw'/f'{key}.log').open() if line.startswith('M=')]
-            assert len(headers)==1 and headers[0].startswith('M=4'), (key,'host M=4')
+            assert len(headers)==1 and re.match(r'M=4(?:\s|,)',headers[0]), (key,'host M=4')
+            for name, value in [('N',case['n']),('K',case['k']),('QBLK',32),('WTRANS',0),('QDIR',0)]:
+                match=re.search(r'\b'+name+r'=(\d+)',headers[0])
+                assert match and int(match[1])==value, (key,'host geometry',name)
         for main,window,tail in [('AXI','WINDOW','WINDOW_TAIL'),('GEMM_AXI','GEMM_WINDOW','GEMM_WINDOW_TAIL')]:
             parts=g.get(window,[])+g.get(tail,[])
             for field in ['cycles','rd_bytes','wr_bytes']:
@@ -74,7 +89,7 @@ def main():
         assert mx['input_fire']>0 and useful>0
         data.append(row)
     (OUT/'measurements.json').write_text(json.dumps(data,indent=2))
-    columns=['key','gemm_cycles','core_cycles','gemm_us','core_us','input_fire','input_util_pct','pipeline_util_pct','useful_gflops','effective_peak_pct','hbm_core_gbps','hbm_gemm_gbps','hbm_core_rd_bytes','hbm_core_wr_bytes','hbm_gemm_rd_bytes','hbm_gemm_wr_bytes','weight_fire','dma_union_active_cycles','overlap_dma_pipeline_cycles','dma_pipeline_overlap_pct']
+    columns=['key','gemm_cycles','core_cycles','gemm_us','core_us','input_fire','input_util_pct','pipeline_util_pct','useful_gflops','effective_peak_pct','hbm_core_gbps','hbm_gemm_gbps','hbm_core_rd_bytes','hbm_core_wr_bytes','hbm_gemm_rd_bytes','hbm_gemm_wr_bytes','weight_fire','dma_union_active_cycles','overlap_dma_pipeline_cycles','dma_pipeline_overlap_pct','logical_m','logical_n','logical_k','argument_m','argument_n','argument_k']
     with (OUT/'measurements.csv').open('w') as stream:
         writer=csv.DictWriter(stream,fieldnames=columns,lineterminator='\n');writer.writeheader();writer.writerows({k:r[k] for k in columns} for r in data)
     print('parsed and validated',len(data),'cases')

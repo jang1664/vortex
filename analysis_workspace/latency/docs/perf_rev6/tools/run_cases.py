@@ -12,6 +12,7 @@ CASES = [
     dict(id="llama2_ffn_decode",m=1,n=11008,k=4096,q=32,t=0,d=0),
     dict(id="llama3_kv_decode_m4",m=4,n=1024,k=4096,q=32,t=0,d=0),
     dict(id="llama2_ffn_decode_m4",m=4,n=11008,k=4096,q=32,t=0,d=0),
+    dict(id="llama3_kv_decode_b64_20261009",m=64,n=1024,k=4096,q=32,t=0,d=0),
 ]
 CONFIGS = {"c3":"naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3", "c4":"improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp"}
 def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -20,6 +21,8 @@ def run(candidate):
     app = "fpint_gemm_ffn_hw_naive" if candidate=="c3" else "fpint_gemm_ffn_hw"
     for case in CASES:
         key=f"{candidate}_{case['id']}"
+        if 'b64_' in case['id'] and (OUT/'raw'/f'{key}.json').exists():
+            raise FileExistsError(f'Preserve existing evidence: {key}')
         args=" ".join(f"-{x} {case[x]}" for x in ['m','n','k','q','t','d'])
         cmd=f"source ../configs/{CONFIGS[candidate]}.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout {TIMEOUT} ci/run_black.sh xrt-vcs-sim --app {app} --args '{args}' --perf 3 --configs-extra '-DDISABLE_FSDB'"
         record=dict(candidate=candidate,case=case,app=app,command=cmd,started=datetime.datetime.now().isoformat(),status="running",config_sha256=digest(ROOT/f"configs/{CONFIGS[candidate]}.sh"),monitor_sha256=digest(OUT/'tools/fine_monitor.sv'))
@@ -30,6 +33,23 @@ def run(candidate):
             ROOT/f'tests/regression/{app}/main.cpp',
             ROOT/f'tests/regression/{app}/kernel.cpp',
             ROOT/'tests/regression/fpint_gemm_ffn_hw/test_vectors.h']}
+        if 'b64_' in case['id']:
+            snapshot=OUT/'raw'/f'{key}.sources'
+            sources=list(record['source_sha256'])+[
+                'tests/regression/fpint_gemm_ffn_hw/layout.h',
+                'hw/rtl/core/gemm/VX_gemm_fsm.sv',
+                'tests/regression/fpint_gemm_ffn_hw/common.h',
+                'kernel/include/vx_tvm_gemm.h',
+                'runtime/stub/utils.cpp',
+                'tools/workload/gen_kernel_cfgs.py',
+                'tools/latency_bench/kernel_latency_canonicalization.yaml',
+                'tools/latency_bench/canonicalization.py']
+            for name in sources:
+                dest=snapshot/name
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(ROOT/name,dest)
+            record['source_sha256']={name:digest(snapshot/name) for name in sources}
+            record['dirty_status']=subprocess.check_output(['git','status','--short'],cwd=ROOT,text=True)
         status=OUT/'raw'/f"{key}.json"
         status.write_text(json.dumps(record,indent=2))
         print(f"START {key}",flush=True)
@@ -40,6 +60,14 @@ def run(candidate):
         record['returncode']=result.returncode
         passed=any(line.strip()=='PASSED' for line in (OUT/'raw'/f"{key}.log").open())
         record['status']='passed' if result.returncode==0 and passed else 'failed'
+        if 'b64_' in case['id']:
+            record['binaries']={}
+            for name in [app,'kernel.vxbin']:
+                source=build/f'tests/regression/{app}'/name
+                dest=OUT/'raw'/f'{key}.binaries'/name
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(source,dest)
+                record['binaries'][name]=dict(sha256=digest(dest),mtime_ns=source.stat().st_mtime_ns)
         for src,dest in [('simv.log',f'{key}.simv.log'),('u55c_model_manifest.json',f'{key}.model.json')]:
             source=build/'sim/xrtsim_vcs'/src
             if source.exists():shutil.copy2(source,OUT/'raw'/dest)

@@ -79,6 +79,478 @@
       "c4": "8b0a8b6fc5d9c2abddad51569f2f6e36b7c2c9e7dbc231bc6f1a882b3b8cf4e0"
     },
     "m1_rerun_needed": false,
-    "m1_rerun_reason": "Recorded hashes match; kernels, functional RTL and model sources match baseline commit, model manifests exactly match. Simulation-only QBLK assertion change accepts the already-supported QBLK=32 baseline."
+    "m1_rerun_reason": "Recorded hashes match; kernels, functional RTL and model sources match baseline commit, model manifests exactly match. Simulation-only QBLK assertion change accepts the already-supported QBLK=32 baseline.",
+    "comparability_checks": {
+      "c3_llama3_kv_decode_m4": {
+        "config_sha256": true,
+        "monitor_sha256": true,
+        "model_manifest_exact_match": true,
+        "launch_sources_preserved": true,
+        "current_source_matches_launch": {
+          "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv": true,
+          "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+          "tests/regression/fpint_gemm_ffn_hw_naive/main.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw_naive/kernel.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw/test_vectors.h": true
+        },
+        "model_sha256": "46d21a1b20b39d104afd55e204ae75919df9222a512f8e510b040f2d32f071c9"
+      },
+      "c3_llama2_ffn_decode_m4": {
+        "config_sha256": true,
+        "monitor_sha256": true,
+        "model_manifest_exact_match": true,
+        "launch_sources_preserved": true,
+        "current_source_matches_launch": {
+          "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv": true,
+          "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+          "tests/regression/fpint_gemm_ffn_hw_naive/main.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw_naive/kernel.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw/test_vectors.h": true
+        },
+        "model_sha256": "46d21a1b20b39d104afd55e204ae75919df9222a512f8e510b040f2d32f071c9"
+      },
+      "c4_llama3_kv_decode_m4": {
+        "config_sha256": true,
+        "monitor_sha256": true,
+        "model_manifest_exact_match": true,
+        "launch_sources_preserved": true,
+        "current_source_matches_launch": {
+          "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv": true,
+          "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+          "tests/regression/fpint_gemm_ffn_hw/main.cpp": false,
+          "tests/regression/fpint_gemm_ffn_hw/kernel.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw/test_vectors.h": true
+        },
+        "model_sha256": "2fe1148c24a3af078c9fd8bb675b76fa44dfae6f493a4ed8cbf0a0d4b7dc71ac"
+      },
+      "c4_llama2_ffn_decode_m4": {
+        "config_sha256": true,
+        "monitor_sha256": true,
+        "model_manifest_exact_match": true,
+        "launch_sources_preserved": true,
+        "current_source_matches_launch": {
+          "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv": true,
+          "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+          "tests/regression/fpint_gemm_ffn_hw/main.cpp": false,
+          "tests/regression/fpint_gemm_ffn_hw/kernel.cpp": true,
+          "tests/regression/fpint_gemm_ffn_hw/test_vectors.h": true
+        },
+        "model_sha256": "2fe1148c24a3af078c9fd8bb675b76fa44dfae6f493a4ed8cbf0a0d4b7dc71ac"
+      }
+    },
+    "actual_m_checks": {
+      "c3_llama3_kv_decode_m4": {
+        "command": "source ../configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout 7200 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 4 -n 1024 -k 4096 -q 32 -t 0 -d 0' --perf 3 --configs-extra '-DDISABLE_FSDB'",
+        "header": "M=4, N=1024, K=4096, QBLK=32, WTRANS=0, QDIR=0, REPS=1, lmem_offset=0, vectors=corrected-default",
+        "logical_M": 4,
+        "accepted_input_fire": 65536,
+        "expected_M4_input_fire": 65536,
+        "weight_fire": 65536,
+        "returncode": 0,
+        "reference": "PASSED"
+      },
+      "c3_llama2_ffn_decode_m4": {
+        "command": "source ../configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout 7200 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive --args '-m 4 -n 11008 -k 4096 -q 32 -t 0 -d 0' --perf 3 --configs-extra '-DDISABLE_FSDB'",
+        "header": "M=4, N=11008, K=4096, QBLK=32, WTRANS=0, QDIR=0, REPS=1, lmem_offset=0, vectors=corrected-default",
+        "logical_M": 4,
+        "accepted_input_fire": 704512,
+        "expected_M4_input_fire": 704512,
+        "weight_fire": 704512,
+        "returncode": 0,
+        "reference": "PASSED"
+      },
+      "c4_llama3_kv_decode_m4": {
+        "command": "source ../configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout 7200 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 4 -n 1024 -k 4096 -q 32 -t 0 -d 0' --perf 3 --configs-extra '-DDISABLE_FSDB'",
+        "header": "M=4 (padded to 8), N=1024 (execution 1024), K=4096 (execution 4096), QBLK=32, WTRANS=0, QDIR=0, REPS=1, vectors=corrected-default",
+        "logical_M": 4,
+        "accepted_input_fire": 65536,
+        "expected_M4_input_fire": 65536,
+        "weight_fire": 65536,
+        "returncode": 0,
+        "reference": "PASSED"
+      },
+      "c4_llama2_ffn_decode_m4": {
+        "command": "source ../configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout 7200 ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw --args '-m 4 -n 11008 -k 4096 -q 32 -t 0 -d 0' --perf 3 --configs-extra '-DDISABLE_FSDB'",
+        "header": "M=4 (padded to 8), N=11008 (execution 11008), K=4096 (execution 4096), QBLK=32, WTRANS=0, QDIR=0, REPS=1, vectors=corrected-default",
+        "logical_M": 4,
+        "accepted_input_fire": 704512,
+        "expected_M4_input_fire": 704512,
+        "weight_fire": 704512,
+        "returncode": 0,
+        "reference": "PASSED"
+      }
+    },
+    "binary_evidence": {
+      "c3_llama3_kv_decode_m4": {
+        "build_latency_perf_c3_rev6/tests/regression/fpint_gemm_ffn_hw_naive/fpint_gemm_ffn_hw_naive": {
+          "sha256": "79af23c92db591a765682214b3822b1120da7e8d84e5acba5b11429a7320830a",
+          "mtime": "2026-10-08T00:42:00.305709",
+          "predates_launch": true
+        },
+        "build_latency_perf_c3_rev6/tests/regression/fpint_gemm_ffn_hw_naive/kernel.vxbin": {
+          "sha256": "e02e64ff8a4e42ca33c0fe4d43dba867ee7e03c803c2c6206dc038715fd62ed2",
+          "mtime": "2026-10-08T00:42:00.447711",
+          "predates_launch": true
+        }
+      },
+      "c3_llama2_ffn_decode_m4": {
+        "build_latency_perf_c3_rev6/tests/regression/fpint_gemm_ffn_hw_naive/fpint_gemm_ffn_hw_naive": {
+          "sha256": "79af23c92db591a765682214b3822b1120da7e8d84e5acba5b11429a7320830a",
+          "mtime": "2026-10-08T00:42:00.305709",
+          "predates_launch": true
+        },
+        "build_latency_perf_c3_rev6/tests/regression/fpint_gemm_ffn_hw_naive/kernel.vxbin": {
+          "sha256": "e02e64ff8a4e42ca33c0fe4d43dba867ee7e03c803c2c6206dc038715fd62ed2",
+          "mtime": "2026-10-08T00:42:00.447711",
+          "predates_launch": true
+        }
+      },
+      "c4_llama3_kv_decode_m4": {
+        "build_latency_perf_c4_rev6/tests/regression/fpint_gemm_ffn_hw/fpint_gemm_ffn_hw": {
+          "sha256": "928bd904201468c238b42b72ae0377fbdce0d6ffe4e936faca63d120b210e4d2",
+          "mtime": "2026-10-08T00:41:19.922162",
+          "predates_launch": true
+        },
+        "build_latency_perf_c4_rev6/tests/regression/fpint_gemm_ffn_hw/kernel.vxbin": {
+          "sha256": "4e15fd778bf9941bf1c647b4e734e909e645d32700d789aedd68e149eb999014",
+          "mtime": "2026-10-08T00:41:20.087164",
+          "predates_launch": true
+        }
+      },
+      "c4_llama2_ffn_decode_m4": {
+        "build_latency_perf_c4_rev6/tests/regression/fpint_gemm_ffn_hw/fpint_gemm_ffn_hw": {
+          "sha256": "928bd904201468c238b42b72ae0377fbdce0d6ffe4e936faca63d120b210e4d2",
+          "mtime": "2026-10-08T00:41:19.922162",
+          "predates_launch": true
+        },
+        "build_latency_perf_c4_rev6/tests/regression/fpint_gemm_ffn_hw/kernel.vxbin": {
+          "sha256": "4e15fd778bf9941bf1c647b4e734e909e645d32700d789aedd68e149eb999014",
+          "mtime": "2026-10-08T00:41:20.087164",
+          "predates_launch": true
+        }
+      }
+    },
+    "concurrent_worktree_changes": {
+      "current_head": "cb9d4dfe5ea3245ee48f235d09eaa475111cef5a",
+      "main_cpp_mtime": "2026-10-09T13:24:24.165572",
+      "layout_h_mtime": "2026-10-09T12:55:44.292511",
+      "explanation": "Other work refactored C4 host TMEM allocation after both C4 launches. Both measurements executed unchanged Oct-8 host/kernel binaries and launch main.cpp hashes match original baseline. runtime/xrt/vortex_v6.cpp changes are outside the default runtime/xrt/Makefile SRCS (vortex.cpp). No M1 rerun needed for the measured cohort. Current worktree is not identical to the launch source snapshot."
+    },
+    "status": "complete",
+    "finished": "2026-10-09T14:14:25.610167",
+    "passing_new_cases": 4,
+    "aggregate_count": 12,
+    "accounting_checks": "AXI/window/tail byte and cycle sums, GEMM gate cycles=node.total_cycles, core gate cycles=busy_cycles, LMEM/TMEM endpoint counts and overlap<=DMA union validated for all 12 captures."
+  },
+  "batch64_decode_experiment": {
+    "status": "complete",
+    "started": "2026-10-09T15:37:25.154756",
+    "case_ids": [
+      "llama3_kv_decode_b64_20261009"
+    ],
+    "batch": 64,
+    "input_kv_length": 1024,
+    "output_token_index": 1,
+    "logical_cache_length": 1025,
+    "shape_manifest": "raw/llama3_decode_b64_shape_manifest_20261009.json",
+    "geometry": {
+      "k_proj": {
+        "args": "-m 64 -n 1024 -k 4096 -q 32 -t 0 -d 0",
+        "shape": {
+          "M": 64,
+          "N": 1024,
+          "K": 4096,
+          "QBLK": 32,
+          "WTRANS": 0,
+          "QDIR": 0,
+          "query_length": 1,
+          "input_kv_length": 1024,
+          "out_tokens": 1,
+          "output_token_index": 1,
+          "logical_cache_length": 1025,
+          "logical_kv_start": 1025,
+          "logical_kv_end": 1025,
+          "cache_capacity": 1025,
+          "decode_measurement": "exact",
+          "decode_sampling_class": "invariant",
+          "measurement_kind": "measured"
+        },
+        "calls_per_forward": 32
+      },
+      "v_proj": {
+        "args": "-m 64 -n 1024 -k 4096 -q 32 -t 0 -d 0",
+        "shape": {
+          "M": 64,
+          "N": 1024,
+          "K": 4096,
+          "QBLK": 32,
+          "WTRANS": 0,
+          "QDIR": 0,
+          "query_length": 1,
+          "input_kv_length": 1024,
+          "out_tokens": 1,
+          "output_token_index": 1,
+          "logical_cache_length": 1025,
+          "logical_kv_start": 1025,
+          "logical_kv_end": 1025,
+          "cache_capacity": 1025,
+          "decode_measurement": "exact",
+          "decode_sampling_class": "invariant",
+          "measurement_kind": "measured"
+        },
+        "calls_per_forward": 32
+      },
+      "attn_qkT": {
+        "args": "-m 4 -n 1025 -k 128 -q 128 -t 1 -d 0",
+        "shape": {
+          "M": 4,
+          "N": 1025,
+          "K": 128,
+          "QBLK": 128,
+          "WTRANS": 1,
+          "QDIR": 0,
+          "per_head": true,
+          "grouped_query_attention": true,
+          "query_heads": 32,
+          "key_value_heads": 8,
+          "query_heads_per_kv": 4,
+          "query_length": 1,
+          "input_kv_length": 1024,
+          "out_tokens": 1,
+          "output_token_index": 1,
+          "logical_cache_length": 1025,
+          "logical_kv_start": 1025,
+          "logical_kv_end": 1025,
+          "cache_capacity": 1025,
+          "persistent_weight_layout": "gemm_w_tiled_transposed",
+          "padded_cache_length": 1056,
+          "decode_length_alignment": 32,
+          "padded_shape_argument": "N",
+          "decode_measurement": "exact",
+          "decode_sampling_class": "tile_step",
+          "measurement_kind": "measured"
+        },
+        "calls_per_forward": 16384
+      }
+    },
+    "scope": "Actual M64 K/V common standalone shape for C3 and C4. No new QKT simulations. No full batched decoder execution.",
+    "qkt_execution": "Cancelled at user request: per-call shape is batch-invariant. No new QKT profiling required. Existing QKT captures may be count-scaled only as explicitly labelled estimates.",
+    "functional_source_changes_by_this_task": false,
+    "source_head": "cb9d4dfe5ea3245ee48f235d09eaa475111cef5a",
+    "baseline_comparison": {
+      "c4_host_change": "Existing TMEM allocator extraction into layout.h. Formulas, allocation order, alignment=512 and capacities preserved. main rebuilt for this run. Compare QKT capture to original same-shape baseline after completion.",
+      "kernel_rtl_hash_checks": {
+        "hw/rtl/core/gemm/VX_gemm_fsm.sv": true,
+        "kernel/include/vx_tvm_gemm.h": true,
+        "tests/regression/fpint_gemm_ffn_hw/common.h": true,
+        "tests/regression/fpint_gemm_ffn_hw/kernel.cpp": true,
+        "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+        "runtime/stub/utils.cpp": true
+      },
+      "model_manifest_exact_match_at_launch": {
+        "c3": true,
+        "c4": true
+      },
+      "m1_rerun_needed": false,
+      "rationale": "Same config, passive monitor, complete model manifests and kernel binary hashes as original cohort; relevant DUT RTL hashes match. Existing C4 host allocator extraction preserves all formulas/order/alignment/capacities. No timed datapath change. Host source and actual measured binaries are preserved separately."
+    },
+    "canonical_measurement_args": {
+      "C3": {
+        "args": "-m 8 -n 1056 -k 128 -q 128 -t 1 -d 0",
+        "latency_shape": {
+          "fpga_bin_label": "C3",
+          "app": "fpint_gemm_ffn_hw_naive",
+          "mode": "aligned",
+          "canonical_arguments": {
+            "-m": 8,
+            "-n": 1056,
+            "-k": 128
+          }
+        }
+      },
+      "C4": {
+        "args": "-m 8 -n 1056 -k 128 -q 128 -t 1 -d 0",
+        "latency_shape": {
+          "fpga_bin_label": "C4",
+          "app": "fpint_gemm_ffn_hw",
+          "mode": "aligned",
+          "canonical_arguments": {
+            "-m": 8,
+            "-n": 1056,
+            "-k": 128
+          }
+        }
+      }
+    },
+    "planned_new_runs": 2,
+    "cancelled_qkt_case_ids": [
+      "llama3_qkt_decode_b64_s1024_step1_20261009",
+      "llama3_qkt_decode_b64_canonical_20261009"
+    ],
+    "controller_transfer": {
+      "stopped_controller_pid": 1821623,
+      "cancelled_queue_pid": 1842597,
+      "kv_child_pids": {
+        "c3": 1821733,
+        "c4": 1821734
+      },
+      "reason": "Prevent queued QKT launches following user scope reduction while keeping both active M64 simulations running. Collect exact exit codes from stopped controller child zombie status."
+    },
+    "qkt_argument_audit": "raw/batch64_qkt_argument_audit_20261009.json",
+    "completed_simulations": "2026-10-09T16:38:13.425988",
+    "new_passed_count": 2,
+    "aggregate_passed_count": 14,
+    "actual_m": 64,
+    "input_fire": 1048576,
+    "weight_fire": 65536,
+    "comparability": {
+      "c3": {
+        "config_matches_m1": true,
+        "monitor_matches_m1": true,
+        "model_manifest_exact_match_m1": true,
+        "kernel_binary_matches_m4": true,
+        "simulation_runtime_binary_manifest": "raw/batch64_c3_simulation_binaries_20261009/manifest.json"
+      },
+      "c4": {
+        "config_matches_m1": true,
+        "monitor_matches_m1": true,
+        "model_manifest_exact_match_m1": true,
+        "kernel_binary_matches_m4": true,
+        "simulation_runtime_binary_manifest": "raw/batch64_c4_simulation_binaries_20261009/manifest.json"
+      }
+    },
+    "results": {
+      "c3": {
+        "gemm_cycles": 1146321,
+        "gemm_us": 11463.21,
+        "effective_peak_pct": 91.4731562974071,
+        "hbm_gemm_gbps": 0.3539950851463072,
+        "dma_pipeline_overlap_pct": 99.60838850178422,
+        "input_fire": 1048576,
+        "weight_fire": 65536,
+        "hbm_gemm_rd_bytes": 3927808,
+        "hbm_gemm_wr_bytes": 130112
+      },
+      "c4": {
+        "gemm_cycles": 1055150,
+        "gemm_us": 10551.5,
+        "effective_peak_pct": 99.37696062171256,
+        "hbm_gemm_gbps": 0.6583723641188457,
+        "dma_pipeline_overlap_pct": 99.45945125623756,
+        "input_fire": 1048576,
+        "weight_fire": 65536,
+        "hbm_gemm_rd_bytes": 6815744,
+        "hbm_gemm_wr_bytes": 131072
+      }
+    },
+    "output_progress": {
+      "c3": {
+        "output_group_bytes": 16384,
+        "expected_output_groups": 8,
+        "expected_output_bytes": 131072,
+        "accepted_output_dma_endpoint_bytes": 131072,
+        "gemm_window_group_equivalent_milestones": [
+          {
+            "group_equivalent": 1,
+            "selected_gemm_cycles": 144384,
+            "cumulative_full_window_write_bytes": 16384
+          },
+          {
+            "group_equivalent": 2,
+            "selected_gemm_cycles": 287744,
+            "cumulative_full_window_write_bytes": 32768
+          },
+          {
+            "group_equivalent": 3,
+            "selected_gemm_cycles": 431104,
+            "cumulative_full_window_write_bytes": 49152
+          },
+          {
+            "group_equivalent": 4,
+            "selected_gemm_cycles": 574464,
+            "cumulative_full_window_write_bytes": 65536
+          },
+          {
+            "group_equivalent": 5,
+            "selected_gemm_cycles": 717824,
+            "cumulative_full_window_write_bytes": 81920
+          },
+          {
+            "group_equivalent": 6,
+            "selected_gemm_cycles": 861184,
+            "cumulative_full_window_write_bytes": 98304
+          },
+          {
+            "group_equivalent": 7,
+            "selected_gemm_cycles": 1003520,
+            "cumulative_full_window_write_bytes": 114688
+          }
+        ],
+        "gemm_axi_write_bytes": 130112,
+        "core_axi_write_bytes": 133213,
+        "scope_note": "Window write milestones are progress proxies, not directly logged tile-done signals. C3 GEMM gate excludes part of final output drain; all output DMA endpoint bytes=131072, core AXI is separately validated, reference PASSED."
+      },
+      "c4": {
+        "output_group_bytes": 16384,
+        "expected_output_groups": 8,
+        "expected_output_bytes": 131072,
+        "accepted_output_dma_endpoint_bytes": 131072,
+        "gemm_window_group_equivalent_milestones": [
+          {
+            "group_equivalent": 1,
+            "selected_gemm_cycles": 133120,
+            "cumulative_full_window_write_bytes": 16384
+          },
+          {
+            "group_equivalent": 2,
+            "selected_gemm_cycles": 265216,
+            "cumulative_full_window_write_bytes": 32768
+          },
+          {
+            "group_equivalent": 3,
+            "selected_gemm_cycles": 397312,
+            "cumulative_full_window_write_bytes": 49152
+          },
+          {
+            "group_equivalent": 4,
+            "selected_gemm_cycles": 528384,
+            "cumulative_full_window_write_bytes": 65536
+          },
+          {
+            "group_equivalent": 5,
+            "selected_gemm_cycles": 660480,
+            "cumulative_full_window_write_bytes": 81920
+          },
+          {
+            "group_equivalent": 6,
+            "selected_gemm_cycles": 792576,
+            "cumulative_full_window_write_bytes": 98304
+          },
+          {
+            "group_equivalent": 7,
+            "selected_gemm_cycles": 923648,
+            "cumulative_full_window_write_bytes": 114688
+          }
+        ],
+        "gemm_axi_write_bytes": 131072,
+        "core_axi_write_bytes": 133076,
+        "scope_note": "Window write milestones are progress proxies, not directly logged tile-done signals. C3 GEMM gate excludes part of final output drain; all output DMA endpoint bytes=131072, core AXI is separately validated, reference PASSED."
+      }
+    },
+    "measurements_original_12_unchanged": true,
+    "checks_passed": [
+      "14-case CSV/JSON coverage",
+      "original 12 records exactly unchanged",
+      "CPU reference PASSED and exact exit code 0",
+      "actual M64 input count",
+      "effective utilization/bandwidth/overlap formulas",
+      "AXI/window/tail byte and cycle accounting",
+      "local-memory DMA endpoint accounting",
+      "full output DMA 131072 B",
+      "source and binary snapshot hashes",
+      "exact original model manifests",
+      "no extra QKT runs",
+      "Markdown links"
+    ]
   }
 }
