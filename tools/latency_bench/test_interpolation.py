@@ -52,6 +52,17 @@ def _case(
 
 
 class InterpolationGroupingTest(unittest.TestCase):
+    def test_transpose_sequence_shares_anchors_without_merging_head_dimensions(self):
+        first = _case("first", app="head_concat", backend="head_reorder",
+                      variant="C1", name="attn_v_transpose", logical_cache_length=1025)
+        first = replace(first, shape={**first.shape, "seq": 1025,
+                        "padded_shape_argument": "seq", "headdim": 128})
+        second = replace(first, case_id="second", shape={**first.shape,
+                         "seq": 1057, "logical_cache_length": 1057})
+        self.assertEqual(interpolation_group_key(first), interpolation_group_key(second))
+        other = replace(second, shape={**second.shape, "headdim": 64})
+        self.assertNotEqual(interpolation_group_key(first), interpolation_group_key(other))
+
     def test_physical_kernel_type_ignores_variant_and_logical_name(self) -> None:
         k_case = _case(
             "k",

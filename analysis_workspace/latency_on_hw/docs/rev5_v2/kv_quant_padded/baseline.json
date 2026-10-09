@@ -1,0 +1,50 @@
+{
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C1/raw_db.csv": {
+    "sha256": "510f0381a0204b279dbe3670b01bcc5ac37ce354f1304bd84ae6a1bb213a4c7b",
+    "size": 939551
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C3/raw_db.csv": {
+    "sha256": "e5a2128cee421b458724b109555bf2df1a167ab763b864ac57388158796d9a8d",
+    "size": 141601
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C4/raw_db.csv": {
+    "sha256": "d9bb69dac133d0eabcd1761e3c77bcd2c189d47f7c8540bd7ee9f93f25cac4bb",
+    "size": 723587
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C1/raw_db.csv": {
+    "sha256": "62acbaf542e61ba77e7487e717e70d3b18662d507ec8b05e10c41cb2ab6763e3",
+    "size": 873725
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C3/raw_db.csv": {
+    "sha256": "e5a2128cee421b458724b109555bf2df1a167ab763b864ac57388158796d9a8d",
+    "size": 141601
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C4/raw_db.csv": {
+    "sha256": "d9bb69dac133d0eabcd1761e3c77bcd2c189d47f7c8540bd7ee9f93f25cac4bb",
+    "size": 723587
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C1/raw_db.csv": {
+    "sha256": "a827be4d06fe750587e9102c0c0b2fce4e9b5659ce71ef5b55b53677250061b7",
+    "size": 1013479
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C3/raw_db.csv": {
+    "sha256": "f4afa41272591244e33d5704ea203266477f811cade8d6029c0d7a3679429299",
+    "size": 155029
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C4/raw_db.csv": {
+    "sha256": "e19a28133b424457de332bb06a63ac27988136279c662137cbb2d30ddb582987",
+    "size": 794144
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C1/raw_db.csv": {
+    "sha256": "d1f549d8b6dd31b80020f7278526cd70480b5ecfcdf9672a4216bf3354e67553",
+    "size": 933063
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C3/raw_db.csv": {
+    "sha256": "f4afa41272591244e33d5704ea203266477f811cade8d6029c0d7a3679429299",
+    "size": 155029
+  },
+  "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C4/raw_db.csv": {
+    "sha256": "e19a28133b424457de332bb06a63ac27988136279c662137cbb2d30ddb582987",
+    "size": 794144
+  }
+}

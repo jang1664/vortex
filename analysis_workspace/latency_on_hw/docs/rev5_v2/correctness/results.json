@@ -1,0 +1,153 @@
+{
+  "metadata": {
+    "mode": "hw",
+    "gate": "PARTIAL_PASS",
+    "overhead_limit_pct": 50,
+    "overhead_limits_pct": {
+      "default": 50,
+      "softmax": 30,
+      "quantization": 30
+    },
+    "fp16_small_value": 0.001,
+    "fp16_abs_tol": 0.0001,
+    "configs": {
+      "C1": {
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+        "alias": "tcu_th16_c1_v3_axi_fix"
+      }
+    },
+    "variants": {},
+    "slurm_job_id": "5792",
+    "cases": [
+      {
+        "candidate": "C1",
+        "app": "head_concat",
+        "shape": "q_head_reorder",
+        "args": "-batch 1 -seq 1024 -heads 32 -headdim 128 -mode 1",
+        "pair": "",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "head_concat",
+        "shape": "kv_head_reorder",
+        "args": "-batch 2 -seq 17 -heads 8 -headdim 128 -mode 1",
+        "pair": "",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "head_concat",
+        "shape": "decode_head_reorder",
+        "args": "-batch 4 -seq 1 -heads 32 -headdim 128 -mode 1",
+        "pair": "",
+        "bench_args": null
+      },
+      {
+        "candidate": "C1",
+        "app": "head_concat",
+        "shape": "v_transpose",
+        "args": "-batch 1 -seq 1025 -heads 1 -headdim 128 -mode 2",
+        "pair": "",
+        "bench_args": null
+      }
+    ],
+    "source_identities": {
+      "head_concat": "c225660bdb3c659ed968780a696136d0eb4866943a20df902d062713e164b93b"
+    },
+    "kernel_variants": {
+      "head_concat": {
+        "configured": "chunk16_packed",
+        "selected": "chunk16_packed",
+        "sources": [
+          "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/tests/regression/head_concat/kernel.chunk16_packed.cpp"
+        ]
+      }
+    },
+    "phase": "benchmark",
+    "functionality_gate": "PASS"
+  },
+  "results": [
+    {
+      "candidate": "C1",
+      "app": "head_concat",
+      "shape": "configured",
+      "phase": "static",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": "",
+      "cycle_samples": "",
+      "elapsed_s": 0.565,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/correctness/C1.head_concat.configured.static.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' static /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh make --no-print-directory -C /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llm_regression/C1/tests/regression/head_concat --eval '.PHONY: llm-static-check\nllm-static-check:\n\t$(VX_CXX) $(VX_CFLAGS) -fsyntax-only $(VX_SRCS)\n\t$(CXX) $(CXXFLAGS) -fsyntax-only $(SRCS)\n\t$(if $(BENCH_SRCS),$(CXX) $(BENCH_CXXFLAGS) -fsyntax-only $(BENCH_SRCS),:)\n' llm-static-check",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "head_concat",
+      "shape": "q_head_reorder",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 114565183,
+      "cycle_samples": 2,
+      "elapsed_s": 20.692,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/correctness/C1.head_concat.q_head_reorder.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app head_concat --perf 0 --args '-batch 1 -seq 1024 -heads 32 -headdim 128 -mode 1' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "head_concat",
+      "shape": "kv_head_reorder",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 1017050,
+      "cycle_samples": 2,
+      "elapsed_s": 7.625,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/correctness/C1.head_concat.kv_head_reorder.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app head_concat --perf 0 --args '-batch 2 -seq 17 -heads 8 -headdim 128 -mode 1' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "head_concat",
+      "shape": "decode_head_reorder",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 507577,
+      "cycle_samples": 2,
+      "elapsed_s": 7.675,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/correctness/C1.head_concat.decode_head_reorder.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app head_concat --perf 0 --args '-batch 4 -seq 1 -heads 32 -headdim 128 -mode 1' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    },
+    {
+      "candidate": "C1",
+      "app": "head_concat",
+      "shape": "v_transpose",
+      "phase": "correctness",
+      "status": "PASS",
+      "reason": "",
+      "exit_code": 0,
+      "cycle": 2475743,
+      "cycle_samples": 2,
+      "elapsed_s": 7.525,
+      "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/correctness/C1.head_concat.v_transpose.correctness.log",
+      "command": "bash -c 'source \"$1\"; shift; exec \"$@\"' run /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh bash ci/run_black.sh hw --app head_concat --perf 0 --args '-batch 1 -seq 1025 -heads 1 -headdim 128 -mode 2' --fpga-bin tcu_th16_c1_v3_axi_fix --no-srun",
+      "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+      "alias": "tcu_th16_c1_v3_axi_fix"
+    }
+  ],
+  "comparisons": []
+}

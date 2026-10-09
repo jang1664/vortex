@@ -1,0 +1,16 @@
+{
+  "llama2": {
+    "checkpoint": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C1/interpolation/refinements/rev5_v2.llama2.C1.latency/recovery.json",
+    "completed_budget": 1,
+    "outcomes": {
+      "head_concat|head_reorder": "converged"
+    }
+  },
+  "llama3": {
+    "checkpoint": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C1/interpolation/refinements/rev5_v2.llama3.C1.latency/recovery.json",
+    "completed_budget": 2,
+    "outcomes": {
+      "head_concat|head_reorder": "converged"
+    }
+  }
+}

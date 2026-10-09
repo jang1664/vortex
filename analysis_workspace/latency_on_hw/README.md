@@ -10,6 +10,27 @@ Registering a C2 image never creates a C2
 measurement or refinement task. C4_fused remains included and C4_alone remains
 excluded.
 
+Row-major C1/C2/C3 workloads include `attn_q_head_reorder`,
+`attn_k_head_reorder`, and `attn_v_head_reorder` once per layer. TCU attention
+also includes `attn_v_transpose` once per batch/KV head per layer, after V
+dequantization. These use the existing `head_concat` app with `-mode 1`
+(token-major to head-major) or `-mode 2` (per-head V transpose), backend
+`head_reorder`, and kind `reorder`. Default `-mode 0` remains head concatenation.
+C4 fused layouts already provide the required connections and add no such rows.
+Decode V transpose follows the logical KV length and is sampled as a continuous
+cost; this does not change the existing grouped-query attention schedule.
+
+The `sgemm_tcu` latency/power harness initializes floating inputs with a fixed
+seed and small finite values in `[-0.25, 0.25]`, instead of random storage bytes.
+FP16 input values are binary-exact multiples of `1/4096`; padding stays zero,
+and B follows the selected kernel's row/column-major layout. This applies to
+all TCU benchmark GEMMs, including QK, and avoids the NaN/Inf conversion shortcut
+observed with historical inputs. It is synthetic finite data, not a replay of
+model activations. The correctness harness retains its existing input policy.
+Regenerate suites under a new experiment tag and remeasure affected TCU rows;
+historical Rev5 rows do not represent the new input policy. Reorder costs must
+be measured before composing corrected totals.
+
 The local `candidate_fpga_bins.yaml` is the source of truth for image aliases.
 Execution sources are C1, C3, and C4; logical C2 has no independent raw database.
 
@@ -250,6 +271,17 @@ and acquisition settings. If only the historical application-source identity is
 missing, opt in with `--adopt-legacy`; this flag does not waive missing metrics,
 insufficient power samples, a conflicting SHA/config, or contradictory settings.
 The original evidence remains referenced by the adoption receipt.
+
+For an intentionally mixed historical experiment, downstream-only execution
+also supports `workflow.py pipeline --tag TAG --from compose --to plot
+--offline-inputs DIRECTORY`. The directory contains `suites/<model>/`, an
+`input_inventory.json` with raw/suite hashes, and `power_selection.json`.
+The existing `docs/rev5_plot_refresh/build_plot_inputs.py` can construct this
+per-application image view. This mode verifies the frozen input hashes and
+retains composition's missing-latency/power checks; it does not certify that
+current-source run/refine stages completed. Validate newly introduced
+interpolation curves through the regular refine stage first. Hardware stages
+and `--require-convergence` are rejected in this historical composition mode.
 
 Refinement checkpoints each probe before execution and restore completed probes,
 promotions, iteration budgets, and terminal outcomes after interruption. Normal

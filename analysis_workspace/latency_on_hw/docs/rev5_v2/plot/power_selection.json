@@ -1,0 +1,115 @@
+{
+  "experiment": {},
+  "mode": "explicit_raw_dbs_validated_per_application",
+  "inventory": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/input_inventory.json",
+  "old_snapshot": {
+    "schema_version": 1,
+    "candidate_map": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/candidate_fpga_bins.rev4.yaml",
+    "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad",
+    "candidates": {
+      "C1": {
+        "alias": "tcu_th16_c1_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "9a55650057986e0909cda36a226213ab185f97bbc58805fb307358ec4ede0e05",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+        "config_sha256": "423d7efd12868ec620665afc4f3cfcbf251e60dfa71ebc51a89f59c85b1cea7d",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/manifest.json",
+        "manifest_sha256": "faaba28e199a888f8143a6afd6fc4c40aeb68276d90d934e83a17765bc1c1799",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin/vortex_afu.xclbin.info"
+      },
+      "C2": {
+        "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "b1c188352823194e949ddfe642a038849d3fbff03b18dac9fc87847f25668d27",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh",
+        "config_sha256": "268a166a39d003502f85ca366fb4c0a4108cf722748121393304e0d114871516",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/manifest.json",
+        "manifest_sha256": "4d909cfc31988dfcac4ecb9709f52bf84c8864f6cdecc0f29056b2381f29f1d1",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin/vortex_afu.xclbin.info"
+      },
+      "C3": {
+        "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "8dd7fe2c032f1b0dc9c609b246ff87b2435cbd676b2ddf34b57fe95a20589998",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh",
+        "config_sha256": "7fe91d84a978749006bfc162cc4de8c1836b31e5606b6838ad95feea75e73f30",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/manifest.json",
+        "manifest_sha256": "b25de66e97d08f194b55272500761d6efe7c12538c5445099af0cefa6173523e",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin/vortex_afu.xclbin.info"
+      },
+      "C4": {
+        "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "a5eb17407cd4c1dcbe918348b14d07d0c753f76f8a11197685332b216277e017",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+        "config_sha256": "1eb71e1315cd0d170aba223cbd92aeac6a419b94af99cdbd37e545eb6ef96ca5",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673_2/manifest.json",
+        "manifest_sha256": "3e3b2766bbf119100a7da01376e3d24e932db12e39cc54cf2094e56534feb8d7",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_9299cac673_2/bin/vortex_afu.xclbin.info"
+      }
+    }
+  },
+  "gemm_snapshot": {
+    "schema_version": 1,
+    "candidate_map": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/candidate_fpga_bins.rev4.yaml",
+    "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17",
+    "candidates": {
+      "C1": {
+        "alias": "tcu_th16_c1_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "9a55650057986e0909cda36a226213ab185f97bbc58805fb307358ec4ede0e05",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/tcu_th16_c1_v3.sh",
+        "config_sha256": "423d7efd12868ec620665afc4f3cfcbf251e60dfa71ebc51a89f59c85b1cea7d",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/manifest.json",
+        "manifest_sha256": "faaba28e199a888f8143a6afd6fc4c40aeb68276d90d934e83a17765bc1c1799",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin/vortex_afu.xclbin.info"
+      },
+      "C2": {
+        "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "b1c188352823194e949ddfe642a038849d3fbff03b18dac9fc87847f25668d27",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh",
+        "config_sha256": "268a166a39d003502f85ca366fb4c0a4108cf722748121393304e0d114871516",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/manifest.json",
+        "manifest_sha256": "4d909cfc31988dfcac4ecb9709f52bf84c8864f6cdecc0f29056b2381f29f1d1",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_0b1936f552_2/bin/vortex_afu.xclbin.info"
+      },
+      "C3": {
+        "alias": "naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_axi_fix",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "8dd7fe2c032f1b0dc9c609b246ff87b2435cbd676b2ddf34b57fe95a20589998",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh",
+        "config_sha256": "7fe91d84a978749006bfc162cc4de8c1836b31e5606b6838ad95feea75e73f30",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/manifest.json",
+        "manifest_sha256": "b25de66e97d08f194b55272500761d6efe7c12538c5445099af0cefa6173523e",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin/vortex_afu.xclbin.info"
+      },
+      "C4": {
+        "alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_fix_pad",
+        "bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/bin",
+        "xclbin": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/bin/vortex_afu.xclbin",
+        "xclbin_sha256": "2e80ec9d2810473fe4f222192615e299959e4c995ff3bcd853d21741f33f4f03",
+        "config": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4.sh",
+        "config_sha256": "1eb71e1315cd0d170aba223cbd92aeac6a419b94af99cdbd37e545eb6ef96ca5",
+        "manifest": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/manifest.json",
+        "manifest_sha256": "ed1ce9a5b2be95af3327d120e95338e7f715122a12305b5616c5d2ddf2921f4f",
+        "fpga_period_s": 1e-08,
+        "fpga_clock_source": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ab79baf965/bin/vortex_afu.xclbin.info"
+      }
+    }
+  }
+}

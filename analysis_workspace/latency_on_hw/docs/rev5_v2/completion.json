@@ -1,0 +1,50 @@
+{
+  "status": "complete",
+  "source_tag": "th16_20261007_rev5_pipeline",
+  "tag": "rev5_v2",
+  "scope": "QK-only TCU input refresh plus missing head reorders and V transpose; other TCU rows retained by user request",
+  "models": {
+    "llama2": {
+      "remeasured_qk": 54,
+      "added_reorders": 45,
+      "preserved_C1_rows": 470,
+      "C3_C4_byte_identical": true,
+      "original_raw_databases_unchanged": true,
+      "board": {
+        "hostname": "fpga",
+        "slurm_job_id": "5793",
+        "slurm_step_id": "0",
+        "xrt_device_bdf": "0000:2a:00.1",
+        "xrt_device_index": "0",
+        "xrt_smi": "/opt/xilinx/xrt/bin/xrt-smi"
+      },
+      "source_board": {
+        "hostname": "fpga",
+        "xrt_device_index": "0",
+        "xrt_device_bdf": "0000:2a:00.1",
+        "slurm_job_id": "5223"
+      }
+    },
+    "llama3": {
+      "remeasured_qk": 54,
+      "added_reorders": 54,
+      "preserved_C1_rows": 507,
+      "C3_C4_byte_identical": true,
+      "original_raw_databases_unchanged": true,
+      "board": {
+        "hostname": "fpga",
+        "slurm_job_id": "5794",
+        "slurm_step_id": "0",
+        "xrt_device_bdf": "0000:3d:00.1",
+        "xrt_device_index": "1",
+        "xrt_smi": "/opt/xilinx/xrt/bin/xrt-smi"
+      },
+      "source_board": {
+        "hostname": "fpga",
+        "xrt_device_index": "1",
+        "xrt_device_bdf": "0000:3d:00.1",
+        "slurm_job_id": "5224"
+      }
+    }
+  }
+}

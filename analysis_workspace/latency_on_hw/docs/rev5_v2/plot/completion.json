@@ -1,0 +1,94 @@
+{
+  "status": "complete",
+  "raw_databases_unchanged": true,
+  "models": {
+    "llama2_7b": {
+      "rows_by_status": {
+        "pass": 251064,
+        "estimated": 21516
+      },
+      "completeness": {
+        "complete": true,
+        "latency_complete": true,
+        "power_complete": true,
+        "power_skip_apps": [],
+        "duplicate_case_count": 0,
+        "missing_latency_count": 0,
+        "missing_power_count": 0,
+        "generation_out_tokens": [
+          128
+        ]
+      },
+      "all_source_image_hashes_match_application_selection": true
+    },
+    "llama3_8b": {
+      "rows_by_status": {
+        "pass": 251082,
+        "estimated": 21498
+      },
+      "completeness": {
+        "complete": true,
+        "latency_complete": true,
+        "power_complete": true,
+        "power_skip_apps": [],
+        "duplicate_case_count": 0,
+        "missing_latency_count": 0,
+        "missing_power_count": 0,
+        "generation_out_tokens": [
+          128
+        ]
+      },
+      "all_source_image_hashes_match_application_selection": true
+    }
+  },
+  "render_jobs": 11,
+  "artifacts": [
+    "kernel_dynamic_power/kernel_dynamic_power_by_kind.png",
+    "kernel_dynamic_power/kernel_dynamic_power_by_kind.pdf",
+    "kernel_dynamic_power/kernel_dynamic_power_by_kind.svg",
+    "kernel_dynamic_power/kernel_dynamic_power_by_kind.csv",
+    "kernel_dynamic_power/kernel_dynamic_power_inputs.json",
+    "kernel_dynamic_power/render_manifest.json",
+    "llama_e2e_gemm_layout_vector_stacked/llama_e2e_gemm_layout_vector_latency_stacked.png",
+    "llama_e2e_gemm_layout_vector_stacked/llama_e2e_gemm_layout_vector_latency_stacked.pdf",
+    "llama_e2e_gemm_layout_vector_stacked/llama_e2e_gemm_layout_vector_latency_stacked.svg",
+    "llama_e2e_gemm_layout_vector_stacked/render_manifest.json",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard/llama_e2e_gemm_layout_vector_latency_stacked_without_hadamard.png",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard/llama_e2e_gemm_layout_vector_latency_stacked_without_hadamard.pdf",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard/llama_e2e_gemm_layout_vector_latency_stacked_without_hadamard.svg",
+    "llama_e2e_gemm_layout_vector_stacked_without_hadamard/render_manifest.json",
+    "llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.png",
+    "llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.pdf",
+    "llama_e2e_no_area_norm_stacked/llama_e2e_latency_no_area_norm_stacked.svg",
+    "llama_e2e_no_area_norm_stacked/render_manifest.json",
+    "llama_e2e_no_area_norm_stacked_without_hadamard/llama_e2e_latency_no_area_norm_stacked_without_hadamard.png",
+    "llama_e2e_no_area_norm_stacked_without_hadamard/llama_e2e_latency_no_area_norm_stacked_without_hadamard.pdf",
+    "llama_e2e_no_area_norm_stacked_without_hadamard/llama_e2e_latency_no_area_norm_stacked_without_hadamard.svg",
+    "llama_e2e_no_area_norm_stacked_without_hadamard/render_manifest.json",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_avg_W_no_area_norm_gemm_layout_vector_stacked.png",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_avg_W_no_area_norm_gemm_layout_vector_stacked.pdf",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_avg_W_no_area_norm_gemm_layout_vector_stacked.svg",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/render_manifest.power_avg_W.json",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_dynamic_avg_W_no_area_norm_gemm_layout_vector_stacked.png",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_dynamic_avg_W_no_area_norm_gemm_layout_vector_stacked.pdf",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_dynamic_avg_W_no_area_norm_gemm_layout_vector_stacked.svg",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/render_manifest.power_dynamic_avg_W.json",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_avg_W_fixed_idle_no_area_norm_gemm_layout_vector_stacked.png",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_avg_W_fixed_idle_no_area_norm_gemm_layout_vector_stacked.pdf",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_avg_W_fixed_idle_no_area_norm_gemm_layout_vector_stacked.svg",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/render_manifest.power_fpga_avg_W.json",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.png",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.pdf",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/llama_energy_per_token_power_fpga_dequant_dynamic_W_no_area_norm_gemm_layout_vector_stacked.svg",
+    "llama_energy_no_area_norm_gemm_layout_vector_stacked/render_manifest.power_fpga_dequant_dynamic_W.json",
+    "llama_gemm_only/llama_gemm_only_latency.png",
+    "llama_gemm_only/llama_gemm_only_latency.pdf",
+    "llama_gemm_only/llama_gemm_only_latency.svg",
+    "llama_gemm_only/render_manifest.json",
+    "llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.png",
+    "llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.pdf",
+    "llama_gemm_only_no_area_norm/llama_gemm_only_latency_no_area_norm.svg",
+    "llama_gemm_only_no_area_norm/render_manifest.json"
+  ],
+  "output_root": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/figure_output.rev5_v2"
+}

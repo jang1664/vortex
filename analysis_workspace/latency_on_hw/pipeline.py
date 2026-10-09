@@ -1074,6 +1074,7 @@ class PipelineSettings:
     output_format: str = "pkl"
     generation_options: tuple[str, ...] = ()
     require_generation_receipt: bool = False
+    offline_inputs: Path | None = None
 
     def __post_init__(self) -> None:
         from tools.latency_bench.candidate_map import parse_execution_candidates
@@ -1100,6 +1101,8 @@ class PipelineSettings:
         return MODEL_KEYS[model]
 
     def suite_root(self, model: str) -> Path:
+        if self.offline_inputs is not None:
+            return self.offline_inputs / "suites" / self.model_key(model)
         return self.workspace / "generated_suites" / (
             f"{self.model_key(model)}_main_{self.suite_size}.{self.tag}"
         )
@@ -1457,6 +1460,9 @@ def _prepare_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
 def _candidate_snapshot_path(settings: PipelineSettings) -> Path:
     from tools.latency_bench.yaml_io import safe_load
 
+    if settings.offline_inputs is not None:
+        return settings.offline_inputs / "power_selection.json"
+
     # A reused C1 measurement may have been captured before C3/C4 were added.
     # The generated workload is authoritative for downstream source selection.
     for model in settings.models:
@@ -1767,6 +1773,10 @@ def _validate_excluded_prerequisites(
     if first >= STAGES.index("compose"):
         settings = replace(settings, candidates=EXECUTION_BINS, case_filters=(), force_measurement=False)
     for stage in STAGES[:first]:
+        if settings.offline_inputs is not None and stage in ("generate", "run", "refine"):
+            # Historical composition does not certify current-source acquisition
+            # or refinement. Raw coverage/power checks remain in run_compose.py.
+            continue
         if stage == "generate" and not settings.require_generation_receipt:
             continue
         try:
@@ -1833,6 +1843,30 @@ def _full_input_problems(settings: PipelineSettings, stage: str) -> list[str]:
     if stage not in ("compose", "prepare", "plot"):
         return []
     problems = []
+    if settings.offline_inputs is not None:
+        try:
+            inventory = json.loads((settings.offline_inputs / "input_inventory.json").read_text())
+            if inventory["tag"] != settings.tag:
+                raise ValueError("offline inventory tag differs")
+            expected_raw = {str(path) for model in settings.models for path in _raw_dbs(settings, model)}
+            if not expected_raw.issubset(inventory["raw"]):
+                raise ValueError("offline inventory is missing requested raw databases")
+            for path in expected_raw:
+                if content_identity(path).sha256 != inventory["raw"][path]["sha256"]:
+                    raise ValueError(f"offline raw database changed: {path}")
+            for entry in inventory["suites"]:
+                if content_identity(entry["output"]).sha256 != entry["sha256"]:
+                    raise ValueError(f"offline suite changed: {entry['output']}")
+            if not (settings.offline_inputs / "power_selection.json").is_file():
+                raise ValueError("offline power selection is missing")
+            for model in settings.models:
+                for phase in ("prefill", "generation"):
+                    for label in ("C1", "C2", "C3", "C4_fused"):
+                        if not (settings.suite_root(model) / f"{label}_{phase}" / "index.yaml").is_file():
+                            raise ValueError(f"offline suite index missing: {model}/{label}/{phase}")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            problems.append(str(error))
+        return problems
     for model in settings.models:
         for label, path in zip(EXECUTION_BINS, _raw_dbs(settings, model)):
             if not path.is_file():
@@ -1869,6 +1903,8 @@ def run_pipeline(
     """Execute stage barriers, committing each successful sibling independently."""
 
     selected = _stage_range(first, last, rerun)
+    if settings.offline_inputs is not None and (STAGES.index(first) < STAGES.index("compose") or settings.require_convergence):
+        raise ValueError("offline inputs require compose/prepare/plot and cannot certify refinement convergence")
     settings = replace(settings, force_measurement=(rerun == "run"))
     store = ReceiptStore(settings.state_root)
     summary: dict[str, Any] = {"tag": settings.tag, "range": list(selected), "tasks": [],
@@ -1882,6 +1918,7 @@ def run_pipeline(
                                    "validation_samples": settings.validation_samples,
                                    "max_iterations": settings.max_iterations,
                                    "adopt_legacy": settings.adopt_legacy,
+                                   "offline_inputs": str(settings.offline_inputs) if settings.offline_inputs else None,
                                    "require_convergence": settings.require_convergence,
                                },
                                "reused": [], "adopted": [], "executed": [],
@@ -2000,9 +2037,11 @@ def run_pipeline(
                 summary["failed"].append({"task": task.key, "error": str(error)})
                 return 1, summary
             summary["executed"].append(task.key)
-        if STAGES.index(stage) >= STAGES.index("refine"):
+        if STAGES.index(stage) >= STAGES.index("refine") and settings.offline_inputs is None:
             for model in settings.models:
                 for label in (settings.candidates if stage == "refine" else EXECUTION_BINS):
+                    if stage == "refine" and not any(task.key == f"refine:{model}:{label}" for task in tasks):
+                        continue  # A filtered source with no interpolation candidates has no task/checkpoint.
                     evidence = inspect_refinement_evidence(
                         _refinement_checkpoint(settings, model, label)
                     )
@@ -2053,6 +2092,8 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
                         help="Omit power for this app while retaining latency (repeatable).")
     parser.add_argument("--kernel-variant", action="append", default=[], metavar="APP=NAME")
     parser.add_argument("--adopt-legacy", action="store_true")
+    parser.add_argument("--offline-inputs", type=Path,
+                        help="Compose/plot frozen historical data using suites/, input_inventory.json and power_selection.json; does not certify run/refine completion.")
     parser.add_argument("--require-convergence", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--status", action="store_true")
@@ -2076,6 +2117,8 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         parser.error("--tag must not contain path separators")
     try:
         _stage_range(args.from_stage, args.to_stage, args.rerun)
+        if args.offline_inputs is not None and (STAGES.index(args.from_stage) < STAGES.index("compose") or args.require_convergence):
+            raise ValueError("--offline-inputs requires --from compose/prepare/plot without --require-convergence")
     except ValueError as error:
         parser.error(str(error))
     if args.generation_out_tokens is None and args.out_tokens is not None:
@@ -2108,6 +2151,7 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         output_format=args.output_format,
         generation_options=options_from_args(args),
         require_generation_receipt=True,
+        offline_inputs=args.offline_inputs.resolve() if args.offline_inputs else None,
     )
     from tools.latency_bench.kernel_variants import parse_variants
     from tools.latency_bench.suite import compile_case_filter

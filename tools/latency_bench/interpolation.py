@@ -116,9 +116,12 @@ def _kernel_type_filter(args: argparse.Namespace) -> set[str]:
 
 
 def interpolation_group_key(case: BenchCase) -> str:
+    # The workload declares the varying decode dimension. V transpose uses
+    # "seq", unlike the existing K/N/seqk kernels; it must share its anchors.
+    dynamic_shape_keys = _DYNAMIC_SHAPE_KEYS | {str(case.shape.get("padded_shape_argument", ""))}
     stable_shape = {
         key: value for key, value in case.shape.items()
-        if key not in _DYNAMIC_SHAPE_KEYS
+        if key not in dynamic_shape_keys
     }
     return json.dumps({
         "kernel_type": kernel_type(case),

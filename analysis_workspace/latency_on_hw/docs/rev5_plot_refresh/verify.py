@@ -1,5 +1,6 @@
 """Check offline rev5 plot completeness and preserved measurement provenance."""
 from collections import Counter
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,12 @@ sys.path.insert(0, str(WORKSPACE))
 from plot import expected_plot_outputs, selected_plot_jobs
 
 TAG = "th16_20261007_rev5_pipeline"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--tag", default=TAG)
+parser.add_argument("--evidence", type=Path, default=HERE)
+args = parser.parse_args()
+TAG = args.tag
+HERE = args.evidence.resolve()
 inventory = json.loads((HERE / "input_inventory.json").read_text())
 for name, evidence in inventory["raw"].items():
     assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == evidence["sha256"], name

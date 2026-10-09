@@ -158,6 +158,7 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "eladd_layout_fused": "eladd_layout_fused",
     "elmul_layout_fused": "elmul_layout_fused",
     "head_concat": "head_concat",
+    "head_reorder": "head_concat",
     "head_concat_layout_fused": "head_concat_layout_fused",
     "rmsnorm":    "rmsnorm",
     "rope":       "rope",
@@ -393,6 +394,7 @@ _DECODE_LENGTH_ARG_BY_NAME = {
     "layout_attn_softmax_to_attn_pv": ("-k", "K"),
     "kv_cache_dequant_k_to_attn_qkT": ("-k", "K"),
     "kv_cache_dequant_v_to_attn_pv": ("-k", "K"),
+    "attn_v_transpose": ("-seq", "seq"),
 }
 
 
@@ -403,6 +405,8 @@ def _decode_length_alignment(kernel: dict) -> int | None:
         return None
 
     backend = str(kernel.get("backend", ""))
+    if name == "attn_v_transpose":
+        return 1
     if backend in FPINT_GEMM_BACKENDS:
         return 32
     if backend == "sgemm_tcu":
@@ -463,7 +467,7 @@ def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dic
 def _decode_sampling_class(kernel: dict) -> str:
     if _decode_length_alignment(kernel) is None:
         return "invariant"
-    if str(kernel.get("backend", "")) in {
+    if kernel.get("name") == "attn_v_transpose" or str(kernel.get("backend", "")) in {
         "softmax", "softmax_layout_fused", "kv_cache_dequant_w4a16",
     }:
         return "continuous"
@@ -484,7 +488,7 @@ def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
         sample_indices = {0, len(kernels) - 1}
         sample_indices.update(range(0, len(kernels), interval))
         alignment = _decode_length_alignment(kernels[0])
-        if alignment:
+        if alignment and alignment > 1:
             for index, kernel in enumerate(kernels):
                 logical = int(kernel["shape"]["logical_cache_length"])
                 if logical % alignment in {0, 1, alignment - 1}:
@@ -1103,6 +1107,61 @@ def _head_concat_kernel(stage: str,
         shape=shape,
         variant=variant,
     )
+
+
+def _apply_head_reorders(kernels: list[dict], *, stage: str, batch: int,
+                         seq_q: int, seq_kv: int, heads_q: int, heads_kv: int,
+                         head_dim: int, layers: int, variant: str) -> list[dict]:
+    """Account for connections absent from standalone row-major benchmarks."""
+    if _base_workload_variant(variant) not in STANDARD_KV_CACHE_QUANT_VARIANTS:
+        return kernels
+    names = {kernel["name"] for kernel in kernels}
+
+    def reorder(name: str, producer: str, consumer: str, *, seq: int,
+                heads: int, transpose: bool = False) -> dict:
+        return _llm_kernel(
+            name=name, kind="reorder", backend="head_reorder", stage=stage,
+            args=(f"-batch {1 if transpose else batch} -seq {seq} "
+                  f"-heads {heads} -headdim {head_dim} -mode {2 if transpose else 1}"),
+            calls_per_forward=layers * batch * heads_kv if transpose else layers,
+            shape={
+                "batch": 1 if transpose else batch, "seq": seq,
+                "heads": heads, "headdim": head_dim,
+                "layout_from": "head_major_row_fp16" if transpose else "row_major_fp16",
+                "layout_to": "col_major_fp16" if transpose else "head_major_row_fp16",
+                "producer": producer, "consumer": consumer,
+                "layout_group": name,
+            },
+            variant=variant,
+        )
+
+    after = {
+        "rope_q": reorder(
+            "attn_q_head_reorder", "rope_q",
+            "spinquant_r3_q_hadamard" if "spinquant_r3_q_hadamard" in names else "attn_qkT",
+            seq=seq_q, heads=heads_q),
+        "rope_k": reorder(
+            "attn_k_head_reorder", "rope_k",
+            "spinquant_r3_k_hadamard" if "spinquant_r3_k_hadamard" in names
+            else "kv_cache_quant_rope_k_to_attn_qkT",
+            seq=seq_q, heads=heads_kv),
+        "v_proj": reorder(
+            "attn_v_head_reorder", "v_proj", "kv_cache_quant_v_cache_to_attn_pv",
+            seq=seq_q, heads=heads_kv),
+    }
+    # V dequantization emits [S_kv, D]; the TCU B-col-major consumer needs
+    # [D, S_kv]. Each KV head is transposed once and shared by its query heads.
+    dequant = _kv_cache_dequant_name("attn_pv")
+    if dequant in names:
+        after[dequant] = reorder(
+            "attn_v_transpose", dequant, "attn_pv",
+            seq=seq_kv, heads=1, transpose=True)
+    out = []
+    for kernel in kernels:
+        out.append(kernel)
+        if kernel["name"] in after:
+            out.append(after[kernel["name"]])
+    return out
 
 
 def _hadamard_kernel(name: str,
@@ -2299,7 +2358,7 @@ def build_decoder_pass_kernels(config: dict,
     )
 
     if spinquant:
-        return _apply_spinquant_hadamard_variant(
+        kernels = _apply_spinquant_hadamard_variant(
             kernels,
             stage=stage,
             batch=batch,
@@ -2315,7 +2374,10 @@ def build_decoder_pass_kernels(config: dict,
             hadamard_variant=hadamard_variant,
         )
 
-    return kernels
+    return _apply_head_reorders(
+        kernels, stage=stage, batch=batch, seq_q=seq_q, seq_kv=seq_kv,
+        heads_q=H_q, heads_kv=H_kv, head_dim=D, layers=L, variant=variant,
+    )
 
 
 def build_llm_kernels(model_name: str,
@@ -2454,6 +2516,15 @@ def build_llm_kernels(model_name: str,
                         shape["persistent_weight_layout"] = "gemm_w_tiled"
                     elif name == "attn_softmax":
                         shape["capacity_stride"] = cache_capacity
+
+                    if (kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16"
+                            and shape.get("layout_from") in {"gemm_a_tiled", "gemm_c_tiled"}):
+                        # Match the connected C4 producer's physical row pitch.
+                        # Quantize one token, not all eight padded rows. K has
+                        # per-head matrices; V is a projection with B query rows.
+                        source_rows = batch if name == "kv_cache_quant_v_cache_to_attn_pv" else 1
+                        shape["source_total_k"] = ((source_rows + 7) // 8) * 8
+                        kernel["args"] += f" --source-total-k {shape['source_total_k']}"
 
                     decode_kernels.append(
                         _annotate_decode_padding_reference(kernel, logical_seq_kv)
@@ -3433,6 +3504,21 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         inputs=[_input_flow("x", "residual_ffn", "row_major")],
         outputs=[_output_flow("hidden", "model_output", "row_major")],
     )
+
+    # Insert the explicit connection between the existing producer/consumer
+    # edges after their normal flow annotations have been assigned.
+    for kernel in kernels:
+        if kernel.get("kind") != "reorder":
+            continue
+        shape = kernel["shape"]
+        producer = kernels_by_name[shape["producer"]]
+        consumer = kernels_by_name[shape["consumer"]]
+        for edge in producer["outputs"]:
+            if edge["target"] == consumer["name"]:
+                edge.update(target=kernel["name"], layout=shape["layout_from"])
+        for edge in consumer["inputs"]:
+            if edge["source"] == producer["name"]:
+                edge.update(source=kernel["name"], layout=shape["layout_to"])
 
 
 # ===========================================================================

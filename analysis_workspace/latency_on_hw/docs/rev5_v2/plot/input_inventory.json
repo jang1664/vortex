@@ -1,0 +1,1458 @@
+{
+  "tag": "rev5_v2",
+  "baseline_tag": "th16_20261004_rev4_pipeline",
+  "raw": {
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C1/raw_db.csv": {
+      "sha256": "2687c1b8c58b99c7d31fb8ee1640b92ff28038acfb0e4bc140287bb79655e21f",
+      "rows_by_app": {
+        "eladd": 9,
+        "elmul": 9,
+        "hadamard": 18,
+        "head_concat": 57,
+        "kv_cache_dequant_w4a16": 90,
+        "kv_cache_quant_w4a16": 14,
+        "rmsnorm": 9,
+        "rope": 24,
+        "sgemm_tcu": 108,
+        "silu": 9,
+        "softmax": 225
+      }
+    },
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C3/raw_db.csv": {
+      "sha256": "e5a2128cee421b458724b109555bf2df1a167ab763b864ac57388158796d9a8d",
+      "rows_by_app": {
+        "fpint_gemm_ffn_hw_naive": 84
+      }
+    },
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C4/raw_db.csv": {
+      "sha256": "42fb62ec43207b4a9999c391ea3e9b6abd5a077afe8811a6a366e14f9de52f5c",
+      "rows_by_app": {
+        "eladd_layout_fused": 9,
+        "elmul_layout_fused": 9,
+        "fpint_gemm_ffn_hw": 84,
+        "hadamard_layout_fused": 18,
+        "head_concat_layout_fused": 9,
+        "kv_cache_quant_layout_fused_w4a16": 42,
+        "rms_norm_layout_fused": 9,
+        "rope_layout_fused": 24,
+        "silu_layout_fused": 9,
+        "softmax_layout_fused": 225
+      }
+    },
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C1/raw_db.csv": {
+      "sha256": "60531fa5547aa945beb0af0dc2b784321693ede162372339a3476088b87b463a",
+      "rows_by_app": {
+        "eladd": 9,
+        "elmul": 9,
+        "hadamard": 22,
+        "head_concat": 69,
+        "kv_cache_dequant_w4a16": 91,
+        "kv_cache_quant_w4a16": 14,
+        "rmsnorm": 9,
+        "rope": 48,
+        "sgemm_tcu": 116,
+        "silu": 9,
+        "softmax": 225
+      }
+    },
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C3/raw_db.csv": {
+      "sha256": "f4afa41272591244e33d5704ea203266477f811cade8d6029c0d7a3679429299",
+      "rows_by_app": {
+        "fpint_gemm_ffn_hw_naive": 92
+      }
+    },
+    "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C4/raw_db.csv": {
+      "sha256": "ef6b3512b10c24e497bb0d43e9f2ee572d147fa76e0d91b253196f1a3ee82d15",
+      "rows_by_app": {
+        "eladd_layout_fused": 9,
+        "elmul_layout_fused": 9,
+        "fpint_gemm_ffn_hw": 92,
+        "hadamard_layout_fused": 27,
+        "head_concat_layout_fused": 9,
+        "kv_cache_quant_layout_fused_w4a16": 42,
+        "rms_norm_layout_fused": 9,
+        "rope_layout_fused": 48,
+        "silu_layout_fused": 9,
+        "softmax_layout_fused": 225
+      }
+    }
+  },
+  "suites": [
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_eladd_C1.pkl",
+      "source_sha256": "2a8547eb9e384bd731114e6eff287994e6bee82694aa82706b7789ad7cfb4bce",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_eladd_C1.pkl",
+      "sha256": "36c513ba97727a7f8eaa478c95a3811deb45f61311f7ff7b902e92e263f4d334",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_elmul_C1.pkl",
+      "source_sha256": "6c5d8a4b6e44d3d088372bc12648825e1d3a4e6ce0d6d80b30ee099f344f1a3b",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_elmul_C1.pkl",
+      "sha256": "303f4877a13ff03c5a3783b20443c5eb863d66515ba5b4c51d50e5b20a9ff316",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_hadamard_C1.pkl",
+      "source_sha256": "f206b0b2d60d69b0b2d2fea6a74e289babc806af7d06d0b99e05d6bf325ccaea",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_hadamard_C1.pkl",
+      "sha256": "f1feabf5fb54b1f1d7b33fc2ff836413a731bdfc15bf5542a2402f1c78fe247d",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_head_concat_C1.pkl",
+      "source_sha256": "7cada84d811bf508178f8f2db50ec777723506c5628403810973c51256d6e6e6",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_head_concat_C1.pkl",
+      "sha256": "64ac7df73c9987b10672becd3a4678d50d69cd424244931035605e5e840c033e",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "82cbd8f200851cf61e7ae17aa3d9e53b2fc17956bf4c4f441982de977049e7b4",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "df053fd31fbbadde49de05ceb985e6f4fa8f7f420a51b4634324ad8f233dea2f",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "df5363611eb3222024453726c126cd804facae368fb4e40400224260afe9b6d8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "a8778d6490023a1d81bb3a6de4504ef367b764227c5f7ac3a9adb07b0f132a4e",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_rmsnorm_C1.pkl",
+      "source_sha256": "6f02f55cc87d449e3aa032f24e23601a80cd66f5f004d95663896afa6223dc69",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_rmsnorm_C1.pkl",
+      "sha256": "e3d73a11cddcb5ac0a1b009abef74ad8ddcc70c4626b7a8b6bffd36ef798ebf5",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_rope_C1.pkl",
+      "source_sha256": "79b816f0801b17a12034e3134fdf13327facf1449d63854f4126ff812a71adb1",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_rope_C1.pkl",
+      "sha256": "c0916f6407f5f85fbcff5d3fabf1a5f6b80f7f2c522edbd72e53e9377f0f20c8",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_sgemm_tcu_C1.pkl",
+      "source_sha256": "4cd8e60e0cb49ebf4d5881b38965e071a898d94e55f19430a27223455000f40a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_sgemm_tcu_C1.pkl",
+      "sha256": "2df99cf8b790e6f80919539bb1fbf8ec21d98ea6653ce9de87b9a690e290177a",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_silu_C1.pkl",
+      "source_sha256": "dd878e4d886e5d04e25499b9d5cf7a95ff05755e9ec2a6b132c2a29eb4fbf90e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_silu_C1.pkl",
+      "sha256": "b1beb47926a1d6eaa3598dc736dce682ac4579ab8712717b8d4100a0b4ff907e",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_prefill/llama2_7b_prefill_C1_softmax_C1.pkl",
+      "source_sha256": "10a245a36be5a191bc6cb174911d53ca9ce74f3c6a2e38f0a546a97453cbd548",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_prefill/llama2_7b_prefill_C1_softmax_C1.pkl",
+      "sha256": "a4d3be8d5ae4012af36b40aaea433f8107cba0fa05c9c69c9d8fd3d06cc96229",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_eladd_C1.pkl",
+      "source_sha256": "599529a072e6883cfb107332bc42f5a4e712ef998f7ea811aea937205f70c835",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_eladd_C1.pkl",
+      "sha256": "7671369366bac675de4e3c667891b33decb707ece3203949381a9ff0d07b29d4",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_elmul_C1.pkl",
+      "source_sha256": "0a9652c15273abca88199f194105cf335d25fb21a1a946527e02a2a9a8b66688",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_elmul_C1.pkl",
+      "sha256": "71926b7e968feda77949df5c0ac8671604a0396d7644ea4804836b6f636cd609",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "b76cdfe68310b5be7f3e2895136f62e5e05cc26511153dda19002a5d24099664",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "96137b6e511ef41a133e499aabcd716cc9b36909a4a03c14acd12d6b88c14c59",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_hadamard_C1.pkl",
+      "source_sha256": "0662d6ff900669e689f220aa5da59bdefa8a295be66ba6b3a4c86882e0f8dd31",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_hadamard_C1.pkl",
+      "sha256": "cb4a7e5e9325bcd609f7dd87cd0784b49116ba65b65f4fa50d406c3b4810056b",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_head_concat_C1.pkl",
+      "source_sha256": "1fa75ea54c9cb5710c15d2282477947962d39719c3ed6a59e84cb5109b31f702",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_head_concat_C1.pkl",
+      "sha256": "60011114c030ed7c8b2f53b03f6c56beb2950f17323a0ac261b2376ef47998bf",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "4748b79d62b7e611550cbdaf448bc0d22753b7955ce33bb5e343001f37ab9150",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "83ad850ccd43ea3ba6e33cd175cb085ce74b4c5e27503b5e555d0792c312e288",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "cfd80f376645c5a34f0fc3ce9ed9ed0e055883ead4b3438cf9fa5a873073458a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "a24c3cc84431d7e44acc39aa233ec2dd9f3815a9ee8a1870b96e87d191169a23",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_rmsnorm_C1.pkl",
+      "source_sha256": "f632b0cf86776cb97b47dba6f54e2b6665e4ce0394b51cd3740a6956099abfed",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_rmsnorm_C1.pkl",
+      "sha256": "3b1e6e84e62cf47592df3875406afa557742a18683667704144c2bd4a1b746a9",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_rope_C1.pkl",
+      "source_sha256": "d686dd2d5939f2bd190c4a5e569d0de9516bf29ec5e02cf5a578dd1175260db3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_rope_C1.pkl",
+      "sha256": "eef5dc9d7d8c3f123a5e1998bf6e8ec64dfc126a9873cd6e16a96e395ed0c304",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_sgemm_tcu_C1.pkl",
+      "source_sha256": "73545d66edf86b8a8cb666276386fcde705d189c7ee690aa942a0a39cf32b9d1",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_sgemm_tcu_C1.pkl",
+      "sha256": "ed2ba9f6f7bbcbfedee0af7a2e30270e69c76673d90b9b39e6abe5d9e65d39d8",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_silu_C1.pkl",
+      "source_sha256": "70eea9ece8ea40659dcb8666f3f4b1681e9c1a2472b2fbd9ca032cdf435861c3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_silu_C1.pkl",
+      "sha256": "a44eb671ee85376bf8199b0e1dbc700a4a87fb9471610afd286f7b9b35bdf543",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_prefill/llama2_7b_prefill_C2_softmax_C1.pkl",
+      "source_sha256": "ab3468c632d57e247d6f4177066a29ae1c1ce640d6c6201c429b976bb3f6ba39",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_prefill/llama2_7b_prefill_C2_softmax_C1.pkl",
+      "sha256": "84c2ff1e4d478dded36723d43ad7f3f9a0c95598f83e409f2baabef4fde0d5de",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_eladd_C1.pkl",
+      "source_sha256": "b8bc80980628742c14a0314dbaf83d6fa7d3ba891878425dc7bcff7170375fa2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_eladd_C1.pkl",
+      "sha256": "4a4147c0c353b4839973caa664fa0b191d40587f448affa41241bb6010a67667",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_elmul_C1.pkl",
+      "source_sha256": "789b1dee757cebb4d26f931c636b15af6c616e9db00fd19e07d38fabef0d3e74",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_elmul_C1.pkl",
+      "sha256": "208295f911df12de2110a42c1f3c4dceffb028bf2d60710d9e8e76453c8047ea",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "45e18468fb0095445ed97ae18d4932f1ea21646f9c64ce0b69f6c0751e10ea3a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "4506048efb04444c70c342d097d5ff46de9497b2f96a68fe5ae69880d6c0d879",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_hadamard_C1.pkl",
+      "source_sha256": "bb24274e95adf6bcff3506f89fb32ac82195ee350c2e442089d0a8fc5b45983d",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_hadamard_C1.pkl",
+      "sha256": "3e83fec485e7df92da60bc4ab7796bd1be1edeec1278cf46bed4bf0a15c35bf5",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_head_concat_C1.pkl",
+      "source_sha256": "b6e019dc388826c2b57ce37034ed40fc49862612ca453910ccf2544776b0d250",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_head_concat_C1.pkl",
+      "sha256": "5d356e71d4e9fb2d5e6997e286c3e85cc8d18a4acf4800907363cf6d352ff8c9",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "6761eabb4428214083f1222700a11f9ddea4cbceef1d0c0d56aeac5ea84c3e0f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "c55085e03d0ed756c20ba20e316daa208d73832414784b9bb07d0b77d9252b42",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_rmsnorm_C1.pkl",
+      "source_sha256": "0676f3907492ba05493350624c746f108516910c18b6954cef4c4562e18b04de",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_rmsnorm_C1.pkl",
+      "sha256": "b508f0dadc6188607e2709e7734d2918df7c7741237e7cf1be461e4e46408154",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_rope_C1.pkl",
+      "source_sha256": "1170540aa85c745c5917e617ec3fa3f044e85531c1a56b486391cc97d1ffd4d6",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_rope_C1.pkl",
+      "sha256": "03ad0b5a494102f7a42decadc2c2a39f142a9353890973df47ed91407306216b",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_silu_C1.pkl",
+      "source_sha256": "2922a4c4c0cb83f0700621f4883dcf494ff633e41c1209d4383aad47f0cd69e5",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_silu_C1.pkl",
+      "sha256": "b1f8417afc74bf1ee21b9f90e8a06f492ba364c7c283ab331e1e102ab7fd04cd",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_prefill/llama2_7b_prefill_C3_softmax_C1.pkl",
+      "source_sha256": "d0aad40835f9926cf199b1fa49d35b575f6f0724b6ce059cd16dfea968d2afc7",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_prefill/llama2_7b_prefill_C3_softmax_C1.pkl",
+      "sha256": "d6506b4122f32a7b39bcecfde0c3c7ec6fb2a4ee983802d3d3ab1b0a80786385",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_eladd_layout_fused_C4.pkl",
+      "source_sha256": "dad298cf81fc917b6deae14965997922700b21ffdf9515f17d53cb560fe48831",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_eladd_layout_fused_C4.pkl",
+      "sha256": "b2260729fbeffe32f2ee5a3bea88c588deed958a9289716604ff943ca7fea987",
+      "app": "eladd_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_elmul_layout_fused_C4.pkl",
+      "source_sha256": "9bec590b653aa31386247a0cb40bdbc43c8dce46d124f7041b216f5ebc2d1d26",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_elmul_layout_fused_C4.pkl",
+      "sha256": "87f4de83edd918b53f70346b4dae8c38d873355196bed5482be564d69b90c01a",
+      "app": "elmul_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "source_sha256": "a718b64cb37c8c8bb0fdad2dd35a669829fdd21b8f91b9c136899dad1dce79bc",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "sha256": "53d51f18748d52b9e035f603cd1ec0b1a4e9f0981f727f3d4bb212808d015168",
+      "app": "fpint_gemm_ffn_hw",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_hadamard_layout_fused_C4.pkl",
+      "source_sha256": "8c018066f75d4f950c6ba6b8e67d5e3b11e499dcd6a7ac29980d09265ea60e05",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_hadamard_layout_fused_C4.pkl",
+      "sha256": "77cc2efa4f226b0d7eeaab518ef9527afa81a7a57e9a72116c07527e07117a05",
+      "app": "hadamard_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_head_concat_layout_fused_C4.pkl",
+      "source_sha256": "694fbab61e4a087137936b6f9a3e8709daeb349e072e8c35872315650cadab1b",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_head_concat_layout_fused_C4.pkl",
+      "sha256": "fa6f4dd4df71ef1822db8d6ce2894b57b767068bcb88cb6c5d6359fa8692e277",
+      "app": "head_concat_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "source_sha256": "326d46b6314192afbc29939de80d241679d9351d9f6bb436777289027a91d53e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "sha256": "d666aadb2f9ad028b89385550cdaa085d5f0861f479960fc3382cf7df8c49ccc",
+      "app": "kv_cache_quant_layout_fused_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "source_sha256": "e8e9868e9518adbe3c944ec519e4f7034fe07f5d448463229cfb9533aa63920c",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "sha256": "400628f9582388337c8674c33c8579b72ae8bc2c175b0f6968e6afca5faee46c",
+      "app": "rms_norm_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_rope_layout_fused_C4.pkl",
+      "source_sha256": "86712b0c0e33a250ff96fc09c781696aebe3a350903adfe5c12a9da12d4a49c8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_rope_layout_fused_C4.pkl",
+      "sha256": "2159cd38076075db7c8b22fd49af33da4af2c6456778d9741fed43ac6955980b",
+      "app": "rope_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_silu_layout_fused_C4.pkl",
+      "source_sha256": "eb8b6fbfe2a1e2ad9c32b201b9e34e6aa56e86ee7ccc6b67459cb40a2e797162",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_silu_layout_fused_C4.pkl",
+      "sha256": "19beae00480f6f95ca0102ba36ba56cd27fd914264bd8ca919b933f972448260",
+      "app": "silu_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_prefill/llama2_7b_prefill_C4_fused_softmax_layout_fused_C4.pkl",
+      "source_sha256": "2f5acf3005e9e5c2dc874da388fdf893599310603dc2b7772213c95d275ab441",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_prefill/llama2_7b_prefill_C4_fused_softmax_layout_fused_C4.pkl",
+      "sha256": "5b0ee574a4a08feb30edbbad4f8baa6df0ad29a020ed5f4108b2f2ee10d65c3b",
+      "app": "softmax_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_eladd_C1.pkl",
+      "source_sha256": "9bb653311b6c8d63bdf93c2c2d1d9239f76effe46bbb852790b4338b7b8c0344",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_eladd_C1.pkl",
+      "sha256": "a1f2b746c81cafdbd2ebbf6aa578c4c0919acfdf319b257716111855d067f074",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_elmul_C1.pkl",
+      "source_sha256": "b721c485d773a48efc02d025132a03693ee9064af13a46f6bd8555346145e145",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_elmul_C1.pkl",
+      "sha256": "d48611f202fe585ca1018c681128612fc413b3c7fd54ec880c810a5817c98a05",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_hadamard_C1.pkl",
+      "source_sha256": "219f1a00331e1e21bc796afa6f1d96c67cc2124faf7a951d8c0abc409409e11b",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_hadamard_C1.pkl",
+      "sha256": "b21d7a71ed83fae6eefafbdd9717e07f9e3fab62178aec33a80fdb430c49ec4e",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_head_concat_C1.pkl",
+      "source_sha256": "2cedd3410b24a618df627c715bf663dc6a9c79ae6cf8b203313b34785f46d719",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_head_concat_C1.pkl",
+      "sha256": "2a9f02346e2704ca1b51be630dfcd10c2f8bc995af4e80bc002759627614a174",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "e6e9208fa419a5221d00d65c93794f7fb6ee444cc8cb79406633aa32c1005c99",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "3ec4bc0149f263e71db2a3fe9f2938b96351a87cad8adc6ef6c085a739143ba4",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "719d8bf7490abc7ba6eeb5f2e1ce5fa207d46453b9814ed09798c0f049cc0568",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "75c26ebeca08ec8b40f54c7ea0b3a8faec581ef0281baf9cd75a2fadab0f3679",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_rmsnorm_C1.pkl",
+      "source_sha256": "c1caf4991bfc44319b03218a7696badfd497d598ed741cd307d138beaef9732e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_rmsnorm_C1.pkl",
+      "sha256": "3ee03f5d673e65836fefcb356a7bef6400c64dfa117e60a7755833034550a689",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_rope_C1.pkl",
+      "source_sha256": "1062a97b5f24a1ed3b07d7f3961c393cc4d04c33cd980fd6edddf1826ab1b1a8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_rope_C1.pkl",
+      "sha256": "dab22ec6a1bc10b5c571889c094178453c5edea2e91d9eb5006517183aab6f49",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_sgemm_tcu_C1.pkl",
+      "source_sha256": "4820f2cfa39dc32aa8303d4093ed55923e861adbd6ee91a06a05c17f9557f235",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_sgemm_tcu_C1.pkl",
+      "sha256": "c8b18537348a837b791f52a66dfd50f7d362d7f4196f72fd93d3e6c20a11f3f2",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_silu_C1.pkl",
+      "source_sha256": "9368d48144d669608ba69579adab184efb1afa5482ff62009314610244378299",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_silu_C1.pkl",
+      "sha256": "85c9622082a5a4799d56146238e75ecabe31290d389503befea483025e4f43ae",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C1_generation/llama2_7b_generation_C1_softmax_C1.pkl",
+      "source_sha256": "e3e0ecee4dbefc0dd72d0e352841ed69eacf3214a17d449b649cbc9ccc37b9ce",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C1_generation/llama2_7b_generation_C1_softmax_C1.pkl",
+      "sha256": "d1cebfee7feda299ef6821480dc43d2910fc5ea4f4cb35852940fd19c6cad694",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_eladd_C1.pkl",
+      "source_sha256": "e21845384062084e0c0ebe015f1544e51aef0d131f4ed10db1c5c8de095abd3f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_eladd_C1.pkl",
+      "sha256": "cd773ce2f3f0a8bbea138d6d0b730923378ee2da1f0c6049452f5d6ef296d708",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_elmul_C1.pkl",
+      "source_sha256": "d0b9f6a907d3aa75863214d12ce414944f1e98cf524a4592088866cd3f55fe69",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_elmul_C1.pkl",
+      "sha256": "376da88243afcaa17e0886ce5d1987d81a2056175b921737c52515371e4c066e",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "072ad0ffb4fc223ba136d7a60dc8c353a3b1f6a7dd5d4493149d700bc3ffc88c",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "32d8d48f0ca1aae0455d9100a5cde69d404951d03ca8481dd7ee92115c914759",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_hadamard_C1.pkl",
+      "source_sha256": "696694cf1d1fd1c9a4a73e285501d249570a2219bcf615bd417a9719abce77eb",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_hadamard_C1.pkl",
+      "sha256": "c6813ab224cde9bc0105d096b05482b91fa7fab156cfe27058d7388f2bda092f",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_head_concat_C1.pkl",
+      "source_sha256": "5dc37ea2a5b20314e91679d0ce4334361afad8cc20d72fa309a17ba4a0ac1a21",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_head_concat_C1.pkl",
+      "sha256": "c2c43565ff30d28205d3948bc110d3e7d77026537d524b85506a98a47ed48e52",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "4b26e2b59b2b2ea35a45181f4a6ba573bef6fe2f5ab328e4579c5bea32dfce98",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "cbd37b6d9eab644f82ced4715c453a39a05249be926f74e01576ab8a16fbe3b9",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "56b1d8488a7e476833727895bfc88b44f18987049eebd0389052c4a48ba42461",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "030bfd368461abdaf8bb5323769acd9553bd3cca3f7da23b9c9ab7d84a9c0a8b",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_rmsnorm_C1.pkl",
+      "source_sha256": "fe70a5b4cfceb71c80332497a9856118361b70fa80127d6962007026389197b2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_rmsnorm_C1.pkl",
+      "sha256": "55a32238832cb2a16aa6955b0b953421ef41dac5de828235a52764736cadf222",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_rope_C1.pkl",
+      "source_sha256": "539e2702a63dae8caa3237b1bb10b96bf0752bf09d5a80751d90dd30e3b1c87f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_rope_C1.pkl",
+      "sha256": "b78672886a657f569a8acf9bcc931da5ef6f824eda45488319b5480c94d1b10b",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_sgemm_tcu_C1.pkl",
+      "source_sha256": "11f8bde6efc8d7be283b08e9d5eb16182015f8eb572224bda7ac5fef4d92f2cd",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_sgemm_tcu_C1.pkl",
+      "sha256": "7198e8b7c19a0e0cb8c4fd376a4990480309f2bf61d589aa42abe9811c53a7f7",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_silu_C1.pkl",
+      "source_sha256": "e5e9328a626f9ca49fa9f097762ea41c7b3fe7fab914fd66e2bb17c4e9e941ce",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_silu_C1.pkl",
+      "sha256": "6c9485a3594e17cb6d5c8a9a6f5ebfa015199968bcd7d4d6435713124213068a",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C2_generation/llama2_7b_generation_C2_softmax_C1.pkl",
+      "source_sha256": "9d3de219bf4568ddd0821a7ccb22626296e2cb29f1fa2b6f439856fe72759729",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C2_generation/llama2_7b_generation_C2_softmax_C1.pkl",
+      "sha256": "ff6c44110023c91395a142ad2cdf6e0a5869ea71040f242c2caad4aaf474dcdd",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_eladd_C1.pkl",
+      "source_sha256": "b812cf681aaec35d575816650f9f0a5cffd660245bade1e5c85b833759bb129a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_eladd_C1.pkl",
+      "sha256": "89327d09d88aab4fecfc0d761a3df69c18a7479189095e1ace6b7ceaecce4945",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_elmul_C1.pkl",
+      "source_sha256": "65753ccac43283e5427245538d5e711388379a6157616df2b91036088bca8902",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_elmul_C1.pkl",
+      "sha256": "d00f2474b83346ba56915c5419a9096ed366d09f849065b3d6f7ecb4dd37e4fa",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "c8fdabbbe3a0f11ae6b3c679b01ca928eaede8015a5a07aaaefa1d2ecfaa0205",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "a4616038992eb0aecfbacfcdb204a09785ba67022db84e70c759121ce575cc51",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_hadamard_C1.pkl",
+      "source_sha256": "936d3fe9ab2859701aa668f40a68d77f280fcde921377a357d7120d051bac80c",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_hadamard_C1.pkl",
+      "sha256": "b8aafb3f908bdf1aa1e2b6f689b10ac60af6bacde36c4b7f59d11ead90071e63",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_head_concat_C1.pkl",
+      "source_sha256": "0a8759e2e5befd33bf52df2203648c06f3bbb0732659d5599f923859f8f81355",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_head_concat_C1.pkl",
+      "sha256": "9884ceb3ecdadc6e5355fe8216e6ebe219f6ed4f13fb94a3b8a437145d1ead43",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "8fe5e28640029975a1845c9cfe24d5d91fb6254639b4e6c1944cbc13c0c6feef",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "a6cb9cf8897d8208f5425ced498cd405019f03609170c74128aada6ee87e2a9e",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_rmsnorm_C1.pkl",
+      "source_sha256": "f1f81fab4ce220373d0c357e0cb6fd009bb06c341f01a8f28ea2b92237cccea0",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_rmsnorm_C1.pkl",
+      "sha256": "ff3b2b868e95894fe79d016a22728ed9a497ed4b44cee928c3914236075cbf8e",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_rope_C1.pkl",
+      "source_sha256": "3f1adf37102054215d4b12c2f762414ac787fe9c508200aea910eafbfaf2c3ce",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_rope_C1.pkl",
+      "sha256": "e39635289da4e94ea200c5e09370750d0f52314febdf2e6b23f83d44ab20f83b",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_silu_C1.pkl",
+      "source_sha256": "39f32d77cd49d758520bd43eddc15d84dcb6fcc4e4f6d9f6b01d689151633aee",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_silu_C1.pkl",
+      "sha256": "59b8ef7242967b043f0ea2242778832530bd4a4d1c182a67fceee09eecd975e8",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C3_generation/llama2_7b_generation_C3_softmax_C1.pkl",
+      "source_sha256": "ed23d89ebc1efde837ea7b3da66037aa439bf632c33eee428e3d19d5844a1f2f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C3_generation/llama2_7b_generation_C3_softmax_C1.pkl",
+      "sha256": "9481315e9e0dcae86f110017a0d99db6a1d9650e3acfbb2ddef1da2ba06c1a43",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_eladd_layout_fused_C4.pkl",
+      "source_sha256": "e252b0294304c71d5ebfe530c1b04ff493da172d8154341377960f1ce76e4da3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_eladd_layout_fused_C4.pkl",
+      "sha256": "cc41b13308c0566209fade36a8ce5bda8f612a20d5e48a781f87aa5c5fda2146",
+      "app": "eladd_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_elmul_layout_fused_C4.pkl",
+      "source_sha256": "a066005f976cf965b50167b6a62b2023f63d83a622893127fa4fa5b9859b2f3f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_elmul_layout_fused_C4.pkl",
+      "sha256": "0bf3eda53a631974e31b1df8753c52918162776442d64e5c77bb68cf1905db21",
+      "app": "elmul_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "source_sha256": "3c8702e69b85ad0410eec14492ddda6d9d4388f68381257344f2622b1e5caaa7",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "sha256": "16118fde73d3fc8da21cd483d5f23df504423073e175c8e02c80dcee8451384d",
+      "app": "fpint_gemm_ffn_hw",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_hadamard_layout_fused_C4.pkl",
+      "source_sha256": "247f66a711d19287537719b26ad01159f87752f0f625166bf03b0f1a5000d64e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_hadamard_layout_fused_C4.pkl",
+      "sha256": "091507471d2d15b03c24fdcb9eea4d8f2da2e17c6260120b23b72dd60831d5a6",
+      "app": "hadamard_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_head_concat_layout_fused_C4.pkl",
+      "source_sha256": "8f7a6832f236fb51ed3cfa1f6de908e026d06177b14a6188eea91850f5919089",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_head_concat_layout_fused_C4.pkl",
+      "sha256": "cf5c72cc0de33ce3ee043aba2c3614e53f24b7854d5210b828d27d5ce475f070",
+      "app": "head_concat_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "source_sha256": "8f49d6ad68ff83f5266f21982008837d5cf525ca646d137ace9998e801220839",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "sha256": "0e2c55e910f71cddf6f6ef4890a16afc57fed330e571ca4ad96f4a29866aad19",
+      "app": "kv_cache_quant_layout_fused_w4a16",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "source_sha256": "95a893d5cc877c87a78ac321c025b6af03f60ea66bd0f0e8bd9858cbaa419535",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "sha256": "f730db7c64f0f39a2cd4c1a7127a786bf2d4c4e2ee12c6f9e94b8e72b4a08be5",
+      "app": "rms_norm_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_rope_layout_fused_C4.pkl",
+      "source_sha256": "7f9f3ad43d4d7d5971eb134db1e9804143d7b285f0df8dc8dbbe7f9285e7ddb3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_rope_layout_fused_C4.pkl",
+      "sha256": "49d88e7c2787df7bb641ab5cc51343769cef7e072af880d19a820d579f8b9eae",
+      "app": "rope_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_silu_layout_fused_C4.pkl",
+      "source_sha256": "8a2c01a6541b656e696a53694bed9b5798e10c386a869637283412119ea39071",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_silu_layout_fused_C4.pkl",
+      "sha256": "c8937892bdfb47b2dfd238378ff12a4bb3dcf83ced724803a242f31618a64e65",
+      "app": "silu_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/C4_fused_generation/llama2_7b_generation_C4_fused_softmax_layout_fused_C4.pkl",
+      "source_sha256": "6803df450bef806639129469d5bc580135f0c79dc94faaf732c246bb0475682d",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama2_7b/C4_fused_generation/llama2_7b_generation_C4_fused_softmax_layout_fused_C4.pkl",
+      "sha256": "33b930fb99acbd11864c17c1cefe0ff50e554bfc4a31e1366826f24dd5a6deae",
+      "app": "softmax_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_eladd_C1.pkl",
+      "source_sha256": "4432996e2d5080b0a40e906600955dd7cb7b02ee9e6bd018f22537c06c7d0352",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_eladd_C1.pkl",
+      "sha256": "42b30ae3e139045d6ade1d7eb45f3b1d6a813853e724dc529efbe9a547b73c85",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_elmul_C1.pkl",
+      "source_sha256": "495d4517e8d7a1eed9910fec154ddb929018b4b9fa0f4affb3a5468ee6da823a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_elmul_C1.pkl",
+      "sha256": "b08f7ea1b929fc7fa8b183d2543e84573d4180ee6b9564058882e7d354a875d8",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_hadamard_C1.pkl",
+      "source_sha256": "fc3a868d2bf9e672ad2f1a8c8409e2eb8207a40d1689bdc5db7776781e224dfe",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_hadamard_C1.pkl",
+      "sha256": "46df363216e564138d550fc3f202fe0e0484ec4c514470460cc8d3eff2e35502",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_head_concat_C1.pkl",
+      "source_sha256": "b7ec1d809fbf10e996ea0613b315f4756e36335767ccae0caec8462256904710",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_head_concat_C1.pkl",
+      "sha256": "a3a4933e3d73768f15eb716e69a9a7121542ca1834aacfa83a9275d37f5aef9e",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "54e4cc99e6bc7700c717eeac92af60f00cc38cc035d3b8f86f31a43b56ccd6c0",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "1d0fc4f93753ea781a5e715617a561eaed980fbee407d07261bed246ca2428c6",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "9128bc9925a16dd5c6a33ae343e3cbe34e4af2ca0952e8dbadbcd53e91519b69",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "edd7088f399e98b7b2ffc0fe277e40ed61b61404ffd2f1b6929142e41ab92c06",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_rmsnorm_C1.pkl",
+      "source_sha256": "6495379ca40c3bac86ce4d04c2358464e0b77f334c191449cddff0bf5848be16",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_rmsnorm_C1.pkl",
+      "sha256": "80f7545bc4d602876e2b5957b77305005dcbd1de32079bdbbd1e12e51a966b64",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_rope_C1.pkl",
+      "source_sha256": "cd4e788ec8e20a676ca11a34819f4dead4acea348595b9e7a59f3647ea50fb70",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_rope_C1.pkl",
+      "sha256": "9fcd793ee7942ceaabd82be938e2c17fb5cfc2bb75fc6ea3f81d89e069f544ef",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_sgemm_tcu_C1.pkl",
+      "source_sha256": "8f3aa4c03d4c9c446dc9cc78b01638bcce9c69a7a85310078cee8ec595f18570",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_sgemm_tcu_C1.pkl",
+      "sha256": "4885af27542ac4acb9a4089e8187dc52d732bce6dfed2f13804bde5d214ae6ad",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_silu_C1.pkl",
+      "source_sha256": "e7758cb6449f33f9ca8b38e1c95c0a0bb6c4fd11487df78f1953e521e8bc1e00",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_silu_C1.pkl",
+      "sha256": "cd83eeac49a9387997099e65ec4a71c8eba439b815871a3729a34b84cb7d06b2",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_prefill/llama3_8b_prefill_C1_softmax_C1.pkl",
+      "source_sha256": "1d1e8990446ec16197c52614191d98682df397becb97f8c8c075c96fa1d846ba",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_prefill/llama3_8b_prefill_C1_softmax_C1.pkl",
+      "sha256": "4ec1cc2a614ce0dbc6094dd66fa628d28c7ed6d1de25985aa4db17d25d306ae9",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_eladd_C1.pkl",
+      "source_sha256": "d8bbac0738e31e95becb65dbf0349e0f232da2c083542463aaa94a22b34b21af",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_eladd_C1.pkl",
+      "sha256": "cbdd5cef59439343e7acd36cd6e82ba4c34e71cbecb07562583a209e92f80682",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_elmul_C1.pkl",
+      "source_sha256": "74be8157e6a974f921de7fa7f70a28a55b1b54d0de71b95a44679001a9ef152a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_elmul_C1.pkl",
+      "sha256": "98b0ff3b57c3ff1e7061b1ee678ea10c9dd5e2c7997710a9349a1c68f1eea83d",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "f4217a0ab26e5ecea4e32cf35afcb7a7d55ad878636566697c360febacd158fd",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "34db9103387c2c7d3f60df68bf8ec4eb77697b633fbe4dcb69cc1b35e445532a",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_hadamard_C1.pkl",
+      "source_sha256": "869f573b2b898721f714e3067f21a82fb6b6360b08a428ecae8abce214646103",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_hadamard_C1.pkl",
+      "sha256": "32fe9f4f11ec20a408ebd1c7ac543472695f9af6673a600c3c8c6a721c890690",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_head_concat_C1.pkl",
+      "source_sha256": "0714f93914e757fbe0400b666970178ff5e3fbb599d53f4563ab5db65b3bb0f9",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_head_concat_C1.pkl",
+      "sha256": "95e6ee4ae05329b9aeac94d192248f1443224fcc73a4848fb452bc03883b5b77",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "1fcac0124130b504ecaffddfbc20e2edebcc5481a7056b3a53a311233fa59414",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "81ee60aa225b9211f31e0739ef884cf6e28796971992c593abec0fe9b3c2a9e9",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "e6e469cc189020a4d24e4f7f7af7500a845cb668df2d4c9b67ef74a16f9ff572",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "0f0555f8275cc03c2b56aba5bff969ba765810219737054c2103ae6f4eacb5d5",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_rmsnorm_C1.pkl",
+      "source_sha256": "e2999807ddb8a7dfaeb6caa5f218177e80afdf6129b8919feba99ebce09e42e0",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_rmsnorm_C1.pkl",
+      "sha256": "eacfb789d617f798f259f32028628a5a2f923de98b957a5416f5020e623362e8",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_rope_C1.pkl",
+      "source_sha256": "5bc0d0b713dbaeb2e423f7b10923ae9419f3b02817a596492fff3d931f7a99f4",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_rope_C1.pkl",
+      "sha256": "761bc18199e017cf07fa348de5aca1e619775fba38552b3262a81bae34497f0d",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_sgemm_tcu_C1.pkl",
+      "source_sha256": "f5c9cd29095f42d6d82e0c1c0a52f840a86a0167f3af008700dde7b17f90a582",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_sgemm_tcu_C1.pkl",
+      "sha256": "704ea83bccea6220bbbca2831cc3b973ef778ef822e9735a82df388ada53a3cc",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_silu_C1.pkl",
+      "source_sha256": "b0593be2ee6d83293bf5447cb12c73d51a92aa76d9460b607e399ea695282c8e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_silu_C1.pkl",
+      "sha256": "ccfd7103ad3b1bc8924a98e6306e74561d70594fabdc5fb70310d330eebd3261",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_prefill/llama3_8b_prefill_C2_softmax_C1.pkl",
+      "source_sha256": "5b09b1262ae461084669434025e344f1754dc3ccc95e9495bc9b19fb6982ae8e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_prefill/llama3_8b_prefill_C2_softmax_C1.pkl",
+      "sha256": "57e51d24b06f47c3634c8598eadd2525ce2233b6ae116a4c95af13ec9628e0e0",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_eladd_C1.pkl",
+      "source_sha256": "4f83a3b2c5f5c3642a1e7a8bac2042b231882597fa5f082f83b5560ac2b23492",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_eladd_C1.pkl",
+      "sha256": "d9105ed45f74345ac56e04f7ba525360c9d14eaf6032d20bf32edc2e9d1bc5b5",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_elmul_C1.pkl",
+      "source_sha256": "82edae24691aa7f2cad33816dad68d4280f784f0ad56a53ef6b58f4aca141b79",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_elmul_C1.pkl",
+      "sha256": "8c6c3ba2577e0f45ae9dc21e21db438092573e21972e05b63d7ba073b50d07a1",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "3c4ed3018ab561775cedde5478da91c640a2d088179b5bfa43b8093c9827b91c",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "d711a48eb4422920ae0e2e49e6afb14eec5e07ff343978109a656eb613b08b36",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_hadamard_C1.pkl",
+      "source_sha256": "a089b7e52d2f9a9a93b0e38fa518aa07f163b0f3fef7d6d8494dceb77b2c3925",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_hadamard_C1.pkl",
+      "sha256": "70f62b7f250b9071e25862fe68453b94b3a7a6791af1cce21162eb0fcf93ca19",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_head_concat_C1.pkl",
+      "source_sha256": "247a471c9ab0b8bcdf0efe6c0f4e1240d69db79add9ffc7cd6d0b3f5e5426b8e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_head_concat_C1.pkl",
+      "sha256": "8fbcf655ee4a275db08d3d9ffae74e61a0e9201cd8099c73bae03107747b0bdf",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "ae687ee84dace2edf690525e8703b02ea80cf1c3c7b9c27402c10a9a6fab6338",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "3e0d4576aff2fac62c61333093dfdd80df0da1d80f9fd1c90c5773b96bb084ea",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_rmsnorm_C1.pkl",
+      "source_sha256": "407753ab128479bad2fa28f7c74f1fe5e070af5caa64292e933efa14070d3d25",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_rmsnorm_C1.pkl",
+      "sha256": "9eda9a1f84e8297979fec45f32416bde04596ff04fd6ad3dcc5d5cde979ccf55",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_rope_C1.pkl",
+      "source_sha256": "24a26427a6d1f2bf721263ea7a938a258dfd26ba89f0c6fd122f1f80b3597614",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_rope_C1.pkl",
+      "sha256": "592d58f8c0bb557eeebeb470a82afd5ed2d998cd0ea70624b24867f62b7b9ab8",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_silu_C1.pkl",
+      "source_sha256": "708fde7792a6447c1a796a24f7be82512d3c7e199242acc6de3faa9f4288d9c8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_silu_C1.pkl",
+      "sha256": "878b2ad9ab562effb7baf68c6e455da65bd63b3452cb30464472b9b0cdd0c4d7",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_prefill/llama3_8b_prefill_C3_softmax_C1.pkl",
+      "source_sha256": "2b07e0fef673df4f5a67f7c81ea85c6388ab712b37e4b1e35954ac8f906277a9",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_prefill/llama3_8b_prefill_C3_softmax_C1.pkl",
+      "sha256": "5c43f6438445bb59552611c03b8a5c3c5356b785af3065d2980e3b385c059afa",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_eladd_layout_fused_C4.pkl",
+      "source_sha256": "d09bb1007a9626ef154727789a9a60a638b98f19dbc2783fe7fa3e9e6eb9c899",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_eladd_layout_fused_C4.pkl",
+      "sha256": "b4f182f6c058c7ee9c82e98365128609fb43949f52f6cea8a3c207c5e9ba809b",
+      "app": "eladd_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_elmul_layout_fused_C4.pkl",
+      "source_sha256": "79d8ede75e4cb3ca4ab4dc91c6004021f9dbb8cd630946e0f49a16cb56346527",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_elmul_layout_fused_C4.pkl",
+      "sha256": "9e2a57c9cf3cb2665f77e904301276058717d4678d70541132c869daea2d1c84",
+      "app": "elmul_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "source_sha256": "4859c7e35242c12133a1bb0b83a69803d5a0687a3fba116e8c1578b3700347b1",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "sha256": "84c15d9fb48877e5fa9aa093875aca9ca6c62e4904ec3c4e3c1dcac8ba04ccfe",
+      "app": "fpint_gemm_ffn_hw",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_hadamard_layout_fused_C4.pkl",
+      "source_sha256": "391108d9119353909cccc0f67a7a5835ff479e66c2c64e7a714a0cceed574908",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_hadamard_layout_fused_C4.pkl",
+      "sha256": "2460ba1fcc16ba717d2b1580f6dfa7c041d11a39987c77f4f0a22dc40544d36b",
+      "app": "hadamard_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_head_concat_layout_fused_C4.pkl",
+      "source_sha256": "6d6a3d6fca892e69b614b37415f3397e570082ad312c35b16e718650d2b98b67",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_head_concat_layout_fused_C4.pkl",
+      "sha256": "29f00b07b4b8f68d2f592a3f087eccb11e5d2a858ec6cf4c9b1f010adf3d52b5",
+      "app": "head_concat_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "source_sha256": "c34282b55658c784e42abffe89d7ee597a2f13ca150dd16cac1265ac6f2260e5",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "sha256": "a3820631abe00729d898d14cfccdbe76332b4bf4de99378a4b2413ffcd9e4af1",
+      "app": "kv_cache_quant_layout_fused_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "source_sha256": "663f32ec09238415816804641a5ad9988d56161aaab820b557335f3d11ec5080",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "sha256": "3219aeab67dd19de103c996d1a80aca04a4c629ed281301dfa0e5f542baf3ca4",
+      "app": "rms_norm_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_rope_layout_fused_C4.pkl",
+      "source_sha256": "8ff2b7b0e618f24a898b09ad2f34d273d376e5d0e8b0d99293a25caa6f0690d4",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_rope_layout_fused_C4.pkl",
+      "sha256": "dee009673ab05873a98f16657a3d049b8424ca97523d28f7e390f16398410bd8",
+      "app": "rope_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_silu_layout_fused_C4.pkl",
+      "source_sha256": "c4422b027054a39d6c3e69b253c430dfd6843a765eb2b6fbe63a9d8e3f06b905",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_silu_layout_fused_C4.pkl",
+      "sha256": "600e96c17c5a2e8c8530d682a2bf3fbf4fd094f3c21955c30d048b9ce7c468d5",
+      "app": "silu_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_prefill/llama3_8b_prefill_C4_fused_softmax_layout_fused_C4.pkl",
+      "source_sha256": "6997cf88f25046bdc411dacb97df6490be4290a1274b307f62f38e6f5a22a966",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_prefill/llama3_8b_prefill_C4_fused_softmax_layout_fused_C4.pkl",
+      "sha256": "a71d531b2ea21d2a3630ec1137b5cabea9b68fd8bbdc4b7a899e407f834f79cb",
+      "app": "softmax_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_eladd_C1.pkl",
+      "source_sha256": "250714c83d338794720627c53181f9c35e41057a3d28081c221d9f3d3c525c5e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_eladd_C1.pkl",
+      "sha256": "25f157808ebbc57b519ec72b8468138865035915106bafeaff19eab50db74c98",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_elmul_C1.pkl",
+      "source_sha256": "1084d86622e99ce43c8f1b0dd6eba2f2ce025ef73bd4c95f7d40f0a0632ad5ce",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_elmul_C1.pkl",
+      "sha256": "1149432193c41d598e5915b1a63c72b2322437d145ec73319d441457ad672e8d",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_hadamard_C1.pkl",
+      "source_sha256": "2302ecc2bdc29aca61919cc3a6f98971a6da427c415dd7512a486c4e7ca5aace",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_hadamard_C1.pkl",
+      "sha256": "e164591f79776bf8c20eb3650634d34fa907ed1fbaa509de433fcae846db3f7c",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_head_concat_C1.pkl",
+      "source_sha256": "dbe9bd7619c2fb66cda2eec7865ae20e065016a944b20249343676158393ffe8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_head_concat_C1.pkl",
+      "sha256": "91ececc675a87beedde506890d1793d05daa51bfa36e0213299a0962bdef0f9d",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "03339100d3fd42dd60b8b9dbe9b57a516e2b1bebd0acbad80438ea4d98afa23a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "e09180abf212d47066e7dd24cf13b2c4bacc7d088f460e477bd5740fc756a86e",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "feb0c6e794043aa32a123c731588fa94c0d0273760da1d0358efabfc374b4494",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "d278b9755b200a9cf016f708fb5d8350c7877e70bd44231ada6913399972516b",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_rmsnorm_C1.pkl",
+      "source_sha256": "f4580f5624eafedc907c6beee36fa4de7288836ed0e00e1a052b18dd8f6aefbc",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_rmsnorm_C1.pkl",
+      "sha256": "6e83c19382c1be43107f473f3cee8713f4fe52e11257775dccab7cbc2740a4d6",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_rope_C1.pkl",
+      "source_sha256": "6767c21d7d65f6c535ee3e28a8493a8637c3dd2d6e65792dc208d8eb6b1dfb20",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_rope_C1.pkl",
+      "sha256": "7974c2e7f072fdf2f66858846b7afd2aa5a030028b937704b4fcc2863a68b440",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_sgemm_tcu_C1.pkl",
+      "source_sha256": "414c15f23c5a77724ad9ceefdf5e2bef0dbd00da297e8f5869b473abf92192da",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_sgemm_tcu_C1.pkl",
+      "sha256": "6d9212630eb68fbe76e726e8c565aa1553e2740077349b4cf1812499b30d3a12",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_silu_C1.pkl",
+      "source_sha256": "7a76a65d8bdf59e780c786641732da80ba5a3eded763444e9a20d9ba530910bf",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_silu_C1.pkl",
+      "sha256": "47ea0663826fc7dac31a5cc972a21fb2893bfd9b31e8b8e7258b58457a9bde83",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C1_generation/llama3_8b_generation_C1_softmax_C1.pkl",
+      "source_sha256": "973c5b22d1135457db17cc64e27e32d642e14f25e035687b8d01c86fb9e10213",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C1_generation/llama3_8b_generation_C1_softmax_C1.pkl",
+      "sha256": "01ffadd61d591b49b198e4d5f61450338767a595f938043a2c97f9b9a7ea59f4",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_eladd_C1.pkl",
+      "source_sha256": "d00ad120aeac4aaf0ae4e56421d360cf931536bcbd86c2e8d5909042dcb233e9",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_eladd_C1.pkl",
+      "sha256": "fd340de6a0e6a9337a3ede5ed1b125e90dbb50346b1c2f9215e973eac2f0ec6c",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_elmul_C1.pkl",
+      "source_sha256": "395b30a5ad1e2ed5844ed42d4c2de74887abe053275f22347719528f238d5097",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_elmul_C1.pkl",
+      "sha256": "7e84770324aa143cf014343ed69f7ceb7b94311673675b34c73030646f255bee",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "1bc7ac9281306029ee410a7651111c4992ef7963a4534173f47c1b4dc157ba19",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "3feb7cb2b43e1b3674b3b6e2c2c730a52515dcf0bad4f802726799ec79f5d4e2",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_hadamard_C1.pkl",
+      "source_sha256": "135586b4f3022ce4b13d08ddd6979dc625c2230e99a9f1816e132f507b707fa8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_hadamard_C1.pkl",
+      "sha256": "651b31d776c2b65701c6aa9ba5a819c6d2262a0d58f44430663de2b7dd703431",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_head_concat_C1.pkl",
+      "source_sha256": "7d2d32ccc90e68844df158aeeef0adee0eeecdd86b8af7bcde14d22c8b7a095a",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_head_concat_C1.pkl",
+      "sha256": "7ef16963420d95f43a66706835538832a54dc8cf4e736b78cd8f57d27cc23751",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "source_sha256": "f14705dbbc2b51b21819524165302c2df385564c2ff95eaff9fabfe28afc2b3d",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_kv_cache_dequant_w4a16_C1.pkl",
+      "sha256": "e32ddd158c9f211af9dab87f08d159a4ab964165af1386b40a5e3f23894a100e",
+      "app": "kv_cache_dequant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "b3963fa622913d2f256249e189a3a6d2c111a8c0ac46895853609932e1093e88",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "e44611e1aebdd7ee4a7cb79eddf4e57aeca1b29c4b759675376e08c325eb3788",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_rmsnorm_C1.pkl",
+      "source_sha256": "4fd7dcacd78465f6996123c83c85f23a4d6cd5cdc9430206cb90390db4b57ee8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_rmsnorm_C1.pkl",
+      "sha256": "4691ba1f96d4fd4e6be4d055080801528dce872fbe5ae3eabd98dda828ba575f",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_rope_C1.pkl",
+      "source_sha256": "2b20ff07bd669fce445addc13e7d13924ebc45c296dcde52eb7c22b6de23de7f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_rope_C1.pkl",
+      "sha256": "cdd1f49b7a46553ea7111d377ae2d21f1d2023dfddb430c6de0ec45bf58e0000",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_sgemm_tcu_C1.pkl",
+      "source_sha256": "46865c8be738049b48f00be144ef7feed6d5ceaebf061989de385c105a4ec4ab",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_sgemm_tcu_C1.pkl",
+      "sha256": "63959c6504fb5cfd538468dcde4a2927ff04dd6d424ac8f1478d081402f57573",
+      "app": "sgemm_tcu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_silu_C1.pkl",
+      "source_sha256": "fb5e7107a3c4f4758d55dab9bffb3402afb436b881f78ed9c91eb529dc5b78c4",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_silu_C1.pkl",
+      "sha256": "f55739deb9b6a558f3e8b4c037fabfaa525b1a92f15bb3c09c2599a8e9d370a6",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C2_generation/llama3_8b_generation_C2_softmax_C1.pkl",
+      "source_sha256": "d71b4d58c746b82b761448ec00eb9f733cbfa981a7d1b88eee2db7550df0c7f8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C2_generation/llama3_8b_generation_C2_softmax_C1.pkl",
+      "sha256": "54fadf5e57964d4c2dc5d9b5d51953fea4084d01699c4e0ac2fa69a1f58ff31d",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_eladd_C1.pkl",
+      "source_sha256": "4bbc91ca9240fbab552233029bbf17b8c2124818bb07df2004756202f7843488",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_eladd_C1.pkl",
+      "sha256": "bc46db4cee3736c0b8d8a9cc1ee4e795db99d5194cda72d770eff829c68a6352",
+      "app": "eladd",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_elmul_C1.pkl",
+      "source_sha256": "be4d669c038d3c923379d3adb4742b91a7bc290b2378b4ccf5b49d99c27dc981",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_elmul_C1.pkl",
+      "sha256": "f0353b16463c7aae1a60a4b0219ca48cbd6104cb7ebbb1644a0dcbc282ad9bd3",
+      "app": "elmul",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "source_sha256": "50b013ba4c0dca87a9e9e5ef6459a94ec371227d03b2b681374e5a8d4dcd14cc",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_fpint_gemm_ffn_hw_naive_C3.pkl",
+      "sha256": "c422272932dc31b5d3651346fb65b38d523766e1f8afd8453a545a2a85c95a81",
+      "app": "fpint_gemm_ffn_hw_naive",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_hadamard_C1.pkl",
+      "source_sha256": "de974eda4fd11b70a913852102b02599368fa48d1eaf206019ee7ea8062825fd",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_hadamard_C1.pkl",
+      "sha256": "a80221aa54c8e86751b2826ce5721c3531f5d981ffd7e204cb6a76e2d37a7988",
+      "app": "hadamard",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_head_concat_C1.pkl",
+      "source_sha256": "656552b26e6aa707b568953d3dfff39304ac6dd22fe29806fca00bd2c46a2ae3",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_head_concat_C1.pkl",
+      "sha256": "e212c2bd61f0ede54128a9655f9a5e8795b4a5f36d553895d8bbe72a966785b9",
+      "app": "head_concat",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_kv_cache_quant_w4a16_C1.pkl",
+      "source_sha256": "4c398321aa0fd9c6c8c48a99aa4728f18457b60bcd81f981d47a9a59b5da80f2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_kv_cache_quant_w4a16_C1.pkl",
+      "sha256": "d9f9513cb3f8667a234805c12aedbe748c75fa496320957502565ed3ad511772",
+      "app": "kv_cache_quant_w4a16",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_rmsnorm_C1.pkl",
+      "source_sha256": "72caa7d742d40507d3acd8c2d4ebba907be4ff7adb65d465e8e85ca2b67324ff",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_rmsnorm_C1.pkl",
+      "sha256": "6a8c2d830a5447f98c63f8f28328085e95f2534f690440b1fcc91975c532cc86",
+      "app": "rmsnorm",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_rope_C1.pkl",
+      "source_sha256": "a6ba765939957125dc00d1ddc861793afaf67da72d73c183846410b0aa691a8f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_rope_C1.pkl",
+      "sha256": "6c9f276ac5b121e58a6b48df1293e8319b048d5fdd43848600114a694fd8e838",
+      "app": "rope",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_silu_C1.pkl",
+      "source_sha256": "cc9f31396c680c15356cfcc0c00f75e0030aee2348747c00320f2c5e990e1680",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_silu_C1.pkl",
+      "sha256": "071109be11f210605c01ef32c89759bda92c284c466ad8b59a990b0ad321c526",
+      "app": "silu",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C3_generation/llama3_8b_generation_C3_softmax_C1.pkl",
+      "source_sha256": "a4b761a0d8fcc44ac9f6a73f030693dd5c28b9f9611bb1d5b61ba16f2a451e3d",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C3_generation/llama3_8b_generation_C3_softmax_C1.pkl",
+      "sha256": "37ab1a9e193b76f11a47c1a360d92c182ed7f2edb9675061ad61ba75cde33a05",
+      "app": "softmax",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_eladd_layout_fused_C4.pkl",
+      "source_sha256": "6f9f51b84a78b626e6a5b4d3cb41154d65490984961437dc0fa9524581457487",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_eladd_layout_fused_C4.pkl",
+      "sha256": "6a019f6253236be78dc0f64e01897bdf77e8f1065ac43c46d634fd2843cea30e",
+      "app": "eladd_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_elmul_layout_fused_C4.pkl",
+      "source_sha256": "f7be2d71749abe53e94e27f30d5ff41b733f0c982c362e1e62741df5af37c4b6",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_elmul_layout_fused_C4.pkl",
+      "sha256": "f69f62111c933336aa209b64b83e9e6ce819ff730508e41c9e1cb7edec5c583f",
+      "app": "elmul_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "source_sha256": "205f022d1b1b97bab473b2d9ec56deabc74306947121a793dcc92283965d6e08",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_fpint_gemm_ffn_hw_C4.pkl",
+      "sha256": "38d7269941a5402184c89d7be150d057bb843360897eccd3c2b94d5dbc080b6c",
+      "app": "fpint_gemm_ffn_hw",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_hadamard_layout_fused_C4.pkl",
+      "source_sha256": "5e204cea3b66e0048c38b4ea4a206b8b197da13314b6a5f856697b9392f61271",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_hadamard_layout_fused_C4.pkl",
+      "sha256": "99212539f461919271bc2c5e47d9ee40921adaa412a870123145999c947317b1",
+      "app": "hadamard_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_head_concat_layout_fused_C4.pkl",
+      "source_sha256": "39e91e70d242af6c4528b47302169f42ac4725754475ba6f89e8d315e730cb5c",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_head_concat_layout_fused_C4.pkl",
+      "sha256": "19e01f3fc7640100fd2f619fb15059eeb5733f07fc8cf0d78ae851bd79546f58",
+      "app": "head_concat_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "source_sha256": "9a63d9f951e86b98e8169db20bba207c9d20dc2ae27ea5539a03a04e3f52a19f",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_kv_cache_quant_layout_fused_w4a16_C4.pkl",
+      "sha256": "34450739e9706804c8db54031b795cafbc5742b39fdaa9dcf3094d1429e0da30",
+      "app": "kv_cache_quant_layout_fused_w4a16",
+      "selection_digest": "c61915a3cc5808aaf10b7780bf7d8ef070cd731ade4cc9eca0d442704aa07c17"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "source_sha256": "d97792a113816c416d02411f52b9c4a99511f54d20f4bf6e02015dad740102c8",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_rms_norm_layout_fused_C4.pkl",
+      "sha256": "5c7bb313354091581a3ee37789934ffd4990207527bb71a76dff78436923d163",
+      "app": "rms_norm_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_rope_layout_fused_C4.pkl",
+      "source_sha256": "ac67bc26544b6bebcb98760aeb03b2cf0b4b6d42a298edb0479e78ebcf6b7550",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_rope_layout_fused_C4.pkl",
+      "sha256": "4ee694454dafe262fd52ae040aec98ab2f11512738a20e4b740b6f83240d399a",
+      "app": "rope_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_silu_layout_fused_C4.pkl",
+      "source_sha256": "fcfddef66afb59aa0be56e54a2da95e5b54cc089117a3b791dce2a1fdd39655e",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_silu_layout_fused_C4.pkl",
+      "sha256": "6d23e0f062dda071172925ffedea00f99c589fe2089a2ae21cde88de2f5dc666",
+      "app": "silu_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    },
+    {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/C4_fused_generation/llama3_8b_generation_C4_fused_softmax_layout_fused_C4.pkl",
+      "source_sha256": "71b1e0568098adf1e0fd503f3175d258d3b2970d72f2f57ad0116b3ec18c4ead",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev5_v2/plot/suites/llama3_8b/C4_fused_generation/llama3_8b_generation_C4_fused_softmax_layout_fused_C4.pkl",
+      "sha256": "f0f945c217f8e8393fcf7a0df134ba36bd0a58e3b1b38168c270c67c7613bc92",
+      "app": "softmax_layout_fused",
+      "selection_digest": "a9c4680414989bde43995d5f8f5d48b7a03af06b562c9bc033bc42ddef76efad"
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "models": {
+    "llama2": {
+      "added": 18,
+      "historical_rows_preserved": 420,
+      "runs": [
+        "20261009T102242814340Z"
+      ]
+    },
+    "llama3": {
+      "added": 18,
+      "historical_rows_preserved": 461,
+      "runs": [
+        "20261009T102243553163Z"
+      ]
+    }
+  },
+  "unchanged_databases": {
+    "analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C1/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2/C3/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C1/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C3/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline/C4/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C1/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2/C3/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C1/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C3/raw_db.csv": true,
+    "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C4/raw_db.csv": true
+  },
+  "sessions": [
+    {
+      "exit_code": 0,
+      "logs": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/pipeline_state.rev5_v2/model_sessions/3fd23b68-361d-4625-b26e-2b016c8677c9",
+      "models": [
+        "llama2"
+      ],
+      "summary": {
+        "exit_code": 0,
+        "identity": {
+          "hostname": "fpga",
+          "xrt_device_bdf": "0000:2a:00.1",
+          "xrt_device_index": "0"
+        },
+        "models": [
+          {
+            "adopted": [],
+            "blocked": [],
+            "executed": [
+              "run:llama2:prefill:C1",
+              "run:llama2:prefill:C3",
+              "run:llama2:prefill:C4",
+              "run:llama2:generation:C1",
+              "run:llama2:generation:C3",
+              "run:llama2:generation:C4"
+            ],
+            "failed": [],
+            "range": [
+              "run"
+            ],
+            "reused": [],
+            "settings": {
+              "adopt_legacy": false,
+              "candidates": [
+                "C1",
+                "C3",
+                "C4"
+              ],
+              "formats": [
+                "png",
+                "pdf",
+                "svg"
+              ],
+              "max_iterations": 3,
+              "models": [
+                "llama2"
+              ],
+              "out_tokens": 128,
+              "require_convergence": false,
+              "suite_size": "full",
+              "target_error": 0.05,
+              "validation_samples": 3
+            },
+            "tag": "rev5_v2",
+            "tasks": []
+          }
+        ]
+      }
+    },
+    {
+      "exit_code": 0,
+      "logs": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/pipeline_state.rev5_v2/model_sessions/461b852e-da5b-4454-818f-012fa5aef9b1",
+      "models": [
+        "llama3"
+      ],
+      "summary": {
+        "exit_code": 0,
+        "identity": {
+          "hostname": "fpga",
+          "xrt_device_bdf": "0000:3d:00.1",
+          "xrt_device_index": "1"
+        },
+        "models": [
+          {
+            "adopted": [],
+            "blocked": [],
+            "executed": [
+              "run:llama3:prefill:C1",
+              "run:llama3:prefill:C3",
+              "run:llama3:prefill:C4",
+              "run:llama3:generation:C1",
+              "run:llama3:generation:C3",
+              "run:llama3:generation:C4"
+            ],
+            "failed": [],
+            "range": [
+              "run"
+            ],
+            "reused": [],
+            "settings": {
+              "adopt_legacy": false,
+              "candidates": [
+                "C1",
+                "C3",
+                "C4"
+              ],
+              "formats": [
+                "png",
+                "pdf",
+                "svg"
+              ],
+              "max_iterations": 3,
+              "models": [
+                "llama3"
+              ],
+              "out_tokens": 128,
+              "require_convergence": false,
+              "suite_size": "full",
+              "target_error": 0.05,
+              "validation_samples": 3
+            },
+            "tag": "rev5_v2",
+            "tasks": []
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -17,10 +17,47 @@ from tools.latency_bench.compose import (
     compose_to_csv,
 )
 from tools.latency_bench.fpga_clock import resolve_fpga_period_s
-from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
+from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite, load_suite
 
 
 class ComposeTest(unittest.TestCase):
+    def test_shared_head_reorder_measurement_counts_all_three_logical_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "suite.yaml"
+            source.write_text("""name: reorder_accounting
+defaults:
+  fpga_bin: C1
+workloads:
+  - id: prefill
+    model: llama2-7b
+    stage: prefill
+    batch: 1
+    prefill_seq_len: 1024
+    qblk: 32
+    variant: all_sgemm_tcu_spinquant
+    filter_backend: head_reorder
+""")
+            suite = load_suite(source, repo_root=Path.cwd())
+            self.assertEqual(4, len(suite.cases))
+            physical = {case.exec_key: case for case in suite.cases}
+            self.assertEqual(2, len(physical))
+            rows = []
+            for case in physical.values():
+                rows.append(dict(
+                    run_id="finite_inputs", timestamp_utc="2026-10-09T00:00:00Z",
+                    fpga_bin_label="C1", xclbin_sha256="abc", app=case.app,
+                    exec_key=case.exec_key, args=case.args, status="pass",
+                    p50_us=2 if case.name == "attn_v_transpose" else 5,
+                ))
+            raw = root / "raw_db.csv"
+            self._write_rows(raw, rows)
+            composed = compose_latency(suite, ComposeOptions(
+                raw_dbs=(raw,), out=root / "composed.csv", metric="p50_us"))
+            self.assertTrue(composed["compose_status"].eq("pass").all())
+            self.assertEqual(3 * 32 * 5 + 32 * 32 * 2,
+                             composed["weighted_latency_us"].sum())
+
     def test_fpga_period_uses_achieved_kernel_frequency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp)

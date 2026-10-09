@@ -1,0 +1,37 @@
+{
+  "source_tag": "th16_20261007_rev5_pipeline",
+  "tag": "rev5_v2",
+  "scope": "QK-only TCU input refresh plus missing head reorders and V transpose; other TCU rows retained by user request",
+  "models": {
+    "llama2": {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.th16_20261007_rev5_pipeline",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2",
+      "raw_sha256": {
+        "C1": "62acbaf542e61ba77e7487e717e70d3b18662d507ec8b05e10c41cb2ab6763e3",
+        "C3": "e5a2128cee421b458724b109555bf2df1a167ab763b864ac57388158796d9a8d",
+        "C4": "d9bb69dac133d0eabcd1761e3c77bcd2c189d47f7c8540bd7ee9f93f25cac4bb"
+      },
+      "board": {
+        "hostname": "fpga",
+        "xrt_device_index": "0",
+        "xrt_device_bdf": "0000:2a:00.1",
+        "slurm_job_id": "5223"
+      }
+    },
+    "llama3": {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2",
+      "raw_sha256": {
+        "C1": "d1f549d8b6dd31b80020f7278526cd70480b5ecfcdf9672a4216bf3354e67553",
+        "C3": "f4afa41272591244e33d5704ea203266477f811cade8d6029c0d7a3679429299",
+        "C4": "e19a28133b424457de332bb06a63ac27988136279c662137cbb2d30ddb582987"
+      },
+      "board": {
+        "hostname": "fpga",
+        "xrt_device_index": "1",
+        "xrt_device_bdf": "0000:3d:00.1",
+        "slurm_job_id": "5224"
+      }
+    }
+  }
+}

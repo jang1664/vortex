@@ -1452,5 +1452,54 @@ class CampaignWrapperTest(unittest.TestCase):
             self.assertEqual("fixture-job", status["job_id"])
 
 
+class OfflineCompositionTest(unittest.TestCase):
+    def test_filtered_refine_does_not_require_checkpoints_for_skipped_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = pipeline.PipelineSettings("filtered", root, root,
+                                                 case_filters=("backend=head_reorder",))
+            with mock.patch.object(pipeline, "build_stage_tasks", return_value=()), \
+                    mock.patch.object(pipeline, "_validate_excluded_prerequisites", return_value=[]), \
+                    mock.patch.object(pipeline, "_legacy_writer", return_value=None):
+                code, summary = pipeline.run_pipeline(settings, first="refine", last="refine")
+            self.assertEqual(0, code, summary)
+            self.assertEqual([], summary["blocked"])
+
+    def test_offline_mode_skips_only_acquisition_prerequisites(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = pipeline.PipelineSettings("history", root, root, offline_inputs=root)
+            store = pipeline.ReceiptStore(settings.state_root)
+            with mock.patch.object(pipeline, "build_stage_tasks", return_value=()) as build:
+                self.assertEqual([], pipeline._validate_excluded_prerequisites(
+                    settings, ("compose",), store, publish_adoption=False))
+                build.assert_not_called()
+                pipeline._validate_excluded_prerequisites(
+                    settings, ("plot",), store, publish_adoption=False)
+                self.assertEqual(["compose", "prepare"], [call.args[1] for call in build.call_args_list])
+            with self.assertRaisesRegex(ValueError, "offline inputs"):
+                pipeline.run_pipeline(settings, first="run", last="plot")
+
+    def test_offline_inventory_rejects_changed_raw_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = pipeline.PipelineSettings("history", root, root, models=("llama2",), offline_inputs=root)
+            raw = {}
+            for path in pipeline._raw_dbs(settings, "llama2"):
+                path.parent.mkdir(parents=True)
+                path.write_text("original\n")
+                raw[str(path)] = {"sha256": pipeline.content_identity(path).sha256}
+            for phase in ("prefill", "generation"):
+                for label in ("C1", "C2", "C3", "C4_fused"):
+                    path = settings.suite_root("llama2") / f"{label}_{phase}" / "index.yaml"
+                    path.parent.mkdir(parents=True)
+                    path.write_text("generated: []\n")
+            (root / "power_selection.json").write_text("{}")
+            (root / "input_inventory.json").write_text(json.dumps({"tag": "history", "raw": raw, "suites": []}))
+            self.assertEqual([], pipeline._full_input_problems(settings, "compose"))
+            Path(next(iter(raw))).write_text("changed\n")
+            self.assertIn("offline raw database changed", " ".join(pipeline._full_input_problems(settings, "compose")))
+
+
 if __name__ == "__main__":
     unittest.main()

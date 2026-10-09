@@ -1,0 +1,1490 @@
+{
+  "filter": "(app=sgemm_tcu & name=attn_qkT) | backend=head_reorder",
+  "models": {
+    "llama2": {
+      "prefill": {
+        "suite": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/prefill_merged/prefill_merged_C1.pkl",
+        "physical_cases": [
+          {
+            "exec_key": "3603932b98",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1024 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "783a9400ed",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1024 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "03a9477af9",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2048 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "84332761b0",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2048 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "8749e2a157",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4096 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "35e79dda42",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4096 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "29dcb80a15",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8192 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "953a658f27",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8192 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "adf5f3d1e1",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16384 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "16bf5e34f7",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16384 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "d8bcc92580",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32768 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "e86359b8a5",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32768 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "002fbc06dc",
+            "app": "sgemm_tcu",
+            "args": "-m 1024 -n 1024 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "b807976c7a",
+            "app": "sgemm_tcu",
+            "args": "-m 2048 -n 2048 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "c446fa00b5",
+            "app": "sgemm_tcu",
+            "args": "-m 4096 -n 4096 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "5486d6a758",
+            "app": "sgemm_tcu",
+            "args": "-m 8192 -n 8192 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "78a8497a5d",
+            "app": "sgemm_tcu",
+            "args": "-m 16384 -n 16384 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "dac9648a76",
+            "app": "sgemm_tcu",
+            "args": "-m 32768 -n 32768 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          }
+        ],
+        "qk": 6,
+        "reorder": 12
+      },
+      "generation": {
+        "suite": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama2_7b_main_full.rev5_v2/generation_merged/generation_merged_C1.pkl",
+        "physical_cases": [
+          {
+            "exec_key": "f0a99a05d3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c1909b6c32",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1025 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "2e262f7674",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1057 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "72707bf344",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1089 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "69a56bafb9",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1121 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dcc0d3ddc4",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1152 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "30e510bb3d",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2049 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "854f078a5c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2081 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "32725c0f4c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2113 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dd34178e94",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2145 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "2d08bdb662",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2176 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f9d3c66e6b",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4097 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c8ea3a1231",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4129 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5642092f49",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4161 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d57c8e220b",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4193 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "62b69a1e45",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4224 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8bf8f4008a",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8193 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "9101394e6c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8225 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "90bca62794",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8257 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5719a6dff3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8289 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d2b2babe24",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8320 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f307ed718d",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16385 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a16aff6172",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16417 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "1515530f36",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16449 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "62e08eb9f2",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16481 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0b86e87fed",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16512 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "780600ac19",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32769 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a9dcc1edd3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32801 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4cce771fa5",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32833 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "b0ba6c7b8f",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32865 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "bbcb68f8ad",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32896 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8c6dbce975",
+            "app": "head_concat",
+            "args": "-batch 4 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "46b6fa556a",
+            "app": "head_concat",
+            "args": "-batch 64 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4e2d4d3c56",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1040 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "572a74c641",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1056 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f74c7f8ac3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1072 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "260a62855a",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1088 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "04b69cd731",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1104 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "fb1df919f7",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1120 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "ee59473edf",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1136 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5f5d0a4d34",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1152 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "1ccb0c4aa3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2064 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0634655e14",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2080 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f8ca9f8029",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2096 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "116ab0b71f",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2112 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dc1ad34741",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2128 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5ec3089bda",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2144 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "93e35dbdf0",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2160 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "13f9328f51",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2176 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "55fee3dd29",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4112 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0a52af7746",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4128 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "de61f0cdc2",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4144 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "fb69558851",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4160 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "41de3e6294",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4176 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "19e3a84676",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4192 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "78041561f2",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4208 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "bb3854b464",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4224 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "04e8e43660",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8208 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "23d31fd41b",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8224 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a91a1738cf",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8240 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0c0a010866",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8256 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "507bfe358d",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8272 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "e690cf23f4",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8288 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a1eb7f0443",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8304 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c5408d54f6",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8320 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8cdb10a834",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16400 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "7876f920e4",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16416 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "ee1fdd573f",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16432 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "56ed919457",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16448 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "739a77a22d",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16464 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f4473edd43",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16480 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8b02993d54",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16496 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "99dc403e1c",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16512 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d8cfc13a17",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32784 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "6d9af03bfa",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32800 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "649e302575",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32816 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4ba8de2902",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32832 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "72f10ea1e3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32848 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "922694322a",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32864 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c99bfe99e5",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32880 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "7f9400f042",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32896 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          }
+        ],
+        "qk": 48,
+        "reorder": 33
+      }
+    },
+    "llama3": {
+      "prefill": {
+        "suite": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/prefill_merged/prefill_merged_C1.pkl",
+        "physical_cases": [
+          {
+            "exec_key": "0d10c3db40",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1024 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "3603932b98",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1024 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "783a9400ed",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1024 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "6de437d9e4",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2048 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "03a9477af9",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2048 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "84332761b0",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2048 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "79bf0b3412",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4096 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "8749e2a157",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4096 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "35e79dda42",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4096 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "cbea4871bb",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8192 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "29dcb80a15",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8192 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "953a658f27",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8192 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "1e4d543876",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16384 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "adf5f3d1e1",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16384 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "16bf5e34f7",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16384 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "afc2f2c21d",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32768 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "d8bcc92580",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32768 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "e86359b8a5",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32768 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "002fbc06dc",
+            "app": "sgemm_tcu",
+            "args": "-m 1024 -n 1024 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "b807976c7a",
+            "app": "sgemm_tcu",
+            "args": "-m 2048 -n 2048 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "c446fa00b5",
+            "app": "sgemm_tcu",
+            "args": "-m 4096 -n 4096 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "5486d6a758",
+            "app": "sgemm_tcu",
+            "args": "-m 8192 -n 8192 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "78a8497a5d",
+            "app": "sgemm_tcu",
+            "args": "-m 16384 -n 16384 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          },
+          {
+            "exec_key": "dac9648a76",
+            "app": "sgemm_tcu",
+            "args": "-m 32768 -n 32768 -k 128",
+            "name": "attn_qkT",
+            "stage": "prefill"
+          }
+        ],
+        "qk": 6,
+        "reorder": 18
+      },
+      "generation": {
+        "suite": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/generated_suites/llama3_8b_main_full.rev5_v2/generation_merged/generation_merged_C1.pkl",
+        "physical_cases": [
+          {
+            "exec_key": "2fdf878f61",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f0a99a05d3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c1909b6c32",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1025 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "2e262f7674",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1057 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "72707bf344",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1089 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "69a56bafb9",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1121 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dcc0d3ddc4",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 1152 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "30e510bb3d",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2049 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "854f078a5c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2081 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "32725c0f4c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2113 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dd34178e94",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2145 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "2d08bdb662",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 2176 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f9d3c66e6b",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4097 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c8ea3a1231",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4129 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5642092f49",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4161 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d57c8e220b",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4193 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "62b69a1e45",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 4224 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8bf8f4008a",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8193 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "9101394e6c",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8225 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "90bca62794",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8257 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5719a6dff3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8289 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d2b2babe24",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 8320 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f307ed718d",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16385 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a16aff6172",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16417 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "1515530f36",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16449 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "62e08eb9f2",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16481 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0b86e87fed",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 16512 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "780600ac19",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32769 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a9dcc1edd3",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32801 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4cce771fa5",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32833 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "b0ba6c7b8f",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32865 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "bbcb68f8ad",
+            "app": "head_concat",
+            "args": "-batch 1 -seq 32896 -heads 1 -headdim 128 -mode 2",
+            "name": "attn_v_transpose",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "702d183d05",
+            "app": "head_concat",
+            "args": "-batch 4 -seq 1 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8c6dbce975",
+            "app": "head_concat",
+            "args": "-batch 4 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "83229ab536",
+            "app": "head_concat",
+            "args": "-batch 64 -seq 1 -heads 8 -headdim 128 -mode 1",
+            "name": "attn_k_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "46b6fa556a",
+            "app": "head_concat",
+            "args": "-batch 64 -seq 1 -heads 32 -headdim 128 -mode 1",
+            "name": "attn_q_head_reorder",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4e2d4d3c56",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1040 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "572a74c641",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1056 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f74c7f8ac3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1072 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "260a62855a",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1088 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "04b69cd731",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1104 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "fb1df919f7",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1120 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "ee59473edf",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1136 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5f5d0a4d34",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 1152 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "1ccb0c4aa3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2064 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0634655e14",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2080 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f8ca9f8029",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2096 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "116ab0b71f",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2112 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "dc1ad34741",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2128 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "5ec3089bda",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2144 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "93e35dbdf0",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2160 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "13f9328f51",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 2176 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "55fee3dd29",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4112 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0a52af7746",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4128 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "de61f0cdc2",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4144 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "fb69558851",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4160 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "41de3e6294",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4176 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "19e3a84676",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4192 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "78041561f2",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4208 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "bb3854b464",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 4224 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "04e8e43660",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8208 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "23d31fd41b",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8224 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a91a1738cf",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8240 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "0c0a010866",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8256 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "507bfe358d",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8272 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "e690cf23f4",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8288 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "a1eb7f0443",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8304 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c5408d54f6",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 8320 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8cdb10a834",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16400 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "7876f920e4",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16416 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "ee1fdd573f",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16432 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "56ed919457",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16448 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "739a77a22d",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16464 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "f4473edd43",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16480 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "8b02993d54",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16496 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "99dc403e1c",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 16512 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "d8cfc13a17",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32784 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "6d9af03bfa",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32800 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "649e302575",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32816 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "4ba8de2902",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32832 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "72f10ea1e3",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32848 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "922694322a",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32864 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "c99bfe99e5",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32880 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          },
+          {
+            "exec_key": "7f9400f042",
+            "app": "sgemm_tcu",
+            "args": "-m 16 -n 32896 -k 128",
+            "name": "attn_qkT",
+            "stage": "generation"
+          }
+        ],
+        "qk": 48,
+        "reorder": 36
+      }
+    }
+  },
+  "source_identities": {
+    "sgemm_tcu": "d8a2f3d34c84afb309e7425f71541a60e5438c17bac3f01e04061e78cc6eebaa",
+    "head_concat": "c225660bdb3c659ed968780a696136d0eb4866943a20df902d062713e164b93b"
+  }
+}

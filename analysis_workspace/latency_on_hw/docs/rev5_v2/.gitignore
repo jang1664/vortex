@@ -1,0 +1,4 @@
+# Local generated suite snapshots; retain scripts, hashes, and result summaries.
+/kv_quant_padded/llama*_suite_before/
+/kv_quant_padded/llama*_suite_original/
+/plot/suites/

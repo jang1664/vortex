@@ -29,6 +29,88 @@ def _repo_root() -> Path:
 
 
 class KernelVariantTest(unittest.TestCase):
+    def test_fused_decode_quant_uses_physical_source_rows(self) -> None:
+        from tools.latency_bench.suite import make_exec_key
+        for model in ("llama2-7b", "llama3-8b"):
+            for batch in (1, 16):
+                payload = build_llm_kernels(
+                    model, ["prefill", "generation"], batch, 32, 1024, 32,
+                    variant="all_fpint_gemm_improve_fused_layout_spinquant",
+                    out_tokens=2,
+                )
+                quant = [k for k in payload["kernels"]
+                         if k["backend"] == "kv_cache_quant_layout_fused_w4a16"]
+                self.assertTrue(quant)
+                for kernel in quant:
+                    if kernel["stage"] == "prefill":
+                        self.assertNotIn("--source-total-k", kernel["args"])
+                        continue
+                    key = kernel["name"] == "kv_cache_quant_rope_k_to_attn_qkT"
+                    rows = 8 if key else max(8, batch)
+                    self.assertEqual(1, kernel["shape"]["K"])
+                    self.assertEqual(rows, kernel["shape"]["source_total_k"])
+                    self.assertIn(f"--source-total-k {rows}", kernel["args"])
+                    self.assertEqual("gemm_a_tiled" if key else "gemm_c_tiled",
+                                     kernel["shape"]["layout_from"])
+                    old_args = kernel["args"].replace(f" --source-total-k {rows}", "")
+                    self.assertNotEqual(make_exec_key("image", kernel["app"], old_args),
+                                        make_exec_key("image", kernel["app"], kernel["args"]))
+
+    def test_head_reorders_account_for_gqa_connections_and_tcu_transpose(self) -> None:
+        for variant, transpose in (
+            ("all_sgemm_tcu_spinquant", True),
+            ("attn_sgemm_tcu_fpint_gemm_naive_spinquant", True),
+            ("all_fpint_gemm_naive_spinquant", False),
+        ):
+            with self.subTest(variant=variant):
+                payload = build_llm_kernels(
+                    "llama3-8b", ["prefill"], 2, 1024, 1024, 32,
+                    variant=variant,
+                )
+                by_name = {k["name"]: k for k in payload["kernels"]}
+                for operand, heads in (("q", 32), ("k", 8), ("v", 8)):
+                    k = by_name[f"attn_{operand}_head_reorder"]
+                    self.assertEqual("head_concat", k["app"])
+                    self.assertEqual("head_reorder", k["backend"])
+                    self.assertEqual("reorder", k["kind"])
+                    self.assertEqual(32, k["calls_per_forward"])
+                    self.assertEqual(
+                        f"-batch 2 -seq 1024 -heads {heads} -headdim 128 -mode 1",
+                        k["args"],
+                    )
+                self.assertEqual(transpose, "attn_v_transpose" in by_name)
+                if transpose:
+                    k = by_name["attn_v_transpose"]
+                    self.assertEqual(32 * 2 * 8, k["calls_per_forward"])
+                    self.assertEqual(
+                        "-batch 1 -seq 1024 -heads 1 -headdim 128 -mode 2", k["args"])
+                self.assertEqual("attn_q_head_reorder",
+                                 by_name["spinquant_r3_q_hadamard"]["inputs"][0]["source"])
+                self.assertEqual("attn_v_head_reorder",
+                                 by_name["kv_cache_quant_v_cache_to_attn_pv"]["inputs"][0]["source"])
+
+    def test_decode_v_transpose_is_length_dependent_not_invariant(self) -> None:
+        payload = build_llm_kernels(
+            "llama3-8b", ["generation"], 1, 1024, 1024, 32,
+            variant="all_sgemm_tcu_spinquant", out_tokens=5,
+            decode_measurement="sampled", decode_sample_interval=4,
+        )
+        transposes = [k for k in payload["kernels"] if k["name"] == "attn_v_transpose"]
+        self.assertEqual([1025, 1026, 1027, 1028, 1029],
+                         [k["shape"]["seq"] for k in transposes])
+        self.assertTrue(all(k["shape"]["decode_sampling_class"] == "continuous"
+                            for k in transposes))
+        self.assertIn("interpolated", {k["shape"]["measurement_kind"] for k in transposes})
+        self.assertTrue(all(k["calls_per_forward"] == 32 * 8 for k in transposes))
+
+    def test_fused_c4_does_not_add_standalone_head_reorders(self) -> None:
+        for stage in ("prefill", "generation"):
+            payload = build_llm_kernels(
+                "llama3-8b", [stage], 1, 1024, 1024, 32,
+                variant="all_fpint_gemm_improve_fused_layout_spinquant", out_tokens=2,
+            )
+            self.assertFalse(any(k["kind"] == "reorder" for k in payload["kernels"]))
+
     def test_generation_exact_preserves_logical_decode_arguments(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
@@ -440,7 +522,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn(
             {
                 "role": "C",
-                "target": "kv_cache_quant_v_cache_to_attn_pv",
+                "target": "attn_v_head_reorder",
                 "layout": "row_major_fp16",
             },
             v_proj["outputs"],
@@ -454,8 +536,8 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn(
             {
                 "role": "B",
-                "source": "kv_cache_dequant_v_to_attn_pv",
-                "layout": "row_major_fp16",
+                "source": "attn_v_transpose",
+                "layout": "col_major_fp16",
             },
             attn_pv["inputs"],
         )

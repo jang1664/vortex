@@ -1,0 +1,26 @@
+[
+  {
+    "candidate": "C1",
+    "app": "head_concat",
+    "shape": "q_head_reorder",
+    "args": "-batch 1 -seq 1024 -heads 32 -headdim 128 -mode 1"
+  },
+  {
+    "candidate": "C1",
+    "app": "head_concat",
+    "shape": "kv_head_reorder",
+    "args": "-batch 2 -seq 17 -heads 8 -headdim 128 -mode 1"
+  },
+  {
+    "candidate": "C1",
+    "app": "head_concat",
+    "shape": "decode_head_reorder",
+    "args": "-batch 4 -seq 1 -heads 32 -headdim 128 -mode 1"
+  },
+  {
+    "candidate": "C1",
+    "app": "head_concat",
+    "shape": "v_transpose",
+    "args": "-batch 1 -seq 1025 -heads 1 -headdim 128 -mode 2"
+  }
+]
