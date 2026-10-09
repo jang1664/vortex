@@ -1,0 +1,9 @@
+{
+  "date": "2026-10-09",
+  "git_head": "ff466b03a200b1925f255d874bfb1d23e261b924",
+  "modified_rtl": "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv",
+  "modified_rtl_sha256": "e6cb467e438399a7b6f93492219fb85e8ca9fca4b37733adf667380e7dbebcb9",
+  "scope": "naive simulation assertion only; hardware logic unchanged",
+  "baseline": "../raw",
+  "all_cases_passed": true
+}

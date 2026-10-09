@@ -13,5 +13,7 @@ for candidate in ['c3','c4']:
     text+='\n# Passive analysis-only monitor; no source RTL changes.\n'
     text+='RTL_PKGS += '+str(MONITOR)+'\n'
     text+='$(DESTDIR)/simv: '+str(MONITOR)+'\n'
+    if candidate == 'c3':
+        text+='$(DESTDIR)/simv: '+str(ROOT/'hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv')+'\n'
     makefile.write_text(text)
     print('Configured',build)

@@ -1,9 +1,9 @@
 # rev6 C3/C4 GEMM fine-grained 성능 분석
 
-측정일: 2026-10-08. `candidate_fpga_bins.rev6.yaml`의 C3/C4에 해당하는 소스 설정으로 `ci/run_black.sh xrt-vcs-sim --perf 3`을 실행했다. FPGA bitstream을 실행한 결과가 아니라 현재 worktree RTL의 VCS 시뮬레이션 결과다.
+측정일: 2026-10-08, C3 attention 보완 및 M=4 projection 추가 측정: 2026-10-09. `candidate_fpga_bins.rev6.yaml`의 C3/C4에 해당하는 소스 설정으로 `ci/run_black.sh xrt-vcs-sim --perf 3`을 실행했다. FPGA bitstream을 실행한 결과가 아니라 현재 worktree RTL의 VCS 시뮬레이션 결과다.
 
 <!-- SUMMARY -->
-공통 projection에서 C4는 C3보다 GEMM 구간 기준 **Llama3 K/V 1.882배, Llama2 FFN 1.916배** 빠르다. GEMM 구간 HBM AXI 평균은 C3 **1.18–1.20 GB/s**, C4 **2.30–2.31 GB/s**, MXU input utilization은 C3 **7.34–7.46%**, C4 **14.04–14.06%**다. LMEM/TMEM의 물리 read/write byte 수는 같은 shape에서 동일해, 데이터량 감소보다 공급·중첩 경로의 처리 속도 차이가 두드러진다. 작은 검증 case를 포함한 7개 실행은 reference 검증을 통과했다. C3의 QBLK=128 attention은 현재 naive FSM 지원 범위 제한으로 실패해 성능 표에서 제외했다. HBM 모델은 uncalibrated이며 GB/s를 실측 hardware bandwidth로 해석하지 않는다.
+공통 projection에서 C4는 C3보다 GEMM 구간 기준 **Llama3 K/V 1.882배, Llama2 FFN 1.916배** 빠르다. GEMM 구간 HBM AXI 평균은 C3 **1.18–1.20 GB/s**, C4 **2.30–2.31 GB/s**, MXU input utilization은 C3 **7.34–7.46%**, C4 **14.04–14.06%**다. K/V·FFN projection의 LMEM/TMEM 물리 read/write byte 수는 같은 shape에서 동일해, 데이터량 감소보다 공급·중첩 경로의 처리 속도 차이가 두드러진다. 작은 검증 case를 포함한 8개 실행은 reference 검증을 통과했다. M4 attention도 C3를 보완 측정해 C4가 GEMM 구간 **1.427배** 빠름을 확인했다. HBM 모델은 uncalibrated이며 GB/s를 실측 hardware bandwidth로 해석하지 않는다.
 <!-- /SUMMARY -->
 
 ## 측정 조건과 재현 자료
@@ -24,7 +24,7 @@
 
 HBM 모델은 logic=100 MHz, HBM AXI=300 MHz, DRAM profile=`HBM2_2Gbps`이며 manifest의 timing provenance는 **uncalibrated**다. 따라서 아래 GB/s는 해당 모델과 clock 가정에서 관측한 값이다. 실제 U55C HBM의 달성 bandwidth를 확정하려면 같은 계측을 hardware에서 검증해야 한다. alias의 bitstream 명칭은 구성 선택의 근거이며, 해당 bitstream과 현재 dirty worktree의 RTL 동일성을 주장하지 않는다.
 
-실행 당시 기존 FSM/kernel 변경을 그대로 사용했다. 분석 작업은 RTL/kernel source를 수정하지 않았다. [provenance.json](perf_rev6/provenance.json)에 HEAD·source hash·dirty status, `perf_rev6/source_worktree.patch`에 관련 기존 변경을 로컬로 보존했다. 각 실행의 config/monitor hash와 명령은 `perf_rev6/raw/*.json`, 모델의 실제 parameter/주소 매핑은 `*.model.json`에 있다.
+최초 측정은 당시 기존 FSM/kernel 변경을 그대로 사용했고 분석 계측은 RTL/kernel source를 수정하지 않았다. 2026-10-09 보완 측정에서는 naive의 simulation 전용 QBLK assertion만 16·32·64·128 허용으로 수정했다. 하드웨어 데이터 경로는 변경하지 않았다. 이번 C3 attention은 아래 모든 표·그림·요약 파일에 포함되며, 원래 실패 기록과 작은 QBLK별 검증은 별도로 보존했다. [provenance.json](perf_rev6/provenance.json)에 HEAD·source hash·dirty status, `perf_rev6/source_worktree.patch`에 관련 기존 변경을 로컬로 보존했다. 각 실행의 config/monitor hash와 명령은 `perf_rev6/raw/*.json`, 모델의 실제 parameter/주소 매핑은 `*.model.json`에 있다.
 
 Git에는 이 보고서, 요약 CSV, 본문의 PNG 그림, provenance 및 재현 스크립트를 보존한다. `perf_rev6/raw/`, 전체 window dump인 `measurements.json`, 임시 `source_worktree.patch`와 SVG 출력은 생성 자료이므로 ignore한다. 원시 자료가 없는 checkout에서는 아래 재실행 절차로 다시 생성해야 한다. RTL 및 kernel 변경은 `af4536708`에 커밋되어 있으며, 측정 당시 파일 hash는 provenance로 확인할 수 있다.
 
@@ -36,8 +36,10 @@ Git에는 이 보고서, 요약 CSV, 본문의 PNG 그림, provenance 및 재현
 | llama3_kv_decode | 1 × 1024 × 4096 | 32 / 0 / 0 | Llama3-8B generation의 K/V projection; 긴 reduction 및 작은 M |
 | llama3_attention_decode | 4 × 1025 × 128 | 128 / 1 / 0 | Llama3-8B generation의 첫 attention QKᵀ; GQA M=4, ragged N, 전치 weight |
 | llama2_ffn_decode | 1 × 11008 × 4096 | 32 / 0 / 0 | Llama2-7B generation의 gate/up projection; 큰 weight footprint |
+| llama3_kv_decode_m4 | 4 × 1024 × 4096 | 32 / 0 / 0 | 같은 K/V projection의 M=1→4 weight 재사용 비교 |
+| llama2_ffn_decode_m4 | 4 × 11008 × 4096 | 32 / 0 / 0 | 같은 FFN projection의 M=1→4 weight 재사용 비교 |
 
-실제 dimension과 옵션은 `analysis_workspace/latency_on_hw/generated_suites/{llama2_7b,llama3_8b}_main_full.th16_20261004_rev4_pipeline/C3_generation/model_structure.text`에서 확인했다. C4는 같은 shape를 improve app으로 실행한다. 과거 suite는 shape 출처이며 하드웨어 설정은 **rev6**를 따른다. 한 GEMM invocation을 분석하며 layer/token 전체 합계나 latency_on_hw의 warmup/반복 평균과 직접 동일시하지 않는다. 이번 표본은 generation에 한정되어 prefill 전반으로 일반화하지 않는다.
+기존 M=1 projection 및 attention의 dimension과 옵션은 `analysis_workspace/latency_on_hw/generated_suites/{llama2_7b,llama3_8b}_main_full.th16_20261004_rev4_pipeline/C3_generation/model_structure.text`에서 확인했다. C4는 같은 shape를 improve app으로 실행한다. 과거 suite는 shape 출처이며 하드웨어 설정은 **rev6**를 따른다. 한 GEMM invocation을 분석하며 layer/token 전체 합계나 latency_on_hw의 warmup/반복 평균과 직접 동일시하지 않는다. M=4 projection은 같은 N/K를 유지한 controlled workload 비교이며 실제 logical/target M=4로 실행한다. 이번 표본을 prefill 전반으로 일반화하지 않는다. 현재 추가 실험에서 RTL/kernel의 기능·성능 변경은 하지 않았다.
 
 ## 계측 방법과 해석 기준
 
@@ -72,6 +74,7 @@ Git에는 이 보고서, 요약 CSV, 본문의 PNG 그림, provenance 및 재현
 | small | C4 | 303 | 3.030 | 92.370 | 21.122 | 28.713 | 10.815 |
 | llama3_kv_decode | C3 | 219,638 | 2,196.380 | 2,293.790 | 7.460 | 52.329 | 3.819 |
 | llama3_kv_decode | C4 | 116,716 | 1,167.160 | 1,257.120 | 14.037 | 99.235 | 7.187 |
+| llama3_attention_decode | C3 | 7,596 | 75.960 | 174.670 | 27.383 | 76.435 | 13.818 |
 | llama3_attention_decode | C4 | 5,324 | 53.240 | 143.300 | 39.068 | 71.112 | 19.715 |
 | llama2_ffn_decode | C3 | 2,399,965 | 23,999.650 | 24,097.040 | 7.339 | 51.237 | 3.757 |
 | llama2_ffn_decode | C4 | 1,252,396 | 12,523.960 | 12,613.620 | 14.063 | 99.418 | 7.200 |
@@ -86,6 +89,7 @@ Git에는 이 보고서, 요약 CSV, 본문의 PNG 그림, provenance 및 재현
 | c4_small | 64 | 16 | 5.281 | 64 | 51.200 | 21.122 |
 | c3_llama3_kv_decode | 16,384 | 65,536 | 29.838 | 65,536 | 12.800 | 29.838 |
 | c4_llama3_kv_decode | 16,384 | 65,536 | 56.150 | 65,536 | 12.800 | 56.150 |
+| c3_llama3_attention_decode | 2,080 | 2,080 | 27.383 | 2,080 | 50.462 | 27.383 |
 | c4_llama3_attention_decode | 2,080 | 2,080 | 39.068 | 2,080 | 50.462 | 39.068 |
 | c3_llama2_ffn_decode | 176,128 | 704,512 | 29.355 | 704,512 | 12.800 | 29.355 |
 | c4_llama2_ffn_decode | 176,128 | 704,512 | 56.253 | 704,512 | 12.800 | 56.253 |
@@ -100,6 +104,7 @@ weight bus는 `GEMM_WEIGHT_DATA_SIZE=(COL×WLOAD_NUM×4)/8=32 B`이고, 한 16×
 | c4_small | 0.130 | 0.887 | N/A | N/A | N/A | N/A | 0 |
 | c3_llama3_kv_decode | 1.156 | 1.202 | 1.012 | 1.319 | 1.205 | 1.206 | 214 |
 | c4_llama3_kv_decode | 2.146 | 2.304 | 2.050 | 3.100 | 2.324 | 2.075 | 113 |
+| c3_llama3_attention_decode | 0.510 | 1.041 | 0.169 | 1.750 | 1.088 | 0.975 | 7 |
 | c4_llama3_attention_decode | 0.682 | 1.659 | 0.569 | 2.938 | 1.712 | 1.894 | 5 |
 | c3_llama2_ffn_decode | 1.178 | 1.183 | 1.000 | 1.325 | 1.183 | 1.200 | 2343 |
 | c4_llama2_ffn_decode | 2.292 | 2.308 | 0.294 | 3.100 | 2.308 | 2.075 | 1223 |
@@ -112,6 +117,7 @@ small은 GEMM 길이가 1,024 cycles 미만이라 GEMM window min/max를 제공�
 | c4_small | 9,024 | 3,028 | 1,664 | 1,024 | 2.719 |
 | c3_llama3_kv_decode | 2,647,040 | 4,189 | 2,638,976 | 1,792 | 3.164 |
 | c4_llama3_kv_decode | 2,694,336 | 4,052 | 2,686,976 | 2,048 | 3.109 |
+| c3_llama3_attention_decode | 78,784 | 10,341 | 70,848 | 8,192 | 11.777 |
 | c4_llama3_attention_decode | 87,360 | 10,324 | 80,000 | 8,320 | 10.745 |
 | c3_llama2_ffn_decode | 28,372,992 | 24,157 | 28,364,928 | 21,760 | 3.176 |
 | c4_llama2_ffn_decode | 28,892,352 | 24,020 | 28,884,992 | 22,016 | 3.119 |
@@ -124,6 +130,7 @@ small은 GEMM 길이가 1,024 cycles 미만이라 GEMM window min/max를 제공�
 | c4_small | 0.000 | 0.441 | 0.131 | 11.111 | 0.017 | 0.079 | 0.033 |
 | c3_llama3_kv_decode | 0.000 | 1.325 | 1.156 | 0.446 | 0.288 | 0.291 | 0.289 |
 | c4_llama3_kv_decode | 0.000 | 3.081 | 2.160 | 0.820 | 0.535 | 0.540 | 0.537 |
+| c3_llama3_attention_decode | 0.000 | 1.350 | 0.512 | 11.765 | 0.119 | 0.152 | 0.128 |
 | c4_llama3_attention_decode | 0.000 | 2.038 | 0.733 | 7.692 | 0.160 | 0.200 | 0.170 |
 | c3_llama2_ffn_decode | 0.000 | 1.325 | 1.179 | 0.042 | 0.295 | 0.295 | 0.295 |
 | c4_llama2_ffn_decode | 0.000 | 3.094 | 2.294 | 0.081 | 0.573 | 0.573 | 0.573 |
@@ -138,6 +145,7 @@ port avg는 각 port의 전체 core 구간 평균이며, 시간 window 통계와
 | c4_small | TMEM | 3,840 | 2,688 | 0.071 | 6 | 6 |
 | c3_llama3_kv_decode | LMEM | 3,672,064 | 2,689,024 | 2.773 | 121,503 | 0 |
 | c4_llama3_kv_decode | TMEM | 3,672,064 | 2,689,024 | 5.060 | 12,639 | 12,639 |
+| c3_llama3_attention_decode | LMEM | 174,624 | 87,744 | 1.502 | 6,798 | 0 |
 | c4_llama3_attention_decode | TMEM | 174,720 | 88,320 | 1.836 | 712 | 712 |
 | c3_llama2_ffn_decode | LMEM | 39,474,688 | 28,907,008 | 2.838 | 1,287,717 | 0 |
 | c4_llama2_ffn_decode | TMEM | 39,474,688 | 28,907,008 | 5.421 | 136,194 | 136,194 |
@@ -152,6 +160,7 @@ C3의 collision event는 기존 LMEM bank_stalls이고 마지막 열은 response
 | c4_small | 219 | 67 | 30.594 |
 | c3_llama3_kv_decode | 185,556 | 104,837 | 56.499 |
 | c4_llama3_kv_decode | 116,212 | 115,687 | 99.548 |
+| c3_llama3_attention_decode | 4,404 | 3,614 | 82.062 |
 | c4_llama3_attention_decode | 4,510 | 3,642 | 80.754 |
 | c3_llama2_ffn_decode | 2,038,147 | 1,124,038 | 55.150 |
 | c4_llama2_ffn_decode | 1,247,836 | 1,243,645 | 99.664 |
@@ -170,6 +179,7 @@ C3의 collision event는 기존 LMEM bank_stalls이고 마지막 열은 response
 | c4_llama3_kv_decode | lmem_dma_weight | 2,097,152 | 2,097,152 | 115,764 | 1.812 | 0 | 0 |
 | c4_llama3_kv_decode | lmem_dma_sz | 1,048,576 | 1,048,576 | 231,451 | 0.453 | 0 | 0 |
 | c4_llama3_kv_decode | lmem_dma_output | 2,048 | 2,048 | 448 | 0.457 | 0 | 0 |
+| c3_llama3_attention_decode | cpu_dma | 80,256 | 11,776 | 4,404 | 1.822 | 1,210 | 1,502 |
 | c4_llama3_attention_decode | hbm_dma.aggregate | 80,000 | 8,320 | 4,390 | 1.822 | 54 | 451 |
 | c4_llama3_attention_decode | lmem_dma_input | 66,560 | 66,560 | 3,645 | 1.826 | 76 | 518 |
 | c4_llama3_attention_decode | lmem_dma_weight | 66,560 | 66,560 | 3,693 | 1.802 | 0 | 0 |
@@ -196,7 +206,7 @@ C4는 C3 대비 GEMM 구간 1.882배, 전체 core 구간 1.825배 빠르다. 유
 
 전체 core AXI traffic은 C3 2.651 MB, C4 2.698 MB다. C4의 이점은 주로 비슷한 데이터량을 더 짧은 시간에 처리하는 데 있다. GEMM window bandwidth 범위는 C3 1.012–1.319, C4 2.050–3.100 GB/s다.
 
-pipeline active 비율은 C3 52.329%, C4 99.235%이지만 input fire 비율은 훨씬 낮다. 특히 C4의 pipeline이 대부분의 시간 비어 있지 않아도 MAC peak utilization이 높다는 뜻은 아니다. DMA와 pipeline의 중첩 비율은 56.499% → 99.548%로 증가한다. 수치들은 C4의 DMA 중첩과 공급 경로 개선에 부합하지만, 개별 stall의 원인을 독립적으로 분리하는 ablation을 하지 않았으므로 특정 bank conflict가 전체 속도 차이를 설명한다고 단정할 수 없다.
+pipeline active 비율은 C3 52.329%, C4 99.235%이지만 input fire 비율은 훨씬 낮다. 특히 C4의 pipeline이 대부분의 시간 비어 있지 않아도 MAC peak utilization이 높다는 뜻은 아니다. DMA와 pipeline의 중첩 비율은 56.499% → 99.548%로 변한다. 이 수치는 DMA 중첩과 공급 경로를 구분하는 단서지만, 개별 stall의 원인을 독립적으로 분리하는 ablation을 하지 않았으므로 특정 bank conflict가 전체 속도 차이를 설명한다고 단정할 수 없다.
 
 C3 CPU-DMA source request stall은 86,695 events이며 wait_dcache 카운터와 같다. C4 HBM-DMA는 source request stall 7, destination write stall 9,094 events다. 관찰 지점이 달라 단순 event-count 비율을 speedup의 원인으로 해석할 수는 없지만, C3의 D-cache 경유 공급과 C4의 TMEM 수용 경로를 구분하는 진단 지표가 된다. C3 CPU-DMA rd counter 4,784,128 B와 실제 외부 AXI read 2,647,040 B도 같지 않아 DMA byte counter를 곧바로 HBM 물리 traffic으로 사용할 수 없다.
 
@@ -204,13 +214,27 @@ local memory physical traffic은 C3 read 3,672,064 B / write 2,689,024 B, C4 rea
 
 C4 input local DMA는 논리 A 8,192 B에 대해 524,288 B를 읽어 64.0배의 local read amplification을 보인다. N 방향 tile마다 A를 재사용하는 방식의 비용이며 HBM에서 같은 비율로 다시 읽는다는 의미는 아니다. weight, scale/zero의 전송량도 DMA table에서 별도로 확인할 수 있다.
 
+### llama3_attention_decode
+
+C4는 C3 대비 GEMM 구간 1.427배, 전체 core 구간 1.219배 빠르다. 유효 throughput은 13.818 → 19.715 GFLOP/s, MXU input utilization은 27.383% → 39.068%다. 두 backend의 input fire는 각각 2,080/2,080로 유효 연산량 차이에 의한 속도 차이가 아니다.
+
+전체 core AXI traffic은 C3 0.089 MB, C4 0.098 MB다. C4의 이점은 주로 비슷한 데이터량을 더 짧은 시간에 처리하는 데 있다. GEMM window bandwidth 범위는 C3 0.169–1.750, C4 0.569–2.938 GB/s다.
+
+pipeline active 비율은 C3 76.435%, C4 71.112%이지만 input fire 비율은 훨씬 낮다. 특히 C4의 pipeline이 대부분의 시간 비어 있지 않아도 MAC peak utilization이 높다는 뜻은 아니다. DMA와 pipeline의 중첩 비율은 82.062% → 80.754%로 변한다. 이 수치는 DMA 중첩과 공급 경로를 구분하는 단서지만, 개별 stall의 원인을 독립적으로 분리하는 ablation을 하지 않았으므로 특정 bank conflict가 전체 속도 차이를 설명한다고 단정할 수 없다.
+
+C3 CPU-DMA source request stall은 1,210 events이며 wait_dcache 카운터와 같다. C4 HBM-DMA는 source request stall 54, destination write stall 451 events다. 관찰 지점이 달라 단순 event-count 비율을 speedup의 원인으로 해석할 수는 없지만, C3의 D-cache 경유 공급과 C4의 TMEM 수용 경로를 구분하는 진단 지표가 된다. C3 CPU-DMA rd counter 80,256 B와 실제 외부 AXI read 78,784 B도 같지 않아 DMA byte counter를 곧바로 HBM 물리 traffic으로 사용할 수 없다.
+
+local memory physical traffic은 C3 read 174,624 B / write 87,744 B, C4 read 174,720 B / write 88,320 B다. local memory traffic의 양과 실제 처리 속도를 분리해 보는 것이 필요하다.
+
+C4 input local DMA는 논리 A 1,024 B에 대해 66,560 B를 읽어 65.0배의 local read amplification을 보인다. N 방향 tile마다 A를 재사용하는 방식의 비용이며 HBM에서 같은 비율로 다시 읽는다는 의미는 아니다. weight, scale/zero의 전송량도 DMA table에서 별도로 확인할 수 있다.
+
 ### llama2_ffn_decode
 
 C4는 C3 대비 GEMM 구간 1.916배, 전체 core 구간 1.910배 빠르다. 유효 throughput은 3.757 → 7.200 GFLOP/s, MXU input utilization은 7.339% → 14.063%다. 두 backend의 input fire는 각각 176,128/176,128로 유효 연산량 차이에 의한 속도 차이가 아니다.
 
 전체 core AXI traffic은 C3 28.397 MB, C4 28.916 MB다. C4의 이점은 주로 비슷한 데이터량을 더 짧은 시간에 처리하는 데 있다. GEMM window bandwidth 범위는 C3 1.000–1.325, C4 0.294–3.100 GB/s다.
 
-pipeline active 비율은 C3 51.237%, C4 99.418%이지만 input fire 비율은 훨씬 낮다. 특히 C4의 pipeline이 대부분의 시간 비어 있지 않아도 MAC peak utilization이 높다는 뜻은 아니다. DMA와 pipeline의 중첩 비율은 55.150% → 99.664%로 증가한다. 수치들은 C4의 DMA 중첩과 공급 경로 개선에 부합하지만, 개별 stall의 원인을 독립적으로 분리하는 ablation을 하지 않았으므로 특정 bank conflict가 전체 속도 차이를 설명한다고 단정할 수 없다.
+pipeline active 비율은 C3 51.237%, C4 99.418%이지만 input fire 비율은 훨씬 낮다. 특히 C4의 pipeline이 대부분의 시간 비어 있지 않아도 MAC peak utilization이 높다는 뜻은 아니다. DMA와 pipeline의 중첩 비율은 55.150% → 99.664%로 변한다. 이 수치는 DMA 중첩과 공급 경로를 구분하는 단서지만, 개별 stall의 원인을 독립적으로 분리하는 ablation을 하지 않았으므로 특정 bank conflict가 전체 속도 차이를 설명한다고 단정할 수 없다.
 
 C3 CPU-DMA source request stall은 963,148 events이며 wait_dcache 카운터와 같다. C4 HBM-DMA는 source request stall 85, destination write stall 98,036 events다. 관찰 지점이 달라 단순 event-count 비율을 speedup의 원인으로 해석할 수는 없지만, C3의 D-cache 경유 공급과 C4의 TMEM 수용 경로를 구분하는 진단 지표가 된다. C3 CPU-DMA rd counter 51,429,376 B와 실제 외부 AXI read 28,372,992 B도 같지 않아 DMA byte counter를 곧바로 HBM 물리 traffic으로 사용할 수 없다.
 
@@ -224,7 +248,7 @@ kernel-facing AXI의 config상 read capacity는 4 ports×64 B×100 MHz=25.6 GB/s
 
 ### Attention 및 지원 범위
 
-C4의 실제 Llama3 attention shape `4×1025×128, QBLK=128, WTRANS=1`은 검증을 통과했다. C3는 GEMM 시작 시 `VX_gemm_fsm_naive_meta.sv:384`의 `unsupported dimensions/qblock/alignment` assertion으로 종료했다. 이 FSM은 QBLK register의 log2 값이 5(=32)인지 검사한다. 실제 suite의 QBLK=128은 현재 naive RTL의 지원 범위를 벗어난다. 실패 실행의 GEMM cycles=0을 성능값으로 사용하지 않았다. 로컬 `perf_rev6/raw/c3_llama3_attention_decode.simv.log`에서 assertion을 확인할 수 있다. 이 shape를 두 backend에서 비교하려면 naive 지원 확장이 먼저 필요하며, QBLK를 임의로 바꾸면 원래 workload와 달라진다.
+실제 Llama3 attention shape `4×1025×128, QBLK=128, WTRANS=1, QDIR=0`은 C3와 C4 모두 reference 검증을 통과했다. C3의 최초 실패는 QBLK register를 log2=5(32)로 고정한 simulation assertion이었다. 2026-10-09에 허용 범위를 log2=4–7(16·32·64·128)로 넓힌 후 동일 shape를 `xrt-vcs-sim --perf 3`으로 다시 측정해 위 모든 표와 그림에 반영했다. 차원/alignment 검사는 유지했고 하드웨어 데이터 경로는 변경하지 않았다. 최초 실패 기록은 `perf_rev6/raw/attempts/c3_attention_qblk32_assertion_20261008/`에 보존하고 집계에서 제외했다. 작은 QBLK별 검증은 [별도 재실행 문서](perf_rev6/qblk_support_rerun_20261009/README.md)에 있다.
 
 ## 검증과 재실행
 
@@ -236,8 +260,7 @@ python3 analysis_workspace/latency/docs/perf_rev6/tools/setup_builds.py
 python3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case small
 python3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_kv_decode
 python3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama2_ffn_decode --timeout 5400
-# C3 QBLK=128 제약 때문에 attention은 C4만 정상 실행 가능
-python3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_attention_decode --candidate c4
+python3 analysis_workspace/latency/docs/perf_rev6/tools/run_cases.py --case llama3_attention_decode
 python3 analysis_workspace/latency/docs/perf_rev6/tools/analyze.py
 /home/jaeyongjang/.conda/envs/vortex/bin/python analysis_workspace/latency/docs/perf_rev6/tools/render_results.py
 ```

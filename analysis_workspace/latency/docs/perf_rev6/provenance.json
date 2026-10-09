@@ -11,5 +11,74 @@
     "runtime/stub/utils.cpp": "e92f33c7f6452ac0c593fc6de6e0b900314e1aeeefcf1915865ebe263a377bba"
   },
   "candidate_map": "schema_version: 1\ncandidates:\n  C1: tcu_th16_c1_v3_axi_fix\n  C2: naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol\n  C3: naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_axi_fix\n  C4: improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fsm_update\n",
-  "baseline_dirty_status": " M analysis_workspace/candidates_fpga_utils/candidate_fpga_bins.yaml\n M analysis_workspace/candidates_fpga_utils/results/summary.md\n M ci/fpga_bin_alias_map.yaml\n M hw/rtl/core/gemm/VX_gemm_fsm.sv\n M hw/syn/xilinx/xrt/Makefile\n M hw/syn/xilinx/xrt/gen_vitis_ini.py\n M hw/syn/xilinx/xrt/run_hw.sh.in\n M kernel/include/vx_tvm_gemm.h\n M paper/overleaf_fpga\n M tests/regression/fpint_gemm_ffn_hw/common.h\n M tests/regression/fpint_gemm_ffn_hw/kernel.cpp\n M tests/regression/fpint_gemm_ffn_hw/main.cpp\n"
+  "baseline_dirty_status": " M analysis_workspace/candidates_fpga_utils/candidate_fpga_bins.yaml\n M analysis_workspace/candidates_fpga_utils/results/summary.md\n M ci/fpga_bin_alias_map.yaml\n M hw/rtl/core/gemm/VX_gemm_fsm.sv\n M hw/syn/xilinx/xrt/Makefile\n M hw/syn/xilinx/xrt/gen_vitis_ini.py\n M hw/syn/xilinx/xrt/run_hw.sh.in\n M kernel/include/vx_tvm_gemm.h\n M paper/overleaf_fpga\n M tests/regression/fpint_gemm_ffn_hw/common.h\n M tests/regression/fpint_gemm_ffn_hw/kernel.cpp\n M tests/regression/fpint_gemm_ffn_hw/main.cpp\n",
+  "supplemental_runs": [
+    {
+      "date": "2026-10-09",
+      "case": "c3_llama3_attention_decode",
+      "head": "ff466b03a200b1925f255d874bfb1d23e261b924",
+      "rtl_change": "GEMM_NAIVE simulation-only assertion permits log2(QBLK)=4..7",
+      "modified_source_sha256": {
+        "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv": "e6cb467e438399a7b6f93492219fb85e8ca9fca4b37733adf667380e7dbebcb9"
+      },
+      "record": "raw/c3_llama3_attention_decode.json",
+      "previous_failure_archive": "raw/attempts/c3_attention_qblk32_assertion_20261008",
+      "status": "passed",
+      "gemm_cycles": 7596,
+      "aggregate_count": 8
+    }
+  ],
+  "m4_projection_experiment": {
+    "started": "2026-10-09T12:40:10.509024",
+    "head": "ff466b03a200b1925f255d874bfb1d23e261b924",
+    "case_ids": [
+      "llama3_kv_decode_m4",
+      "llama2_ffn_decode_m4"
+    ],
+    "baseline_source_commit": "af4536708",
+    "baseline_recorded_source_hash_matches": {
+      "ci/fpga_bin_alias_map.yaml": true,
+      "hw/rtl/core/gemm/VX_gemm_fsm.sv": true,
+      "kernel/include/vx_tvm_gemm.h": true,
+      "tests/regression/fpint_gemm_ffn_hw/common.h": true,
+      "tests/regression/fpint_gemm_ffn_hw/kernel.cpp": true,
+      "tests/regression/fpint_gemm_ffn_hw/main.cpp": true,
+      "hw/rtl/core/gemm/VX_gemm_compute_core.sv": true,
+      "runtime/stub/utils.cpp": true
+    },
+    "changes_since_baseline_source_commit": [
+      "ci/fpga_bin_alias_map.yaml",
+      "hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv"
+    ],
+    "comparability_reason": "Recorded hashes, config and monitor match. Only naive simulation assertion and alias map differ from baseline source commit; recorded alias map hash matches and sourced configs match. Datapath, kernels and simulator/model sources unchanged. M=1 baseline reusable if final model SHA matches.",
+    "source_functional_changes_this_task": false,
+    "config_monitor_comparison": {
+      "c3": {
+        "config_sha256": true,
+        "monitor_sha256": true
+      },
+      "c4": {
+        "config_sha256": true,
+        "monitor_sha256": true
+      }
+    },
+    "start_model_comparison": {
+      "c3": {
+        "old_sha256": "46d21a1b20b39d104afd55e204ae75919df9222a512f8e510b040f2d32f071c9",
+        "new_sha256": "46d21a1b20b39d104afd55e204ae75919df9222a512f8e510b040f2d32f071c9",
+        "equal": true
+      },
+      "c4": {
+        "old_sha256": "2fe1148c24a3af078c9fd8bb675b76fa44dfae6f493a4ed8cbf0a0d4b7dc71ac",
+        "new_sha256": "2fe1148c24a3af078c9fd8bb675b76fa44dfae6f493a4ed8cbf0a0d4b7dc71ac",
+        "equal": true
+      }
+    },
+    "build_simv_sha256": {
+      "c3": "544b5a1cd00381cd9d75dae2907c02bb5f8e2e6a68ddb24cb5070ef56f245bc5",
+      "c4": "8b0a8b6fc5d9c2abddad51569f2f6e36b7c2c9e7dbc231bc6f1a882b3b8cf4e0"
+    },
+    "m1_rerun_needed": false,
+    "m1_rerun_reason": "Recorded hashes match; kernels, functional RTL and model sources match baseline commit, model manifests exactly match. Simulation-only QBLK assertion change accepts the already-supported QBLK=32 baseline."
+  }
 }

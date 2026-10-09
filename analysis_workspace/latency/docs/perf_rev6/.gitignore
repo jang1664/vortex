@@ -2,6 +2,8 @@
 /raw/
 /measurements.json
 /source_worktree.patch
+/qblk_support_rerun_20261009/raw/
+/qblk_support_rerun_20261009/measurements.json
 
 # Compact reviewed evidence and the figures embedded in the report.
 !/measurements.csv

@@ -10,6 +10,8 @@ CASES = [
     dict(id="llama3_kv_decode",m=1,n=1024,k=4096,q=32,t=0,d=0),
     dict(id="llama3_attention_decode",m=4,n=1025,k=128,q=128,t=1,d=0),
     dict(id="llama2_ffn_decode",m=1,n=11008,k=4096,q=32,t=0,d=0),
+    dict(id="llama3_kv_decode_m4",m=4,n=1024,k=4096,q=32,t=0,d=0),
+    dict(id="llama2_ffn_decode_m4",m=4,n=11008,k=4096,q=32,t=0,d=0),
 ]
 CONFIGS = {"c3":"naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3", "c4":"improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp"}
 def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -21,6 +23,13 @@ def run(candidate):
         args=" ".join(f"-{x} {case[x]}" for x in ['m','n','k','q','t','d'])
         cmd=f"source ../configs/{CONFIGS[candidate]}.sh\nexport CC=/usr/bin/gcc CXX=/usr/bin/g++\ntimeout {TIMEOUT} ci/run_black.sh xrt-vcs-sim --app {app} --args '{args}' --perf 3 --configs-extra '-DDISABLE_FSDB'"
         record=dict(candidate=candidate,case=case,app=app,command=cmd,started=datetime.datetime.now().isoformat(),status="running",config_sha256=digest(ROOT/f"configs/{CONFIGS[candidate]}.sh"),monitor_sha256=digest(OUT/'tools/fine_monitor.sv'))
+        record['source_head']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+        record['source_sha256']={str(p.relative_to(ROOT)):digest(p) for p in [
+            ROOT/'hw/rtl/core/gemm/VX_gemm_fsm_naive_meta.sv',
+            ROOT/'hw/rtl/core/gemm/VX_gemm_compute_core.sv',
+            ROOT/f'tests/regression/{app}/main.cpp',
+            ROOT/f'tests/regression/{app}/kernel.cpp',
+            ROOT/'tests/regression/fpint_gemm_ffn_hw/test_vectors.h']}
         status=OUT/'raw'/f"{key}.json"
         status.write_text(json.dumps(record,indent=2))
         print(f"START {key}",flush=True)
