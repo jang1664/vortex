@@ -304,7 +304,8 @@ def _gemm_shape(
 ) -> dict:
     shape = {"M": M, "N": N, "K": K}
     if backend in FPINT_GEMM_BACKENDS:
-        shape.update({"QBLK": qblk, "WTRANS": wtrans, "QDIR": qdir})
+        shape.update({"QBLK": qblk, "WTRANS": wtrans, "QDIR": qdir,
+                      "preserve_execution_m": True})
     if per_head:
         shape["per_head"] = True
     if shape_update:

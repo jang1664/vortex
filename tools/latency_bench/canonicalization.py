@@ -50,7 +50,10 @@ def canonicalize_args(
     args: str,
     fpga_bin_label: str,
     policies: dict[str, Any],
+    preserve_execution_m: bool = False,
 ) -> CanonicalizedArgs:
+    if preserve_execution_m and app not in {"fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw_naive"}:
+        raise ValueError("preserve_execution_m is supported only for FPINT GEMM")
     default_policy = policies.get("default")
     bin_policy = policies.get(fpga_bin_label, default_policy)
     if not isinstance(bin_policy, dict):
@@ -88,6 +91,8 @@ def canonicalize_args(
     canonical: dict[str, int] = {}
     for option, raw_alignment in alignments.items():
         alignment = int(raw_alignment)
+        if preserve_execution_m and option == "-m":
+            alignment = 1  # Host storage padding must not enlarge executed rows.
         if alignment < 1:
             raise ValueError(
                 f"invalid alignment for {fpga_bin_label}/{app}/{option}: {alignment}"
@@ -117,5 +122,6 @@ def canonicalize_args(
             "app": app,
             "mode": "aligned",
             "canonical_arguments": canonical,
+            **({"preserve_execution_m": True} if preserve_execution_m else {}),
         },
     )

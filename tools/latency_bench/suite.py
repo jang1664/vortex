@@ -381,6 +381,7 @@ def _canonicalize_suite_cases(suite: BenchSuite) -> BenchSuite:
             args=case.args,
             fpga_bin_label=fpga_bin_label,
             policies=policies,
+            preserve_execution_m=bool(case.shape.get("preserve_execution_m", False)),
         )
         cases.append(replace(
             case,

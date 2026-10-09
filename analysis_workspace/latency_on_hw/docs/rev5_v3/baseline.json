@@ -1,0 +1,25 @@
+{
+  "source_tag": "rev5_v2",
+  "tag": "rev5_v3",
+  "candidate_map": "candidate_fpga_bins.rev5.yaml",
+  "models": {
+    "llama2": {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama2_main.rev5_v3",
+      "raw_sha256": {
+        "C1": "2687c1b8c58b99c7d31fb8ee1640b92ff28038acfb0e4bc140287bb79655e21f",
+        "C3": "e5a2128cee421b458724b109555bf2df1a167ab763b864ac57388158796d9a8d",
+        "C4": "42fb62ec43207b4a9999c391ea3e9b6abd5a077afe8811a6a366e14f9de52f5c"
+      }
+    },
+    "llama3": {
+      "source": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v2",
+      "output": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/outputs_llama3_main.rev5_v3",
+      "raw_sha256": {
+        "C1": "60531fa5547aa945beb0af0dc2b784321693ede162372339a3476088b87b463a",
+        "C3": "f4afa41272591244e33d5704ea203266477f811cade8d6029c0d7a3679429299",
+        "C4": "ef6b3512b10c24e497bb0d43e9f2ee572d147fa76e0d91b253196f1a3ee82d15"
+      }
+    }
+  }
+}

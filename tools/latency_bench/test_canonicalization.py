@@ -12,6 +12,17 @@ from tools.latency_bench.suite import BenchCase, load_suite
 
 
 class CanonicalizationTest(unittest.TestCase):
+    def test_fpint_logical_m_policy_preserves_storage_alignment_and_legacy_snapshots(self):
+        policies = load_canonicalization_policies()
+        for app in ("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw_naive"):
+            for m in (1, 4, 8, 64):
+                args = f"-m {m} -n 1025 -k 128 -q 128 -t 1 -d 0"
+                updated = canonicalize_args(app=app, args=args, fpga_bin_label="C4",
+                                            policies=policies, preserve_execution_m=True)
+                self.assertEqual(f"-m {m} -n 1056 -k 128 -q 128 -t 1 -d 0", updated.measurement_args)
+                legacy = canonicalize_args(app=app, args=args, fpga_bin_label="C4", policies=policies)
+                self.assertEqual(f"-m {max(8, m)} -n 1056 -k 128 -q 128 -t 1 -d 0", legacy.measurement_args)
+
     def test_exec_key_uses_only_xclbin_app_and_measurement_args(self) -> None:
         base = {
             "case_id": "same_kernel",
