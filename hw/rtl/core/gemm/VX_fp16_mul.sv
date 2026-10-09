@@ -49,6 +49,8 @@ module VX_fp16_mul #(
     output wire [15:0] result_data
 );
 
+`include "VX_fp16_arith.vh"
+
 `ifdef FPU_FPNEW
 
     import fpnew_pkg::*;
@@ -200,64 +202,6 @@ module VX_fp16_mul #(
 
 `elsif USE_DPI
 
-    // FP16 <-> FP32 conversion helpers for DPI path (DPI operates in FP32)
-    function automatic [31:0] fp16_to_fp32_convert(input [15:0] fp16);
-        logic        sign;
-        logic [4:0]  exp_fp16;
-        logic [9:0]  frac_fp16;
-        logic [7:0]  exp_fp32;
-        logic [22:0] frac_fp32;
-
-        sign      = fp16[15];
-        exp_fp16  = fp16[14:10];
-        frac_fp16 = fp16[9:0];
-
-        if (exp_fp16 == 5'b0) begin
-            return {sign, 31'b0};
-        end else if (exp_fp16 == 5'b11111) begin
-            exp_fp32  = 8'hFF;
-            frac_fp32 = {frac_fp16, 13'b0};
-            return {sign, exp_fp32, frac_fp32};
-        end else begin
-            exp_fp32  = {3'b0, exp_fp16} + 8'd112; // -15 + 127
-            frac_fp32 = {frac_fp16, 13'b0};
-            return {sign, exp_fp32, frac_fp32};
-        end
-    endfunction
-
-    function automatic [15:0] fp32_to_fp16_convert(input [31:0] fp32);
-        logic        sign;
-        logic [7:0]  exp_fp32;
-        logic [22:0] frac_fp32;
-        logic [4:0]  exp_fp16;
-        logic [9:0]  frac_fp16;
-        logic [7:0]  exp_adjusted;
-
-        sign      = fp32[31];
-        exp_fp32  = fp32[30:23];
-        frac_fp32 = fp32[22:0];
-
-        if (exp_fp32 == 8'b0) begin
-            return {sign, 15'b0};
-        end else if (exp_fp32 == 8'hFF) begin
-            exp_fp16  = 5'b11111;
-            frac_fp16 = frac_fp32[22:13];
-            return {sign, exp_fp16, frac_fp16};
-        end else begin
-            exp_adjusted = exp_fp32 - 8'd112; // 127 - 15
-
-            if (exp_adjusted >= 8'd31) begin
-                return {sign, 5'b11111, 10'b0};
-            end else if (exp_adjusted <= 8'd0) begin
-                return {sign, 15'b0};
-            end else begin
-                exp_fp16  = exp_adjusted[4:0];
-                frac_fp16 = frac_fp32[22:13];
-                return {sign, exp_fp16, frac_fp16};
-            end
-        end
-    endfunction
-
     // DPI path: stream fence + FP16 -> FP32 -> DPI mul -> FP32 -> FP16
 
     // Stream fence: synchronize a and b inputs
@@ -293,8 +237,8 @@ module VX_fp16_mul #(
     assign pop_streams[1].ready = inputs_ready;
 
     // FP16 to FP32 conversion using function
-    wire [31:0] a_fp32 = fp16_to_fp32_convert(pop_streams[0].data);
-    wire [31:0] b_fp32 = fp16_to_fp32_convert(pop_streams[1].data);
+    wire [31:0] a_fp32 = vx_fp16_to_fp32(pop_streams[0].data);
+    wire [31:0] b_fp32 = vx_fp16_to_fp32(pop_streams[1].data);
 
     // DPI FP32 multiplication (combinational)
     reg [63:0] dpi_result_fp32;
@@ -314,7 +258,7 @@ module VX_fp16_mul #(
     end
 
     // FP32 to FP16 conversion using function
-    wire [15:0] result_fp16 = fp32_to_fp16_convert(dpi_result_fp32[31:0]);
+    wire [15:0] result_fp16 = vx_fp32_to_fp16_rne(dpi_result_fp32[31:0]);
 
     // Elastic buffer for valid/ready handshaking
     VX_elastic_buffer #(
@@ -352,35 +296,91 @@ module VX_fp16_mul #(
 
 `else // Vivado IP or XSIM — native FP16 Xilinx IP
 
+    // Match independently arriving operands before forking a transaction to
+    // the IP and its correction metadata. The fence is fall-through when both
+    // operands are present; it does not add a fixed arithmetic pipeline stage.
+    VX_stream_intf #(.DATA_WIDTH(16)) push_streams [2] (.clk(clk));
+    VX_stream_intf #(.DATA_WIDTH(16)) pop_streams [2] (.clk(clk));
+    assign push_streams[0].valid = a_valid;
+    assign push_streams[0].data = a_data;
+    assign push_streams[0].strb = '1;
+    assign a_ready = push_streams[0].ready;
+    assign push_streams[1].valid = b_valid;
+    assign push_streams[1].data = b_data;
+    assign push_streams[1].strb = '1;
+    assign b_ready = push_streams[1].ready;
+    VX_stream_fence #(.NB_STREAMS(2), .DATA_WIDTH(16)) input_fence (
+        .clk_i(clk), .resetn_i(~reset), .clear_i(1'b0),
+        .push_i(push_streams), .pop_o(pop_streams)
+    );
+
+    wire [15:0] joined_a = pop_streams[0].data;
+    wire [15:0] joined_b = pop_streams[1].data;
+    wire ip_a_ready, ip_b_ready, correction_ready;
+    wire joined_ready = !reset && ip_a_ready && ip_b_ready && correction_ready;
+    assign pop_streams[0].ready = joined_ready;
+    assign pop_streams[1].ready = joined_ready;
+    // Both IP input channels and the metadata queue accept the same pair.
+    wire ip_inputs_valid = pop_streams[0].valid && pop_streams[1].valid && joined_ready;
+    wire ip_result_valid, ip_result_ready;
+    wire [15:0] ip_result_data;
+    wire correction_valid, correction_select_out;
+    wire [15:0] correction_out;
+    wire [15:0] correction_data = vx_fp16_mul_rne(joined_a, joined_b);
+    wire correction_select =
+        ((joined_a[14:10] == 0) && (joined_a[9:0] != 0))
+        || ((joined_b[14:10] == 0) && (joined_b[9:0] != 0))
+        // Include the rounding boundary where a tiny exact product becomes
+        // the smallest normal. Native-half FTZ must not decide that result.
+        || (correction_data[14:0] <= 15'h0400);
+
+    // Depths cover the configured 1/2/7-cycle IPs plus elastic headroom.
+    // Queue by accepted transaction, not wall-clock delay: IP stalls and
+    // independently arriving inputs must not misalign correction data.
+    localparam CORRECTION_DEPTH = USE_LATENCY1_IP ? 2 : (USE_LOW_LATENCY_IP ? 4 : 16);
+    VX_elastic_buffer #(
+        .DATAW(17), .SIZE(CORRECTION_DEPTH), .OUT_REG(0)
+    ) correction_queue (
+        .clk(clk), .reset(reset),
+        .valid_in(ip_inputs_valid), .ready_in(correction_ready),
+        .data_in({correction_select, correction_data}),
+        .data_out({correction_select_out, correction_out}),
+        .valid_out(correction_valid),
+        .ready_out(result_ready && ip_result_valid)
+    );
+    assign result_valid = ip_result_valid && correction_valid;
+    assign ip_result_ready = result_ready && correction_valid;
+    assign result_data = correction_select_out ? correction_out : ip_result_data;
+
     if (USE_LATENCY1_IP) begin : g_latency1
         xil_f16mul_latency1 xil_f16mul_inst (
             .aclk                (clk),
             .aresetn             (~reset),
             .aclken              (1'b1),
-            .s_axis_a_tvalid     (a_valid),
-            .s_axis_a_tready     (a_ready),
-            .s_axis_a_tdata      (a_data),
-            .s_axis_b_tvalid     (b_valid),
-            .s_axis_b_tready     (b_ready),
-            .s_axis_b_tdata      (b_data),
-            .m_axis_result_tvalid(result_valid),
-            .m_axis_result_tready(result_ready),
-            .m_axis_result_tdata (result_data)
+            .s_axis_a_tvalid     (ip_inputs_valid),
+            .s_axis_a_tready     (ip_a_ready),
+            .s_axis_a_tdata      (joined_a),
+            .s_axis_b_tvalid     (ip_inputs_valid),
+            .s_axis_b_tready     (ip_b_ready),
+            .s_axis_b_tdata      (joined_b),
+            .m_axis_result_tvalid(ip_result_valid),
+            .m_axis_result_tready(ip_result_ready),
+            .m_axis_result_tdata (ip_result_data)
         );
     end else if (USE_LOW_LATENCY_IP) begin : g_low_latency
         xil_f16mul_low_latency xil_f16mul_inst (
             .aclk                (clk),
             .aresetn             (~reset),
             .aclken              (1'b1),
-            .s_axis_a_tvalid     (a_valid),
-            .s_axis_a_tready     (a_ready),
-            .s_axis_a_tdata      (a_data),
-            .s_axis_b_tvalid     (b_valid),
-            .s_axis_b_tready     (b_ready),
-            .s_axis_b_tdata      (b_data),
-            .m_axis_result_tvalid(result_valid),
-            .m_axis_result_tready(result_ready),
-            .m_axis_result_tdata (result_data)
+            .s_axis_a_tvalid     (ip_inputs_valid),
+            .s_axis_a_tready     (ip_a_ready),
+            .s_axis_a_tdata      (joined_a),
+            .s_axis_b_tvalid     (ip_inputs_valid),
+            .s_axis_b_tready     (ip_b_ready),
+            .s_axis_b_tdata      (joined_b),
+            .m_axis_result_tvalid(ip_result_valid),
+            .m_axis_result_tready(ip_result_ready),
+            .m_axis_result_tdata (ip_result_data)
         );
     end else begin : g_default_latency
         xil_f16mul xil_f16mul_inst (
@@ -389,19 +389,19 @@ module VX_fp16_mul #(
             .aclken              (1'b1),
 
             // Input A (AXI Stream)
-            .s_axis_a_tvalid     (a_valid),
-            .s_axis_a_tready     (a_ready),
-            .s_axis_a_tdata      (a_data),
+            .s_axis_a_tvalid     (ip_inputs_valid),
+            .s_axis_a_tready     (ip_a_ready),
+            .s_axis_a_tdata      (joined_a),
 
             // Input B (AXI Stream)
-            .s_axis_b_tvalid     (b_valid),
-            .s_axis_b_tready     (b_ready),
-            .s_axis_b_tdata      (b_data),
+            .s_axis_b_tvalid     (ip_inputs_valid),
+            .s_axis_b_tready     (ip_b_ready),
+            .s_axis_b_tdata      (joined_b),
 
             // Output (AXI Stream)
-            .m_axis_result_tvalid(result_valid),
-            .m_axis_result_tready(result_ready),
-            .m_axis_result_tdata (result_data)
+            .m_axis_result_tvalid(ip_result_valid),
+            .m_axis_result_tready(ip_result_ready),
+            .m_axis_result_tdata (ip_result_data)
         );
     end
 

@@ -47,18 +47,11 @@ module VX_f32_to_f16 # (
   logic fp16_sign;
   logic [FP16_EXP_WIDTH-1:0] fp16_exp;
   logic [FP16_MANTISSA_WIDTH-1:0] fp16_mant;
-  logic fp16_sign_;
-  logic [FP16_EXP_WIDTH-1:0] fp16_exp_;
-  logic [FP16_MANTISSA_WIDTH-1:0] fp16_mant_;
 
   logic fp16_overflow;
   logic fp16_underflow;
 
   logic is_fp32_nan;
-  logic is_fp32_exp_too_small;
-
-  logic [FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] fp32_mant_with_pad;
-  logic [FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] shifted_fp32_mant;
 
   // parsing input data
   assign fp32_sign = data_i[FP32_SIGN_BP+:FP32_SIGN_WIDTH];
@@ -69,95 +62,13 @@ module VX_f32_to_f16 # (
   assign fp16_underflow = (fp32_exp <= (FP32_EXP_BIAS + FP16_MIN_EXP));
 
   assign is_fp32_nan = (fp32_exp == (FP32_EXP_BIAS + FP32_MAX_EXP)) & (fp32_mant != 0);
-  assign is_fp32_exp_too_small = (fp32_exp <= (FP32_EXP_BIAS + FP16_MIN_EXP - (FP16_MANTISSA_WIDTH+1)));
+  `include "VX_fp16_arith.vh"
 
-  assign fp32_mant_with_pad = {fp32_mant, (FP16_MANTISSA_WIDTH + 1)'(1'b0)};
-
-
-  function logic [(FP16_WIDTH-1)-1:0] round_mant(
-      input logic[FP16_EXP_WIDTH+FP32_MANTISSA_WIDTH+FP16_MANTISSA_WIDTH+1-1:0] fp16_with_pad);
-
-    localparam MSB = $bits(fp16_with_pad) - 1;
-    localparam MANT_MSB = $bits(fp16_with_pad) - 1 - FP16_EXP_WIDTH;
-
-    logic G, R, S, L;
-    logic [(FP16_WIDTH-1)-1:0] fp16_no_sign;
-
-    // parsing guard, round, stitch and LSB
-    G = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH)];
-    R = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+1)];
-    S = |fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+2):0];
-    L = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH-1)];
-
-    // G = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+1)];
-    // R = fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+2)];
-    // S = |fp16_with_pad[MANT_MSB-(FP16_MANTISSA_WIDTH+3):0];
-    // L = fp16_with_pad[MANT_MSB-FP16_MANTISSA_WIDTH];
-
-    // round to nearest with tie break to even
-    // $display("fp16_with_pad : %b", fp16_with_pad);
-    if ((G & ~R & ~S & L) | (G & R) | (G & ~R & S)) begin
-      fp16_no_sign = fp16_with_pad[MSB-:(FP16_WIDTH-1)] + 1'b1;
-    end else begin
-      fp16_no_sign = fp16_with_pad[MSB-:(FP16_WIDTH-1)];
-    end
-
-    // if ((G & ~R & ~S & L) | (G & R) | (G & ~R & S)) begin
-    //   fp16_no_sign = fp16_with_pad[MSB-1-:(FP16_WIDTH-1)] + 1'b1;
-    // end else begin
-    //   fp16_no_sign = fp16_with_pad[MSB-1-:(FP16_WIDTH-1)];
-    // end
-
-    return fp16_no_sign;
-  endfunction
-
+  // Shared arithmetic; keep this module's combinational/registered interface.
+  // The helper restores the hidden one for normal FP32 inputs entering the
+  // FP16 subnormal range and retains guard/sticky bits through RNE rounding.
   always_comb begin
-    // Deterministic defaults (avoid X-propagation / synthesis don't-care behavior).
-    fp16_sign         = fp32_sign;
-    fp16_exp          = '0;
-    fp16_mant         = '0;
-    fp16_exp_         = '0;
-    shifted_fp32_mant = fp32_mant_with_pad;
-
-    case ({fp16_overflow, fp16_underflow})
-      2'b00: begin
-        // normal case
-        fp16_exp_ = fp32_exp - (FP32_EXP_BIAS - FP16_EXP_BIAS);
-        {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
-      end
-
-      2'b10: begin
-        if (is_fp32_nan) begin
-          // NaN: keep sign, set quiet NaN payload
-          fp16_exp                           = (FP16_EXP_BIAS + FP16_MAX_EXP);
-          fp16_mant[FP16_MANTISSA_WIDTH-1]   = 1'b1;
-          fp16_mant[FP16_MANTISSA_WIDTH-2:0] = '0;
-        end else begin
-          // overflow: saturate to infinity
-          fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
-          fp16_mant = '0;
-        end
-      end
-
-      2'b01: begin
-        if (is_fp32_exp_too_small) begin
-          // too small: flush to signed zero
-          fp16_exp  = '0;
-          fp16_mant = '0;
-        end else begin
-          // subnormal range
-          fp16_exp_ = '0;
-          shifted_fp32_mant = fp32_mant_with_pad >> (FP32_EXP_BIAS + FP16_MIN_EXP + 1 - fp32_exp);
-          {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
-        end
-      end
-
-      default: begin
-        // impossible (overflow && underflow) for known inputs; keep deterministic fallback
-        fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
-        fp16_mant = '0;
-      end
-    endcase
+    {fp16_sign, fp16_exp, fp16_mant} = vx_fp32_to_fp16_rne(data_i);
   end
 
   generate

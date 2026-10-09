@@ -27,7 +27,7 @@ void initialize(uint32_t m_size, uint32_t k_size, uint32_t n_size,
                 uint32_t qdir, uint32_t generation, bool tagged,
                 std::vector<uint16_t>& a, std::vector<int8_t>& w,
                 std::vector<uint16_t>& scales, std::vector<int16_t>& zeros,
-                Encode encode) {
+                Encode encode, bool subnormal = false) {
   const uint32_t ngroups = (n_size + qblk - 1) / qblk;
   const uint32_t qsize = qdir ? k_size * ngroups
                             : ((k_size + qblk - 1) / qblk) * n_size;
@@ -40,12 +40,26 @@ void initialize(uint32_t m_size, uint32_t k_size, uint32_t n_size,
       const uint32_t identity = tagged ? identity_hash(m * logical_k + k)
                                        : m + k;
       a[m * k_size + k] = encode(1.0f + float((identity % 7 + generation % 7) % 7));
+      if (subnormal) {
+        constexpr uint16_t values[] = {0x0001, 0x03ff, 0x0400, 0x3555};
+        a[m * k_size + k] = values[k % 4] | ((m & 1) ? 0x8000 : 0);
+      }
     }
   for (uint32_t k = 0; k < logical_k; ++k)
     for (uint32_t n = 0; n < logical_n; ++n) {
       const uint32_t identity = tagged ? identity_hash(k * logical_n + n + 0x9e3779b9u)
                                        : k * logical_n + n;
       w[k * n_size + n] = int8_t(int((identity % 7 + generation % 7) % 7) - 3);
+      if (subnormal) {
+        // Sparse columns expose subnormal ACC readout; dense columns expose
+        // the QROW pre-multiply independently with normal accumulated outputs.
+        switch (n % 4) {
+          case 0: w[k * n_size + n] = (k == 0); break;
+          case 1: w[k * n_size + n] = 1; break;
+          case 2: w[k * n_size + n] = -(k == 1); break;
+          case 3: w[k * n_size + n] = (k == 2); break;
+        }
+      }
     }
   const uint32_t rows = qdir ? logical_k : (logical_k + qblk - 1) / qblk;
   const uint32_t cols = qdir ? (logical_n + qblk - 1) / qblk : logical_n;
@@ -58,6 +72,11 @@ void initialize(uint32_t m_size, uint32_t k_size, uint32_t n_size,
                          + float(col % 7) / 8.0f;
       scales[row * stride + col] = encode(scale);
       zeros[row * stride + col] = int16_t(int((3 * (row % 7) + col % 7 + generation % 7) % 7) - 3);
+      if (subnormal) {
+        constexpr uint16_t values[] = {0x3c00, 0x4000, 0x3800, 0x0001};
+        scales[row * stride + col] = qdir ? values[row % 4] : 0x3c00;
+        zeros[row * stride + col] = 0;
+      }
     }
 }
 

@@ -36,6 +36,7 @@ static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
 static bool TAGGED_VECTORS = false;
+static bool SUBNORMAL_VECTORS = false;
 static uint32_t TARGET_M = 0, TARGET_N = 0, TARGET_K = 0;
 static uint32_t M_START = 0, N_START = 0;
 static std::vector<uint32_t> TARGET_K_LIST, TARGET_N_LIST;
@@ -96,12 +97,14 @@ static void show_usage() {
   std::cout << "       [--m-start M] [--n-start N] (DMA-tile-aligned region origin)" << std::endl;
   std::cout << "       [--target-k-list K1,K2,... | --target-n-list N1,N2,...]" << std::endl;
   std::cout << "         Sequence jobs reuse the same original packed input buffers." << std::endl;
+  std::cout << "       [--subnormal] (directed FP16 underflow vectors; bit-exact verify)" << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
 static constexpr int OPT_TAGGED = 0x101;
+static constexpr int OPT_SUBNORMAL = 0x110;
 enum { OPT_TM = 0x102, OPT_TN, OPT_TK, OPT_MS, OPT_NS, OPT_K_LIST, OPT_N_LIST };
 
 static uint32_t parse_extent(const char* text, bool allow_zero = false) {
@@ -129,6 +132,7 @@ static std::vector<uint32_t> parse_extents(const char* text) {
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
   {"tagged", no_argument, nullptr, OPT_TAGGED},
+  {"subnormal", no_argument, nullptr, OPT_SUBNORMAL},
   {"target-m", required_argument, nullptr, OPT_TM},
   {"target-n", required_argument, nullptr, OPT_TN},
   {"target-k", required_argument, nullptr, OPT_TK},
@@ -153,6 +157,7 @@ static void parse_args(int argc, char **argv) {
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
     case OPT_TAGGED: TAGGED_VECTORS = true; break;
+    case OPT_SUBNORMAL: SUBNORMAL_VECTORS = true; break;
     case OPT_TM: TARGET_M = parse_extent(optarg); break;
     case OPT_TN: TARGET_N = parse_extent(optarg); break;
     case OPT_TK: TARGET_K = parse_extent(optarg); break;
@@ -292,7 +297,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                bool compute_reference = true,
                                uint32_t generation = 0) {
   fpint_gemm_test::initialize(M, K, N, K_logical, N_logical, QBLK, QDIR,
-      generation, TAGGED_VECTORS, h_A, h_W_raw, h_scales, h_zeros, float_to_fp16);
+      generation, TAGGED_VECTORS, h_A, h_W_raw, h_scales, h_zeros, float_to_fp16, SUBNORMAL_VECTORS);
   h_ref_out_fp16.assign(M * N, 0);
   if (compute_reference) {
     std::vector<uint8_t> packed;
@@ -524,6 +529,7 @@ static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
 // ============================================================================
 
 static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
+  if (SUBNORMAL_VECTORS) return actual == expected;
   if (actual == expected) return true;
   float a = fp16_to_float(actual);
   float e = fp16_to_float(expected);

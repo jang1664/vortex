@@ -33,6 +33,7 @@ static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
 static bool TAGGED_VECTORS = false;
+static bool SUBNORMAL_VECTORS = false;
 static uint64_t LMEM_OFFSET_BYTES = 0;
 // Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
 // Used to isolate Vortex-core polling power from HW-GEMM power.
@@ -104,17 +105,20 @@ static void show_usage() {
   std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
   std::cout << "       [--tagged] (directed A/W address-identity vectors)" << std::endl;
   std::cout << "       [--lmem-offset BYTES] (scratch placement offset; default 0)" << std::endl;
+  std::cout << "       [--subnormal] (directed FP16 underflow vectors; bit-exact verify)" << std::endl;
   std::cout << "       [-h]" << std::endl;
 }
 
 // Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
 static constexpr int OPT_POL = 0x100;
 static constexpr int OPT_TAGGED = 0x101;
+static constexpr int OPT_SUBNORMAL = 0x110;
 static constexpr int OPT_LMEM_OFFSET = 0x102;
 
 static struct option long_options[] = {
   {"pol", required_argument, nullptr, OPT_POL},
   {"tagged", no_argument, nullptr, OPT_TAGGED},
+  {"subnormal", no_argument, nullptr, OPT_SUBNORMAL},
   {"lmem-offset", required_argument, nullptr, OPT_LMEM_OFFSET},
   {nullptr, 0, nullptr, 0},
 };
@@ -133,6 +137,7 @@ static void parse_args(int argc, char **argv) {
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
     case OPT_TAGGED: TAGGED_VECTORS = true; break;
+    case OPT_SUBNORMAL: SUBNORMAL_VECTORS = true; break;
     case OPT_LMEM_OFFSET: {
       char* end = nullptr;
       errno = 0;
@@ -243,7 +248,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                uint32_t generation = 0) {
   std::vector<int8_t> raw_weight;
   fpint_gemm_test::initialize(M, K, N, K, N, QBLK, QDIR,
-      generation, TAGGED_VECTORS, h_A, raw_weight, h_scales, h_zeros, float_to_fp16);
+      generation, TAGGED_VECTORS, h_A, raw_weight, h_scales, h_zeros, float_to_fp16, SUBNORMAL_VECTORS);
   const uint32_t stride = WTRANS ? (K + 1) / 2 : (N + 1) / 2;
   h_W_int4.assign((WTRANS ? N : K) * stride, 0);
   for (uint32_t k = 0; k < K; ++k)
@@ -264,6 +269,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 }
 
 static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
+  if (SUBNORMAL_VECTORS) return actual == expected;
   if (actual == expected) {
     return true;
   }
