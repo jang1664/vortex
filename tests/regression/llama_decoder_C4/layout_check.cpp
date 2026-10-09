@@ -6,7 +6,10 @@
 #include <vector>
 
 int main() {
-  for (uint32_t rows : {32u, 136u, 256u}) {
+  for (uint32_t target_rows : {1u, 4u, 32u, 129u, 136u, 256u}) {
+    // The decoder's fused vectors use a padded parent matrix, while GEMM
+    // executes only target_rows. Enumerate the parent's physical DMA order.
+    const uint32_t rows = (target_rows + 7u) & ~7u;
     for (uint32_t columns : {32u, 128u, 256u, 4096u, 11008u, 14336u}) {
       std::vector<uint32_t> packed(rows * columns);
       uint64_t cursor = 0;
@@ -20,7 +23,7 @@ int main() {
               packed[offset] = row * columns + column;
             }
       assert(cursor == packed.size());
-      for (uint32_t row = 0; row < rows; ++row)
+      for (uint32_t row = 0; row < target_rows; ++row)
         for (uint32_t column = 0; column < columns; ++column)
           assert(packed[gemm_a_tiled_elem_offset(row, column, rows, columns, 7, 4)]
                  == row * columns + column);

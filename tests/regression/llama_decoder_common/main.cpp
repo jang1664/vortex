@@ -58,12 +58,14 @@ int main(int argc,char** argv) {
     std::string model="llama3-8b",mode="verify",stage="prefill";
     fs::path fixture,out="decoder_results";
     uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0;
-    bool diagnostic_timing=false,output_pass=true;
+    bool diagnostic_timing=false,output_pass=true,profile_repetitions_set=false;
+    uint32_t profile_repetitions=0;
     for(int i=1;i<argc;++i) {
       std::string key=argv[i];
       if(key=="--help" || key=="-h") {
         std::cout<<"--model llama3-8b|llama2-7b --batch 1 --seq-len 32 --fixture DIR\n"
                    "--mode verify|timing|isolated --output DIR --repetitions 3\n"
+                   "--profile-repetitions N (timing counter passes; default: repetitions; 0 disables)\n"
                    "--stage prefill|decode --past-kv-len N --cache-capacity N\n"
                    "--diagnostic-timing (measure despite output mismatch; still exit nonzero)\n"
                    "--stop-after N (partial diagnostic only; never a decoder PASS)\n";
@@ -83,9 +85,15 @@ int main(int argc,char** argv) {
       else if(key=="--batch") batch=extent();
       else if(key=="--seq-len") seq=extent();
       else if(key=="--repetitions") repetitions=extent();
+      else if(key=="--profile-repetitions") {
+        size_t end=0; auto n=std::stoul(value,&end);
+        if(end!=value.size() || n>UINT32_MAX) throw std::invalid_argument("invalid profile repetitions");
+        profile_repetitions=uint32_t(n); profile_repetitions_set=true;
+      }
       else if(key=="--stop-after") stop_after=extent();
       else throw std::invalid_argument("unknown option "+key);
     }
+    if(!profile_repetitions_set) profile_repetitions=repetitions;
     if(fixture.empty()) throw std::invalid_argument("--fixture is required");
     if(mode!="verify" && mode!="timing" && mode!="isolated") throw std::invalid_argument("unknown mode");
     if(stop_after && mode!="verify") throw std::invalid_argument("partial execution is only supported in verify mode");
@@ -93,7 +101,7 @@ int main(int argc,char** argv) {
     if(!fs::exists(fixture/"reference/output.bin")) throw std::invalid_argument("fixture needs CPU reference/output.bin");
     fs::create_directories(out);
     Decoder decoder(config); decoder.load(fixture); decoder.build();
-    size_t gemms=0; for(const auto& o:decoder.operations()) gemms+=o.kind==DecoderOp::gemm;
+    size_t gemms=0; for(const auto& o:decoder.operations()) gemms+=(o.kind==DecoderOp::gemm || o.kind==DecoderOp::tcu);
     std::cout<<"DECODER "<<model<<" B="<<batch<<" S="<<seq<<" heads="<<config.q_heads
       <<" stage="<<stage<<" past_kv="<<past_kv<<" capacity="<<capacity
       <<" kv_heads="<<config.kv_heads<<" operations="<<decoder.operations().size()<<" gemms="<<gemms<<std::endl;
@@ -107,7 +115,10 @@ int main(int argc,char** argv) {
       std::cout<<"PASSED: decoder final output; intermediate checks are in reference.py"<<std::endl;
     } else {
       // Verify the actual chain once before collecting latency.
-      decoder.run(false,out);
+      // Reuse the mandatory warmup for counter samples. These queries are
+      // outside wall timing and avoid another long graph solely for profiling.
+      auto warmup_samples=decoder.run(true,out);
+      save_samples(out/"warmup_profile.csv",warmup_samples);
       output_pass=check_output(fixture,out);
       if(!output_pass && !diagnostic_timing) throw std::runtime_error("correctness gate failed; timing skipped");
       if(!output_pass) std::cout<<"DIAGNOSTIC TIMING: output gate failed; these measurements are not a functionality PASS"<<std::endl;
@@ -128,7 +139,7 @@ int main(int argc,char** argv) {
         if(!output_pass && !diagnostic_timing) throw std::runtime_error("timed decoder output failed");
         // Counter queries belong to separate passes, outside wall timing.
         std::vector<Sample> profile;
-        for(uint32_t r=0;r<repetitions;++r) {
+        for(uint32_t r=0;r<profile_repetitions;++r) {
           auto samples=decoder.run(true,{});
           profile.insert(profile.end(),samples.begin(),samples.end());
         }

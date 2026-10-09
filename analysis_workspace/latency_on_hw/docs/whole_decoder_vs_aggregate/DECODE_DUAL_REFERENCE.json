@@ -1,0 +1,194 @@
+{
+  "C1": {
+    "candidate": "C1",
+    "fixture": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llama_decoder_c1_parallel_20261009/fixtures/llama3_decode_p1024",
+    "reference_scope": "independent decode step from fixture and initial cache",
+    "ieee_replay_bit_exact": true,
+    "references": {
+      "ieee": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.026901669800281525,
+        "violation_fraction": 0.11474609375,
+        "relative_l2": 0.0030655444285817408,
+        "cosine": 0.9999959731349166,
+        "actual_max_magnitude": 2.052734375,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0078125
+      },
+      "ip": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.026901669800281525,
+        "violation_fraction": 0.11474609375,
+        "relative_l2": 0.0030655444285817408,
+        "cosine": 0.9999959731349166,
+        "actual_max_magnitude": 2.052734375,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0078125
+      }
+    },
+    "accepted_ip_policy": "MXU QROW native-half latency1 multiplier input/output FTZ only",
+    "excluded_defects": [
+      "TCU subnormal input x4",
+      "MXU output converter missing hidden bit"
+    ],
+    "applicable_ip_adjustment": false,
+    "thresholds": {
+      "split": 0.25,
+      "atol": 0.005,
+      "rtol": 0.005,
+      "max_violation_fraction": 0.02,
+      "max_relative_l2": 0.01,
+      "min_cosine": 0.999
+    },
+    "selected_gate": "ip",
+    "selected_gate_pass": false
+  },
+  "C2": {
+    "candidate": "C2",
+    "fixture": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llama_decoder_c2_parallel_20261009/fixtures/llama3_decode_p1024_c1056",
+    "reference_scope": "independent decode step from fixture and initial cache",
+    "ieee_replay_bit_exact": true,
+    "references": {
+      "ieee": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.027829313650727272,
+        "violation_fraction": 0.115478515625,
+        "relative_l2": 0.003075319094680015,
+        "cosine": 0.9999959534991049,
+        "actual_max_magnitude": 2.052734375,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0078125
+      },
+      "ip": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.027829313650727272,
+        "violation_fraction": 0.115478515625,
+        "relative_l2": 0.003075319094680015,
+        "cosine": 0.9999959534991049,
+        "actual_max_magnitude": 2.052734375,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0078125
+      }
+    },
+    "accepted_ip_policy": "MXU QROW native-half latency1 multiplier input/output FTZ only",
+    "excluded_defects": [
+      "TCU subnormal input x4",
+      "MXU output converter missing hidden bit"
+    ],
+    "applicable_ip_adjustment": false,
+    "thresholds": {
+      "split": 0.25,
+      "atol": 0.005,
+      "rtol": 0.005,
+      "max_violation_fraction": 0.02,
+      "max_relative_l2": 0.01,
+      "min_cosine": 0.999
+    },
+    "selected_gate": "ip",
+    "selected_gate_pass": false
+  },
+  "C3": {
+    "candidate": "C3",
+    "fixture": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llama_decoder_c3_parallel_20261009/fixtures/llama3_decode_p1024_c1056",
+    "reference_scope": "independent decode step from fixture and initial cache",
+    "ieee_replay_bit_exact": true,
+    "references": {
+      "ieee": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.029684601351618767,
+        "violation_fraction": 0.155029296875,
+        "relative_l2": 0.0035602760150944923,
+        "cosine": 0.9999946228820344,
+        "actual_max_magnitude": 2.06640625,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0087890625
+      },
+      "ip": {
+        "max_small_absolute_error": 0.001220703125,
+        "max_large_relative_error": 0.0038314175326377153,
+        "violation_fraction": 0.0,
+        "relative_l2": 0.00048106664357787,
+        "cosine": 0.9999998843945804,
+        "actual_max_magnitude": 2.06640625,
+        "reference_max_magnitude": 2.06640625,
+        "nonfinite_count": 0,
+        "pass": 1,
+        "max_absolute_error": 0.001953125
+      }
+    },
+    "accepted_ip_policy": "MXU QROW native-half latency1 multiplier input/output FTZ only",
+    "excluded_defects": [
+      "TCU subnormal input x4",
+      "MXU output converter missing hidden bit"
+    ],
+    "applicable_ip_adjustment": true,
+    "thresholds": {
+      "split": 0.25,
+      "atol": 0.005,
+      "rtol": 0.005,
+      "max_violation_fraction": 0.02,
+      "max_relative_l2": 0.01,
+      "min_cosine": 0.999
+    },
+    "selected_gate": "ip",
+    "selected_gate_pass": true
+  },
+  "C4": {
+    "candidate": "C4",
+    "fixture": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_llama_decoder_c4/fixtures/llama3_decode_p1024_c1152",
+    "reference_scope": "independent decode step from fixture and initial cache",
+    "ieee_replay_bit_exact": true,
+    "references": {
+      "ieee": {
+        "max_small_absolute_error": 0.0078125,
+        "max_large_relative_error": 0.029684601351618767,
+        "violation_fraction": 0.155029296875,
+        "relative_l2": 0.0035602760150944923,
+        "cosine": 0.9999946228820344,
+        "actual_max_magnitude": 2.06640625,
+        "reference_max_magnitude": 2.05859375,
+        "nonfinite_count": 0,
+        "pass": 0,
+        "max_absolute_error": 0.0087890625
+      },
+      "ip": {
+        "max_small_absolute_error": 0.001220703125,
+        "max_large_relative_error": 0.0038314175326377153,
+        "violation_fraction": 0.0,
+        "relative_l2": 0.00048106664357787,
+        "cosine": 0.9999998843945804,
+        "actual_max_magnitude": 2.06640625,
+        "reference_max_magnitude": 2.06640625,
+        "nonfinite_count": 0,
+        "pass": 1,
+        "max_absolute_error": 0.001953125
+      }
+    },
+    "accepted_ip_policy": "MXU QROW native-half latency1 multiplier input/output FTZ only",
+    "excluded_defects": [
+      "TCU subnormal input x4",
+      "MXU output converter missing hidden bit"
+    ],
+    "applicable_ip_adjustment": true,
+    "thresholds": {
+      "split": 0.25,
+      "atol": 0.005,
+      "rtol": 0.005,
+      "max_violation_fraction": 0.02,
+      "max_relative_l2": 0.01,
+      "min_cosine": 0.999
+    },
+    "selected_gate": "ip",
+    "selected_gate_pass": true
+  }
+}

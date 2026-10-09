@@ -18,7 +18,7 @@ import torch
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / 'pytorch/spinquant'))
 from spinquant_inference.llama3_c4_export import (
-    Llama3ExportConfig, Llama3LayerPrefillCheckpoints, Llama3StackPrefill,
+    Llama3ExportConfig, Llama3LayerPrefillCheckpoints, Llama3LayerDecodeCheckpoints, Llama3StackPrefill,
     Llama3StackPrefillCheckpoints,
     stack_parameter_shapes, layer_checkpoint_names, _rms_norm, _hadamard,
 )
@@ -39,9 +39,9 @@ DEFAULT_MANIFEST = '/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cach
 OUTPUT_THRESHOLDS = {**LOCAL_THRESHOLDS, 'atol': 0.005, 'rtol': 0.005}
 
 
-def config(model, batch, seq, reduction_width):
+def config(model, batch, seq, reduction_width, capacity=None):
     return Llama3ExportConfig(
-        batch, seq, seq, intermediate_size=11008 if model == 'llama2-7b' else 14336,
+        batch, seq, seq if capacity is None else capacity, intermediate_size=11008 if model == 'llama2-7b' else 14336,
         num_key_value_heads=32 if model == 'llama2-7b' else 8,
         rope_theta=10000.0 if model == 'llama2-7b' else 500000.0,
         round_silu_before_multiply=True,
@@ -55,7 +55,11 @@ def generate(args):
     root.mkdir(parents=True, exist_ok=True)
     profile = load_vortex_accelerator_profile(args.manifest)
     # This app's existing compile-time contract requires thread width == MXU.
-    cfg = config(args.model, args.batch, args.seq_len, ImproveProfile.from_target(profile.target).mxu_kt)
+    decode = args.decoder_stage == "decode"
+    if decode and (args.batch != 1 or args.seq_len != 1 or not args.past_fixture or not 0 < args.past_kv_len < args.cache_capacity or args.cache_capacity % 32):
+        raise ValueError("decode needs B1/S1, past fixture, positive past length and aligned capacity")
+    cfg = config(args.model, args.batch, args.seq_len, ImproveProfile.from_target(profile.target).mxu_kt,
+                 args.cache_capacity if decode else None)
     params = _deterministic_parameters(cfg, lambda c, _: stack_parameter_shapes(c, 1), args.seed)
     # One canonical archive supports both C++ physical tensors and TVM inputs.
     np.savez(root / 'canonical.npz', **{k: v.numpy() for k, v in params.items()})
@@ -84,26 +88,54 @@ def generate(args):
         name = name.removesuffix('.zeros') + '.zero' if name.endswith('.zeros') else name
         write_tensor(name, archive.tensor(key))
 
-    rng = np.random.default_rng(args.seed + 1)
+    rng = np.random.default_rng(args.seed + (2 if decode else 1))
     hidden = torch.from_numpy(rng.uniform(-1, 1, (args.batch, args.seq_len, cfg.hidden_size)).astype('float16'))
-    positions = torch.arange(args.seq_len, dtype=torch.int64).expand(args.batch, -1)
-    model = Llama3LayerPrefillCheckpoints(cfg)
+    positions = (torch.arange(args.seq_len, dtype=torch.int64) + (args.past_kv_len if decode else 0)).expand(args.batch, -1)
+    model = (Llama3LayerDecodeCheckpoints if decode else Llama3LayerPrefillCheckpoints)(cfg)
     local_params = {k.removeprefix('layers.0.'): v for k, v in params.items()}
-    frequencies = torch.arange(args.seq_len).float()[:, None] * model.rope_inv_freq[None, :]
+    frequencies = positions[0].float()[:, None] * model.rope_inv_freq[None, :]
     write_tensor('hidden', hidden.numpy())
     write_tensor('rope.cos', frequencies.cos().half().numpy())
     write_tensor('rope.sin', frequencies.sin().half().numpy())
     write_tensor('hadamard.r3', model.r3_base.half().numpy())
     write_tensor('hadamard.r4', model.r4_base.half().numpy())
+    initial_cache = []
+    if decode:
+        past_meta = json.loads((args.past_fixture / 'fixture.json').read_text())
+        if (past_meta['model'] != args.model or past_meta['seed'] != args.seed
+                or past_meta['config']['batch_size'] != args.batch
+                or past_meta['config']['query_length'] != args.past_kv_len
+                or not past_meta['config'].get('kv_quantize_fp16_arithmetic')):
+            raise ValueError("past fixture model/seed/length/numerical policy mismatch")
+        past = np.load(args.past_fixture / 'reference.npz')
+        layout_profile = ImproveProfile.from_target(profile.target)
+        for is_key in (True, False):
+            # Nonzero unused cache entries test masking and append preservation.
+            source = torch.from_numpy(rng.uniform(-1, 1, (args.batch * cfg.num_key_value_heads * cfg.cache_capacity, cfg.head_dim)).astype('float16'))
+            cache = list(torch.ops.vortex.quantize_int4(source, 1, cfg.kv_group_size, 1, 'signed_asymmetric_int4_fp16'))
+            for i, value in enumerate(cache):
+                cache[i] = value.reshape(args.batch, cfg.num_key_value_heads, cfg.cache_capacity, -1)
+                cache[i][:, :, :args.past_kv_len] = torch.from_numpy(past[f'cache_{i + (0 if is_key else 3)}'][:, :, :args.past_kv_len])
+            initial_cache.extend(cache)
+            plan = plan_improve_layout(1, cfg.cache_capacity if is_key else cfg.head_dim,
+                cfg.head_dim if is_key else cfg.cache_capacity, cfg.kv_group_size, is_key, 0 if is_key else 1, layout_profile)
+            for b in range(args.batch):
+                for h in range(cfg.num_key_value_heads):
+                    name = f'{"key" if is_key else "value"}.{b}.{h}'
+                    write_tensor(name + '.weight', prepack_improve_weight(cache[0][b,h].numpy(), plan))
+                    write_tensor(name + '.scale', prepack_improve_qparam(cache[1][b,h].numpy(), plan, 'float16'))
+                    write_tensor(name + '.zero', prepack_improve_qparam(cache[2][b,h].numpy(), plan, 'int16'))
+        np.savez(root / 'initial_cache.npz', **{f'cache_{i}': t.numpy() for i,t in enumerate(initial_cache)})
     (root / 'tensors.tsv').write_text(''.join(records))
     fields = dict(model=args.model, batch=args.batch, seq=args.seq_len, hidden=cfg.hidden_size,
                   ffn=cfg.intermediate_size, q_heads=cfg.num_attention_heads,
                   kv_heads=cfg.num_key_value_heads, head_dim=cfg.head_dim)
+    if decode: fields.update(stage='decode', past_kv=args.past_kv_len, cache_capacity=cfg.cache_capacity)
     (root / 'config.txt').write_text(''.join(f'{k} {v}\n' for k, v in fields.items()))
 
     print('CPU reference', args.model, args.batch, args.seq_len, flush=True)
     with torch.inference_mode():
-        values = model(hidden, positions, local_params)
+        values = model(hidden, positions, local_params, *initial_cache, torch.tensor(args.past_kv_len)) if decode else model(hidden, positions, local_params)
         refs = dict(zip(layer_checkpoint_names(cfg), values[:15], strict=True))
         norm = _rms_norm(hidden, local_params['input_norm.weight'], cfg.rms_norm_eps, cfg.rms_reduction_width)
         refs['attention_norm'] = norm
@@ -128,7 +160,9 @@ def generate(args):
     refdir = root / 'reference'
     refdir.mkdir(exist_ok=True)
     references['output'].tofile(refdir / 'output.bin')
-    provenance = dict(config=asdict(cfg), model=args.model, seed=args.seed, profile_fingerprint=profile.fingerprint,
+    provenance = dict(config=asdict(cfg), model=args.model, seed=args.seed,
+                      decoder_stage=args.decoder_stage, past_kv_len=args.past_kv_len if decode else 0,
+                      past_fixture=str(args.past_fixture.resolve()) if decode else None, profile_fingerprint=profile.fingerprint,
                       manifest=str(Path(args.manifest).resolve()), tensors_sha256=hashes,
                       vortex_head=subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip(),
                       numerical_policy='signed_all_asymmetric_wkv4_v1; FP16 KV quantization arithmetic; separate FP16 SiLU output; lane-strided RMS reduction')
@@ -157,6 +191,9 @@ def compare(args):
     refs = np.load(args.fixture / 'reference.npz')
     metadata = json.loads((args.fixture / 'fixture.json').read_text())
     cfg = Llama3ExportConfig(**metadata['config'])
+    decode = metadata.get('decoder_stage', 'prefill') == 'decode'
+    past_length = metadata.get('past_kv_len', 0)
+    valid_length = past_length + cfg.query_length if decode else cfg.query_length
     catalog = {}
     for line in (args.output / 'buffers.tsv').read_text().splitlines():
         name, layout, matrices, rows, cols, _ = line.split()
@@ -171,6 +208,7 @@ def compare(args):
             continue
         actual = tensor(name)
         expected = refs[name].reshape(actual.shape)
+        if name == 'scores': actual, expected = actual[..., :valid_length], expected[..., :valid_length]
         thresholds = OUTPUT_THRESHOLDS if name == 'output' else LOCAL_THRESHOLDS
         metrics = hybrid_metrics(actual, expected, thresholds, name=name, enforce=False)
         diff = np.abs(actual.astype('float32') - expected.astype('float32'))
@@ -192,10 +230,15 @@ def compare(args):
             flat = torch.from_numpy(np.ascontiguousarray(source.reshape(-1, cfg.head_dim)))
             cache = torch.ops.vortex.quantize_int4(flat, 1, cfg.kv_group_size, 1, scheme)
             cache = tuple(x.reshape(cfg.batch_size, cfg.num_key_value_heads, cfg.query_length, -1) for x in cache)
+            if decode:
+                saved = np.load(args.fixture / 'initial_cache.npz')
+                full = [torch.from_numpy(saved[f'cache_{i + (0 if is_key else 3)}'].copy()) for i in range(3)]
+                for dest, update in zip(full, cache): dest[:, :, past_length:valid_length] = update
+                cache = tuple(full)
             caches.append(cache)
             plan = plan_improve_layout(cfg.query_length,
-                cfg.query_length if is_key else cfg.head_dim,
-                cfg.head_dim if is_key else cfg.query_length,
+                cfg.cache_capacity if is_key else cfg.head_dim,
+                cfg.head_dim if is_key else cfg.cache_capacity,
                 cfg.kv_group_size, is_key, 0 if is_key else 1, profile)
             for b in range(cfg.batch_size):
                 for h in range(cfg.num_key_value_heads):
@@ -212,14 +255,14 @@ def compare(args):
         model = Llama3LayerPrefillCheckpoints(cfg)
         with torch.inference_mode():
             query = torch.from_numpy(tensor('q_hadamard').reshape(cfg.batch_size, cfg.num_attention_heads, cfg.query_length, cfg.head_dim))
-            positions = torch.arange(cfg.query_length).expand(cfg.batch_size, -1)
+            positions = (torch.arange(cfg.query_length) + past_length).expand(cfg.batch_size, -1)
             # QDIR=0 follows fpint_gemm_ffn_hw/test_vectors.h: scale the
             # integer weight in FP32, with no intermediate FP16 weight.
             # The generic TVM CPU model dequantizes to FP16 first. Preserve
             # that end-to-end comparison above, but isolate the actual MXU
             # arithmetic here using the verified quantized input bytes.
             packed, scale, zero = caches[0]
-            weight = _unpack_signed_int4(packed, list(k_source.shape), 3).float()
+            weight = _unpack_signed_int4(packed, [cfg.batch_size, cfg.num_key_value_heads, cfg.cache_capacity, cfg.head_dim], 3).float()
             weight = (weight - zero.float()) * scale.float()
             grouped_query = query.reshape(cfg.batch_size, cfg.num_key_value_heads,
                 cfg.query_heads_per_kv_head, cfg.query_length, cfg.head_dim)
@@ -241,15 +284,15 @@ def compare(args):
             with torch.inference_mode():
                 raw_scores = torch.from_numpy(tensor('scores')).reshape(
                     cfg.batch_size, cfg.num_key_value_heads, cfg.query_heads_per_kv_head,
-                    cfg.query_length, cfg.query_length)
+                    cfg.query_length, cfg.cache_capacity)
                 isolated_expected['probabilities'] = torch.ops.vortex.causal_softmax(
-                    raw_scores, positions, torch.tensor(cfg.query_length), cfg.head_dim)[1]
+                    raw_scores, positions, torch.tensor(valid_length), cfg.head_dim)[1]
                 # QDIR=1 rounds activation*scale to FP16 before the INT4 dot.
                 packed, scale, zero = caches[1]
-                weight = _unpack_signed_int4(packed, list(v_source.shape), 3).float() - zero.float()
+                weight = _unpack_signed_int4(packed, [cfg.batch_size, cfg.num_key_value_heads, cfg.cache_capacity, cfg.head_dim], 3).float() - zero.float()
                 probs = torch.from_numpy(tensor('probabilities')).reshape(
                     cfg.batch_size, cfg.num_key_value_heads, cfg.query_heads_per_kv_head,
-                    cfg.query_length, cfg.query_length)
+                    cfg.query_length, cfg.cache_capacity)
                 scaled = (probs.float() * scale.squeeze(-1).unsqueeze(2).unsqueeze(2).float()).half().float()
                 isolated_expected['context'] = (scaled @ weight.unsqueeze(2)).half()
                 context = torch.from_numpy(tensor('context')).reshape(
@@ -267,7 +310,9 @@ def compare(args):
                 isolated_expected['output'] = (actual_tensor('down_proj').float() + actual_tensor('attention_residual').float()).half()
         for name, expected in isolated_expected.items():
             actual = tensor(name)
-            local_checks[name] = hybrid_metrics(actual, expected.numpy().reshape(actual.shape), LOCAL_THRESHOLDS, name=name, enforce=False)
+            wanted = expected.numpy().reshape(actual.shape)
+            if name == 'scores': actual, wanted = actual[..., :valid_length], wanted[..., :valid_length]
+            local_checks[name] = hybrid_metrics(actual, wanted, LOCAL_THRESHOLDS, name=name, enforce=False)
             print('SAME INPUT', name, 'PASS' if local_checks[name]['pass'] else 'FAIL', flush=True)
     quant_pass = all(v['mismatches'] == 0 for checks in quant_checks.values() for v in checks.values())
     overall = quant_pass and all(v['pass'] or (k != 'output' and local_checks.get(k, {}).get('pass', False))
@@ -287,6 +332,8 @@ def tvm_stage(args):
     from tvm import relax
 
     metadata = json.loads((args.fixture / 'fixture.json').read_text())
+    if metadata.get('decoder_stage', 'prefill') == 'decode':
+        raise ValueError('decode fixtures currently support CPU/checkpoint validation, not the prefill TVM runner')
     cfg = Llama3ExportConfig(**metadata['config'])
     profile = load_vortex_accelerator_profile(metadata['manifest'])
     if profile.fingerprint != metadata['profile_fingerprint']:
@@ -382,6 +429,10 @@ def main():
     parser.add_argument('--model', choices=['llama3-8b', 'llama2-7b'], default='llama3-8b')
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--seq-len', type=int, default=32)
+    parser.add_argument('--decoder-stage', choices=['prefill', 'decode'], default='prefill')
+    parser.add_argument('--past-kv-len', type=int, default=0)
+    parser.add_argument('--cache-capacity', type=int, default=0)
+    parser.add_argument('--past-fixture', type=Path)
     parser.add_argument('--seed', type=int, default=20260831)
     parser.add_argument('--manifest', default=DEFAULT_MANIFEST)
     parser.add_argument('--mxu', type=int, default=16)

@@ -36,7 +36,7 @@ class Decoder {
   std::vector<Sample> isolated(unsigned repetitions);
   void save_output(const std::filesystem::path& folder);
   const std::vector<Operation>& operations() const { return ops_; }
-  uint64_t cores = 0, warps = 0, threads = 0, tmem = 0;
+  uint64_t cores = 0, warps = 0, threads = 0, tmem = 0, local_mem = 0;
  private:
   ModelConfig cfg_;
   vx_device_h device_ = nullptr;
@@ -49,10 +49,7 @@ class Decoder {
   void append(Operation op);
   Sample launch(Operation& op, bool profile);
   void dump_buffer(const std::string& name, const std::filesystem::path& folder);
-  void gemm(const std::string& name, const std::string& input,
-            const std::string& weight, const std::string& scale, const std::string& zero,
-            const std::string& output, uint32_t m, uint32_t k, uint32_t n,
-            uint32_t group, uint32_t transpose, uint32_t qdir,
-            uint64_t input_offset = 0, uint64_t output_offset = 0,
-            uint32_t target_k = 0, uint32_t target_n = 0);
+  void multiply(const std::string& name, const std::string& input, const std::string& weights,
+      const std::string& output, uint32_t m, uint32_t k, uint32_t n, bool attention,
+      bool transpose = false, uint64_t input_offset = 0, uint64_t output_offset = 0);
 };

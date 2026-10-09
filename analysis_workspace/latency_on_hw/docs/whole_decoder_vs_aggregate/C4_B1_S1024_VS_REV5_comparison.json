@@ -1,0 +1,23 @@
+{
+  "candidate": "C4",
+  "model": "llama3_8b",
+  "batch": 1,
+  "prefill_seq_len": 1024,
+  "layers": 1,
+  "historical_composed_csv": "analysis_workspace/latency_on_hw/composed_results.th16_20261007_rev5_pipeline/llama3_8b/composed.csv",
+  "historical_variant": "all_fpint_gemm_improve_fused_layout_spinquant",
+  "historical_row_count": 24,
+  "historical_layer_s": 30.299683580000004,
+  "wall_seconds": 31.060444846,
+  "delta_s": 0.7607612659999958,
+  "delta_percent": 2.5107894740595604,
+  "dequant_deduction_s": 0,
+  "extra_reorder_deduction_s": 0,
+  "tcu_qk_deduction_s": 0,
+  "decoder_summary": "build_llama_decoder_c4/results/b1_s1024_busy_poll_20261009/summary.json",
+  "decoder_alias": "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fsm_update",
+  "historical_aliases": [
+    "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_axi_fix",
+    "improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_fix_pad"
+  ]
+}

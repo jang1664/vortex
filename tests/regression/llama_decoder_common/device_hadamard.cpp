@@ -1,0 +1,8 @@
+// Reuse the existing standalone regression kernel unchanged.
+#define main llama_hadamard_main
+#define kernel_arg_t llama_hadamard_kernel_arg_t
+#define kernel_dispatcher llama_hadamard_kernel_dispatcher
+#define kernel_dispatcher_power llama_hadamard_kernel_dispatcher_power
+#define kernel_body llama_hadamard_kernel_body
+#define kernel_body_power llama_hadamard_kernel_body_power
+#include "../hadamard/kernel.cpp"

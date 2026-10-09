@@ -1,0 +1,21 @@
+{
+  "historical_manifest": "analysis_workspace/latency_on_hw/outputs_llama3_main.th16_20261007_rev5_pipeline/C1/kernel_variants.json",
+  "historical_run_id": "20261004T060802877116Z",
+  "variants": {
+    "eladd": "row_coalesced_cursor",
+    "elmul": "default",
+    "hadamard": "r3_shuffle",
+    "head_concat": "chunk16_packed",
+    "kv_cache_dequant_w4a16": "groupwise_fp16",
+    "kv_cache_quant_w4a16": "groupwise_fp16",
+    "rmsnorm": "adaptive_m_rows",
+    "rope": "task_chunk16",
+    "sgemm_tcu": "b_colmajor",
+    "silu": "linear",
+    "softmax": "rev2_shuffle_grouped"
+  },
+  "notes": [
+    "Decoder wrappers select these variants explicitly; combined binary hashes differ from standalone.",
+    "Existing model math is preserved: softmax scale 1/sqrt(128), asymmetric V quantization."
+  ]
+}
