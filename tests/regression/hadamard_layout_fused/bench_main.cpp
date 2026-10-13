@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../vector_common/spinquant_hadamard.h"
 #include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 #include "bench_util.h"
@@ -81,6 +82,7 @@ int main(int argc, char** argv) {
   if (vx_bench::report_parse_error(bench))
     return -1;
 
+  bool canonical_matrix = false;
   uint32_t rows = 2;
   uint32_t matrix_count = 32;
   uint32_t dim = 128;
@@ -119,6 +121,12 @@ int main(int argc, char** argv) {
         return -1;
       }
     }
+    else if (std::strcmp(argv[index], "--matrix") == 0 && index + 1 < argc) {
+      const char* mode = argv[++index];
+      if (std::strcmp(mode, "spinquant") != 0 && std::strcmp(mode, "synthetic") != 0)
+        return -1;
+      canonical_matrix = std::strcmp(mode, "spinquant") == 0;
+    }
     else if (std::strcmp(argv[index], "--launch-rows") == 0
              && index + 1 < argc) {
       const char* value = argv[++index];
@@ -138,7 +146,7 @@ int main(int argc, char** argv) {
                   "[--power-measure-latency[=on|off]] [-m rows] [-n matrices] [-k dim] "
                   "[--hadamard-variant zero_padding|factorized] "
                   "[--layout-from row_major_fp16|head_major_row_fp16|gemm_a_tiled] "
-                  "[--launch-rows real|padded]\n",
+                  "[--launch-rows real|padded] [--matrix spinquant|synthetic]\n",
                   argv[0]);
       return 0;
     } else {
@@ -200,6 +208,7 @@ int main(int argc, char** argv) {
         matrix[row * base_k + column] = float_to_fp16(value);
       }
     }
+    if (canonical_matrix && !spinquant_hadamard::fill(matrix, base_k)) return -1;
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);

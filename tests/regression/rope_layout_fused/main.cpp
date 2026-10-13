@@ -93,13 +93,14 @@ static void init_input(std::vector<data_t>& values) {
 static void precompute_freqs(std::vector<data_t>& cos_table,
                              std::vector<data_t>& sin_table,
                              uint32_t max_seq_len,
-                             uint32_t head_dim) {
+                             uint32_t head_dim,
+                             float theta_base) {
   const uint32_t half_dim = head_dim >> 1;
   cos_table.resize((size_t)max_seq_len * half_dim);
   sin_table.resize((size_t)max_seq_len * half_dim);
   for (uint32_t pos = 0; pos < max_seq_len; ++pos) {
     for (uint32_t p = 0; p < half_dim; ++p) {
-      float freq = std::pow(10000.0f, -2.0f * float(p) / float(head_dim));
+      float freq = std::pow(theta_base, -2.0f * float(p) / float(head_dim));
       float theta = float(pos) * freq;
       cos_table[(size_t)pos * half_dim + p] = float_to_fp16(std::cos(theta));
       sin_table[(size_t)pos * half_dim + p] = float_to_fp16(std::sin(theta));
@@ -195,6 +196,7 @@ int main(int argc, char *argv[]) {
   uint32_t head_dim = 32;
   uint32_t max_seq = 32;
   uint32_t pos_offset = 0;
+  float theta_base = 10000.0f;
   uint32_t layout_to = ROPE_LAYOUT_TO_GEMM_A;
 
   for (int i = 1; i < argc; ++i) {
@@ -203,12 +205,13 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) head_dim = atoi(argv[++i]);
     else if (strcmp(argv[i], "-maxseq") == 0) max_seq = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-theta") == 0) theta_base = std::atof(argv[++i]);
     else if (strcmp(argv[i], "-offset") == 0) pos_offset = atoi(argv[++i]);
     else if (strcmp(argv[i], "--layout-to") == 0) layout_to = parse_layout_to(argv[++i]);
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) layout_to = parse_layout_to(argv[i] + 12);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major|head_major_row]\n", argv[0]);
+             "[-maxseq N] [-offset O] [-theta BASE] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major|head_major_row]\n", argv[0]);
       return 0;
     }
   }
@@ -235,6 +238,10 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (!std::isfinite(theta_base) || theta_base <= 0.0f) {
+    std::fprintf(stderr, "RoPE theta must be finite and positive\n");
+    return 1;
+  }
   const uint32_t input_m = batch * seq;
   const uint32_t input_m_pad = (input_m + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
   const uint32_t output_m_pad = (seq + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
@@ -267,7 +274,7 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_ref(output_elems);
   std::vector<data_t> h_out(output_elems, 0);
   init_input(h_input_row);
-  precompute_freqs(h_cos, h_sin, max_seq, head_dim);
+  precompute_freqs(h_cos, h_sin, max_seq, head_dim, theta_base);
   pack_projection(h_input_row, h_input_tiled, batch, seq, heads, head_dim, input_m_pad);
   build_reference(h_input_row, h_cos, h_sin, h_ref, batch, seq, heads, head_dim,
                   max_seq, pos_offset, output_m_pad, layout_to);

@@ -13,6 +13,7 @@
 
 #include <iostream>
 #include <unistd.h>
+#include <getopt.h>
 #include <string.h>
 #include <vector>
 #include <cmath>
@@ -43,6 +44,7 @@ static uint32_t K = 128;
 static uint32_t QBLK = 32;
 static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
+static uint32_t TARGET_M = 0, TARGET_N = 0, TARGET_K = 0;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -487,9 +489,26 @@ int main(int argc, char *argv[]) {
   }
 
   optind = 1;
+  enum { OPT_TM = 0x102, OPT_TN, OPT_TK };
+  const option region_options[] = {
+      {"target-m", required_argument, nullptr, OPT_TM},
+      {"target-n", required_argument, nullptr, OPT_TN},
+      {"target-k", required_argument, nullptr, OPT_TK},
+      {nullptr, 0, nullptr, 0},
+  };
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:t:d:h")) != -1) {
+  while ((c = getopt_long(argc, argv, "m:n:k:q:t:d:h", region_options, nullptr)) != -1) {
     switch (c) {
+    case OPT_TM: case OPT_TN: case OPT_TK: {
+      char* end = nullptr;
+      const unsigned long value = strtoul(optarg, &end, 10);
+      if (!*optarg || *optarg == '-' || *end || !value || value > UINT32_MAX) {
+        std::cerr << "Invalid target extent: " << optarg << std::endl;
+        return 1;
+      }
+      (c == OPT_TM ? TARGET_M : c == OPT_TN ? TARGET_N : TARGET_K) = uint32_t(value);
+      break;
+    }
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
     case 'k': K = atoi(optarg); break;
@@ -508,7 +527,8 @@ int main(int argc, char *argv[]) {
              "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
              "[--power-measure-latency[=on|off]] "
              "[--power-max-iterations=N] "
-             "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
+             "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR] "
+             "[--target-m M] [--target-n N] [--target-k K]\n", argv[0]);
       return 0;
     default:
       printf("Usage: %s [--warmup=N] [--iterations=N] [--latency=on|off] "
@@ -522,7 +542,8 @@ int main(int argc, char *argv[]) {
              "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
              "[--power-measure-latency[=on|off]] "
              "[--power-max-iterations=N] "
-             "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
+             "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR] "
+             "[--target-m M] [--target-n N] [--target-k K]\n", argv[0]);
       return -1;
     }
   }
@@ -532,9 +553,18 @@ int main(int argc, char *argv[]) {
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
     return -1;
   }
-  if (M == 0) {
-    std::cerr << "M must be > 0" << std::endl;
+  if (M == 0 || N == 0 || K == 0) {
+    std::cerr << "M, N, and K must be > 0" << std::endl;
     return -1;
+  }
+  // Match main.cpp: M/N/K describe packed storage; targets describe work.
+  TARGET_M = TARGET_M ? TARGET_M : M;
+  TARGET_N = TARGET_N ? TARGET_N : N;
+  TARGET_K = TARGET_K ? TARGET_K : K;
+  if (TARGET_M > M || TARGET_N > N || TARGET_K > K
+      || TARGET_N % DMA_MXU_NT || TARGET_K % DMA_MXU_KT) {
+    std::cerr << "Target must fit original storage; N/K must align to MXU" << std::endl;
+    return 1;
   }
   // Pad M up to multiple of 8 for DMA stripe alignment (NUM_DMA_CHANNELS=8).
   // DRAM slots reserve M_pad rows for address alignment; compute/DMA use real M.
@@ -568,6 +598,8 @@ int main(int argc, char *argv[]) {
              static_cast<unsigned long long>(bench.power_csv_max_bytes));
     }
     printf("\n");
+    printf("GEMM region: orig=%ux%ux%u target=%ux%ux%u\n",
+           M, N, K, TARGET_M, TARGET_N, TARGET_K);
     printf("Active MXU profile: MXU_ROW=%u MXU_COL=%u MXU_COL_TILE=%u\n",
            DMA_MXU_KT, DMA_MXU_NT, DMA_MXU_COL_TILE);
   }
@@ -659,6 +691,9 @@ int main(int argc, char *argv[]) {
   kargs.M      = M;
   kargs.N      = N;
   kargs.K      = K;
+  kargs.target_M = TARGET_M;
+  kargs.target_N = TARGET_N;
+  kargs.target_K = TARGET_K;
   kargs.QBLK   = QBLK;
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;

@@ -10,6 +10,7 @@
 #include <vortex.h>
 
 #include "common.h"
+#include "../vector_common/spinquant_hadamard.h"
 #include "../vector_common/fp16.h"
 
 using data_t = fp16_t;
@@ -137,11 +138,12 @@ static void initialize_random(std::vector<data_t>& vec) {
 
 static void print_usage(const char* prog) {
   printf("Usage: %s [-rows N] [-dim D] [-K BASE] "
-         "[-seed S] [-k kernel.vxbin]\n",
+         "[-seed S] [-k kernel.vxbin] [--matrix spinquant|synthetic]\n",
          prog);
 }
 
 int main(int argc, char *argv[]) {
+  bool canonical_matrix = false;
   uint32_t rows = 4;
   uint32_t dim = 128;
   uint32_t seed = 42;
@@ -154,6 +156,11 @@ int main(int argc, char *argv[]) {
       dim = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-K") == 0 && i + 1 < argc) {
       base_k = static_cast<uint32_t>(atoi(argv[++i]));
+    } else if (strcmp(argv[i], "--matrix") == 0 && i + 1 < argc) {
+      const char* mode = argv[++i];
+      if (strcmp(mode, "spinquant") != 0 && strcmp(mode, "synthetic") != 0)
+        return -1;
+      canonical_matrix = strcmp(mode, "spinquant") == 0;
     } else if (strcmp(argv[i], "-seed") == 0 && i + 1 < argc) {
       seed = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
@@ -225,6 +232,10 @@ int main(int argc, char *argv[]) {
   srand(seed);
   initialize_random(h_input);
   initialize_random(h_matrix);
+  if (canonical_matrix && !spinquant_hadamard::fill(h_matrix, matrix_dim)) {
+    fprintf(stderr, "No canonical SpinQuant basis for K=%u\n", matrix_dim);
+    return -1;
+  }
   hadamard_cpu(
       h_input, h_matrix, h_output_cpu, rows, dim, padded_dim,
       base_k, width);

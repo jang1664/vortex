@@ -415,6 +415,7 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
 static int run_persistent_update_test(uint32_t capacity,
                                       uint32_t position,
                                       uint32_t persistent_kind,
+                                      uint32_t quant_mode,
                                       bool emit_correction_qparams,
                                       uint32_t N,
                                       uint32_t QBLK,
@@ -429,9 +430,6 @@ static int run_persistent_update_test(uint32_t capacity,
   const uint32_t source_transposed = persistent_kind == 1 ? 1u : 0u;
   const uint32_t wtrans = source_transposed;
   const uint32_t gemm_qdir = persistent_kind == 1 ? 0u : 1u;
-  const uint32_t quant_mode = persistent_kind == 1
-      ? KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC
-      : KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC;
   if (N == 0 || (N & 1u) != 0 || !is_pow2_u32(QBLK) || QBLK < N
       || capacity == 0 || position >= capacity) {
     printf("ERROR: persistent update requires even non-zero N, power-of-two "
@@ -715,7 +713,11 @@ int main(int argc, char *argv[]) {
 
   if (persistent_kind != 0) {
     return run_persistent_update_test(cache_capacity, cache_position,
-                                      persistent_kind, true, 128, 128,
+                                      persistent_kind,
+                                      persistent_kind == 1
+                                          ? KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC
+                                          : KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC,
+                                      true, 128, 128,
                                       DEFAULT_DMA_MT, DEFAULT_DMA_KT,
                                       DEFAULT_DMA_NT, src_layout, source_total_k,
                                       source_total_n, head_col_offset);
@@ -741,7 +743,8 @@ int main(int argc, char *argv[]) {
         && quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
       persistent_kind = 1;
     } else if (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && GEMM_QDIR == 1
-               && quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+               && (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                   || quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC)) {
       persistent_kind = 2;
     } else {
       printf("ERROR: append correctness mode supports the decode KV-K "
@@ -749,7 +752,7 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     return run_persistent_update_test(cache_capacity, cache_position,
-                                      persistent_kind,
+                                      persistent_kind, quant_mode,
                                       emit_correction_qparams, N, QBLK,
                                       DMA_MT, DMA_KT, DMA_NT, src_layout, source_total_k,
                                       source_total_n, head_col_offset);

@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../vector_common/spinquant_hadamard.h"
 #include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 
@@ -140,7 +141,8 @@ static bool run_case(const char* name,
                      uint32_t base_k,
                      bool factorized = true,
                      bool tiled_input = false,
-                     bool padded_row_launch = false) {
+                     bool padded_row_launch = false,
+                     bool canonical_matrix = false) {
   std::printf("%s: matrices=%u rows=%u m_pad=%u dim=%u base=%u variant=%s input=%s launch=%s\n",
               name, matrix_count, rows, m_pad, dim, base_k,
               factorized ? "factorized" : "zero_padding",
@@ -183,6 +185,7 @@ static bool run_case(const char* name,
       matrix[row * base_k + column] = float_to_fp16(value);
     }
   }
+  if (canonical_matrix && !spinquant_hadamard::fill(matrix, base_k)) return false;
   reference_hadamard(input, matrix, reference_row,
                      matrix_count, rows, dim, base_k, factorized);
   for (uint32_t matrix_idx = 0; matrix_idx < matrix_count; ++matrix_idx) {
@@ -318,6 +321,7 @@ static bool run_case(const char* name,
 
 int main(int argc, char** argv) {
   const char* kernel_file = "kernel.vxbin";
+  bool canonical_matrix = false;
   uint32_t rows = 2;
   uint32_t matrix_count = 32;
   uint32_t dim = 128;
@@ -358,6 +362,12 @@ int main(int argc, char** argv) {
         return 2;
       }
     }
+    else if (std::strcmp(argv[index], "--matrix") == 0 && index + 1 < argc) {
+      const char* mode = argv[++index];
+      if (std::strcmp(mode, "spinquant") != 0 && std::strcmp(mode, "synthetic") != 0)
+        return -1;
+      canonical_matrix = std::strcmp(mode, "spinquant") == 0;
+    }
     else if (std::strcmp(argv[index], "--launch-rows") == 0
              && index + 1 < argc) {
       const char* value = argv[++index];
@@ -375,7 +385,7 @@ int main(int argc, char** argv) {
                    "Usage: %s [--kernel kernel.vxbin] [-m N] [-n N] [-k N] "
                    "[--hadamard-variant zero_padding|factorized] "
                    "[--layout-from row_major_fp16|head_major_row_fp16|gemm_a_tiled] "
-                   "[--launch-rows real|padded]\n",
+                   "[--launch-rows real|padded] [--matrix spinquant|synthetic]\n",
                    argv[0]);
       return 2;
     }
@@ -395,7 +405,7 @@ int main(int argc, char** argv) {
   }
   bool passed = run_case(
       "requested", matrix_count, rows, (rows + 7) & ~7u, dim, base_k,
-      factorized, tiled_input, padded_row_launch);
+      factorized, tiled_input, padded_row_launch, canonical_matrix);
   cleanup();
   return passed ? 0 : 1;
 }
