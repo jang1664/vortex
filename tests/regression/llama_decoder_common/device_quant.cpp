@@ -1,4 +1,4 @@
-// Reuse the existing standalone regression kernel unchanged.
+// Reuse the standalone kernel with the decoder-only strided input option.
 #define main llama_quant_main
 #define kernel_arg_t llama_quant_kernel_arg_t
 #define kernel_dispatcher llama_quant_kernel_dispatcher

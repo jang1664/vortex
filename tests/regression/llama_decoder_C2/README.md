@@ -6,10 +6,10 @@ QK and PV use the existing FP16 TCU kernel. Vector operations and intermediate
 activations use row-major layout. Every query and KV head is executed on device.
 
 Implementation is shared with C1 and C3 in `../llama_decoder_common`.
-The existing standalone regression kernels and latency_on_hw measurements are
-not modified. Quantization/dequantization and attention transposes must execute
-on device inside the connected graph; fixtures only prepare initial inputs and
-static weights.
+Standalone kernel defaults and latency_on_hw measurements are unchanged.
+Quantization/dequantization executes on device; RoPE output addressing and KV
+quant input strides eliminate separate head reorders. Fixtures only prepare
+initial inputs and static weights.
 
 Hardware alias:
 `naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_axi_fix`.
@@ -29,9 +29,9 @@ of shape `[K/QBLK, N]`. The decoder obtains the original device ABI from
 in its own translation unit. LMEM scratch uses the original regression allocation
 order and 64-byte alignment; insufficient local memory fails before launch.
 
-TCU attention is a different boundary: its column-major B operand requires
-explicit device-side reordering/dequantization. Those operations are part of the
-connected decoder and its timing, not host preprocessing of intermediate data.
+TCU attention dequantizes KV on device. QK interprets row-major K `[C,D]` as
+column-major B `[D,C]`; PV directly loads row-major V `[C,D]`. Neither requires
+a separate V transpose. See the shared README for the opt-in kernel capabilities.
 
 ## Reproduce a prepared fixture
 

@@ -36,6 +36,7 @@ using otype_t = typename vt::OTYPE::dtype;
 
 const char *kernel_file = "kernel.vxbin";
 
+static uint32_t b_row_major = 0;
 static uint32_t xm = 32;
 static uint32_t xn = 128;
 static uint32_t xk = 1024;
@@ -87,20 +88,21 @@ int main(int argc, char *argv[]) {
 
   optind = 1;
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:i:o:h")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:r:i:o:h")) != -1) {
     switch (c) {
       case 'm': xm = atoi(optarg); break;
       case 'n': xn = atoi(optarg); break;
-      case 'k': xk = atoi(optarg); break;
+      case 'r': b_row_major = atoi(optarg); break;
+    case 'k': xk = atoi(optarg); break;
       case 'h':
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
                "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-               "[-m M] [-n N] [-k K]\n", argv[0]);
+               "[-m M] [-n N] [-k K] [-r 0|1]\n", argv[0]);
         return 0;
       default:
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
                "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-               "[-m M] [-n N] [-k K]\n", argv[0]);
+               "[-m M] [-n N] [-k K] [-r 0|1]\n", argv[0]);
         return -1;
     }
   }
@@ -153,6 +155,12 @@ int main(int argc, char *argv[]) {
   kernel_arg.grid_dim[1] = M_exec / cfg::tileM;
   kernel_arg.block_dim[0] = NT;
   kernel_arg.block_dim[1] = 1;
+#if defined(SGEMM_TCU_RUNTIME_B_LAYOUT) && SGEMM_TCU_RUNTIME_B_LAYOUT
+  if (b_row_major > 1 || (b_row_major && vt::ITYPE::bits < 8)) { fprintf(stderr, "invalid row-major B mode\n"); return 1; }
+  kernel_arg.B_row_major = b_row_major;
+#else
+  if (b_row_major) { fprintf(stderr, "runtime B layout requires b_colmajor variant\n"); return 1; }
+#endif
   kernel_arg.M = M_exec;
   kernel_arg.N = N_exec;
   kernel_arg.K = K_exec;
@@ -174,7 +182,7 @@ int main(int argc, char *argv[]) {
     for (uint32_t k = 0; k < K; ++k) {
       for (uint32_t n = 0; n < N; ++n) {
 #if SGEMM_TCU_USE_B_COLMAJOR
-        h_B[n * K_exec + k] = gen_value<vt::ITYPE>();
+        h_B[b_row_major ? k * N_exec + n : n * K_exec + k] = gen_value<vt::ITYPE>();
 #else
         h_B[k * N_exec + n] = gen_value<vt::ITYPE>();
 #endif

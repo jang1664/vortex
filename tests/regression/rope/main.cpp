@@ -84,7 +84,7 @@ void rope_cpu(
     uint32_t seq_len,
     uint32_t num_heads,
     uint32_t head_dim,
-    uint32_t pos_offset) {
+    uint32_t pos_offset, bool head_major) {
   
   uint32_t half_dim = head_dim / 2;
   
@@ -95,6 +95,8 @@ void rope_cpu(
       for (uint32_t h = 0; h < num_heads; ++h) {
         uint32_t base_idx = ((b * seq_len + s) * num_heads + h) * head_dim;
         
+        uint32_t output_idx = head_major
+            ? ((b * num_heads + h) * seq_len + s) * head_dim : base_idx;
         // Apply rotation to each pair
         for (uint32_t p = 0; p < half_dim; ++p) {
           float cos_val = fp16_to_float(cos_table[pos * half_dim + p]);
@@ -103,8 +105,8 @@ void rope_cpu(
           float x0 = fp16_to_float(input[base_idx + p]);
           float x1 = fp16_to_float(input[base_idx + p + half_dim]);
           
-          output[base_idx + p] = float_to_fp16(x0 * cos_val - x1 * sin_val);
-          output[base_idx + p + half_dim] = float_to_fp16(x0 * sin_val + x1 * cos_val);
+          output[output_idx + p] = float_to_fp16(x0 * cos_val - x1 * sin_val);
+          output[output_idx + p + half_dim] = float_to_fp16(x0 * sin_val + x1 * cos_val);
         }
       }
     }
@@ -141,6 +143,8 @@ int main(int argc, char *argv[]) {
   uint32_t head_dim = 64;  // Must be even
   uint32_t max_seq_len = 128;
   uint32_t pos_offset = 0;
+  float theta_base = 10000.0f;
+  uint32_t output_head_major = 0;
   
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
@@ -154,14 +158,26 @@ int main(int argc, char *argv[]) {
       head_dim = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-maxseq") == 0) {
       max_seq_len = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "-head-major") == 0) {
+      output_head_major = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "-theta") == 0) {
+      theta_base = std::atof(argv[++i]);
     } else if (strcmp(argv[i], "-offset") == 0) {
       pos_offset = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      printf("Usage: %s [-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O]\n", argv[0]);
+      printf("Usage: %s [-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O] [-theta BASE] [-head-major 0|1]\n", argv[0]);
       return 0;
     }
   }
   
+  if (output_head_major > 1) return 1;
+#if !defined(ROPE_RUNTIME_OUTPUT_LAYOUT) || !ROPE_RUNTIME_OUTPUT_LAYOUT
+  if (output_head_major) { fprintf(stderr, "head-major output requires task_chunk16\n"); return 1; }
+#endif
+  if (!std::isfinite(theta_base) || theta_base <= 0.0f) {
+    std::fprintf(stderr, "RoPE theta must be finite and positive\n");
+    return 1;
+  }
   assert(head_dim % 2 == 0 && "head_dim must be even");
   
   printf("RoPE Test Configuration:\n");
@@ -190,12 +206,12 @@ int main(int argc, char *argv[]) {
   // Initialize data
   srand(42);
   initialize_random(h_input);
-  precompute_freqs(h_cos, h_sin, max_seq_len, head_dim);
+  precompute_freqs(h_cos, h_sin, max_seq_len, head_dim, theta_base);
   
   // Run CPU reference
   printf("Running CPU reference...\n");
   rope_cpu(h_input, h_cos, h_sin, h_output_cpu, 
-           batch_size, seq_len, num_heads, head_dim, pos_offset);
+           batch_size, seq_len, num_heads, head_dim, pos_offset, output_head_major);
   
   // Initialize Vortex
   printf("Initializing Vortex...\n");
@@ -262,6 +278,9 @@ int main(int argc, char *argv[]) {
   kernel_arg.num_heads = num_heads;
   kernel_arg.head_dim = head_dim;
   kernel_arg.pos_offset = pos_offset;
+#if defined(ROPE_RUNTIME_OUTPUT_LAYOUT) && ROPE_RUNTIME_OUTPUT_LAYOUT
+  kernel_arg.output_head_major = output_head_major;
+#endif
   
   printf("Grid: [%d, %d, %d]\n", 
          kernel_arg.grid_dim[0], kernel_arg.grid_dim[1], kernel_arg.grid_dim[2]);

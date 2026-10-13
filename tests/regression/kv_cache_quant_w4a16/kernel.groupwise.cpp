@@ -6,6 +6,14 @@
 
 #define KV_QUANT_INLINE static inline __attribute__((always_inline))
 
+KV_QUANT_INLINE uint32_t input_row_stride(const kernel_arg_t* arg) {
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+  return arg->src_row_stride ? arg->src_row_stride : arg->N;
+#else
+  return arg->N;
+#endif
+}
+
 KV_QUANT_INLINE uint32_t min_u32(uint32_t a, uint32_t b) {
   return (a < b) ? a : b;
 }
@@ -172,6 +180,9 @@ KV_QUANT_INLINE uint8_t quantize_loaded_value(fp16_t value_bits,
 static void compute_params_baseline(const fp16_t* src,
                                     uint32_t K,
                                     uint32_t N,
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+                                    uint32_t src_stride,
+#endif
                                     uint32_t QBLK,
                                     uint32_t QDIR,
                                     uint32_t quant_mode,
@@ -180,13 +191,16 @@ static void compute_params_baseline(const fp16_t* src,
                                     fp16_t* scale_bits_out,
                                     _Float16* quant_scale_out,
                                     int16_t* zp_out) {
-  _Float16 min_v = kv_fp16_from_bits(src[(uint64_t)k * N + n]);
+#if !defined(KV_CACHE_QUANT_INPUT_STRIDE) || !KV_CACHE_QUANT_INPUT_STRIDE
+  const uint32_t src_stride = N;
+#endif
+  _Float16 min_v = kv_fp16_from_bits(src[(uint64_t)k * src_stride + n]);
   _Float16 max_v = min_v;
   if (QDIR == 0) {
     const uint32_t k0 = (k / QBLK) * QBLK;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0; kk < k1; ++kk) {
-      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)kk * N + n]);
+      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)kk * src_stride + n]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -194,7 +208,7 @@ static void compute_params_baseline(const fp16_t* src,
     const uint32_t n0 = (n / QBLK) * QBLK;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0; nn < n1; ++nn) {
-      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)k * N + nn]);
+      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)k * src_stride + nn]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -210,6 +224,7 @@ static void quantize_baseline(kernel_arg_t* arg,
                               int16_t* zeros) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
+  const uint32_t src_stride = input_row_stride(arg);
   const uint32_t total_bytes = K * (N >> 1);
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -221,9 +236,17 @@ static void quantize_baseline(kernel_arg_t* arg,
     fp16_t bits0, bits1;
     _Float16 scale0, scale1;
     int16_t zp0, zp1;
-    compute_params_baseline(src, K, N, arg->QBLK, arg->QDIR,
+    compute_params_baseline(src, K, N,
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+                            src_stride,
+#endif
+                            arg->QBLK, arg->QDIR,
                             arg->quant_mode, k, n0, &bits0, &scale0, &zp0);
-    compute_params_baseline(src, K, N, arg->QBLK, arg->QDIR,
+    compute_params_baseline(src, K, N,
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+                            src_stride,
+#endif
+                            arg->QBLK, arg->QDIR,
                             arg->quant_mode, k, n1, &bits1, &scale1, &zp1);
     const uint64_t qidx0 = kv_qparam_index(k, n0, K, N, arg->QBLK, arg->QDIR);
     const uint64_t qidx1 = kv_qparam_index(k, n1, K, N, arg->QBLK, arg->QDIR);
@@ -232,10 +255,10 @@ static void quantize_baseline(kernel_arg_t* arg,
     zeros[qidx0] = zp0;
     zeros[qidx1] = zp1;
     const uint8_t q0 = quantize_value(
-        kv_fp16_from_bits(src[(uint64_t)k * N + n0]), scale0, zp0,
+        kv_fp16_from_bits(src[(uint64_t)k * src_stride + n0]), scale0, zp0,
         arg->quant_mode);
     const uint8_t q1 = quantize_value(
-        kv_fp16_from_bits(src[(uint64_t)k * N + n1]), scale1, zp1,
+        kv_fp16_from_bits(src[(uint64_t)k * src_stride + n1]), scale1, zp1,
         arg->quant_mode);
     kv_store_npair(dst, N, k, n_pair, q0, q1);
   }
@@ -248,6 +271,7 @@ static void quantize_qdir1_warp(kernel_arg_t* arg,
                                 int16_t* zeros) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
+  const uint32_t src_stride = input_row_stride(arg);
   const uint32_t groups_n = ceil_div_u32(N, arg->QBLK);
   const uint32_t tasks = K * groups_n;
   const uint32_t lane = threadIdx.x;
@@ -256,10 +280,10 @@ static void quantize_qdir1_warp(kernel_arg_t* arg,
     const uint32_t group_n = task - k * groups_n;
     const uint32_t n0 = group_n * arg->QBLK;
     const uint32_t n1 = min_u32(n0 + arg->QBLK, N);
-    _Float16 min_v = kv_fp16_from_bits(src[(uint64_t)k * N + n0]);
+    _Float16 min_v = kv_fp16_from_bits(src[(uint64_t)k * src_stride + n0]);
     _Float16 max_v = min_v;
     for (uint32_t n = n0 + lane; n < n1; n += NUM_THREADS) {
-      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)k * N + n]);
+      const _Float16 v = kv_fp16_from_bits(src[(uint64_t)k * src_stride + n]);
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -278,10 +302,10 @@ static void quantize_qdir1_warp(kernel_arg_t* arg,
     for (uint32_t pair = lane; pair < pairs; pair += NUM_THREADS) {
       const uint32_t n = n0 + (pair << 1);
       const uint8_t q0 = quantize_loaded_value(
-          src[(uint64_t)k * N + n], quant_scale, zero,
+          src[(uint64_t)k * src_stride + n], quant_scale, zero,
           arg->quant_mode);
       const uint8_t q1 = quantize_loaded_value(
-          src[(uint64_t)k * N + n + 1], quant_scale, zero,
+          src[(uint64_t)k * src_stride + n + 1], quant_scale, zero,
           arg->quant_mode);
       kv_store_npair(dst, N, k, n >> 1, q0, q1);
     }
@@ -389,6 +413,7 @@ static void quantize_qdir1_thread_group(kernel_arg_t* arg,
                                         int16_t* zeros) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
+  const uint32_t src_stride = input_row_stride(arg);
   const uint32_t log2_qblk = arg->log2_qblk;
   const uint32_t groups_n =
       (N + arg->QBLK - 1u) >> log2_qblk;
@@ -401,7 +426,7 @@ static void quantize_qdir1_thread_group(kernel_arg_t* arg,
     const uint32_t group_n = task - k * groups_n;
     const uint32_t n0 = group_n << log2_qblk;
     const uint32_t n1 = min_u32(n0 + arg->QBLK, N);
-    const fp16_t* row = src + (uint64_t)k * N;
+    const fp16_t* row = src + (uint64_t)k * src_stride;
 
     _Float16 min_v = kv_fp16_from_bits(row[n0]);
     _Float16 max_v = min_v;
@@ -438,6 +463,7 @@ static void quantize_qdir0(kernel_arg_t* arg,
                            int16_t* zeros) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
+  const uint32_t src_stride = input_row_stride(arg);
   const uint32_t groups_k = ceil_div_u32(K, arg->QBLK);
   const uint32_t n_pairs = N >> 1;
   const uint32_t tasks = groups_k * n_pairs;
@@ -449,13 +475,13 @@ static void quantize_qdir0(kernel_arg_t* arg,
     const uint32_t n1 = n0 + 1;
     const uint32_t k0 = group_k * arg->QBLK;
     const uint32_t k1 = min_u32(k0 + arg->QBLK, K);
-    _Float16 min0 = kv_fp16_from_bits(src[(uint64_t)k0 * N + n0]);
+    _Float16 min0 = kv_fp16_from_bits(src[(uint64_t)k0 * src_stride + n0]);
     _Float16 max0 = min0;
-    _Float16 min1 = kv_fp16_from_bits(src[(uint64_t)k0 * N + n1]);
+    _Float16 min1 = kv_fp16_from_bits(src[(uint64_t)k0 * src_stride + n1]);
     _Float16 max1 = min1;
     for (uint32_t k = k0 + lane; k < k1; k += NUM_THREADS) {
-      const _Float16 v0 = kv_fp16_from_bits(src[(uint64_t)k * N + n0]);
-      const _Float16 v1 = kv_fp16_from_bits(src[(uint64_t)k * N + n1]);
+      const _Float16 v0 = kv_fp16_from_bits(src[(uint64_t)k * src_stride + n0]);
+      const _Float16 v1 = kv_fp16_from_bits(src[(uint64_t)k * src_stride + n1]);
       if (v0 < min0) min0 = v0;
       if (v0 > max0) max0 = v0;
       if (v1 < min1) min1 = v1;
@@ -479,10 +505,10 @@ static void quantize_qdir0(kernel_arg_t* arg,
     }
     for (uint32_t k = k0 + lane; k < k1; k += NUM_THREADS) {
       const uint8_t q0 = quantize_loaded_value(
-          src[(uint64_t)k * N + n0], scale0, zero0,
+          src[(uint64_t)k * src_stride + n0], scale0, zero0,
           arg->quant_mode);
       const uint8_t q1 = quantize_loaded_value(
-          src[(uint64_t)k * N + n1], scale1, zero1,
+          src[(uint64_t)k * src_stride + n1], scale1, zero1,
           arg->quant_mode);
       kv_store_npair(dst, N, k, pair, q0, q1);
     }

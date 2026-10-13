@@ -79,5 +79,8 @@ typedef struct {
   uint64_t B_addr;
   uint64_t C_addr;
   uint32_t power_kernel_iterations;
+#if defined(SGEMM_TCU_RUNTIME_B_LAYOUT) && SGEMM_TCU_RUNTIME_B_LAYOUT
+  uint32_t B_row_major; // 0: column-major [K,N], 1: row-major [K,N].
+#endif
 } kernel_arg_t;
 #endif

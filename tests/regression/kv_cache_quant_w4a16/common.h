@@ -31,5 +31,8 @@ typedef struct {
   uint32_t mapping_mode;
   uint32_t log2_qblk;   // UINT32_MAX when QBLK is not a power of two.
   uint32_t power_kernel_iterations;
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+  uint32_t src_row_stride; // In fp16 elements; 0 means N. Output remains dense.
+#endif
 } kernel_arg_t;
 #endif // _KV_CACHE_QUANT_W4A16_COMMON_H_

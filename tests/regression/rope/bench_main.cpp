@@ -77,6 +77,8 @@ int main(int argc, char *argv[]) {
   uint32_t head_dim = 64;
   uint32_t max_seq_len = 128;
   uint32_t pos_offset = 0;
+  float theta_base = 10000.0f;
+  uint32_t output_head_major = 0;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0)       batch_size  = atoi(argv[++i]);
@@ -84,15 +86,25 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0)  num_heads   = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) head_dim   = atoi(argv[++i]);
     else if (strcmp(argv[i], "-maxseq") == 0) max_seq_len = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-head-major") == 0) output_head_major = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-theta") == 0) theta_base = std::atof(argv[++i]);
     else if (strcmp(argv[i], "-offset") == 0) pos_offset  = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O]\n", argv[0]);
+             "[-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O] [-theta BASE] [-head-major 0|1]\n", argv[0]);
       return 0;
     }
   }
 
+  if (output_head_major > 1) return 1;
+#if !defined(ROPE_RUNTIME_OUTPUT_LAYOUT) || !ROPE_RUNTIME_OUTPUT_LAYOUT
+  if (output_head_major) { fprintf(stderr, "head-major output requires task_chunk16\n"); return 1; }
+#endif
+  if (!std::isfinite(theta_base) || theta_base <= 0.0f) {
+    std::fprintf(stderr, "RoPE theta must be finite and positive\n");
+    return 1;
+  }
   assert(head_dim % 2 == 0 && "head_dim must be even");
 
   if (!bench.csv) {
@@ -111,7 +123,7 @@ int main(int argc, char *argv[]) {
     h_sin.resize(freq_size);
     srand(42);
     initialize_random(h_in);
-    precompute_freqs(h_cos, h_sin, max_seq_len, head_dim);
+    precompute_freqs(h_cos, h_sin, max_seq_len, head_dim, theta_base);
   }
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
@@ -160,6 +172,9 @@ int main(int argc, char *argv[]) {
   kernel_arg.num_heads = num_heads;
   kernel_arg.head_dim = head_dim;
   kernel_arg.pos_offset = pos_offset;
+#if defined(ROPE_RUNTIME_OUTPUT_LAYOUT) && ROPE_RUNTIME_OUTPUT_LAYOUT
+  kernel_arg.output_head_major = output_head_major;
+#endif
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));

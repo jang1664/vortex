@@ -54,12 +54,14 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 32;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
+  uint32_t src_row_stride = 0;
   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
     else if (strcmp(argv[i], "-n") == 0) N = atoi(argv[++i]);
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--src-row-stride") == 0) src_row_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
     else if (strcmp(argv[i], "--quant-mode") == 0)
       quant_mode = parse_kv_cache_quant_mode(argv[++i]);
@@ -68,7 +70,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] [--src-row-stride ELEMENTS] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|"
              "spinquant_signed_symmetric]\n", argv[0]);
       return 0;
@@ -80,12 +82,18 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (src_row_stride == 0) src_row_stride = N;
+  if (src_row_stride < N) { fprintf(stderr, "source row stride must be >= N\n"); return 1; }
+#if !defined(KV_CACHE_QUANT_INPUT_STRIDE) || !KV_CACHE_QUANT_INPUT_STRIDE
+  if (src_row_stride != N) { fprintf(stderr, "strided input requires groupwise_fp16\n"); return 1; }
+#endif
+  const size_t src_storage_elems = (size_t)K * src_row_stride;
   const size_t src_elems = (size_t)K * N;
   const size_t packed_bytes = src_elems / 2;
   const size_t qparam_elems = kv_qparam_count(K, N, QBLK, QDIR);
   std::vector<fp16_t> h_src;
   if (bench.copy_inputs) {
-    h_src.resize(src_elems);
+    h_src.resize(src_storage_elems);
     init_src(h_src);
   }
 
@@ -96,12 +104,12 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, src_storage_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
   RT_CHECK(vx_mem_alloc(device, packed_bytes, VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(fp16_t), VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t), VX_MEM_WRITE, &zero_buffer));
   if (bench.copy_inputs) {
-    RT_CHECK(vx_copy_to_dev(src_buffer, h_src.data(), 0, src_elems * sizeof(fp16_t)));
+    RT_CHECK(vx_copy_to_dev(src_buffer, h_src.data(), 0, src_storage_elems * sizeof(fp16_t)));
   }
 
   uint64_t num_cores = 0;
@@ -130,6 +138,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(dst_buffer, &arg.dst_addr));
   RT_CHECK(vx_mem_address(scale_buffer, &arg.scale_addr));
   RT_CHECK(vx_mem_address(zero_buffer, &arg.zero_addr));
+#if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
+  arg.src_row_stride = src_row_stride;
+#endif
   arg.K = K;
   arg.N = N;
   arg.QBLK = QBLK;

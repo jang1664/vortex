@@ -461,6 +461,7 @@ static void matmul_cpu(otype_t *C,
 
 const char *kernel_file = "kernel.vxbin";
 
+static uint32_t b_row_major = 0;
 uint32_t xm = 32;
 uint32_t xn = 128;
 uint32_t xk = 1024;
@@ -477,13 +478,13 @@ std::string last_build_options;
 
 static void show_usage() {
   std::cout << "Vortex Sgemm TCU Test." << std::endl;
-  std::cout << "Usage: [-m: m] [-n N] [-k: K] [-s] [-p random|subnormal-a|subnormal-b] [-h: help]" << std::endl;
+  std::cout << "Usage: [-m: m] [-n N] [-k: K] [-r 0|1: row-major B] [-s] [-p random|subnormal-a|subnormal-b] [-h: help]" << std::endl;
   std::cout << "  -s  Enable 2:4 structured sparsity " << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:i:o:p:hs")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:r:i:o:p:hs")) != -1) {
     switch (c) {
     case 'm':
       xm = atoi(optarg);
@@ -491,6 +492,7 @@ static void parse_args(int argc, char **argv) {
     case 'n':
       xn = atoi(optarg);
       break;
+    case 'r': b_row_major = atoi(optarg); break;
     case 'k':
       xk = atoi(optarg);
       break;
@@ -696,6 +698,12 @@ int main(int argc, char *argv[]) {
   kernel_arg.block_dim[1] = 1;
 
   // set matrix dimensions
+#if defined(SGEMM_TCU_RUNTIME_B_LAYOUT) && SGEMM_TCU_RUNTIME_B_LAYOUT
+  if (b_row_major > 1 || (b_row_major && vt::ITYPE::bits < 8)) { fprintf(stderr, "invalid row-major B mode\n"); return 1; }
+  kernel_arg.B_row_major = b_row_major;
+#else
+  if (b_row_major) { fprintf(stderr, "runtime B layout requires b_colmajor variant\n"); return 1; }
+#endif
   kernel_arg.M = M_exec;
   kernel_arg.N = N_exec;
   kernel_arg.K = K_exec;
@@ -761,7 +769,8 @@ int main(int argc, char *argv[]) {
 #if SGEMM_TCU_USE_B_COLMAJOR
     } else {
       std::vector<itype_t> h_B_col(sizeB);
-      convert_row_to_col_major(h_B_col.data(), K_exec, N_exec, h_B.data());
+      if (b_row_major) h_B_col = h_B;
+      else convert_row_to_col_major(h_B_col.data(), K_exec, N_exec, h_B.data());
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
 #else
     } else {

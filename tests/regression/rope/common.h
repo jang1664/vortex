@@ -30,5 +30,8 @@ typedef struct {
   uint32_t pos_offset;      // Position offset for incremental decoding
   
   uint32_t power_kernel_iterations;
+#if defined(ROPE_RUNTIME_OUTPUT_LAYOUT) && ROPE_RUNTIME_OUTPUT_LAYOUT
+  uint32_t output_head_major; // Output [B,H,S,D] instead of [B,S,H,D].
+#endif
 } kernel_arg_t;
 #endif // _COMMON_H_

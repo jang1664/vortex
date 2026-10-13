@@ -43,6 +43,17 @@ void kernel_rope(kernel_arg_t *__UNIFORM__ arg) {
     const uint64_t data_base =
         (((uint64_t)b * seq_len + s) * num_heads + h) * head_dim;
 
+#if defined(ROPE_OUTPUT_HEAD_MAJOR) && ROPE_OUTPUT_HEAD_MAJOR
+    const uint64_t output_base =
+        (((uint64_t)b * num_heads + h) * seq_len + s) * head_dim;
+#elif defined(ROPE_RUNTIME_OUTPUT_LAYOUT) && ROPE_RUNTIME_OUTPUT_LAYOUT
+    const uint64_t output_base = arg->output_head_major
+        ? (((uint64_t)b * num_heads + h) * seq_len + s) * head_dim
+        : data_base;
+#else
+    const uint64_t output_base = data_base;
+#endif
+
     for (uint32_t pair = 0; pair < pair_count; ++pair) {
       const uint32_t p = pair_base + pair;
       const float cos_value =
@@ -51,9 +62,9 @@ void kernel_rope(kernel_arg_t *__UNIFORM__ arg) {
           fp16_to_float(sin_table[freq_base + pair]);
       const float x0 = fp16_to_float(input[data_base + p]);
       const float x1 = fp16_to_float(input[data_base + p + half_dim]);
-      output[data_base + p] =
+      output[output_base + p] =
           float_to_fp16(x0 * cos_value - x1 * sin_value);
-      output[data_base + p + half_dim] =
+      output[output_base + p + half_dim] =
           float_to_fp16(x0 * sin_value + x1 * cos_value);
     }
   }

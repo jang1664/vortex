@@ -195,6 +195,7 @@ void Decoder::multiply(const std::string& name,const std::string& input,const st
     DecoderTcuArgs a{}; a.M=align_up_u32(m,TC::tileM);a.K=k;a.N=n;
     a.grid_dim[0]=n/TC::tileN;a.grid_dim[1]=a.M/TC::tileM;
     a.block_dim[0]=threads;a.block_dim[1]=1;
+    a.B_row_major=attention&&!transpose; // PV consumes dequantized V [C,D] directly.
     a.A_addr=addr(input)+input_offset;a.B_addr=addr(weights+".fp16");a.C_addr=addr(output)+output_offset;
     // Head launches are ordered. Rounded stores may reach the following
     // head's not-yet-produced rows; its later launch replaces them before any
@@ -221,11 +222,6 @@ void Decoder::build() {
   const uint32_t tpb=std::min(256u,uint32_t(warps*threads));
   auto blocks=[&](uint64_t count){return uint32_t(std::max<uint64_t>(1,std::min<uint64_t>((count+tpb-1)/tpb,cores*4)));};
   auto tensor=[&](const std::string& n,uint32_t mats,uint32_t rows,uint32_t cols){alloc(n,uint64_t(mats)*rows*cols*2,"row",mats,rows,cols);};
-  auto reorder=[&](const std::string& name,const std::string& in,uint32_t batch,uint32_t seq,uint32_t heads,uint32_t dim,uint32_t kind){
-    tensor(name,batch*heads,seq,dim);DecoderReorderArgs a{};grid(a,blocks(uint64_t(batch)*seq*heads*dim),tpb);
-    a.input=addr(in);a.output=addr(name);a.batch=batch;a.seq=seq;a.heads=heads;a.dim=dim;a.kind=kind;
-    append(op(name,DecoderOp::reorder,a,{in},{name}));
-  };
   auto norm=[&](const std::string& name,const std::string& in,const std::string& gamma){
     tensor(name,1,M,H);DecoderRmsArgs a{};grid(a,M,rmsnorm_threads_per_block(M,warps,threads));
     a.input_addr=addr(in);a.output_addr=addr(name);a.gamma_addr=addr(gamma);a.batch_size=B;a.seq_len=S;a.hidden_dim=H;a.eps=cfg_.eps;
@@ -233,10 +229,10 @@ void Decoder::build() {
   };
   auto linear=[&](const std::string& name,const std::string& in,uint32_t k,uint32_t n){tensor(name,1,M,n);multiply(name,in,name,name,M,k,n,false);};
   auto rope=[&](const std::string& name,const std::string& in,uint32_t heads){
-    auto tmp=name+"_interleaved";tensor(tmp,1,M,heads*D);DecoderRopeArgs a{};grid(a,std::min(uint32_t((uint64_t(M)*heads*((D/2+15u)/16u)+tpb-1)/tpb),uint32_t(cores)),tpb);
-    a.input_addr=addr(in);a.output_addr=addr(tmp);a.cos_addr=addr("rope.cos");a.sin_addr=addr("rope.sin");
+    tensor(name,B*heads,S,D);DecoderRopeArgs a{};grid(a,std::min(uint32_t((uint64_t(M)*heads*((D/2+15u)/16u)+tpb-1)/tpb),uint32_t(cores)),tpb);
+    a.input_addr=addr(in);a.output_addr=addr(name);a.cos_addr=addr("rope.cos");a.sin_addr=addr("rope.sin");
     a.batch_size=B;a.seq_len=S;a.num_heads=heads;a.head_dim=D;a.pos_offset=0;
-    append(op(tmp,DecoderOp::rope,a,{in,"rope.cos","rope.sin"},{tmp}));reorder(name,tmp,B,S,heads,D,0);
+    append(op(name,DecoderOp::rope,a,{in,"rope.cos","rope.sin"},{name}));
   };
   auto had=[&](const std::string& name,const std::string& in,uint32_t rows,uint32_t dim,uint32_t base){
     tensor(name,1,rows,dim);DecoderHadamardArgs a{};bool r3=base==1&&dim==128;
@@ -251,30 +247,30 @@ void Decoder::build() {
   linear("q_proj","attention_norm",H,H);linear("k_proj","attention_norm",H,V*D);linear("v_proj","attention_norm",H,V*D);
   rope("q_rope","q_proj",Q);rope("k_rope","k_proj",V);
   had("q_hadamard","q_rope",B*Q*S,D,1);had("k_hadamard","k_rope",B*V*S,D,1);
-  reorder("v_head_major","v_proj",B,S,V,D,0);
   for(uint32_t b=0;b<B;++b)for(uint32_t h=0;h<V;++h)for(uint32_t key=0;key<2;++key){
     auto name=std::string(key?"key.":"value.")+std::to_string(b)+"."+std::to_string(h);
-    auto input=key?"k_hadamard":"v_head_major";
+    auto input=key?"k_hadamard":"v_proj";
     if(!cfg_.decode()){alloc(name+".weight",uint64_t(C)*D/2,"w",1,C,D);alloc(name+".scale",C*2,"scale");alloc(name+".zero",C*2,"zero");}
     const uint32_t work_items=kv_cache_quant_work_items(S,D,D,1);
     const uint32_t mapping=kv_cache_quant_mapping_mode(work_items,1,D,cores,warps);
     const uint32_t quant_threads=kv_cache_quant_threads_per_block(mapping,warps,threads);
     DecoderQuantArgs a{};grid(a,kv_cache_quant_blocks(work_items,quant_threads,mapping,cores,warps),quant_threads);
-    a.src_addr=addr(input)+uint64_t(b*V+h)*S*D*2;
+    // K is head-major after RoPE; V remains projection [B,S,V,D].
+    a.src_addr=addr(input)+(key?uint64_t(b*V+h)*S*D:(uint64_t(b)*S*V+h)*D)*2;
+    a.src_row_stride=key?D:V*D;
     const uint32_t pos=cfg_.decode()?cfg_.past_kv:0;
     a.dst_addr=addr(name+".weight")+uint64_t(pos)*D/2;a.scale_addr=addr(name+".scale")+pos*2;a.zero_addr=addr(name+".zero")+pos*2;
     a.K=S;a.N=D;a.QBLK=D;a.QDIR=1;a.quant_mode=KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC;a.mapping_mode=mapping;a.log2_qblk=lg(D);
     append(op(name,DecoderOp::quant,a,{input},{name+".weight",name+".scale",name+".zero"}));
 #if DECODER_CANDIDATE != 3
     // Cache dequantization is part of the real TCU attention graph.
-    auto dq=name+(key?".fp16":".dequant");tensor(dq,1,C,D);
+    auto dq=name+".fp16";tensor(dq,1,C,D);
     const uint32_t dequant_threads=kv_cache_dequant_threads_per_block(warps,threads);
     const uint32_t dequant_work=kv_cache_dequant_work_items(C,D,D,1,threads);
     DecoderDequantArgs d{};grid(d,kv_cache_dequant_blocks(dequant_work,dequant_threads,cores,warps),dequant_threads);
     d.src_addr=addr(name+".weight");d.dst_addr=addr(dq);d.scale_addr=addr(name+".scale");d.zero_addr=addr(name+".zero");
     d.K=C;d.N=D;d.QBLK=D;d.QDIR=1;d.quant_mode=KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC;
     append(op(dq,DecoderOp::dequant,d,{name+".weight",name+".scale",name+".zero"},{dq}));
-    if(!key)reorder(name+".fp16",dq,1,C,1,D,1);
 #endif
   }
   tensor("scores",B*Q,S,C);tensor("probabilities",B*Q,S,C);tensor("context",B*Q,S,D);

@@ -3,7 +3,8 @@
 This application uses the shared row-major runner in `../llama_decoder_common`.
 All seven linear projections and all per-head QK/PV products use the unchanged
 `fpint_gemm_ffn_hw_naive` device kernel. Vector operations use the existing
-standalone kernels, with explicit device head split/concatenation. Intermediates
+standalone kernels with head splitting folded into RoPE/quantization addressing
+and an explicit head concatenation. Intermediates
 remain on the FPGA; all query heads execute rather than multiplying one head's
 latency afterward.
 

@@ -2,8 +2,10 @@
 
 The C1, C2 and C3 application Makefiles compile this runner with a fixed candidate
 selector. The host schedules the same decoder graph and reuses existing standalone
-vector kernels, TCU GEMM and naive FP-INT GEMM. Only the explicit device reorder
-helper and integration/dispatch code are new; standalone implementations stay intact.
+vector kernels, TCU GEMM and naive FP-INT GEMM. The decoder enables optional
+layout addressing in the reused kernels. Standalone apps expose the same
+capabilities through explicit layout/stride arguments. Their default layouts stay
+unchanged; rebuild host and device together after argument ABI changes.
 
 | Candidate | Seven linear projections | QK and PV | Physical intermediates |
 |---|---|---|---|
@@ -16,6 +18,30 @@ are dequantized once during fixture preparation and uploaded as FP16 outside
 `decoder.run()`. C1/C2 dequantize KV cache inside the device graph. C3 consumes
 packed KV directly. Do not compare C1 timing to a sum that includes per-invocation
 weight dequantization without accounting for this policy.
+
+## Head layouts without separate adapters
+
+The shared decoder enables three capabilities in `common.mk`, for both host and
+kernel compilation. They apply to prefill and decode, without an S=1 special case.
+
+| Boundary | Implementation | Candidates |
+|---|---|---|
+| Q/K projection → RoPE → Hadamard | RoPE reads `[B,S,H,D]`, writes `[B,H,S,D]` directly | C1–C3 |
+| V projection → KV quantization | Each head reads projection rows with stride `kv_heads * head_dim`; packed output and qparams are unchanged | C1–C3 |
+| V dequantization → PV | Dequantization writes `[capacity,D]`; PV TCU loads B row-major | C1/C2 |
+
+`ROPE_OUTPUT_HEAD_MAJOR=1` selects the RoPE output address formula.
+`KV_CACHE_QUANT_INPUT_STRIDE=1` adds `src_row_stride` (FP16 elements, zero means N)
+to quant arguments. `SGEMM_TCU_RUNTIME_B_LAYOUT=1` adds `B_row_major` to TCU
+arguments and dispatches to row/column-major template implementations. Linears
+and QK keep column-major B; only PV selects row-major B. The decoder enables these macros in its own build. Standalone `rope`,
+`kv_cache_quant_w4a16` and `sgemm_tcu` also expose explicit layout/stride options;
+RoPE uses a runtime output-layout field there. Rebuild host and device together when enabling
+them. KV quant arithmetic, output packing, and the default standalone variants
+are unchanged. C3 GEMM and all RTL are unchanged.
+
+PV output still uses the existing `head_concat` kernel. Its removal would require
+a different GEMM output interface and is outside these changes.
 
 `reference.py` reuses the existing SpinQuant backend-aware PyTorch decoder and
 C4 validation helpers. It preserves model dimensions, deterministic weights,

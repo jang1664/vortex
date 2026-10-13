@@ -1,4 +1,4 @@
-// Reuse the existing standalone regression kernel unchanged.
+// Reuse the standalone kernel with the decoder-only head-major output option.
 #define main llama_rope_main
 #define kernel_arg_t llama_rope_kernel_arg_t
 #define kernel_dispatcher llama_rope_kernel_dispatcher

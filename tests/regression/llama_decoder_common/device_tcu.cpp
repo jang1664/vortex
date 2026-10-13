@@ -1,4 +1,4 @@
-// Reuse the existing standalone regression kernel unchanged.
+// Reuse the standalone kernel with the decoder-only runtime B layout option.
 #define main llama_tcu_main
 #define kernel_arg_t llama_tcu_kernel_arg_t
 #define kernel_dispatcher llama_tcu_kernel_dispatcher
