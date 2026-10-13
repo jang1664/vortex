@@ -55,7 +55,7 @@ static void save_samples(const fs::path& path,const std::vector<Sample>& samples
 }
 int main(int argc,char** argv) {
   try {
-    std::string model="llama3-8b",mode="verify",stage="prefill";
+    std::string model="llama3-8b",mode="verify",stage="prefill",attention_launch="batched";
     fs::path fixture,out="decoder_results";
     uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0;
     bool diagnostic_timing=false,output_pass=true;
@@ -65,6 +65,7 @@ int main(int argc,char** argv) {
         std::cout<<"--model llama3-8b|llama2-7b --batch 1 --seq-len 32 --fixture DIR\n"
                    "--mode verify|timing|isolated --output DIR --repetitions 3\n"
                    "--stage prefill|decode --past-kv-len N --cache-capacity N\n"
+                   "--attention-launch batched|per-head (default: batched)\n"
                    "--diagnostic-timing (measure despite output mismatch; still exit nonzero)\n"
                    "--stop-after N (partial diagnostic only; never a decoder PASS)\n";
         return 0;
@@ -76,6 +77,7 @@ int main(int argc,char** argv) {
       if(key=="--model") model=value;
       else if(key=="--mode") mode=value;
       else if(key=="--stage") stage=value;
+      else if(key=="--attention-launch") attention_launch=value;
       else if(key=="--past-kv-len") past_kv=extent();
       else if(key=="--cache-capacity") capacity=extent();
       else if(key=="--fixture") fixture=value;
@@ -88,15 +90,18 @@ int main(int argc,char** argv) {
     }
     if(fixture.empty()) throw std::invalid_argument("--fixture is required");
     if(mode!="verify" && mode!="timing" && mode!="isolated") throw std::invalid_argument("unknown mode");
+    if(attention_launch!="batched" && attention_launch!="per-head") throw std::invalid_argument("unknown attention launch mode");
     if(stop_after && mode!="verify") throw std::invalid_argument("partial execution is only supported in verify mode");
     auto config=ModelConfig::preset(model); config.batch=batch; config.seq=seq; config.stage=stage; config.past_kv=past_kv; config.cache_capacity=capacity; config.validate();
     if(!fs::exists(fixture/"reference/output.bin")) throw std::invalid_argument("fixture needs CPU reference/output.bin");
     fs::create_directories(out);
-    Decoder decoder(config); decoder.load(fixture); decoder.build();
-    size_t gemms=0; for(const auto& o:decoder.operations()) gemms+=o.kind==DecoderOp::gemm;
+    Decoder decoder(config,attention_launch=="batched"); decoder.load(fixture); decoder.build();
+    size_t gemms=0,gemm_jobs=0;
+    for(const auto& o:decoder.operations()) if(o.kind==DecoderOp::gemm) { ++gemms; gemm_jobs+=o.gemm_count; }
     std::cout<<"DECODER "<<model<<" B="<<batch<<" S="<<seq<<" heads="<<config.q_heads
       <<" stage="<<stage<<" past_kv="<<past_kv<<" capacity="<<capacity
-      <<" kv_heads="<<config.kv_heads<<" operations="<<decoder.operations().size()<<" gemms="<<gemms<<std::endl;
+      <<" kv_heads="<<config.kv_heads<<" operations="<<decoder.operations().size()<<" gemms="<<gemms
+      <<" gemm_jobs="<<gemm_jobs<<" attention_launch="<<attention_launch<<std::endl;
     if(mode=="verify") {
       auto samples=decoder.run(true,out,stop_after); save_samples(out/"profile.csv",samples);
       if(stop_after && samples.size()<decoder.operations().size()) {

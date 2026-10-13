@@ -7,6 +7,6 @@ enum class DecoderOp : uint32_t {
 struct DecoderDispatch {
   uint64_t args_address;
   DecoderOp operation;
-  uint32_t reserved;
+  uint32_t gemm_count;
 };
 #endif

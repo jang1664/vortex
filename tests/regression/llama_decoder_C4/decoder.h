@@ -22,11 +22,12 @@ struct Operation {
   std::vector<uint8_t> arguments;
   std::vector<std::string> inputs, outputs;
   vx_buffer_h args_buffer = nullptr, dispatch_buffer = nullptr;
+  uint32_t gemm_count = 1;
 };
 struct Sample { std::string name; uint64_t cycles; double seconds; };
 class Decoder {
  public:
-  explicit Decoder(ModelConfig config);
+  explicit Decoder(ModelConfig config, bool batch_attention = true);
   ~Decoder();
   Decoder(const Decoder&) = delete;
   Decoder& operator=(const Decoder&) = delete;
@@ -39,6 +40,7 @@ class Decoder {
   uint64_t cores = 0, warps = 0, threads = 0, tmem = 0;
  private:
   ModelConfig cfg_;
+  bool batch_attention_;
   vx_device_h device_ = nullptr;
   vx_buffer_h kernel_ = nullptr;
   std::map<std::string, Buffer> buffers_;
@@ -54,5 +56,6 @@ class Decoder {
             const std::string& output, uint32_t m, uint32_t k, uint32_t n,
             uint32_t group, uint32_t transpose, uint32_t qdir,
             uint64_t input_offset = 0, uint64_t output_offset = 0,
-            uint32_t target_k = 0, uint32_t target_n = 0);
+            uint32_t target_k = 0, uint32_t target_n = 0,
+            Operation* batch = nullptr);
 };

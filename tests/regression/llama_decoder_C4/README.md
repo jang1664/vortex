@@ -3,13 +3,39 @@
 One real decoder layer, using the existing regression kernels and one C4 FPGA
 image throughout. The first validated shape is batch 1, prefill 32. Llama3-8B
 uses hidden 4096 / FFN 14336 / Q32 / KV8 / D128; Llama2-7B uses FFN11008 and
-KV32. Every QK/PV head runs: each model has 71 GEMM launches. This app does not
+KV32. Every QK/PV head runs, with each attention phase using one launch and a
+device-side loop over its GEMM argument array. This app does not
 perform embedding, LM head, autoregressive generation, or power measurement.
 
 `ops/device_*.cpp` compiles the original device sources in separate translation
 units. `kernel.cpp` dispatches one resident binary; `decoder.cpp` builds original
 argument structs and connects device buffers. All intermediate allocations are
 distinct, allowing independent per-operation replay without restoring data.
+
+### Attention launch policy
+
+`--attention-launch batched` is the default for both prefill and decode. QK and
+PV each receive an array of unchanged `fpint_gemm_ffn_hw` argument records;
+the decoder wrapper executes the existing MMIO driver sequentially and waits
+for each GEMM job before starting the next. The RTL and standalone GEMM ABI are
+unchanged. All job statuses are checked in verification mode. The decoder
+continues to require one core.
+
+For B1 decode, Llama2 executes 32 QK jobs and 32 PV jobs in two launches.
+Llama3 retains the existing GQA grouping (four query heads as four rows per KV
+head), executing eight QK jobs and eight PV jobs in two launches. Both models
+have nine GEMM launches in total, including the seven linear projections.
+Prefill also uses two attention launches while retaining all 32 jobs per phase.
+
+Use `--attention-launch per-head` for the previous host launch policy with the
+same compiled binary. The total job count, shapes, layouts and math are the
+same. Batched profiles contain one `qk` and one `pv` row per pass; per-head
+profiles retain names such as `qk.0.0`. `--stop-after` counts launches, so its
+numeric checkpoints differ between policies. Timing still excludes allocation,
+uploads, tensor dumps and checks; cycle profiles use separate passes.
+
+The rev7 hardware validation and comparison against latency_on_hw are recorded
+in [C4 batched attention results](../../../analysis_workspace/latency_on_hw/docs/whole_decoder_vs_aggregate/C4_BATCHED_ATTENTION_VS_AGGREGATE.md).
 
 ## Build and fixtures
 

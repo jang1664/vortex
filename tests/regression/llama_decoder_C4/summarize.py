@@ -18,8 +18,8 @@ def samples(path):
 
 
 def family(name):
-    if name.startswith('qk.'): return 'QK (all heads)'
-    if name.startswith('pv.'): return 'PV (all heads)'
+    if name == 'qk' or name.startswith('qk.'): return 'QK (all heads)'
+    if name == 'pv' or name.startswith('pv.'): return 'PV (all heads)'
     if name.startswith(('key.', 'value.')): return 'KV quantization'
     if name in ('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'):
         return 'Linear GEMM (7)'
@@ -45,6 +45,10 @@ def summarize(root, frequency):
                 raise ValueError(f'{model}/{mode}: warmup output failed')
         isolated = samples(folder / 'isolated/isolated.csv')
         connected = samples(folder / 'timing/profile.csv')
+        batched = 'qk' in isolated and 'pv' in isolated
+        if batched:
+            operations -= 62  # B1 prefill: 32 QK + 32 PV launches become two.
+        gemms = 9 if batched else 71
         if len(isolated) != operations or isolated.keys() != connected.keys():
             raise ValueError(f'{model}: incomplete operation coverage')
         with (folder / 'timing/timings.csv').open() as stream:
@@ -61,7 +65,7 @@ def summarize(root, frequency):
                 isolated_cycles=isolated[name], connected_cycles=connected[name],
                 delta_percent=100*(connected[name]/isolated[name]-1)))
         i, c = sum(isolated.values()), sum(connected.values())
-        report[model] = dict(operations=operations, gemms=71,
+        report[model] = dict(operations=operations, gemms=gemms,
             isolated_cycles=i, connected_cycles=c, delta_percent=100*(c/i-1),
             isolated_seconds=i/frequency, connected_seconds=c/frequency,
             wall_seconds_median=statistics.median(wall), wall_seconds=wall,
@@ -80,7 +84,7 @@ def summarize(root, frequency):
         '| Model | Ops / GEMMs | Isolated cycles | Connected cycles | Difference | Device s | Wall median s |',
         '|---|---:|---:|---:|---:|---:|---:|']
     for model, d in report.items():
-        lines.append(f"| {model} | {d['operations']} / 71 | {d['isolated_cycles']:,.0f} | "
+        lines.append(f"| {model} | {d['operations']} / {d['gemms']} | {d['isolated_cycles']:,.0f} | "
             f"{d['connected_cycles']:,.0f} | {d['delta_percent']:+.4f}% | "
             f"{d['connected_seconds']:.6f} | {d['wall_seconds_median']:.6f} |")
     lines += ['', '## Functionality', '',

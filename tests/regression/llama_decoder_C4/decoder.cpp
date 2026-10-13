@@ -36,7 +36,8 @@ template<class T> Operation op(const std::string& name, DecoderOp kind, const T&
 void rt_check(int status, const char* action) {
   if (status) throw std::runtime_error(std::string(action)+": status="+std::to_string(status));
 }
-Decoder::Decoder(ModelConfig config) : cfg_(std::move(config)) {
+Decoder::Decoder(ModelConfig config, bool batch_attention)
+    : cfg_(std::move(config)), batch_attention_(batch_attention) {
   cfg_.validate();
   rt_check(vx_dev_open(&device_), "vx_dev_open");
   try {
@@ -101,13 +102,16 @@ void Decoder::load(const fs::path& fixture) {
   }
 }
 void Decoder::append(Operation operation) {
+  if(operation.kind==DecoderOp::gemm && (!operation.gemm_count ||
+      operation.arguments.size()!=sizeof(DecoderGemmArgs)*operation.gemm_count))
+    throw std::runtime_error("invalid GEMM argument array");
   for(const auto& name:operation.inputs) (void)buffers_.at(name);
   for(const auto& name:operation.outputs) (void)buffers_.at(name);
   // Preserve every original argument struct verbatim on the wire.
   rt_check(vx_mem_alloc(device_,operation.arguments.size(),VX_MEM_READ_WRITE,&operation.args_buffer), "allocate args");
   ops_.push_back(std::move(operation)); auto& saved=ops_.back();
   rt_check(vx_copy_to_dev(saved.args_buffer,saved.arguments.data(),0,saved.arguments.size()), "upload args");
-  DecoderDispatch dispatch{}; dispatch.operation=saved.kind;
+  DecoderDispatch dispatch{}; dispatch.operation=saved.kind; dispatch.gemm_count=saved.gemm_count;
   rt_check(vx_mem_address(saved.args_buffer,&dispatch.args_address), "args address");
   rt_check(vx_upload_bytes(device_,&dispatch,sizeof(dispatch),&saved.dispatch_buffer), "upload dispatch");
 }
@@ -146,9 +150,10 @@ std::vector<Sample> Decoder::run(bool profile,const fs::path& dump,size_t stop_a
     samples.push_back(launch(operation,profile));
     if(!dump.empty()) {
       if(operation.kind==DecoderOp::gemm) {
-        DecoderGemmArgs arg{};
-        rt_check(vx_copy_from_dev(&arg,operation.args_buffer,0,sizeof(arg)),"GEMM status");
-        if(arg.status!=STATUS_OK) throw std::runtime_error("GEMM bad status "+std::to_string(arg.status));
+        std::vector<DecoderGemmArgs> args(operation.gemm_count);
+        rt_check(vx_copy_from_dev(args.data(),operation.args_buffer,0,args.size()*sizeof(DecoderGemmArgs)),"GEMM status");
+        for(size_t i=0;i<args.size();++i)
+          if(args[i].status!=STATUS_OK) throw std::runtime_error(operation.name+" GEMM job "+std::to_string(i)+" bad status "+std::to_string(args[i].status));
       }
       for(const auto& name:operation.outputs) dump_buffer(name,dump);
       std::cout<<"DONE "<<operation.name<<" cycles="<<samples.back().cycles<<std::endl;
@@ -174,7 +179,7 @@ void Decoder::gemm(const std::string& name,const std::string& input,
     const std::string& weight,const std::string& scale,const std::string& zero,
     const std::string& output,uint32_t m,uint32_t k,uint32_t n,
     uint32_t group,uint32_t transpose,uint32_t qdir,uint64_t input_offset,uint64_t output_offset,
-    uint32_t target_k,uint32_t target_n) {
+    uint32_t target_k,uint32_t target_n,Operation* batch) {
   DecoderGemmArgs arg{};
   arg.dram_in_base=addr(input)+input_offset; arg.dram_w_base=addr(weight);
   arg.dram_sc_base=addr(scale); arg.dram_zp_base=addr(zero); arg.dram_out_base=addr(output)+output_offset;
@@ -189,7 +194,13 @@ void Decoder::gemm(const std::string& name,const std::string& input,
   if(input_offset+tensor_bytes(1,m,k)>buffers_.at(input).bytes ||
      output_offset+tensor_bytes(1,m,n)>buffers_.at(output).bytes)
     throw std::runtime_error("GEMM tensor range overflow");
-  append(op(name,DecoderOp::gemm,arg,{input,weight,scale,zero},{output}));
+  auto operation=op(name,DecoderOp::gemm,arg,{input,weight,scale,zero},{output});
+  if(!batch) { append(std::move(operation)); return; }
+  batch->arguments.insert(batch->arguments.end(),operation.arguments.begin(),operation.arguments.end());
+  ++batch->gemm_count;
+  for(const auto& input_name:operation.inputs)
+    if(std::find(batch->inputs.begin(),batch->inputs.end(),input_name)==batch->inputs.end()) batch->inputs.push_back(input_name);
+  if(std::find(batch->outputs.begin(),batch->outputs.end(),output)==batch->outputs.end()) batch->outputs.push_back(output);
 }
 
 void Decoder::build() {
@@ -288,22 +299,29 @@ void Decoder::build() {
     append(op(name,DecoderOp::quant,a,{input},{name+".weight",name+".scale",name+".zero",name+".logical_scale",name+".logical_zero"}));
   }
   tensor("scores",B*attention_heads,attention_rows,C,"c"); tensor("probabilities",B*attention_heads,attention_rows,C,"a"); tensor("context",B*attention_heads,attention_rows,D,"c");
+  Operation qk_batch; qk_batch.name="qk"; qk_batch.kind=DecoderOp::gemm; qk_batch.gemm_count=0;
   for(uint32_t b=0;b<B;++b) for(uint32_t h=0;h<Q;h+=G) {
     auto kv="key."+std::to_string(b)+"."+std::to_string(h/(Q/V));
     gemm("qk."+std::to_string(b)+"."+std::to_string(h),"q_hadamard",kv+".weight",kv+".scale",kv+".zero",
-      "scores",attention_rows,D,C,D,1,0,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*D*2,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*C*2,0,E);
+      "scores",attention_rows,D,C,D,1,0,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*D*2,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*C*2,0,E,batch_attention_?&qk_batch:nullptr);
   }
-  DecoderSoftmaxArgs soft{}; grid(soft,B*Q*S,threads);
+  if(batch_attention_) append(std::move(qk_batch));
+  // Match rev2_shuffle_cursor's standalone host: one persistent block per
+  // hardware warp, with remaining rows handled by the kernel's grid-stride loop.
+  DecoderSoftmaxArgs soft{};
+  grid(soft,std::min(B*Q*S,uint32_t(cores*warps)),threads);
   soft.input_addr=addr("scores"); soft.output_addr=addr("probabilities");
   soft.batch_size=B; soft.num_heads=attention_heads; soft.seq_len_q=attention_rows; soft.seq_len_k=L; soft.seq_len_k_pad=soft.output_k_pad=C;
   soft.M_pad=pad_rows(attention_rows); soft.use_mask=cfg_.decode()?0:1; soft.scale=1/std::sqrt(float(D));
   soft.log2_mt=soft.log2_kt=7; soft.log2_mxu_kt=lg(MXU_ROW); soft.log2_mxu_nt=lg(MXU_COL);
   append(op("softmax",DecoderOp::softmax,soft,{"scores"},{"probabilities"}));
+  Operation pv_batch; pv_batch.name="pv"; pv_batch.kind=DecoderOp::gemm; pv_batch.gemm_count=0;
   for(uint32_t b=0;b<B;++b) for(uint32_t h=0;h<Q;h+=G) {
     auto kv="value."+std::to_string(b)+"."+std::to_string(h/(Q/V));
     gemm("pv."+std::to_string(b)+"."+std::to_string(h),"probabilities",kv+".weight",kv+".scale",kv+".zero",
-      "context",attention_rows,C,D,D,0,1,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*C*2,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*D*2,E,0);
+      "context",attention_rows,C,D,D,0,1,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*C*2,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*D*2,E,0,batch_attention_?&pv_batch:nullptr);
   }
+  if(batch_attention_) append(std::move(pv_batch));
   tensor("concat",1,M,H,"a"); DecoderConcatArgs cat{};
   grid(cat,blocks(uint64_t(M)*H),tpb); cat.input_addr=addr("context"); cat.output_addr=addr("concat");
   cat.batch=B; cat.seq=S; cat.heads=Q; cat.headdim=D; cat.query_heads_per_kv=G;
