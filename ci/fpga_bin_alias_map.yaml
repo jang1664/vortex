@@ -43,6 +43,10 @@ aliases:
   tcu_th16_c1_v3_axi_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_2/bin
     configs: configs/tcu_th16_c1_v3.sh
+
+  tcu_th16_c1_v3_fix_sub_norm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_aeaa53da67_3/bin
+    configs: configs/tcu_th16_c1_v3.sh
   
   C1: *C1_
 
@@ -82,6 +86,10 @@ aliases:
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_b110994320/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol_fix_sub_norm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_b4b8d750af/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_qcol.sh
 
   naive_th16_c2_v3_slr0_acc_uram_fp16_fix:
@@ -133,6 +141,10 @@ aliases:
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_axi_fix:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_2/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh
+
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_fix_sub_norm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c0e620ccc8_3/bin
     configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3.sh
 
   naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_base_pnr_v3_highbw:
@@ -241,6 +253,10 @@ aliases:
 
   improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fsm_update:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_96c0f69b12/bin
+    configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh
+
+  improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fix_sub_norm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_cc4901d20c/bin
     configs: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh
 
   C4: *C4_
