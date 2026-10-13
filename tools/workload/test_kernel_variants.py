@@ -29,6 +29,44 @@ def _repo_root() -> Path:
 
 
 class KernelVariantTest(unittest.TestCase):
+    def test_fused_gemm_keeps_parent_capacity_and_real_work(self) -> None:
+        from tools.latency_bench.canonicalization import canonicalize_args, load_canonicalization_policies
+        from tools.latency_bench.suite import make_exec_key
+        for model, group in (("llama2-7b", 1), ("llama3-8b", 4)):
+            payload = build_llm_kernels(
+                model, ["prefill", "generation"], 1, 1024, 1024, 32,
+                variant="all_fpint_gemm_improve_fused_layout_spinquant",
+                out_tokens=33, max_seq_len=1152,
+            )
+            decode = [k for k in payload["kernels"] if k["stage"] == "generation"]
+            for name, dim in (("attn_qkT", "n"), ("attn_pv", "k")):
+                cases = [k for k in decode if k["name"] == name]
+                self.assertEqual(33, len(cases))
+                for kernel in cases:
+                    args = kernel["args"]
+                    self.assertIn("-m 8 ", args)
+                    self.assertIn(f"--target-m {group}", args)
+                    self.assertIn(f"-{dim} 1152", args)
+                    logical = kernel["shape"]["logical_cache_length"]
+                    target = ((logical + 31) // 32) * 32
+                    self.assertIn(f"--target-{dim} {target}", args)
+                    self.assertIn(f"-{dim} 1152", kernel["padded_args"])
+                    result = canonicalize_args(
+                        app="fpint_gemm_ffn_hw", args=args, fpga_bin_label="C4",
+                        policies=load_canonicalization_policies(), preserve_execution_m=True,
+                    )
+                    self.assertEqual(args, result.measurement_args)
+                self.assertNotEqual(make_exec_key("image", "fpint_gemm_ffn_hw", cases[0]["args"]),
+                                    make_exec_key("image", "fpint_gemm_ffn_hw", cases[-1]["args"]))
+            linear = next(k for k in decode if k["name"] == "q_proj")
+            self.assertIn("-m 8 ", linear["args"])
+            self.assertIn("--target-m 1", linear["args"])
+            softmax = next(k for k in decode if k["name"] == "attn_softmax")
+            self.assertIn(f"-heads {32 // group} -seqq {group}", softmax["args"])
+            for kernel in payload["kernels"]:
+                if kernel["stage"] == "prefill" and kernel["kind"] == "gemm":
+                    self.assertNotIn("--target-", kernel["args"])
+
     def test_fused_decode_quant_uses_physical_source_rows(self) -> None:
         from tools.latency_bench.suite import make_exec_key
         for model in ("llama2-7b", "llama3-8b"):
@@ -56,52 +94,37 @@ class KernelVariantTest(unittest.TestCase):
                     self.assertNotEqual(make_exec_key("image", kernel["app"], old_args),
                                         make_exec_key("image", kernel["app"], kernel["args"]))
 
-    def test_head_reorders_account_for_gqa_connections_and_tcu_transpose(self) -> None:
-        for variant, transpose in (
-            ("all_sgemm_tcu_spinquant", True),
-            ("attn_sgemm_tcu_fpint_gemm_naive_spinquant", True),
-            ("all_fpint_gemm_naive_spinquant", False),
-        ):
-            with self.subTest(variant=variant):
-                payload = build_llm_kernels(
-                    "llama3-8b", ["prefill"], 2, 1024, 1024, 32,
-                    variant=variant,
-                )
-                by_name = {k["name"]: k for k in payload["kernels"]}
-                for operand, heads in (("q", 32), ("k", 8), ("v", 8)):
-                    k = by_name[f"attn_{operand}_head_reorder"]
-                    self.assertEqual("head_concat", k["app"])
-                    self.assertEqual("head_reorder", k["backend"])
-                    self.assertEqual("reorder", k["kind"])
-                    self.assertEqual(32, k["calls_per_forward"])
-                    self.assertEqual(
-                        f"-batch 2 -seq 1024 -heads {heads} -headdim 128 -mode 1",
-                        k["args"],
+    def test_row_major_attention_eliminates_adapters_and_preserves_exec_keys(self) -> None:
+        from tools.latency_bench.suite import make_exec_key
+        for model, kv_heads in (("llama3-8b", 8), ("llama2-7b", 32)):
+            for variant in ("all_sgemm_tcu_spinquant",
+                            "attn_sgemm_tcu_fpint_gemm_naive_spinquant",
+                            "all_fpint_gemm_naive_spinquant"):
+                for stage in ("prefill", "generation"):
+                    payload = build_llm_kernels(
+                        model, [stage], 2, 1024, 1024, 32,
+                        variant=variant, out_tokens=1,
                     )
-                self.assertEqual(transpose, "attn_v_transpose" in by_name)
-                if transpose:
-                    k = by_name["attn_v_transpose"]
-                    self.assertEqual(32 * 2 * 8, k["calls_per_forward"])
-                    self.assertEqual(
-                        "-batch 1 -seq 1024 -heads 1 -headdim 128 -mode 2", k["args"])
-                self.assertEqual("attn_q_head_reorder",
-                                 by_name["spinquant_r3_q_hadamard"]["inputs"][0]["source"])
-                self.assertEqual("attn_v_head_reorder",
-                                 by_name["kv_cache_quant_v_cache_to_attn_pv"]["inputs"][0]["source"])
-
-    def test_decode_v_transpose_is_length_dependent_not_invariant(self) -> None:
-        payload = build_llm_kernels(
-            "llama3-8b", ["generation"], 1, 1024, 1024, 32,
-            variant="all_sgemm_tcu_spinquant", out_tokens=5,
-            decode_measurement="sampled", decode_sample_interval=4,
-        )
-        transposes = [k for k in payload["kernels"] if k["name"] == "attn_v_transpose"]
-        self.assertEqual([1025, 1026, 1027, 1028, 1029],
-                         [k["shape"]["seq"] for k in transposes])
-        self.assertTrue(all(k["shape"]["decode_sampling_class"] == "continuous"
-                            for k in transposes))
-        self.assertIn("interpolated", {k["shape"]["measurement_kind"] for k in transposes})
-        self.assertTrue(all(k["calls_per_forward"] == 32 * 8 for k in transposes))
+                    by_name = {k["name"]: k for k in payload["kernels"]}
+                    self.assertFalse(any(k["kind"] == "reorder" for k in payload["kernels"]))
+                    for side in ("q", "k"):
+                        rope = by_name[f"rope_{side}"]
+                        self.assertIn("-head-major 1", rope["args"])
+                        self.assertEqual("head_major_row_fp16", rope["outputs"][0]["layout"])
+                        had = by_name[f"spinquant_r3_{side}_hadamard"]
+                        self.assertEqual(f"rope_{side}", had["inputs"][0]["source"])
+                    quant = by_name["kv_cache_quant_v_cache_to_attn_pv"]
+                    self.assertIn(f"--src-row-stride {kv_heads * 128}", quant["args"])
+                    self.assertEqual("v_proj", quant["inputs"][0]["source"])
+                    self.assertNotEqual(make_exec_key("test-image", quant["app"], quant["args"]),
+                                        make_exec_key("test-image", quant["app"], quant["args"].split(" --src-row-stride")[0]))
+                    pv = by_name["attn_pv"]
+                    if pv["backend"] == "sgemm_tcu":
+                        self.assertIn("-r 1", pv["args"])
+                        self.assertEqual("row_major_fp16", pv["shape"]["B_layout"])
+                        self.assertNotEqual(make_exec_key("test-image", pv["app"], pv["args"]),
+                                            make_exec_key("test-image", pv["app"], pv["args"].replace(" -r 1", "")))
+                    self.assertIn("attn_head_concat", by_name)
 
     def test_fused_c4_does_not_add_standalone_head_reorders(self) -> None:
         for stage in ("prefill", "generation"):
@@ -393,7 +416,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-m 128 -n 128 -k 128", attn_qk["args"])
         self.assertEqual("sgemm_tcu", attn_pv["backend"])
         self.assertEqual("sgemm_tcu", attn_pv["app"])
-        self.assertEqual("-m 128 -n 128 -k 128", attn_pv["args"])
+        self.assertEqual("-m 128 -n 128 -k 128 -r 1", attn_pv["args"])
 
     def test_all_fpint_naive_variant_emits_kv_cache_quant_for_attention_operands(self) -> None:
         payload = build_llm_kernels(
@@ -431,7 +454,7 @@ class KernelVariantTest(unittest.TestCase):
         )
 
         self.assertEqual("kv_cache_quant_w4a16", v_quant["backend"])
-        self.assertEqual("-k 8 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
+        self.assertEqual("-k 8 -n 128 -q 128 -d 1 -t 0 --src-row-stride 4096", v_quant["args"])
         self.assertEqual(8, v_quant["shape"]["K"])
         self.assertEqual(128, v_quant["shape"]["N"])
         self.assertNotIn("effective_K", v_quant["shape"])
@@ -504,7 +527,7 @@ class KernelVariantTest(unittest.TestCase):
             attn_qk["inputs"],
         )
 
-        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0 --src-row-stride 4096", v_quant["args"])
         self.assertEqual(1, v_quant["shape"]["K"])
         self.assertEqual(128, v_quant["shape"]["N"])
         self.assertNotIn("effective_K", v_quant["shape"])
@@ -522,7 +545,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn(
             {
                 "role": "C",
-                "target": "attn_v_head_reorder",
+                "target": "kv_cache_quant_v_cache_to_attn_pv",
                 "layout": "row_major_fp16",
             },
             v_proj["outputs"],
@@ -536,8 +559,8 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn(
             {
                 "role": "B",
-                "source": "attn_v_transpose",
-                "layout": "col_major_fp16",
+                "source": "kv_cache_dequant_v_to_attn_pv",
+                "layout": "row_major_fp16",
             },
             attn_pv["inputs"],
         )
@@ -900,7 +923,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("spinquant_signed_asymmetric", k_quant["shape"]["quant_mode"])
         self.assertEqual("spinquant_signed_asymmetric", v_quant["shape"]["quant_mode"])
 
-        historical = build_llm_kernels(
+        default_variant = build_llm_kernels(
             model_name="llama3-8b",
             stages=["prefill"],
             batch=1,
@@ -909,14 +932,14 @@ class KernelVariantTest(unittest.TestCase):
             qblk=32,
             variant="all_fpint_gemm_improve_fused_layout_spinquant",
         )
-        historical_v = _kernel_by_name(
-            historical, "kv_cache_quant_v_cache_to_attn_pv"
+        default_variant_v = _kernel_by_name(
+            default_variant, "kv_cache_quant_v_cache_to_attn_pv"
         )
         self.assertEqual(
-            "historical_spinquant_w4kv4_v1",
-            historical["config"]["quantization_policy"]["name"],
+            "signed_all_asymmetric_wkv4_v1",
+            default_variant["config"]["quantization_policy"]["name"],
         )
-        self.assertEqual("spinquant_signed_symmetric", historical_v["shape"]["quant_mode"])
+        self.assertEqual("spinquant_signed_asymmetric", default_variant_v["shape"]["quant_mode"])
 
     def test_spinquant_variants_emit_hadamard_kernels(self) -> None:
         self.assertIn("all_sgemm_tcu_spinquant", WORKLOAD_VARIANTS)
@@ -952,7 +975,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-rows 256 -dim 128 -K 1", k_had["args"])
         self.assertEqual("spinquant_r3_k_hadamard", k_quant["shape"]["producer"])
         self.assertIn(
-            {"role": "x", "source": "spinquant_r3_k_hadamard", "layout": "row_major_fp16"},
+            {"role": "x", "source": "spinquant_r3_k_hadamard", "layout": "head_major_row_fp16"},
             k_quant["inputs"],
         )
         self.assertIn(
@@ -968,7 +991,7 @@ class KernelVariantTest(unittest.TestCase):
             "--quant-mode spinquant_signed_asymmetric",
             k_dequant["args"],
         )
-        self.assertEqual("-rows 8 -dim 11008 -K 172", r4_had["args"])
+        self.assertEqual("-rows 8 -dim 11008 -K 172 --matrix spinquant", r4_had["args"])
         self.assertEqual("hadamard", r4_had["backend"])
         self.assertEqual(
             "butterfly_base_fused", r4_had["shape"]["hadamard_phase"]
@@ -997,7 +1020,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("hadamard", q_had["backend"])
         self.assertEqual("-rows 32 -dim 128 -K 1", q_had["args"])
         self.assertEqual("hadamard", r4_had["backend"])
-        self.assertEqual("-rows 1 -dim 11008 -K 172", r4_had["args"])
+        self.assertEqual("-rows 1 -dim 11008 -K 172 --matrix spinquant", r4_had["args"])
         self.assertEqual(
             "butterfly_base_fused", r4_had["shape"]["hadamard_phase"]
         )
@@ -1023,7 +1046,7 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("hadamard_layout_fused", r4_had["backend"])
         self.assertEqual(
-            "-m 1 -n 1 -k 14336 --layout-from gemm_a_tiled",
+            "-m 1 -n 1 -k 14336 --layout-from gemm_a_tiled --matrix spinquant",
             r4_had["args"],
         )
         self.assertEqual("factorized", r4_had["shape"]["hadamard_variant"])
@@ -1045,7 +1068,7 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("-rows 32 -dim 128 -K 1", q_had["args"])
         self.assertEqual("-rows 32 -dim 128 -K 1", k_had["args"])
-        self.assertEqual("-rows 1 -dim 11008 -K 172", r4_had["args"])
+        self.assertEqual("-rows 1 -dim 11008 -K 172 --matrix spinquant", r4_had["args"])
 
     def test_zero_padding_remains_explicit_when_not_default(self) -> None:
         standalone = build_llm_kernels(
@@ -1110,7 +1133,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertNotIn("correction_qparams_layout_to", k_quant["shape"])
         self.assertEqual(128, k_quant["shape"]["source_total_n"])
         self.assertEqual(0, k_quant["shape"]["head_col_offset"])
-        self.assertEqual("spinquant_signed_symmetric", v_quant["shape"]["quant_mode"])
+        self.assertEqual("spinquant_signed_asymmetric", v_quant["shape"]["quant_mode"])
         self.assertEqual(4096, v_quant["shape"]["source_total_n"])
         self.assertEqual("call_head_index*128", v_quant["shape"]["head_col_offset"])
         self.assertIn("--head-col-offset 0", v_quant["args"])
@@ -1133,7 +1156,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("gemm_a_tiled", mlp_elmul["shape"]["layout_to"])
         self.assertEqual("hadamard_layout_fused", r4_hadamard["backend"])
         self.assertEqual(
-            "-m 8 -n 1 -k 11008 --layout-from gemm_a_tiled",
+            "-m 8 -n 1 -k 11008 --layout-from gemm_a_tiled --matrix spinquant",
             r4_hadamard["args"],
         )
         self.assertEqual("gemm_a_tiled", r4_hadamard["shape"]["layout_from"])
@@ -1309,7 +1332,7 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("rms_norm_layout_fused", input_norm["backend"])
         self.assertEqual("rms_norm_layout_fused", input_norm["app"])
-        self.assertEqual("-m 128 -k 4096", input_norm["args"])
+        self.assertEqual("-m 128 -k 4096 -eps 1e-05", input_norm["args"])
         self.assertEqual("rope_layout_fused", rope_q["backend"])
         self.assertIn("--layout-to gemm_a_tiled", rope_q["args"])
         self.assertEqual("rope_layout_fused", rope_k["backend"])
@@ -1432,7 +1455,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn("out: product   -> down_proj", text)
         self.assertIn(
             "args='-batch 1 -seq 8 -heads 32 -headdim 128 -maxseq 4096 "
-            "-offset 0 --layout-to gemm_a_tiled'",
+            "-offset 0 -theta 10000 --layout-to gemm_a_tiled'",
             text,
         )
         self.assertIn(

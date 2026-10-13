@@ -10,15 +10,28 @@ Registering a C2 image never creates a C2
 measurement or refinement task. C4_fused remains included and C4_alone remains
 excluded.
 
-Row-major C1/C2/C3 workloads include `attn_q_head_reorder`,
-`attn_k_head_reorder`, and `attn_v_head_reorder` once per layer. TCU attention
-also includes `attn_v_transpose` once per batch/KV head per layer, after V
-dequantization. These use the existing `head_concat` app with `-mode 1`
-(token-major to head-major) or `-mode 2` (per-head V transpose), backend
-`head_reorder`, and kind `reorder`. Default `-mode 0` remains head concatenation.
-C4 fused layouts already provide the required connections and add no such rows.
-Decode V transpose follows the logical KV length and is sampled as a continuous
-cost; this does not change the existing grouped-query attention schedule.
+Row-major C1/C2/C3 workloads use the connected decoder's head layouts:
+RoPE writes head-major output (`-head-major 1`), V quantization reads each head
+from the projection with `--src-row-stride kv_heads*head_dim`, and TCU PV loads
+row-major B (`-r 1`). QK and linear TCU GEMMs retain column-major B. The generator
+therefore emits no separate Q/K/V head reorder or V transpose. Head concat after
+PV remains a measured operation. C4 fused layouts are unchanged.
+
+These arguments are part of the execution key, so a dense quantization or
+column-major PV measurement cannot replace the new case. Generate under a new
+tag and remeasure; deleting reorder rows from historical totals alone is not
+sufficient, because row-major PV has a different load cost.
+
+C4 fused GEMM measurements also distinguish physical storage from executed work.
+For example, a one-row projection uses `-m 8 --target-m 1`; the fused producer
+stores eight-row microtile pitches even though GEMM computes only one row.
+Decode QK uses capacity-sized N with `--target-n` for the active extent, and PV
+uses capacity-sized K with `--target-k`. The target attention extent is the
+valid length rounded to 32. These arguments require a C4 image with the updated
+parent/target FSM, as supplied by `candidate_fpga_bins.rev7.yaml`. Fused decode
+softmax uses the same KV-head/group-row geometry as the connected decoder.
+The standalone GEMM benchmark defaults remain full-matrix execution; changing
+only the allocation size without the parent dimensions does not match C4.
 
 The `sgemm_tcu` latency/power harness initializes floating inputs with a fixed
 seed and small finite values in `[-0.25, 0.25]`, instead of random storage bytes.
@@ -28,8 +41,7 @@ all TCU benchmark GEMMs, including QK, and avoids the NaN/Inf conversion shortcu
 observed with historical inputs. It is synthetic finite data, not a replay of
 model activations. The correctness harness retains its existing input policy.
 Regenerate suites under a new experiment tag and remeasure affected TCU rows;
-historical Rev5 rows do not represent the new input policy. Reorder costs must
-be measured before composing corrected totals.
+historical Rev5 rows do not represent the new input policy. The new layout paths must be measured before composing corrected totals.
 
 The local `candidate_fpga_bins.yaml` is the source of truth for image aliases.
 Execution sources are C1, C3, and C4; logical C2 has no independent raw database.
@@ -521,3 +533,26 @@ reused. New latency-only rows have `measure_power=0`, blank power metrics, and
 `power_source=skipped_stalled`; ordinary runs that require power cannot reuse
 those rows without explicitly allowing this app to skip power. Energy summaries
 with missing power are marked `complete=false`; they are partial results.
+
+### Decoder computation contract
+
+For the Llama2-7B/Llama3-8B comparison, the connected C1-C4 decoder defines
+computation semantics. `tools/workload/gen_kernel_cfgs.py` now emits RMSNorm
+`-eps 1e-5`, attention softmax `-scale 1/sqrt(head_dim)`, and model-specific
+RoPE `-theta` (10000 for Llama2; 500000 for Llama3). Current SpinQuant workload
+variants use signed asymmetric K **and V** quantization, including the C1/C2
+V dequant stage, and identify the policy as `signed_all_asymmetric_wkv4_v1`.
+The explicit `_all_asym_wkv4` variants remain supported.
+
+Factorized R4 cases pass `--matrix spinquant` so both benchmark and correctness
+hosts use the exact decoder basis instead of synthetic coefficients. The shared
+C++ header is generated from the existing decoder Python basis literals with
+`python3 tools/workload/export_spinquant_hadamard.py`; `--check` verifies it is
+current without requiring Torch. Device kernels are unchanged.
+
+Regenerate suites under a new tag after this update. Changed numerical arguments
+produce different measurement keys; historical generated snapshots and raw DBs
+remain historical results. Scalar/basis equivalence does not imply identical
+standalone input tensors, executable startup costs, or host launch overhead.
+The focused rev7 comparison is documented in
+[REV7_DECODER_SEMANTICS_ALIGNMENT.md](docs/whole_decoder_vs_aggregate/REV7_DECODER_SEMANTICS_ALIGNMENT.md).

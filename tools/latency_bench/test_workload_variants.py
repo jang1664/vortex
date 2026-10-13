@@ -254,7 +254,7 @@ workloads:
                 set(by_op),
             )
             self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", by_op["kv_cache_quant_rope_k_to_attn_qkT"].args)
-            self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
+            self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0 --src-row-stride 4096", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
 
     def test_sgemm_spinquant_workload_expands_runtime_dequant_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -297,7 +297,7 @@ workloads:
             )
             self.assertEqual(
                 "-k 513 -n 128 -q 128 -d 1 -t 0 "
-                "--quant-mode spinquant_signed_symmetric",
+                "--quant-mode spinquant_signed_asymmetric",
                 by_op["kv_cache_dequant_v_to_attn_pv"].args,
             )
             self.assertEqual(

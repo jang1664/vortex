@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shlex
 import sys
 from pathlib import Path
@@ -24,7 +25,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Model registry. Add entries here to extend coverage.
 # ---------------------------------------------------------------------------
-MODELS: dict[str, dict[str, int]] = {
+MODELS: dict[str, dict[str, int | float]] = {
     "llama2-7b": {
         "hidden_size": 4096,
         "intermediate_size": 11008,
@@ -34,6 +35,8 @@ MODELS: dict[str, dict[str, int]] = {
         "num_layers": 32,
         "vocab_size": 32000,
         "max_position_embeddings": 4096,
+        "rms_norm_eps": 1e-5,
+        "rope_theta": 10000.0,
     },
     "llama3-8b": {
         "hidden_size": 4096,
@@ -44,6 +47,8 @@ MODELS: dict[str, dict[str, int]] = {
         "num_layers": 32,
         "vocab_size": 128256,
         "max_position_embeddings": 8192,
+        "rms_norm_eps": 1e-5,
+        "rope_theta": 500000.0,
     },
     "llama3p2-1b": {
         "hidden_size": 2048,
@@ -233,7 +238,7 @@ def _is_all_asymmetric_wkv4_variant(variant: str) -> bool:
 
 
 def _quantization_policy(variant: str, qblk: int) -> dict:
-    if _is_all_asymmetric_wkv4_variant(variant):
+    if _is_spinquant_variant(variant):
         return {
             "name": "signed_all_asymmetric_wkv4_v1",
             "weight": {
@@ -255,10 +260,7 @@ def _quantization_policy(variant: str, qblk: int) -> dict:
                 "zero_point_dtype": "int16",
             },
         }
-    return {
-        "name": "historical_spinquant_w4kv4_v1" if _is_spinquant_variant(variant)
-                else "legacy_w4a16_v1",
-    }
+    return {"name": "legacy_w4a16_v1"}
 
 
 def _gemm_backend(op: str, variant: str) -> str:
@@ -443,6 +445,9 @@ def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dic
 
     name = str(kernel["name"])
     option, shape_key = _DECODE_LENGTH_ARG_BY_NAME[name]
+    target_option = {"-n": "--target-n", "-k": "--target-k"}.get(option)
+    if target_option and target_option in str(kernel["args"]).split():
+        option = target_option  # Preserve the physical parent stride.
     padded_seq_kv = _align_up(logical_seq_kv, alignment)
     out = dict(kernel)
     padded_args = _replace_integer_arg(str(out["args"]), option, padded_seq_kv)
@@ -956,7 +961,7 @@ def _apply_sgemm_w4a16_dequant_stages(kernels: list[dict],
                 layout_group="v_cache_to_fp16_attn_pv",
                 variant=variant,
                 quant_mode=(
-                    "spinquant_signed_symmetric"
+                    "spinquant_signed_asymmetric"
                     if spinquant else "legacy_uint4_asymmetric"
                 ),
                 cache_len=seq_kv,
@@ -1110,58 +1115,69 @@ def _head_concat_kernel(stage: str,
     )
 
 
-def _apply_head_reorders(kernels: list[dict], *, stage: str, batch: int,
-                         seq_q: int, seq_kv: int, heads_q: int, heads_kv: int,
-                         head_dim: int, layers: int, variant: str) -> list[dict]:
-    """Account for connections absent from standalone row-major benchmarks."""
-    if _base_workload_variant(variant) not in STANDARD_KV_CACHE_QUANT_VARIANTS:
-        return kernels
-    names = {kernel["name"] for kernel in kernels}
-
-    def reorder(name: str, producer: str, consumer: str, *, seq: int,
-                heads: int, transpose: bool = False) -> dict:
-        return _llm_kernel(
-            name=name, kind="reorder", backend="head_reorder", stage=stage,
-            args=(f"-batch {1 if transpose else batch} -seq {seq} "
-                  f"-heads {heads} -headdim {head_dim} -mode {2 if transpose else 1}"),
-            calls_per_forward=layers * batch * heads_kv if transpose else layers,
-            shape={
-                "batch": 1 if transpose else batch, "seq": seq,
-                "heads": heads, "headdim": head_dim,
-                "layout_from": "head_major_row_fp16" if transpose else "row_major_fp16",
-                "layout_to": "col_major_fp16" if transpose else "head_major_row_fp16",
-                "producer": producer, "consumer": consumer,
-                "layout_group": name,
-            },
-            variant=variant,
-        )
-
-    after = {
-        "rope_q": reorder(
-            "attn_q_head_reorder", "rope_q",
-            "spinquant_r3_q_hadamard" if "spinquant_r3_q_hadamard" in names else "attn_qkT",
-            seq=seq_q, heads=heads_q),
-        "rope_k": reorder(
-            "attn_k_head_reorder", "rope_k",
-            "spinquant_r3_k_hadamard" if "spinquant_r3_k_hadamard" in names
-            else "kv_cache_quant_rope_k_to_attn_qkT",
-            seq=seq_q, heads=heads_kv),
-        "v_proj": reorder(
-            "attn_v_head_reorder", "v_proj", "kv_cache_quant_v_cache_to_attn_pv",
-            seq=seq_q, heads=heads_kv),
-    }
-    # V dequantization emits [S_kv, D]; the TCU B-col-major consumer needs
-    # [D, S_kv]. Each KV head is transposed once and shared by its query heads.
-    dequant = _kv_cache_dequant_name("attn_pv")
-    if dequant in names:
-        after[dequant] = reorder(
-            "attn_v_transpose", dequant, "attn_pv",
-            seq=seq_kv, heads=1, transpose=True)
+def _apply_fused_parent_geometry(kernels: list[dict], *, stage: str,
+                                 capacity: int, heads_q: int, heads_kv: int) -> list[dict]:
+    """Describe the fused decoder's storage separately from GEMM work extents."""
     out = []
     for kernel in kernels:
-        out.append(kernel)
-        if kernel["name"] in after:
-            out.append(after[kernel["name"]])
+        args = kernel["args"]
+        update = {}
+        name = kernel["name"]
+        if kernel["backend"] == FPINT_GEMM_IMPROVE_BACKEND:
+            shape = kernel["shape"]
+            target = {"M": int(shape["M"]),
+                      "N": _align_up(int(shape["N"]), 32),
+                      "K": _align_up(int(shape["K"]), 32)}
+            storage = dict(target, M=_align_up(target["M"], 8))
+            if stage == "generation":
+                if name == "attn_qkT":
+                    storage["N"] = _align_up(capacity, 32)
+                elif name == "attn_pv":
+                    storage["K"] = _align_up(capacity, 32)
+            for dim in ("M", "N", "K"):
+                if storage[dim] < target[dim]:
+                    raise ValueError("fused GEMM target exceeds parent storage")
+                args = _replace_integer_arg(args, f"-{dim.lower()}", storage[dim])
+                if storage[dim] != target[dim]:
+                    args += f" --target-{dim.lower()} {target[dim]}"
+                update[f"storage_{dim}"] = storage[dim]
+        elif name == "attn_softmax" and stage == "generation":
+            # QK stores a GQA group in M, matching the connected decoder.
+            group = heads_q // heads_kv
+            args = _replace_integer_arg(args, "-heads", heads_kv)
+            args = _replace_integer_arg(args, "-seqq", group)
+            update = {"heads": heads_kv, "seqq": group}
+        out.append(_with_kernel_updates(kernel, args=args, shape_update=update))
+    return out
+
+
+def _apply_row_major_attention_layout(kernels: list[dict], *, heads_kv: int,
+                                      head_dim: int, variant: str) -> list[dict]:
+    """Match the connected C1/C2/C3 decoder without separate head adapters."""
+    if _base_workload_variant(variant) not in STANDARD_KV_CACHE_QUANT_VARIANTS:
+        return kernels
+    out = []
+    for kernel in kernels:
+        name = kernel["name"]
+        args = kernel["args"]
+        update = {}
+        if name in {"rope_q", "rope_k"}:
+            args += " -head-major 1"
+            update = {"output_head_major": True, "layout_from": "row_major_fp16",
+                      "layout_to": "head_major_row_fp16"}
+        elif name in {"spinquant_r3_q_hadamard", "spinquant_r3_k_hadamard"}:
+            update = {"layout_from": "head_major_row_fp16",
+                      "layout_to": "head_major_row_fp16"}
+        elif name == "kv_cache_quant_rope_k_to_attn_qkT":
+            update = {"layout_from": "head_major_row_fp16"}
+        elif name == "kv_cache_quant_v_cache_to_attn_pv":
+            stride = heads_kv * head_dim
+            args += f" --src-row-stride {stride}"
+            update = {"src_row_stride": stride}
+        elif name == "attn_pv" and kernel["backend"] == "sgemm_tcu":
+            args += " -r 1"
+            update = {"B_layout": "row_major_fp16"}
+        out.append(_with_kernel_updates(kernel, args=args, shape_update=update))
     return out
 
 
@@ -1225,7 +1241,8 @@ def _factorized_hadamard_kernels(name: str,
         kind="hadamard",
         backend="hadamard",
         stage=stage,
-        args=f"-rows {rows} -dim {dim} -K {base_k}",
+        args=(f"-rows {rows} -dim {dim} -K {base_k}"
+              + (" --matrix spinquant" if base_k > 1 else "")),
         calls_per_forward=calls_per_forward,
         shape={
             "rows": rows,
@@ -1234,6 +1251,7 @@ def _factorized_hadamard_kernels(name: str,
             "width": width,
             "hadamard_variant": "factorized",
             "hadamard_phase": "butterfly_base_fused",
+            "matrix_policy": "spinquant" if base_k > 1 else "implicit_fwht",
             "layout_from": "row_major_fp16",
             "layout_to": "row_major_fp16",
             "producer": producer,
@@ -1607,7 +1625,8 @@ def _apply_fused_layout_variant(kernels: list[dict],
         # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
         _with_fused_backend(
             by_name["input_layernorm"], "rms_norm_layout_fused",
-            args=f"-m {M_proj} -k {hidden}",
+            args=(f"-m {M_proj} -k {hidden}"
+                  f" -eps {by_name['input_layernorm']['shape']['eps']:.9g}"),
             shape_update={
                 "M": M_proj, "K": hidden,
                 "layout_from": "row_major", "layout_to": "gemm_a_tiled",
@@ -1691,7 +1710,8 @@ def _apply_fused_layout_variant(kernels: list[dict],
         ),
         _with_fused_backend(
             by_name["post_attention_layernorm"], "rms_norm_layout_fused",
-            args=f"-m {M_proj} -k {hidden}",
+            args=(f"-m {M_proj} -k {hidden}"
+                  f" -eps {by_name['post_attention_layernorm']['shape']['eps']:.9g}"),
             shape_update={
                 "M": M_proj, "K": hidden,
                 "layout_from": "row_major", "layout_to": "gemm_a_tiled",
@@ -1862,7 +1882,8 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         r4_hadamards = [_with_fused_backend(
             r4_hadamards[0], "hadamard_layout_fused",
             args=(f"-m {M_proj} -n 1 -k {intermediate}"
-                  f"{fused_variant_arg} --layout-from gemm_a_tiled"),
+                  f"{fused_variant_arg} --layout-from gemm_a_tiled"
+                  + (" --matrix spinquant" if hadamard_variant == "factorized" else "")),
             shape_update={
                 "layout_from": "gemm_a_tiled",
                 "layout_to": "gemm_a_tiled",
@@ -1959,11 +1980,8 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if name == "kv_cache_quant_v_cache_to_attn_pv":
-            value_quant_mode = (
-                "spinquant_signed_asymmetric"
-                if _is_all_asymmetric_wkv4_variant(variant)
-                else "spinquant_signed_symmetric"
-            )
+            # The connected C1-C4 decoder is the workload reference.
+            value_quant_mode = "spinquant_signed_asymmetric"
             args = str(kernel["args"]) + f" --quant-mode {value_quant_mode}"
             shape_update = {
                 "quant_mode": value_quant_mode,
@@ -2073,6 +2091,9 @@ def build_decoder_pass_kernels(config: dict,
     H_q    = config["num_attention_heads"]
     H_kv   = config["num_key_value_heads"]
     D      = config["head_dim"]
+    rms_eps = float(config.get("rms_norm_eps", 1e-5))
+    rope_theta = float(config.get("rope_theta", 10000.0))
+    softmax_scale = 1.0 / math.sqrt(D)
     # V is only needed when embedding_lookup is part of the latency workload.
     # embedding_lookup is intentionally disabled below.
     # V      = config["vocab_size"]
@@ -2127,9 +2148,9 @@ def build_decoder_pass_kernels(config: dict,
         name="input_layernorm",
         kind="rmsnorm",
         stage=stage,
-        args=f"-batch {batch} -seq {seq_q} -hidden {H}",
+        args=f"-batch {batch} -seq {seq_q} -hidden {H} -eps {rms_eps:.9g}",
         calls_per_forward=L,
-        shape={"batch": batch, "seq": seq_q, "hidden": H},
+        shape={"batch": batch, "seq": seq_q, "hidden": H, "eps": rms_eps},
         variant=variant,
     ))
 
@@ -2154,19 +2175,19 @@ def build_decoder_pass_kernels(config: dict,
     out.append(_llm_kernel(
         name="rope_q", kind="rope", stage=stage,
         args=(f"-batch {batch} -seq {seq_q} -heads {H_q} -headdim {D} "
-              f"-maxseq {max_seq} -offset {pos_offset}"),
+              f"-maxseq {max_seq} -offset {pos_offset} -theta {rope_theta:.9g}"),
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "heads": H_q, "headdim": D,
-               "maxseq": max_seq, "offset": pos_offset},
+               "maxseq": max_seq, "offset": pos_offset, "theta": rope_theta},
         variant=variant,
     ))
     out.append(_llm_kernel(
         name="rope_k", kind="rope", stage=stage,
         args=(f"-batch {batch} -seq {seq_q} -heads {H_kv} -headdim {D} "
-              f"-maxseq {max_seq} -offset {pos_offset}"),
+              f"-maxseq {max_seq} -offset {pos_offset} -theta {rope_theta:.9g}"),
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "heads": H_kv, "headdim": D,
-               "maxseq": max_seq, "offset": pos_offset},
+               "maxseq": max_seq, "offset": pos_offset, "theta": rope_theta},
         variant=variant,
     ))
 
@@ -2187,11 +2208,12 @@ def build_decoder_pass_kernels(config: dict,
     out.append(_llm_kernel(
         name="attn_softmax", kind="softmax", stage=stage,
         args=(f"-batch {batch} -heads {softmax_heads} -seqq {seq_q} -seqk {seq_kv} "
-              f"-seqk-stride {softmax_k_stride} -mask {use_mask}"),
+              f"-seqk-stride {softmax_k_stride} -mask {use_mask} -scale {softmax_scale:.9g}"),
         calls_per_forward=softmax_calls,
         shape={"batch": batch, "heads": softmax_heads,
                "seqq": seq_q, "seqk": seq_kv,
-               "capacity_stride": softmax_k_stride, "mask": use_mask},
+               "capacity_stride": softmax_k_stride, "mask": use_mask,
+               "scale": softmax_scale},
         variant=variant,
     ))
 
@@ -2229,9 +2251,9 @@ def build_decoder_pass_kernels(config: dict,
     # 13. post_attention_layernorm
     out.append(_llm_kernel(
         name="post_attention_layernorm", kind="rmsnorm", stage=stage,
-        args=f"-batch {batch} -seq {seq_q} -hidden {H}",
+        args=f"-batch {batch} -seq {seq_q} -hidden {H} -eps {rms_eps:.9g}",
         calls_per_forward=L,
-        shape={"batch": batch, "seq": seq_q, "hidden": H},
+        shape={"batch": batch, "seq": seq_q, "hidden": H, "eps": rms_eps},
         variant=variant,
     ))
 
@@ -2288,9 +2310,9 @@ def build_decoder_pass_kernels(config: dict,
     # current per-layer accelerator evaluation target.
     # out.append(_llm_kernel(
     #     name="final_layernorm", kind="rmsnorm", stage=stage,
-    #     args=f"-batch {batch} -seq {seq_q} -hidden {H}",
+    #     args=f"-batch {batch} -seq {seq_q} -hidden {H} -eps {rms_eps:.9g}",
     #     calls_per_forward=1,
-    #     shape={"batch": batch, "seq": seq_q, "hidden": H},
+    #     shape={"batch": batch, "seq": seq_q, "hidden": H, "eps": rms_eps},
     #     variant=variant,
     # ))
 
@@ -2375,9 +2397,13 @@ def build_decoder_pass_kernels(config: dict,
             hadamard_variant=hadamard_variant,
         )
 
-    return _apply_head_reorders(
-        kernels, stage=stage, batch=batch, seq_q=seq_q, seq_kv=seq_kv,
-        heads_q=H_q, heads_kv=H_kv, head_dim=D, layers=L, variant=variant,
+    if base_variant == LAYOUT_FUSED_VARIANT:
+        kernels = _apply_fused_parent_geometry(
+            kernels, stage=stage, capacity=softmax_k_stride,
+            heads_q=H_q, heads_kv=H_kv,
+        )
+    return _apply_row_major_attention_layout(
+        kernels, heads_kv=H_kv, head_dim=D, variant=variant,
     )
 
 
