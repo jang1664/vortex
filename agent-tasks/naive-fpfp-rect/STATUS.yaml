@@ -1,0 +1,36 @@
+task: naive-fpfp-rect
+status: complete
+phase: complete
+spec: rectangular-fpfp-spec.md
+iterations:
+- iteration: 1
+  status: pass
+  unit_result: 8x16 WLOAD1/4,16x8 WLOAD1,4x4 WLOAD1 frontend VCS tests PASS;40 transactions each with distinct row/column
+    data, subnormals and backpressure.
+  host_result: Valid rectangular FPFP-only configurations compile; non-power-of-two ROW/COL and unchanged vector/dual rectangular
+    contracts reject as intended.
+  integration_result: 8x16 WLOAD1/4 tiny,subnormal,K24N17tails andM2K136N144multi-tile allPASS.
+  rejection_result: Host12checksPASS; invalidWLOAD3 explicitunitassertion; invalidROW2fullRTLrejects zero-sizedlane elaboration
+    beforeinitialguard.
+  reverse_and_boundary_result: 16x8 tail/subnormal and4x4 minimumword fullsystem PASS;8x16M129multi-Mtile PASS.
+  acc_result: 8x16 LMEM-backed FP32 ACC M2K24N17 PASS.
+  square_result: 16x16 WLOAD1 core8298/GEMM441 andWLOAD4 core8223/GEMM414 exactlypreserved.
+  remaining: None within the scoped rectangular FPFP implementation and VCS verification.
+  final_result: 17 integration cases,4 frontend units,12 host checks PASS;2 expected RTL rejections. Dual transitions PASS;
+    improve exact RTL identity andcore7510/GEMM167 preserved.
+log:
+- timestamp: 2026-10-14 17:16
+  action: User authorized unequal power-of-two FPFP ROW/COL geometry, example8x16.
+  findings: Prior FPFP source baseline archived before edits; improve selected RTL hash unchanged; existing frontend parameters
+    separate ROWS/COLS but naive FSM explicitly requires square16/32.
+- timestamp: 2026-10-14 17:32
+  action: Completed rectangular FPFP implementation and all scheduled verification.
+  findings: 8x16 WLOAD1/4,16x8,4x4 andLMEM ACC pass; square FPFP/improve cycles unchanged; no simulator processes remain.
+pitfalls:
+- Preserve the previous uncommitted FPFP implementation.
+- MXU_ROW is K reduction width while MXU_COL is output N width.
+- Input/weight/output physical word alignment and lane limits may impose additional constraints beyond power-of-two dimensions.
+- Preserve improve exact selected RTL and cycles; do not synthesize improve.
+- Source config and use isolated configured builds for every geometry.
+- ROW2 creates zero physical input lanes and RTL elaboration rejects before initial assertions; app compile check now gives
+  a clear native-word diagnostic.

@@ -1,0 +1,63 @@
+task: naive-fpfp
+status: complete
+phase: complete
+spec: naive-fpfp-spec.md
+plan: ../../docs/future_optim/naive_fp16_gemm_plan.md
+iterations:
+  - iteration: 1
+    status: sim_fail
+    tests: FPFP front WLOAD1 and WLOAD4 unit tests, followed by blackbox GEMM
+    infrastructure_retry: VCS nested make inherited inaccessible parallel jobserver descriptors; verification reruns serial make with unchanged RTL.
+    unit_result: Both WLOAD configurations PASS, 40 ordered transactions with real Xilinx FP32 IP, subnormal inputs and sustained backpressure.
+    blackbox_result: Both WLOAD1/4 stop at first input with admission ownership probe mismatch in VX_gemm_compute_core.
+    root_cause: VCS created an undriven implicit input_fire net at the new FPFP instance before the later explicit declaration.
+    fix_applied: Move input_fire declaration before the FPFP instance; preserve ownership assertions.
+  - iteration: 2
+    status: sim_fail
+    tests: Diagnostic-only WLOAD1 M1 K32 N32 rerun
+    root_cause: Diagnostic showed input_fire Z with request valid/ready both zero; VCS IWNF warning confirms forward-reference implicit net.
+    fix_applied: Declaration ordering corrected by RTL agent.
+    lesson: Check implicit-net warnings when inserting a new consumer ahead of an existing wire declaration.
+  - iteration: 3
+    status: pass
+    tests: FPFP-only WLOAD1/4 M1 K32 N32 after declaration-order fix
+    smoke_result: Both PASS; WLOAD1 core8298/GEMM441 cycles, WLOAD4 core8223/GEMM414 cycles. No implicit-wire warnings remain.
+    directed_result: Subnormal M2 K32 N32 and tail M3 K48 N17 PASS on both WLOAD settings with bit-exact FPFP comparison.
+    compatibility_result: Improve exact core7510/GEMM167 and old naive exact core8620/GEMM554 preserved; improve selected RTL identity PASS.
+    multi_tile_result: WLOAD4 M4 K256 N256 PASS bit-exact1024 outputs, core13486/GEMM5626.
+    infrastructure_retry: WLOAD1 multi-tile reached133275000ps after299s CPU before300s wall limit; no RTL failure. Same code rerun with900s limit.
+    transition_result: Dual-capability FPFP to FPINT to FPFP three-job sequence PASS; LMEM-backed FP32 ACC M1 K48 N17 PASS.
+    capability_result: All four combinations elaborate/run; selected instance pruning PASS; FPFP QDIR/QBLK perturbation preserves exact output and cycle counts.
+    large_m_result: M129 K32 N32 WLOAD4 PASS, core10098/GEMM2234.
+    final_result: WLOAD1 and WLOAD4 M4 K256 N256 PASS bit-exact1024 outputs; core14536/13486 and GEMM6702/5626. Dual M1 K384 N160 PASS.
+    remaining: None within scoped VCS implementation/comparison.
+    limits: TH16/MXU16 and configured Xilinx FP32 backend; no PnR, arbitrary geometry or nonzero job partition validation.
+log:
+  - timestamp: '2026-10-14 16:59'
+    action: Completed FPFP implementation and WLOAD comparison; all scheduled simulations passed and own simulator processes exited.
+    findings: WLOAD4 reduces M4 K256 N256 GEMM cycles16.05percent and core cycles7.22percent; both original arithmetic paths retain exact cycle counts and improve RTL token identity.
+  - timestamp: '2026-10-14 16:15'
+    action: User authorized FPFP implementation followed by MXU_WLOAD_NUM 1/4 VCS comparison.
+    findings: Existing naive metadata path and shared ACC contracts identified; independent capability combinations and fixed row-major B confirmed.
+  - timestamp: '2026-10-14 16:20'
+    action: Completed static scratch, bank-address and ACC capacity preflight for representative C2/C3 v3 configurations.
+    findings: 224 KiB scratch fits 1280 KiB physical LMEM; intervals disjoint; ACC max depth index 511 below 1024; stack lies below LSU LMEM window. Keep 128 tiles.
+  - timestamp: '2026-10-14 16:20'
+    action: Captured improve baseline through verification agent and agreed software/RTL format ABI.
+    findings: Improve M1 K32 N32 PASS at 7510 core cycles and 167 GEMM cycles. CONTROL bit23 is free after owner/generation bits; bit1 is occupied and must not be used.
+  - timestamp: '2026-10-14 16:32'
+    action: Started FPFP front VCS unit verification after implementation; checked software and improve compatibility.
+    findings: FPFP-only and FPINT-only host/kernel builds PASS, independent capability macros confirmed; CPU reference/subnormal checks PASS. Improve selected RTL token hash remains identical to baseline.
+  - timestamp: '2026-10-14 16:36'
+    action: FPFP front unit tests passed; fullsystem iteration 1 stopped at an admission-control assertion in both WLOAD configurations.
+    findings: Arithmetic unit passes normal/subnormal and backpressure checks. Integration assertion detects a mismatch between accepted input and legacy control-pipeline ownership; routed to RTL agent without weakening checks.
+pitfalls:
+  - Existing GEMM_NAIVE guards must not force FPINT into an FPFP-only build.
+  - Removing quantization commands requires removing source-join and consumer dependency obligations.
+  - FP16-result multiplication is not a substitute for widened FP32 products.
+  - Physical LMEM_SIZE may be smaller than the power-of-two address envelope.
+  - Keep all concurrent simulations in separate configured build directories.
+  - FPFP WLOAD4 at NT128 requests four rows from the same four banks; grouped request width is not sustained bandwidth.
+  - CONTROL bit1 is allocator occupy state; datatype uses reviewed free bit23.
+  - VCS nested make cannot inherit inaccessible make jobserver descriptors; use serial make for the initial unit fixture.
+  - VCS created an undriven implicit net for an instance connection referencing input_fire before its explicit declaration.

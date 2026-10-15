@@ -1,0 +1,121 @@
+task: naive-fpfp-shared
+status: complete
+phase: verified
+spec: shared-geometry-spec.md
+iterations:
+- iteration: 1
+  status: sim_fail
+  error_summary: Compatibility source identity check found four changed FPINT-only
+    assertion tokens; all four frontend unit configurations passed.
+  root_cause: A shared geometry assertion replaced legacy MK/MN identifiers with equivalent
+    constants; FPFP-only dormant bookkeeping also still referenced legacy geometry.
+  fix_applied: Requested restoration of FPINT-only selected tokens and FPFP-only placeholder
+    bookkeeping independent of unused legacy dimensions.
+  lesson: Preserve inactive-capability selected RTL, and avoid constraints on dormant
+    arithmetic geometry.
+- iteration: 2
+  status: sim_fail
+  error_summary: Queued regression returned ALLOC_FAIL before GEMM execution; standalone
+    FPFP cases passed. Different-COL internal ACC gather also failed aligned-DMA destination
+    stride assertion.
+  root_cause: VX_core uses JOB_MMIO_NUM_ENTRIES=1, while the regression assumed the
+    naive module default of4. Three descriptors cannot reserve a single physical entry.
+    Physical output width32B and activeCOL8 destination stride16B require the existing
+    misaligned gather implementation.
+  fix_applied: Make default1 JOB_MMIO_NUM_ENTRIES overridable for dedicated queued
+    builds (set4), and derive app capacity from the actual macro; reject undersized
+    queued configurations before running. Enable output DMA misalignment only when
+    shared physicalCOL differs from minimum enabledCOL; preserve lane issue/write-counter
+    behavior.
+  lesson: Use instantiated core capacity, not a module default, when constructing
+    concurrency tests. A physical shared envelope changes alignment requirements even
+    when logical matrices are unchanged.
+- iteration: 3
+  status: pass
+  error_summary: No unresolved implementation failures.
+  root_cause: Different-COL output gather alignment and queued-test capacity/publication
+    issues resolved.
+  fix_applied: Guarded descriptor-capacity override, differing-COL misaligned output
+    DMA, actual-capacity app checks, and staged queued publication.
+  lesson: Test pending jobs explicitly and account for physical bus alignment separately
+    from logical geometry. Isolated build directories do not isolate scripts with
+    fixed global temporary paths.
+log:
+- timestamp: 2026-10-14 17:50
+  action: User authorized independent FPINT/FPFP dimensions with whole-job exclusion
+    and shared DMA/ACC/output.
+  findings: Baseline captured before edits; previous rectangular implementation and
+    improve token identity preserved. Existing global MXU macros affect FSM, transport
+    and accumulator geometry.
+- timestamp: 2026-10-14 18:02
+  action: Frontend unit verification and preprocessor identity completed; queued-format
+    app is build-ready.
+  findings: 8x16 W1/W4,8x8 W1,32x8 W1 passed; improve SHA unchanged. Blackbox starts
+    on iteration2 after local compatibility fixes.
+- timestamp: 2026-10-14 18:05
+  action: Iteration2 VCS blackboxes launched in isolated sourced builds (build stamp22).
+  findings: FPINT-only and improve token hashes both exactly match baseline. Host/kernel
+    builds, per-format K gates, scratch separation, and geometry accept/reject probes
+    passed. Three queued jobs need916KiB at16/8 geometry.
+- timestamp: 2026-10-14 18:07
+  action: Queued regression capacity mismatch isolated; targeted config/app correction
+    underway.
+  findings: No jobs had executed when allocation failed. Existing W1 tiny/tail/subnormal
+    and W4 tiny/multitile tests passed; no arithmetic RTL failure observed.
+- timestamp: 2026-10-14 18:10
+  action: Different-COL internal output-DMA alignment failure isolated.
+  findings: LMEM ACC8x8 tail passed; FPFP-only8x16 with legacy32 defaults passed;
+    dual FPFP8x32 standalone passed. Internal8x8 and32x8 require 16B-segment writes
+    over a32B physical bus.
+- timestamp: 2026-10-14 18:13
+  action: Iteration3 tiny queued jobs completed without RTL assertion; increasing
+    shape to establish pending overlap.
+  findings: Pending mask0x4 means first two jobs completed before submission ended;
+    coverage insufficient, not a datapath failure. Final pinned FPINT cycles8620/554
+    and improve7510/167 match baseline exactly.
+- timestamp: 2026-10-14T18:14+09:00
+  action: Refine queued test submission to program all descriptors before publishing
+    starts.
+  findings: Interleaving descriptor programming with start lets earlier tiny jobs
+    finish, even atM4K128. Back-to-back start publication provides stronger overlap
+    coverage without enlarging arithmetic cases. Pinned legacyFPFP16x16 W1 andW4 cycles
+    also exactly preserved.
+- timestamp: 2026-10-14T18:16+09:00
+  action: Different-COL internal ACC full-system correctness established for8x8.
+  findings: M2K136N144 multi-tile PASS core12848/GEMM4924; queuedM4K256N32 PASS withpendingmask0x6
+    andall3outputschecked. Stagedsmallqueuedtests for8x8,32x8,8x32 andfinalmatchedWLOADcomparison
+    running.
+- timestamp: 2026-10-14T18:18+09:00
+  action: Serialize final kernel conversion after pre-existing temporary-file collision.
+  findings: kernel/scripts/vxbin.py uses fixed /tmp/temp_kernel.bin across build directories.
+    Two parallel app builds failed before host connect; no RTL failure. Verifier audits
+    vxbin payloads against their own ELF files and reruns affected cases. Stagedsmall8x8queued
+    case passed11550/1679.
+- timestamp: 2026-10-14T18:22+09:00
+  action: Completed verification and results report.
+  findings: Minimum4x4 M3K12N5 PASS8268/371; final12 current kernel payloads match
+    ownELF. No task-owned simulators left. All required representative configurations,
+    format transitions, ACC backends and legacy compatibility checks passed.
+pitfalls:
+- Preserve previous uncommitted FPFP and rectangular changes.
+- Hold format and geometry until full DMA/ACC/output drain, not merely multiplier
+  idle.
+- Changing only row stride to max COL overlaps existing n0-based ACC microtile addresses.
+- Source buffer completion identity depends on geometry-specific micro-op counts.
+- Capability absence must remove unused arithmetic/resources; preserve improve structure/cycles.
+- FPFP reference must use its own reduction width rather than FPINT ROW.
+verification:
+  summary: verification/FINAL_SUMMARY.json
+  frontend_units: 4
+  host_config_checks: 9
+  successful_integration_reports_including_reruns: 21
+  queued_geometries:
+  - FPINT16x16 / FPFP8x8
+  - FPINT16x16 / FPFP32x8
+  - FPINT16x16 / FPFP8x32,32 LMEM ports
+  pending_masks: 0x7 for all staged queued geometry cases
+  output_verification: All three outputs bit-exact in each staged queued case
+  legacy_selected_rtl: FPINT-only and improve exact baseline identity
+  legacy_cycle_delta: 0
+  scope: VCS only; no synthesis/PnR/hardware execution
+  results: RESULTS.md
