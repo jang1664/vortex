@@ -6,7 +6,16 @@
 // row-major address mapping and the 16-lane partial-response assembly.
 module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    parameter int ROW_SIZE = `MXU_ROW,
+    parameter int COL_SIZE = `MXU_COL,
+    parameter int LOAD_ROWS = `MXU_WLOAD_NUM,
+    parameter int WEIGHT_DW = `W_BIT_WIDTH,
+    parameter int WEIGHT_BYTES = (COL_SIZE * LOAD_ROWS * WEIGHT_DW) / 8,
+    parameter int NUM_LANES = WEIGHT_BYTES / LSU_WORD_SIZE,
+`else
     parameter int NUM_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE,
+`endif
     parameter int TAG_WIDTH = 1,
     parameter int RD_PREFETCH_DEPTH = 4,
     parameter int CMD_FIFO_DEPTH = 1,
@@ -40,13 +49,25 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
     localparam int SLOT_COUNT_BITS = $clog2(RD_PREFETCH_DEPTH + 1);
     localparam int TAG_VALUE_BITS = TAG_WIDTH - `UP(UUID_WIDTH);
     localparam bit SLOT_IN_VALUE = TAG_VALUE_BITS >= SLOT_BITS;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int GEMM_BYTES = WEIGHT_BYTES;
+`else
     localparam int GEMM_BYTES = `GEMM_WEIGHT_DATA_SIZE;
+`endif
     localparam int GEMM_BITS = GEMM_BYTES * 8;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int WEIGHT_ROW_BYTES = (COL_SIZE * WEIGHT_DW) / 8;
+`else
     localparam int WEIGHT_ROW_BYTES = (`MXU_COL * `W_BIT_WIDTH) / 8;
+`endif
     localparam int LANES_PER_ROW = WEIGHT_ROW_BYTES / LANE_BYTES;
     localparam int ROWS_PER_GROUP = GEMM_BYTES / WEIGHT_ROW_BYTES;
     localparam int EXPECTED_LANES = GEMM_BYTES / LANE_BYTES;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int EXPECTED_CMD_BEATS = ROW_SIZE / ROWS_PER_GROUP;
+`else
     localparam int EXPECTED_CMD_BEATS = `MXU_ROW / ROWS_PER_GROUP;
+`endif
     localparam int COUNT_BITS = 32;
     localparam int GROUP_ROW_WIDTH = BOUND_WIDTH + `CLOG2(ROWS_PER_GROUP);
     localparam int GROUP_OFFSET_WIDTH = GROUP_ROW_WIDTH + 32;
@@ -353,6 +374,12 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
          || ((WEIGHT_ROW_BYTES % LANE_BYTES) != 0))
             $fatal(1, "%s: packed Weight row must contain whole LMEM lanes, row_bytes=%0d lane_bytes=%0d",
                    INSTANCE_ID, WEIGHT_ROW_BYTES, LANE_BYTES);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        if (LOAD_ROWS <= 0 || ROW_SIZE % LOAD_ROWS != 0
+         || GEMM_BYTES == 0 || (GEMM_BYTES % WEIGHT_ROW_BYTES) != 0
+         || NUM_LANES != EXPECTED_LANES || ROWS_PER_GROUP != LOAD_ROWS)
+            $fatal(1, "%s: invalid independent Weight gather geometry", INSTANCE_ID);
+`else
         if ((GEMM_BYTES == 0)
          || ((GEMM_BYTES % WEIGHT_ROW_BYTES) != 0)
          || (NUM_LANES != EXPECTED_LANES)
@@ -365,6 +392,7 @@ module VX_lmem_weight_gather_dma import VX_gpu_pkg::*; #(
             $fatal(1, "%s: invalid Weight command beats rows=%0d rows_per_beat=%0d beats=%0d expected=%0d",
                    INSTANCE_ID, `MXU_ROW, ROWS_PER_GROUP,
                    `W_LMEM_DMA_CMD_BEATS, EXPECTED_CMD_BEATS);
+`endif
         if ((RD_PREFETCH_DEPTH < 2)
          || ((RD_PREFETCH_DEPTH & (RD_PREFETCH_DEPTH - 1)) != 0))
             $fatal(1, "%s: RD_PREFETCH_DEPTH must be a power of two >= 2",

@@ -75,11 +75,27 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int W_GEMM_TAG_WIDTH  = GEMM_BASE_TAG_WIDTH;
     localparam int SZ_GEMM_TAG_WIDTH = GEMM_BASE_TAG_WIDTH;
     localparam int GEMM_INPUT_LANES  = `GEMM_INPUT_DATA_SIZE / LSU_WORD_SIZE;
+    `ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int FP16_WEIGHT_BYTES = `FPFP_MXU_COL * `FPFP_MXU_WLOAD_NUM * 2;
+    localparam int FP16_WEIGHT_LANES = FP16_WEIGHT_BYTES / LSU_WORD_SIZE;
+`ifdef GEMM_NAIVE_ENABLE
+    localparam int GEMM_WEIGHT_LANES = `MAX(FP16_WEIGHT_LANES, `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE);
+`else
+    localparam int GEMM_WEIGHT_LANES = FP16_WEIGHT_LANES;
+`endif
+    wire fp16_mode;
+    VX_mem_bus_if #(.DATA_SIZE(FP16_WEIGHT_BYTES), .TAG_WIDTH(W_GEMM_TAG_WIDTH)) fp16_weight_bus_if ();
+`else
     localparam int GEMM_WEIGHT_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE;
+`endif
     localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_PSUM_LANES   = `GEMM_PSUM_DATA_SIZE / LSU_WORD_SIZE;
+    `ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int WEIGHT_ROW_BYTES = `FPFP_MXU_COL * 2;
+`else
     localparam int WEIGHT_ROW_BYTES  = (`MXU_COL * `W_BIT_WIDTH) / 8;
+`endif
     localparam int WEIGHT_ROW_LANES  = WEIGHT_ROW_BYTES / LSU_WORD_SIZE;
     localparam int I_LANE_OFFSET = NAIVE_LMEM_I_OFFSET;
     localparam int W_LANE_OFFSET = NAIVE_LMEM_W_OFFSET;
@@ -312,14 +328,60 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
 `endif
       end
     end
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef SYNTHESIS
+    logic locked_mode_q, was_active_q;
+    logic [`JOB_MMIO_ENTRYID_W-1:0] locked_entry_q;
+    logic [31:0] locked_geometry_q [9];
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        locked_mode_q <= 0;
+        locked_entry_q <= 0;
+        was_active_q <= 0;
+        for (int g = 0; g < 9; ++g) locked_geometry_q[g] <= 0;
+      end else begin
+        was_active_q <= job_active_q;
+        if (cfg_start_fire) begin
+          assert (!job_active_q && (&executor_idle) && gemm_write_queues_empty
+                  && gemm_unit_v2_if.pipeline_empty)
+            else $fatal(1, "%s: new job admitted before shared datapath drained", INSTANCE_ID);
+          locked_mode_q <= issue_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT];
+          locked_entry_q <= `JOB_MMIO_ENTRYID_W'(issue_if.entry_id);
+        end
+        if (job_active_q) begin
+          assert (fp16_mode == locked_mode_q && active_entry_q == locked_entry_q)
+            else $fatal(1, "%s: active job format/entry changed", INSTANCE_ID);
+          if (was_active_q) begin
+            for (int g = 0; g < 9; ++g)
+              assert (geometry[g] == locked_geometry_q[g])
+                else $fatal(1, "%s: active job geometry changed", INSTANCE_ID);
+          end else begin
+            for (int g = 0; g < 9; ++g) locked_geometry_q[g] <= geometry[g];
+          end
+        end
+        if (done_if.valid && done_if.ready)
+          assert ((&executor_idle) && gemm_write_queues_empty && gemm_unit_v2_if.pipeline_empty)
+            else $fatal(1, "%s: job completed before shared datapath drained", INSTANCE_ID);
+      end
+    end
+`endif
+`endif
     VX_naive_gemm_control #(.INSTANCE_ID(INSTANCE_ID)) control (
       .clk(clk), .reset(reset), .cfg_reg_if(issue_if), .child_if(child_if),
       .executor_quiescent((&executor_idle) && gemm_write_queues_empty && gemm_unit_v2_if.pipeline_empty),
       .consume_valid(consumes), .source_read_done_valid(source_done), .source_read_done_work_seq(source_id),
       .done_valid(done_if.valid), .done_ready(done_if.ready), .done_entry_id(done_entry),
-      .job_geometry_o(geometry), .quiescent(control_idle));
+      .job_geometry_o(geometry), .quiescent(control_idle)
+`ifdef GEMM_NAIVE_FP16_ENABLE
+      , .fp16_mode_o(fp16_mode)
+`endif
+    );
     VX_naive_input_executor #(.INSTANCE_ID({INSTANCE_ID,"_input"})) input_executor (
-      .clk(clk), .reset(reset), .cmd(child_if.cmd[0]), .cmd_valid(child_if.cmd_valid[0]),
+      .clk(clk), .reset(reset),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+      .fp16_mode(fp16_mode),
+`endif
+      .cmd(child_if.cmd[0]), .cmd_valid(child_if.cmd_valid[0]),
       .cmd_ready(child_if.cmd_ready[0]), .prepare_valid(child_if.prepare_valid[0]),
       .prepare_ready(child_if.prepare_ready[0]), .done_valid(child_if.done_valid[0]),
       .done_ready(child_if.done_ready[0]), .done_work_seq(child_if.done_work_seq[0]),
@@ -328,6 +390,87 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .ingress_complete(), .ingress_work_seq(), .packet_ctrl(gemm_unit_v2_if.packet_ctrl),
       .lane_bus_if(i_lane_mem_if), .input_bus_if(i_gemm_bus_if),
       .source_done_valid(source_done[0]), .source_done_work_seq(source_id[0]), .quiescent(executor_idle[0]));
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    wire [1:0] weight_cmd_ready, weight_prepare_ready, weight_done_valid;
+    wire [1:0] weight_source_done, weight_idle;
+    wire [31:0] weight_done_id [2], weight_source_id [2];
+`ifdef GEMM_NAIVE_ENABLE
+    VX_mem_bus_if #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH))
+        fpint_weight_lanes [`GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE] ();
+`endif
+    VX_mem_bus_if #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(GEMM_BASE_TAG_WIDTH))
+        fp16_weight_lanes [FP16_WEIGHT_LANES] ();
+    assign child_if.cmd_ready[1] = weight_cmd_ready[fp16_mode];
+    assign child_if.prepare_ready[1] = weight_prepare_ready[fp16_mode];
+    assign child_if.done_valid[1] = weight_done_valid[fp16_mode];
+    assign child_if.done_work_seq[1] = weight_done_id[fp16_mode];
+    assign source_done[1] = weight_source_done[fp16_mode];
+    assign source_id[1] = weight_source_id[fp16_mode];
+    assign executor_idle[1] = &weight_idle;
+`ifdef GEMM_NAIVE_ENABLE
+    VX_naive_weight_executor #(.INSTANCE_ID({INSTANCE_ID,"_weight"}), .RESPONSE_SLOTS(W_RD_OUTSTANDING)) weight_executor (
+      .clk(clk), .reset(reset), .cmd(child_if.cmd[1]), .cmd_valid(child_if.cmd_valid[1] && !fp16_mode),
+      .cmd_ready(weight_cmd_ready[0]), .prepare_valid(child_if.prepare_valid[1] && !fp16_mode),
+      .prepare_ready(weight_prepare_ready[0]), .done_valid(weight_done_valid[0]),
+      .done_ready(child_if.done_ready[1] && !fp16_mode), .done_work_seq(weight_done_id[0]),
+      .sync_value(child_if.sync_value), .lane_bus_if(fpint_weight_lanes), .install_bus_if(w_gemm_bus_if),
+      .source_done_valid(weight_source_done[0]), .source_done_work_seq(weight_source_id[0]), .quiescent(weight_idle[0]));
+`else
+    assign weight_cmd_ready[0] = 0;
+    assign weight_prepare_ready[0] = 0;
+    assign weight_done_valid[0] = 0;
+    assign weight_done_id[0] = 0;
+    assign weight_source_done[0] = 0;
+    assign weight_source_id[0] = 0;
+    assign weight_idle[0] = 1;
+    assign w_gemm_bus_if.req_valid = 0;
+    assign w_gemm_bus_if.req_data = '0;
+    assign w_gemm_bus_if.rsp_ready = 1;
+`endif
+    VX_naive_weight_executor #(.INSTANCE_ID({INSTANCE_ID,"_fp16_weight"}), .WEIGHT_DW(16),
+      .ROW_SIZE(`FPFP_MXU_ROW), .COL_SIZE(`FPFP_MXU_COL), .LOAD_ROWS(`FPFP_MXU_WLOAD_NUM),
+      .RESPONSE_SLOTS(W_RD_OUTSTANDING)) fp16_weight_executor (
+      .clk(clk), .reset(reset), .cmd(child_if.cmd[1]), .cmd_valid(child_if.cmd_valid[1] && fp16_mode),
+      .cmd_ready(weight_cmd_ready[1]), .prepare_valid(child_if.prepare_valid[1] && fp16_mode),
+      .prepare_ready(weight_prepare_ready[1]), .done_valid(weight_done_valid[1]),
+      .done_ready(child_if.done_ready[1] && fp16_mode), .done_work_seq(weight_done_id[1]),
+      .sync_value(child_if.sync_value), .lane_bus_if(fp16_weight_lanes), .install_bus_if(fp16_weight_bus_if),
+      .source_done_valid(weight_source_done[1]), .source_done_work_seq(weight_source_id[1]), .quiescent(weight_idle[1]));
+    for (genvar l = 0; l < GEMM_WEIGHT_LANES; ++l) begin : g_weight_format_lanes
+        wire [1:0] req_valid, rsp_ready;
+        wire [1:0][$bits(w_lane_mem_if[l].req_data)-1:0] req_data;
+`ifdef GEMM_NAIVE_ENABLE
+        if (l < `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE) begin : g_fpint
+            assign req_valid[0] = fpint_weight_lanes[l].req_valid;
+            assign req_data[0] = fpint_weight_lanes[l].req_data;
+            assign rsp_ready[0] = fpint_weight_lanes[l].rsp_ready;
+            assign fpint_weight_lanes[l].req_ready = !fp16_mode && w_lane_mem_if[l].req_ready;
+            assign fpint_weight_lanes[l].rsp_valid = !fp16_mode && w_lane_mem_if[l].rsp_valid;
+            assign fpint_weight_lanes[l].rsp_data = w_lane_mem_if[l].rsp_data;
+        end else
+`endif
+        begin : g_no_fpint
+            assign req_valid[0] = 0;
+            assign req_data[0] = '0;
+            assign rsp_ready[0] = 1;
+        end
+        if (l < FP16_WEIGHT_LANES) begin : g_fpfp
+            assign req_valid[1] = fp16_weight_lanes[l].req_valid;
+            assign req_data[1] = fp16_weight_lanes[l].req_data;
+            assign rsp_ready[1] = fp16_weight_lanes[l].rsp_ready;
+            assign fp16_weight_lanes[l].req_ready = fp16_mode && w_lane_mem_if[l].req_ready;
+            assign fp16_weight_lanes[l].rsp_valid = fp16_mode && w_lane_mem_if[l].rsp_valid;
+            assign fp16_weight_lanes[l].rsp_data = w_lane_mem_if[l].rsp_data;
+        end else begin : g_no_fpfp
+            assign req_valid[1] = 0;
+            assign req_data[1] = '0;
+            assign rsp_ready[1] = 1;
+        end
+        assign w_lane_mem_if[l].req_valid = req_valid[fp16_mode];
+        assign w_lane_mem_if[l].req_data = req_data[fp16_mode];
+        assign w_lane_mem_if[l].rsp_ready = rsp_ready[fp16_mode];
+    end
+`else
     VX_naive_weight_executor #(.INSTANCE_ID({INSTANCE_ID,"_weight"}), .RESPONSE_SLOTS(W_RD_OUTSTANDING)) weight_executor (
       .clk(clk), .reset(reset), .cmd(child_if.cmd[1]), .cmd_valid(child_if.cmd_valid[1]),
       .cmd_ready(child_if.cmd_ready[1]), .prepare_valid(child_if.prepare_valid[1]),
@@ -335,6 +478,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .done_ready(child_if.done_ready[1]), .done_work_seq(child_if.done_work_seq[1]),
       .sync_value(child_if.sync_value), .lane_bus_if(w_lane_mem_if), .install_bus_if(w_gemm_bus_if),
       .source_done_valid(source_done[1]), .source_done_work_seq(source_id[1]), .quiescent(executor_idle[1]));
+`endif
+`ifdef GEMM_NAIVE_ENABLE
     gemm_unified_cmd_t quant_cmd [2];
     wire [31:0] quant_done_id [2], quant_source_id [2];
     for(genvar q=0;q<2;++q) begin : g_quant_connect
@@ -350,6 +495,27 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .done_ready(child_if.done_ready[3:2]), .done_work_seq(quant_done_id),
       .sync_value(child_if.sync_value), .lane_bus_if(sz_lane_mem_if), .install_bus_if(quant_gemm_bus_if),
       .source_done_valid(source_done[3:2]), .source_done_work_seq(quant_source_id), .quiescent(executor_idle[2]));
+`else
+    assign child_if.cmd_ready[3:2] = '0;
+    assign child_if.prepare_ready[3:2] = '0;
+    assign child_if.done_valid[3:2] = '0;
+    assign child_if.done_work_seq[2] = '0;
+    assign child_if.done_work_seq[3] = '0;
+    assign source_done[3:2] = '0;
+    assign source_id[2] = '0;
+    assign source_id[3] = '0;
+    assign executor_idle[2] = 1'b1;
+    for (genvar q = 0; q < 2; ++q) begin : g_no_quant
+        assign quant_gemm_bus_if[q].req_valid = 0;
+        assign quant_gemm_bus_if[q].req_data = '0;
+        assign quant_gemm_bus_if[q].rsp_ready = 1;
+    end
+    for (genvar q = 0; q < SZ_PORT_LANES; ++q) begin : g_no_quant_lanes
+        assign sz_lane_mem_if[q].req_valid = 0;
+        assign sz_lane_mem_if[q].req_data = '0;
+        assign sz_lane_mem_if[q].rsp_ready = 1;
+    end
+`endif
     assign child_if.prepare_ready[4] = 0;
 `ifdef GEMM_NAIVE_USE_ACC_MEM
     VX_lmem_dma_ctrl_if o_dma_ctrl_if ();
@@ -360,6 +526,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .done_ready(child_if.done_ready[4]), .done_work_seq(child_if.done_work_seq[4]),
       .quiescent(executor_idle[3]), .M_orig(geometry[0]), .N_orig(geometry[1]), .K_orig(geometry[2]),
       .qblk_orig(geometry[3]), .M_target(geometry[4]), .N_target(geometry[5]), .K_target(geometry[6]),
+      `ifdef GEMM_NAIVE_FP16_ENABLE
+      .fp16_mode(fp16_mode),
+`endif
       .wtrans_tot(geometry[7]), .qdir_tot(geometry[8]), .dma_if(dma_if), .store_done(output_store_done)
 `ifdef GEMM_NAIVE_USE_ACC_MEM
       , .o_dma_ctrl_if(o_dma_ctrl_if), .output_write_drained(gemm_write_queues_empty)
@@ -413,14 +582,34 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
 
     initial begin
+`ifndef GEMM_NAIVE_FP16_ENABLE
       if (`LMEM_NUM_PORTS < 8)
         $fatal(1, "%s: GEMM_NAIVE requires at least eight LMEM ports", INSTANCE_ID);
       if ((GEMM_INPUT_LANES != 4 && GEMM_INPUT_LANES != 8)
        || GEMM_SZ_LANES != GEMM_INPUT_LANES
        || GEMM_OUTPUT_LANES != GEMM_INPUT_LANES)
         $fatal(1, "%s: GEMM_NAIVE requires matching 32-byte or 64-byte Input/SZ/Output paths", INSTANCE_ID);
+`else
+      if (`FPFP_MXU_ROW * 2 < LSU_WORD_SIZE
+       || (`FPFP_MXU_ROW * 2 % LSU_WORD_SIZE) != 0
+       || `FPFP_MXU_COL * 2 < LSU_WORD_SIZE
+       || (`FPFP_MXU_COL * 2 % LSU_WORD_SIZE) != 0
+       || `GEMM_INPUT_DATA_SIZE < LSU_WORD_SIZE
+       || (`GEMM_INPUT_DATA_SIZE % LSU_WORD_SIZE) != 0
+       || `GEMM_OUTPUT_DATA_SIZE < LSU_WORD_SIZE
+       || (`GEMM_OUTPUT_DATA_SIZE % LSU_WORD_SIZE) != 0
+       || GEMM_INPUT_LANES > `LMEM_NUM_PORTS
+       || GEMM_OUTPUT_LANES > `LMEM_NUM_PORTS)
+        $fatal(1, "%s: FPFP Input/Output vectors must contain whole LMEM words and fit physical ports", INSTANCE_ID);
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+      if (`FPFP_MXU_WLOAD_NUM <= 0 || (`FPFP_MXU_ROW % `FPFP_MXU_WLOAD_NUM) != 0
+       || (WEIGHT_ROW_BYTES % LSU_WORD_SIZE) != 0
+       || (FP16_WEIGHT_LANES != (`FPFP_MXU_WLOAD_NUM * WEIGHT_ROW_LANES)))
+`else
       if ((WEIGHT_ROW_BYTES % LSU_WORD_SIZE) != 0
        || (GEMM_WEIGHT_LANES != (`MXU_WLOAD_NUM * WEIGHT_ROW_LANES)))
+`endif
         $fatal(1, "%s: invalid GEMM_NAIVE Weight shape bytes=%0d lanes=%0d wload=%0d row_lanes=%0d",
                INSTANCE_ID, `GEMM_WEIGHT_DATA_SIZE, GEMM_WEIGHT_LANES,
                `MXU_WLOAD_NUM, WEIGHT_ROW_LANES);
@@ -958,6 +1147,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .reset(reset),
       .input_bus_if(i_gemm_bus_if),
       .weight_bus_if(w_gemm_bus_if),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+      .fp16_mode(fp16_mode), .fp16_weight_bus_if(fp16_weight_bus_if),
+`endif
       .scale_bus_if(quant_gemm_bus_if[0]),
       .zero_bus_if(quant_gemm_bus_if[1]),
       .gemm_unit_if(gemm_unit_v2_if),
@@ -969,8 +1161,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
 
 `ifdef GEMM_NAIVE_USE_ACC_MEM
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    `VX_STATIC_ASSERT(MT * (NT / `GEMM_NAIVE_MIN_COL) * `GEMM_SHARED_ACC_COL * 4 <= `GEMM_ACC_MEM_TOT_SIZE,
+        ("Naive padded output tile exceeds shared ACC memory capacity"))
+`else
     `VX_STATIC_ASSERT(MT * NT * 4 <= `GEMM_ACC_MEM_TOT_SIZE,
         ("Naive output tile exceeds ACC memory capacity"))
+`endif
     `VX_STATIC_ASSERT((NT % `MXU_COL) == 0,
         ("Naive ACC output requires whole MXU column blocks"))
 
@@ -1031,6 +1228,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
     VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_o_dma"}), .DIR(1),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+      // Narrow logical microtiles share a wider physical ACC vector. Their
+      // compact destination offsets can fall inside one physical output beat.
+      .ENABLE_MISALIGN(`GEMM_SHARED_ACC_COL != `GEMM_NAIVE_MIN_COL),
+`endif
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
       .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
       .RD_OUTSTANDING(O_RD_OUTSTANDING),

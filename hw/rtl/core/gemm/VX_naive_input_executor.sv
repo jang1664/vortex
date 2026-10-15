@@ -10,6 +10,9 @@ module VX_naive_input_executor import VX_gpu_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    input wire fp16_mode,
+`endif
     input gemm_unified_cmd_t cmd,
     input wire cmd_valid,
     output wire cmd_ready,
@@ -54,7 +57,11 @@ module VX_naive_input_executor import VX_gpu_pkg::*; #(
         descriptor.source.base = 34'(cmd.rs2_data);
         descriptor.source.stride = `GEMM_FSM_KT*2;
         descriptor.source.segments = 16'(cmd.eff_mt);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        descriptor.source.useful_bytes = 16'(2 * (fp16_mode ? `FPFP_MXU_ROW : `MXU_ROW));
+`else
         descriptor.source.useful_bytes = 16'(B);
+`endif
         descriptor.source.buffer_id = cmd.naive_source_buffer;
         descriptor.source.generation = cmd.naive_source_generation;
         descriptor.dest.install_target = cmd.work_seq;

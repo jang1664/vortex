@@ -18,6 +18,9 @@ module VX_naive_gemm_control import VX_gpu_pkg::*; #(
     input wire done_ready,
     output wire [`JOB_MMIO_ENTRYID_W-1:0] done_entry_id,
     output wire [31:0] job_geometry_o [9],
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    output wire fp16_mode_o,
+`endif
     output wire quiescent
 );
     wire invocation_valid, invocation_ready;
@@ -37,12 +40,19 @@ module VX_naive_gemm_control import VX_gpu_pkg::*; #(
         .invocation_entry_id_o(invocation_entry_id),
         .cmd_valid_o(command_valid), .cmd_ready_i(command_ready), .cmd_o(command),
         .producer_done_o(producer_done), .controller_done_i(done_valid && done_ready),
-        .idle_o(fsm_idle), .job_geometry_o(job_geometry_o), .source_closed_valid_o(closed_valid),
+        .idle_o(fsm_idle), .job_geometry_o(job_geometry_o),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        .fp16_mode_o(fp16_mode_o),
+`endif
+        .source_closed_valid_o(closed_valid),
         .source_closed_buffer_o(closed_buffer), .source_closed_generation_o(closed_generation),
         .source_closed_count_o(closed_count)
     );
     VX_naive_source_join source_join (
         .clk(clk), .reset(reset), .invocation_start(invocation_fire),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        .active_sources(fp16_mode_o ? 4'b0011 : 4'b1111),
+`endif
         .closed_valid(closed_valid), .closed_buffer(closed_buffer),
         .closed_generation(closed_generation), .closed_count(closed_count),
         .read_done_valid(source_read_done_valid), .read_done_work_seq(source_read_done_work_seq),
@@ -52,6 +62,9 @@ module VX_naive_gemm_control import VX_gpu_pkg::*; #(
     VX_gemm_ctrl_naive_meta #(.INSTANCE_ID({INSTANCE_ID,"_controller"})) controller (
         .clk(clk), .reset(reset), .invocation_valid_i(invocation_valid),
         .invocation_ready_o(invocation_ready), .invocation_entry_id_i(invocation_entry_id),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        .active_sources(fp16_mode_o ? 4'b0011 : 4'b1111),
+`endif
         .cmd_valid_i(command_valid), .cmd_ready_o(command_ready), .cmd_i(command),
         .producer_done_i(producer_done), .executor_quiescent_i(executor_quiescent && source_quiescent),
         .quiescent_o(controller_quiescent), .done_valid_o(done_valid), .done_ready_i(done_ready),

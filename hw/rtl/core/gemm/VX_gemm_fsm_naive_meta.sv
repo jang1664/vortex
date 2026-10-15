@@ -19,6 +19,9 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     input wire controller_done_i,
     output wire idle_o,
     output wire [31:0] job_geometry_o [9],
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    output wire fp16_mode_o,
+`endif
     // Producer closure only: NOT source-read completion or SRC_FREE.
     output wire source_closed_valid_o,
     output wire source_closed_buffer_o,
@@ -28,10 +31,15 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     localparam int MT = `GEMM_FSM_MT;
     localparam int KT = `GEMM_FSM_KT;
     localparam int NT = `GEMM_FSM_NT;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int MAX_K_MICROS = KT / `GEMM_NAIVE_MIN_ROW;
+    localparam int MAX_N_MICROS = NT / `GEMM_NAIVE_MIN_COL;
+`else
     localparam int MK = `GEMM_FSM_MXU_KT;
     localparam int MN = `GEMM_FSM_MXU_NT;
     localparam int MAX_K_MICROS = KT / MK;
     localparam int MAX_N_MICROS = NT / MN;
+`endif
     localparam int K_COUNT_BITS = $clog2(MAX_K_MICROS + 1);
     localparam int N_COUNT_BITS = $clog2(MAX_N_MICROS + 1);
     localparam int K_INDEX_BITS = `MAX(1, $clog2(MAX_K_MICROS));
@@ -51,8 +59,27 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
         logic [31:0] orig_m, orig_n, orig_k, qlog;
         logic [31:0] m, n, k, m_start, n_start;
         logic wtrans, qrow;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        logic fp16;
+`endif
     } job_t;
     job_t job_q;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifdef GEMM_NAIVE_ENABLE
+    wire fp16_mode = job_q.fp16;
+`else
+    wire fp16_mode = 1'b1;
+`endif
+    assign fp16_mode_o = fp16_mode;
+`else
+    wire fp16_mode = 1'b0;
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    wire [31:0] MK = fp16_mode ? `FPFP_MXU_ROW : `MXU_ROW;
+    wire [31:0] MN = fp16_mode ? `FPFP_MXU_COL : `MXU_COL;
+    wire [4:0] k_shift = fp16_mode ? $clog2(`FPFP_MXU_ROW) : $clog2(`MXU_ROW);
+    wire [4:0] n_shift = fp16_mode ? $clog2(`FPFP_MXU_COL) : $clog2(`MXU_COL);
+`endif
     assign job_geometry_o[0] = job_q.orig_m;
     assign job_geometry_o[1] = job_q.orig_n;
     assign job_geometry_o[2] = job_q.orig_k;
@@ -104,11 +131,22 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     wire [31:0] rows = lesser(MT, job_q.m - mt_q * MT);
     wire [31:0] cols = lesser(NT, job_q.n - nt_q * NT);
     wire [31:0] kval = lesser(KT, job_q.k - kt_q * KT);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    wire [K_COUNT_BITS-1:0] knum = K_COUNT_BITS'(kval >> k_shift);
+    wire [N_COUNT_BITS-1:0] nnum = N_COUNT_BITS'((cols + MN - 1) >> n_shift);
+`else
     wire [K_COUNT_BITS-1:0] knum = K_COUNT_BITS'(kval / MK);
     wire [N_COUNT_BITS-1:0] nnum = N_COUNT_BITS'((cols + MN - 1) / MN);
+`endif
     wire [MICRO_BITS-1:0] micro_count = knum * nnum;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    wire [31:0] k0 = 32'(kb_q) << k_shift;
+    wire [31:0] n0 = 32'(nb_q) << n_shift;
+    wire [63:0] acc_slot_base = 64'(nb_q) * MT * `GEMM_SHARED_ACC_COL * 4;
+`else
     wire [31:0] k0 = 32'(kb_q) * MK;
     wire [31:0] n0 = 32'(nb_q) * MN;
+`endif
     wire [31:0] valid_cols = lesser(MN, cols - n0);
     wire [31:0] work_seq = tile_q * MAX_MICROS + 32'(kb_q) * nnum + 32'(nb_q) + 1;
     wire source_bank = tile_q[0];
@@ -177,13 +215,17 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                     cmd_o.rs2 = NUM_REGS_BITS'(load_kt_q);
                 end
                 1: begin
-                    if (job_q.wtrans)
+                    if (fp16_mode)
+                        address = job_q.dram[1] + (64'(load_kt_q * KT) * job_q.orig_n
+                                  + 64'(job_q.n_start + load_nt_q * NT)) * 2;
+                    else if (job_q.wtrans)
                         address = job_q.dram[1] + 64'(job_q.n_start + load_nt_q * NT)
                                   * ((64'(job_q.orig_k) + 1) >> 1) + 64'(load_kt_q * (KT/2));
                     else
                         address = job_q.dram[1] + 64'(load_kt_q * KT)
                                   * ((64'(job_q.orig_n) + 1) >> 1) + 64'((job_q.n_start + load_nt_q * NT) >> 1);
-                    amount = job_q.wtrans ? load_cols * ((load_k + 1) >> 1)
+                    amount = fp16_mode ? load_k * load_cols * 2
+                                          : job_q.wtrans ? load_cols * ((load_k + 1) >> 1)
                                           : load_k * ((load_cols + 1) >> 1);
                     cmd_o.rs1 = NUM_REGS_BITS'(load_kt_q);
                     cmd_o.rs2 = NUM_REGS_BITS'(load_nt_q);
@@ -224,14 +266,15 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                 S_WEIGHT: begin
                     install_rid = register_bank ? GEMM_RID_W1 : GEMM_RID_W0;
                     consume_rid = register_bank ? GEMM_RID_W_CONSUME1 : GEMM_RID_W_CONSUME0;
-                    cmd_o.instr = instruction(OP_WEIGHT, job_q.wtrans ? valid_cols * (MK/2) : MK * ((valid_cols + 1) >> 1));
+                    cmd_o.instr = instruction(OP_WEIGHT, fp16_mode ? MK * valid_cols * 2 : job_q.wtrans ? valid_cols * (MK/2) : MK * ((valid_cols + 1) >> 1));
                     cmd_o.rs1_data = 64'(register_bank);
                     cmd_o.rs2_data = job_q.source[1][source_bank]
-                        + (job_q.wtrans ? 64'(n0) * (KT/2) + 64'(k0/2)
+                        + (fp16_mode ? (64'(k0) * NT + n0) * 2
+                                         : job_q.wtrans ? 64'(n0) * (KT/2) + 64'(k0/2)
                                          : 64'(k0) * (NT/2) + 64'(n0/2));
                     cmd_o.flags[1:0] = {job_q.wtrans, register_bank};
                     cmd_o.bound = job_q.wtrans ? 16'(valid_cols) : 16'(MK);
-                    cmd_o.stride = job_q.wtrans ? KT/2 : NT/2;
+                    cmd_o.stride = fp16_mode ? NT * 2 : job_q.wtrans ? KT/2 : NT/2;
                     cmd_o.groups_eff = valid_cols;
                 end
                 S_SCALE, S_ZERO: begin
@@ -255,18 +298,39 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                 S_INPUT: begin
                     cmd_o.instr = instruction(OP_INPUT, rows);
 `ifdef GEMM_NAIVE_USE_ACC_MEM
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    cmd_o.rs1_data = acc_slot_base;
+`else
                     cmd_o.rs1_data = 64'(n0) * MT * 4;
+`endif
+`else
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    cmd_o.rs1_data = job_q.pbuf + acc_slot_base;
 `else
                     cmd_o.rs1_data = job_q.pbuf + 64'(n0) * MT * 4;
 `endif
+`endif
                     cmd_o.rs2_data = job_q.source[0][source_bank] + 64'(k0) * 2;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    cmd_o.stride = `GEMM_SHARED_ACC_COL * 4;
+`else
                     cmd_o.stride = MN * 4;
+`endif
 `ifdef GEMM_NAIVE_USE_ACC_MEM
                     cmd_o.naive_final_base = cmd_o.rs1_data;
                     cmd_o.naive_final_stride = cmd_o.stride;
 `else
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    if (`GEMM_SHARED_ACC_COL != `GEMM_NAIVE_MIN_COL) begin
+                        cmd_o.naive_final_base = job_q.obuf + (acc_slot_base >> 1);
+                        cmd_o.naive_final_stride = `GEMM_SHARED_ACC_COL * 2;
+                    end else begin
+`endif
                     cmd_o.naive_final_base = job_q.obuf + 64'(n0) * 2;
                     cmd_o.naive_final_stride = NT * 2;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    end
+`endif
 `endif
                     cmd_o.naive_terminal = terminal;
                     cmd_o.flags = {1'b0, job_q.qrow, terminal, (kt_q * KT + k0 != 0), last_k,
@@ -275,8 +339,8 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                     cmd_o.eff_mt = 21'(rows);
                     cmd_o.groups_eff = valid_cols;
                     cmd_o.input_admit_waits[0] = wait_meta(register_bank ? GEMM_RID_W1 : GEMM_RID_W0, work_seq);
-                    cmd_o.input_admit_waits[1] = wait_meta(register_bank ? GEMM_RID_SC1 : GEMM_RID_SC0, work_seq);
-                    cmd_o.input_admit_waits[2] = wait_meta(register_bank ? GEMM_RID_ZP1 : GEMM_RID_ZP0, work_seq);
+                    if (!fp16_mode) cmd_o.input_admit_waits[1] = wait_meta(register_bank ? GEMM_RID_SC1 : GEMM_RID_SC0, work_seq);
+                    if (!fp16_mode) cmd_o.input_admit_waits[2] = wait_meta(register_bank ? GEMM_RID_ZP1 : GEMM_RID_ZP0, work_seq);
                     cmd_o.input_admit_waits[3] = wait_meta(GEMM_RID_O, owner_q - 1);
                     cmd_o.notify = notify_meta(terminal ? GEMM_RID_G1 : GEMM_RID_G0, 1, 1'b0);
                 end
@@ -309,6 +373,9 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
             job_q.orig_n <= cfg_reg_if.regs[30][31:0];
             job_q.orig_k <= cfg_reg_if.regs[31][31:0];
             job_q.qlog <= cfg_reg_if.regs[32][31:0];
+`ifdef GEMM_NAIVE_FP16_ENABLE
+            job_q.fp16 <= cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT];
+`endif
             job_q.m <= cfg_reg_if.regs[33][31:0];
             job_q.n <= cfg_reg_if.regs[34][31:0];
             job_q.k <= cfg_reg_if.regs[35][31:0];
@@ -316,6 +383,13 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
             job_q.n_start <= cfg_reg_if.regs[37][31:0];
             job_q.wtrans <= cfg_reg_if.regs[38][0];
             job_q.qrow <= cfg_reg_if.regs[39][0];
+`ifdef GEMM_NAIVE_FP16_ENABLE
+            if (cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT]) begin
+                job_q.wtrans <= 1'b0;
+                job_q.qrow <= 1'b0;
+                job_q.qlog <= 32'd4;
+            end
+`endif
             state_q <= S_LOAD;
             tile_q <= 0; load_tile_q <= 0; ordinal_q <= 0; owner_q <= 1;
             mt_q <= 0; nt_q <= 0; kt_q <= 0;
@@ -328,7 +402,8 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                 unique case (state_q)
                     S_LOAD: begin
                         load_member_q <= load_member_q + 1'b1;
-                        if (load_member_q == 3) begin
+                        if (load_member_q == (fp16_mode ? 1 : 3)) begin
+                            load_member_q <= 0;
                             load_tile_q <= load_tile_q + 1;
                             if (load_kt_q + 1 < kdim)
                                 load_kt_q <= load_kt_q + 1;
@@ -341,7 +416,7 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
                             state_q <= ((load_tile_q == 0) && (total_tiles > 1)) ? S_LOAD : S_WEIGHT;
                         end
                     end
-                    S_WEIGHT: state_q <= S_SCALE;
+                    S_WEIGHT: state_q <= fp16_mode ? S_INPUT : S_SCALE;
                     S_SCALE: state_q <= S_ZERO;
                     S_ZERO: state_q <= S_INPUT;
                     S_INPUT: begin
@@ -376,15 +451,44 @@ module VX_gemm_fsm_naive_meta import VX_gpu_pkg::*; #(
     end
 `ifndef SYNTHESIS
     initial begin
+        assert (`JOB_MMIO_CTRL_FP16_BIT >= `JOB_MMIO_CTRL_GEN_LSB + `JOB_MMIO_GEN_W)
+            else $fatal(1, "FP16 mode overlaps allocator identity");
+`ifdef GEMM_NAIVE_ENABLE
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        assert (MT == 128 && KT == 128 && NT == 128 && `MXU_ROW == `MXU_COL && (`MXU_ROW == 16 || `MXU_ROW == 32))
+`else
         assert (MT == 128 && KT == 128 && NT == 128 && MK == MN && (MK == 16 || MK == 32))
+`endif
             else $fatal(1, "%s: unsupported frozen tile geometry", INSTANCE_ID);
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        assert (MT == 128 && KT == 128 && NT == 128
+             && `FPFP_MXU_ROW > 0 && (`FPFP_MXU_ROW & (`FPFP_MXU_ROW-1)) == 0 && KT % `FPFP_MXU_ROW == 0
+             && `FPFP_MXU_COL > 0 && (`FPFP_MXU_COL & (`FPFP_MXU_COL-1)) == 0 && NT % `FPFP_MXU_COL == 0)
+            else $fatal(1, "%s: FPFP dimensions must be powers of two dividing the DMA tile", INSTANCE_ID);
+`endif
     end
     always_ff @(posedge clk) begin
         if (!reset && start_fire) begin
+`ifndef GEMM_NAIVE_FP16_ENABLE
+            assert (!cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT])
+                else $fatal(1, "%s: FPFP capability absent", INSTANCE_ID);
+`endif
+`ifndef GEMM_NAIVE_ENABLE
+            assert (cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT])
+                else $fatal(1, "%s: FPINT capability absent", INSTANCE_ID);
+`endif
             assert (cfg_reg_if.regs[33][31:0] != 0 && cfg_reg_if.regs[34][31:0] != 0
-                 && cfg_reg_if.regs[35][31:0] != 0 && cfg_reg_if.regs[35][31:0] % MK == 0
+                 && cfg_reg_if.regs[35][31:0] != 0 && cfg_reg_if.regs[35][31:0] %
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    (cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT] ? `FPFP_MXU_ROW : `MXU_ROW)
+`else
+                    MK
+`endif
+                    == 0
                  // Config stores log2(QBLK): support 16, 32, 64, and 128.
-                 && cfg_reg_if.regs[32][31:0] >= 4 && cfg_reg_if.regs[32][31:0] <= 7
+                 && (cfg_reg_if.regs[0][`JOB_MMIO_CTRL_FP16_BIT]
+                     || (cfg_reg_if.regs[32][31:0] >= 4 && cfg_reg_if.regs[32][31:0] <= 7))
                  && (cfg_reg_if.regs[37][31:0] & 31) == 0)
                 else $fatal(1, "%s: unsupported dimensions/qblock/alignment", INSTANCE_ID);
         end

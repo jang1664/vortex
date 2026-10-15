@@ -4,6 +4,17 @@
 // descriptors; this adapter retains only activation and completion ownership.
 module VX_naive_weight_executor import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    parameter int ROW_SIZE = `MXU_ROW,
+    parameter int COL_SIZE = `MXU_COL,
+    parameter int LOAD_ROWS = `MXU_WLOAD_NUM,
+`endif
+    parameter int WEIGHT_DW = `W_BIT_WIDTH,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    parameter int WEIGHT_BYTES = (COL_SIZE * LOAD_ROWS * WEIGHT_DW) / 8,
+`else
+    parameter int WEIGHT_BYTES = (`MXU_COL * `MXU_WLOAD_NUM * WEIGHT_DW) / 8,
+`endif
     parameter int TAG_WIDTH = GEMM_BASE_TAG_WIDTH,
     parameter int RESPONSE_SLOTS = `W_LMEM_DMA_CMD_BEATS
 ) (
@@ -18,7 +29,7 @@ module VX_naive_weight_executor import VX_gpu_pkg::*; #(
     input wire done_ready,
     output wire [31:0] done_work_seq,
     input wire [31:0] sync_value [GEMM_NUM_SYNC_REGS],
-    VX_mem_bus_if.master lane_bus_if [`GEMM_WEIGHT_DATA_SIZE/8],
+    VX_mem_bus_if.master lane_bus_if [WEIGHT_BYTES/8],
     VX_mem_bus_if.master install_bus_if,
     output wire source_done_valid,
     output wire [31:0] source_done_work_seq,
@@ -58,24 +69,35 @@ module VX_naive_weight_executor import VX_gpu_pkg::*; #(
     // the existing LMEM macro tile, and GEMM requires a complete W register.
     // Logical valid columns remain owned by the producer/Input/store metadata.
     assign transport.src_base_addr = cmd.rs2_data;
-    assign transport.dst_base_addr = 64'(cmd.flags[1:0]) << $clog2(`GEMM_WEIGHT_DATA_SIZE);
+    assign transport.dst_base_addr = 64'(cmd.flags[1:0]) << $clog2(WEIGHT_BYTES);
     assign transport.src_strides[0] = cmd.stride;
     assign transport.src_strides[1] = 0;
     assign transport.src_strides[2] = 0;
     assign transport.dst_strides[0] = 0;
     assign transport.dst_strides[1] = 0;
     assign transport.dst_strides[2] = 0;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    assign transport.bounds[0] = ROW_SIZE;
+`else
     assign transport.bounds[0] = `MXU_ROW;
+`endif
     assign transport.bounds[1] = 1;
     assign transport.bounds[2] = 1;
-    assign transport.seg_size = `MXU_COL/2;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    assign transport.seg_size = COL_SIZE * WEIGHT_DW / 8;
+`else
+    assign transport.seg_size = `MXU_COL * WEIGHT_DW / 8;
+`endif
     assign transport.reg_idx = cmd.work_seq;
     assign transport.reg_value = cmd.notify.value;
     assign transport.scheduler_work_seq = cmd.work_seq;
     assign transport.prepare = 0;
     assign transport.prepare_max_beats = 0;
     VX_lmem_weight_gather_dma #(.INSTANCE_ID(INSTANCE_ID),
-        .NUM_LANES(`GEMM_WEIGHT_DATA_SIZE/8), .TAG_WIDTH(TAG_WIDTH),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        .WEIGHT_DW(WEIGHT_DW), .ROW_SIZE(ROW_SIZE), .COL_SIZE(COL_SIZE), .LOAD_ROWS(LOAD_ROWS),
+`endif
+        .NUM_LANES(WEIGHT_BYTES/8), .TAG_WIDTH(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(RESPONSE_SLOTS), .CMD_FIFO_DEPTH(4),
         .NAIVE_METADATA(1)) gather (
         .clk(clk), .reset(reset), .ctrl_if(transport), .lmem_bus_if(lane_bus_if),

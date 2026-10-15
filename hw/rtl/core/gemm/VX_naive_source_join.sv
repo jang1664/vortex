@@ -7,6 +7,9 @@
 module VX_naive_source_join import VX_gpu_pkg::*; (
     input wire clk,
     input wire reset,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    input wire [3:0] active_sources,
+`endif
     input wire invocation_start,
     input wire closed_valid,
     input wire closed_buffer,
@@ -18,8 +21,13 @@ module VX_naive_source_join import VX_gpu_pkg::*; (
     output wire [31:0] source_free_generation [2],
     output wire quiescent
 );
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    localparam int MAX_MICROS = (`GEMM_FSM_KT / `GEMM_NAIVE_MIN_ROW)
+                             * (`GEMM_FSM_NT / `GEMM_NAIVE_MIN_COL);
+`else
     localparam int MAX_MICROS = (`GEMM_FSM_KT / `GEMM_FSM_MXU_KT)
                              * (`GEMM_FSM_NT / `GEMM_FSM_MXU_NT);
+`endif
     localparam int COUNTW = $clog2(MAX_MICROS + 1);
     typedef struct packed {
         logic valid, closed, published;
@@ -124,7 +132,10 @@ module VX_naive_source_join import VX_gpu_pkg::*; (
             for (int e = 0; e < 4; ++e) begin
                 if (owner_next[b].closed && (|(owner_next[b].captured[e] & ~expected_mask)))
                     protocol_error = 1'b1;
-                complete &= owner_next[b].captured[e] == expected_mask;
+                `ifdef GEMM_NAIVE_FP16_ENABLE
+                if (active_sources[e])
+`endif
+                    complete &= owner_next[b].captured[e] == expected_mask;
             end
             if (complete) begin
                 owner_next[b].published = 1'b1;

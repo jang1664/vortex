@@ -9,6 +9,9 @@ module VX_gemm_ctrl_naive_meta import VX_gpu_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    input wire [3:0] active_sources,
+`endif
     input wire invocation_valid_i,
     output wire invocation_ready_o,
     input wire [`JOB_MMIO_ENTRYID_W-1:0] invocation_entry_id_i,
@@ -313,7 +316,11 @@ module VX_gemm_ctrl_naive_meta import VX_gpu_pkg::*; #(
             if (completion_fire[DMA] && load_receipt_q.valid
              && (load_receipt_q.buffer_id == bank)) begin
                 tile_join_next[bank].completed[load_receipt_q.member] = 1'b1;
+                `ifdef GEMM_NAIVE_FP16_ENABLE
+                if ((tile_join_next[bank].completed & active_sources) == active_sources)
+`else
                 if (&tile_join_next[bank].completed)
+`endif
                     tile_join_next[bank].published = 1'b1;
             end
         end

@@ -367,7 +367,14 @@ module VX_naive_qparam_dma import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
     initial begin
         assert ($bits(naive_qparam_desc_t) == 235 && `MEM_ADDR_WIDTH == 34);
+`ifndef GEMM_NAIVE_FP16_ENABLE
         assert ((DATA_BYTES == 32 || DATA_BYTES == 64) && TAG_WIDTH >= 3);
+`else
+        // FPFP input vectors may be narrower than legacy square FPINT.
+        assert (DATA_BYTES >= 8 && (DATA_BYTES & (DATA_BYTES-1)) == 0
+             && DATA_BYTES % 8 == 0 && TAG_WIDTH >= 3)
+            else $fatal(1, "%s: operand width must contain whole native LMEM beats", INSTANCE_ID);
+`endif
         assert ((RESPONSE_SLOTS == 8 || RESPONSE_SLOTS == 16)
              && (LANE_FIFO_DEPTH == 4 || LANE_FIFO_DEPTH == 8 || LANE_FIFO_DEPTH == 16)
              && TAG_WIDTH >= SLOT_BITS);

@@ -9,6 +9,9 @@
 */
 
 module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    parameter bit ROW_ONLY            = 0,
+`endif
     parameter int ROW_SIZE            = 32,
     parameter int COL_SIZE            = 32,
     parameter int WEIGHT_DW           = 4,
@@ -45,7 +48,9 @@ module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
     for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_row
       for (genvar col = 0; col < COL_SIZE; col++) begin : gen_col
         logic [WEIGHT_DW-1:0] row_dir_next;
+`ifndef GEMM_NAIVE_FP16_ENABLE
         logic [WEIGHT_DW-1:0] col_dir_next;
+`endif
 
         if (row >= (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)) begin : g_row_dir_load
           assign row_dir_next = weight_i[row - (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)][col];
@@ -53,6 +58,17 @@ module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
           assign row_dir_next = mem[row + WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
         end
 
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        // FPFP has row-major weights only. Do not elaborate transpose indices
+        // against a rectangular row payload. Legacy FPINT keeps both paths.
+        if (ROW_ONLY) begin : g_row_only
+          always_ff @(posedge clk_i) begin
+            if (ready_weight_i)
+              mem[row][col][in_weight_sel_i] <= row_dir_next;
+          end
+        end else begin : g_bidirectional
+        logic [WEIGHT_DW-1:0] col_dir_next;
+`endif
         if (col >= (COL_SIZE - WEIGHT_LOAD_COL_NUM)) begin : g_col_dir_load
           assign col_dir_next = weight_i[col - (COL_SIZE - WEIGHT_LOAD_COL_NUM)][row];
         end else begin : g_col_dir_shift
@@ -71,6 +87,9 @@ module VX_gemm_weight_regs_v1 import VX_gpu_pkg::*; #(
           end
         end
         
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        end
+`endif
         // Output mux: select active buffer
         assign weight_o[row][col] = mem[row][col][out_weight_sel_i];
         

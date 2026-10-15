@@ -18,9 +18,9 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     output logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0] read_req_addr,
     output logic [3:0]       early_rsp_pending,
     output logic [3:0]       early_hold_valid,
-    output logic [3:0][`MXU_COL-1:0][31:0] early_hold_data,
-    output logic [3:0][`MXU_COL-1:0][31:0] acc_mem_out_data,
-    output logic [3:0][`MXU_COL-1:0][31:0] acc_mem_in_data,
+    output logic [3:0][`GEMM_SHARED_ACC_COL-1:0][31:0] early_hold_data,
+    output logic [3:0][`GEMM_SHARED_ACC_COL-1:0][31:0] acc_mem_out_data,
+    output logic [3:0][`GEMM_SHARED_ACC_COL-1:0][31:0] acc_mem_in_data,
     output logic [3:0][`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] acc_mem_addr,
     output logic [3:0]       acc_mem_rd_en,
     output logic [3:0]       acc_mem_wr_en,
@@ -51,8 +51,8 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     logic [2:0] read_rsp_early_pipe;
     logic compute_write_bank_conflict;
     logic compute_write_exact_conflict;
-    logic [`MXU_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
-    logic [`MXU_COL-1:0] fp16_out_valid;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0] fp16_out_valid;
 
     function automatic [1:0] get_acc_mem_idx(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr
@@ -267,7 +267,7 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
             assign acc_mem_in_data[i] = acc_if.wr_req_data;
 
             VX_sp_ram #(
-                .DATAW    (`MXU_COL * FP32_WIDTH),
+                .DATAW    (`GEMM_SHARED_ACC_COL * FP32_WIDTH),
                 .SIZE     (`GEMM_ACC_MEM_DEPTH),
                 .OUT_REG  (1),
                 .USE_URAM (`GEMM_ACC_USE_URAM),
@@ -286,7 +286,7 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     endgenerate
 
     generate
-        for (genvar i = 0; i < `MXU_COL; ++i) begin : gen_fp32_to_fp16
+        for (genvar i = 0; i < `GEMM_SHARED_ACC_COL; ++i) begin : gen_fp32_to_fp16
             VX_f32_to_f16 u_f32_to_f16 (
                 .clk_i    (clk),
                 .resetn_i (~reset),

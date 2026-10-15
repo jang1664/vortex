@@ -14,6 +14,24 @@
 `ifndef VX_CONFIG_VH
 `define VX_CONFIG_VH
 
+// Legacy GEMM_NAIVE enables FPINT. New capabilities are independent;
+// GEMM_NAIVE remains the internal shared-node presence guard.
+`ifdef GEMM_NAIVE
+`ifndef GEMM_NAIVE_ENABLE
+`define GEMM_NAIVE_ENABLE
+`endif
+`endif
+`ifdef GEMM_NAIVE_ENABLE
+`ifndef GEMM_NAIVE
+`define GEMM_NAIVE
+`endif
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE
+`define GEMM_NAIVE
+`endif
+`endif
+
 `ifndef MIN
 `define MIN(x, y)   (((x) < (y)) ? (x) : (y))
 `endif
@@ -1408,11 +1426,36 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Data Transfer Sizes (in bytes)
 // -------------------------------------------------------
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef FPFP_MXU_ROW
+`define FPFP_MXU_ROW `MXU_ROW
+`endif
+`ifndef FPFP_MXU_COL
+`define FPFP_MXU_COL `MXU_COL
+`endif
+`ifndef FPFP_MXU_WLOAD_NUM
+`define FPFP_MXU_WLOAD_NUM `MXU_WLOAD_NUM
+`endif
+`ifdef GEMM_NAIVE_ENABLE
+`define GEMM_SHARED_INPUT_ROW `MAX(`MXU_ROW, `FPFP_MXU_ROW)
+`define GEMM_SHARED_ACC_COL `MAX(`MXU_COL, `FPFP_MXU_COL)
+`define GEMM_NAIVE_MIN_ROW `MIN(`MXU_ROW, `FPFP_MXU_ROW)
+`define GEMM_NAIVE_MIN_COL `MIN(`MXU_COL, `FPFP_MXU_COL)
+`else
+`define GEMM_SHARED_INPUT_ROW `FPFP_MXU_ROW
+`define GEMM_SHARED_ACC_COL `FPFP_MXU_COL
+`define GEMM_NAIVE_MIN_ROW `FPFP_MXU_ROW
+`define GEMM_NAIVE_MIN_COL `FPFP_MXU_COL
+`endif
+`define GEMM_INPUT_DATA_SIZE ((`IFP_WIDTH/8)*`GEMM_SHARED_INPUT_ROW)
+`else
+`define GEMM_SHARED_ACC_COL `MXU_COL
 `define GEMM_INPUT_DATA_SIZE      ((`IFP_WIDTH/8)*`MXU_ROW)
+`endif
 `define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM*`W_BIT_WIDTH)/8)
 `define GEMM_SCALE_ZERO_DATA_SIZE ((`SCALE_WIDTH*`MXU_COL)/8)
-`define GEMM_OUTPUT_DATA_SIZE     ((`FP16_WIDTH/8)*`MXU_COL)
-`define GEMM_PSUM_DATA_SIZE       ((`FP32_WIDTH/8)*`MXU_COL)
+`define GEMM_OUTPUT_DATA_SIZE     ((`FP16_WIDTH/8)*`GEMM_SHARED_ACC_COL)
+`define GEMM_PSUM_DATA_SIZE       ((`FP32_WIDTH/8)*`GEMM_SHARED_ACC_COL)
 
 // -------------------------------------------------------
 // Accumulator Memory Configuration
@@ -1426,7 +1469,7 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_ACC_MEM_BANK_NUM 4
 `define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM)
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
-`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * `GEMM_ACC_MEM_BANK_NUM)
+`define GEMM_ACC_MEM_BANK_WIDTH (`GEMM_SHARED_ACC_COL * `GEMM_ACC_MEM_BANK_NUM)
 `define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - `CLOG2(`GEMM_ACC_MEM_BANK_NUM))
 `define GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH (`GEMM_ACC_MEM_BANK_ADDR_WIDTH - `CLOG2(`GEMM_PSUM_DATA_SIZE))
 `define GEMM_ACC_MAX_CNT `CLOG2((2*`GEMM_ACC_MEM_DEPTH))
@@ -1482,7 +1525,9 @@ for block_size in range(1, full_bitwidth+1):
 `define MM_MAX_LOG_TILEDIM 10 // Maximum log2 tile dimension size (1K)
 
 // job frontend number of entries
+`ifndef JOB_MMIO_NUM_ENTRIES
 `define JOB_MMIO_NUM_ENTRIES 1
+`endif
 
 // job frontend reg idx
 `define JOB_MMIO_CONTROL_REG_IDX 0
@@ -1493,6 +1538,7 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_GEN_W     16
 
 // job frontend control reg bit fields
+`define JOB_MMIO_CTRL_FP16_BIT    23
 `define JOB_MMIO_CTRL_VALID_BIT   0
 `define JOB_MMIO_CTRL_OCCUPY_BIT  1
 `define JOB_MMIO_CTRL_WORKING_BIT 2

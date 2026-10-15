@@ -11,7 +11,7 @@
 // VX_gemm_node_naive.
 module VX_gemm_acc_lmem #(
     parameter ADDRW = `GEMM_ACC_MEM_ADDR_WIDTH,
-    parameter DATAW = `MXU_COL * 32,
+    parameter DATAW = `GEMM_SHARED_ACC_COL * 32,
     parameter TAGW = 32,
     parameter LMEM_TAGW = VX_gpu_pkg::GEMM_BASE_TAG_WIDTH,
     parameter LMEM_ADDRW = `MEM_ADDR_WIDTH,
@@ -34,7 +34,7 @@ module VX_gemm_acc_lmem #(
     localparam FP32_WIDTH = 32;
     localparam FP16_WIDTH = 16;
     localparam PSUM_BYTES = DATAW / 8;
-    localparam FINAL_BYTES = (`MXU_COL * FP16_WIDTH) / 8;
+    localparam FINAL_BYTES = (`GEMM_SHARED_ACC_COL * FP16_WIDTH) / 8;
     localparam PSUM_ROW_ADDRW = LMEM_ADDRW - `CLOG2(PSUM_BYTES);
     localparam FINAL_ROW_ADDRW = LMEM_ADDRW - `CLOG2(FINAL_BYTES);
     localparam READ_PTRW = `LOG2UP(READ_SLOTS);
@@ -329,13 +329,13 @@ module VX_gemm_acc_lmem #(
     logic [TAGW-1:0] final_convert_tag;
     logic [ADDRW-1:0] final_convert_addr;
     logic final_convert_last;
-    logic [`MXU_COL-1:0][FP16_WIDTH-1:0] final_fp16_data;
-    logic [`MXU_COL-1:0] final_fp16_valid;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0] final_fp16_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0] final_fp16_valid;
     logic final_hold_valid;
     logic [TAGW-1:0] final_hold_tag;
     logic [ADDRW-1:0] final_hold_addr;
     logic final_hold_last;
-    logic [`MXU_COL-1:0][FP16_WIDTH-1:0] final_hold_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0] final_hold_data;
     logic final_core_match;
     logic final_lmem_fire;
 
@@ -382,7 +382,7 @@ module VX_gemm_acc_lmem #(
         ? (final_core_match && final_lmem_bus_if.req_ready)
         : psum_wr_lmem_bus_if.req_ready;
 
-    for (genvar i = 0; i < `MXU_COL; ++i) begin : g_final_convert
+    for (genvar i = 0; i < `GEMM_SHARED_ACC_COL; ++i) begin : g_final_convert
         VX_f32_to_f16 u_f32_to_f16 (
             .clk_i    (clk),
             .resetn_i (~reset),

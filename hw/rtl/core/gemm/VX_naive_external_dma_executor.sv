@@ -38,6 +38,9 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
     input wire [31:0] M_orig, N_orig, K_orig, qblk_orig,
     input wire [31:0] M_target, N_target, K_target,
     input wire [31:0] wtrans_tot, qdir_tot,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    input wire fp16_mode,
+`endif
     VX_lsu_mem_if.master            dma_if,
     output wire                     store_done
 `ifdef GEMM_NAIVE_USE_ACC_MEM
@@ -174,6 +177,16 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
   // ============================================================
   gemm_unified_cmd_t cmd_q;
   wire logic [3:0] cmd_op = cmd_q.instr[3:0];
+`ifdef GEMM_NAIVE_FP16_ENABLE
+  wire [31:0] active_col = fp16_mode ? `FPFP_MXU_COL : `MXU_COL;
+  wire [4:0] active_col_shift = fp16_mode ? $clog2(`FPFP_MXU_COL) : $clog2(`MXU_COL);
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+  logic [31:0] output_micro_q;
+  wire [31:0] output_col = output_micro_q << active_col_shift;
+  wire padded_output_store = (`GEMM_SHARED_ACC_COL != `GEMM_NAIVE_MIN_COL)
+                          && (cmd_op == OP_DMA_ST) && (cmd_q.rd == 4);
+`endif
+`endif
 
   logic [31:0] M_orig_q, N_orig_q, K_orig_q, qblk_orig_q;
   logic [31:0] M_orig_d, N_orig_d, K_orig_d, qblk_orig_d;
@@ -195,6 +208,14 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
     end else if (cmd_op == OP_DMA_ST) begin
       src_base = cmd_q.rs2_data; // LMEM src
       dst_base = cmd_q.rs1_data; // DRAM dst
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+      if (padded_output_store) begin
+        src_base = cmd_q.rs2_data + 64'(output_micro_q) * MT * `GEMM_SHARED_ACC_COL * 2;
+        dst_base = cmd_q.rs1_data + 64'(output_col) * 2;
+      end
+`endif
+`endif
     end else begin
       src_base = 64'd0;
       dst_base = 64'd0;
@@ -300,6 +321,14 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
       end
 
       T_WEIGHT: begin
+        `ifdef GEMM_NAIVE_FP16_ENABLE
+        if (fp16_mode) begin
+          seg_size = NT * BPE_FP16;
+          padding = (NT - nt_eff) * BPE_FP16;
+          dram_s0 = N_orig_q * BPE_FP16;
+          dram_b0 = kt_eff;
+        end else
+`endif
         if (wtrans_tot_q[0]) begin
           // wtrans=1: source is [N, K] packed row-major
           seg_size = (KT >> 1);
@@ -366,6 +395,13 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
           // L->G : DO NOT write padding into compact GLOBAL (would overwrite next row)
           seg_size = nt_eff * BPE_FP16;             // e.g., 254
           padding  = 32'd0;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+          // A final partial microtile must not write padding into compact DRAM.
+          if (padded_output_store)
+            seg_size = `MIN(active_col, nt_eff - output_col) * BPE_FP16;
+`endif
+`endif
         end
       end
 
@@ -381,10 +417,20 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
     lmem_s0 = 0; lmem_s1 = 0; lmem_s2 = 0;
     unique case (tensor_sel)
       T_INPUT:  lmem_s0 = KT * BPE_FP16;
-      T_WEIGHT: lmem_s0 = wtrans_tot_q[0] ? (KT >> 1) : (NT >> 1);
+      T_WEIGHT: lmem_s0 =
+`ifdef GEMM_NAIVE_FP16_ENABLE
+          fp16_mode ? NT * BPE_FP16 :
+`endif
+          wtrans_tot_q[0] ? (KT >> 1) : (NT >> 1);
       T_SCALE:  lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_FP16)  : (NT * BPE_FP16);
       T_ZP:     lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_INT16) : (NT * BPE_INT16);
-      T_OUTPUT: lmem_s0 = NT * BPE_FP16;
+      T_OUTPUT: lmem_s0 =
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+          padded_output_store ? `GEMM_SHARED_ACC_COL * BPE_FP16 :
+`endif
+`endif
+          NT * BPE_FP16;
       default: ;
     endcase
   end
@@ -533,16 +579,28 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
   assign o_dma_ctrl_if.prepare_max_beats = '0;
   assign o_dma_ctrl_if.src_base_addr = '0;
   assign o_dma_ctrl_if.dst_base_addr = src_base;
-  assign o_dma_ctrl_if.src_strides[0] = `MXU_COL * 2;
+  assign o_dma_ctrl_if.src_strides[0] = `GEMM_SHARED_ACC_COL * 2;
   assign o_dma_ctrl_if.dst_strides[0] = NT * 2;
-  assign o_dma_ctrl_if.src_strides[1] = MT * `MXU_COL * 2;
+  assign o_dma_ctrl_if.src_strides[1] = MT * `GEMM_SHARED_ACC_COL * 2;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+  assign o_dma_ctrl_if.dst_strides[1] = active_col * 2;
+`else
   assign o_dma_ctrl_if.dst_strides[1] = `MXU_COL * 2;
+`endif
   assign o_dma_ctrl_if.src_strides[2] = '0;
   assign o_dma_ctrl_if.dst_strides[2] = '0;
   assign o_dma_ctrl_if.bounds[0] = `DMA_BOUND_WIDTH'(dram_b0);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+  assign o_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'((nt_eff + active_col - 1) >> active_col_shift);
+`else
   assign o_dma_ctrl_if.bounds[1] = `DMA_BOUND_WIDTH'((nt_eff + `MXU_COL - 1) / `MXU_COL);
+`endif
   assign o_dma_ctrl_if.bounds[2] = `DMA_BOUND_WIDTH'(1);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+  assign o_dma_ctrl_if.seg_size = active_col * 2;
+`else
   assign o_dma_ctrl_if.seg_size = `MXU_COL * 2;
+`endif
   assign o_dma_ctrl_if.reg_idx = '0;
   assign o_dma_ctrl_if.reg_value = '0;
   assign o_dma_ctrl_if.scheduler_work_seq = cmd_q.work_seq;
@@ -795,6 +853,12 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
            || (ctrl_owner != alloc_owner_q)
            || (ctrl_gen   != alloc_gen_q)) begin
             state_d = S_DONE;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+            if (padded_output_store && output_col + active_col < nt_eff)
+              state_d = S_DECODE;
+`endif
+`endif
           end else begin
             poll_gap_d = (POLL_GAP_CYCLES > 0) ? (POLL_GAP_CYCLES-1) : 0;
             state_d    = S_POLL_GAP;
@@ -813,6 +877,18 @@ module VX_naive_external_dma_executor import VX_gpu_pkg::*; #(
   // ============================================================
   // Sequential
   // ============================================================
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifndef GEMM_NAIVE_USE_ACC_MEM
+  // One STORE command owns every micro-descriptor. Completion/progress is
+  // published only by the last one through the unchanged S_DONE transition.
+  always_ff @(posedge clk) begin
+    if (reset || (cmd_valid && cmd_ready))
+      output_micro_q <= 0;
+    else if (state_q == S_POLL_R_WAIT && state_d == S_DECODE)
+      output_micro_q <= output_micro_q + 1;
+  end
+`endif
+`endif
   always_ff @(posedge clk) begin
     if (reset) begin
       state_q      <= S_IDLE;

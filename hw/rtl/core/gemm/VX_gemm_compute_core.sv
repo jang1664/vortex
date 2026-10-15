@@ -1,4 +1,35 @@
 `include "VX_define.vh"
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`define GEMM_CORE_WEIGHT_INDEX fpint_weight_consume_idx
+`else
+`define GEMM_CORE_WEIGHT_INDEX gemm_unit_if.weight_consume_idx
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`define GEMM_CORE_WEIGHT_CONSUME fpint_weight_consume_valid
+`else
+`define GEMM_CORE_WEIGHT_CONSUME gemm_unit_if.weight_consume_valid
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`define GEMM_CORE_WEIGHT_WRITE fpint_weight_register_write
+`else
+`define GEMM_CORE_WEIGHT_WRITE gemm_unit_if.weight_register_write
+`endif
+
+
+`ifdef GEMM_NAIVE
+`ifdef GEMM_NAIVE_ENABLE
+`define GEMM_CORE_FPINT_PRESENT
+`endif
+`else
+`define GEMM_CORE_FPINT_PRESENT
+`endif
+
+// The inactive INT frontend must not impose a column-tiling contract on FPFP.
+`ifdef GEMM_CORE_FPINT_PRESENT
+`define GEMM_CORE_COL_GROUPS `MXU_COL/`MXU_COL_TILE
+`else
+`define GEMM_CORE_COL_GROUPS 1
+`endif
 
 // Backend-independent GEMM arithmetic and transaction pipeline.  Operand
 // streams and accumulator addresses are opaque here; physical memory layout,
@@ -11,6 +42,10 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if.slave     input_bus_if,
     VX_mem_bus_if.slave     weight_bus_if,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    input wire fp16_mode,
+    VX_mem_bus_if.slave fp16_weight_bus_if,
+`endif
     VX_mem_bus_if.slave     scale_bus_if,
     VX_mem_bus_if.slave     zero_bus_if,
 
@@ -45,12 +80,23 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     localparam DEFAULT_OUT_DLY = 1;
     localparam INPUT_SCALE_DLY = 1;
     localparam PREALIGN_DLY = 3;
+`ifdef GEMM_CORE_FPINT_PRESENT
     localparam ACT_REDUCE_OUT_DLY = get_pipe_stage_num(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam ACT_REDUCE_PIPE_STAGES = get_pipe_stage_bitmask(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
+`else
+    localparam ACT_REDUCE_OUT_DLY = 0;
+    localparam ACT_REDUCE_PIPE_STAGES = 0;
+`endif
     localparam BLK_IDX_DLY = DEFAULT_OUT_DLY;
+`ifdef GEMM_CORE_FPINT_PRESENT
     localparam MXU_BASE_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1)
                            + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV)
                            + ((`MXU_COL / `MXU_COL_TILE) - 1);
+`else
+    // Preserve the established common post-pop ACC schedule. FPFP metadata
+    // follows its own reserved result FIFO, not this dormant INT tree.
+    localparam MXU_BASE_OUT_DLY = 5;
+`endif
 `ifdef GEMM_SLR_PIPELINE
     // Each physical crossing has an unconditional source TX and destination
     // RX register. The ACC schedule below remains local and unchanged relative
@@ -200,11 +246,22 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         ("same-address history forwarding requires fixed 1/1/0 ACC latency"))
     `VX_STATIC_ASSERT(MERGER_CTRL_IDX + K_LOOKBACK == WRITE_CTRL_IDX - 1,
         ("d=3 ACC RAW hold must precede the producer write by one cycle"))
+`ifdef GEMM_CORE_FPINT_PRESENT
     `VX_STATIC_ASSERT(MXU_BASE_OUT_DLY == 5,
         ("local GEMM-tree and correction latency contract must be five cycles"))
+`endif
+`ifdef GEMM_NAIVE_FP16_ENABLE
+`ifdef GEMM_CORE_FPINT_PRESENT
+    `VX_STATIC_ASSERT(`MXU_COL_TILE > 0 && `MXU_COL >= `MXU_COL_TILE
+        && (`MXU_COL % `MXU_COL_TILE) == 0,
+        ("FPINT column tile must divide its own MXU_COL"))
+`endif
+`endif
 `ifdef GEMM_SLR_PIPELINE
+`ifdef GEMM_CORE_FPINT_PRESENT
     `VX_STATIC_ASSERT(`MXU_COL == `MXU_COL_TILE,
         ("SLR weight-consume accounting requires a single MXU column tile"))
+`endif
     `VX_STATIC_ASSERT(MXU_OUT_DLY == MXU_BASE_OUT_DLY + 4,
         ("SLR tree metadata must cover both two-register crossings"))
 `endif
@@ -253,16 +310,16 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 
     typedef struct packed {
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
-        logic [`MXU_COL-1:0][FP16_WIDTH-1:0] data;
+        logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0] data;
 `else
-        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] data;
+        logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] data;
 `endif
         gemm_input_ctrl_t ctrl;
     } int2fp_result_t;
 
     typedef struct packed {
         gemm_input_ctrl_t ctrl;
-        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] data;
+        logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] data;
     } acc_result_t;
 
     // Independent scale and zero-point write control signals.
@@ -361,9 +418,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic                                                       mxu_ready_weight;
 `endif
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output;
-    logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid;
+    logic [`GEMM_CORE_COL_GROUPS-1:0]                          mxu_output_valid;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
-    logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
+    logic [`GEMM_CORE_COL_GROUPS-1:0]                          mxu_output_valid_dly;
     logic [`MXU_ROW-1:0][`SEL_BLOCK_WIDTH-1:0]                  mxu_input_capture;
     logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0]                  mxu_blk_capture;
     gemm_wreg_idx_t                                            mxu_weight_use_capture;
@@ -373,7 +430,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic                                                      mxu_weight_dir_capture;
     logic                                                      mxu_weight_valid_capture;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_capture;
-    logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_capture;
+    logic [`GEMM_CORE_COL_GROUPS-1:0]                          mxu_output_valid_capture;
     logic                                                      mxu_transport_busy;
     logic                                                       compute_fire;
     logic                                                       compute_ready;
@@ -444,9 +501,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic [POST_TXN_DEPTH-1:0]                    post_txn_rd_issued;
     logic [POST_TXN_DEPTH-1:0]                    post_txn_forward;
     logic [POST_TXN_DEPTH-1:0][31:0]              post_txn_forward_tag;
-    logic [POST_TXN_DEPTH-1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]
+    logic [POST_TXN_DEPTH-1:0][`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]
                                                    post_txn_scaled_data;
-    logic [POST_TXN_DEPTH-1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]
+    logic [POST_TXN_DEPTH-1:0][`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]
                                                    post_txn_rsp_data;
     logic [POST_TXN_PTRW-1:0]                     post_txn_wr_ptr;
     logic [POST_TXN_PTRW-1:0]                     post_txn_rd_ptr;
@@ -456,8 +513,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic                                          post_head_scaled_ready;
     logic                                          post_head_psum_ready;
     gemm_input_ctrl_t                              post_head_ctrl;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           post_head_scaled_data;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           post_head_psum_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           post_head_scaled_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           post_head_psum_data;
     logic                                          rd_hold_valid;
     logic [POST_TXN_PTRW-1:0]                     rd_hold_slot;
     logic [31:0]                                   rd_hold_tag;
@@ -505,33 +562,33 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           scaled_fp_out_data;
     logic [`MXU_COL-1:0]                           scaler_output_valid;
-    logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           scaler_bypass_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0]           scaler_bypass_data;
     logic                                          scaler_bypass_valid;
-    logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           final_scaled_fp_out_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0]           final_scaled_fp_out_data;
     logic                                          final_scaler_output_valid;
 `else
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaled_fp_out_data;
     logic [`MXU_COL-1:0]                           scaler_output_valid;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaler_bypass_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           scaler_bypass_data;
     logic                                          scaler_bypass_valid;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           final_scaled_fp_out_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           final_scaled_fp_out_data;
     logic                                          final_scaler_output_valid;
 `endif
 
     // -------------------------------------------------------------------------
     // scaled output to fp32
     // -------------------------------------------------------------------------
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaled_fp32_out_data;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaled_fp32_aligned_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           scaled_fp32_out_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           scaled_fp32_aligned_data;
     logic                                          scaled_fp32_aligned_valid;
 
     // -------------------------------------------------------------------------
     // Accumulator Signals
     // -------------------------------------------------------------------------
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_output_data;
-    logic [`MXU_COL-1:0]                           acc_output_valid;
-    logic [`MXU_COL-1:0]                           acc_in_data_valid;
-    logic [`MXU_COL-1:0]                           acc_psum_data_valid;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0]           acc_output_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0]                           acc_output_valid;
+    logic [`GEMM_SHARED_ACC_COL-1:0]                           acc_in_data_valid;
+    logic [`GEMM_SHARED_ACC_COL-1:0]                           acc_psum_data_valid;
 
 
     logic [`MXU_ROW-1:0][`ACT_REDUCE_IN_WIDTH-1:0] qcol_reduce_data_in;
@@ -553,17 +610,17 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic [WRITE_CTRL_IDX:0] forward_pipe;
     logic [WRITE_CTRL_IDX:0] history_forward_pipe;
 
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] selected_psum_data;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] load_result_data;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] writeback_result_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] selected_psum_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] load_result_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] writeback_result_data;
     logic writeback_history_valid;
     logic [`MEM_ADDR_WIDTH-1:0] writeback_history_addr;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] writeback_history_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] writeback_history_data;
     logic [31:0] writeback_history_tag;
     logic writeback_history2_valid;
     logic [31:0] writeback_history2_tag;
     logic [`MEM_ADDR_WIDTH-1:0] writeback_history2_addr;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] writeback_history2_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] writeback_history2_data;
     logic load_result_valid;
     logic acc_write_valid;
     logic acc_write_fire;
@@ -600,10 +657,36 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic acc_result_commit;
     logic acc_result_empty;
     logic forward_match_valid;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] forward_match_data;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] forward_match_data;
 
     wire input_fire = input_bus_if.req_valid
                     && input_bus_if.req_ready;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    wire fpint_weight_register_write, fpint_weight_consume_valid;
+    gemm_wreg_idx_t fpint_weight_consume_idx;
+    wire fp16_input_ready, fp16_result_valid, fp16_idle, fp16_weight_install;
+    wire [`FPFP_MXU_COL-1:0][31:0] fp16_result_data;
+    gemm_input_ctrl_t fp16_result_ctrl;
+    wire fp16_weight_ready = gemm_unit_if.w_load_value[gemm_unit_if.packet_ctrl.wreg_use_idx]
+                          == gemm_unit_if.packet_ctrl.w_load_target;
+    wire fpint_result_pop = int2fp_result_pop && !fp16_mode;
+    wire fpint_result_empty = int2fp_result_count == 0;
+    int2fp_result_t fpint_result_data_out;
+    VX_gemm_fpfp_front #(.INSTANCE_ID({INSTANCE_ID,"_fpfp"})) fp16_front (
+        .clk(clk), .reset(reset), .input_valid(input_fire && fp16_mode),
+        .input_ready(fp16_input_ready), .input_data(input_bus_if.req_data.data[`FPFP_MXU_ROW*16-1:0]),
+        .input_ctrl(admitted_ctrl), .weight_bus_if(fp16_weight_bus_if),
+        .weight_install(fp16_weight_install), .result_valid(fp16_result_valid),
+        .result_ready(int2fp_result_pop && fp16_mode), .result_data(fp16_result_data),
+        .result_ctrl(fp16_result_ctrl), .idle(fp16_idle)
+    );
+    assign gemm_unit_if.weight_register_write = fp16_mode ? fp16_weight_install : fpint_weight_register_write;
+    assign gemm_unit_if.weight_consume_valid = fp16_mode
+        ? input_fire && admitted_ctrl.notify_on_writeback : fpint_weight_consume_valid;
+    assign gemm_unit_if.weight_consume_idx = fp16_mode ? admitted_ctrl.wreg_use_idx : fpint_weight_consume_idx;
+    `VX_STATIC_ASSERT(!GEMM_UNIT_FP16_OUT_SCALE,
+        ("FPFP requires FP32 intermediate results; disable GEMM_UNIT_FP16_OUT_SCALE"))
+`endif
     wire input_stage_is_qcol
         = in_pipe_payload_out.ctrl.quant_dir == `QDIR_COL;
     wire prealign_stage_out_is_qcol
@@ -633,7 +716,12 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     end
 
     assign input_bus_if.req_ready
-        = gemm_unit_if.input_admission_ready && in_pipe_ready_in;
+        = gemm_unit_if.input_admission_ready
+`ifdef GEMM_NAIVE_FP16_ENABLE
+       && (fp16_mode ? fp16_input_ready && fp16_weight_ready : in_pipe_ready_in);
+`else
+       && in_pipe_ready_in;
+`endif
     assign input_bus_if.rsp_valid = 1'b0;
     assign gemm_unit_if.last_write = acc_write_fire
                                       && acc_result_data_out.ctrl.last;
@@ -661,6 +749,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         = qrow_scaler_issue;
     assign qcol_scale_consumer_fire
         = scaler_consumer_fire
+`ifdef GEMM_NAIVE_FP16_ENABLE
+       && !fp16_mode
+`endif
        && (qcol_scale_consumer_ctrl.quant_dir == `QDIR_COL);
     assign qrow_scale_consume_last
 `ifdef GEMM_NAIVE
@@ -737,6 +828,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             consumer_block_raw_bank = pre_meta_out.ctrl.zreg_use_idx;
             consumer_block_raw_target = pre_meta_out.ctrl.z_load_target;
         end else if ((!int2fp_result_empty || int2fp_result_push)
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                  && !fp16_mode
+`endif
                   && (qcol_scale_consumer_ctrl.quant_dir == `QDIR_COL)
                   && !qcol_scale_ready) begin
             consumer_block_raw_valid = 1'b1;
@@ -809,7 +903,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             gemm_unit_if.input_admit_work_seq <= '0;
         end else begin
             gemm_unit_if.input_ahead_credit
+            `ifdef GEMM_NAIVE_FP16_ENABLE
+                <= fp16_mode ? fp16_input_ready : in_pipe_ready_in && (tree_credit_q != 0);
+`else
                 <= in_pipe_ready_in && (tree_credit_q != 0);
+`endif
             // Admission metadata is sampled only on the exact GEMM input
             // handshake.  The registered event may affect scheduler policy
             // on the following cycle, never local req_ready in this cycle.
@@ -1079,8 +1177,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // A matching staged writer may update the same bank on the edge only when
     // no incoming or earlier pipeline entry can still consume that version.
     wire same_cycle_weight_release
-        = gemm_unit_if.weight_consume_valid
-       && (gemm_unit_if.weight_consume_idx == wreg_wr_idx)
+        = `GEMM_CORE_WEIGHT_CONSUME
+       && (`GEMM_CORE_WEIGHT_INDEX == wreg_wr_idx)
        && !wreg_preconsume_busy[wreg_wr_idx];
     wire mxu_w_pipe_ready_out = !wreg_busy[wreg_wr_idx]
                               || same_cycle_weight_release;
@@ -1105,8 +1203,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign wreg_wr_idx = weight_bus_if.req_data.addr[0];
     assign wreg_load_dir = weight_bus_if.req_data.addr[1];
     wire same_cycle_weight_release
-        = gemm_unit_if.weight_consume_valid
-       && (gemm_unit_if.weight_consume_idx == wreg_wr_idx)
+        = `GEMM_CORE_WEIGHT_CONSUME
+       && (`GEMM_CORE_WEIGHT_INDEX == wreg_wr_idx)
        && !wreg_preconsume_busy[wreg_wr_idx];
     assign weight_bus_if.req_ready = !wreg_busy[wreg_wr_idx]
                                    || same_cycle_weight_release;
@@ -1185,6 +1283,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     wire [`GEMM_SCALE_ZERO_DATA_SIZE-1:0] zp_req_byteen
         = zero_bus_if.req_data.byteen;
 
+`ifdef GEMM_CORE_FPINT_PRESENT
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             scale_regs <= '0;
@@ -1214,6 +1313,10 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         end
     end
 
+`else
+    assign scale_regs = '0;
+    assign zero_regs = '0;
+`endif
     // =========================================================================
     // Datapath Combinational Logic
     // =========================================================================
@@ -1238,7 +1341,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     ) u_in_pipe (
         .clk       (clk),
         .reset     (reset),
-        .valid_in  (input_fire),
+        .valid_in  (input_fire
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                    && !fp16_mode
+`endif
+                   ),
         .ready_in  (in_pipe_ready_in),
         .data_in   (in_pipe_payload_in),
         .data_out  (in_pipe_payload_out),
@@ -1310,6 +1417,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Input Scalers
     // -------------------------------------------------------------------------
+`ifdef GEMM_CORE_FPINT_PRESENT
     generate
         for (genvar i = 0; i < `MXU_ROW; i++) begin : gen_in_scaler
             logic activated;
@@ -1349,6 +1457,13 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         end
     endgenerate
 
+`else
+    assign in_scaler_a_ready = '1;
+    assign in_scaler_b_ready = '1;
+    assign in_scaler_result_valid = '0;
+    assign in_scaler_result_data = '0;
+    assign in_scaler_result_ready = '0;
+`endif
     assign qrow_scaler_output_valid
         = qrow_meta_valid_out && (&in_scaler_result_valid);
     assign pre_branch_valid
@@ -1385,6 +1500,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Prealigner
     // -------------------------------------------------------------------------
+`ifdef GEMM_CORE_FPINT_PRESENT
     VX_prealigner #(
         .NUM_UNIT(`MXU_ROW)
     ) u_prealigner (
@@ -1399,6 +1515,14 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         .valid_o    (prealigner_out_valid),
         .ready_i    (pre_meta_valid_out && compute_ready)
     );
+
+`else
+    assign prealigner_ready_out = 1;
+    assign prealigner_int_data = '0;
+    assign prealigner_blk_idx = '0;
+    assign prealigner_max_exp = '0;
+    assign prealigner_out_valid = 0;
+`endif
 
 `ifdef GEMM_SLR_PIPELINE
     // The local QROW shift and the SLR TX sample the same block indices.
@@ -1443,6 +1567,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Parallel QCOL/QROW Pre-processing
     // -------------------------------------------------------------------------
+`ifdef GEMM_CORE_FPINT_PRESENT
     generate
         for (genvar i = 0; i < `MXU_ROW; i++) begin : g_preprocess_inputs
             assign qcol_reduce_data_in[i]
@@ -1523,6 +1648,20 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         .valid_out (qrow_reduce_valid_out)
     );
 
+`else
+    assign qcol_reduce_data_in = '0;
+    assign qcol_reduce_data_out = '0;
+    assign qcol_reduce_valid_out = 0;
+    assign qcol_zp_mul_data = '0;
+    assign qcol_zp_mul_data_q = '0;
+    assign qcol_zp_mul_valid = 0;
+    assign qrow_zp_mul_data = '0;
+    assign qrow_zp_mul_data_q = '0;
+    assign qrow_zp_mul_valid = 0;
+    assign qrow_reduce_data_in = '0;
+    assign qrow_reduce_data_out = '0;
+    assign qrow_reduce_valid_out = 0;
+`endif
     // -------------------------------------------------------------------------
     // Pre-processor Output
     // -------------------------------------------------------------------------
@@ -1573,7 +1712,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         logic direction;
     } mxu_weight_transport_t;
     typedef struct packed {
-        logic [`MXU_COL/`MXU_COL_TILE-1:0] valid;
+        logic [`GEMM_CORE_COL_GROUPS-1:0] valid;
         logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0] data;
     } mxu_output_transport_t;
 
@@ -1693,11 +1832,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                 consume_valid_q <= '0;
             end
         end
-        assign gemm_unit_if.weight_register_write
+        assign `GEMM_CORE_WEIGHT_WRITE
             = install_valid_q[MXU_INPUT_TRANSPORT_DLY-1];
-        assign gemm_unit_if.weight_consume_valid
+        assign `GEMM_CORE_WEIGHT_CONSUME
             = consume_valid_q[MXU_INPUT_TRANSPORT_DLY-1];
-        assign gemm_unit_if.weight_consume_idx
+        assign `GEMM_CORE_WEIGHT_INDEX
             = consume_idx_q[MXU_INPUT_TRANSPORT_DLY-1];
         assign mxu_transport_busy = |install_valid_q;
     end
@@ -1712,17 +1851,18 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign mxu_weight_valid_capture = mxu_ready_weight;
     assign mxu_output_capture = mxu_output;
     assign mxu_output_valid_capture = mxu_output_valid;
-    assign gemm_unit_if.weight_register_write = mxu_ready_weight;
-    assign gemm_unit_if.weight_consume_valid
+    assign `GEMM_CORE_WEIGHT_WRITE = mxu_ready_weight;
+    assign `GEMM_CORE_WEIGHT_CONSUME
 `ifdef GEMM_NAIVE
         = compute_fire && pre_meta_out.ctrl.notify_on_writeback;
 `else
         = compute_fire && pre_meta_out.ctrl.last;
 `endif
-    assign gemm_unit_if.weight_consume_idx = pre_meta_out.ctrl.wreg_use_idx;
+    assign `GEMM_CORE_WEIGHT_INDEX = pre_meta_out.ctrl.wreg_use_idx;
     assign mxu_transport_busy = 1'b0;
 `endif
 
+`ifdef GEMM_CORE_FPINT_PRESENT
     VX_gemm_tree_v1 u_mxu (
         .clk_i            (clk),
         .resetn_i         (~reset),
@@ -1738,14 +1878,19 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         .output_valid_o   (mxu_output_valid)
     );
 
+`else
+    assign mxu_output = '0;
+    assign mxu_output_valid = '0;
+`endif
+
     // -------------------------------------------------------------------------
     // MXU Output Delay Alignment
     // -------------------------------------------------------------------------
     generate
-        for (genvar i = 0; i < (`MXU_COL/`MXU_COL_TILE); i++) begin : gen_mxu_output_dly
+        for (genvar i = 0; i < (`GEMM_CORE_COL_GROUPS); i++) begin : gen_mxu_output_dly
             VX_pipe_buffer #(
                 .DATAW (`MXU_COL_TILE * `O_BIT_WIDTH),
-                .DEPTH ((`MXU_COL/`MXU_COL_TILE) - 1 - i)
+                .DEPTH ((`GEMM_CORE_COL_GROUPS) - 1 - i)
             ) u_mxu_output_dly_pipe (
                 .clk       (clk),
                 .reset     (reset),
@@ -1906,7 +2051,13 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             for (int i = 0; i < INT2FP_CONVERTER_META_DLY; ++i)
                 int2fp_meta_pipe[i] <= '0;
         end else begin
-            case ({merged_fifo_pop, int2fp_result_pop})
+            case ({merged_fifo_pop,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                   fpint_result_pop
+`else
+                   int2fp_result_pop
+`endif
+                  })
                 2'b10: int2fp_result_credit <= int2fp_result_credit - 1'b1;
                 2'b01: int2fp_result_credit <= int2fp_result_credit + 1'b1;
                 default: begin end
@@ -1923,6 +2074,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Integer to FP32 Converters
     // -------------------------------------------------------------------------
+`ifdef GEMM_CORE_FPINT_PRESENT
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_int2fp
             VX_pint2fp #(
@@ -1946,6 +2098,10 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         end
     endgenerate
 
+`else
+    assign int2fp_out_data = '0;
+    assign int2fp_output_valid = '0;
+`endif
     always_comb begin
         int2fp_result_data_in.data = int2fp_out_data;
         int2fp_result_data_in.ctrl
@@ -1953,13 +2109,24 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         int2fp_result_data_in.ctrl.valid = int2fp_result_push;
     end
     assign int2fp_result_push = &int2fp_output_valid;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    assign int2fp_result_empty = fp16_mode ? !fp16_result_valid : fpint_result_empty;
+`else
     assign int2fp_result_empty = (int2fp_result_count == 0);
+`endif
     assign int2fp_result_full
         = (int2fp_result_count
         == INT2FP_RESULT_FIFO_COUNTW'(INT2FP_RESULT_FIFO_DEPTH));
+`ifdef GEMM_NAIVE_FP16_ENABLE
+    assign fpint_result_data_out = fpint_result_empty ? int2fp_result_data_in
+        : int2fp_result_mem[int2fp_result_rd_ptr];
+    assign int2fp_result_data_out = fp16_mode
+        ? {fp16_result_data, fp16_result_ctrl} : fpint_result_data_out;
+`else
     assign int2fp_result_data_out = int2fp_result_empty
         ? int2fp_result_data_in
         : int2fp_result_mem[int2fp_result_rd_ptr];
+`endif
     assign qcol_scale_ready
         = gemm_unit_if.s_load_value[
               qcol_scale_consumer_ctrl.sreg_use_idx]
@@ -1969,9 +2136,16 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign int2fp_result_pop
         = (!int2fp_result_empty || int2fp_result_push)
        && post_txn_space
+`ifdef GEMM_NAIVE_FP16_ENABLE
+       && (!fp16_mode || postprocess_ready)
+`endif
        && !rd_hold_valid
        && !post_head_d3_raw_stall
-       && ((int2fp_result_data_out.ctrl.quant_dir == `QDIR_ROW)
+       && (
+`ifdef GEMM_NAIVE_FP16_ENABLE
+           fp16_mode ||
+`endif
+           (int2fp_result_data_out.ctrl.quant_dir == `QDIR_ROW)
         || (qcol_scale_ready && out_scaler_input_ready));
     assign scaler_consumer_fire = int2fp_result_pop;
 
@@ -1988,9 +2162,21 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                     <= int2fp_result_data_in;
                 int2fp_result_wr_ptr <= int2fp_result_wr_ptr + 1'b1;
             end
-            if (int2fp_result_pop)
+            if (
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                fpint_result_pop
+`else
+                int2fp_result_pop
+`endif
+               )
                 int2fp_result_rd_ptr <= int2fp_result_rd_ptr + 1'b1;
-            case ({int2fp_result_push, int2fp_result_pop})
+            case ({int2fp_result_push,
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                   fpint_result_pop
+`else
+                   int2fp_result_pop
+`endif
+                  })
                 2'b10: int2fp_result_count <= int2fp_result_count + 1'b1;
                 2'b01: int2fp_result_count <= int2fp_result_count - 1'b1;
                 default: begin end
@@ -2003,6 +2189,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // QCOL: output needs scaling (use VX_fp16_mul)
     // QROW: output already scaled at input, bypass the scaler
+`ifdef GEMM_CORE_FPINT_PRESENT
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_out_scaler
 `ifndef SYNTHESIS
@@ -2019,6 +2206,9 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 `endif
 
             assign a_valid = int2fp_result_pop
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                           && !fp16_mode
+`endif
                            & (int2fp_result_data_out.ctrl.quant_dir
                               == `QDIR_COL);
             assign b_valid = a_valid;
@@ -2122,19 +2312,30 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
 `endif
     endgenerate
 
+`else
+    assign out_scaler_a_ready = '1;
+    assign out_scaler_b_ready = '1;
+    assign scaler_output_valid = '0;
+    assign scaled_fp_out_data = '0;
+`endif
     // Bypass pipe buffer for QROW mode (1 cycle delay to match scaler latency)
     VX_pipe_buffer #(
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
-        .DATAW (`MXU_COL * FP16_WIDTH),
+        .DATAW (`GEMM_SHARED_ACC_COL * FP16_WIDTH),
 `else
-        .DATAW (`MXU_COL * FP32_WIDTH),
+        .DATAW (`GEMM_SHARED_ACC_COL * FP32_WIDTH),
 `endif
         .DEPTH (1)
     ) u_scaler_bypass_pipe (
         .clk       (clk),
         .reset     (reset),
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        .valid_in  (int2fp_result_pop
+                 && (fp16_mode || (int2fp_result_data_out.ctrl.quant_dir == `QDIR_ROW))),
+`else
         .valid_in  (int2fp_result_pop
                  && (int2fp_result_data_out.ctrl.quant_dir == `QDIR_ROW)),
+`endif
         .ready_in  (),
         .data_in   (int2fp_result_data_out.data),
         .data_out  (scaler_bypass_data),
@@ -2143,10 +2344,18 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     );
 
     // Mux between scaled output (QCOL) and bypassed output (QROW)
-    assign final_scaled_fp_out_data  = scaler_stage_is_qcol ? scaled_fp_out_data : scaler_bypass_data;
-    assign final_scaler_output_valid = scaler_stage_is_qcol ? scaler_output_valid[0] : scaler_bypass_valid;
+    assign final_scaled_fp_out_data  =
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        fp16_mode ? scaler_bypass_data :
+`endif
+        scaler_stage_is_qcol ? scaled_fp_out_data : scaler_bypass_data;
+    assign final_scaler_output_valid =
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        fp16_mode ? scaler_bypass_valid :
+`endif
+        scaler_stage_is_qcol ? scaler_output_valid[0] : scaler_bypass_valid;
     generate
-        for (genvar i = 0; i < `MXU_COL; i++) begin : gen_f16_to_f32
+        for (genvar i = 0; i < `GEMM_SHARED_ACC_COL; i++) begin : gen_f16_to_f32
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             logic [FP16_EXP_WIDTH-1:0] exp;
             logic inf;
@@ -2165,7 +2374,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // result-FIFO pop, so two bounded common registers are required after the
     // scaler/QROW-bypass mux to reach the proven Phase-1 ACC launch index.
     VX_pipe_buffer #(
-        .DATAW (`MXU_COL * FP32_WIDTH),
+        .DATAW (`GEMM_SHARED_ACC_COL * FP32_WIDTH),
         .DEPTH (POST_SCALER_ALIGN_DLY)
     ) u_scaled_fp32_align (
         .clk       (clk),
@@ -2357,7 +2566,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     // Load/accumulate latency alignment
     // -------------------------------------------------------------------------
     VX_pipe_buffer #(
-        .DATAW (`MXU_COL * FP32_WIDTH),
+        .DATAW (`GEMM_SHARED_ACC_COL * FP32_WIDTH),
         .DEPTH (ACC_ADD_DLY)
     ) u_load_result_align (
         .clk       (clk),
@@ -2373,7 +2582,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     assign selected_psum_data = post_head_psum_data;
 
     generate
-        for (genvar i = 0; i < `MXU_COL; ++i) begin : gen_accumulator
+        for (genvar i = 0; i < `GEMM_SHARED_ACC_COL; ++i) begin : gen_accumulator
             logic a_ready;
             logic b_ready;
 
@@ -2514,7 +2723,7 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     logic acc_wr_stall_probe_q;
     logic [31:0] acc_wr_stall_tag_q;
     logic [`MEM_ADDR_WIDTH-1:0] acc_wr_stall_addr_q;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_wr_stall_data_q;
+    logic [`GEMM_SHARED_ACC_COL-1:0][FP32_WIDTH-1:0] acc_wr_stall_data_q;
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
@@ -2588,7 +2797,15 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
             end
             assert (ctrl_pipe[INPUT_CTRL_IDX].valid
                  == admission_fire_probe_q)
-                else $fatal(1, "GEMM v2 admission ownership probe mismatch");
+                else
+`ifdef GEMM_NAIVE_FP16_ENABLE
+                begin
+                    $display("FPFP admission diagnostic: ctrl=%b probe=%b req_valid=%b req_ready=%b input_fire=%b fp16=%b front_ready=%b weight_ready=%b product_ready=%h owned=%0d result_count=%0d result_pop=%b", ctrl_pipe[INPUT_CTRL_IDX].valid, admission_fire_probe_q, input_bus_if.req_valid, input_bus_if.req_ready, input_fire, fp16_mode, fp16_input_ready, fp16_weight_ready, fp16_front.product_ready, fp16_front.owned_q, fp16_front.count_q, int2fp_result_pop);
+                    $fatal(1, "GEMM v2 admission ownership probe mismatch");
+                end
+`else
+                    $fatal(1, "GEMM v2 admission ownership probe mismatch");
+`endif
             if (admission_fire_probe_q) begin
                 assert (ctrl_pipe[INPUT_CTRL_IDX]
                      == admission_ctrl_probe_q)
@@ -2777,13 +2994,13 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                     else $fatal(1, "GEMM v2 QCOL Zero-point last consume selected unrelated metadata");
             end
 `ifdef GEMM_SLR_PIPELINE
-            assert (gemm_unit_if.weight_register_write
+            assert (`GEMM_CORE_WEIGHT_WRITE
                  == mxu_weight_valid_capture)
                 else $fatal(1, "GEMM SLR weight installation mirror misaligned");
             assert (mxu_input_valid_capture
                  == tree_valid_pipe[MXU_INPUT_TRANSPORT_DLY-1])
                 else $fatal(1, "GEMM SLR input capture metadata misaligned");
-            assert (gemm_unit_if.weight_consume_valid
+            assert (`GEMM_CORE_WEIGHT_CONSUME
                  == (mxu_input_valid_capture
 `ifdef GEMM_NAIVE
                   && tree_meta_pipe[MXU_INPUT_TRANSPORT_DLY-1].ctrl.notify_on_writeback))
@@ -2791,8 +3008,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                   && tree_meta_pipe[MXU_INPUT_TRANSPORT_DLY-1].ctrl.last))
 `endif
                 else $fatal(1, "GEMM SLR old weight released before final capture");
-            if (gemm_unit_if.weight_consume_valid) begin
-                assert (gemm_unit_if.weight_consume_idx
+            if (`GEMM_CORE_WEIGHT_CONSUME) begin
+                assert (`GEMM_CORE_WEIGHT_INDEX
                      == mxu_weight_use_capture)
                     else $fatal(1, "GEMM SLR consumed unrelated weight storage");
             end
@@ -2808,12 +3025,12 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                 end
                 if (mxu_input_valid_capture
                  && (mxu_weight_use_capture == mxu_weight_write_capture)) begin
-                    assert (gemm_unit_if.weight_consume_valid)
+                    assert (`GEMM_CORE_WEIGHT_CONSUME)
                         else $fatal(1, "GEMM SLR weight overwrite before last capture");
                 end
             end
 `else
-            assert (gemm_unit_if.weight_consume_valid
+            assert (`GEMM_CORE_WEIGHT_CONSUME
 `ifdef GEMM_NAIVE
                  == (compute_fire && pre_meta_out.ctrl.notify_on_writeback))
 `else
@@ -2826,8 +3043,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                     || same_cycle_weight_release)
                     else $fatal(1, "GEMM v2 accepted a busy weight-register write");
                 if (wreg_busy[wreg_wr_idx]) begin
-                    assert (gemm_unit_if.weight_consume_valid
-                         && (gemm_unit_if.weight_consume_idx == wreg_wr_idx)
+                    assert (`GEMM_CORE_WEIGHT_CONSUME
+                         && (`GEMM_CORE_WEIGHT_INDEX == wreg_wr_idx)
                          && !wreg_preconsume_busy[wreg_wr_idx])
                       else $fatal(1,
                           "GEMM v2 invalid same-cycle Weight overwrite");
@@ -2989,10 +3206,10 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
                     $time, INSTANCE_ID,
                     gemm_unit_if.zp_consume_idx))
             end
-            if (gemm_unit_if.weight_consume_valid) begin
+            if (`GEMM_CORE_WEIGHT_CONSUME) begin
                 `TRACE(1, ("%m : [%0t] | GEMM_V2_WEIGHT_CONSUME | {inst=%s, buf=%0d}\n",
                     $time, INSTANCE_ID,
-                    gemm_unit_if.weight_consume_idx))
+                    `GEMM_CORE_WEIGHT_INDEX))
             end
         end
     end
@@ -3021,7 +3238,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         debug.idle = gemm_unit_if.pipeline_empty;
         debug.done = gemm_unit_if.last_write;
         debug.is_load = acc_result_data_out.ctrl.is_load;
+`ifdef GEMM_NAIVE_FP16_ENABLE
+        debug.is_qcol = !fp16_mode && scaler_stage_is_qcol;
+`else
         debug.is_qcol = scaler_stage_is_qcol;
+`endif
         debug.rd_req = acc_if.rd_req_valid;
         debug.rd_accept = acc_if.rd_req_valid && acc_if.rd_req_ready;
         debug.wr_req = acc_if.wr_req_valid;
@@ -3052,7 +3273,11 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
         end else begin
             if (input_fire)
                 perf_input_fire_r <= perf_input_fire_r + PERF_CTR_BITS'(1);
+`ifdef GEMM_NAIVE_FP16_ENABLE
+            if (fp16_mode ? fp16_weight_install : weight_bus_if.req_valid && weight_bus_if.req_ready)
+`else
             if (weight_bus_if.req_valid && weight_bus_if.req_ready)
+`endif
                 perf_weight_fire_r <= perf_weight_fire_r + PERF_CTR_BITS'(1);
             if (acc_if.rd_req_valid && acc_if.rd_req_ready)
                 perf_accum_rd_accept_r <= perf_accum_rd_accept_r + PERF_CTR_BITS'(1);
@@ -3079,3 +3304,8 @@ module VX_gemm_compute_core import VX_gpu_pkg::*; #(
     `UNUSED_VAR (prealigner_max_exp_q_valid)
 
 endmodule
+`undef GEMM_CORE_COL_GROUPS
+`undef GEMM_CORE_FPINT_PRESENT
+`undef GEMM_CORE_WEIGHT_INDEX
+`undef GEMM_CORE_WEIGHT_CONSUME
+`undef GEMM_CORE_WEIGHT_WRITE
