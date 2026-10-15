@@ -267,4 +267,10 @@ aliases:
 
   C4_v3: *improve_th32_tcol32_hwexp_dcache_sxbar_f16_bigmem_
 
+  # ------------------------------------ FPFP ------------------------------------------------
+  # FPFP-only 8x16, WLOAD1, 100 MHz; config retains its original filename.
+  fpfp_th16_m8_n16_wload1_all_bram_acc:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c9181389b1/bin
+    configs: configs/fpfp_th16_m16_n16_wload4_all_bram_acc.sh
+
   # ------------------------------------ ETC -------------------------------------------------
