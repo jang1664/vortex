@@ -113,7 +113,7 @@ LLM_REGRESSION_APPS := eladd elmul silu rmsnorm hadamard head_concat rope softma
   softmax_layout_fused kv_cache_quant_layout_fused_w4a16 \
   fpint_gemm_ffn_hw_naive fpint_gemm_ffn_hw
 ifneq (,$(filter $(PROJECT),$(LLM_REGRESSION_APPS)))
-LLM_CONFIG_CHECK := $(VORTEX_HOME)/tests/regression/vector_common/config_check.h
+LLM_CONFIG_CHECK ?= $(VORTEX_HOME)/tests/regression/vector_common/config_check.h
 CXXFLAGS += -include $(LLM_CONFIG_CHECK)
 VX_CFLAGS += -include $(LLM_CONFIG_CHECK)
 endif

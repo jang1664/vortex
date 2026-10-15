@@ -70,7 +70,7 @@
 #define REG_OUTPUT_PROGRESS     43
 
 #define GEMM_JOB_NUM_REGS32     44
-#define GEMM_JOB_NUM_ENTRIES     4
+#define GEMM_JOB_NUM_ENTRIES     JOB_MMIO_NUM_ENTRIES
 
 // kernel status codes
 #define MMIO_STATUS_INIT        0
@@ -78,10 +78,24 @@
 #define MMIO_STATUS_ALLOC_FAIL  2
 #define MMIO_STATUS_WAIT_STUCK  3
 #define MMIO_STATUS_BAD_EID     4
+#define MMIO_STATUS_BAD_FORMAT  5
+
+#define GEMM_WEIGHT_INT4        0u
+#define GEMM_WEIGHT_FP16        1u
 
 #define GEMM_FSM_MT 128
 #define GEMM_FSM_NT 128
 #define GEMM_FSM_KT 128
+
+// Shared ACC/output storage uses physical-width slots, including padding when
+// the two enabled frontends have different column counts.
+#ifdef GEMM_NAIVE_FP16_ENABLE
+#define GEMM_HOST_MINIMUM_COL GEMM_NAIVE_MIN_COL
+#else
+#define GEMM_HOST_MINIMUM_COL MXU_COL
+#endif
+#define GEMM_HOST_OUTPUT_TILE_ELEMENTS \
+  (uint64_t(GEMM_FSM_MT) * (GEMM_FSM_NT / GEMM_HOST_MINIMUM_COL) * GEMM_SHARED_ACC_COL)
 
 typedef struct {
   uint32_t grid_dim[2];
@@ -116,6 +130,12 @@ typedef struct {
   uint32_t job_generation;
   uint32_t last_ctrl;
   uint32_t power_kernel_iterations;
+  // Appended so existing geometry and buffer field offsets stay unchanged.
+  uint32_t weight_format;
+  uint32_t poll_only_iterations;
+  uint64_t queued_jobs_base;
+  uint32_t queued_jobs_count;
+  uint32_t queued_pending_mask;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

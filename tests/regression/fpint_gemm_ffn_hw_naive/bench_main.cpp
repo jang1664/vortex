@@ -188,7 +188,7 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
                                 ? (groups_tile * DMA_NT * 2ull)
                                 : (DMA_KT * ng_tile     * 2ull);
   uint64_t lmem_zpbuf_bytes = lmem_scbuf_bytes;
-  uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
+  uint64_t lmem_obuf_bytes  = GEMM_HOST_OUTPUT_TILE_ELEMENTS * 2ull;
 
   const uint64_t lmem_begin = LMEM_BASE_ADDRESS;
   const uint64_t lmem_end   = LMEM_BASE_ADDRESS + local_mem_size;
@@ -222,6 +222,11 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
+#ifndef GEMM_NAIVE_ENABLE
+  std::cerr << "The INT4 benchmark requires GEMM_NAIVE_ENABLE; use the regression"
+               " app with --fp16-weights for FPFP verification" << std::endl;
+  return -1;
+#endif
   // Strip --warmup / --iterations / --csv first; remaining argv goes to getopt.
   auto bench = vx_bench::parse(argc, argv);
   if (vx_bench::report_parse_error(bench)) {

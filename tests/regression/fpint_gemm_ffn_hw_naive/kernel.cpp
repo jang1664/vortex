@@ -178,7 +178,16 @@ static bool gemm_job_alloc_fixed(uint32_t& eid, uint32_t& generation, uint32_t& 
   return true;
 }
 
-static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_partition_t& part) {
+static inline void publish_job(uint32_t eid, uint32_t weight_format) {
+  static_assert(JOB_MMIO_CTRL_FP16_BIT >= JOB_MMIO_CTRL_GEN_LSB + JOB_MMIO_GEN_W,
+                "GEMM format must not overlap read-only owner/generation bits");
+  static_assert(JOB_MMIO_CTRL_FP16_BIT < 32, "GEMM format must fit CONTROL");
+  // Format is independent of quantization direction and weight orientation.
+  job_write_reg32(eid, REG_CONTROL, 1u | (weight_format << JOB_MMIO_CTRL_FP16_BIT));
+}
+
+static void program_job_regs(uint32_t eid, const kernel_arg_t* arg,
+                              const tb_partition_t& part, bool publish = true) {
   // Global/DRAM bases
   job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->input_base);
   job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->weight_base);
@@ -202,7 +211,8 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_M_ORIG, arg->M);
   job_write_reg32(eid, REG_N_ORIG, arg->N);
   job_write_reg32(eid, REG_K_ORIG, arg->K);
-  job_write_reg32(eid, REG_QBLK_ORIG, log2_pow2_u32(arg->QBLK));
+  job_write_reg32(eid, REG_QBLK_ORIG,
+                  arg->weight_format == GEMM_WEIGHT_FP16 ? arg->QBLK : log2_pow2_u32(arg->QBLK));
 
   // Partition sizes/offsets for this job
   job_write_reg32(eid, REG_M_TARGET, part.target_M);
@@ -215,8 +225,8 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_WTRANS, arg->WTRANS);
   job_write_reg32(eid, REG_QDIR, arg->QDIR);
 
-  // Start (valid=1)
-  job_write_reg32(eid, REG_CONTROL, 1u);
+  if (publish)
+    publish_job(eid, arg->weight_format);
 }
 
 static void wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl) {
@@ -272,6 +282,53 @@ static bool run_gemm_job_once(kernel_arg_t* arg, const tb_partition_t& part, boo
   return true;
 }
 
+// Regression-only queue probe: reserve all entries, publish all jobs, then
+// wait. Separate output/scratch addresses let the host validate every job.
+static void run_queued_jobs(kernel_arg_t* arg) {
+  const uint32_t count = arg->queued_jobs_count;
+  if (count != 3 || count > GEMM_JOB_NUM_ENTRIES || arg->queued_jobs_base == 0) {
+    arg->status = MMIO_STATUS_BAD_FORMAT;
+    return;
+  }
+#if !defined(GEMM_NAIVE_ENABLE) || !defined(GEMM_NAIVE_FP16_ENABLE)
+  arg->status = MMIO_STATUS_BAD_FORMAT;
+  return;
+#endif
+  auto jobs = reinterpret_cast<kernel_arg_t*>(arg->queued_jobs_base);
+  uint32_t eids[GEMM_JOB_NUM_ENTRIES];
+  uint32_t generations[GEMM_JOB_NUM_ENTRIES];
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t raw = 0;
+    if (!gemm_job_alloc_fixed(eids[i], generations[i], raw)) {
+      arg->last_ctrl = raw;
+      arg->status = MMIO_STATUS_ALLOC_FAIL;
+      return;
+    }
+    jobs[i].job_eid = eids[i];
+    jobs[i].job_generation = generations[i];
+    jobs[i].status = MMIO_STATUS_INIT;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    const tb_partition_t part = compute_partition(0, 1, jobs[i].M, jobs[i].N);
+    program_job_regs(eids[i], &jobs[i], part, false);
+  }
+  // Descriptor programming can outlast a tiny GEMM. Publish only after every
+  // descriptor is ready so these consecutive starts exercise pending jobs.
+  for (uint32_t i = 0; i < count; ++i)
+    publish_job(eids[i], jobs[i].weight_format);
+  arg->queued_pending_mask = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t ctrl = job_read_reg32(eids[i], REG_CONTROL);
+    if ((ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u)
+      arg->queued_pending_mask |= 1u << i;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    wait_job_done(eids[i], generations[i], jobs[i].last_ctrl);
+    jobs[i].status = MMIO_STATUS_OK;
+  }
+  arg->status = MMIO_STATUS_OK;
+}
+
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
   uint32_t num_cores = vx_num_cores();
@@ -281,10 +338,26 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     arg->status = MMIO_STATUS_INIT;
     arg->last_ctrl = 0;
   }
+  if (arg->queued_jobs_count != 0) {
+    if (reporter) run_queued_jobs(arg);
+    return;
+  }
 
-  // Poll-only baseline mode: spin on a GEMM MMIO read for arg->K iterations
-  // without launching any GEMM job. Triggered by QDIR == 0xDEAD. Lets the
-  // host measure pure Vortex-core polling overhead so HW-GEMM ΔP can be
+  bool format_supported = false;
+#ifdef GEMM_NAIVE_ENABLE
+  format_supported |= arg->weight_format == GEMM_WEIGHT_INT4;
+#endif
+#ifdef GEMM_NAIVE_FP16_ENABLE
+  format_supported |= arg->weight_format == GEMM_WEIGHT_FP16;
+#endif
+  if (!format_supported) {
+    if (reporter) arg->status = MMIO_STATUS_BAD_FORMAT;
+    return;
+  }
+
+  // Poll-only baseline mode: spin on a GEMM MMIO read without launching a
+  // GEMM job. Use a separate flag: QDIR is ignored for FPFP, including 0xDEAD.
+  // Lets the host measure pure Vortex-core polling overhead so HW-GEMM ΔP can be
   // separated from polling baseline.
   //
   // The MMIO address and per-iter ALU pattern mirror wait_job_done() so that
@@ -293,13 +366,13 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   // alloc handshake is performed, so the entry's CONTROL register is read in
   // its idle (unallocated) state -- this still exercises the same per-entry
   // MMIO decode logic that real polling hits.
-  if (arg->QDIR == 0xDEAD) {
+  if (arg->poll_only_iterations != 0) {
     volatile uint32_t sink = 0;
     const uint32_t eid_fake = 0;
     // Pick a generation value that the comparison can never satisfy, so the
     // expression has the same shape as wait_job_done() but never short-circuits.
     const uint32_t generation_fake = 0xFFFFFFFFu;
-    for (uint32_t i = 0; i < arg->K; ++i) {
+    for (uint32_t i = 0; i < arg->poll_only_iterations; ++i) {
       uint32_t ctrl     = job_read_reg32(eid_fake, REG_CONTROL);
       uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
       uint32_t valid    = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;

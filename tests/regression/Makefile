@@ -41,6 +41,10 @@ TEST_DIRS += \
 endif
 endif
 
+ifneq (,$(findstring -DGEMM_NAIVE_FP16_ENABLE,$(CONFIGS)))
+TEST_DIRS += fpfp_gemm_ffn_hw_naive
+endif
+
 TEST_DIRS += \
 	fpint_gemm_ffn_hw \
 	fpint_gemm_ffn_hw_naive \

@@ -9,6 +9,7 @@ LD_LIBRARY_PATH := $(VORTEX_HOME)/third_party/ramulator:$(LD_LIBRARY_PATH)
 STARTUP_ADDR ?= 0x80000000
 
 SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
+LLM_CONFIG_CHECK := $(SRC_DIR)/config_check.h
 
 SRCS := $(SRC_DIR)/main.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp
 
@@ -19,3 +20,7 @@ CXXFLAGS += -I$(THIRD_PARTY_DIR)/softfloat/source/include
 LDFLAGS += $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
 
 include ../common.mk
+
+# Host and kernel share the descriptor ABI, including operand format selection.
+$(PROJECT) $(PROJECT)_bench kernel.elf: $(SRC_DIR)/common.h $(SRC_DIR)/config_check.h
+$(PROJECT): $(SRC_DIR)/fpfp_test_vectors.h
