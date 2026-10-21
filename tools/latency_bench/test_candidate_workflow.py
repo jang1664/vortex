@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from tools.latency_bench.candidate_map import resolve_candidate_map, validate_run_selection, validate_snapshot, parse_execution_candidates
+from tools.latency_bench.candidate_map import resolve_candidate_map, validate_run_selection, validate_snapshot, parse_execution_candidates, resolve_c1_gemm_backend
 from tools.latency_bench.compose import ComposeOptions, compose_latency
 from tools.latency_bench.generate_suites import GenerateSuitesOptions, generate_suites
 from tools.latency_bench.merge_suites import MergeSuitesOptions, merge_suites
@@ -37,7 +37,7 @@ class CandidateWorkflowTest(unittest.TestCase):
             (binary / "vortex_afu.xclbin.info").write_text("Name: ulp_ucs_aclk_kernel_00\nAchieved Freq: 80 MHz\n")
             (image / "manifest.json").write_text("{}")
             config = image / "config.sh"
-            config.write_text("export CONFIGS='-DNUM_THREADS=16'\n")
+            config.write_text("export CONFIGS='-DNUM_THREADS=16 -DEXT_TCU_ENABLE'\n")
             aliases[f"new_{label}"] = {"path": str(binary), "configs": str(config)}
         alias_map = self.root / "aliases.yaml"
         alias_map.write_text(safe_dump({"aliases": aliases}))
@@ -47,6 +47,16 @@ class CandidateWorkflowTest(unittest.TestCase):
         self.mapping = self.root / "candidates.yaml"
         self.mapping.write_text(safe_dump({"schema_version": 1, "candidates": {c: f"new_{c}" for c in ("C1", "C2", "C3", "C4")}}))
         self.snapshot = resolve_candidate_map(self.mapping)
+
+    def test_c1_backend_resolved_from_config_and_mismatch_rejected(self):
+        self.assertEqual("tcu", resolve_c1_gemm_backend(self.mapping))
+        with self.assertRaisesRegex(ValueError, "does not support fpfp"):
+            resolve_c1_gemm_backend(self.mapping, "fpfp")
+        config = self.root / "C1/config.sh"
+        config.write_text("export CONFIGS='-DGEMM_NAIVE_FP16_ENABLE -DFPFP_MXU_ROW=8 -DFPFP_MXU_COL=16'\n")
+        self.assertEqual("fpfp", resolve_c1_gemm_backend(self.mapping))
+        with self.assertRaisesRegex(ValueError, "does not support tcu"):
+            resolve_c1_gemm_backend(self.mapping, "tcu")
 
     def _suite(self):
         return BenchSuite(name="C2", defaults=BenchDefaults(fpga_bin="C4"), experiment=self.snapshot,
@@ -201,7 +211,8 @@ class CandidateWorkflowTest(unittest.TestCase):
 
     def test_candidate_selection_rejects_composed_unknown_and_empty_names(self):
         self.assertEqual(("C1", "C4"), parse_execution_candidates("C4,C1,C1"))
-        for text in ("", "C2", "C5"):
+        self.assertEqual(("C2",), parse_execution_candidates("C2"))
+        for text in ("", "C5"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_execution_candidates(text)
         with self.assertRaisesRegex(ValueError, "schema"):
@@ -245,7 +256,7 @@ class CandidateWorkflowTest(unittest.TestCase):
     def test_make_cases_generates_c4_without_vector_images(self):
         self._check_make_cases_selected_source("C4")
 
-    def test_all_model_suites_route_fused_to_c4_and_preserve_other_sources(self):
+    def test_model_suites_respect_reuse_and_candidate_local_routing(self):
         repo = Path(__file__).resolve().parents[2]
         sources = sorted((repo / "analysis_workspace/latency_on_hw/suites").glob("llama*/*.yaml"))
         self.assertTrue(sources)
@@ -256,13 +267,17 @@ class CandidateWorkflowTest(unittest.TestCase):
         gemm_sources = {"sgemm_tcu": "C1", "fpint_gemm_ffn_hw_naive": "C3", "fpint_gemm_ffn_hw": "C4"}
         kinds = set()
         for source in sources:
-            with self.subTest(source=source.name):
+            with self.subTest(source=str(source.relative_to(repo))):
                 suite = load_suite(source, matrix_overrides=overrides)
                 self.assertTrue(suite.cases)
                 for case in suite.cases:
                     kinds.add(case.kind)
                     expected = (gemm_sources[case.app] if case.kind == "gemm"
                                 else "C4" if "layout_fused" in case.app else "C1")
+                    if source.parent.name.endswith("_no_reuse"):
+                        # These suites intentionally execute every op on their candidate.
+                        expected = next(label for label in ("C1", "C2", "C3", "C4")
+                                        if f"_{label}" in source.stem)
                     self.assertEqual(expected, resolve_case_fpga_bin(suite, case), case.case_id)
         self.assertTrue({"gemm", "rmsnorm", "eladd", "layout", "dequantization", "quantization"} <= kinds)
 

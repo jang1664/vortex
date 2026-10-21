@@ -1275,6 +1275,26 @@ class PartialCandidatePipelineTest(unittest.TestCase):
             self.assertEqual(set(labels), {task.metadata["label"] for task in refinements})
         self.assertEqual(3, len(pipeline._raw_dbs(self.settings, "llama2")))
 
+    def test_fpfp_c1_keeps_c2_in_run_refine_and_composition(self):
+        settings = pipeline.replace(self.settings, c1_gemm_backend="fpfp", candidates=("C1", "C2", "C3", "C4"))
+        self.assertEqual(("C1", "C2", "C3", "C4"), settings.execution_bins)
+        self.assertEqual(8, len(pipeline._run_tasks(settings)))
+        self.assertEqual(4, len(pipeline._refine_tasks(settings)))
+        self.assertEqual(["C1", "C2", "C3", "C4"], [p.parent.name for p in pipeline._raw_dbs(settings, "llama2")])
+        compose = pipeline._compose_tasks(settings)[0]
+        self.assertIn("C1,C2,C3,C4", compose.command)
+        from model_sessions import _settings_payload, _settings_from_payload
+        self.assertEqual(settings, _settings_from_payload(_settings_payload(settings)))
+
+    def test_fpfp_c2_keeps_attention_in_run_refine_and_composition(self):
+        settings = pipeline.replace(self.settings, c2_attn_backend="fpfp", candidates=("C1", "C2", "C3", "C4"))
+        self.assertEqual(("C1", "C2", "C3", "C4"), settings.execution_bins)
+        self.assertEqual(8, len(pipeline._run_tasks(settings)))
+        self.assertEqual(4, len(pipeline._refine_tasks(settings)))
+        self.assertIn("C1,C2,C3,C4", pipeline._compose_tasks(settings)[0].command)
+        from model_sessions import _settings_payload, _settings_from_payload
+        self.assertEqual(settings, _settings_from_payload(_settings_payload(settings)))
+
     def test_run_through_refine_never_checks_or_executes_other_candidates(self):
         coverage = MeasurementCoverage((MeasurementEvidence(
             "new-exec", MeasurementReuseState.PENDING, ("no matching rows",)
@@ -1353,7 +1373,9 @@ class PartialCandidatePipelineTest(unittest.TestCase):
 
     def test_cli_selection_and_dry_run_do_not_write_files(self):
         output = io.StringIO()
-        with redirect_stdout(output):
+        with redirect_stdout(output), \
+             mock.patch("tools.latency_bench.candidate_map.resolve_c1_gemm_backend", return_value="tcu"), \
+             mock.patch("tools.latency_bench.candidate_map.resolve_c2_attn_backend", return_value="tcu"):
             code = workflow.main([
                 "pipeline", "--tag", "partial", "--workspace", str(self.settings.workspace),
                 "--state-root", str(self.settings.state_base), "--models", "llama2",
@@ -1388,14 +1410,14 @@ class PartialCandidatePipelineTest(unittest.TestCase):
         self.assertEqual(index, selected)
         self.assertEqual(snapshot, plot._read_candidate_snapshot(selected))
 
-    def test_invalid_cli_candidate_explains_c2_composition(self):
+    def test_invalid_cli_candidate_is_rejected(self):
         from contextlib import redirect_stderr
 
         errors = io.StringIO()
         with redirect_stderr(errors), self.assertRaises(SystemExit) as error:
-            workflow.main(["pipeline", "--tag", "partial", "--candidates", "C2"])
+            workflow.main(["pipeline", "--tag", "partial", "--candidates", "C5"])
         self.assertEqual(2, error.exception.code)
-        self.assertIn("C2 is a composed variant", errors.getvalue())
+        self.assertIn("subset of C1,C2,C3,C4", errors.getvalue())
 
 
 class CampaignWrapperTest(unittest.TestCase):

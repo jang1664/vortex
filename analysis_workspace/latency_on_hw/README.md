@@ -2,12 +2,12 @@
 
 `candidate_fpga_bins.yaml` selects the C1–C4 aliases from
 `ci/fpga_bin_alias_map.yaml`. The workflow does not change the global C1–C4
-aliases. TCU GEMM comes from C1, naive GEMM from C3, and improved GEMM from C4.
+aliases. By default, TCU GEMM comes from C1, naive GEMM from C3, and improved GEMM from C4.
 Plain vector, layout, and quantization kernels execute on C1. Layout-fused
 kernels execute on C4, including fused Hadamard and KV-cache quantization.
 Logical C2 combines C1 TCU/vector results with C3 naive GEMM results.
-Registering a C2 image never creates a C2
-measurement or refinement task. C4_fused remains included and C4_alone remains
+When both C1 and C2 use TCU, C2 has no separate measurement or refinement task.
+When either uses FPFP, C2 attention is measured and refined on the C2 image. C4_fused remains included and C4_alone remains
 excluded.
 
 Row-major C1/C2/C3 workloads use the connected decoder's head layouts:
@@ -44,7 +44,64 @@ Regenerate suites under a new experiment tag and remeasure affected TCU rows;
 historical Rev5 rows do not represent the new input policy. The new layout paths must be measured before composing corrected totals.
 
 The local `candidate_fpga_bins.yaml` is the source of truth for image aliases.
-Execution sources are C1, C3, and C4; logical C2 has no independent raw database.
+Execution sources are C1/C3/C4 when both C1 and C2 use TCU, or C1/C2/C3/C4
+when either uses FPFP.
+
+## C1 GEMM and C2 attention: TCU or FPFP MXU
+
+`--c1-gemm-backend auto|tcu|fpfp` and `--c2-attn-backend auto|tcu|fpfp`
+are accepted by `workflow.py pipeline`,
+`make_case.sh`, `make_cases.sh`, and `tools.latency_bench generate-suites`.
+`auto` reads each candidate alias config; an explicitly incompatible engine is rejected.
+Use a new experiment tag when changing the engine or image.
+
+```bash
+python workflow.py pipeline --tag rev8_pipeline \
+  --candidate-map candidate_fpga_bins.rev8.yaml \
+  --c1-gemm-backend auto --c2-attn-backend auto \
+  --suite-size full --models llama2,llama3 \
+  --model-execution parallel --parallel-fallback serial
+```
+
+Rev8 uses C1 alias `fpfp_th16_m8_n16_wload1_all_bram_acc` (FPFP 8x16,
+WLOAD1). C1 GEMMs use `fpfp_gemm_ffn_hw_naive`; M stays unpadded, K/N measurement
+extents align to 8/16. Its row-major B requires a measured K transpose after
+cache dequantization, once per KV head, before QKT. Prefill transposes the full
+input once; decode dequantizes/transposes only the new token into persistent
+`[D, capacity]` storage. Linear/PV weights are already
+row-major. Quantization and standalone vector work retain the existing policy.
+Decode sampling uses the FPFP boundaries and includes K transpose in refinement.
+
+Rev8 C2 uses the mixed FPINT + FPFP image with the `qcol_pnr_spread` alias suffix
+(FPFP 8x16 WLOAD1; kernel 100 MHz, HBM 450 MHz). Its QKT/PV use FPFP and include
+the same K transpose. C2 attention is measured on its own image under `C2/raw_db.csv`,
+even when C1 also uses FPFP. C2 linear GEMM still reuses C3 and standalone vectors
+(including K transpose) still reuse C1. To use TCU attention, select a candidate map
+with a TCU-capable C2 image (e.g. rev7) and `--c2-attn-backend tcu`. All four
+sources participate in run, refine, compose and plot. Historical variant names
+such as `all_sgemm_tcu_spinquant` remain stable logical candidate identifiers;
+the generated `backend`, `app`, config metadata and FPGA snapshot identify the
+actual engine. Existing TCU suites retain their original execution semantics.
+
+The current FPFP measurement alignment describes the rev8 8x16 image. If a
+future image changes FPFP geometry, update its sampling/canonicalization policy
+before measuring it. Both C1 and C2 decoder builds use the config macros directly
+and expose the corresponding backend selection; see the
+[shared decoder README](../../tests/regression/llama_decoder_common/README.md).
+
+Validation: [Rev8 C2 FPFP results](docs/rev8_c2_fpfp/VALIDATION.md).
+
+C1 decoder verification uses the existing `llama_decoder_C1` application with
+backend-specific fixtures; see its [README](../../tests/regression/llama_decoder_C1/README.md).
+`ci/test_llm_regression.py` also selects the FPFP GEMM cases automatically
+when C1 uses the rev8 alias. A short GEMM-only gate is:
+
+```bash
+python ../../ci/test_llm_regression.py hw --candidate-map candidate_fpga_bins.rev8.yaml \
+  --candidates C1 --apps fpfp_gemm_ffn_hw_naive --checks correctness
+```
+
+See the [rev8 validation report](docs/rev8_c1_fpfp/VALIDATION.md).
 
 ## Kernel regression gate
 
@@ -111,7 +168,8 @@ the selected image alias. Older output roots and their `C4_v3/` directories
 are not automatically reused by this new tag.
 
 Without a candidate filter, suite generation validates every configured
-candidate, including C2, even though C2 has no independent measurement task.
+candidate, including C2. C2 has an independent attention measurement task
+when either C1 or C2 uses FPFP.
 Each alias must resolve to an existing config, FPGA image, manifest, and kernel
 clock information. Use a new experiment tag when replacing a selected image.
 See the subset workflow below when some images are not yet available.
@@ -349,8 +407,8 @@ pending stage.
 
 Use `--candidates C1` or a comma-separated list such as `--candidates C1,C3`
 with `workflow.py pipeline` or `status`. It selects physical execution sources,
-not logical model variants. C2 has no independent measurement; selecting C2
-directly is an error. `--candidates C1` collects TCU GEMM and plain vector/layout/
+not logical model variants. C2 is selectable as a separate attention source
+when either C1 or C2 uses FPFP. `--candidates C1` collects its selected GEMM engine and plain vector/layout/
 quantization kernels; `--candidates C4` collects improved GEMM and layout-fused kernels.
 The complete logical C1 workload now executes on C1. The downstream pipeline
 still produces the full candidate comparison and therefore requires C3/C4.
@@ -364,9 +422,10 @@ historical evidence; regenerated suites select C4 fused measurements for composi
 | `refine` | Refines selected sources independently, requiring their compatible run evidence. Probes measure latency only. |
 | `compose` | Requires C1/C3/C4 raw databases, full generated workloads, and compatible run/refine evidence for all sources. |
 | `prepare` | Uses complete composed results; the pipeline validates the full upstream chain. The candidate filter does not trim figures or models. |
-| `plot` | Uses prepared results plus C1/C3/C4 raw databases for kernel power, and validates the full upstream chain. |
+| `plot` | Uses prepared results plus all selected execution-source raw databases for kernel power, and validates the full upstream chain. |
 
-The default execution selection remains C1,C3,C4. Missing downstream raw files
+The default execution selection is C1,C3,C4 when both C1 and C2 use TCU,
+and C1,C2,C3,C4 when either uses FPFP. Composition and plotting require every source in that selection. Missing downstream raw files
 produce an error naming the source and exact `raw_db.csv` path. A subset
 selection never silently omits missing sources from composition or plots.
 When a range includes downstream stages, the selected run/refine work completes

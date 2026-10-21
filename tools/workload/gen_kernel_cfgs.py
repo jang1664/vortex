@@ -162,6 +162,8 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "softmax_layout_fused": "softmax_layout_fused",
     "eladd_layout_fused": "eladd_layout_fused",
     "elmul_layout_fused": "elmul_layout_fused",
+    "fpfp_gemm_naive": "fpfp_gemm_ffn_hw_naive",
+    "head_transpose": "head_concat",
     "head_concat": "head_concat",
     "head_reorder": "head_concat",
     "head_concat_layout_fused": "head_concat_layout_fused",
@@ -287,7 +289,7 @@ def _gemm_backend(op: str, variant: str) -> str:
 def _gemm_args(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int) -> str:
     if backend in FPINT_GEMM_BACKENDS:
         return f"-m {M} -n {N} -k {K} -q {qblk} -t {wtrans} -d {qdir}"
-    if backend == "sgemm_tcu":
+    if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
         return f"-m {M} -n {N} -k {K}"
     raise ValueError(f"unknown GEMM backend: {backend!r}")
 
@@ -398,20 +400,26 @@ _DECODE_LENGTH_ARG_BY_NAME = {
     "kv_cache_dequant_k_to_attn_qkT": ("-k", "K"),
     "kv_cache_dequant_v_to_attn_pv": ("-k", "K"),
     "attn_v_transpose": ("-seq", "seq"),
+    "attn_k_transpose": ("-seq", "seq"),
 }
 
 
 def _decode_length_alignment(kernel: dict) -> int | None:
     """Return the execution granularity of a decode-length-dependent kernel."""
     name = str(kernel.get("name", ""))
+    if (name == "kv_cache_dequant_k_to_attn_qkT"
+            and kernel.get("shape", {}).get("cache_update") == "append"):
+        return None
     if name not in _DECODE_LENGTH_ARG_BY_NAME:
         return None
 
     backend = str(kernel.get("backend", ""))
-    if name == "attn_v_transpose":
+    if name in {"attn_v_transpose", "attn_k_transpose"}:
         return 1
     if backend in FPINT_GEMM_BACKENDS:
         return 32
+    if backend == "fpfp_gemm_naive":
+        return 16 if name == "attn_qkT" else 8
     if backend == "sgemm_tcu":
         # C1 uses the NUM_THREADS=32 FP16 WMMA shape. QK grows in N
         # (tileN=16); PV grows in K (tileK=32 after FP16 packing).
@@ -450,8 +458,14 @@ def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dic
         option = target_option  # Preserve the physical parent stride.
     padded_seq_kv = _align_up(logical_seq_kv, alignment)
     out = dict(kernel)
-    padded_args = _replace_integer_arg(str(out["args"]), option, padded_seq_kv)
     shape = dict(out.get("shape") or {})
+    if name == "attn_k_transpose" and shape.get("cache_update") == "append":
+        # seq is the update size, not the growing cache length. Keep capacity
+        # and the actual append position in the execution/reuse identity.
+        padded_args = str(out["args"])
+        shape_key = "cache_position"
+    else:
+        padded_args = _replace_integer_arg(str(out["args"]), option, padded_seq_kv)
     shape.update({
         "logical_cache_length": logical_seq_kv,
         "padded_cache_length": padded_seq_kv,
@@ -473,7 +487,7 @@ def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dic
 def _decode_sampling_class(kernel: dict) -> str:
     if _decode_length_alignment(kernel) is None:
         return "invariant"
-    if kernel.get("name") == "attn_v_transpose" or str(kernel.get("backend", "")) in {
+    if kernel.get("name") in {"attn_v_transpose", "attn_k_transpose"} or str(kernel.get("backend", "")) in {
         "softmax", "softmax_layout_fused", "kv_cache_dequant_w4a16",
     }:
         return "continuous"
@@ -2052,7 +2066,9 @@ def build_decoder_pass_kernels(config: dict,
                                qblk: int,
                                variant: str = DEFAULT_WORKLOAD_VARIANT,
                                softmax_k_stride: int | None = None,
-                               hadamard_variant: str = DEFAULT_HADAMARD_VARIANT) -> list[dict]:
+                               hadamard_variant: str = DEFAULT_HADAMARD_VARIANT,
+                               c1_gemm_backend: str = "tcu",
+                      c2_attn_backend: str = "tcu") -> list[dict]:
     """Emit every kernel that fires during one forward pass of the model
     in the given stage.
 
@@ -2078,6 +2094,8 @@ def build_decoder_pass_kernels(config: dict,
     """
     if stage not in LLM_STAGES:
         raise ValueError(f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}")
+    if c2_attn_backend not in {"tcu", "fpfp"}:
+        raise ValueError("C2 attention backend must be tcu or fpfp")
     if variant not in WORKLOAD_VARIANTS:
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
@@ -2402,9 +2420,60 @@ def build_decoder_pass_kernels(config: dict,
             kernels, stage=stage, capacity=softmax_k_stride,
             heads_q=H_q, heads_kv=H_kv,
         )
-    return _apply_row_major_attention_layout(
+    kernels = _apply_row_major_attention_layout(
         kernels, heads_kv=H_kv, head_dim=D, variant=variant,
     )
+    if ((c1_gemm_backend == "fpfp" and base_variant == ALL_SGEMM_TCU_VARIANT)
+            or (c2_attn_backend == "fpfp" and base_variant == ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT)):
+        kernels = _apply_fpfp_gemm(kernels, config=config, batch=batch, capacity=softmax_k_stride)
+    return kernels
+
+
+def _apply_fpfp_gemm(kernels: list[dict], *, config: dict, batch: int, capacity: int) -> list[dict]:
+    """Keep quantization/vector and FPINT work; replace only the FP16 GEMM engine.
+
+    FPFP accepts row-major B only. K dequant produces [S,D], requiring
+    one transpose per KV head, shared by all query heads using that K.
+    Decode appends only the new token to a persistent capacity-strided cache.
+    This runs before decode sampling so FPFP tile boundaries are sampled.
+    """
+    out = []
+    for kernel in kernels:
+        if (kernel["name"] == _kv_cache_dequant_name("attn_qkT")
+                and kernel["stage"] == "generation"):
+            # Old dequantized K rows persist; match the decoder's one-token update.
+            shape = dict(kernel["shape"], K=1, source_token_count=1,
+                         cache_update="append", capacity_stride=capacity)
+            kernel = dict(kernel, shape=shape,
+                          args=_replace_integer_arg(kernel["args"], "-k", 1))
+        if kernel["backend"] != "sgemm_tcu":
+            out.append(kernel)
+            continue
+        shape = dict(kernel["shape"])
+        shape.update(B_layout="row_major_fp16", preserve_execution_m=True)
+        args = f"-m {shape['M']} -k {shape['K']} -n {shape['N']}"
+        if kernel["name"] == "attn_qkT":
+            transpose = dict(kernel)
+            transpose.update(name="attn_k_transpose", op="attn_k_transpose", kind="reorder",
+                             backend="head_transpose", app="head_concat",
+                             args=f"-batch 1 -seq {shape['N']} -heads 1 -headdim {shape['K']} -mode 2",
+                             calls_per_forward=config["num_layers"] * batch * config["num_key_value_heads"])
+            transpose["shape"] = {key: value for key, value in shape.items()
+                                  if key.startswith("decode_") or key in ("seq_kv", "logical_seq_kv")}
+            transpose["shape"].update(batch=1, seq=shape["N"], heads=1, headdim=shape["K"],
+                                      layout_from="row_major_fp16", layout_to="transposed_row_major_fp16",
+                                      producer=_kv_cache_dequant_name("attn_qkT"), consumer="attn_qkT")
+            if kernel["stage"] == "generation":
+                position = shape["N"] - 1
+                transpose["args"] = (f"-batch 1 -seq 1 -heads 1 -headdim {shape['K']} -mode 2"
+                                     f" -capacity {capacity} -offset {position}")
+                transpose["shape"].update(seq=1, source_token_count=1, cache_update="append",
+                    capacity_stride=capacity, cache_position=position,
+                    persistent_layout="transposed_row_major_fp16")
+            out.append(transpose)
+        out.append(dict(kernel, backend="fpfp_gemm_naive", app="fpfp_gemm_ffn_hw_naive",
+                        args=args, shape=shape))
+    return out
 
 
 def build_llm_kernels(model_name: str,
@@ -2418,7 +2487,9 @@ def build_llm_kernels(model_name: str,
                       hadamard_variant: str = DEFAULT_HADAMARD_VARIANT,
                       out_tokens: int = DEFAULT_LLM_OUT_TOKENS,
                       decode_measurement: str = DEFAULT_DECODE_MEASUREMENT,
-                      decode_sample_interval: int = DEFAULT_DECODE_SAMPLE_INTERVAL) -> dict:
+                      decode_sample_interval: int = DEFAULT_DECODE_SAMPLE_INTERVAL,
+                      c1_gemm_backend: str = "tcu",
+                      c2_attn_backend: str = "tcu") -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -2426,6 +2497,8 @@ def build_llm_kernels(model_name: str,
             f"{sorted(MODELS.keys())}"
         )
     config = MODELS[model_name]
+    if c1_gemm_backend not in {"tcu", "fpfp"}:
+        raise ValueError("C1 GEMM backend must be tcu or fpfp")
     if variant not in WORKLOAD_VARIANTS:
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
@@ -2479,6 +2552,8 @@ def build_llm_kernels(model_name: str,
                 softmax_k_stride=prefill_seq_len,
                 variant=variant,
                 hadamard_variant=hadamard_variant,
+                c1_gemm_backend=c1_gemm_backend,
+                c2_attn_backend=c2_attn_backend,
             ))
         elif stage == "generation":
             decode_kernels: list[dict] = []
@@ -2494,6 +2569,8 @@ def build_llm_kernels(model_name: str,
                     softmax_k_stride=cache_capacity,
                     variant=variant,
                     hadamard_variant=hadamard_variant,
+                    c1_gemm_backend=c1_gemm_backend,
+                    c2_attn_backend=c2_attn_backend,
                 )
 
                 for kernel in step_kernels:
@@ -2582,6 +2659,8 @@ def build_llm_kernels(model_name: str,
             "qblk": qblk,
             "variant": variant,
             "hadamard_variant": hadamard_variant,
+            "c1_gemm_backend": c1_gemm_backend,
+            "c2_attn_backend": c2_attn_backend,
             "quantization_policy": _quantization_policy(variant, qblk),
         },
         "kernels": kernels,
@@ -2787,7 +2866,7 @@ def _output_flows(role: str, targets: list[str], layout: str) -> list[dict]:
 def _gemm_a_layout(backend: str) -> str:
     if backend == FPINT_GEMM_IMPROVE_BACKEND:
         return "gemm_a_tiled"
-    if backend == "sgemm_tcu":
+    if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
         return "row_major_fp16"
     return "row_major"
 
@@ -2795,7 +2874,7 @@ def _gemm_a_layout(backend: str) -> str:
 def _gemm_w_layout(backend: str, wtrans: int = 0) -> str:
     if backend == FPINT_GEMM_IMPROVE_BACKEND:
         return "gemm_w_tiled_transposed" if wtrans else "gemm_w_tiled"
-    if backend == "sgemm_tcu":
+    if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
         return "row_major_fp16"
     return "row_major"
 
@@ -2811,7 +2890,7 @@ def _gemm_qparam_layout(backend: str) -> str | None:
 def _gemm_c_layout(backend: str) -> str:
     if backend == FPINT_GEMM_IMPROVE_BACKEND:
         return "gemm_c_tiled"
-    if backend == "sgemm_tcu":
+    if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
         return "row_major_fp16"
     return "row_major"
 
@@ -2935,7 +3014,7 @@ def _static_weight_inputs(op: str,
             _input_flow("W", f"param:{op}.weight", "row_major"),
             _input_flow("scale/zp", f"param:{op}.qparams", "row_major"),
         ]
-    if backend == "sgemm_tcu":
+    if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
         dequant_name = _sgemm_static_weight_dequant_name(op)
         if dequant_name in kernels_by_name:
             return [_input_flow("B", dequant_name, "row_major_fp16")]
@@ -3229,7 +3308,12 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         ], names) or "rope_q"
         a_layout = _producer_output_layout(kernels_by_name, a_source, _gemm_a_layout(backend))
         k_dequant_name = _kv_cache_dequant_name("attn_qkT")
-        if k_dequant_name in names:
+        if "attn_k_transpose" in names:
+            w_source = "attn_k_transpose"
+            scale_source = ""
+            w_layout = "transposed_row_major_fp16"
+            scale_layout = "row_major"
+        elif k_dequant_name in names:
             w_source = k_dequant_name
             scale_source = ""
             w_layout = "row_major_fp16"
@@ -3586,7 +3670,7 @@ def _kernel_input_layout(kernel: dict) -> str:
             return f"A:gemm_a_tiled + W:{w_layout} + scale/zp:gemm_scale_zp_tiled"
         if backend == FPINT_GEMM_NAIVE_BACKEND:
             return "A:row_major + W:row_major + scale/zp:row_major"
-        if backend == "sgemm_tcu":
+        if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
             return "A:row_major_fp16 + B:row_major_fp16"
         return "A:row_major + B:row_major"
 
@@ -3615,7 +3699,7 @@ def _kernel_output_layout(kernel: dict) -> str:
     if kind == "gemm":
         if backend == FPINT_GEMM_IMPROVE_BACKEND:
             return "C:gemm_c_tiled"
-        if backend == "sgemm_tcu":
+        if backend in {"sgemm_tcu", "fpfp_gemm_naive"}:
             return "C:row_major_fp16"
         return "C:row_major"
 
@@ -3768,6 +3852,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--qblk", type=int, default=DEFAULT_LLM_QBLK,
         help=f"QBLK for fpint GEMMs (default: {DEFAULT_LLM_QBLK}).",
     )
+    parser.add_argument("--c2-attn-backend", choices=("tcu", "fpfp"), default="tcu",
+                        help="FP16 attention engine for the logical C2 workload")
+    parser.add_argument("--c1-gemm-backend", choices=("tcu", "fpfp"), default="tcu",
+                        help="Arithmetic engine for the logical C1 workload")
     parser.add_argument(
         "--variant", default=DEFAULT_WORKLOAD_VARIANT, metavar="VARIANT",
         help=f"Workload variant (available: {', '.join(WORKLOAD_VARIANTS)}). "
@@ -3820,6 +3908,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         stages = parse_stages_csv(args.stage)
         payload = build_llm_kernels(
+            c1_gemm_backend=args.c1_gemm_backend,
+            c2_attn_backend=args.c2_attn_backend,
             model_name=args.model,
             stages=stages,
             batch=args.batch,

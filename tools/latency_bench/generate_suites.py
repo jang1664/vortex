@@ -19,7 +19,7 @@ from .suite import (
 )
 from .yaml_io import safe_load
 from .suite_io import write_suite_payload
-from .candidate_map import parse_execution_candidates, resolve_candidate_map, validate_snapshot
+from .candidate_map import parse_execution_candidates, resolve_candidate_map, validate_snapshot, resolve_c1_gemm_backend, resolve_c2_attn_backend
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,8 @@ class GenerateSuitesOptions:
     output_format: str = "yaml"
     candidate_map: Path | None = None
     candidates: tuple[str, ...] | None = None
+    c1_gemm_backend: str = "auto"
+    c2_attn_backend: str = "auto"
 
 
 def _case_without_fpga_bin(case: BenchCase) -> BenchCase:
@@ -151,7 +153,21 @@ def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
         raise ValueError("--candidates requires --candidate-map")
     experiment = resolve_candidate_map(options.candidate_map, selected) if options.candidate_map else {}
     repo_root = options.repo_root or find_repo_root()
+    try:
+        c1_backend = resolve_c1_gemm_backend(options.candidate_map, options.c1_gemm_backend)
+    except ValueError:
+        if options.c1_gemm_backend != "auto" or selected is None or "C1" in selected:
+            raise
+        c1_backend = "tcu"  # A partial run need not provision the excluded C1 image.
+    try:
+        c2_backend = resolve_c2_attn_backend(options.candidate_map, options.c2_attn_backend)
+    except ValueError:
+        if options.c2_attn_backend != "auto" or selected is None or "C2" in selected:
+            raise
+        c2_backend = "tcu"
     matrix_overrides = SuiteMatrixOverrides(
+        c1_gemm_backend=c1_backend,
+        c2_attn_backend=c2_backend,
         batch_values=tuple(options.batch_values),
         seq_len_values=tuple(options.seq_len_values),
         prefill_batch_values=tuple(options.prefill_batch_values),

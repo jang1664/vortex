@@ -131,6 +131,8 @@ class LoadedSuiteArtifacts:
 
 @dataclass(frozen=True)
 class SuiteMatrixOverrides:
+    c1_gemm_backend: str = "tcu"
+    c2_attn_backend: str = "tcu"
     batch_values: tuple[int, ...] = ()
     seq_len_values: tuple[int, ...] = ()
     prefill_batch_values: tuple[int, ...] = ()
@@ -155,6 +157,8 @@ def _matrix_values_spec(values: tuple[int, ...]) -> dict[str, list[int]]:
 
 def _has_suite_matrix_overrides(overrides: SuiteMatrixOverrides) -> bool:
     return any((
+        overrides.c1_gemm_backend != "tcu",
+        overrides.c2_attn_backend != "tcu",
         overrides.batch_values,
         overrides.seq_len_values,
         overrides.prefill_batch_values,
@@ -312,6 +316,27 @@ def _apply_suite_matrix_overrides(raw: dict[str, Any], overrides: SuiteMatrixOve
         return raw
 
     out = copy.deepcopy(raw)
+    if overrides.c1_gemm_backend == "fpfp":
+        for workload in out.get("workloads", []):
+            workload["c1_gemm_backend"] = "fpfp"
+        # Any remaining TCU attention cannot reuse C1's FPFP timing.
+        bins = out.setdefault("fpga_bins", {})
+        bins.setdefault("by_backend", {})["sgemm_tcu"] = "C2"
+        bins.setdefault("by_app", {})["sgemm_tcu"] = "C2"
+        bins["by_backend"]["fpfp_gemm_naive"] = "C1"
+        bins["by_app"]["fpfp_gemm_ffn_hw_naive"] = "C1"
+    if overrides.c2_attn_backend == "fpfp":
+        from tools.workload.gen_kernel_cfgs import ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT
+
+        bins = out.setdefault("fpga_bins", {})
+        for workload in out.get("workloads", []):
+            workload["c2_attn_backend"] = "fpfp"
+            variant = str(workload.get("variant", ""))
+            if variant in (ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT,
+                           ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT + "_spinquant"):
+                # Same FPFP app can run on both C1 and C2; keep their measurements separate.
+                bins.setdefault("by_variant_app", {}).setdefault(variant, {})[
+                    "fpfp_gemm_ffn_hw_naive"] = "C2"
     case_matrices = out.get("case_matrices") or []
     if isinstance(case_matrices, list):
         out["case_matrices"] = [
@@ -344,6 +369,10 @@ def resolve_case_fpga_bin(suite: BenchSuite, case: BenchCase) -> str:
         return case.fpga_bin
 
     spec = suite.fpga_bins or {}
+    by_variant_app = spec.get("by_variant_app") or {}
+    fpga_bin = _mapping_value(by_variant_app.get(case.variant), case.app)
+    if fpga_bin:
+        return fpga_bin
     by_app = spec.get("by_app") or {}
     by_backend = spec.get("by_backend") or {}
     by_kind = spec.get("by_kind") or spec.get("by_kernel") or spec.get("kernels") or {}
@@ -923,6 +952,8 @@ def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, A
         raw.get("decode-sample-interval", DEFAULT_DECODE_SAMPLE_INTERVAL),
     ))
     payload = build_llm_kernels(
+        c1_gemm_backend=str(raw.get("c1_gemm_backend", "tcu")),
+        c2_attn_backend=str(raw.get("c2_attn_backend", "tcu")),
         model_name=model,
         stages=stages,
         batch=int(raw.get("batch", DEFAULT_LLM_BATCH)),

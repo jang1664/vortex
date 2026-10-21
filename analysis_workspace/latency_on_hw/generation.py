@@ -9,7 +9,7 @@ from pathlib import Path
 VALUE_OPTIONS = (
     "batches", "seq-lens", "prefill-batches", "prefill-seq-lens",
     "generation-batches", "generation-seq-lens", "generation-out-tokens",
-    "generation-max-seq-len", "fpga-bin-default",
+    "generation-max-seq-len", "fpga-bin-default", "c1-gemm-backend", "c2-attn-backend",
 )
 REPEATED_OPTIONS = (
     "fpga-bin-remap", "fpga-bin-by-app", "fpga-bin-by-backend", "fpga-bin-by-kind",
@@ -27,7 +27,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
                    "prefill-batches": "prefill-batch-list", "generation-batches": "generation-batch-list",
                    "prefill-seq-lens": "prefill-seq-len-list", "generation-seq-lens": "generation-seq-len-list"}
         flags = ["--" + name] + (["--" + aliases[name]] if name in aliases else [])
-        group.add_argument(*flags)
+        if name in {"c1-gemm-backend", "c2-attn-backend"}:
+            group.add_argument(*flags, choices=("auto", "tcu", "fpfp"),
+                               help="FP16 GEMM engine (default: infer from candidate alias config)")
+        else:
+            group.add_argument(*flags)
     for name in REPEATED_OPTIONS:
         flags = ["--" + name] + (["--fpga-bin-by-kernel"] if name == "fpga-bin-by-kind" else [])
         group.add_argument(*flags, action="append", default=[])

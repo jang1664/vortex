@@ -536,9 +536,11 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-suites",
         help="Expand a base suite and export one runnable suite per (app, FPGA bin) group.",
     )
+    gen.add_argument("--c2-attn-backend", choices=("auto", "tcu", "fpfp"), default="auto")
+    gen.add_argument("--c1-gemm-backend", choices=("auto", "tcu", "fpfp"), default="auto")
     gen.add_argument("--candidate-map", type=Path, default=None)
     gen.add_argument("--candidates", type=execution_candidates_argument, default=None,
-                     help="Generate only selected execution sources (comma-separated C1,C3,C4).")
+                     help="Generate only selected execution sources (comma-separated C1,C2,C3,C4).")
     gen.add_argument("--output-format", choices=("yaml", "pkl"), default="yaml")
     gen.add_argument("--suite", required=True, help="Base suite YAML path.")
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
@@ -1017,6 +1019,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
         index = generate_suites(GenerateSuitesOptions(
+            c1_gemm_backend=args.c1_gemm_backend,
+            c2_attn_backend=args.c2_attn_backend,
             suite=Path(args.suite),
             out_dir=Path(args.out),
             overwrite=args.overwrite,

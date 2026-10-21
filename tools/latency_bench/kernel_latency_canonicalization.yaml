@@ -11,6 +11,13 @@ app_policies: &app_policies
       -m: 16
       -n: 16
       -k: 32
+  # C1/C2 rev8: FPFP ROW=8, COL=16; M executes without padding.
+  fpfp_gemm_ffn_hw_naive:
+    mode: aligned
+    align:
+      -m: 1
+      -n: 16
+      -k: 8
   fpint_gemm_ffn_hw:
     mode: aligned
     align:

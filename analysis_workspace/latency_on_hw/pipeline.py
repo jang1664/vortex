@@ -1064,6 +1064,8 @@ class PipelineSettings:
     require_convergence: bool = False
     python: str = sys.executable
     candidates: tuple[str, ...] = EXECUTION_BINS
+    c1_gemm_backend: str = "tcu"
+    c2_attn_backend: str = "tcu"
     case_filters: tuple[str, ...] = ()
     kernel_variants: tuple[str, ...] = ()
     power_skip_apps: tuple[str, ...] = ()
@@ -1080,6 +1082,14 @@ class PipelineSettings:
         from tools.latency_bench.candidate_map import parse_execution_candidates
 
         object.__setattr__(self, "candidates", parse_execution_candidates(",".join(self.candidates)))
+        if self.c1_gemm_backend not in {"tcu", "fpfp"}:
+            raise ValueError("resolved C1 GEMM backend must be tcu or fpfp")
+        if self.c2_attn_backend not in {"tcu", "fpfp"}:
+            raise ValueError("resolved C2 attention backend must be tcu or fpfp")
+
+    @property
+    def execution_bins(self) -> tuple[str, ...]:
+        return ("C1", "C2", "C3", "C4") if "fpfp" in (self.c1_gemm_backend, self.c2_attn_backend) else EXECUTION_BINS
 
     @property
     def state_root(self) -> Path:
@@ -1174,7 +1184,7 @@ def _refinement_checkpoint(settings: PipelineSettings, model: str, label: str) -
 
 
 def _raw_dbs(settings: PipelineSettings, model: str) -> tuple[Path, ...]:
-    return tuple(settings.result_root(model) / label / "raw_db.csv" for label in EXECUTION_BINS)
+    return tuple(settings.result_root(model) / label / "raw_db.csv" for label in settings.execution_bins)
 
 
 def _generate_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
@@ -1182,9 +1192,13 @@ def _generate_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
     from tools.latency_bench.candidate_map import resolve_candidate_map
 
     snapshot = resolve_candidate_map(settings.candidate_map_path,
-                                     None if settings.candidates == EXECUTION_BINS else settings.candidates)
+                                     None if settings.candidates == settings.execution_bins else settings.candidates)
+    options = tuple(item for flag, value in zip(settings.generation_options[::2], settings.generation_options[1::2])
+                    if flag not in {"--c1-gemm-backend", "--c2-attn-backend"} for item in (flag, value))
+    options += ("--c1-gemm-backend", settings.c1_gemm_backend,
+                "--c2-attn-backend", settings.c2_attn_backend)
     arguments = workload_arguments(settings.suite_size, settings.decode_measurement,
-                                   settings.decode_sample_interval, settings.generation_options)
+                                   settings.decode_sample_interval, options)
     script = settings.workspace / "make_cases.sh"
     return tuple(TaskSpec(
         key=f"generate:{model}", stage="generate",
@@ -1203,7 +1217,7 @@ def _generate_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
         command=("bash", str(script), "--input", str(settings.workspace / "suites" / settings.model_key(model)),
                  "--output", str(settings.suite_root(model)), "--candidate-map", str(settings.candidate_map_path),
                  "--output-format", settings.output_format,
-                 *(("--candidates", ",".join(settings.candidates)) if settings.candidates != EXECUTION_BINS else ()),
+                 *(("--candidates", ",".join(settings.candidates)) if settings.candidates != settings.execution_bins else ()),
                  *arguments),
         metadata={"environment": {"PYTHON": settings.python, "CANDIDATE_MAP": str(settings.candidate_map_path),
                                   "CANDIDATES": "", "OUTPUT_FORMAT": settings.output_format}},
@@ -1368,7 +1382,7 @@ def _compose_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
         key = settings.model_key(model)
         inputs = {"suites": _path_identity(settings.suite_root(model))}
         inputs.update({f"raw_{label}": _path_identity(path)
-                       for label, path in zip(EXECUTION_BINS, _raw_dbs(settings, model))})
+                       for label, path in zip(settings.execution_bins, _raw_dbs(settings, model))})
         outputs = tuple(OutputSpec(settings.composed_root / key / name)
                         for name in ("composed.csv", "summary.csv", "manifest.json"))
         command = (
@@ -1378,7 +1392,7 @@ def _compose_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             "--llama2-suites", str(settings.suite_root("llama2")),
             "--llama3-suites", str(settings.suite_root("llama3")),
             "--models", key, "--no-combine", "--out", "{attempt_root}",
-            "--raw-db-subdirs", ",".join(EXECUTION_BINS),
+            "--raw-db-subdirs", ",".join(settings.execution_bins),
         )
         for app in settings.power_skip_apps:
             command += ("--skip-power-app", app)
@@ -1576,7 +1590,7 @@ def _legacy_writer(settings: PipelineSettings) -> Path | None:
     """Conservatively recognize the old runner's explicit running state."""
 
     for model in settings.models:
-        for label in EXECUTION_BINS:
+        for label in settings.execution_bins:
             state = settings.result_root(model) / label / "latest" / "run_state.json"
             try:
                 payload = json.loads(state.read_text())
@@ -1771,7 +1785,7 @@ def _validate_excluded_prerequisites(
     first = STAGES.index(selected[0])
     requested_filters = settings.case_filters
     if first >= STAGES.index("compose"):
-        settings = replace(settings, candidates=EXECUTION_BINS, case_filters=(), force_measurement=False)
+        settings = replace(settings, candidates=settings.execution_bins, case_filters=(), force_measurement=False)
     for stage in STAGES[:first]:
         if settings.offline_inputs is not None and stage in ("generate", "run", "refine"):
             # Historical composition does not certify current-source acquisition
@@ -1868,10 +1882,10 @@ def _full_input_problems(settings: PipelineSettings, stage: str) -> list[str]:
             problems.append(str(error))
         return problems
     for model in settings.models:
-        for label, path in zip(EXECUTION_BINS, _raw_dbs(settings, model)):
+        for label, path in zip(settings.execution_bins, _raw_dbs(settings, model)):
             if not path.is_file():
                 problems.append(
-                    f"{stage}:{model}: requires all execution candidates C1,C3,C4; "
+                    f"{stage}:{model}: requires all execution candidates {','.join(settings.execution_bins)}; "
                     f"missing {label} raw DB: {path}; measure with --candidates {label} --to run"
                 )
         # Raw files alone cannot make a subset-generated workload complete.
@@ -1884,7 +1898,7 @@ def _full_input_problems(settings: PipelineSettings, stage: str) -> list[str]:
             try:
                 payload = safe_load(index.read_text())
                 labels = {entry["fpga_bin"] for entry in payload["generated"]}
-                missing = set(EXECUTION_BINS) - labels
+                missing = set(settings.execution_bins) - labels
                 if missing:
                     problems.append(
                         f"{stage}:{model}: incomplete {workload_stage} suite index {index}; "
@@ -1945,7 +1959,7 @@ def run_pipeline(
         return (0 if inspect_only else 2), summary
     for stage in selected:
         problems = _full_input_problems(settings, stage)
-        if stage == "compose" and settings.candidates != EXECUTION_BINS and not problems:
+        if stage == "compose" and settings.candidates != settings.execution_bins and not problems:
             problems = _validate_excluded_prerequisites(
                 settings, ("compose",), store, publish_adoption=not inspect_only
             )
@@ -2039,7 +2053,7 @@ def run_pipeline(
             summary["executed"].append(task.key)
         if STAGES.index(stage) >= STAGES.index("refine") and settings.offline_inputs is None:
             for model in settings.models:
-                for label in (settings.candidates if stage == "refine" else EXECUTION_BINS):
+                for label in (settings.candidates if stage == "refine" else settings.execution_bins):
                     if stage == "refine" and not any(task.key == f"refine:{model}:{label}" for task in tasks):
                         continue  # A filtered source with no interpolation candidates has no task/checkpoint.
                     evidence = inspect_refinement_evidence(
@@ -2082,8 +2096,8 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--workspace", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--suite-size", choices=("full", "quick"), default=os.environ.get("SUITE_SIZE", "full"))
     parser.add_argument("--models", type=_parse_models, default=MODEL_NAMES)
-    parser.add_argument("--candidates", type=execution_candidates_argument, default=EXECUTION_BINS,
-                        help="Execution sources for run/refine (comma-separated C1,C3,C4); downstream stages still require all sources.")
+    parser.add_argument("--candidates", type=execution_candidates_argument, default=None,
+                        help="Execution sources for run/refine (comma-separated C1,C2,C3,C4); downstream stages still require all sources.")
     parser.add_argument("--from", dest="from_stage", choices=STAGES, default="generate")
     parser.add_argument("--to", dest="to_stage", choices=STAGES, default="plot")
     parser.add_argument("--rerun", choices=STAGES, nargs="?", const="run")
@@ -2135,6 +2149,30 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         args.out_tokens = counts[0]
     if args.out_tokens < 1 or args.validation_samples < 1 or args.max_iterations < 0:
         parser.error("out-tokens/validation-samples must be positive and max-iterations nonnegative")
+    from tools.latency_bench.candidate_map import resolve_c1_gemm_backend, resolve_c2_attn_backend
+    candidate_map_path = (args.candidate_map or Path(os.environ.get("CANDIDATE_MAP", str(args.workspace / "candidate_fpga_bins.yaml")))).resolve()
+    try:
+        if args.offline_inputs:
+            from tools.latency_bench.suite_io import indexed_suites, read_suite_payload
+            for label, attribute in (("C1", "c1_gemm_backend"), ("C2", "c2_attn_backend")):
+                frozen_apps = set()
+                for model in args.models:
+                    index = args.offline_inputs / "suites" / MODEL_KEYS[model] / f"{label}_prefill/index.yaml"
+                    if label == "C2" and not index.exists():
+                        continue  # Legacy TCU experiments reuse C1 for C2 attention.
+                    for _, path in indexed_suites(index):
+                        frozen_apps.update(case.get("app") for case in read_suite_payload(path).get("cases", []))
+                captured_backend = "fpfp" if "fpfp_gemm_ffn_hw_naive" in frozen_apps else "tcu"
+                if getattr(args, attribute) not in (None, "auto", captured_backend):
+                    raise ValueError(f"{label} GEMM backend differs from the frozen offline suites")
+                setattr(args, attribute, captured_backend)
+        else:
+            args.c1_gemm_backend = resolve_c1_gemm_backend(candidate_map_path, args.c1_gemm_backend or "auto")
+            args.c2_attn_backend = resolve_c2_attn_backend(candidate_map_path, args.c2_attn_backend or "auto")
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    if args.candidates is None:
+        args.candidates = ("C1", "C2", "C3", "C4") if "fpfp" in (args.c1_gemm_backend, args.c2_attn_backend) else EXECUTION_BINS
     settings = PipelineSettings(
         tag=args.tag, workspace=args.workspace.resolve(), state_base=args.state_root.resolve(),
         suite_size=args.suite_size, models=tuple(args.models), out_tokens=args.out_tokens,
@@ -2143,9 +2181,11 @@ def cli_main(argv: Sequence[str] | None = None) -> int:
         adopt_legacy=args.adopt_legacy, require_convergence=args.require_convergence,
         python=args.python,
         candidates=args.candidates,
+        c1_gemm_backend=args.c1_gemm_backend,
+        c2_attn_backend=args.c2_attn_backend,
         case_filters=tuple(args.filter), kernel_variants=tuple(args.kernel_variant),
         power_skip_apps=tuple(args.skip_power_app),
-        candidate_map=(args.candidate_map or Path(os.environ.get("CANDIDATE_MAP", str(args.workspace / "candidate_fpga_bins.yaml")))).resolve(),
+        candidate_map=candidate_map_path,
         decode_measurement=args.decode_measurement,
         decode_sample_interval=args.decode_sample_interval,
         output_format=args.output_format,

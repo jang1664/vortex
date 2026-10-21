@@ -36,8 +36,10 @@ Override options:
   --generation-max-seq-len N     Fix generation KV-cache capacity/stride.
   --decode-measurement MODE      Generation mode: exact or sampled.
   --decode-sample-interval N     Sampling interval for sampled mode.
+  --c2-attn-backend auto|tcu|fpfp  C2 attention engine; auto reads its config.
+  --c1-gemm-backend auto|tcu|fpfp  C1 arithmetic engine; auto reads its config.
   --candidate-map PATH          Candidate selection (default: local candidate_fpga_bins.yaml).
-  --candidates LIST             Execution sources to generate: C1,C3,C4 (also CANDIDATES env).
+  --candidates LIST             Execution sources to generate: C1,C2,C3,C4 (also CANDIDATES env).
   --output-format FORMAT        pkl (default) or yaml.
   --fpga-bin-remap OLD=NEW       Remap a resolved FPGA bin; repeat as needed.
   --fpga-bin-default BIN         Override fpga_bins.default.
@@ -190,6 +192,14 @@ while [[ $# -gt 0 ]]; do
             CANDIDATES="${2:?--candidates requires a value}"
             shift 2
             ;;
+        --c2-attn-backend)
+            C2_ATTN_BACKEND="$2"
+            shift 2
+            ;;
+        --c1-gemm-backend)
+            C1_GEMM_BACKEND="$2"
+            shift 2
+            ;;
         --candidate-map|--output-format)
             if [[ $# -lt 2 ]]; then echo "Error: $1 requires a value" >&2; exit 1; fi
             if [[ "$1" == "--candidate-map" ]]; then CANDIDATE_MAP="$2"; else OUTPUT_FORMAT="$2"; fi
@@ -295,7 +305,7 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-GENERATE_ARGS=(--candidate-map "${CANDIDATE_MAP}" --output-format "${OUTPUT_FORMAT}")
+GENERATE_ARGS=(--c1-gemm-backend "${C1_GEMM_BACKEND:-auto}" --c2-attn-backend "${C2_ATTN_BACKEND:-auto}" --candidate-map "${CANDIDATE_MAP}" --output-format "${OUTPUT_FORMAT}")
 if [[ -n "${CANDIDATES}" ]]; then
     GENERATE_ARGS+=(--candidates "${CANDIDATES}")
 fi

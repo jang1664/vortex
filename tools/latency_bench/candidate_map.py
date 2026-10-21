@@ -12,15 +12,13 @@ from .fpga_clock import XCLBIN_INFO_FILENAMES, kernel_clock_period_s
 from .yaml_io import safe_load
 
 PROVENANCE_COLUMNS = ("fpga_bin_alias", "selection_digest", "fpga_period_s", "fpga_clock_source")
-EXECUTION_CANDIDATES = ("C1", "C3", "C4")
+EXECUTION_CANDIDATES = ("C1", "C2", "C3", "C4")
 
 
 def parse_execution_candidates(value: str) -> tuple[str, ...]:
     labels = tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
-    if "C2" in labels:
-        raise ValueError("C2 is a composed variant and has no independent measurement; select its execution sources (C1,C3 for current suites)")
     if not labels or set(labels) - set(EXECUTION_CANDIDATES):
-        raise ValueError("--candidates expects a comma-separated subset of C1,C3,C4")
+        raise ValueError("--candidates expects a comma-separated subset of C1,C2,C3,C4")
     return tuple(label for label in EXECUTION_CANDIDATES if label in labels)
 
 
@@ -29,6 +27,45 @@ def execution_candidates_argument(value: str) -> tuple[str, ...]:
         return parse_execution_candidates(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def resolve_c1_gemm_backend(path: Path | None, requested: str = "auto") -> str:
+    return resolve_candidate_gemm_backend(path, "C1", requested)
+
+
+def resolve_c2_attn_backend(path: Path | None, requested: str = "auto") -> str:
+    return resolve_candidate_gemm_backend(path, "C2", requested)
+
+
+def resolve_candidate_gemm_backend(path: Path | None, candidate: str, requested: str = "auto") -> str:
+    """Select the candidate FP16 engine from its image config, rejecting incompatible requests."""
+    import shlex
+    import subprocess
+    if requested not in {"auto", "tcu", "fpfp"}:
+        raise ValueError(f"{candidate} GEMM backend must be auto, tcu or fpfp")
+    if path is None:
+        return "tcu" if requested == "auto" else requested
+    with path.open() as source:
+        mapping = safe_load(source)["candidates"]
+    if candidate not in mapping:
+        if requested == "fpfp":
+            raise ValueError(f"FPFP {candidate} selection requires {candidate} in the candidate map")
+        return "tcu"
+    alias = mapping[candidate]
+    config = resolve_fpga_bin_artifacts(alias, require_alias=True).config
+    flags = subprocess.check_output(
+        ["bash", "-c", 'set -e; source "$1" >/dev/null; printf "%s" "$CONFIGS"',
+         "candidate-backend", str(config)], text=True)
+    defines = set(shlex.split(flags))
+    available = set()
+    if "-DGEMM_NAIVE_FP16_ENABLE" in defines:
+        available.add("fpfp")
+    if "-DEXT_TCU_ENABLE" in defines:
+        available.add("tcu")
+    backend = ("fpfp" if "fpfp" in available else "tcu") if requested == "auto" else requested
+    if backend not in available:
+        raise ValueError(f"{candidate} alias {alias} does not support {backend} GEMM ({config})")
+    return backend
 
 
 def _digest(candidates: dict) -> str:

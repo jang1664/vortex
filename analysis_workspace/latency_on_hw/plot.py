@@ -245,6 +245,7 @@ RAW_DB_ROOT_NAMES = (
 )
 GEMM_DYNAMIC_POWER_LABELS = {
     "sgemm_tcu": "FP-FP gemm",
+    "fpfp_gemm_ffn_hw_naive": "FP-FP gemm",
     "fpint_gemm_ffn_hw_naive": "FP-INT naive gemm",
     "fpint_gemm_ffn_hw": "FP-INT gemm",
 }
@@ -258,6 +259,7 @@ KERNEL_KIND_BY_APP = {
     "eladd_layout_fused": "eladd",
     "elmul": "elmul",
     "elmul_layout_fused": "elmul",
+    "fpfp_gemm_ffn_hw_naive": "gemm",
     "fpint_gemm_ffn_hw": "gemm",
     "fpint_gemm_ffn_hw_naive": "gemm",
     "hadamard": "hadamard",

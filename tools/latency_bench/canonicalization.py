@@ -52,8 +52,8 @@ def canonicalize_args(
     policies: dict[str, Any],
     preserve_execution_m: bool = False,
 ) -> CanonicalizedArgs:
-    if preserve_execution_m and app not in {"fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw_naive"}:
-        raise ValueError("preserve_execution_m is supported only for FPINT GEMM")
+    if preserve_execution_m and app not in {"fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw_naive", "fpfp_gemm_ffn_hw_naive"}:
+        raise ValueError("preserve_execution_m is supported only for hardware GEMM")
     default_policy = policies.get("default")
     bin_policy = policies.get(fpga_bin_label, default_policy)
     if not isinstance(bin_policy, dict):
