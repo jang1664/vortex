@@ -1,0 +1,62 @@
+{
+  "model_execution": "serial",
+  "stages": [
+    {
+      "adopted": [],
+      "blocked": [],
+      "executed": [
+        "compose:llama2",
+        "compose:llama3",
+        "compose:combined:llama2+llama3",
+        "prepare:llama2",
+        "prepare:llama3",
+        "plot:kernel_dynamic_power:default",
+        "plot:llama_e2e_gemm_layout_vector_stacked:default",
+        "plot:llama_e2e_gemm_layout_vector_stacked_without_hadamard:default",
+        "plot:llama_e2e_no_area_norm_stacked:default",
+        "plot:llama_e2e_no_area_norm_stacked_without_hadamard:default",
+        "plot:llama_energy_no_area_norm_gemm_layout_vector_stacked:power_avg_W",
+        "plot:llama_energy_no_area_norm_gemm_layout_vector_stacked:power_dynamic_avg_W",
+        "plot:llama_energy_no_area_norm_gemm_layout_vector_stacked:power_fpga_avg_W",
+        "plot:llama_energy_no_area_norm_gemm_layout_vector_stacked:power_fpga_dequant_dynamic_W",
+        "plot:llama_gemm_only:default",
+        "plot:llama_gemm_only_no_area_norm:default"
+      ],
+      "failed": [],
+      "range": [
+        "compose",
+        "prepare",
+        "plot"
+      ],
+      "reused": [],
+      "settings": {
+        "adopt_legacy": false,
+        "candidates": [
+          "C1",
+          "C2",
+          "C3",
+          "C4"
+        ],
+        "formats": [
+          "png",
+          "pdf",
+          "svg"
+        ],
+        "max_iterations": 3,
+        "models": [
+          "llama2",
+          "llama3"
+        ],
+        "offline_inputs": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/latency_on_hw/docs/rev8_v2/plot_inputs",
+        "out_tokens": 128,
+        "require_convergence": false,
+        "suite_size": "full",
+        "target_error": 0.05,
+        "validation_samples": 3
+      },
+      "tag": "rev8_v2",
+      "tasks": []
+    }
+  ],
+  "tag": "rev8_v2"
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "candidate": "C1",
+    "case": "llama2_decode",
+    "pass_output": true,
+    "violations": 0,
+    "max_abs": 0.001953125,
+    "relative_l2": 0.000526769635413,
+    "transpose_calls": 32,
+    "transpose_cycles_mean": 43861.0625,
+    "key_dequant_cycles_mean": 17895.8125,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c1_fpfp/rev8_v2_results/llama2_decode/verify/profile.csv"
+  },
+  {
+    "candidate": "C1",
+    "case": "llama2_prefill",
+    "pass_output": true,
+    "violations": 1467,
+    "max_abs": 0.0126953125,
+    "relative_l2": 0.00103510684433,
+    "transpose_calls": 32,
+    "transpose_cycles_mean": 124695.78125,
+    "key_dequant_cycles_mean": 59349.1875,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c1_fpfp/rev8_v2_results/llama2_prefill/verify/profile.csv"
+  },
+  {
+    "candidate": "C1",
+    "case": "llama3_decode",
+    "pass_output": true,
+    "violations": 0,
+    "max_abs": 0.001953125,
+    "relative_l2": 0.000479829083106,
+    "transpose_calls": 8,
+    "transpose_cycles_mean": 43777.125,
+    "key_dequant_cycles_mean": 17821,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c1_fpfp/rev8_v2_results/llama3_decode/verify/profile.csv"
+  },
+  {
+    "candidate": "C1",
+    "case": "llama3_prefill",
+    "pass_output": true,
+    "violations": 1,
+    "max_abs": 0.00390625,
+    "relative_l2": 0.000410888825758,
+    "transpose_calls": 8,
+    "transpose_cycles_mean": 125173.25,
+    "key_dequant_cycles_mean": 59386.375,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c1_fpfp/rev8_v2_results/llama3_prefill/verify/profile.csv"
+  },
+  {
+    "candidate": "C2",
+    "case": "llama2-7b_decode1024",
+    "pass_output": true,
+    "violations": 0,
+    "max_abs": 0.0009765625,
+    "relative_l2": 0.000393037279455,
+    "transpose_calls": 32,
+    "transpose_cycles_mean": 43665.78125,
+    "key_dequant_cycles_mean": 17899.53125,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c2_fpfp/rev8_v2_results/llama2-7b_decode1024/verify/profile.csv"
+  },
+  {
+    "candidate": "C2",
+    "case": "llama2-7b_prefill32",
+    "pass_output": true,
+    "violations": 1451,
+    "max_abs": 0.0126953125,
+    "relative_l2": 0.00103540852769,
+    "transpose_calls": 32,
+    "transpose_cycles_mean": 123641.4375,
+    "key_dequant_cycles_mean": 59489.3125,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c2_fpfp/rev8_v2_results/llama2-7b_prefill32/verify/profile.csv"
+  },
+  {
+    "candidate": "C2",
+    "case": "llama3-8b_prefill32",
+    "pass_output": true,
+    "violations": 1,
+    "max_abs": 0.00390625,
+    "relative_l2": 0.000411280230174,
+    "transpose_calls": 8,
+    "transpose_cycles_mean": 124431.875,
+    "key_dequant_cycles_mean": 59497.625,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c2_fpfp/rev8_v2_results/llama3-8b_prefill32/verify/profile.csv"
+  },
+  {
+    "candidate": "C2",
+    "case": "llama3_decode1024",
+    "pass_output": true,
+    "violations": 0,
+    "max_abs": 0.0009765625,
+    "relative_l2": 0.000422043479708,
+    "transpose_calls": 8,
+    "transpose_cycles_mean": 43368.375,
+    "key_dequant_cycles_mean": 17999.375,
+    "profile": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_c2_fpfp/rev8_v2_results/llama3_decode1024/verify/profile.csv"
+  }
+]

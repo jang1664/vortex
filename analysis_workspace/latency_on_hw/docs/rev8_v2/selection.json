@@ -1,0 +1,381 @@
+{
+  "filter": "stage=generation & shape.cache_update=append & (name=attn_k_transpose | name=kv_cache_dequant_k_to_attn_qkT)",
+  "models": {
+    "llama2": [
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1024",
+        "name": "attn_k_transpose",
+        "exec_key": "88db6880df"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1056",
+        "name": "attn_k_transpose",
+        "exec_key": "43366a3977"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1088",
+        "name": "attn_k_transpose",
+        "exec_key": "163b15a333"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1120",
+        "name": "attn_k_transpose",
+        "exec_key": "ad51efb6dd"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1151",
+        "name": "attn_k_transpose",
+        "exec_key": "738d4750fe"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2048",
+        "name": "attn_k_transpose",
+        "exec_key": "af3c44741e"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2080",
+        "name": "attn_k_transpose",
+        "exec_key": "5b6438d529"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2112",
+        "name": "attn_k_transpose",
+        "exec_key": "7345730b62"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2144",
+        "name": "attn_k_transpose",
+        "exec_key": "f2b319211a"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2175",
+        "name": "attn_k_transpose",
+        "exec_key": "85b9078059"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4096",
+        "name": "attn_k_transpose",
+        "exec_key": "e5448cad7a"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4128",
+        "name": "attn_k_transpose",
+        "exec_key": "b3d6a4e001"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4160",
+        "name": "attn_k_transpose",
+        "exec_key": "40dd5001e2"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4192",
+        "name": "attn_k_transpose",
+        "exec_key": "f6cd547524"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4223",
+        "name": "attn_k_transpose",
+        "exec_key": "2784e92ef8"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8192",
+        "name": "attn_k_transpose",
+        "exec_key": "3174133fc7"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8224",
+        "name": "attn_k_transpose",
+        "exec_key": "805f413b0c"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8256",
+        "name": "attn_k_transpose",
+        "exec_key": "fb9228cb02"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8288",
+        "name": "attn_k_transpose",
+        "exec_key": "9abba16982"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8319",
+        "name": "attn_k_transpose",
+        "exec_key": "75ebb449f3"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16384",
+        "name": "attn_k_transpose",
+        "exec_key": "614122a861"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16416",
+        "name": "attn_k_transpose",
+        "exec_key": "736a2749eb"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16448",
+        "name": "attn_k_transpose",
+        "exec_key": "57ebb477af"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16480",
+        "name": "attn_k_transpose",
+        "exec_key": "fc46ef2c07"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16511",
+        "name": "attn_k_transpose",
+        "exec_key": "2834e75084"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32768",
+        "name": "attn_k_transpose",
+        "exec_key": "94990fb152"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32800",
+        "name": "attn_k_transpose",
+        "exec_key": "7638fc8811"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32832",
+        "name": "attn_k_transpose",
+        "exec_key": "3ddfc2f3c0"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32864",
+        "name": "attn_k_transpose",
+        "exec_key": "60f9c2ccfd"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32895",
+        "name": "attn_k_transpose",
+        "exec_key": "632ab13c90"
+      },
+      {
+        "app": "kv_cache_dequant_w4a16",
+        "args": "-k 1 -n 128 -q 128 -d 1 -t 1 --quant-mode spinquant_signed_asymmetric",
+        "name": "kv_cache_dequant_k_to_attn_qkT",
+        "exec_key": "0f6382bab0"
+      }
+    ],
+    "llama3": [
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1024",
+        "name": "attn_k_transpose",
+        "exec_key": "88db6880df"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1056",
+        "name": "attn_k_transpose",
+        "exec_key": "43366a3977"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1088",
+        "name": "attn_k_transpose",
+        "exec_key": "163b15a333"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1120",
+        "name": "attn_k_transpose",
+        "exec_key": "ad51efb6dd"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 1151",
+        "name": "attn_k_transpose",
+        "exec_key": "738d4750fe"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2048",
+        "name": "attn_k_transpose",
+        "exec_key": "af3c44741e"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2080",
+        "name": "attn_k_transpose",
+        "exec_key": "5b6438d529"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2112",
+        "name": "attn_k_transpose",
+        "exec_key": "7345730b62"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2144",
+        "name": "attn_k_transpose",
+        "exec_key": "f2b319211a"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 2175",
+        "name": "attn_k_transpose",
+        "exec_key": "85b9078059"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4096",
+        "name": "attn_k_transpose",
+        "exec_key": "e5448cad7a"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4128",
+        "name": "attn_k_transpose",
+        "exec_key": "b3d6a4e001"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4160",
+        "name": "attn_k_transpose",
+        "exec_key": "40dd5001e2"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4192",
+        "name": "attn_k_transpose",
+        "exec_key": "f6cd547524"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 4223",
+        "name": "attn_k_transpose",
+        "exec_key": "2784e92ef8"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8192",
+        "name": "attn_k_transpose",
+        "exec_key": "3174133fc7"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8224",
+        "name": "attn_k_transpose",
+        "exec_key": "805f413b0c"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8256",
+        "name": "attn_k_transpose",
+        "exec_key": "fb9228cb02"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8288",
+        "name": "attn_k_transpose",
+        "exec_key": "9abba16982"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 8319",
+        "name": "attn_k_transpose",
+        "exec_key": "75ebb449f3"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16384",
+        "name": "attn_k_transpose",
+        "exec_key": "614122a861"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16416",
+        "name": "attn_k_transpose",
+        "exec_key": "736a2749eb"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16448",
+        "name": "attn_k_transpose",
+        "exec_key": "57ebb477af"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16480",
+        "name": "attn_k_transpose",
+        "exec_key": "fc46ef2c07"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 16511",
+        "name": "attn_k_transpose",
+        "exec_key": "2834e75084"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32768",
+        "name": "attn_k_transpose",
+        "exec_key": "94990fb152"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32800",
+        "name": "attn_k_transpose",
+        "exec_key": "7638fc8811"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32832",
+        "name": "attn_k_transpose",
+        "exec_key": "3ddfc2f3c0"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32864",
+        "name": "attn_k_transpose",
+        "exec_key": "60f9c2ccfd"
+      },
+      {
+        "app": "head_concat",
+        "args": "-batch 1 -seq 1 -heads 1 -headdim 128 -mode 2 -capacity 65536 -offset 32895",
+        "name": "attn_k_transpose",
+        "exec_key": "632ab13c90"
+      },
+      {
+        "app": "kv_cache_dequant_w4a16",
+        "args": "-k 1 -n 128 -q 128 -d 1 -t 1 --quant-mode spinquant_signed_asymmetric",
+        "name": "kv_cache_dequant_k_to_attn_qkT",
+        "exec_key": "0f6382bab0"
+      }
+    ]
+  }
+}

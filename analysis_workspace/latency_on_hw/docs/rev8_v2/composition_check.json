@@ -1,0 +1,36 @@
+{
+  "llama2": {
+    "compose_status": {
+      "pass": 234666,
+      "estimated": 17124
+    },
+    "updated_logical_cases": {
+      "attn_k_transpose": 4608,
+      "kv_cache_dequant_k_to_attn_qkT": 4608
+    },
+    "updated_power_resolution": {
+      "measured": 216,
+      "interpolated": 4428,
+      "invariant_reused": 4572
+    },
+    "transpose_cycles_min": 37246.0,
+    "transpose_cycles_max": 41616.0
+  },
+  "llama3": {
+    "compose_status": {
+      "pass": 234648,
+      "estimated": 17142
+    },
+    "updated_logical_cases": {
+      "attn_k_transpose": 4608,
+      "kv_cache_dequant_k_to_attn_qkT": 4608
+    },
+    "updated_power_resolution": {
+      "measured": 216,
+      "interpolated": 4428,
+      "invariant_reused": 4572
+    },
+    "transpose_cycles_min": 38351.0,
+    "transpose_cycles_max": 41457.0
+  }
+}

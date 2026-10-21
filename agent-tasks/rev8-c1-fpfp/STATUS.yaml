@@ -1,0 +1,31 @@
+task: rev8-c1-fpfp
+status: complete
+phase: verified
+plan:
+- Add rev8 map and C1 backend selection through generation/run/refine/compose
+- Preserve C2 TCU measurements with an independent execution source when C1 uses FPFP
+- Extend existing C1 decoder with config-selected FPFP dispatch and correct row-major
+  weights/QKT transpose
+- Verify generator/routing regressions and FPGA prefill/decode final outputs for both
+  C1 backends
+log:
+- timestamp: 2026-10-15 19:00
+  action: Inspect existing workflows and decoder
+  findings: C2 currently reuses C1 TCU data. FPFP needs a bench harness and row-major
+    QKT operand. U55C slots available.
+pitfalls:
+- FPFP backend cannot consume TCU column-major weights. QKT must transpose dequantized
+  K.
+- Do not route C2 TCU attention to the FPFP-only C1 image.
+- Keep old TCU suite behavior and C2/C3 decoder behavior unchanged.
+
+results:
+- Rev8 changes C1 only to fpfp_th16_m8_n16_wload1_all_bram_acc.
+- Workflow auto/tcu/fpfp selection; C2 attention has independent TCU measurement/refinement.
+- C1 decoder FPFP Llama2/Llama3 B1 S32 prefill and KV32 one-step decode all PASS.
+- C1 TCU Llama3 prefill and decode both PASS; existing output tolerance unchanged.
+- FPFP regression static preflight and 3 hardware functionality cases PASS.
+- FPFP benchmark, 1000-job power loop, generated workflow PV raw DB and wrapper PASS.
+- 106 targeted Python tests PASS; legacy generator identical across 64 combinations.
+- Full latency campaign not launched; hardware smoke and pipeline generation/task wiring tested.
+report: analysis_workspace/latency_on_hw/docs/rev8_c1_fpfp/VALIDATION.md
