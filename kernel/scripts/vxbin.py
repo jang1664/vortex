@@ -19,6 +19,7 @@ import subprocess
 import struct
 import sys
 import re
+import tempfile
 
 def get_vma_size(elf_file):
     try:
@@ -54,12 +55,14 @@ def create_vxbin_binary(input_elf, output_bin, objcopy_path):
     min_vma, max_vma = get_vma_size(input_elf)
 
     # Create a binary data from the ELF file using objcopy
-    temp_bin_path = '/tmp/temp_kernel.bin'
-    subprocess.check_call([objcopy_path, '-O', 'binary', input_elf, temp_bin_path])
+    # Concurrent builds must not overwrite or delete one another's payload.
+    with tempfile.TemporaryDirectory(prefix='vxbin-') as temp_dir:
+        temp_bin_path = os.path.join(temp_dir, 'kernel.bin')
+        subprocess.check_call([objcopy_path, '-O', 'binary', input_elf, temp_bin_path])
 
-    # Read the binary file to determine its size
-    with open(temp_bin_path, 'rb') as temp_file:
-        binary_data = temp_file.read()
+        # Read the binary file to determine its size
+        with open(temp_bin_path, 'rb') as temp_file:
+            binary_data = temp_file.read()
 
     # Pack addresses into 64-bit unsigned integer
     min_vma_bytes = struct.pack('<Q', min_vma)
@@ -71,8 +74,6 @@ def create_vxbin_binary(input_elf, output_bin, objcopy_path):
         bin_file.write(max_vma_bytes)
         bin_file.write(binary_data)
 
-    # Remove the temporary binary file
-    os.remove(temp_bin_path)
     # print("Binary created successfully: {}, min_vma={:x}, max_vma={:x}".format(output_bin, min_vma, max_vma))
 
 if __name__ == '__main__':
