@@ -1,0 +1,164 @@
+{
+  "fsdb": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpint/captures/m1_k128_n512/vcs_cosim.fsdb",
+  "k": 128,
+  "n": 512,
+  "bits": 4,
+  "weight_base": "0x11000",
+  "partial_capture": false,
+  "weight_bytes_expected": 32768,
+  "totals": {
+    "ar": [
+      177,
+      174,
+      175,
+      240
+    ],
+    "r": [
+      177,
+      174,
+      175,
+      240
+    ],
+    "ar_stall": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "r_backpressure": [
+      7,
+      8,
+      8,
+      8
+    ]
+  },
+  "unmatched_responses": 0,
+  "outstanding_transactions": 0,
+  "tiles": {
+    "k0_n0": {
+      "ar_beats": [
+        128,
+        0,
+        0,
+        0
+      ],
+      "r_beats": [
+        128,
+        0,
+        0,
+        0
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        7,
+        0,
+        0,
+        0
+      ],
+      "first_ar_ps": 80265000,
+      "last_r_ps": 85055000,
+      "r_active_cycles": 128,
+      "r_multiport_cycles": 0,
+      "read_window_cycles": 480
+    },
+    "k0_n1": {
+      "ar_beats": [
+        0,
+        128,
+        0,
+        0
+      ],
+      "r_beats": [
+        0,
+        128,
+        0,
+        0
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        0,
+        8,
+        0,
+        0
+      ],
+      "first_ar_ps": 88635000,
+      "last_r_ps": 93305000,
+      "r_active_cycles": 128,
+      "r_multiport_cycles": 0,
+      "read_window_cycles": 468
+    },
+    "k0_n2": {
+      "ar_beats": [
+        0,
+        0,
+        128,
+        0
+      ],
+      "r_beats": [
+        0,
+        0,
+        128,
+        0
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        0,
+        0,
+        8,
+        0
+      ],
+      "first_ar_ps": 97705000,
+      "last_r_ps": 102515000,
+      "r_active_cycles": 128,
+      "r_multiport_cycles": 0,
+      "read_window_cycles": 482
+    },
+    "k0_n3": {
+      "ar_beats": [
+        0,
+        0,
+        0,
+        128
+      ],
+      "r_beats": [
+        0,
+        0,
+        0,
+        128
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        0,
+        0,
+        0,
+        8
+      ],
+      "first_ar_ps": 106755000,
+      "last_r_ps": 111425000,
+      "r_active_cycles": 128,
+      "r_multiport_cycles": 0,
+      "read_window_cycles": 468
+    }
+  },
+  "weight_bytes_observed": 32768
+}

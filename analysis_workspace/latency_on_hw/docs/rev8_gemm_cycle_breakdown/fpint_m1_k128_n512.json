@@ -1,0 +1,280 @@
+{
+  "trace": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpint/captures/breakdown_m1_k128_n512/gemm_breakdown.csv",
+  "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpint/breakdown_m1_k128_n512.log",
+  "core_cycles": 12377,
+  "gemm_job_cycles": 4049,
+  "outside_gemm_job_cycles": 8328,
+  "exclusive_cycles": {
+    "neither": 20,
+    "dma_only": 2308,
+    "dma_and_pipeline": 1316,
+    "pipeline_only": 405
+  },
+  "dma_states": {
+    "idle": 425,
+    "decode": 20,
+    "allocate_request": 20,
+    "allocate_response": 60,
+    "program": 180,
+    "kick": 20,
+    "poll_gap": 640,
+    "poll_request": 640,
+    "poll_response": 1920,
+    "done": 20,
+    "output_start": 4,
+    "output_wait": 88,
+    "output_drain": 12
+  },
+  "dma_tensors": {
+    "input": 294,
+    "weight": 2274,
+    "scale": 384,
+    "zero": 384,
+    "output": 288
+  },
+  "dma_tensor_states": {
+    "input": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 46,
+      "poll_request": 46,
+      "poll_response": 138,
+      "done": 4
+    },
+    "weight": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 442,
+      "poll_request": 442,
+      "poll_response": 1326,
+      "done": 4
+    },
+    "scale": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 64,
+      "poll_request": 64,
+      "poll_response": 192,
+      "done": 4
+    },
+    "zero": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 64,
+      "poll_request": 64,
+      "poll_response": 192,
+      "done": 4
+    },
+    "output": {
+      "decode": 4,
+      "output_start": 4,
+      "output_wait": 88,
+      "output_drain": 12,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 24,
+      "poll_request": 24,
+      "poll_response": 72,
+      "done": 4
+    }
+  },
+  "executor_active_cycles": {
+    "input": 1956,
+    "weight": 1904,
+    "quant": 1885,
+    "dma": 3624
+  },
+  "events": {
+    "input_fire": 256,
+    "acc_write_fire": 256,
+    "input_backpressure": 137
+  },
+  "child_wait_cycles": {
+    "input": {
+      "queue_empty": 1306,
+      "dependency_wait": 2163,
+      "issue": 256,
+      "inflight_full": 324
+    },
+    "weight": {
+      "queue_empty": 121,
+      "dependency_wait": 2127,
+      "issue": 256,
+      "inflight_full": 1545
+    },
+    "scale": {
+      "queue_empty": 124,
+      "dependency_wait": 2133,
+      "issue": 256,
+      "inflight_full": 1536
+    },
+    "zero": {
+      "queue_empty": 130,
+      "dependency_wait": 2147,
+      "issue": 256,
+      "inflight_full": 1516
+    },
+    "dma": {
+      "queue_empty": 494,
+      "issue": 20,
+      "inflight_full": 3480,
+      "dependency_wait": 55
+    }
+  },
+  "descriptors": [
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 1,
+      "begin_cycle": 7900,
+      "cycles": 86
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11000",
+      "work_seq": 1,
+      "begin_cycle": 7987,
+      "cycles": 571
+    },
+    {
+      "tensor": "scale",
+      "base": "0x19000",
+      "work_seq": 1,
+      "begin_cycle": 8559,
+      "cycles": 96
+    },
+    {
+      "tensor": "zero",
+      "base": "0x1a000",
+      "work_seq": 1,
+      "begin_cycle": 8656,
+      "cycles": 96
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 65,
+      "begin_cycle": 8753,
+      "cycles": 71
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11040",
+      "work_seq": 65,
+      "begin_cycle": 8825,
+      "cycles": 566
+    },
+    {
+      "tensor": "scale",
+      "base": "0x19100",
+      "work_seq": 65,
+      "begin_cycle": 9392,
+      "cycles": 96
+    },
+    {
+      "tensor": "zero",
+      "base": "0x1a100",
+      "work_seq": 65,
+      "begin_cycle": 9489,
+      "cycles": 96
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc15000",
+      "work_seq": 64,
+      "begin_cycle": 9586,
+      "cycles": 72
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 129,
+      "begin_cycle": 9659,
+      "cycles": 71
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11080",
+      "work_seq": 129,
+      "begin_cycle": 9731,
+      "cycles": 571
+    },
+    {
+      "tensor": "scale",
+      "base": "0x19200",
+      "work_seq": 129,
+      "begin_cycle": 10303,
+      "cycles": 96
+    },
+    {
+      "tensor": "zero",
+      "base": "0x1a200",
+      "work_seq": 129,
+      "begin_cycle": 10400,
+      "cycles": 96
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc15000",
+      "work_seq": 128,
+      "begin_cycle": 10497,
+      "cycles": 72
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 193,
+      "begin_cycle": 10570,
+      "cycles": 66
+    },
+    {
+      "tensor": "weight",
+      "base": "0x110c0",
+      "work_seq": 193,
+      "begin_cycle": 10637,
+      "cycles": 566
+    },
+    {
+      "tensor": "scale",
+      "base": "0x19300",
+      "work_seq": 193,
+      "begin_cycle": 11204,
+      "cycles": 96
+    },
+    {
+      "tensor": "zero",
+      "base": "0x1a300",
+      "work_seq": 193,
+      "begin_cycle": 11301,
+      "cycles": 96
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc15000",
+      "work_seq": 192,
+      "begin_cycle": 11398,
+      "cycles": 72
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc15000",
+      "work_seq": 256,
+      "begin_cycle": 11872,
+      "cycles": 72
+    }
+  ]
+}

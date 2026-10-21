@@ -323,11 +323,22 @@ module tb_vcs_xrtsim #(
 
 `ifdef FSDB_DUMP
 `ifndef DISABLE_FSDB
+`ifdef GEMM_BREAKDOWN
+  `include "gemm_breakdown.svh"
+`endif
   initial begin : fsdb_dump
     string fsdb_file;
     if (!$value$plusargs("fsdb_file=%s", fsdb_file)) fsdb_file = "vcs_cosim.fsdb";
     $fsdbDumpfile(fsdb_file);
-`ifdef FSDB_GEMM_ONLY
+`ifdef FSDB_PORT_PROFILE
+    // Keep port/address and DMA descriptor timing without dumping SRAM contents.
+    $fsdbDumpvars(1, tb_vcs_xrtsim, "+all");
+    $fsdbDumpvars(1, tb_vcs_xrtsim.dut.vortex_axi.axi_adapter, "+all");
+    $fsdbDumpvars(1,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive.dma_executor,
+      "+all");
+`elsif FSDB_GEMM_ONLY
 `ifdef GEMM_IMPROVE
     $fsdbDumpvars(0,
       tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
@@ -361,6 +372,37 @@ module tb_vcs_xrtsim #(
     end
 `endif
   end
+`ifdef FSDB_PORT_PROFILE
+  // Optional bounded capture for large matrices; this is not a completed test.
+  initial begin : port_profile_window
+    integer tile_limit, tiles_seen;
+    logic [63:0] previous_base;
+    bit seen_weight;
+    tiles_seen = 0;
+    seen_weight = 0;
+    if ($value$plusargs("port_profile_weight_tiles=%d", tile_limit)) begin
+      forever begin
+        @(negedge ap_clk);
+        if (tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+              .g_sockets[0].socket.g_cores[0].core.gemm_node_naive.dma_executor.tensor_sel == 1) begin
+          if (!seen_weight || previous_base !=
+              tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+                .g_sockets[0].socket.g_cores[0].core.gemm_node_naive.dma_executor.src_base) begin
+            previous_base = tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+                .g_sockets[0].socket.g_cores[0].core.gemm_node_naive.dma_executor.src_base;
+            seen_weight = 1;
+            tiles_seen = tiles_seen + 1;
+            if (tiles_seen > tile_limit) begin
+              $display("[PORT_PROFILE] bounded capture complete after %0d weight descriptors; full GEMM not completed", tile_limit);
+              $fsdbDumpflush;
+              $finish;
+            end
+          end
+        end
+      end
+    end
+  end
+`endif
 `else
   initial begin : fsdb_dump_disabled
     $display("[TB] FSDB dump disabled by DISABLE_FSDB");

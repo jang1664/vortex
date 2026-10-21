@@ -1,0 +1,194 @@
+{
+  "trace": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpfp/captures/breakdown_m1_k128_n512/gemm_breakdown.csv",
+  "log": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpfp/breakdown_m1_k128_n512.log",
+  "core_cycles": 14583,
+  "gemm_job_cycles": 6680,
+  "outside_gemm_job_cycles": 7903,
+  "exclusive_cycles": {
+    "neither": 15,
+    "dma_only": 1445,
+    "dma_and_pipeline": 3321,
+    "pipeline_only": 1899
+  },
+  "dma_states": {
+    "idle": 1914,
+    "decode": 12,
+    "allocate_request": 12,
+    "allocate_response": 36,
+    "program": 108,
+    "kick": 12,
+    "poll_gap": 894,
+    "poll_request": 894,
+    "poll_response": 2682,
+    "done": 12,
+    "output_start": 4,
+    "output_wait": 88,
+    "output_drain": 12
+  },
+  "dma_tensors": {
+    "input": 254,
+    "weight": 4224,
+    "output": 288
+  },
+  "dma_tensor_states": {
+    "input": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 38,
+      "poll_request": 38,
+      "poll_response": 114,
+      "done": 4
+    },
+    "weight": {
+      "decode": 4,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 832,
+      "poll_request": 832,
+      "poll_response": 2496,
+      "done": 4
+    },
+    "output": {
+      "decode": 4,
+      "output_start": 4,
+      "output_wait": 88,
+      "output_drain": 12,
+      "allocate_request": 4,
+      "allocate_response": 12,
+      "program": 36,
+      "kick": 4,
+      "poll_gap": 24,
+      "poll_request": 24,
+      "poll_response": 72,
+      "done": 4
+    }
+  },
+  "executor_active_cycles": {
+    "input": 5458,
+    "weight": 5447,
+    "quant": 0,
+    "dma": 4766
+  },
+  "events": {
+    "input_fire": 512,
+    "acc_write_fire": 512,
+    "input_backpressure": 4164
+  },
+  "child_wait_cycles": {
+    "input": {
+      "queue_empty": 126,
+      "dependency_wait": 1139,
+      "issue": 512,
+      "inflight_full": 4903
+    },
+    "weight": {
+      "queue_empty": 127,
+      "dependency_wait": 1140,
+      "issue": 512,
+      "inflight_full": 4901
+    },
+    "scale": {
+      "queue_empty": 6680
+    },
+    "zero": {
+      "queue_empty": 6680
+    },
+    "dma": {
+      "queue_empty": 4902,
+      "issue": 12,
+      "inflight_full": 1454,
+      "dependency_wait": 312
+    }
+  },
+  "descriptors": [
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 1,
+      "begin_cycle": 8879,
+      "cycles": 86
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11000",
+      "work_seq": 1,
+      "begin_cycle": 8966,
+      "cycles": 1056
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 129,
+      "begin_cycle": 10023,
+      "cycles": 66
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11100",
+      "work_seq": 129,
+      "begin_cycle": 10090,
+      "cycles": 1056
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc20000",
+      "work_seq": 128,
+      "begin_cycle": 11417,
+      "cycles": 72
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 257,
+      "begin_cycle": 11490,
+      "cycles": 51
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11200",
+      "work_seq": 257,
+      "begin_cycle": 11542,
+      "cycles": 1056
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc20000",
+      "work_seq": 256,
+      "begin_cycle": 12840,
+      "cycles": 72
+    },
+    {
+      "tensor": "input",
+      "base": "0x10000",
+      "work_seq": 385,
+      "begin_cycle": 12913,
+      "cycles": 51
+    },
+    {
+      "tensor": "weight",
+      "base": "0x11300",
+      "work_seq": 385,
+      "begin_cycle": 12965,
+      "cycles": 1056
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc20000",
+      "work_seq": 384,
+      "begin_cycle": 14263,
+      "cycles": 72
+    },
+    {
+      "tensor": "output",
+      "base": "0x1ffc20000",
+      "work_seq": 512,
+      "begin_cycle": 15482,
+      "cycles": 72
+    }
+  ]
+}

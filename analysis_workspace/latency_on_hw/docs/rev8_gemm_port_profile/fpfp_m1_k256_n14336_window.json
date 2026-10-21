@@ -1,0 +1,102 @@
+{
+  "fsdb": "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/build_rev8_port_fpfp/captures/m1_k256_n14336_window/vcs_cosim.fsdb",
+  "k": 256,
+  "n": 14336,
+  "bits": 16,
+  "weight_base": "0x11000",
+  "partial_capture": true,
+  "weight_bytes_expected": 7340032,
+  "totals": {
+    "ar": [
+      271,
+      269,
+      269,
+      335
+    ],
+    "r": [
+      271,
+      269,
+      269,
+      335
+    ],
+    "ar_stall": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "r_backpressure": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "unmatched_responses": 0,
+  "outstanding_transactions": 0,
+  "tiles": {
+    "k0_n0": {
+      "ar_beats": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "r_beats": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "first_ar_ps": 1222525000,
+      "last_r_ps": 1233015000,
+      "r_active_cycles": 374,
+      "r_multiport_cycles": 131,
+      "read_window_cycles": 1050
+    },
+    "k1_n0": {
+      "ar_beats": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "r_beats": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "ar_stall_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "r_backpressure_cycles": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "first_ar_ps": 1234665000,
+      "last_r_ps": 1245175000,
+      "r_active_cycles": 373,
+      "r_multiport_cycles": 132,
+      "read_window_cycles": 1052
+    }
+  },
+  "weight_bytes_observed": 65536
+}
