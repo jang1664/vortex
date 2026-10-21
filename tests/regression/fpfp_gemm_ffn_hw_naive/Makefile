@@ -20,3 +20,5 @@ include ../common.mk
 $(PROJECT) kernel.elf: $(NAIVE_DIR)/common.h $(NAIVE_DIR)/config_check.h $(SRC_DIR)/config_check.h
 $(PROJECT): $(NAIVE_DIR)/main.cpp $(NAIVE_DIR)/fpfp_test_vectors.h
 kernel.elf: $(NAIVE_DIR)/kernel.cpp
+
+$(PROJECT)_bench: $(NAIVE_DIR)/bench_main.cpp $(NAIVE_DIR)/common.h $(NAIVE_DIR)/fpfp_test_vectors.h

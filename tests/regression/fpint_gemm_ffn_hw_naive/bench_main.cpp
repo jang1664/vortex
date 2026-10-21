@@ -20,6 +20,9 @@
 #include <vortex.h>
 #include "common.h"
 #include "bench_util.h"
+#ifdef FPFP_GEMM_ONLY
+#include "fpfp_test_vectors.h"
+#endif
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -30,6 +33,12 @@
      cleanup();                                                 \
      exit(-1);                                                  \
    } while (false)
+
+#ifdef FPFP_GEMM_ONLY
+static constexpr const char* bench_name = "fpfp_gemm_ffn_hw_naive";
+#else
+static constexpr const char* bench_name = "fpint_gemm_ffn_hw";
+#endif
 
 static const char* kernel_file = "kernel.vxbin";
 
@@ -120,6 +129,16 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint8_t>& h_W_int4,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros) {
+#ifdef FPFP_GEMM_ONLY
+  std::vector<uint16_t> unused_output;
+  std::vector<double> unused_reference;
+  fpfp_gemm_test::initialize(M, K, N, FPFP_MXU_ROW, 1, 0, false, false,
+                            h_A, h_W_int4, unused_output, unused_reference, false,
+                            [](uint16_t) { return 0.0f; }, float_to_fp16);
+  h_scales.clear();
+  h_zeros.clear();
+  return;
+#endif
   uint32_t groups_total = (K + QBLK - 1) / QBLK;
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
   uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
@@ -187,6 +206,10 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   uint64_t lmem_scbuf_bytes = (QDIR == 0)
                                 ? (groups_tile * DMA_NT * 2ull)
                                 : (DMA_KT * ng_tile     * 2ull);
+#ifdef FPFP_GEMM_ONLY
+  lmem_wbuf_bytes = DMA_KT * DMA_NT * 2ull;
+  lmem_scbuf_bytes = 0;
+#endif
   uint64_t lmem_zpbuf_bytes = lmem_scbuf_bytes;
   uint64_t lmem_obuf_bytes  = GEMM_HOST_OUTPUT_TILE_ELEMENTS * 2ull;
 
@@ -222,7 +245,7 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-#ifndef GEMM_NAIVE_ENABLE
+#if !defined(GEMM_NAIVE_ENABLE) && !defined(FPFP_GEMM_ONLY)
   std::cerr << "The INT4 benchmark requires GEMM_NAIVE_ENABLE; use the regression"
                " app with --fp16-weights for FPFP verification" << std::endl;
   return -1;
@@ -262,6 +285,12 @@ int main(int argc, char *argv[]) {
     }
   }
 
+#ifdef FPFP_GEMM_ONLY
+  if (!M || !K || !N || K % FPFP_MXU_ROW || N % FPFP_MXU_COL || WTRANS || QDIR) {
+    std::cerr << "FPFP requires positive M, aligned K/N and row-major FP16 weights" << std::endl;
+    return -1;
+  }
+#endif
   if (QBLK == 0 || WTRANS > 1 || QDIR > 1) {
     std::cerr << "Invalid parameters: QBLK=" << QBLK
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
@@ -311,19 +340,23 @@ int main(int argc, char *argv[]) {
       ? size_t((K + QBLK - 1) / QBLK) * N
       : size_t(K) * ((N + QBLK - 1) / QBLK);
 
+#ifdef FPFP_GEMM_ONLY
+  weight_bytes = size_t(K) * N * sizeof(uint16_t);
+  qparam_elems = 0;
+#endif
   // ---- Allocate device buffers (row-major; no tile conversion) ----
   RT_CHECK(vx_mem_alloc(device, input_bytes,                       VX_MEM_READ,  &A_buffer));
   RT_CHECK(vx_mem_alloc(device, weight_bytes,                      VX_MEM_READ,  &W_int4_buffer));
-  RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(uint16_t),   VX_MEM_READ,  &scales_buffer));
-  RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t),    VX_MEM_READ,  &zeros_buffer));
+  if (qparam_elems) RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(uint16_t),   VX_MEM_READ,  &scales_buffer));
+  if (qparam_elems) RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t),    VX_MEM_READ,  &zeros_buffer));
   RT_CHECK(vx_mem_alloc(device, out_total_bytes,                    VX_MEM_WRITE, &C_buffer));
 
   // ---- Upload row-major data ----
   if (bench.copy_inputs) {
     RT_CHECK(vx_copy_to_dev(A_buffer,      h_A.data(),      0, input_bytes));
     RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, weight_bytes));
-    RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, qparam_elems * sizeof(uint16_t)));
-    RT_CHECK(vx_copy_to_dev(zeros_buffer,  h_zeros.data(),  0, qparam_elems * sizeof(int16_t)));
+    if (qparam_elems) RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, qparam_elems * sizeof(uint16_t)));
+    if (qparam_elems) RT_CHECK(vx_copy_to_dev(zeros_buffer,  h_zeros.data(),  0, qparam_elems * sizeof(int16_t)));
   }
 
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
@@ -342,11 +375,14 @@ int main(int argc, char *argv[]) {
   kargs.QBLK   = QBLK;
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;
+#ifdef FPFP_GEMM_ONLY
+  kargs.weight_format = GEMM_WEIGHT_FP16;
+#endif
 
   RT_CHECK(vx_mem_address(A_buffer,      &kargs.input_base));
   RT_CHECK(vx_mem_address(W_int4_buffer, &kargs.weight_base));
-  RT_CHECK(vx_mem_address(scales_buffer, &kargs.scale_base));
-  RT_CHECK(vx_mem_address(zeros_buffer,  &kargs.zp_base));
+  if (qparam_elems) RT_CHECK(vx_mem_address(scales_buffer, &kargs.scale_base));
+  if (qparam_elems) RT_CHECK(vx_mem_address(zeros_buffer,  &kargs.zp_base));
   RT_CHECK(vx_mem_address(C_buffer,      &kargs.output_base));
 
   if (!compute_lmem_layout(kargs, local_mem_size)) {
@@ -442,18 +478,18 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  stats.report("fpint_gemm_ffn_hw", bench);
+  stats.report(bench_name, bench);
 
   kargs.status = MMIO_STATUS_INIT;
   if (!vx_bench::prepare_power_kernel_iterations(
           bench, kargs, args_buffer, first_latency_us, first_iter_perf,
-          "fpint_gemm_ffn_hw")) {
+          bench_name)) {
     cleanup();
     return -1;
   }
 
   if (!vx_bench::run_power_measurement(
-          "fpint_gemm_ffn_hw", bench, device,
+          bench_name, bench, device,
           [&](const char* phase, int iter) -> bool {
             return run_kernel_checked(phase, iter);
           },

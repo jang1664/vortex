@@ -50,7 +50,7 @@ class Case:
     bench_args: str | None = None
 
 
-def cases() -> list[Case]:
+def cases(c1_gemm_backend: str = "tcu") -> list[Case]:
     """Matched shapes, including actual pipeline layouts and factor-172 Hadamard."""
     out: list[Case] = []
 
@@ -128,7 +128,7 @@ def cases() -> list[Case]:
                         f"-k {k} -n {n} -q {q} -d {d} -t {t} "
                         "--quant-mode signed_int4_asymmetric"))
     for index, (m, n, k) in enumerate(((8, 16, 32), (16, 32, 64), (17, 33, 64)), 1):
-        out.append(Case("C1", "sgemm_tcu", f"case{index}", f"-m {m} -n {n} -k {k}"))
+        out.append(Case("C1", "fpfp_gemm_ffn_hw_naive" if c1_gemm_backend == "fpfp" else "sgemm_tcu", f"case{index}", f"-m {m} -n {n} -k {k}"))
     for candidate, app in (("C3", "fpint_gemm_ffn_hw_naive"), ("C4", "fpint_gemm_ffn_hw")):
         # Include multiple 128x128 tiles and multiple K tiles.
         for index, (m, n, k, d, t) in enumerate(((1, 32, 32, 0, 0),
@@ -139,13 +139,13 @@ def cases() -> list[Case]:
     return out
 
 
-def load_cases(path: Path | None = None) -> list[Case]:
+def load_cases(path: Path | None = None, c1_gemm_backend: str = "tcu") -> list[Case]:
     if path is None:
-        return cases()
+        return cases(c1_gemm_backend)
     raw = json.loads(path.read_text())
     if not isinstance(raw, list) or not raw:
         raise ValueError("case file must contain a nonempty JSON list")
-    routes = {case.app: case.candidate for case in cases()}
+    routes = {case.app: case.candidate for case in cases(c1_gemm_backend)}
     selected = [Case(**item) for item in raw]
     for case in selected:
         if routes.get(case.app) != case.candidate:
@@ -192,13 +192,20 @@ def resolve_selection(value: str, mode: str, aliases) -> Selection:
     return selected
 
 
-def infer_candidate(selection: Selection) -> str:
+def selection_config_flags(selection: Selection) -> str:
     result = subprocess.run(["bash", "-c", 'source "$1" >&2; printf "%s" "$CONFIGS"',
                              "config", str(selection.config)], capture_output=True, text=True,
                             timeout=15, check=True)
-    if re.search(r"-DGEMM_NAIVE(?:\s|=|$)", result.stdout):
+    return result.stdout
+
+
+def infer_candidate(selection: Selection) -> str:
+    flags = selection_config_flags(selection)
+    if "-DGEMM_NAIVE_FP16_ENABLE" in flags and not re.search(r"-DGEMM_NAIVE(?:\s|=|$)", flags):
+        return "C1"
+    if re.search(r"-DGEMM_NAIVE(?:\s|=|$)", flags):
         return "C3"
-    if "-DENABLE_GEMM_ACCEL" in result.stdout:
+    if "-DENABLE_GEMM_ACCEL" in flags:
         return "C4"
     return "C1"
 
@@ -482,7 +489,12 @@ def main(argv=None):
         raise ValueError("candidates must be C1, C3, or C4")
     def matches(value, patterns):
         return any(fnmatch.fnmatchcase(value, pattern) for pattern in patterns.split(","))
-    selected = [case for case in load_cases(args.case_file) if case.candidate in active
+    c1_backend = "tcu"
+    if "C1" in active:
+        c1_selection = resolve_selection(selections["C1"], args.mode, aliases)
+        if "-DGEMM_NAIVE_FP16_ENABLE" in selection_config_flags(c1_selection):
+            c1_backend = "fpfp"
+    selected = [case for case in load_cases(args.case_file, c1_backend) if case.candidate in active
                 and matches(case.app, args.apps) and matches(case.shape, args.shapes)]
     if not selected:
         raise ValueError("no matching cases")

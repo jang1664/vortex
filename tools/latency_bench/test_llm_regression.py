@@ -13,6 +13,19 @@ from tools.latency_bench.fpga_bins import FpgaBinAlias
 
 
 class RegressionTests(unittest.TestCase):
+    def test_fpfp_c1_replaces_only_tcu_cases(self):
+        old, new = regression.cases(), regression.cases("fpfp")
+        self.assertEqual(len(old), len(new))
+        for before, after in zip(old, new):
+            if before.app == "sgemm_tcu":
+                self.assertEqual("fpfp_gemm_ffn_hw_naive", after.app)
+                self.assertEqual(("C1", before.args, before.shape), (after.candidate, after.args, after.shape))
+            else:
+                self.assertEqual(before, after)
+        selection = regression.Selection(Path("unused"), "fp16")
+        with patch.object(regression, "selection_config_flags", return_value="-DENABLE_GEMM_ACCEL -DGEMM_NAIVE_FP16_ENABLE"):
+            self.assertEqual("C1", regression.infer_candidate(selection))
+
     def test_compile_contract_checks_equality_without_width_whitelist(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
