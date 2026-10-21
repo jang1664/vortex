@@ -273,4 +273,9 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_c9181389b1/bin
     configs: configs/fpfp_th16_m16_n16_wload4_all_bram_acc.sh
 
+  # C2: FPINT 16x16 WLOAD4 + FPFP 8x16 WLOAD1; no TCU; kernel 100 MHz, HBM 450 MHz.
+  naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_fpfp_m8_n16_wload1_base_pnr_v3_qcol_pnr_spread:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_228d4f384d/bin
+    configs: configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_fpfp_m8_n16_wload1_base_pnr_v3_qcol_pnr_spread.sh
+
   # ------------------------------------ ETC -------------------------------------------------
