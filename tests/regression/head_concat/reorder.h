@@ -17,7 +17,8 @@ inline void kernel_head_reorder(kernel_arg_t *__UNIFORM__ arg) {
     if (arg->kernel_id == KERNEL_HEAD_TRANSPOSE) {
       const uint32_t s = (i / arg->headdim) % arg->seq;
       const uint32_t matrix = i / (arg->seq * arg->headdim);
-      target = (matrix * arg->headdim + d) * arg->seq + s;
+      const uint32_t capacity = arg->capacity ? arg->capacity : arg->seq;
+      target = (matrix * arg->headdim + d) * capacity + arg->offset + s;
     } else {
       const uint32_t h = (i / arg->headdim) % arg->heads;
       const uint32_t s = (i / (arg->headdim * arg->heads)) % arg->seq;

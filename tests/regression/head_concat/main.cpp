@@ -50,7 +50,7 @@ static void build_reference(const std::vector<data_t>& input,
                             uint32_t seq,
                             uint32_t heads,
                             uint32_t headdim,
-                            uint32_t mode) {
+                            uint32_t mode, uint32_t capacity, uint32_t offset) {
   const uint32_t hidden = heads * headdim;
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t s = 0; s < seq; ++s) {
@@ -64,7 +64,7 @@ static void build_reference(const std::vector<data_t>& input,
             ref[in_off] = input[out_off];
           } else if (mode == KERNEL_HEAD_TRANSPOSE) {
             const uint64_t transposed =
-                (((uint64_t)b * heads + h) * headdim + d) * seq + s;
+                (((uint64_t)b * heads + h) * headdim + d) * capacity + offset + s;
             ref[transposed] = input[in_off];
           } else {
             ref[out_off] = input[in_off];
@@ -81,6 +81,8 @@ int main(int argc, char *argv[]) {
   uint32_t heads = 2;
   uint32_t headdim = 32;
   uint32_t mode = KERNEL_HEAD_CONCAT;
+  uint32_t capacity = 0, offset = 0;
+  uint32_t updates = 1;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
@@ -88,9 +90,12 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mode") == 0) mode = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-capacity") == 0) capacity = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-offset") == 0) offset = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-updates") == 0) updates = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-mode 0=concat|1=head-reorder|2=transpose]\n", argv[0]);
+             "[-mode 0=concat|1=head-reorder|2=transpose] [-capacity C] [-offset T] [-updates U]\n", argv[0]);
       return 0;
     }
   }
@@ -100,14 +105,24 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (!capacity) capacity = seq;
+  if ((mode != KERNEL_HEAD_TRANSPOSE && (capacity != seq || offset || updates != 1))
+      || !updates || offset > capacity || uint64_t(seq) * updates > capacity - offset) {
+    fprintf(stderr, "Transpose update must fit capacity; other modes require default layout\n");
+    return 1;
+  }
   const uint32_t hidden = heads * headdim;
   const size_t elems = (size_t)batch * seq * hidden;
   const size_t bytes = elems * sizeof(data_t);
+  const size_t output_elems = (size_t)batch * capacity * hidden;
+  const size_t output_bytes = output_elems * sizeof(data_t);
   std::vector<data_t> h_input(elems);
-  std::vector<data_t> h_ref(elems);
-  std::vector<data_t> h_out(elems);
+  std::vector<data_t> h_ref(output_elems);
+  std::vector<data_t> h_out(output_elems);
+  init_input(h_out); // Nonzero old cache: verify untouched prefix and suffix too.
+  h_ref = h_out;
   init_input(h_input);
-  build_reference(h_input, h_ref, batch, seq, heads, headdim, mode);
+  build_reference(h_input, h_ref, batch, seq, heads, headdim, mode, capacity, offset);
 
 #if HEAD_CONCAT_VARIANT_TAG == 1
   const char* variant = "chunk16_packed";
@@ -125,8 +140,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_READ, &input_buffer));
-  RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_WRITE, &output_buffer));
+  RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
   RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, bytes));
+  RT_CHECK(vx_copy_to_dev(output_buffer, h_out.data(), 0, output_bytes));
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -153,14 +169,26 @@ int main(int argc, char *argv[]) {
   arg.seq = seq;
   arg.heads = heads;
   arg.headdim = headdim;
+  arg.capacity = capacity;
+  arg.offset = offset;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, bytes));
+  for (uint32_t update = 0; update < updates; ++update) {
+    if (update) {
+      // Advance without resetting output: earlier updates must survive.
+      for (auto& value : h_input) value ^= uint16_t(update);
+      arg.offset = offset + update * seq;
+      build_reference(h_input, h_ref, batch, seq, heads, headdim, mode, capacity, arg.offset);
+      RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, bytes));
+      RT_CHECK(vx_copy_to_dev(args_buffer, &arg, 0, sizeof(arg)));
+    }
+    RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
+    RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+  }
+  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
 
   int errors = 0;
-  for (size_t i = 0; i < elems; ++i) {
+  for (size_t i = 0; i < output_elems; ++i) {
     if (h_out[i] != h_ref[i]) {
       if (errors < 10) {
         printf("Error at %zu: got=0x%04x expected=0x%04x\n",

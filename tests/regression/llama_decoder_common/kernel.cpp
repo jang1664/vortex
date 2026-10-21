@@ -28,10 +28,10 @@ case DecoderOp::concat: r=llama_concat_main(); break;
 case DecoderOp::silu: r=llama_silu_main(); break;
 case DecoderOp::elmul: r=llama_elmul_main(); break;
 case DecoderOp::eladd: r=llama_eladd_main(); break;
-#if DECODER_CANDIDATE != 3
+#if DECODER_HAS_TCU
 case DecoderOp::tcu: r=llama_tcu_main(); break;
 #endif
-#if DECODER_CANDIDATE != 1
+#if DECODER_HAS_NAIVE
 case DecoderOp::gemm: r=llama_naive_main(); break;
 #endif
 case DecoderOp::reorder:r=llama_reorder_main();break;

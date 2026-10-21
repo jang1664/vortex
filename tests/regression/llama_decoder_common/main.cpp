@@ -55,7 +55,7 @@ static void save_samples(const fs::path& path,const std::vector<Sample>& samples
 }
 int main(int argc,char** argv) {
   try {
-    std::string model="llama3-8b",mode="verify",stage="prefill";
+    std::string model="llama3-8b",mode="verify",stage="prefill",c1_backend="auto",c2_backend="auto";
     fs::path fixture,out="decoder_results";
     uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0;
     bool diagnostic_timing=false,output_pass=true,profile_repetitions_set=false;
@@ -64,6 +64,8 @@ int main(int argc,char** argv) {
       std::string key=argv[i];
       if(key=="--help" || key=="-h") {
         std::cout<<"--model llama3-8b|llama2-7b --batch 1 --seq-len 32 --fixture DIR\n"
+                   "--c1-gemm-backend auto|tcu|fpfp (must match the configured build)\n"
+                   "--c2-attn-backend auto|tcu|fpfp (C2 attention only)\n"
                    "--mode verify|timing|isolated --output DIR --repetitions 3\n"
                    "--profile-repetitions N (timing counter passes; default: repetitions; 0 disables)\n"
                    "--stage prefill|decode --past-kv-len N --cache-capacity N\n"
@@ -77,6 +79,8 @@ int main(int argc,char** argv) {
       auto extent=[&]() { size_t end=0; auto n=std::stoul(value,&end); if(end!=value.size()||!n||n>UINT32_MAX) throw std::invalid_argument("invalid extent"); return uint32_t(n); };
       if(key=="--model") model=value;
       else if(key=="--mode") mode=value;
+      else if(key=="--c1-gemm-backend") c1_backend=value;
+      else if(key=="--c2-attn-backend") c2_backend=value;
       else if(key=="--stage") stage=value;
       else if(key=="--past-kv-len") past_kv=extent();
       else if(key=="--cache-capacity") capacity=extent();
@@ -93,6 +97,14 @@ int main(int argc,char** argv) {
       else if(key=="--stop-after") stop_after=extent();
       else throw std::invalid_argument("unknown option "+key);
     }
+    const std::string compiled_backend=DECODER_C1_FPFP ? "fpfp" : "tcu";
+    if(c1_backend!="auto" && (DECODER_CANDIDATE!=1 || c1_backend!=compiled_backend))
+      throw std::invalid_argument("--c1-gemm-backend disagrees with the configured C1 build");
+    if(DECODER_CANDIDATE==1) std::cout<<"C1 GEMM backend: "<<compiled_backend<<std::endl;
+    const std::string compiled_attention=DECODER_C2_FPFP ? "fpfp" : "tcu";
+    if(c2_backend!="auto" && (DECODER_CANDIDATE!=2 || c2_backend!=compiled_attention))
+      throw std::invalid_argument("--c2-attn-backend disagrees with the configured C2 build");
+    if(DECODER_CANDIDATE==2) std::cout<<"C2 attention backend: "<<compiled_attention<<std::endl;
     if(!profile_repetitions_set) profile_repetitions=repetitions;
     if(fixture.empty()) throw std::invalid_argument("--fixture is required");
     if(mode!="verify" && mode!="timing" && mode!="isolated") throw std::invalid_argument("unknown mode");

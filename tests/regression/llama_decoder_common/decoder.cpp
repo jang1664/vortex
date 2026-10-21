@@ -2,10 +2,15 @@
 #include "op_args.h"
 #include "../kv_cache_quant_w4a16/host_variant.h"
 #include "../kv_cache_dequant_w4a16/host_variant.h"
-#if DECODER_CANDIDATE != 1
+#if DECODER_HAS_NAIVE
 #include "naive_layout.h"
 #endif
+#if DECODER_HAS_TCU
 #include <tensor_cfg.h>
+#endif
+#if DECODER_ATTN_FPFP && !defined(GEMM_NAIVE_FP16_ENABLE)
+#error "FPFP decoder requires GEMM_NAIVE_FP16_ENABLE"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -51,6 +56,7 @@ Decoder::Decoder(ModelConfig config) : cfg_(std::move(config)) {
   } catch (...) { vx_dev_close(device_); device_=nullptr; throw; }
 }
 Decoder::~Decoder() {
+  for (auto& x:initialization_ops_) { if(x.dispatch_buffer) vx_mem_free(x.dispatch_buffer); if(x.args_buffer) vx_mem_free(x.args_buffer); }
   for (auto& x:ops_) { if(x.dispatch_buffer) vx_mem_free(x.dispatch_buffer); if(x.args_buffer) vx_mem_free(x.args_buffer); }
   for (auto& x:buffers_) if(x.second.handle) vx_mem_free(x.second.handle);
   if(kernel_) vx_mem_free(kernel_);
@@ -63,7 +69,7 @@ Buffer& Decoder::alloc(const std::string& name, uint64_t bytes, const std::strin
   // The original TCU kernel rounds M to its hardware tile. Extra output rows
   // never change the logical row pitch; reserve and initialize the tail so
   // those stores and the corresponding A loads remain inside owned memory.
-#if DECODER_CANDIDATE != 3
+#if DECODER_HAS_TCU
   using TC=vortex::tensor::wmma_config_t<NUM_THREADS,vortex::tensor::fp16,vortex::tensor::fp16>;
   const uint64_t storage_bytes=bytes+uint64_t(TC::tileM-1)*std::max({cfg_.hidden,cfg_.ffn,cfg_.cache_capacity})*2;
 #else
@@ -93,6 +99,18 @@ void Decoder::load(const fs::path& fixture) {
   if (cfg_.decode() && (fields.at("stage") != cfg_.stage || fields.at("past_kv") != std::to_string(cfg_.past_kv)
       || fields.at("cache_capacity") != std::to_string(cfg_.cache_capacity)))
     throw std::runtime_error("fixture decode metadata mismatch");
+  if (DECODER_CANDIDATE == 1) {
+    const std::string expected = DECODER_C1_FPFP ? "fpfp" : "tcu";
+    const auto backend = fields.find("c1_gemm_backend");
+    if ((backend == fields.end() ? "tcu" : backend->second) != expected)
+      throw std::runtime_error("fixture C1 GEMM backend/layout mismatch");
+  }
+  if (DECODER_CANDIDATE==2) {
+    const std::string expected = DECODER_C2_FPFP ? "fpfp" : "tcu";
+    const auto it=fields.find("c2_attn_backend");
+    const std::string actual=it==fields.end()?"tcu":it->second;
+    if(actual!=expected) throw std::runtime_error("fixture C2 attention backend mismatch");
+  }
   std::ifstream list(fixture/"tensors.tsv");
   if(!list) throw std::runtime_error("missing tensors.tsv");
   std::string line;
@@ -110,6 +128,11 @@ void Decoder::load(const fs::path& fixture) {
       rt_check(vx_copy_to_dev(buffer.handle,chunk.data(),off,n), "upload fixture");
     }
   }
+}
+void Decoder::append_initialization(Operation operation) {
+  append(std::move(operation));
+  initialization_ops_.push_back(std::move(ops_.back()));
+  ops_.pop_back();
 }
 void Decoder::append(Operation operation) {
   for(const auto& name:operation.inputs) (void)buffers_.at(name);
@@ -139,10 +162,32 @@ void Decoder::dump_buffer(const std::string& name,const fs::path& folder) {
   if(!out) throw std::runtime_error("could not dump "+name);
 }
 void Decoder::save_output(const fs::path& folder) {
+  verify_key_cache();
   dump_buffer("output",folder);
   if(cfg_.decode()) for(const auto& operation:ops_)
     if(operation.kind==DecoderOp::quant)
       for(const auto& name:operation.outputs) dump_buffer(name,folder);
+}
+void Decoder::verify_key_cache() {
+#if DECODER_ATTN_FPFP
+  for(uint32_t b=0;b<cfg_.batch;++b) for(uint32_t h=0;h<cfg_.kv_heads;++h) {
+    const auto name="key."+std::to_string(b)+"."+std::to_string(h);
+    const uint32_t capacity=cfg_.decode()?cfg_.cache_capacity:cfg_.seq;
+    const uint32_t pos=cfg_.decode()?cfg_.past_kv:0;
+    std::vector<uint16_t> rows(uint64_t(capacity)*cfg_.head_dim), transposed(rows.size());
+    rt_check(vx_copy_from_dev(rows.data(),buffers_.at(name+".fp16").handle,0,rows.size()*2), "verify K rows");
+    rt_check(vx_copy_from_dev(transposed.data(),buffers_.at(name+".transposed.fp16").handle,0,rows.size()*2), "verify K transpose");
+    for(uint32_t s=0;s<capacity;++s) for(uint32_t d=0;d<cfg_.head_dim;++d) {
+      const auto index=uint64_t(s)*cfg_.head_dim+d;
+      if(rows[index]!=transposed[uint64_t(d)*capacity+s])
+        throw std::runtime_error(name+": persistent K transpose mismatch");
+      if(cfg_.decode() && (s<pos || s>=pos+cfg_.seq)
+          && rows[index]!=initial_key_cache_.at(name)[index])
+        throw std::runtime_error(name+": K update changed an untouched cache row");
+    }
+  }
+  std::cout<<"K CACHE PASS: exact transpose and untouched prefix/tail"<<std::endl;
+#endif
 }
 std::vector<Sample> Decoder::run(bool profile,const fs::path& dump,size_t stop_after) {
   std::vector<Sample> samples;
@@ -156,7 +201,7 @@ std::vector<Sample> Decoder::run(bool profile,const fs::path& dump,size_t stop_a
     if(!dump.empty()) std::cout<<"BEGIN "<<samples.size()<<' '<<operation.name<<std::endl;
     samples.push_back(launch(operation,profile));
     if(!dump.empty()) {
-#if DECODER_CANDIDATE != 1
+#if DECODER_HAS_NAIVE
       if(operation.kind==DecoderOp::gemm) {
         DecoderNaiveArgs result{};
         rt_check(vx_copy_from_dev(&result,operation.args_buffer,0,sizeof(result)), "read naive GEMM status");
@@ -169,6 +214,7 @@ std::vector<Sample> Decoder::run(bool profile,const fs::path& dump,size_t stop_a
     }
     if(stop_after && samples.size()>=stop_after) break;
   }
+  if(!dump.empty() && samples.size()==ops_.size()) verify_key_cache();
   return samples;
 }
 std::vector<Sample> Decoder::isolated(unsigned repetitions) {
@@ -188,7 +234,7 @@ std::vector<Sample> Decoder::isolated(unsigned repetitions) {
 void Decoder::multiply(const std::string& name,const std::string& input,const std::string& weights,
     const std::string& output,uint32_t m,uint32_t k,uint32_t n,bool attention,
     bool transpose,uint64_t input_offset,uint64_t output_offset) {
-#if DECODER_CANDIDATE != 3
+#if DECODER_HAS_TCU
   if(DECODER_CANDIDATE==1 || attention) {
     using TC=vortex::tensor::wmma_config_t<NUM_THREADS,vortex::tensor::fp16,vortex::tensor::fp16>;
     if(k%TC::tileK || n%TC::tileN) throw std::runtime_error("TCU K/N must be tile aligned");
@@ -203,7 +249,19 @@ void Decoder::multiply(const std::string& name,const std::string& input,const st
     append(op(name,DecoderOp::tcu,a,{input,weights+".fp16"},{output}));return;
   }
 #endif
-#if DECODER_CANDIDATE != 1
+#if DECODER_ATTN_FPFP
+  if (DECODER_CANDIDATE == 1 || attention) {
+  if (k % FPFP_MXU_ROW) throw std::runtime_error("FPFP K must align to FPFP_MXU_ROW");
+  const auto weight = weights + (transpose ? ".transposed.fp16" : ".fp16");
+  DecoderNaiveArgs a{}; a.M=m; a.K=k; a.N=n; a.weight_format=GEMM_WEIGHT_FP16;
+  a.grid_dim[0]=cores; a.grid_dim[1]=1; a.block_dim[0]=a.block_dim[1]=1;
+  a.input_base=addr(input)+input_offset; a.weight_base=addr(weight); a.output_base=addr(output)+output_offset;
+  if(!decoder_naive_lmem_layout(a,local_mem)) throw std::runtime_error("FPFP LMEM overflow");
+  append(op(name,DecoderOp::gemm,a,{input,weight},{output}));
+  return;
+  }
+#endif
+#if DECODER_HAS_NAIVE
   DecoderNaiveArgs a{};a.M=m;a.K=k;a.N=n;a.QBLK=attention?cfg_.head_dim:cfg_.weight_group;
   a.grid_dim[0]=cores;a.grid_dim[1]=1;a.block_dim[0]=1;a.block_dim[1]=1;
   a.WTRANS=transpose;a.QDIR=attention&&!transpose?1:0;
@@ -263,14 +321,40 @@ void Decoder::build() {
     a.K=S;a.N=D;a.QBLK=D;a.QDIR=1;a.quant_mode=KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC;a.mapping_mode=mapping;a.log2_qblk=lg(D);
     append(op(name,DecoderOp::quant,a,{input},{name+".weight",name+".scale",name+".zero"}));
 #if DECODER_CANDIDATE != 3
-    // Cache dequantization is part of the real TCU attention graph.
+    // Cache dequantization is part of both FP16 attention graphs.
     auto dq=name+".fp16";tensor(dq,1,C,D);
     const uint32_t dequant_threads=kv_cache_dequant_threads_per_block(warps,threads);
     const uint32_t dequant_work=kv_cache_dequant_work_items(C,D,D,1,threads);
     DecoderDequantArgs d{};grid(d,kv_cache_dequant_blocks(dequant_work,dequant_threads,cores,warps),dequant_threads);
     d.src_addr=addr(name+".weight");d.dst_addr=addr(dq);d.scale_addr=addr(name+".scale");d.zero_addr=addr(name+".zero");
     d.K=C;d.N=D;d.QBLK=D;d.QDIR=1;d.quant_mode=KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC;
-    append(op(dq,DecoderOp::dequant,d,{name+".weight",name+".scale",name+".zero"},{dq}));
+#if DECODER_ATTN_FPFP
+    if (key) {
+      const auto transposed=name+".transposed.fp16"; tensor(transposed,1,D,C);
+      DecoderConcatArgs t{}; grid(t,blocks(uint64_t(S)*D),tpb);
+      t.kernel_id=KERNEL_HEAD_TRANSPOSE; t.batch=1; t.seq=S; t.heads=1; t.headdim=D;
+      t.capacity=C; t.offset=pos;
+      t.input_addr=addr(dq)+uint64_t(pos)*D*2; t.output_addr=addr(transposed);
+      if (cfg_.decode()) {
+        // Restore the pre-existing prefix once, before decoder.run() timing.
+        // Both initial and new rows use the same device dequantization policy.
+        append_initialization(op(dq+".initialize",DecoderOp::dequant,d,
+          {name+".weight",name+".scale",name+".zero"},{dq}));
+        auto initial=t; grid(initial,blocks(uint64_t(C)*D),tpb);
+        initial.seq=C; initial.offset=0; initial.input_addr=addr(dq);
+        append_initialization(op(name+".transpose.initialize",DecoderOp::concat,initial,{dq},{transposed}));
+        d.K=S; d.src_addr+=uint64_t(pos)*D/2;
+        d.scale_addr+=pos*2; d.zero_addr+=pos*2; d.dst_addr+=uint64_t(pos)*D*2;
+        grid(d,kv_cache_dequant_blocks(kv_cache_dequant_work_items(S,D,D,1,threads),
+             dequant_threads,cores,warps),dequant_threads);
+      }
+      append(op(dq,DecoderOp::dequant,d,{name+".weight",name+".scale",name+".zero"},{dq}));
+      append(op(name+".transpose",DecoderOp::concat,t,{dq},{transposed}));
+    } else
+#endif
+    {
+      append(op(dq,DecoderOp::dequant,d,{name+".weight",name+".scale",name+".zero"},{dq}));
+    }
 #endif
   }
   tensor("scores",B*Q,S,C);tensor("probabilities",B*Q,S,C);tensor("context",B*Q,S,D);
@@ -287,4 +371,15 @@ void Decoder::build() {
   tensor("mlp_product",1,M,F);DecoderElmulArgs mul{};grid(mul,blocks(uint64_t(M)*F),tpb);mul.input_a_addr=addr("silu");mul.input_b_addr=addr("up_proj");mul.output_addr=addr("mlp_product");mul.size=M*F;append(op("mlp_product",DecoderOp::elmul,mul,{"silu","up_proj"},{"mlp_product"}));
   auto r4=uint32_t(std::sqrt(buffers_.at("hadamard.r4").bytes/2));had("ffn_hadamard","mlp_product",M,F,r4);
   linear("down_proj","ffn_hadamard",F,H);residual("output","down_proj","attention_residual");
+  for (auto& operation:initialization_ops_) {
+    std::cout<<"INITIALIZE "<<operation.name<<std::endl;
+    (void)launch(operation,false);
+  }
+#if DECODER_ATTN_FPFP
+  if(cfg_.decode()) for(uint32_t b=0;b<B;++b) for(uint32_t h=0;h<V;++h) {
+    const auto name="key."+std::to_string(b)+"."+std::to_string(h);
+    auto& snapshot=initial_key_cache_[name]; snapshot.resize(uint64_t(C)*D);
+    rt_check(vx_copy_from_dev(snapshot.data(),buffers_.at(name+".fp16").handle,0,snapshot.size()*2), "snapshot initial K cache");
+  }
+#endif
 }

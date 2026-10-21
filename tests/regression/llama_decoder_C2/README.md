@@ -2,7 +2,7 @@
 
 This application runs one full Llama2 or Llama3 decoder layer on the C2 image.
 Linear projections use the existing naive FP16 x INT4 GEMM hardware kernel;
-QK and PV use the existing FP16 TCU kernel. Vector operations and intermediate
+QK and PV select the existing FP16 TCU or FPFP naive MXU kernel. Vector operations and intermediate
 activations use row-major layout. Every query and KV head is executed on device.
 
 Implementation is shared with C1 and C3 in `../llama_decoder_common`.
@@ -14,6 +14,19 @@ initial inputs and static weights.
 Hardware alias:
 `naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3_axi_fix`.
 The alias selects `configs/naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_tcu_base_pnr_v3.sh`.
+
+For rev8 FPFP attention, source the config resolved by its C2 alias and build
+with `C2_ATTN_BACKEND=fpfp` (or `auto`, which detects `GEMM_NAIVE_FP16_ENABLE`).
+Fixture generation accepts `--c2-attn-backend tcu|fpfp`; the executable and
+`run_validation.sh` additionally accept `auto`. The runtime option validates
+the compiled engine rather than switching hardware. Linear projections remain FPINT.
+Generate both prefix and decode fixtures with the same attention backend.
+
+The FPFP QK path keeps transposed K in `[D,capacity]`. Prefill transposes once;
+decode dequantizes and transposes only the newly appended row. Initializing a
+decode fixture's old cache happens outside timed runs. See the
+[rev8_v2 validation](../../../analysis_workspace/latency_on_hw/docs/rev8_v2/SUMMARY.md)
+for Llama2/Llama3 prefill and B1/past1024 decode PASS results.
 
 Validation starts with batch 1, 32 prefill tokens, real model dimensions, followed
 by one decode input token with 1024 existing KV entries. A successful build does
@@ -59,8 +72,9 @@ preflight's `warmup_profile.csv` without extra counter passes.
 `--check-intermediates` adds diagnostic comparisons whose
 results do not override a passing final-output check.
 
-See [RESULTS.md](RESULTS.md) for the current PASS/FAIL status and decode TCU
-subnormal diagnosis; the recorded decode cases also fail the final-output gate.
+See [RESULTS.md](RESULTS.md) for historical TCU results and the decode subnormal
+diagnosis; those recorded decode cases failed the final-output gate. They do not
+describe the newer FPFP attention validation linked above.
 Older prefill reports used the stricter local-operation acceptance policy. New
 runs use final-output-only acceptance without changing any numeric tolerance.
 

@@ -9,8 +9,8 @@ unchanged; rebuild host and device together after argument ABI changes.
 
 | Candidate | Seven linear projections | QK and PV | Physical intermediates |
 |---|---|---|---|
-| C1 | FP16 TCU | FP16 TCU | Row-major |
-| C2 | Naive FP-INT MXU | FP16 TCU | Row-major |
+| C1 | FP16 TCU or FPFP naive MXU | Same selected FP16 engine | Row-major |
+| C2 | Naive FP-INT MXU | FP16 TCU or FPFP naive MXU | Row-major |
 | C3 | Naive FP-INT MXU | Naive FP-INT MXU | Row-major |
 
 All candidates perform signed asymmetric W4/KV4 quantization. C1 linear weights
@@ -18,6 +18,21 @@ are dequantized once during fixture preparation and uploaded as FP16 outside
 `decoder.run()`. C1/C2 dequantize KV cache inside the device graph. C3 consumes
 packed KV directly. Do not compare C1 timing to a sum that includes per-invocation
 weight dequantization without accounting for this policy.
+
+For FPFP attention, K has a persistent transposed `[D, capacity]` FP16 buffer.
+Prefill transposes each head once. Decode dequantizes only the new K row and
+uses `head_concat` mode 2 with `seq=1`, `capacity=C`, and `offset=past_kv_len`
+to update its position. Existing prefix and unused tail remain unchanged.
+The first-step replay harness restores a fixture's old K cache with one device
+dequant/transpose during setup, outside `decoder.run()` timing. V-cache
+dequantization is unchanged. Verification checks the full K transpose exactly
+and checks that decode did not modify the old prefix or unused tail.
+
+`C1_GEMM_BACKEND=auto|tcu|fpfp` and `C2_ATTN_BACKEND=auto|tcu|fpfp` select the
+build-time attention implementation; `auto` follows `GEMM_NAIVE_FP16_ENABLE`.
+The executable and fixture tools accept `--c1-gemm-backend` and
+`--c2-attn-backend` to validate the selected build against fixture metadata.
+C2 linear projections always use FPINT, including when attention uses FPFP.
 
 ## Head layouts without separate adapters
 
@@ -33,7 +48,7 @@ kernel compilation. They apply to prefill and decode, without an S=1 special cas
 `ROPE_OUTPUT_HEAD_MAJOR=1` selects the RoPE output address formula.
 `KV_CACHE_QUANT_INPUT_STRIDE=1` adds `src_row_stride` (FP16 elements, zero means N)
 to quant arguments. `SGEMM_TCU_RUNTIME_B_LAYOUT=1` adds `B_row_major` to TCU
-arguments and dispatches to row/column-major template implementations. Linears
+arguments and dispatches to row/column-major template implementations. In the TCU path, linears
 and QK keep column-major B; only PV selects row-major B. The decoder enables these macros in its own build. Standalone `rope`,
 `kv_cache_quant_w4a16` and `sgemm_tcu` also expose explicit layout/stride options;
 RoPE uses a runtime output-layout field there. Rebuild host and device together when enabling

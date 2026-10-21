@@ -3,8 +3,46 @@ include $(ROOT_DIR)/config.mk
 SRC_DIR := $(VORTEX_HOME)/tests/regression/llama_decoder_common
 SRCS := $(SRC_DIR)/main.cpp $(SRC_DIR)/decoder.cpp
 VX_SRCS := $(SRC_DIR)/kernel.cpp $(wildcard $(SRC_DIR)/device_*.cpp)
+# C1 defaults to the arithmetic engine present in the selected hardware image.
+C1_GEMM_BACKEND ?= auto
+C2_ATTN_BACKEND ?= auto
+C1_SELECTED_GEMM_BACKEND := $(C1_GEMM_BACKEND)
+ifeq ($(C1_SELECTED_GEMM_BACKEND),auto)
+ifneq (,$(findstring -DGEMM_NAIVE_FP16_ENABLE,$(CONFIGS)))
+C1_SELECTED_GEMM_BACKEND := fpfp
+else
+C1_SELECTED_GEMM_BACKEND := tcu
+endif
+endif
+ifeq ($(filter $(C1_SELECTED_GEMM_BACKEND),tcu fpfp),)
+$(error C1_GEMM_BACKEND must be auto, tcu or fpfp)
+endif
 ifeq ($(DECODER_CANDIDATE),1)
+ifeq ($(C1_SELECTED_GEMM_BACKEND),tcu)
 VX_SRCS := $(filter-out $(SRC_DIR)/device_naive.cpp,$(VX_SRCS))
+else
+VX_SRCS := $(filter-out $(SRC_DIR)/device_tcu.cpp,$(VX_SRCS))
+CXXFLAGS += -DDECODER_C1_FPFP=1
+VX_CFLAGS += -DDECODER_C1_FPFP=1
+endif
+endif
+ifeq ($(DECODER_CANDIDATE),2)
+C2_SELECTED_ATTN_BACKEND := $(C2_ATTN_BACKEND)
+ifeq ($(C2_SELECTED_ATTN_BACKEND),auto)
+ifneq (,$(findstring -DGEMM_NAIVE_FP16_ENABLE,$(CONFIGS)))
+C2_SELECTED_ATTN_BACKEND := fpfp
+else
+C2_SELECTED_ATTN_BACKEND := tcu
+endif
+endif
+ifeq ($(filter $(C2_SELECTED_ATTN_BACKEND),tcu fpfp),)
+$(error C2_ATTN_BACKEND must be auto, tcu or fpfp)
+endif
+ifeq ($(C2_SELECTED_ATTN_BACKEND),fpfp)
+VX_SRCS := $(filter-out $(SRC_DIR)/device_tcu.cpp,$(VX_SRCS))
+CXXFLAGS += -DDECODER_C2_FPFP=1
+VX_CFLAGS += -DDECODER_C2_FPFP=1
+endif
 endif
 ifeq ($(DECODER_CANDIDATE),3)
 VX_SRCS := $(filter-out $(SRC_DIR)/device_tcu.cpp,$(VX_SRCS))

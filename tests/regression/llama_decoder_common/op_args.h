@@ -44,6 +44,6 @@
 #define kernel_arg_t DecoderEladdArgs
 #include "../eladd/common.h"
 #undef kernel_arg_t
-#if DECODER_CANDIDATE != 1
+#if DECODER_HAS_NAIVE
 #include "naive_args.h"
 #endif

@@ -20,5 +20,9 @@ typedef struct {
   uint32_t heads;
   uint32_t headdim;
   uint32_t power_kernel_iterations;
+  // Transpose a compact input chunk into persistent [D, capacity] storage.
+  // Zero capacity preserves the original full-matrix transpose ABI behavior.
+  uint32_t capacity;
+  uint32_t offset;
 } kernel_arg_t;
 #endif // _HEAD_CONCAT_COMMON_H_

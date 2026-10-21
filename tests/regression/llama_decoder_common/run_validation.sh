@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Run a prebuilt candidate app; the existing C++ final-output check is the gate.
 set -euo pipefail
-candidate= fixture= build= output= python_bin=python3
+candidate= fixture= build= output= python_bin=python3 c1_backend=auto c2_backend=auto fpga_alias=
 timing=0 repetitions=3 check_intermediates=0 profile_repetitions=
 while (($#)); do
   case "$1" in
     --candidate) candidate=$2; shift 2;;
+    --c1-gemm-backend) c1_backend=$2; shift 2;;
+    --c2-attn-backend) c2_backend=$2; shift 2;;
+    --fpga-bin) fpga_alias=$2; shift 2;;
     --fixture) fixture=$2; shift 2;;
     --build) build=$2; shift 2;;
     --output) output=$2; shift 2;;
@@ -14,7 +17,7 @@ while (($#)); do
     --check-intermediates) check_intermediates=1; shift;;
     --repetitions) repetitions=$2; shift 2;;
     --profile-repetitions) profile_repetitions=$2; shift 2;;
-    *) echo "Usage: $0 --candidate C1|C2|C3 --build DIR --fixture DIR --output DIR [--python PATH] [--timing] [--repetitions 3] [--profile-repetitions N] [--check-intermediates]" >&2; exit 2;;
+    *) echo "Usage: $0 --candidate C1|C2|C3 --build DIR --fixture DIR --output DIR [--c1-gemm-backend auto|tcu|fpfp] [--c2-attn-backend auto|tcu|fpfp] [--fpga-bin ALIAS] [--python PATH] [--timing] [--repetitions 3] [--profile-repetitions N] [--check-intermediates]" >&2; exit 2;;
   esac
 done
 case "$candidate" in
@@ -33,7 +36,28 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 declare -A cfg
 while read -r name value; do cfg[$name]=$value; done < "$fixture/config.txt"
 [[ ${cfg[candidate]:-} == "$candidate" ]] || { echo "Fixture candidate mismatch" >&2; exit 2; }
+if [[ $candidate == C1 ]]; then
+  if [[ $c1_backend == auto ]]; then c1_backend=${cfg[c1_gemm_backend]:-tcu}; fi
+  case "$c1_backend" in
+    tcu) ;;
+    fpfp) alias=fpfp_th16_m8_n16_wload1_all_bram_acc;;
+    *) echo "Invalid C1 GEMM backend: $c1_backend" >&2; exit 2;;
+  esac
+  [[ $c1_backend == "${cfg[c1_gemm_backend]:-tcu}" ]] || { echo "Fixture C1 backend mismatch" >&2; exit 2; }
+fi
+if [[ $candidate == C2 ]]; then
+  if [[ $c2_backend == auto ]]; then c2_backend=${cfg[c2_attn_backend]:-tcu}; fi
+  case "$c2_backend" in
+    tcu) ;;
+    fpfp) alias=naive_th16_tcol16_m16_L16_bigmem_all_bram_acc_fpfp_m8_n16_wload1_base_pnr_v3_qcol_pnr_spread;;
+    *) echo "Invalid C2 attention backend: $c2_backend" >&2; exit 2;;
+  esac
+  [[ $c2_backend == "${cfg[c2_attn_backend]:-tcu}" ]] || { echo "Fixture C2 backend mismatch" >&2; exit 2; }
+fi
+if [[ -n $fpga_alias ]]; then alias=$fpga_alias; fi
 args=(--model "${cfg[model]}" --batch "${cfg[batch]}" --seq-len "${cfg[seq]}" --fixture "$fixture")
+if [[ $candidate == C1 ]]; then args+=(--c1-gemm-backend "$c1_backend"); fi
+if [[ $candidate == C2 ]]; then args+=(--c2-attn-backend "$c2_backend"); fi
 if [[ ${cfg[stage]:-prefill} == decode ]]; then
   args+=(--stage decode --past-kv-len "${cfg[past_kv]}" --cache-capacity "${cfg[cache_capacity]}")
 fi

@@ -51,6 +51,7 @@ int main(int argc, char *argv[]) {
   uint32_t heads = 32;
   uint32_t headdim = 128;
   uint32_t mode = KERNEL_HEAD_CONCAT;
+  uint32_t capacity = 0, offset = 0;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
@@ -58,11 +59,13 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mode") == 0) mode = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-capacity") == 0) capacity = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-offset") == 0) offset = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-mode 0=concat|1=head-reorder|2=transpose]\n", argv[0]);
+             "[-mode 0=concat|1=head-reorder|2=transpose] [-capacity C] [-offset T]\n", argv[0]);
       return 0;
     }
   }
@@ -72,9 +75,17 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (!capacity) capacity = seq;
+  if ((mode != KERNEL_HEAD_TRANSPOSE && (capacity != seq || offset))
+      || offset > capacity || seq > capacity - offset) {
+    fprintf(stderr, "Transpose update must fit capacity; other modes require default layout\n");
+    return 1;
+  }
   const uint32_t hidden = heads * headdim;
   const size_t elems = (size_t)batch * seq * hidden;
   const size_t bytes = elems * sizeof(data_t);
+  const size_t output_elems = (size_t)batch * capacity * hidden;
+  const size_t output_bytes = output_elems * sizeof(data_t);
   std::vector<data_t> h_input;
   if (bench.copy_inputs) {
     h_input.resize(elems);
@@ -89,7 +100,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_READ, &input_buffer));
-  RT_CHECK(vx_mem_alloc(device, bytes, VX_MEM_WRITE, &output_buffer));
+  RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
   if (bench.copy_inputs) {
     RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, bytes));
   }
@@ -119,6 +130,8 @@ int main(int argc, char *argv[]) {
   arg.seq = seq;
   arg.heads = heads;
   arg.headdim = headdim;
+  arg.capacity = capacity;
+  arg.offset = offset;
   arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 

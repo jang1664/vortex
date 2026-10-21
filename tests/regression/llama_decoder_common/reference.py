@@ -53,7 +53,8 @@ def generate(a):
         write(name, value)
     if a.candidate == 'C1':
         for name in PROJECTION_DIMS:
-            write(name + '.fp16', local[name + '.weight'].numpy().T)
+            weight = local[name + '.weight'].numpy()
+            write(name + '.fp16', weight if a.c1_gemm_backend == 'fpfp' else weight.T)
     rng = np.random.default_rng(a.seed + (2 if decode else 1))
     hidden = torch.from_numpy(rng.uniform(-1, 1, (a.batch, a.seq_len, cfg.hidden_size)).astype('float16'))
     positions = (torch.arange(a.seq_len) + (a.past_kv_len if decode else 0)).expand(a.batch, -1)
@@ -79,6 +80,10 @@ def generate(a):
         np.savez(root / 'initial_cache.npz', **{f'cache_{i}': v.numpy() for i, v in enumerate(initial)})
     (root / 'tensors.tsv').write_text(''.join(records))
     fields = dict(candidate=a.candidate, model=a.model, batch=a.batch, seq=a.seq_len, hidden=cfg.hidden_size, ffn=cfg.intermediate_size, q_heads=cfg.num_attention_heads, kv_heads=cfg.num_key_value_heads, head_dim=cfg.head_dim)
+    if a.candidate == 'C1':
+        fields['c1_gemm_backend'] = a.c1_gemm_backend
+    if a.candidate == 'C2':
+        fields['c2_attn_backend'] = a.c2_attn_backend
     if decode:
         fields.update(stage='decode', past_kv=a.past_kv_len, cache_capacity=cfg.cache_capacity)
     (root / 'config.txt').write_text(''.join((f'{k} {v}\n' for k, v in fields.items())))
@@ -102,7 +107,7 @@ def generate(a):
     np.savez(root / 'reference.npz', **refs, **{f'cache_{i}': v.numpy() for i, v in enumerate(values[15:])})
     (root / 'reference').mkdir(exist_ok=True)
     refs['output'].tofile(root / 'reference/output.bin')
-    meta = dict(config=asdict(cfg), model=a.model, candidate=a.candidate, seed=a.seed, decoder_stage=a.decoder_stage, past_kv_len=a.past_kv_len if decode else 0, tensors_sha256=hashes, linear_compute=model.linear_compute, attention_compute=model.attention_compute, numerical_policy='signed asymmetric WKV4; FP16 KV quant; separate SiLU; lane-strided RMS', weight_dequantization='C1 preloaded FP16 weights; excluded from decoder timing')
+    meta = dict(c2_attn_backend=a.c2_attn_backend if a.candidate == 'C2' else None, c1_gemm_backend=a.c1_gemm_backend if a.candidate == 'C1' else None, config=asdict(cfg), model=a.model, candidate=a.candidate, seed=a.seed, decoder_stage=a.decoder_stage, past_kv_len=a.past_kv_len if decode else 0, tensors_sha256=hashes, linear_compute=model.linear_compute, attention_compute=model.attention_compute, numerical_policy='signed asymmetric WKV4; FP16 KV quant; separate SiLU; lane-strided RMS', weight_dequantization='C1 preloaded FP16 weights; excluded from decoder timing')
     (root / 'fixture.json').write_text(json.dumps(meta, indent=2))
     print('FIXTURE COMPLETE', root, flush=True)
 
@@ -214,6 +219,8 @@ def main():
     p.add_argument('--fixture', type=Path, required=True)
     p.add_argument('--output', type=Path)
     p.add_argument('--candidate', choices=('C1', 'C2', 'C3'), default='C3')
+    p.add_argument('--c1-gemm-backend', choices=('tcu', 'fpfp'), default='tcu')
+    p.add_argument('--c2-attn-backend', choices=('tcu', 'fpfp'), default='tcu')
     p.add_argument('--model', choices=('llama3-8b', 'llama2-7b'), default='llama3-8b')
     p.add_argument('--batch', type=int, default=1)
     p.add_argument('--seq-len', type=int, default=32)
