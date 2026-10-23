@@ -167,7 +167,8 @@ def prealign(
     extra_bitwidth: int,
     M: int,
     K: int,
-    debug: bool = False
+    debug: bool = False,
+    *, tile_k: Optional[int] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Prealign FP16 data to fixed-point with max exponent alignment
@@ -184,10 +185,12 @@ def prealign(
         - aligned_fx_data: Shape (M, K), signed int64 array
         - aligned_exp_data: Shape (M, K//MXU_K), uint8 array
     """
-    assert K % MXU_K == 0, f"K must be multiple of MXU_K={MXU_K}"
+    # Explicit geometry for versioned callers; legacy callers retain MXU_K.
+    group_k = MXU_K if tile_k is None else tile_k
+    assert K % group_k == 0, f"K must be multiple of tile_k={group_k}"
     
     aligned_fx_data = np.zeros((M, K), dtype=np.int64)
-    aligned_exp_data = np.zeros((M, K // MXU_K), dtype=np.uint8)
+    aligned_exp_data = np.zeros((M, K // group_k), dtype=np.uint8)
     
     if debug:
         print(f"[FPINT_EMUL.PREALIGN] extra_bitwidth={extra_bitwidth}, M={M}, K={K}")
@@ -195,11 +198,11 @@ def prealign(
     # Process each row
     for m in range(M):
         # Process each group of MXU_K in K dimension
-        for kg in range(K // MXU_K):
+        for kg in range(K // group_k):
             # Step 1: Find max exponent in this group
             max_exp = 0
-            for k_in_group in range(MXU_K):
-                k = kg * MXU_K + k_in_group
+            for k_in_group in range(group_k):
+                k = kg * group_k + k_in_group
                 sign, exp, mantissa = fp16_to_components(input_data[m, k])
                 exp = max(exp, 1)  # Denormal case: treat exp=0 as exp=1
                 if exp > max_exp:
@@ -212,8 +215,8 @@ def prealign(
                 print(f"[FPINT_EMUL.PREALIGN] m={m}, kg={kg}, max_exp={max_exp}")
             
             # Step 2: Align all elements in this group
-            for k_in_group in range(MXU_K):
-                k = kg * MXU_K + k_in_group
+            for k_in_group in range(group_k):
+                k = kg * group_k + k_in_group
                 
                 # Extract fields from FP16
                 sign, exp, mantissa = fp16_to_components(input_data[m, k])
