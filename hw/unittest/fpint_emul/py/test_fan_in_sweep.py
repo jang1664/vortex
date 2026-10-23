@@ -2,6 +2,8 @@
 
 import sys
 import struct
+import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +12,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fan_in_sweep import (
+    build_parser,
+    build_cuda_model,
+    cuda_prefix_outputs,
+    _validate_config,
+    validate_resume,
+    summarize_results,
     bits_to_fp16,
     fp16_to_bits,
     generate_trial_data,
@@ -31,6 +39,67 @@ from fpint_emul import (
     fpint_gemm_ref,
 )
 from visualize import ulp_diff_fp16_bits
+from fpint_versions import gemm as rtl_c4_gemm
+
+
+def test_explicit_version_and_geometry():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["data"])
+    for version, block in (("legacy", 32), ("rtl-c4-v1", 16)):
+        args = parser.parse_args(["data", "--version", version])
+        _validate_config(args, (32, 64))
+        assert args.qblock == block
+    args = parser.parse_args(["data", "--version", "rtl-c4-v1", "--qblock", "32"])
+    with pytest.raises(ValueError, match="qblock=16"):
+        _validate_config(args, (32, 64))
+
+
+def test_resume_rejects_different_version_config_or_source(tmp_path):
+    path = tmp_path / "metadata.json"
+    config = dict(model_version="rtl-c4-v1", fpint_backend="cuda", qblock=16)
+    hashes = {"kernel.cu": "abc"}
+    path.write_text(json.dumps(dict(config=config, source_sha256=hashes)))
+    validate_resume(path, config, hashes)
+    for updated in (dict(config, model_version="legacy"), dict(config, qblock=32)):
+        with pytest.raises(ValueError, match="configuration/model version"):
+            validate_resume(path, updated, hashes)
+    with pytest.raises(ValueError, match="source hashes"):
+        validate_resume(path, config, {"kernel.cu": "def"})
+
+
+def test_summary_rejects_mixed_versions():
+    pd = pytest.importorskip("pandas")
+    with pytest.raises(ValueError, match="mixed"):
+        summarize_results(pd.DataFrame({"model_version": ["legacy", "rtl-c4-v1"]}))
+
+
+@pytest.fixture(scope="module")
+def cuda_model(tmp_path_factory):
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available() or not shutil.which("nvcc"):
+        pytest.skip("CUDA GPU and nvcc required")
+    model, _ = build_cuda_model(tmp_path_factory.mktemp("fpint_cuda"), "rtl-c4-v1")
+    return model
+
+
+@pytest.mark.parametrize("qdir", [QCOL, QROW])
+@pytest.mark.parametrize("m,k_values", [(16, (32, 64, 128)), (1, (32768,))])
+def test_cuda_sweep_matches_versioned_python(cuda_model, qdir, m, k_values):
+    data = generate_trial_data(20260729, m, 16, max(k_values), qblock=16)
+    scales, zeros = ((data.qcol_scale_bits, data.qcol_zero) if qdir == QCOL
+                     else (data.qrow_scale_bits, data.qrow_zero))
+    actual = cuda_prefix_outputs(cuda_model, data.input_bits, data.weights,
+                                 scales, zeros, qdir, k_values)
+    for k in k_values:
+        count = k//16 if qdir == QCOL else k
+        expected, trace = rtl_c4_gemm(data.input_bits[:, :k], data.weights[:k],
+                                      scales[:count], zeros[:count], qdir=qdir,
+                                      version="rtl-c4-v1")
+        assert np.array_equal(actual[k], expected)
+        _, cuda_trace = cuda_model.gemm(data.input_bits[:, :k], data.weights[:k],
+                                        scales[:count], zeros[:count], qdir=qdir)
+        assert np.array_equal(cuda_trace, trace)
 
 
 def test_fp16_bit_round_trip():

@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -29,6 +31,7 @@ from fpint_emul import (
     QROW,
 )
 from visualize import ulp_diff_fp16_bits
+from fpint_cuda import CudaModel
 
 
 DEFAULT_K_VALUES = (32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
@@ -53,6 +56,49 @@ INPUT_MANTISSA_MEAN = 512.0
 INPUT_MANTISSA_STD = 256.0
 SCALE_MIN = 2.0**-14
 SCALE_MAX = 2.0**-11
+MODEL_VERSIONS = ("legacy", "rtl-c4-v1")
+
+
+def build_cuda_model(output_dir: Path, version: str) -> tuple[CudaModel, dict]:
+    """Build the frozen CUDA emulator; no CPU fallback or arithmetic changes."""
+    nvcc = shutil.which("nvcc")
+    if not nvcc:
+        raise RuntimeError("rtl-c4-v1 requires nvcc on PATH")
+    source = Path(__file__).resolve().parents[1] / "cuda/fpint_rtl_c4.cu"
+    library = output_dir / "libfpint_cuda.so"
+    command = [nvcc, "-std=c++17", "-O2", "-shared", "-Xcompiler", "-fPIC",
+               "--fmad=false", "--ftz=false", str(source), "-o", str(library)]
+    with (output_dir / "cuda_build.log").open("w") as log:
+        subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+    return CudaModel(library, version=version), {
+        "compile_command": command,
+        "nvcc": subprocess.check_output([nvcc, "--version"], text=True).strip(),
+        "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+    }
+
+
+def cuda_prefix_outputs(model, input_bits, weights, scales, zeros, qdir, k_values):
+    """Run each matrix size on CUDA, including its final FP16 conversion."""
+    outputs = {}
+    for k in k_values:
+        params = k // 16 if qdir == QCOL else k
+        outputs[k], _ = model.gemm(input_bits[:, :k], weights[:k],
+                                    scales[:params], zeros[:params], qdir=qdir)
+    return outputs
+
+
+def validate_resume(metadata_path: Path, config: dict, source_hashes: dict) -> None:
+    """Do not mix different model versions, workloads or implementations."""
+    if not metadata_path.exists():
+        raise ValueError("Resume requires existing metadata.json")
+    saved = json.loads(metadata_path.read_text())
+    previous = dict(saved["config"])
+    previous.setdefault("model_version", "legacy")
+    previous.setdefault("fpint_backend", "numpy")
+    if previous != config:
+        raise ValueError("Resume configuration/model version differs from saved experiment")
+    if saved.get("source_sha256", source_hashes) != source_hashes:
+        raise ValueError("Resume source hashes differ from saved experiment")
 
 
 def bits_to_fp16(bits: np.ndarray) -> np.ndarray:
@@ -461,6 +507,8 @@ def summarize_results(raw):
     from scipy.stats import t
 
     raw = raw.copy()
+    if "model_version" in raw.columns and (raw["model_version"].isna().any() or raw["model_version"].nunique() != 1):
+        raise ValueError("Cannot aggregate mixed or missing model versions")
     if "reference" not in raw.columns:
         raw["reference"] = REFERENCE_CPU
     rows = []
@@ -486,9 +534,12 @@ def summarize_results(raw):
                 "trial_count": count,
             }
         )
-    return pd.DataFrame(rows).sort_values(
+    result = pd.DataFrame(rows).sort_values(
         ["reference", "qdir", "K", "method"]
     ).reset_index(drop=True)
+    if "model_version" in raw.columns:
+        result["model_version"] = raw["model_version"].iloc[0]
+    return result
 
 
 def _plot_reference_summary(
@@ -505,9 +556,11 @@ def _plot_reference_summary(
     k_values = sorted(summary["K"].unique())
     x = np.arange(len(k_values), dtype=np.float64)
     width = 0.36
+    ours_label = ("FPINT " + str(summary["model_version"].iloc[0])
+                  if "model_version" in summary.columns else "FINISH")
     plot_methods = (
         (METHOD_GPU, "GPU", "#327da8", -width / 2),
-        (METHOD_OURS, "FINISH", "#9bcbb5", width / 2),
+        (METHOD_OURS, ours_label, "#9bcbb5", width / 2),
     )
     rc = {
         "font.size": DEFAULT_FONT_SIZE,
@@ -682,12 +735,21 @@ def export_data(args: argparse.Namespace) -> Path:
             )
         )
 
-    kernels = verify_tensor_core(args.device, k_values) if args.verify_tensor_core else {}
+    sources = [Path(__file__).resolve(), Path(__file__).with_name("fpint_emul.py")]
+    if args.version == "rtl-c4-v1":
+        sources.extend([Path(__file__).with_name("fpint_cuda.py"),
+                        Path(__file__).with_name("fpint_versions.py"),
+                        Path(__file__).resolve().parents[1] / "cuda/fpint_rtl_c4.cu"])
+    repo_root = Path(__file__).resolve().parents[4]
+    source_hashes = {str(p.resolve().relative_to(repo_root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in sources}
     metadata = {
         "status": "running",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "command": shlex.join(sys.argv),
         "config": {
+            "model_version": args.version,
+            "fpint_backend": "cuda" if args.version == "rtl-c4-v1" else "numpy",
             "k_values": list(k_values),
             "m": args.m,
             "n": args.n,
@@ -717,8 +779,18 @@ def export_data(args: argparse.Namespace) -> Path:
             },
         },
         "system": _system_metadata(args.device),
-        "tensor_core_kernels": kernels,
+        "source_sha256": source_hashes,
     }
+    if args.resume:
+        validate_resume(metadata_path, metadata["config"], source_hashes)
+        if not raw.empty and "model_version" not in raw.columns:
+            raw["model_version"] = "legacy"
+        if not raw.empty and not raw["model_version"].eq(args.version).all():
+            raise ValueError("Saved CSV model version differs from requested experiment")
+    cuda_model = None
+    if args.version == "rtl-c4-v1":
+        cuda_model, metadata["cuda"] = build_cuda_model(output_dir, args.version)
+    metadata["tensor_core_kernels"] = verify_tensor_core(args.device, k_values) if args.verify_tensor_core else {}
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
     expected_per_seed = 2 * len(k_values) * len(METHODS) * len(REFERENCES)
@@ -740,11 +812,16 @@ def export_data(args: argparse.Namespace) -> Path:
         for qdir in (QCOL, QROW):
             if qdir == QCOL:
                 scales, zeros = data.qcol_scale_bits, data.qcol_zero
+            else:
+                scales, zeros = data.qrow_scale_bits, data.qrow_zero
+            if cuda_model is not None:
+                ours = cuda_prefix_outputs(cuda_model, data.input_bits, data.weights,
+                                           scales, zeros, qdir, k_values)
+            elif qdir == QCOL:
                 ours = qcol_real_2scomp_prefix_outputs(
                     data.input_bits, data.weights, scales, zeros, k_values, args.qblock
                 )
             else:
-                scales, zeros = data.qrow_scale_bits, data.qrow_zero
                 ours = qrow_real_2scomp_prefix_outputs(
                     data.input_bits, data.weights, scales, zeros, k_values, args.qblock
                 )
@@ -789,17 +866,17 @@ def export_data(args: argparse.Namespace) -> Path:
                             reference_name,
                         )
                         if key not in completed:
-                            new_rows.append(
-                                _metric_row(
-                                    seed,
-                                    qdir,
-                                    k,
-                                    method,
-                                    reference_name,
-                                    reference_outputs[k],
-                                    outputs[k],
-                                )
+                            row = _metric_row(
+                                seed,
+                                qdir,
+                                k,
+                                method,
+                                reference_name,
+                                reference_outputs[k],
+                                outputs[k],
                             )
+                            row["model_version"] = args.version
+                            new_rows.append(row)
                             completed.add(key)
 
         if new_rows:
@@ -820,9 +897,14 @@ def export_data(args: argparse.Namespace) -> Path:
 
 
 def _validate_config(args: argparse.Namespace, k_values: Sequence[int]) -> None:
-    if args.m % MXU_N != 0 or args.n % MXU_N != 0:
+    if args.qblock is None:
+        args.qblock = 16 if args.version == "rtl-c4-v1" else QBLOCK
+    if args.m <= 0 or args.n <= 0 or args.m % MXU_N != 0 or args.n % MXU_N != 0:
         raise ValueError(f"M and N must be multiples of {MXU_N} for Tensor Core coverage")
-    if args.qblock != QBLOCK or args.qblock != MXU_K:
+    if args.version == "rtl-c4-v1":
+        if args.qblock != 16 or args.n != 16 or args.device != "cuda:0":
+            raise ValueError("rtl-c4-v1 requires qblock=16, N=16 and device=cuda:0")
+    elif args.qblock != QBLOCK or args.qblock != MXU_K:
         raise ValueError(f"This experiment requires qblock=QBLOCK=MXU_K={QBLOCK}")
     if args.trials < 2:
         raise ValueError("At least two trials are required for a confidence interval")
@@ -851,12 +933,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     data_parser = commands.add_parser("data", help="run experiments and export raw CSV data")
+    data_parser.add_argument("--version", choices=MODEL_VERSIONS, required=True)
     data_parser.add_argument(
         "--k-values", type=_parse_k_values, default=list(DEFAULT_K_VALUES), help="comma-separated fan-ins"
     )
     data_parser.add_argument("--m", type=int, default=16)
     data_parser.add_argument("--n", type=int, default=16)
-    data_parser.add_argument("--qblock", type=int, default=QBLOCK)
+    data_parser.add_argument("--qblock", type=int, help="default: 16 for rtl-c4-v1, 32 for legacy")
     data_parser.add_argument("--trials", type=int, default=30)
     data_parser.add_argument("--base-seed", type=int, default=20260729)
     data_parser.add_argument(

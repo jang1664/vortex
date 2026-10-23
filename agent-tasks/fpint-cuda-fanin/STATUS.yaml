@@ -1,0 +1,18 @@
+task: fpint-cuda-fanin
+state: complete
+objective: Extend the matrix accuracy sweep with explicit rtl-c4-v1 CUDA selection and run the historical 100-seed experiment at C4 QBLOCK=16.
+log:
+  - timestamp: '2026-10-21 17:49'
+    message: Located the existing sweep, CPU/GPU FP64 references, Tensor Core checks, ULP metrics and plotting helpers. Will reuse them and retain legacy arithmetic.
+  - timestamp: '2026-10-21 17:51'
+    message: Added required version selection, CUDA matrix execution for each K, versioned metadata/CSV/plots, and strict resume checks. All 17 tests passed, including actual CUDA vs Python output/psum comparison through K=32768. Starting the 100-seed experiment.
+  - timestamp: '2026-10-21 17:57'
+    message: Completed 100 seeds and all 13200 expected metric rows (563200 FPINT output elements). All metrics finite; CPU/GPU reference metrics identical. Generated six plots and summary CSV, inspected the CPU PNG, verified coordinates/source hashes. Legacy/CUDA CLI smoke tests and byte-identical matching resume passed. Full results and reproducible commands recorded.
+artifacts:
+  results: analysis_workspace/numerical_acc/results/fpint_real_2scomp/20261021_rtl_c4_v1_qblock16_100seeds
+  report: agent-tasks/fpint-cuda-fanin/RESULTS.md
+  log: agent-tasks/fpint-cuda-fanin/run.log
+pitfalls:
+  - Historical runs used QBLOCK=MXU_K=32; C4 uses 16, so the new experiment is not an isolated arithmetic-version comparison to old aggregate numbers.
+  - The custom CUDA model currently supports N=16 and the default CUDA device; reject incompatible sweep settings.
+  - The vortex conda environment has an unavailable torch_vortex auto-loaded extension; the existing sweep disables backend auto-loading, and tests use TORCH_DEVICE_BACKEND_AUTOLOAD=0.

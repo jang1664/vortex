@@ -97,6 +97,7 @@ range prevents the broad-exponent inputs from overflowing FP16 outputs.
 ```bash
 conda activate vortex
 python fan_in_sweep.py data \
+  --version legacy \
   --k-values 32,64,128,256,512,1024,2048,4096,8192,16384,32768 \
   --m 16 --n 16 --qblock 32 --trials 100 \
   --quant signed-asymmetric --device cuda:0 --verify-tensor-core
@@ -104,6 +105,42 @@ python fan_in_sweep.py data \
 
 The `data` command writes seed-level metrics and hardware/software metadata below
 `analysis_workspace/numerical_acc/results/fpint_real_2scomp/`.
+
+For the current C4 RTL numerical contract, use the actual `rtl-c4-v1` CUDA
+emulator with QBLOCK=MXU_K=16. From the repository root:
+
+```bash
+conda activate vortex
+python hw/unittest/fpint_emul/py/fan_in_sweep.py data \
+  --version rtl-c4-v1 \
+  --k-values 32,64,128,256,512,1024,2048,4096,8192,16384,32768 \
+  --m 16 --n 16 --qblock 16 --trials 100 --base-seed 20260729 \
+  --quant signed-asymmetric --device cuda:0 --verify-tensor-core \
+  --output analysis_workspace/numerical_acc/results/fpint_real_2scomp/NEW_RUN
+```
+
+`--version` is required. If `--qblock` is omitted, it defaults to 16 for
+`rtl-c4-v1` and 32 for `legacy`. The CUDA model currently requires N=16 and
+`cuda:0`; M must be a positive multiple of 16. nvcc must be on PATH. The runner
+builds the existing frozen CUDA kernel with FMA/FTZ disabled and executes each
+K prefix on the GPU, including final FP16 rounding. No CUDA arithmetic was
+changed for this sweep. The `ours` method is the selected FPINT model; the two
+baselines (`gpu_tensor_core` and the auxiliary `gpu_model`) and CPU/GPU FP64
+references retain their existing arithmetic. QCOL and QROW use the same input
+and weight matrices, with direction-specific scales and zero points.
+
+Version and backend are saved in metadata; raw and summary CSVs include
+`model_version`, and plot legends identify it. Metadata also records source
+hashes, the CUDA compilation command/library hash and nvcc version. To resume,
+repeat the exact version/workload arguments with `--resume --output RUN`;
+configuration or source-hash mismatches are rejected. A CSV containing mixed
+model versions cannot be aggregated. Nonfinite outputs stop the experiment
+instead of silently removing samples.
+
+Changing QBLOCK from the historical 32 to C4's 16 changes scale/zero grouping
+and sampled parameter arrays. Compare methods within the new experiment;
+differences from historical aggregates are not attributable solely to the
+arithmetic version.
 
 Create the Student-t 95% confidence-interval plot separately using only the
 exported CSV path:

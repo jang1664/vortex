@@ -1,0 +1,105 @@
+{
+  "status": "complete",
+  "created_at": "2026-10-21T08:52:11.989121+00:00",
+  "command": "hw/unittest/fpint_emul/py/fan_in_sweep.py data --version rtl-c4-v1 --k-values 32,64,128,256,512,1024,2048,4096,8192,16384,32768 --m 16 --n 16 --qblock 16 --trials 100 --base-seed 20260729 --quant signed-asymmetric --device cuda:0 --verify-tensor-core --output analysis_workspace/numerical_acc/results/fpint_real_2scomp/20261021_rtl_c4_v1_qblock16_100seeds",
+  "config": {
+    "model_version": "rtl-c4-v1",
+    "fpint_backend": "cuda",
+    "k_values": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096,
+      8192,
+      16384,
+      32768
+    ],
+    "m": 16,
+    "n": 16,
+    "qblock": 16,
+    "trials": 100,
+    "base_seed": 20260729,
+    "quant": "signed-asymmetric",
+    "references": [
+      "cpu_fp64",
+      "gpu_fp64"
+    ],
+    "weight_range": [
+      -8,
+      7
+    ],
+    "zero_range": [
+      -4,
+      3
+    ],
+    "scale_range": [
+      6.103515625e-05,
+      0.00048828125
+    ],
+    "input_distribution": {
+      "kind": "independent-sign-exponent-mantissa-rounded-to-fp16",
+      "sign": "uniform-{0,1}",
+      "exponent": {
+        "distribution": "discrete-uniform-inclusive",
+        "min": -24,
+        "max": 15
+      },
+      "mantissa_field": {
+        "distribution": "normal-rounded-and-clipped",
+        "mean": 512.0,
+        "std": 256.0,
+        "min": 0,
+        "max": 1023
+      }
+    }
+  },
+  "system": {
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "compute_capability": "8.6",
+    "gpu_memory_bytes": 25306529792,
+    "driver_version": "570.211.01",
+    "torch_version": "2.11.0+cu126",
+    "torch_cuda_version": "12.6",
+    "numpy_version": "2.2.5",
+    "python_version": "3.10.0 (default, Mar  3 2022, 09:58:08) [GCC 7.5.0]",
+    "git_commit": "2fa4e82106d8a084b6a58260fb04c5ae72021911"
+  },
+  "source_sha256": {
+    "hw/unittest/fpint_emul/py/fan_in_sweep.py": "de573149fe4f8a9467848172852d7824e5aabb2ecf9c5218ab386906afd5bc7d",
+    "hw/unittest/fpint_emul/py/fpint_emul.py": "5d4b36f6068468a28d376d53e500144910df7896bcd8de0a96bd7df545df8554",
+    "hw/unittest/fpint_emul/py/fpint_cuda.py": "16f5be6082d8e18c4d68af751f5d7cfa08a75955b8f33c2b127784d392fe472d",
+    "hw/unittest/fpint_emul/py/fpint_versions.py": "b4cad7e9fe649be300faf6a9e251c2edd5cafd4cee459a2736f4ae643b652b5b",
+    "hw/unittest/fpint_emul/cuda/fpint_rtl_c4.cu": "a871776a58f197d8398be830c3d1fe3ccc3a5048ad3a955683ee0ec3d12af659"
+  },
+  "cuda": {
+    "compile_command": [
+      "/usr/local/cuda/bin/nvcc",
+      "-std=c++17",
+      "-O2",
+      "-shared",
+      "-Xcompiler",
+      "-fPIC",
+      "--fmad=false",
+      "--ftz=false",
+      "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/hw/unittest/fpint_emul/cuda/fpint_rtl_c4.cu",
+      "-o",
+      "/home/jaeyongjang/project.local/vortex_fpint-feat-gemv/analysis_workspace/numerical_acc/results/fpint_real_2scomp/20261021_rtl_c4_v1_qblock16_100seeds/libfpint_cuda.so"
+    ],
+    "nvcc": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:23:50_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0",
+    "library_sha256": "37e1183cb0b7da06ff5b8779a9b8247dae84cd95d4165f1db1f19e851c732e6c"
+  },
+  "tensor_core_kernels": {
+    "32": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8>(cutlass_80_wmma_tensorop_f16_s161616gemm_f16_16x16_32x1_nn_align8::Params)"
+    ],
+    "32768": [
+      "void cutlass::Kernel2<cutlass_80_wmma_tensorop_s161616gemm_f16_16x16_128x2_nn_align8>(cutlass_80_wmma_tensorop_s161616gemm_f16_16x16_128x2_nn_align8::Params)"
+    ]
+  },
+  "completed_at": "2026-10-21T08:54:43.377959+00:00",
+  "raw_row_count": 13200
+}
