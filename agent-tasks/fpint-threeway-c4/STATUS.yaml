@@ -1,0 +1,51 @@
+task: fpint-threeway-c4
+status: complete
+scope: Compare C4 RTL, existing SV fpint_gemm_ref, and unchanged Python real_2scomp models.
+constraints:
+  - Report numerical/model/RTL discrepancies; do not fix DUT or emulator arithmetic.
+  - QCOL and QROW; 1, 2, 4, 32 K tiles; zero and nonzero initial psum.
+  - Require RTL/Python FP16 bit equality and 1 percent reference tolerance (0.01 absolute at zero).
+  - Include finite boundary cases and subnormals; exclude NaN, Inf, overflow workloads.
+configuration:
+  candidate_file: analysis_workspace/latency_on_hw/candidate_fpga_bins.rev8.yaml
+  candidate: C4
+  alias: improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_fix_sub_norm
+  config: configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp.sh
+  dut: VX_gemm_unit_v2
+results:
+  report: agent-tasks/fpint-threeway-c4/RESULTS.md
+  artifacts: build_fpint_threeway_results/c4
+  cases: 240
+  outputs: 7680
+  passing_cases: 183
+  failing_cases: 57
+  rtl_python_bit_mismatches: 788
+  rtl_reference_failures: 245
+  python_reference_failures: 597
+  nonfinite_outputs: 0
+  fp32_writeback_rows: 78720
+  checker_regression: 6 passed
+  existing_v2_regression: passed
+  numerical_exit_code: 1
+  fixes_applied: None to RTL or arithmetic models; report-only requirement satisfied.
+pitfalls:
+  - The user abbreviated candidate_fpga_bins.rev8.yaml as candidate.rev8.yaml.
+  - C4 uses the v2 unit, not the legacy VX_gemm_unit testbench.
+  - Existing legacy accumulation tests feed DUT partial sums into the reference; new reference must be independent.
+  - Python defaults have K/QBLOCK=32 while C4 uses 16; set dimensional constants in the test adapter, preserve arithmetic.
+  - The checked-in SV reference FP16 conversion truncates and does not correctly form all subnormals; retain it as a comparison subject.
+  - The cvfpu common_cells submodule was uninitialized; initialized its pinned revision to satisfy the existing FPNEW build.
+  - The v2 Makefile lacked core/gemm include search for VX_fp16_arith.vh; added the directory and configured-build include paths.
+  - Fresh configured builds also need make -C BUILD/hw config before compiling DPI sources.
+  - Ordinary random cases hid the precision differences; targeted cancellation and w-equals-zero-point cases are essential.
+log:
+  - time: '2026-10-21 15:11'
+    message: Inspected existing unit helpers, resolved C4 alias, and selected v2 TB reuse with independent file-driven numerical comparison.
+  - time: '2026-10-21 15:20'
+    message: Implemented shared-TB file driver, independent full-K SV reference, original Python adapter with exact psum prefix, CSV/JSON reporting, and five passing checker regression tests. First two smoke builds exposed missing dependency/include prerequisites; third build now compiling.
+  - time: '2026-10-21 15:26'
+    message: Smoke passed 8 cases/256 outputs. Expanded run completed 224 cases/7168 outputs with 628 RTL/Python bit mismatches, 213 RTL/reference failures, 597 Python/reference failures, and no nonfinite outputs. Six checker tests pass. All output/psum coordinates verified. Existing v2 regression passed under the same C4 binary.
+  - time: '2026-10-21 15:29'
+    message: Diagnosed fixed reduce precision (cases 64/128/136 match RTL under a temporary in-memory extra=19 probe), QROW FP64 accumulation, SV reference subnormal conversion, and QCOL scale widening. Running final 240-case suite including an explicit zero/subnormal-scale probe. No arithmetic changes applied.
+  - time: '2026-10-21 15:32'
+    message: Final C4 run completed all 240 cases and 7680 outputs. Recorded 788 RTL/Python, 245 RTL/reference, and 597 Python/reference failures. All 78720 psum records are complete and final RTL conversion matches RNE. Added detailed report and reproduction commands; six host tests and existing v2 regression passed. Confirmed original model hash and no RTL changes; work complete with discrepancies intentionally unfixed.

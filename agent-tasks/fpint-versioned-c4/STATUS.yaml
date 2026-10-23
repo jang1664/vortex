@@ -1,0 +1,29 @@
+task: fpint-versioned-c4
+state: complete
+objective: Add explicit legacy and rtl-c4-v1 model selection and verify SV/Python/CUDA against unchanged C4 RTL.
+constraints:
+  - Preserve legacy entry points and arithmetic.
+  - Reproduce current RTL including QCOL exponent-zero scale rebias.
+  - Exclude NaN, Inf, and overflow; include signed zero, subnormals, and underflow.
+  - Run actual CUDA kernels and configured C4 VCS simulation.
+log:
+  - timestamp: '2026-10-21 16:05'
+    message: Inspected C4 arithmetic and prior 240-case artifacts. CUDA 12.8 and RTX 3090 are available. Implementing versioned models and tile-level exact checks.
+  - timestamp: '2026-10-21 16:08'
+    message: Python and actual CUDA match each other and all saved C4 RTL outputs and FP32 tile sums for 240 cases. Initial VCS compile failed because legacy prealign DEBUG inherits ref direction; pass an explicit bit variable instead of its literal default.
+  - timestamp: '2026-10-21 16:12'
+    message: Four-way VCS/CUDA run passed 240 cases, 7680 FP16 outputs, and 74880 FP32 tile sums. Added explicit fixed-width zero negation/merge and started expanded 380-case run including K=128, large signed zero points, and random finite bit patterns. Eleven host tests passed.
+  - timestamp: '2026-10-21 16:16'
+    message: Final 380-case run passed all six pairs with zero mismatches for 12160 FP16 outputs and 114304 FP32 tile sums; 6080 initial writebacks also checked. Saved-result replay and existing v2 normal unittest passed. Legacy rerun reproduced prior CSV/stimulus bytes and all 240 input/Python arrays exactly, including the expected prior numerical failures. Model hashes match the tested sources. Documentation and results recorded; compute RTL unchanged.
+artifacts:
+  final: build_fpint_threeway_results/rtl_c4_v1_final
+  legacy: build_fpint_threeway_results/legacy_version_regression
+  report: agent-tasks/fpint-versioned-c4/RESULTS.md
+  usage: hw/unittest/gemm_unit_v2/FPINT_COMPARE.md
+pitfalls:
+  - C4 uses VX_gemm_unit_v2, 16x16, 19 extra bits for both dot and zero correction.
+  - QCOL directly rebiases zero/subnormal scale exponents; preserve this behavior in rtl-c4-v1.
+  - First load bypasses FP32 addition; adding an explicit zero can change signed-zero bits.
+  - Legacy QROW accumulates in FP64 and legacy SV narrowing is not RNE.
+  - Legacy SV prealign DEBUG is implicitly ref; calling without an explicit bit variable fails VCS compilation.
+  - C4 zero_regs stores negated zero points in 16 bits and MERGE_OUT_BW is 40; preserve both widths in the frozen model.

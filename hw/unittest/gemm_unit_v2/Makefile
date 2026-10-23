@@ -20,6 +20,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 					$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 	        $(RTL_DIR)/verification/cf_math_util_pkg.sv \
 	        $(RTL_DIR)/verification/fpint_emul.sv \
+	        $(RTL_DIR)/verification/fpint_emul_rtl_c4.sv \
 	        $(RTL_DIR)/verification/VX_utils_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \
         $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
@@ -56,14 +57,17 @@ DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
 
 SOFTFLOAT_LIB := $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
 
-INCDIRS_ := $(VORTEX_HOME)/build/hw \
+INCDIRS_ := $(SRC_DIR) \
+            $(ROOT_DIR)/hw \
             $(VORTEX_HOME)/hw \
             $(VORTEX_HOME)/sim/common \
             $(RTL_DIR) \
+            $(RTL_DIR)/core/gemm \
             $(VORTEX_HOME)/hw/dpi \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEBUG_LEVEL ?= 3
+DEFINES_ := SIMULATION DEBUG_LEVEL=$(DEBUG_LEVEL) DBG_TRACE_GEMM
 CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
 DEFINES_ += $(CONFIG_DEFINES)
 FPU_NEW_EN ?= 1
@@ -92,7 +96,7 @@ CVFPU_RTLS := $(RTL_DIR)/fpu/patched_cvfpu/fpnew_pkg.sv \
 RTLS := $(CVFPU_RTLS) $(RTLS)
 endif
 
-CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
+CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS :=
 
 PARAMS_  :=
@@ -113,6 +117,9 @@ setup:
 	mkdir -p logs reports
 
 include $(SIM_EXEC).mk
+
+# File-driven C4 numerical comparison shares the existing DUT and bus helpers.
+compile: $(SRC_DIR)/fpint_compare.svh
 
 fst2vcd:
 	for file in reports/*.fst; do \

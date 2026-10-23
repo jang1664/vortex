@@ -2849,6 +2849,8 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         end
     endtask
 
+    `include "fpint_compare.svh"
+
     initial begin
         test_failed = 1'b0;
         last_write_count = 0;
@@ -2869,6 +2871,14 @@ module tb_VX_gemm_unit_v2 import VX_gpu_pkg::*;
         apply_reset();
         clear_weight_bank(2'd0);
         clear_weight_bank(2'd1);
+        if ($test$plusargs("FPINT_COMPARE")) begin
+            run_fpint_compare();
+            check_scoreboard_empty("fpint comparison");
+            if (test_failed)
+                $fatal(1, "FPINT comparison transport/scoreboard failure");
+            $display("FPINT_COMPARE_COMPLETE");
+            $finish;
+        end
         test_parallel_qparam_ports();
         test_nonlast_qcol_consumer_metadata_overlap();
         test_resource_consumer_stages(1'b0, `QDIR_ROW, 0);

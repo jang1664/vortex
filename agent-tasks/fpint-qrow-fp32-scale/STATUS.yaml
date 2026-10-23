@@ -1,0 +1,17 @@
+task: fpint-qrow-fp32-scale
+state: complete
+objective: Add qrow-fp32-scale-v1 to SV/Python, widening FP16 inputs/scales to FP32 before multiply and narrowing to FP16 RNE. Test without changing compute RTL or CUDA.
+log:
+  - timestamp: '2026-10-21 18:20'
+    message: Reusing the versioned C4 arithmetic and comparison harness. FP16 significand products fit exactly in FP32, so identical finite results are expected; validating both multiplication and complete GEMM traces.
+  - timestamp: '2026-10-21 18:23'
+    message: Python and VCS scaling-only checks passed 1073148 finite non-overflow operand pairs across all 63488 finite FP16 inputs and 18 signed boundary scales. Fourteen host tests passed, including M=N=16 K=32768 version equality. Full 380-case GEMM comparison is running with unchanged C4 RTL and no CUDA execution.
+  - timestamp: '2026-10-21 18:26'
+    message: All 380 cases passed; zero mismatches across 12160 FP16 outputs, 114304 FP32 tile psums and all scaling pairs. Final 14 host tests, saved-result replay, and normal v2 regression passed. Prior C4 stimulus/RTL/SV CSVs and Python arrays are identical. CUDA files are unchanged. Results document the exact-product reason that this variant does not improve FP16-operand accuracy.
+artifacts:
+  results: build_fpint_threeway_results/qrow_fp32_scale_v1
+  report: agent-tasks/fpint-qrow-fp32-scale/RESULTS.md
+  tests: agent-tasks/fpint-qrow-fp32-scale/host_tests_final.log
+pitfalls:
+  - FP32 widening must handle zero/subnormals correctly; do not reuse the QCOL direct exponent rebias.
+  - Both operands remain originally FP16; FP32 multiply followed by FP16 narrowing does not retain extra input precision.
