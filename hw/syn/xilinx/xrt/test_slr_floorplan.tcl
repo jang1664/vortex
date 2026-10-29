@@ -2,6 +2,7 @@
 set ::vortex_slr_definitions_only 1
 source [file join [file dirname [info script]] floorplan.tcl]
 source [file join [file dirname [info script]] slr_floorplan_report.tcl]
+source [file join [file dirname [info script]] tests r8_fixture_endpoints.tcl]
 set ::mock_cells {}
 set ::mock_marked {}
 set ::mock_part xcu55c-fsvh2892-2L-e
@@ -480,5 +481,63 @@ foreach command {inventory require_marked_groups validate_links validate_boundar
     rename ::vortex::slr::$command {}
     rename ::vortex::slr::fixture_saved_$command ::vortex::slr::$command
 }
-puts "PASS: SLR ownership, structural direct/bank-select/pair inventory, direct FF pairs and Laguna checks"
+# TMEM retains its crossing; the complete LMEM transport is local to SLR1.
+fixture 8 mixed 4 16
+lappend ::mock_cells top/node/u_sram_dma/state_reg
+set local_lmem top/node/u_fusion_lmem_cut/u_request/u_launch/storage_reg
+lappend ::mock_cells $local_lmem
+set fusion_endpoints {}
+foreach {endpoint directions} {u_fusion_tmem_cut {request response} u_fusion_publication {query reply}} {
+    foreach direction $directions {
+        foreach half {tx rx} {
+            set cell "top/node/$endpoint/u_${direction}_${half}/payload_${half}_q_reg"
+            lappend ::mock_cells $cell
+            lappend fusion_endpoints $cell
+        }
+    }
+}
+foreach kind {fusion gemm} {
+    foreach direction {request response} {
+        foreach half {tx rx} {
+            set cell [format {top/node/g_fusion_mmio_link[0]/u_%s/u_%s_%s/payload_%s_q_reg} $kind $direction $half $half]
+            lappend ::mock_cells $cell
+            lappend fusion_endpoints $cell
+        }
+    }
+}
+foreach half {tx rx} {
+    set cell "top/node/u_fusion_busy_export/busy_${half}_q_reg"
+    lappend ::mock_cells $cell
+    lappend fusion_endpoints $cell
+}
+# R8 adds sibling ordinary-LMEM links; keep the original fusion_endpoints
+# list intact so every original missing-half negative checks the same reason.
+set r8_endpoints [r8_fixture_endpoints top]
+lappend ::mock_cells {*}[dict keys $r8_endpoints]
+::vortex::slr::inventory
+# This original fixture deliberately calls its node top/node, not the
+# native feature-gated core/gemm_node. Supply sibling ownership explicitly,
+# as below for commit-return; test_r8_floorplan covers real support discovery.
+dict for {cell owner} $r8_endpoints {
+    dict set ::vortex::slr::owners $cell $owner
+}
+equal [::vortex::slr::owner_for u_fusion_lmem_cut/u_request/u_launch/storage_reg] 1 local_lmem_owner
+# This fixture supplies sibling ownership explicitly; exact support-root
+# discovery/classification has its own source-backed support-island fixture.
+foreach half {tx rx} {
+    set cell "top/mem_unit/local_mem/u_fusion_commit_return/count_${half}_q_reg"
+    lappend ::mock_cells $cell
+    lappend fusion_endpoints $cell
+    dict set ::vortex::slr::owners $cell [expr {$half eq "tx" ? 1 : 0}]
+}
+set fusion_marked [lsearch -all -inline -not -exact $::mock_cells $local_lmem]
+set ::mock_marked $fusion_marked
+::vortex::slr::require_marked_groups
+foreach missing $fusion_endpoints {
+    set ::mock_marked [lsearch -all -inline -not -exact $fusion_marked $missing]
+    fails {::vortex::slr::require_marked_groups} {*missing required group: marked fusion*}
+}
+set ::mock_marked [concat $fusion_marked [list $local_lmem]]
+fails {::vortex::slr::require_marked_groups} {*local fusion LMEM transport must not contain marked*}
+puts "PASS: SLR ownership, structural inventory, fusion endpoints, direct FF pairs and Laguna checks"
 puts "Fixture report (temporary): $report_file"

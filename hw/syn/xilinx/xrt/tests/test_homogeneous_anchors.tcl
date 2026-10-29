@@ -224,6 +224,25 @@ foreach spelling {g_slr/u_link g_slr.u_link} {
     }
 }
 
+# Proven fusion siblings retain primitive ownership without anchoring their
+# mixed core hierarchy. Unproven and wrongly scoped exceptions still fail.
+set sibling top/mem_unit/lifted_lut
+set sibling_owners [dict create $sibling 1]
+set sibling_result [::vortex::slr::select_homogeneous_anchors \
+    {top/node top/mem_unit} {top top} [list $sibling] {top/mem_unit} {LUT6} \
+    $sibling_owners {top/node} [list $sibling]]
+equal [dict get $sibling_result groups] {0 {} 1 {} 2 {}} sibling_parent_not_anchored
+equal [dict get $sibling_result uncovered] [list [list $sibling LUT6 1 top/mem_unit]] sibling_primitive_coverage
+fails {::vortex::slr::select_homogeneous_anchors {top/node} {top} [list $sibling] {top/mem_unit} {LUT6} $sibling_owners {top/node}} {*outside retained GEMM hierarchy*}
+foreach {name parent ref owner} {
+    top/mem_unit/lifted_lut top/mem_unit FDRE 1
+    top/mem_unit/lifted_lut top/mem_unit LUT6 0
+    other/mem_unit/lifted_lut other/mem_unit LUT6 1
+    top/node/missing/lut top/node/missing LUT6 1
+} {
+    fails {::vortex::slr::select_homogeneous_anchors {top/node} {top} [list $name] [list $parent] [list $ref] [dict create $name $owner] {top/node} [list $name]} {*outside retained GEMM hierarchy*}
+}
+
 # Optional large, repeatable CPU-only runtime check of the production algorithm.
 set count 10000
 if {$argc == 2 && [lindex $argv 0] eq "--benchmark"} {set count [lindex $argv 1]}

@@ -6,6 +6,8 @@ proc ::vortex::slr::register_role {name} {
     set name [logical_path $name]
     if {[regexp {/g_slr_mxu_(?:input|weight|output)_(tx|rx)[/.]} $name -> role]} {return $role}
     if {[regexp {[/.](?:payload|valid|credit|idle)_(tx|rx)_q_reg} $name -> role]} {return $role}
+    if {[regexp {/u_fusion_busy_export/busy_(tx|rx)_q_reg} $name -> role]} {return $role}
+    if {[regexp {/u_fusion_commit_return/count_(tx|rx)_q_reg} $name -> role]} {return $role}
     error "unrecognized USER_SLL_REG register: $original"
 }
 proc ::vortex::slr::link_group {name} {
@@ -21,6 +23,21 @@ proc ::vortex::slr::link_group {name} {
         set kind [expr {[string match "credit_*" $reg] ? "credit" : "payload"}]
         return "$parent/$stream/$kind"
     }
+    if {[regexp {^(.*(?:/u_fusion_tmem_cut|/g_fusion_mmio_link\[[0-9]+\]/u_(?:fusion|gemm)|/mem_unit/u_fusion_lmem_vector))/u_(request|response)_(?:tx|rx)/([^/]+)} $name -> parent stream reg]
+        || [regexp {^(.*/u_fusion_publication)/u_(query|reply)_(?:tx|rx)/([^/]+)} $name -> parent stream reg]} {
+        set kind [expr {[string match "credit_*" $reg] ? "credit" : "payload"}]
+        return "$parent/u_$stream/$kind"
+    }
+    if {[regexp {^(.*(?:/g_req_data_in\[0\]/g_fusion_lane_request|/g_slice_arbs\[1\]/g_fusion_bank_link/u_transport))/u_(?:tx|rx)/([^/]+)} $name -> parent reg]} {
+        set kind [expr {[string match "credit_*" $reg] ? "credit" : "payload"}]
+        return "$parent/request/$kind"
+    }
+    if {[regexp {^(.*)/u_fusion_busy_export/busy_(?:tx|rx)_q_reg} $name -> parent]} {
+        return "$parent/u_fusion_busy_export/busy"
+    }
+    if {[regexp {^(.*)/u_fusion_commit_return/count_(?:tx|rx)_q_reg} $name -> parent]} {
+        return "$parent/u_fusion_commit_return/count"
+    }
     if {[regexp {^(.*)/g_slr[01][/.]idle_(?:tx|rx)_q_reg} $name -> parent]} {return "$parent/idle"}
     error "unrecognized SLR link group: $original"
 }
@@ -31,6 +48,104 @@ proc ::vortex::slr::leaf_pins_on {pin} {
     set nets [get_nets -quiet -segments -of_objects $pin]
     if {![llength $nets]} {return {}}
     return [get_pins -quiet -leaf -of_objects $nets]
+}
+# Complete C4 ordinary-LMEM links: absence of an entire link is an error,
+# not an empty dynamically discovered set. Physical peer and adjacency checks
+# remain in validate_links, unchanged. Each half needs payload, valid, credit.
+proc ::vortex::slr::fusion_lmem_stream_specs {core} {
+    set streams [list [list "$core/mem_unit/u_fusion_lmem_vector" request 0 1] [list "$core/mem_unit/u_fusion_lmem_vector" response 1 0]]
+    for {set lane 8} {$lane < 16} {incr lane} {
+        lappend streams [list [format {%s/mem_unit/g_lmem_lane_dma_arb[%d]/lmem_membus_dma_arbiter/g_req_data_in[0]/g_fusion_lane_request} $core $lane] {} 1 2]
+    }
+    for {set bank 0} {$bank < 16} {incr bank} {
+        lappend streams [list [format {%s/mem_unit/local_mem/g_req_hier_valid/req_xbar/g_multi_inputs/g_multiple_outputs/g_xbar_arbs[%d]/xbar_arb/g_input_select/g_fanout/g_slice_arbs[1]/g_fusion_bank_link/u_transport} $core $bank] {} 2 1]
+    }
+    return $streams
+}
+proc ::vortex::slr::require_fusion_lmem_marked_groups {core marked} {
+    variable owners
+    array set owner_map $owners
+    # Index retained names once. Never pass these normalized strings to Vivado.
+    array set by_parent {}
+    set streams [fusion_lmem_stream_specs $core]
+    foreach cell $marked {
+        set name [logical_path $cell]
+        foreach spec $streams {
+            lassign $spec parent stream tx_owner rx_owner
+            foreach half {tx rx} target [list $tx_owner $rx_owner] {
+                set prefix "$parent/u_[expr {$stream eq {} ? $half : "${stream}_${half}"}]/"
+                if {[string first $prefix $name] != 0} {continue}
+                if {![info exists owner_map($cell)] || $owner_map($cell) != $target} {
+                    error "unowned/wrong-owner ordinary LMEM marked register: $cell"
+                }
+                lappend by_parent($prefix) [string range $name [string length $prefix] end]
+            }
+        }
+    }
+    foreach spec $streams {
+        lassign $spec parent stream tx_owner rx_owner
+        foreach half {tx rx} {
+            set prefix "$parent/u_[expr {$stream eq {} ? $half : "${stream}_${half}"}]/"
+            if {![info exists by_parent($prefix)]} {error "missing ordinary LMEM marked endpoint: $prefix"}
+            set reverse [expr {$half eq "tx" ? "rx" : "tx"}]
+            foreach signal [list payload_${half} valid_${half} credit_${reverse}] {
+                need [matching $by_parent($prefix) [format {(^|[/.])%s_q_reg(\[|_|$)} $signal]] "ordinary LMEM $prefix $signal"
+            }
+        }
+    }
+}
+
+proc ::vortex::slr::require_fusion_marked_groups {root local marked} {
+    variable owners
+    array set owner_map $owners
+    require_fusion_lmem_marked_groups [file dirname $root] $marked
+    if {[llength [matching $local {^u_fusion_lmem_cut/}]]} {
+        error "local fusion LMEM transport must not contain marked SLR crossing registers"
+    }
+    foreach {endpoint streams} {u_fusion_tmem_cut {request response} u_fusion_publication {query reply}} {
+        foreach stream $streams {
+            foreach half {tx rx} {
+                need [matching $local "^$endpoint/u_${stream}_${half}/"] "marked fusion $endpoint $stream $half"
+            }
+        }
+    }
+    # Every retained master has both complete MMIO links. Discover from the
+    # ownership inventory, so deleting a marked half cannot delete its scope.
+    set masters {}
+    foreach cell [dict keys $owners] {
+        if {[string first "$root/" $cell] != 0} {continue}
+        set relative [logical_path [string range $cell [expr {[string length $root]+1}] end]]
+        if {[regexp {^g_fusion_mmio_link\[([0-9]+)\]/} $relative -> master]} {dict set masters $master 1}
+    }
+    need [dict keys $masters] "fusion MMIO master inventory"
+    foreach master [dict keys $masters] {
+        foreach kind {fusion gemm} {
+            foreach stream {request response} {
+                foreach half {tx rx} {
+                    set pattern [format {^g_fusion_mmio_link\[%s\]/u_%s/u_%s_%s/} $master $kind $stream $half]
+                    need [matching $local $pattern] "marked fusion MMIO master $master $kind $stream $half"
+                }
+            }
+        }
+    }
+    foreach half {tx rx} {
+        need [matching $local "^u_fusion_busy_export/busy_${half}_q_reg"] "marked fusion busy $half"
+    }
+    # Commit observations are a sibling of the GEMM node, not a child. Both
+    # marked halves must also be explicitly owned for validate_links to see them.
+    set core [file dirname $root]
+    set counts {}
+    foreach cell $marked {
+        if {[string first "$core/" $cell] != 0} {continue}
+        set relative [logical_path [string range $cell [expr {[string length $core]+1}] end]]
+        if {[regexp {^mem_unit/local_mem/u_fusion_commit_return/count_(tx|rx)_q_reg} $relative]} {
+            if {![info exists owner_map($cell)]} {error "unowned marked fusion commit register: $cell"}
+            lappend counts $relative
+        }
+    }
+    foreach half {tx rx} {
+        need [matching $counts "^mem_unit/local_mem/u_fusion_commit_return/count_${half}_q_reg"] "marked fusion commit $half"
+    }
 }
 proc ::vortex::slr::require_marked_groups {} {
     variable owners; variable roots
@@ -46,6 +161,15 @@ proc ::vortex::slr::require_marked_groups {} {
         if {[backend] eq "naive"} {
             naive_require_groups $local [geometry] 1
             continue
+        }
+        set fusion_present 0
+        foreach cell [dict keys $owners] {
+            if {[string first "$root/u_sram_dma/" $cell] == 0} {
+                set fusion_present 1; break
+            }
+        }
+        if {$fusion_present} {
+            require_fusion_marked_groups $root $local $marked
         }
         foreach group {input_tx input_rx weight_tx weight_rx output_tx output_rx} {
             need [matching $local [format {/g_slr_mxu_%s[/.]} $group]] "marked MXU $group"
@@ -218,10 +342,10 @@ proc ::vortex::slr::validate_boundary_nets {report_file} {
     foreach net [get_nets -quiet -segments -top_net_of_hierarchical_group -of_objects [get_pins -quiet -of_objects $boundaries]] {
         set net_set($net) 1
     }
-    # Synthesis can lift naive LUTs into a mixed wrapper, bypassing hierarchy
+    # Synthesis can lift recovered LUTs into a mixed wrapper, bypassing hierarchy
     # ports. Audit every incident net of recovered logic as well: output-cone
     # ownership alone does not prove that input-side crossings are registered.
-    if {[backend] eq "naive" && [info exists recovered_lut_names] && [llength $recovered_lut_names]} {
+    if {[info exists recovered_lut_names] && [llength $recovered_lut_names]} {
         set recovered_cells [cell_objects $recovered_lut_names]
         foreach net [get_nets -quiet -segments -top_net_of_hierarchical_group -of_objects [get_pins -quiet -of_objects $recovered_cells]] {
             set net_set($net) 1

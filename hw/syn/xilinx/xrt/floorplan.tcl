@@ -4,7 +4,15 @@ namespace eval ::vortex::slr {
     variable roots {}
     variable groups [dict create]
     variable primitive_names {}; variable primitive_refs {}; variable primitive_parents {}
+    variable logical_path_cache
+    array set logical_path_cache {}
     variable recovered_lut_names {}
+    variable fusion_sibling_names {}
+    variable fusion_metadata [dict create]
+    variable fusion_rams [dict create]
+    variable fusion_pattern_luts [dict create]
+    # actual retained support root -> {owner 0|1|mixed kind endpoint}
+    variable fusion_support_roots [dict create]
     variable script_dir [file dirname [file normalize [info script]]]
 }
 # The backend is derived from CONFIGS by the build, not from synthesized names.
@@ -16,6 +24,7 @@ proc ::vortex::slr::backend {} {
 }
 source [file join $::vortex::slr::script_dir naive_floorplan.tcl]
 source [file join $::vortex::slr::script_dir naive_lut_ownership.tcl]
+source [file join $::vortex::slr::script_dir fusion_floorplan.tcl]
 proc ::vortex::slr::enabled {} {
     set value 0
     if {[info exists ::env(VORTEX_GEMM_SLR_FLOORPLAN)]} {set value $::env(VORTEX_GEMM_SLR_FLOORPLAN)}
@@ -27,6 +36,11 @@ proc ::vortex::slr::enabled {} {
 # Do not normalize arbitrary dots (including IP/leaf names), and never pass
 # this view to a Vivado object/property query or use it as an ownership key.
 proc ::vortex::slr::logical_path {path} {
+    # Required-group checks revisit the same names many times. This cache
+    # contains only pure string translations, never Vivado object handles.
+    variable logical_path_cache
+    set cache_key [list [backend] $path]
+    if {[info exists logical_path_cache($cache_key)]} {return $logical_path_cache($cache_key)}
     if {[backend] eq "naive"} {
         regsub -all {(g_mmio\[[0-9]+\])[.](u_request|u_response)/} $path {\1/\2/} path
     }
@@ -36,6 +50,13 @@ proc ::vortex::slr::logical_path {path} {
     if {[string first "g_output_slr_completion." $path] >= 0} {
         regsub -all {(^|/)g_output_slr_completion[.]} $path {\1g_output_slr_completion/} path
     }
+    regsub -all {(g_fusion_mmio_link\[[0-9]+\])[.](u_fusion|u_gemm)/} $path {\1/\2/} path
+    # Only architectural generate names used by the ordinary-LMEM links.
+    # Keep a match-only view; retained Vivado object names remain untouched.
+    foreach token {g_lmem_lane_dma_arb\[[0-9]+\] g_req_data_in\[[0-9]+\] g_fusion_lane_request g_req_hier_valid g_multi_inputs g_multiple_outputs g_xbar_arbs\[[0-9]+\] g_input_select g_fanout g_slice_arbs\[[0-9]+\] g_fusion_bank_link} {
+        regsub -all "(^|/)($token)\\." $path {\1\2/} path
+    }
+    set logical_path_cache($cache_key) $path
     return $path
 }
 # Classify leaf cells, never a mixed-ownership parent hierarchy.
@@ -44,13 +65,40 @@ proc ::vortex::slr::owner_for {path} {
     set original $path
     set path [logical_path $path]
     if {[string match {u_tmem_dma_ctrl/*} $path]} {return 0}
+    if {[regexp {^g_fusion_mmio_link\[[0-9]+\]/(?:u_fusion|u_gemm)/(.+)$} $path -> leaf]} {
+        if {[regexp {^u_(request_rx|response_tx)/} $leaf]} {return 1}
+        return 0
+    }
+    if {[string match {u_fusion_publication/*} $path]} {
+        if {[regexp {^u_fusion_publication/u_(query_tx|reply_rx)/} $path]} {return 1}
+        return 0
+    }
+    if {[regexp {^u_fusion_reset_(cpu|accel)/} $path]} {error "obsolete local reset relay remains: $original"}
+    if {[string match {u_fusion_busy_export/*} $path]} {
+        if {[regexp {^u_fusion_busy_export/busy_tx_q(?:_reg|\[|_i_)} $path]} {return 1}
+        return 0
+    }
+    # The LMEM consumer shares the source SLR. Its local launch/response
+    # path has no crossing registers; a retained SLR link is a stale build.
+    if {[string match {u_fusion_lmem_cut/*} $path]} {
+        if {[regexp {/g_slr/} $path]} {error "unexpected crossing in local fusion LMEM transport: $original"}
+        return 1
+    }
+    # TMEM retains opposite request/response ownership and return credits.
+    if {[string match {u_fusion_tmem_cut/*} $path]} {
+        if {[regexp {^u_fusion_tmem_cut/u_(request|response)_(tx|rx)/} $path -> stream half]} {
+            return [expr {($stream eq "request") == ($half eq "tx") ? 1 : 0}]
+        }
+        if {[regexp {^u_fusion_tmem_cut/(u_launch/|request_idle|launch_accept)} $path]} {return 1}
+        error "unclassified fusion SRAM transport leaf: $original"
+    }
     # Synthesis can lift command-endpoint logic out of its transport wrapper.
     # The stream and endpoint still identify its owner; generated FSM/LUT
     # names and replica suffixes must not determine placement.
     if {[regexp {^u_commands/g_slr/u_link/(u_tx|u_rx)/} $path -> half]} {
         return [expr {$half eq "u_tx" ? 1 : 0}]
     }
-    if {[regexp {^(u_link|g_slr/u_link|u_commands)/} $path]} {
+    if {[regexp {^(u_link|g_slr/u_link|u_commands|u_request/g_slr/u_link/u_rx)/} $path]} {
         error "SLR link lost command/request/response ownership identity: $original"
     }
     if {[string match {u_gemm_dma_transport/*} $path]} {
@@ -83,6 +131,10 @@ proc ::vortex::slr::owner_for {path} {
         if {[regexp {/u_request/u_launch/|/g_output_slr_completion/} $path]} {return 1}
         if {[regexp {^u_tmem_subsystem/(u_dma_engine/|g_bank\[|g_dma_tmem_route\[|u_switch_)} $path]} {return 0}
         if {[regexp {^u_tmem_subsystem/u_ldma_} $path]} {return 1}
+        # Tracks input LDMA requests before the registered SLR crossing.
+        if {[regexp {^u_tmem_subsystem/fusion_input_pending_q(?:_reg|\[)} $path]} {return 1}
+        # Retains bridge ownership at the memory-side mux until response accept.
+        if {[regexp {^u_tmem_subsystem/fusion_tmem_pending_q(?:_reg|\[|_i_)} $path]} {return 0}
         # Source-side drain/control/priority and performance aggregation.
         if {[regexp {^u_tmem_subsystem/(output_|ldma_|lmem_dma_sz_perf|(?:input|weight|scale|zero_point)_req_)} $path]} {return 1}
         # Memory-side arbitration sidebands after the crossing.
@@ -108,6 +160,7 @@ proc ::vortex::slr::recover_lifted_owner {leaf root ref} {
     if {[string first "$root/" $leaf] != 0} {error "lifted helper is outside GEMM root"}
     set relative [logical_path [string range $leaf [expr {[string length $root]+1}] end]]
     set eligible [regexp {^g_slr/u_link/u_rx/[^/]+$} $relative]
+    if {[backend] eq "improve" && [regexp {^u_request/g_slr/u_link/u_rx/[^/]+$} $relative]} {set eligible 1}
     if {[backend] eq "naive" && [regexp {^u_naive_dma_slr/g_slr/u_link/u_rx/[^/]+$} $relative]} {set eligible 1}
     if {$ref ne "LUT1" || !$eligible} {
         error "not an eligible lifted receiver LUT1"
@@ -166,6 +219,9 @@ proc ::vortex::slr::recover_lifted_owner {leaf root ref} {
     set endpoint [logical_path [string range $ff [expr {[string length $root]+1}] end]]
     set retained [expr {[regexp {^u_gemm_dma_transport/u_(commands|completions|sync)/g_slr/u_link/u_rx/[^/]+$} $endpoint]
         || [regexp {^u_tmem_subsystem/(u_(input|weight|scale|zero_point)_req_reservation/u_slr|u_output_slr)/u_(request|response)/g_slr/u_link/u_rx/[^/]+$} $endpoint]}]
+    if {[backend] eq "improve" && [regexp {^u_request/g_slr/u_link/u_rx/[^/]+$} $relative]} {
+        set retained [regexp {^u_fusion_tmem_cut/u_request/g_slr/u_link/u_rx/[^/]+$} $endpoint]
+    }
     if {[backend] eq "naive" && [regexp {^u_naive_dma_slr/(g_mmio\[[0-9]+\]|g_lmem\[[0-9]+\][/.]u_transport|u_global)/u_(request|response)/g_slr/u_link/u_rx/[^/]+$} $endpoint]} {set retained 1}
     if {!$retained} {
         error "lifted LUT1 FF lost its retained architectural receiver identity: $ff"
@@ -226,6 +282,16 @@ proc ::vortex::slr::inventory {} {
     variable owners; variable roots; variable groups
     variable recovered_lut_names
     set recovered_lut_names {}
+    variable fusion_sibling_names
+    set fusion_sibling_names {}
+    variable fusion_support_roots
+    set fusion_support_roots [dict create]
+    variable fusion_metadata
+    set fusion_metadata [dict create]
+    variable fusion_rams
+    set fusion_rams [dict create]
+    variable fusion_pattern_luts
+    set fusion_pattern_luts [dict create]
     variable primitive_names; variable primitive_refs; variable primitive_parents
     set geometry [geometry]
     if {[backend] eq "improve"} {
@@ -235,6 +301,7 @@ proc ::vortex::slr::inventory {} {
     set owners [dict create]
     set groups [dict create 0 {} 1 {} 2 {}]
     set root_set [dict create]
+    array set fusion_core {}
     set leaves [get_cells -hierarchical -quiet -include_replicated_objects -filter {IS_PRIMITIVE == 1} *]
     puts "INFO: SLR inventory: [llength $leaves] primitive leaves collected"
     set refs [get_property REF_NAME $leaves]
@@ -249,6 +316,9 @@ proc ::vortex::slr::inventory {} {
     # Use canonical full strings, not Vivado collection handles, as map keys.
     set leaves $names
     foreach leaf $leaves {
+        if {[backend] eq "improve" && [regexp {^(.*)/gemm_node/u_sram_dma/} $leaf -> core]} {
+            set fusion_core($core) 1
+        }
         if {[backend] eq "naive"} {
             if {[regexp {^(.*)/gemm_node_naive/u_VX_gemm_compute_core/u_mxu/} $leaf -> root]} {dict set root_set $root 1}
         } elseif {[regexp {^(.*)/u_tmem_subsystem/u_dma_engine/} $leaf -> root]} {dict set root_set $root 1}
@@ -264,19 +334,92 @@ proc ::vortex::slr::inventory {} {
     puts "INFO: SLR inventory: [llength $roots] GEMM roots, primitive references collected"
     array set owner_map {}
     set group0 {}; set group1 {}; set group2 {}; set checked 0
-    set classification_errors {}; set recovered {}
+    set classification_errors {}; set recovered {}; set fusion_extra_cells {}
     foreach leaf $leaves ref $refs {
         incr checked
         if {$checked % 100000 == 0} {puts "INFO: SLR inventory: classified $checked primitive leaves"}
         foreach root $roots {
-            if {[string first "$root/" $leaf] != 0} {continue}
+            if {[string first "$root/" $leaf] != 0} {
+                set core [file dirname $root]
+                if {![info exists fusion_core($core)] || [string first "$core/" $leaf] != 0} {continue}
+                if {$ref in {GND VCC} || [string match "BUFG*" $ref]} {break}
+                set relative [string range $leaf [expr {[string length $core]+1}] end]
+                if {[catch {fusion_metadata_identity $relative $ref} metadata]} {
+                    lappend classification_errors [list $leaf $ref $metadata]; break
+                }
+                if {$metadata ne {}} {
+                    if {[dict exists $fusion_metadata $leaf] || [info exists owner_map($leaf)]} {error "multiply assigned bank metadata: $leaf"}
+                    dict set fusion_metadata $leaf [dict merge $metadata [dict create core $core]]
+                    set owner_map($leaf) 1
+                    lappend group1 $leaf
+                    break
+                }
+                if {[catch {fusion_ram_identity $relative $ref} ram]} {
+                    lappend classification_errors [list $leaf $ref $ram]; break
+                }
+                if {$ram ne {}} {
+                    if {[dict exists $fusion_rams $leaf] || [info exists owner_map($leaf)]} {error "multiply assigned bank RAM: $leaf"}
+                    dict set fusion_rams $leaf [dict merge $ram [dict create core $core]]
+                    set owner_map($leaf) 1
+                    lappend group1 $leaf
+                    break
+                }
+                set lut_kind [fusion_lut_kind $relative $ref]
+                if {$lut_kind ne {}} {
+                    set sink_paths {}
+                    if {$lut_kind eq "bank"} {
+                        set outputs [get_pins -quiet -of_objects [cell_objects [list $leaf]] -filter {DIRECTION == OUT}]
+                        set nets [get_nets -quiet -segments -of_objects $outputs]
+                        foreach sink [get_pins -quiet -leaf -of_objects $nets -filter {DIRECTION == IN}] {
+                            set destination [get_property NAME [get_cells -quiet -of_objects $sink]]
+                            if {[string first "$core/" $destination] != 0} {error "bank LUT destination outside core: $leaf -> $destination"}
+                            lappend sink_paths [string range $destination [expr {[string length $core]+1}] end]
+                        }
+                    }
+                    set lut_owner [fusion_lut_owner $relative $ref $sink_paths]
+                    set owner_map($leaf) $lut_owner
+                    dict set fusion_pattern_luts $leaf [dict create core $core owner $lut_owner sinks $sink_paths]
+                    lappend recovered_lut_names $leaf
+                    switch -- $lut_owner {
+                        0 {lappend group0 $leaf}
+                        1 {lappend group1 $leaf}
+                        2 {lappend group2 $leaf}
+                    }
+                    break
+                }
+                if {[catch {fusion_support_spec $relative} support]} {
+                    lappend classification_errors [list $leaf $ref $support]; break
+                }
+                if {$support eq {}} {continue}
+                set owner [dict get $support owner]
+                set support_root "$core/[dict get $support root]"
+                set metadata [dict remove $support root]
+                if {[dict exists $fusion_support_roots $support_root]} {
+                    set prior [dict get $fusion_support_roots $support_root]
+                    if {[dict get $prior kind] ne [dict get $metadata kind]
+                        || [dict get $prior endpoint] ne [dict get $metadata endpoint]} {
+                        error "conflicting fusion support identity: $support_root"
+                    }
+                    if {[dict get $prior owner] ne $owner} {dict set metadata owner mixed}
+                }
+                dict set fusion_support_roots $support_root $metadata
+                if {[info exists owner_map($leaf)]} {error "multiply assigned support leaf $leaf"}
+                set owner_map($leaf) $owner
+                switch -- $owner {
+                    0 {lappend group0 $leaf}
+                    1 {lappend group1 $leaf}
+                    2 {lappend group2 $leaf}
+                    default {error "invalid fusion support owner $owner: $leaf"}
+                }
+                break
+            }
             if {$ref in {GND VCC} || [string match "BUFG*" $ref]} {break}
             set relative [string range $leaf [expr {[string length $root]+1}] end]
             if {[catch {owner_for $relative} owner]} {
-                # Naive recovers all anonymous LUTs in one batched cone pass
-                # below. Keep improve's original feedback-only proof intact.
+                # Preserve the receiver feedback proof. Fusion drain helpers
+                # have a separate, narrowly checked source/control topology.
                 if {[backend] eq "improve" && $ref eq "LUT1"
-                    && [regexp {^g_slr/u_link/u_rx/} [logical_path $relative]]} {
+                    && [regexp {^(u_request/)?g_slr/u_link/u_rx/} [logical_path $relative]]} {
                     if {[catch {recover_lifted_owner $leaf $root $ref} proof]} {
                         lappend classification_errors [list $leaf $ref "$owner; connectivity recovery rejected: $proof"]
                         break
@@ -284,6 +427,29 @@ proc ::vortex::slr::inventory {} {
                     set owner [dict get $proof owner]
                     lappend recovered [list $leaf $ref $owner [dict get $proof endpoint] \
                         [dict get $proof input_pin] [dict get $proof output_pin]]
+                    lappend recovered_lut_names $leaf
+                } elseif {[backend] eq "improve" && [info exists fusion_core([file dirname $root])]
+                    && [regexp {^LUT[1-6]$} $ref]
+                    && [regexp {^u_gemm_dma_transport/[^/]+$} $relative]} {
+                    if {[catch {recover_fusion_dma_launch_owner $leaf $root $ref} proof]} {
+                        lappend classification_errors [list $leaf $ref "$owner; DMA launch recovery rejected: $proof"]
+                        break
+                    }
+                    set owner [dict get $proof owner]
+                    lappend recovered [list $leaf $ref $owner [dict get $proof endpoint] \
+                        [dict get $proof input_pin] [dict get $proof output_pin]]
+                    lappend recovered_lut_names $leaf
+                } elseif {[backend] eq "improve" && [regexp {^LUT[1-6]$} $ref]
+                    && [regexp {^u_tmem_subsystem/[^/]+$} $relative]} {
+                    if {[catch {recover_fusion_drain_owner $leaf $root $ref} proof]} {
+                        lappend classification_errors [list $leaf $ref "$owner; fusion drain recovery rejected: $proof"]
+                        break
+                    }
+                    set owner [dict get $proof owner]
+                    lappend recovered [list $leaf $ref $owner [dict get $proof endpoint] \
+                        [dict get $proof input_pin] [dict get $proof output_pin]]
+                    lappend recovered_lut_names $leaf
+                    foreach extra [dict get $proof extra_cells] {lappend fusion_extra_cells $extra}
                 } else {
                     lappend classification_errors [list $leaf $ref $owner]
                     break
@@ -300,6 +466,32 @@ proc ::vortex::slr::inventory {} {
             }
             break
         }
+    }
+    set fusion_sibling_names [lsort -unique $fusion_extra_cells]
+    foreach extra $fusion_sibling_names {
+        if {[info exists owner_map($extra)]} {
+            if {$owner_map($extra) != 1} {error "fusion cone conflicts with existing ownership: $extra"}
+        } else {
+            set owner_map($extra) 1
+            lappend group1 $extra
+        }
+        lappend recovered_lut_names $extra
+    }
+    if {[llength $fusion_extra_cells]} {
+        set report [open slr_recovered_fusion_siblings.tsv w]
+        puts $report "cell\tslr\tproof"
+        foreach extra [lsort -unique $fusion_extra_cells] {
+            puts $report "$extra\t1\tpending-counter reduction cone terminating on local controller FFs and optional busy TX D"
+        }
+        close $report
+    }
+    if {[dict size $fusion_pattern_luts]} {
+        set report [open slr_fusion_pattern_luts.tsv w]
+        puts $report "cell\tref\towner"
+        dict for {leaf record} $fusion_pattern_luts {
+            puts $report "$leaf\t[get_property REF_NAME [cell_objects [list $leaf]]]\t[dict get $record owner]"
+        }
+        close $report
     }
     if {[backend] eq "naive"} {
         set cone_result [naive_recover_lut_owners $classification_errors [array get owner_map] $roots]
@@ -324,7 +516,7 @@ proc ::vortex::slr::inventory {} {
     puts $report "cell\tref\tslr\tretained_endpoint_ff\tinput_driver\toutput_sink"
     foreach row $recovered {puts $report [join $row "\t"]}
     close $report
-    puts "INFO: SLR inventory: [llength $recovered] lifted receiver LUTs proven by direct local FF feedback; see slr_recovered_leaves.tsv"
+    puts "INFO: SLR inventory: [llength $recovered] lifted LUTs proven by receiver feedback or fusion drain connectivity; see slr_recovered_leaves.tsv"
     # Report all unclassified leaves in one pass, before creating or changing
     # pblocks. Keep original names so diagnostics can be queried in the DCP.
     set report_file slr_unclassified_leaves.tsv
@@ -335,7 +527,32 @@ proc ::vortex::slr::inventory {} {
     if {[llength $classification_errors]} {
         error "SLR ownership classification failed ([llength $classification_errors] leaves); see $report_file: [lindex [lindex $classification_errors 0] 2]"
     }
+    validate_fusion_metadata $fusion_metadata [lsort [array names fusion_core]]
+    # Exact leaves remain separate from retained support hierarchy roots.
+    if {[dict size $fusion_metadata]} {
+        set metadata_report [open slr_fusion_bank_metadata.tsv w]
+        puts $metadata_report "cell\tref\tcore\tbank\trole\tbit\towner"
+        dict for {leaf metadata} $fusion_metadata {
+            puts $metadata_report "$leaf\tFDRE\t[dict get $metadata core]\t[dict get $metadata bank]\t[dict get $metadata role]\t[dict get $metadata bit]\t1"
+        }
+        close $metadata_report
+    }
+    validate_fusion_rams $fusion_rams [lsort [array names fusion_core]]
+    if {[dict size $fusion_rams]} {
+        set ram_report [open slr_fusion_bank_rams.tsv w]
+        puts $ram_report "cell\tref\tcore\tbank\tlane\tdepth\towner"
+        dict for {leaf ram} $fusion_rams {
+            puts $ram_report "$leaf\tRAMB36E2\t[dict get $ram core]\t[dict get $ram bank]\t[dict get $ram lane]\t[dict get $ram depth]\t1"
+        }
+        close $ram_report
+    }
     set owners [dict create {*}[array get owner_map]]
+    set support_report [open slr_fusion_support_roots.tsv w]
+    puts $support_report "root\towner\tkind\tendpoint"
+    dict for {support_root metadata} $fusion_support_roots {
+        puts $support_report "$support_root\t[dict get $metadata owner]\t[dict get $metadata kind]\t[dict get $metadata endpoint]"
+    }
+    close $support_report
     set groups [dict create 0 $group0 1 $group1 2 $group2]
     puts "INFO: SLR inventory: owner counts [llength $group0]/[llength $group1]/[llength $group2]; checking required groups"
     foreach owner {0 1 2} {need [dict get $groups $owner] "SLR$owner"}
@@ -531,11 +748,12 @@ proc ::vortex::slr::anchor_barrier {relative} {
 # Pure tree analysis: one leaf pass, one bottom-up aggregation and one
 # top-down selection. The inputs use actual Vivado PARENT relationships.
 # Bit 8 blocks unowned primitives (including exempt global-clock cells).
-proc ::vortex::slr::select_homogeneous_anchors {hier_names hier_parents leaf_names leaf_parents leaf_refs owner_dict root_names} {
+proc ::vortex::slr::select_homogeneous_anchors {hier_names hier_parents leaf_names leaf_parents leaf_refs owner_dict root_names {primitive_only_names {}} {metadata_leaves {}} {ram_leaves {}} {pattern_lut_leaves {}}} {
     if {[llength $hier_names] != [llength $hier_parents]
         || [llength $leaf_names] != [llength $leaf_parents]
         || [llength $leaf_names] != [llength $leaf_refs]} {error "incomplete hierarchy-analysis input"}
     array set owned $owner_dict
+    array set primitive_only {}; foreach leaf $primitive_only_names {set primitive_only($leaf) 1}
     array set parent_of {}; array set mask {}; array set barrier {}; array set selected {}; array set eligible {}
     array set is_root {}; foreach root $root_names {set is_root($root) 1}
     foreach name $hier_names parent $hier_parents {
@@ -581,7 +799,52 @@ proc ::vortex::slr::select_homogeneous_anchors {hier_names hier_parents leaf_nam
     }
     foreach leaf $leaf_names parent $leaf_parents ref $leaf_refs {
         if {![info exists parent_of($parent)]} {
-            if {[info exists owned($leaf)]} {error "owned leaf is outside retained GEMM hierarchy: $leaf -> $parent"}
+            if {[info exists owned($leaf)]} {
+                set sibling 0
+                foreach root $root_names {
+                    if {[string first "$root/" $leaf] == 0} {set sibling 0; break}
+                    if {[string first "[file dirname $root]/" $leaf] == 0} {set sibling 1}
+                }
+                set metadata_ok 0
+                if {[dict exists $metadata_leaves $leaf]} {
+                    set record [dict get $metadata_leaves $leaf]
+                    set core [dict get $record core]
+                    set relative [string range $leaf [expr {[string length $core]+1}] end]
+                    set identity [fusion_metadata_identity $relative $ref]
+                    set metadata_ok [expr {$sibling && $owned($leaf) == 1 && $ref eq "FDRE"
+                        && [string first "$core/" $leaf] == 0 && [string first "$parent/" $leaf] == 0
+                        && $identity ne {} && [dict remove $record core] eq $identity}]
+                    if {!$metadata_ok} {error "invalid primitive-only bank metadata: $leaf"}
+                }
+                set ram_ok 0
+                if {[dict exists $ram_leaves $leaf]} {
+                    set record [dict get $ram_leaves $leaf]
+                    set core [dict get $record core]
+                    set relative [string range $leaf [expr {[string length $core]+1}] end]
+                    set identity [fusion_ram_identity $relative $ref]
+                    set ram_ok [expr {$sibling && $owned($leaf) == 1 && $ref eq "RAMB36E2"
+                        && [string first "$core/" $leaf] == 0 && [string first "$parent/" $leaf] == 0
+                        && $identity ne {} && [dict remove $record core] eq $identity}]
+                    if {!$ram_ok} {error "invalid primitive-only bank RAM: $leaf"}
+                }
+                set pattern_lut_ok 0
+                if {[dict exists $pattern_lut_leaves $leaf]} {
+                    set record [dict get $pattern_lut_leaves $leaf]
+                    set core [dict get $record core]
+                    set relative [string range $leaf [expr {[string length $core]+1}] end]
+                    set expected [fusion_lut_owner $relative $ref [dict get $record sinks]]
+                    set pattern_lut_ok [expr {$sibling && $expected ne {} && $owned($leaf)==$expected
+                        && [dict get $record owner]==$expected && [string first "$core/" $leaf]==0
+                        && [string first "$parent/" $leaf]==0}]
+                    if {!$pattern_lut_ok} {error "invalid lifted fusion LUT placement: $leaf"}
+                }
+                if {!$metadata_ok && !$ram_ok && !$pattern_lut_ok && (![info exists primitive_only($leaf)] || !$sibling || $owned($leaf) != 1
+                    || ![regexp {^LUT[1-6]$} $ref] || [string first "$parent/" $leaf] != 0)} {
+                    error "owned leaf is outside retained GEMM hierarchy: $leaf -> $parent"
+                }
+                # Connectivity-proven sibling LUTs remain individually owned.
+                # Never anchor their mixed/unowned core parent hierarchy.
+            }
             foreach root $root_names {
                 if {[string first "$root/" $leaf] == 0} {error "missing retained leaf parent: $leaf -> $parent"}
             }
@@ -637,12 +900,15 @@ proc ::vortex::slr::select_homogeneous_anchors {hier_names hier_parents leaf_nam
 }
 proc ::vortex::slr::anchor_homogeneous_hierarchy {} {
     variable primitive_names; variable primitive_refs; variable primitive_parents; variable owners; variable roots
+    variable fusion_sibling_names
+    variable fusion_support_roots; variable fusion_metadata; variable fusion_rams; variable fusion_pattern_luts
     puts "INFO: post_opt collecting retained hierarchy for homogeneous ownership"
     set hierarchy [get_cells -hierarchical -quiet -include_replicated_objects -filter {IS_PRIMITIVE == 0} *]
     set names [get_property NAME $hierarchy]
     set parents [get_property PARENT $hierarchy]
     if {[llength $names] != [llength $hierarchy]} {error "incomplete retained hierarchy NAME inventory"}
-    set result [select_homogeneous_anchors $names $parents $primitive_names $primitive_parents $primitive_refs $owners $roots]
+    set anchor_roots [concat $roots [dict keys $fusion_support_roots]]
+    set result [select_homogeneous_anchors $names $parents $primitive_names $primitive_parents $primitive_refs $owners $anchor_roots $fusion_sibling_names $fusion_metadata $fusion_rams $fusion_pattern_luts]
     set anchors [dict get $result groups]
     validate_fp_anchor_coverage [dict get $result covered]
     # Validate every selected hierarchy before mutating any pblock. A mixed or
@@ -793,15 +1059,16 @@ proc ::vortex::slr::apply {} {
         set name pblock_gemm_slr$owner
         create_pblock $name
         resize_pblock [get_pblocks $name] -add SLR$owner
-        set_property IS_SOFT false [get_pblocks $name]
         set_property CONTAIN_ROUTING false [get_pblocks $name]
         set_property EXCLUDE_PLACEMENT false [get_pblocks $name]
+        set_property IS_SOFT false [get_pblocks $name]
         add_cells_to_pblock [get_pblocks $name] [dict get $groups $owner]
         # Attaching cells to a nested platform RP can change child-pblock
         # properties. Reassert the intended contract after that operation.
-        set_property IS_SOFT false [get_pblocks $name]
+        # Set IS_SOFT last: routing/exclusion setters can reset it in Vivado.
         set_property CONTAIN_ROUTING false [get_pblocks $name]
         set_property EXCLUDE_PLACEMENT false [get_pblocks $name]
+        set_property IS_SOFT false [get_pblocks $name]
         check_pblock_properties [get_pblocks $name] post_add
         puts "INFO: $name full-SLR leaf count=[llength [dict get $groups $owner]]"
     }
