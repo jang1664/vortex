@@ -191,7 +191,7 @@ module VX_slr_stream_rx #(
             assert (!push || pop || count_q < COUNTW'(DEPTH))
                 else $fatal(1, "%s: SLR receive capacity exceeded", INSTANCE_ID);
             if (stalled_q)
-                assert (valid_out && data_out == stalled_data_q)
+                assert (valid_out && data_out === stalled_data_q)
                     else $fatal(1, "%s: SLR payload changed while stalled", INSTANCE_ID);
             stalled_q <= valid_out && !ready_out;
             stalled_data_q <= data_out;

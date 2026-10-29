@@ -1530,6 +1530,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 `endif
     localparam int DBG_CLASS_COUNT = 10;
     localparam int DBG_QUEUE_DEPTH = DMA_CHILD_QUEUE_DEPTH + 1;
+    localparam int DBG_INFLIGHT_DEPTH = 4;
     localparam logic [3:0] DBG_C_DRAM_INPUT_LOAD  = 4'd0;
     localparam logic [3:0] DBG_C_DRAM_WEIGHT_LOAD = 4'd1;
     localparam logic [3:0] DBG_C_DRAM_SCALE_LOAD  = 4'd2;
@@ -1578,8 +1579,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     int unsigned dbg_q_head[N_CHILDREN];
     int unsigned dbg_q_tail[N_CHILDREN];
     int unsigned dbg_q_count[N_CHILDREN];
-    int unsigned dbg_active_uid[N_CHILDREN];
-    bit dbg_active_uid_valid[N_CHILDREN];
+    int unsigned dbg_active_uid[N_CHILDREN][DBG_INFLIGHT_DEPTH];
+    int unsigned dbg_active_head[N_CHILDREN];
+    int unsigned dbg_active_tail[N_CHILDREN];
+    int unsigned dbg_active_count[N_CHILDREN];
     int unsigned dbg_dma_uid_by_tag[DMA_INFLIGHT_DEPTH];
     bit dbg_dma_uid_valid[DMA_INFLIGHT_DEPTH];
 
@@ -1611,6 +1614,15 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     function automatic int unsigned dbg_child_depth(input int child);
       return (child == DMA_CHILD_INDEX)
           ? (DMA_CHILD_QUEUE_DEPTH + 1) : (CHILD_QUEUE_DEPTH + 1);
+    endfunction
+
+    // Match g_inorder_child's metadata FIFO capacities.  Children 0--3
+    // accept ordered commands concurrently; the remaining local executor
+    // retains its single-active contract despite its two-entry metadata FIFO.
+    function automatic int unsigned dbg_inflight_depth(input int child);
+      return ((child == 0) || (child == WEIGHT_CHILD_INDEX)
+           || (child == SCALE_CHILD_INDEX) || (child == ZP_CHILD_INDEX))
+          ? DBG_INFLIGHT_DEPTH : 2;
     endfunction
 
     function automatic logic [3:0] dbg_command_class(
@@ -1838,8 +1850,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           dbg_q_head[child] = 0;
           dbg_q_tail[child] = 0;
           dbg_q_count[child] = 0;
-          dbg_active_uid[child] = 0;
-          dbg_active_uid_valid[child] = 0;
+          dbg_active_head[child] = 0;
+          dbg_active_tail[child] = 0;
+          dbg_active_count[child] = 0;
         end
         for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag) begin
           dbg_dma_uid_by_tag[tag] = 0;
@@ -1872,10 +1885,19 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           dbg_q_head[child] = 0;
           dbg_q_tail[child] = 0;
           dbg_q_count[child] = 0;
-          dbg_active_uid_valid[child] = 0;
+          assert (dbg_active_count[child] == 0)
+            else $fatal(1, "%s: debug inflight FIFO child %0d not empty at config",
+                        INSTANCE_ID, child);
+          dbg_active_head[child] = 0;
+          dbg_active_tail[child] = 0;
+          dbg_active_count[child] = 0;
         end
-        for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag)
+        for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag) begin
+          assert (!dbg_dma_uid_valid[tag])
+            else $fatal(1, "%s: debug DMA tag %0d active at config",
+                        INSTANCE_ID, tag);
           dbg_dma_uid_valid[tag] = 0;
+        end
         for (int class_id = 0; class_id < DBG_CLASS_COUNT; ++class_id)
           dbg_class_active_cycles_q[class_id] = 0;
         for (int tile = 0; tile < DBG_TILE_MAX; ++tile) begin
@@ -2022,8 +2044,22 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           end
         end
 
-        // Retire first so a non-DMA child may complete and accept its next
-        // in-order command on the same edge without losing the old UID.
+        // Compare pre-edge debug occupancy with the actual inflight FIFOs.
+        for (int child = 0; child < N_CHILDREN; ++child) begin
+          if (child != DMA_CHILD_INDEX) begin
+            assert ((dbg_active_count[child] <= dbg_inflight_depth(child))
+                 && ((dbg_active_count[child] == 0)
+                     == child_inflight_empty_v[child])
+                 && ((dbg_active_count[child] == dbg_inflight_depth(child))
+                     == child_inflight_full_v[child]))
+              else $fatal(1, "%s: debug inflight occupancy mismatch child %0d",
+                          INSTANCE_ID, child);
+          end
+        end
+
+        // Retire the oldest UID first, then append any new issue.  This
+        // preserves FIFO order on simultaneous completion/issue, including
+        // full-capacity replacement when the production controller permits it.
         for (int child = 0; child < N_CHILDREN; ++child) begin
           if (child_completion_pop_v[child]) begin
             int uid;
@@ -2036,12 +2072,22 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               uid = dbg_dma_uid_by_tag[tag];
               dbg_dma_uid_valid[tag] = 0;
             end else begin
-              assert (dbg_active_uid_valid[child])
+              assert (dbg_active_count[child] != 0)
                 else $fatal(1, "%s: command ledger missing active child %0d",
                             INSTANCE_ID, child);
-              uid = dbg_active_uid[child];
-              dbg_active_uid_valid[child] = 0;
+              uid = dbg_active_uid[child][dbg_active_head[child]];
+              dbg_active_head[child]
+                  = (dbg_active_head[child] + 1 == dbg_inflight_depth(child))
+                  ? 0 : dbg_active_head[child] + 1;
+              dbg_active_count[child]--;
             end
+            assert (dbg_cmd_record[uid].issued
+                 && (dbg_cmd_record[uid].child == child)
+                 && ({dbg_cmd_record[uid].cmd.notify,
+                      dbg_cmd_record[uid].cmd.work_seq}
+                     == child_inflight_head[child]))
+              else $fatal(1, "%s: command UID %0d completion metadata mismatch child %0d",
+                          INSTANCE_ID, uid, child);
             assert (!dbg_cmd_record[uid].completed)
               else $fatal(1, "%s: command UID %0d completed twice",
                           INSTANCE_ID, uid);
@@ -2088,11 +2134,20 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
               $display("GEMM_CMD_DMA_MAP | {inst=%s, job=%0d, uid=%0d, tag=%0d, accept=%0d}",
                        INSTANCE_ID, dbg_job_seq_q, uid, tag, dbg_cycle_q);
             end else begin
-              assert (!dbg_active_uid_valid[child])
-                else $fatal(1, "%s: non-DMA child %0d has two active UIDs",
+              assert (dbg_active_count[child] < dbg_inflight_depth(child))
+                else $fatal(1, "%s: debug inflight FIFO child %0d overflow",
                             INSTANCE_ID, child);
-              dbg_active_uid_valid[child] = 1;
-              dbg_active_uid[child] = uid;
+              if ((child != 0) && (child != WEIGHT_CHILD_INDEX)
+               && (child != SCALE_CHILD_INDEX) && (child != ZP_CHILD_INDEX)) begin
+                assert (dbg_active_count[child] == 0)
+                  else $fatal(1, "%s: single-active child %0d has two active UIDs",
+                              INSTANCE_ID, child);
+              end
+              dbg_active_uid[child][dbg_active_tail[child]] = uid;
+              dbg_active_tail[child]
+                  = (dbg_active_tail[child] + 1 == dbg_inflight_depth(child))
+                  ? 0 : dbg_active_tail[child] + 1;
+              dbg_active_count[child]++;
             end
             if (dbg_is_dram_load(dbg_cmd_record[uid].class_id)) begin
               if (!dbg_preload_seen[dbg_cmd_record[uid].tile]) begin
@@ -2213,9 +2268,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           end
           for (int child = 0; child < N_CHILDREN; ++child) begin
             assert ((dbg_q_count[child] == 0)
-                 && !dbg_active_uid_valid[child])
+                 && (dbg_active_count[child] == 0))
               else $fatal(1, "%s: child %0d debug state not drained",
                           INSTANCE_ID, child);
+          end
+          for (int tag = 0; tag < DMA_INFLIGHT_DEPTH; ++tag) begin
+            assert (!dbg_dma_uid_valid[tag])
+              else $fatal(1, "%s: debug DMA tag %0d not drained",
+                          INSTANCE_ID, tag);
           end
           assert (dbg_record_count_q == dbg_issue_count_q)
             else $fatal(1, "%s: emitted/issued count mismatch", INSTANCE_ID);
@@ -2338,7 +2398,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         assert (!(cfg_fire && !scheduler_quiescent))
           else $fatal(1, "%s: config accepted before scheduler quiescence",
                       INSTANCE_ID);
+`ifdef GEMM_SRAM_FUSION
+        assert (cfg_reg_if.ready == (new_invocation_ready && !bridge_busy_i))
+`else
         assert (cfg_reg_if.ready == new_invocation_ready)
+`endif
           else $fatal(1, "%s: new invocation readiness is not strict quiescence",
                       INSTANCE_ID);
         assert (!(invocation_complete && done_valid_q && !done_fire))
