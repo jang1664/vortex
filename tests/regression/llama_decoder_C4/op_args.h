@@ -44,3 +44,5 @@
 #include "../eladd_layout_fused/common.h"
 #undef kernel_arg_t
 #undef _COMMON_H_
+
+#include "flash_args.h"

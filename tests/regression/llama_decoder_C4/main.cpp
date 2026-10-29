@@ -47,25 +47,30 @@ static bool check_output(const fs::path& fixture,const fs::path& out) {
   return pass;
 }
 static void save_samples(const fs::path& path,const std::vector<Sample>& samples) {
-  std::ofstream file(path); file<<"operation,repetition,cycles,host_seconds\n"<<std::setprecision(12);
+  std::ofstream file(path); file<<"operation,repetition,cycles,host_seconds,attention_total_cycles,gemm_submit_cycles,gemm_wait_cycles,sram_copy_cycles,simd_cycles\n"<<std::setprecision(12);
   std::map<std::string,unsigned> repetitions;
   for(const auto& sample:samples)
-    file<<sample.name<<','<<repetitions[sample.name]++<<','<<sample.cycles<<','<<sample.seconds<<'\n';
+    file<<sample.name<<','<<repetitions[sample.name]++<<','<<sample.cycles<<','<<sample.seconds
+      <<','<<sample.attention_total_cycles<<','<<sample.gemm_submit_cycles<<','<<sample.gemm_wait_cycles
+      <<','<<sample.sram_copy_cycles<<','<<sample.simd_cycles<<'\n';
   if(!file) throw std::runtime_error("could not save samples");
 }
 int main(int argc,char** argv) {
   try {
-    std::string model="llama3-8b",mode="verify",stage="prefill",attention_launch="batched";
-    fs::path fixture,out="decoder_results";
-    uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0;
+    std::string model="llama3-8b",mode="verify",stage="prefill",attention_launch="batched",attention_backend="legacy";
+    fs::path fixture,out="decoder_results",attention_inputs,traffic_manifest;
+    uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0,timeout_ms=300000;
     bool diagnostic_timing=false,output_pass=true;
     for(int i=1;i<argc;++i) {
       std::string key=argv[i];
       if(key=="--help" || key=="-h") {
         std::cout<<"--model llama3-8b|llama2-7b --batch 1 --seq-len 32 --fixture DIR\n"
-                   "--mode verify|timing|isolated --output DIR --repetitions 3\n"
+                   "--mode verify|timing|isolated|attention-traffic --output DIR --repetitions 3\n"
+                   "--attention-inputs SNAPSHOT --traffic-manifest FILE (attention-traffic only)\n"
                    "--stage prefill|decode --past-kv-len N --cache-capacity N\n"
                    "--attention-launch batched|per-head (default: batched)\n"
+                   "--attention-backend legacy|resident|resident-fp32 (default: legacy)\n"
+                   "--timeout-ms N (positive per-operation wait in milliseconds; default: 300000)\n"
                    "--diagnostic-timing (measure despite output mismatch; still exit nonzero)\n"
                    "--stop-after N (partial diagnostic only; never a decoder PASS)\n";
         return 0;
@@ -78,30 +83,54 @@ int main(int argc,char** argv) {
       else if(key=="--mode") mode=value;
       else if(key=="--stage") stage=value;
       else if(key=="--attention-launch") attention_launch=value;
+      else if(key=="--attention-backend") attention_backend=value;
       else if(key=="--past-kv-len") past_kv=extent();
       else if(key=="--cache-capacity") capacity=extent();
       else if(key=="--fixture") fixture=value;
+      else if(key=="--attention-inputs") attention_inputs=value;
+      else if(key=="--traffic-manifest") traffic_manifest=value;
       else if(key=="--output") out=value;
       else if(key=="--batch") batch=extent();
       else if(key=="--seq-len") seq=extent();
       else if(key=="--repetitions") repetitions=extent();
+      else if(key=="--timeout-ms") {
+        if(value.find_first_not_of("0123456789")!=std::string::npos)
+          throw std::invalid_argument("--timeout-ms requires a positive integer");
+        timeout_ms=extent();
+      }
       else if(key=="--stop-after") stop_after=extent();
       else throw std::invalid_argument("unknown option "+key);
     }
     if(fixture.empty()) throw std::invalid_argument("--fixture is required");
-    if(mode!="verify" && mode!="timing" && mode!="isolated") throw std::invalid_argument("unknown mode");
+    if(mode!="verify" && mode!="timing" && mode!="isolated" && mode!="attention-traffic") throw std::invalid_argument("unknown mode");
     if(attention_launch!="batched" && attention_launch!="per-head") throw std::invalid_argument("unknown attention launch mode");
+    if(attention_backend!="legacy" && attention_backend!="resident" && attention_backend!="resident-fp32")
+      throw std::invalid_argument("unknown attention backend");
     if(stop_after && mode!="verify") throw std::invalid_argument("partial execution is only supported in verify mode");
+    if(mode=="attention-traffic") {
+      if(attention_inputs.empty() || traffic_manifest.empty())
+        throw std::invalid_argument("attention-traffic requires --attention-inputs and --traffic-manifest");
+      if(attention_backend=="legacy" || attention_launch!="batched" || diagnostic_timing)
+        throw std::invalid_argument("attention-traffic requires batched resident attention without diagnostic timing");
+    } else if(!attention_inputs.empty() || !traffic_manifest.empty()) {
+      throw std::invalid_argument("attention input/manifest options require --mode attention-traffic");
+    }
     auto config=ModelConfig::preset(model); config.batch=batch; config.seq=seq; config.stage=stage; config.past_kv=past_kv; config.cache_capacity=capacity; config.validate();
     if(!fs::exists(fixture/"reference/output.bin")) throw std::invalid_argument("fixture needs CPU reference/output.bin");
     fs::create_directories(out);
-    Decoder decoder(config,attention_launch=="batched"); decoder.load(fixture); decoder.build();
+    Decoder decoder(config,attention_launch=="batched",attention_backend!="legacy",attention_backend=="resident-fp32",timeout_ms);
+    if(mode=="attention-traffic") {
+      auto sample=decoder.attention_traffic(fixture,attention_inputs,traffic_manifest,out);
+      save_samples(out/"profile.csv",{sample});
+      return 0;
+    }
+    decoder.load(fixture); decoder.build();
     size_t gemms=0,gemm_jobs=0;
     for(const auto& o:decoder.operations()) if(o.kind==DecoderOp::gemm) { ++gemms; gemm_jobs+=o.gemm_count; }
     std::cout<<"DECODER "<<model<<" B="<<batch<<" S="<<seq<<" heads="<<config.q_heads
       <<" stage="<<stage<<" past_kv="<<past_kv<<" capacity="<<capacity
       <<" kv_heads="<<config.kv_heads<<" operations="<<decoder.operations().size()<<" gemms="<<gemms
-      <<" gemm_jobs="<<gemm_jobs<<" attention_launch="<<attention_launch<<std::endl;
+      <<" gemm_jobs="<<gemm_jobs<<" attention_launch="<<attention_launch<<" attention_backend="<<attention_backend<<std::endl;
     if(mode=="verify") {
       auto samples=decoder.run(true,out,stop_after); save_samples(out/"profile.csv",samples);
       if(stop_after && samples.size()<decoder.operations().size()) {

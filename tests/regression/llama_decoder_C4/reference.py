@@ -199,6 +199,9 @@ def compare(args):
         name, layout, matrices, rows, cols, _ = line.split()
         catalog[name] = (layout, int(matrices), int(rows), int(cols))
 
+    def available(name):
+        return name in catalog and (args.output / f'{name}.bin').exists()
+
     def tensor(name):
         return logical(np.fromfile(args.output / f'{name}.bin', dtype='float16'), *catalog[name], args.mxu)
 
@@ -269,7 +272,9 @@ def compare(args):
             scores = (grouped_query.float() @ weight.unsqueeze(2).transpose(-1, -2)).half()
             product = torch.from_numpy(tensor('mlp_product').reshape(cfg.batch_size, cfg.query_length, cfg.intermediate_size))
             transformed = _hadamard(product, model.r4_base, model.r4_base_size)
-        isolated_expected = {'scores': scores, 'ffn_hadamard': transformed}
+        isolated_expected = {'ffn_hadamard': transformed}
+        if available('scores'):
+            isolated_expected['scores'] = scores
         # For a failing chain boundary, replay only the reference operation on
         # its actual device input. This locates propagation versus local faults;
         # it never replaces the independent final-output gate.
@@ -282,17 +287,22 @@ def compare(args):
             hidden = torch.from_numpy(np.fromfile(args.fixture / 'tensors/hidden.bin', dtype='float16').reshape(
                 cfg.batch_size, cfg.query_length, cfg.hidden_size))
             with torch.inference_mode():
+                # Fused attention has no score/probability HBM dumps. Reuse
+                # the same-input QK replay above and the existing CPU softmax
+                # to diagnose its context boundary without inventing dumps.
                 raw_scores = torch.from_numpy(tensor('scores')).reshape(
                     cfg.batch_size, cfg.num_key_value_heads, cfg.query_heads_per_kv_head,
-                    cfg.query_length, cfg.cache_capacity)
-                isolated_expected['probabilities'] = torch.ops.vortex.causal_softmax(
+                    cfg.query_length, cfg.cache_capacity) if available('scores') else scores
+                replay_probabilities = torch.ops.vortex.causal_softmax(
                     raw_scores, positions, torch.tensor(valid_length), cfg.head_dim)[1]
+                if available('probabilities'):
+                    isolated_expected['probabilities'] = replay_probabilities
                 # QDIR=1 rounds activation*scale to FP16 before the INT4 dot.
                 packed, scale, zero = caches[1]
                 weight = _unpack_signed_int4(packed, [cfg.batch_size, cfg.num_key_value_heads, cfg.cache_capacity, cfg.head_dim], 3).float() - zero.float()
                 probs = torch.from_numpy(tensor('probabilities')).reshape(
                     cfg.batch_size, cfg.num_key_value_heads, cfg.query_heads_per_kv_head,
-                    cfg.query_length, cfg.cache_capacity)
+                    cfg.query_length, cfg.cache_capacity) if available('probabilities') else replay_probabilities
                 scaled = (probs.float() * scale.squeeze(-1).unsqueeze(2).unsqueeze(2).float()).half().float()
                 isolated_expected['context'] = (scaled @ weight.unsqueeze(2)).half()
                 context = torch.from_numpy(tensor('context')).reshape(

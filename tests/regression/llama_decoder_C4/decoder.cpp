@@ -36,8 +36,16 @@ template<class T> Operation op(const std::string& name, DecoderOp kind, const T&
 void rt_check(int status, const char* action) {
   if (status) throw std::runtime_error(std::string(action)+": status="+std::to_string(status));
 }
-Decoder::Decoder(ModelConfig config, bool batch_attention)
-    : cfg_(std::move(config)), batch_attention_(batch_attention) {
+Decoder::Decoder(ModelConfig config, bool batch_attention, bool resident_attention, bool attention_fp32,
+                 uint32_t timeout_ms)
+    : cfg_(std::move(config)), batch_attention_(batch_attention), resident_attention_(resident_attention),
+      attention_fp32_(attention_fp32), timeout_ms_(timeout_ms) {
+  if (!timeout_ms_) throw std::invalid_argument("operation timeout must be positive");
+  if (attention_fp32_ && !resident_attention_)
+    throw std::invalid_argument("FP32 attention requires the resident backend");
+#ifndef GEMM_SRAM_FUSION
+  if (resident_attention_) throw std::invalid_argument("resident attention requires GEMM_SRAM_FUSION");
+#endif
   cfg_.validate();
   rt_check(vx_dev_open(&device_), "vx_dev_open");
   try {
@@ -105,6 +113,9 @@ void Decoder::append(Operation operation) {
   if(operation.kind==DecoderOp::gemm && (!operation.gemm_count ||
       operation.arguments.size()!=sizeof(DecoderGemmArgs)*operation.gemm_count))
     throw std::runtime_error("invalid GEMM argument array");
+  if(operation.kind==DecoderOp::flash_attention && (!operation.gemm_count ||
+      operation.arguments.size()!=sizeof(DecoderFlashArgs)*operation.gemm_count))
+    throw std::runtime_error("invalid attention argument array");
   for(const auto& name:operation.inputs) (void)buffers_.at(name);
   for(const auto& name:operation.outputs) (void)buffers_.at(name);
   // Preserve every original argument struct verbatim on the wire.
@@ -118,11 +129,28 @@ void Decoder::append(Operation operation) {
 Sample Decoder::launch(Operation& operation, bool profile) {
   auto start=std::chrono::steady_clock::now();
   rt_check(vx_start(device_,kernel_,operation.dispatch_buffer), operation.name.c_str());
-  rt_check(vx_ready_wait(device_,300000), operation.name.c_str());
+  rt_check(vx_ready_wait(device_,timeout_ms_), operation.name.c_str());
   double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
   uint64_t cycles=0;
   if(profile) rt_check(vx_mpm_query(device_,0xB00,0,&cycles), "read MCYCLE");
-  return {operation.name,cycles,seconds};
+  Sample sample{operation.name,cycles,seconds};
+  if(operation.kind==DecoderOp::flash_attention) {
+    std::vector<DecoderFlashArgs> args(operation.gemm_count);
+    rt_check(vx_copy_from_dev(args.data(),operation.args_buffer,0,args.size()*sizeof(DecoderFlashArgs)), "attention status");
+    for(size_t i=0;i<args.size();++i) {
+      if(args[i].attention.status!=1u) throw std::runtime_error(operation.name+" attention job "+std::to_string(i)+" bad status "+std::to_string(args[i].attention.status));
+      sample.attention_total_cycles+=args[i].attention.total_cycles;
+      sample.gemm_submit_cycles+=args[i].attention.gemm_submit_cycles;
+      sample.gemm_wait_cycles+=args[i].attention.gemm_wait_cycles;
+      sample.sram_copy_cycles+=args[i].attention.sram_copy_cycles;
+      sample.simd_cycles+=args[i].attention.simd_cycles;
+    }
+    if(profile) std::cout<<"ATTENTION PHASES "<<operation.name
+      <<" total="<<sample.attention_total_cycles<<" submit="<<sample.gemm_submit_cycles
+      <<" gemm_wait="<<sample.gemm_wait_cycles<<" sram_copy="<<sample.sram_copy_cycles
+      <<" simd="<<sample.simd_cycles<<std::endl;
+  }
+  return sample;
 }
 void Decoder::dump_buffer(const std::string& name,const fs::path& folder) {
   const auto& b=buffers_.at(name); std::vector<uint8_t> bytes(b.bytes);
@@ -298,6 +326,7 @@ void Decoder::build() {
     a.logical_scale_addr=addr(name+".logical_scale"); a.logical_zero_addr=addr(name+".logical_zero");
     append(op(name,DecoderOp::quant,a,{input},{name+".weight",name+".scale",name+".zero",name+".logical_scale",name+".logical_zero"}));
   }
+  if (!resident_attention_) {
   tensor("scores",B*attention_heads,attention_rows,C,"c"); tensor("probabilities",B*attention_heads,attention_rows,C,"a"); tensor("context",B*attention_heads,attention_rows,D,"c");
   Operation qk_batch; qk_batch.name="qk"; qk_batch.kind=DecoderOp::gemm; qk_batch.gemm_count=0;
   for(uint32_t b=0;b<B;++b) for(uint32_t h=0;h<Q;h+=G) {
@@ -322,6 +351,10 @@ void Decoder::build() {
       "context",attention_rows,C,D,D,0,1,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*C*2,uint64_t(b*attention_heads+h/G)*pad_rows(attention_rows)*D*2,E,0,batch_attention_?&pv_batch:nullptr);
   }
   if(batch_attention_) append(std::move(pv_batch));
+  } else {
+    tensor("context",B*attention_heads,attention_rows,D,"c");
+    build_resident_attention(B, S, Q, V, D, G, C, L);
+  }
   tensor("concat",1,M,H,"a"); DecoderConcatArgs cat{};
   grid(cat,blocks(uint64_t(M)*H),tpb); cat.input_addr=addr("context"); cat.output_addr=addr("concat");
   cat.batch=B; cat.seq=S; cat.heads=Q; cat.headdim=D; cat.query_heads_per_kv=G;

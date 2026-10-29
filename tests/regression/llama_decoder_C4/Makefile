@@ -25,3 +25,8 @@ kernel.elf: $(wildcard $(SRC_DIR)/../*_layout_fused/*.cpp) \
   $(SRC_DIR)/../fpint_gemm_ffn_hw/kernel.cpp \
   $(wildcard $(SRC_DIR)/../softmax_common/*.h) \
   $(wildcard $(SRC_DIR)/../vector_common/*.h) $(SRC_DIR)/common.h
+
+# Shared attention implementation and ABI included by the decoder wrapper.
+kernel.elf: $(SRC_DIR)/ops/device_flash_attention.cpp $(SRC_DIR)/flash_args.h \
+  $(SRC_DIR)/../flash_attn/kernel.cpp $(SRC_DIR)/../flash_attn/common.h \
+  $(VORTEX_HOME)/kernel/include/vx_flash_attention.h $(VORTEX_HOME)/kernel/include/vx_sram_fusion.h

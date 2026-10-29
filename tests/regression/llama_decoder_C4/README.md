@@ -12,6 +12,45 @@ units. `kernel.cpp` dispatches one resident binary; `decoder.cpp` builds origina
 argument structs and connects device buffers. All intermediate allocations are
 distinct, allowing independent per-operation replay without restoring data.
 
+### Attention traffic replay diagnostic
+
+`--mode attention-traffic --attention-inputs SNAPSHOT --traffic-manifest FILE`
+replays the complete eight-record resident attention operation for Llama3-8B
+decode B1/S1 with P16/C32, P128/C160 or P128/C256. Pass the matching `--fixture`,
+`--stage decode`, `--past-kv-len`, `--cache-capacity`, and `--attention-backend resident`
+or `resident-fp32`. The snapshot must contain completed `q_hadamard` and all
+48 updated packed K/V inputs with their original `buffers.tsv`; the fixture's
+initial cache is not a replay input. The host checks fixture metadata and exact
+snapshot shapes/sizes, then uses the existing attention builder and production
+kernel once. Other decoder modes and their defaults are unchanged.
+
+P16/C32 uses the archived device snapshot. P128/C160 and P128/C256 require explicitly
+labeled CPU fixture inputs from the updated `reference.npz` cache arrays, plus
+`provenance.json` with schema `c4_attention_input_provenance_v1`, kind
+`cpu-fixture-input`, matching model/paths, and `full_decoder_pass=false`.
+The task utility `agent-tasks/c4-sram-flash-attention/prepare_attention_cpu_inputs.py`
+packs those shapes using the existing TVM layout helpers, preserves a
+separate reference context, and emits provenance and input hash receipts.
+This tests the attention operation on CPU-generated boundary inputs; it does
+not establish a device-produced decoder boundary or a complete decoder pass.
+For C160, it pads canonical V weight/scale/zero rows160–255 to zero before
+packing the C++ K256 physical layout; the model's logical capacity stays160.
+K retains its C160 layout and uses the existing device input-padding adapter.
+Prefill shapes remain rejected by this diagnostic.
+
+The prelaunch `c4_decoder_attention_traffic_v1` manifest contains actual tensor,
+padding, argument and dispatch addresses plus every constructed argument field.
+`completion.json` records returned counters/status under
+`c4_decoder_attention_completion_v1`; only context is downloaded as tensor data.
+The host checks zero-initialized output padding. Its replay success marker
+denotes execution/status success, not a full decoder or numerical comparison
+pass. Independent verification must validate snapshot receipt hashes before
+and after execution, compare logical context using the existing local limits,
+and audit all traffic. No intermediate export is enabled. Kernel reservation
+comes from the existing allocator `MEM_RESERVE` diagnostic, so traffic runs
+must enable the documented host allocator logging. Use separate output/build
+directories; the host rejects output paths inside the immutable snapshot.
+
 ### Attention launch policy
 
 `--attention-launch batched` is the default for both prefill and decode. QK and
@@ -153,6 +192,12 @@ includes runtime launch/wait, driver logs and host sample bookkeeping. See
 [RESULTS.md](RESULTS.md) for the matched runtime comparison; FPGA-cycle sums
 must remain distinct from host wall time.
 
+`--timeout-ms N` sets the host wait limit for each decoder operation in
+milliseconds (positive integer, maximum 4294967295; default 300000). For long
+VCS runs, use an explicit limit such as `--timeout-ms 7200000` and a separate
+outer timeout for the whole run. This option does not change the workload,
+device kernel, or numerical checks.
+
 Rev5 prefill suites contain 512/1024/2048/4096 tokens, not32. Do not scale their
 1K latency linearly to invent a32-token baseline. This experiment's matched
 baseline is its own independent C++ per-operation measurement.
@@ -233,3 +278,72 @@ on the saved decode fixture and output directory. It performs independent CPU
 replays and accepts only the characterized MXU multiplier FTZ behavior in its
 IP mode; custom converter bugs are excluded. The original C++ verification
 record is preserved.
+
+
+## Resident attention backend
+
+`--attention-backend legacy|resident|resident-fp32` selects the attention implementation;
+`legacy` remains the default. The resident backend requires the
+`configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_sram_fusion.sh` build and hardware exposing the SRAM fusion ABI.
+Both resident modes require SRAM fusion capability version 2.
+`resident-fp32` preserves QK scores and PV partials in FP32; probabilities and
+final context remain FP16. A build without `GEMM_SRAM_FUSION` rejects either resident option before opening
+the device. The device checks the capability before running resident GEMM.
+
+The resident operation replaces QK, softmax, and PV together. It reuses
+`flash_attn/kernel.cpp`, consumes the existing quantized key/value cache, and
+writes the existing C-tiled `context` buffer for concat. Projection, RoPE,
+Hadamard, KV quantization, GQA head selection, and the remaining decoder graph
+are unchanged. Decode uses one matrix per KV head (four query rows for Llama3
+and one for Llama2), with an eight-row physical pitch. Prefill keeps separate
+query-head matrices and splits rows into chunks of at most 128, preserving
+the causal query position across chunks. `--attention-launch batched` executes
+all records in one dispatch; `per-head` dispatches each head/query chunk.
+
+QK uses WTRANS=1, QDIR=0, QBLK=128. PV uses WTRANS=0, QDIR=1, QBLK=128 and
+its own zero points. At C4 MXU_COL=16, both weight tile strides are 8192 bytes;
+key scale/zero slots are 512 bytes and value slots are 2048 bytes. Full cache
+tiles feed GEMM directly. If the allocated key capacity ends inside a tile,
+a device adapter copies the packed input into a padded HBM buffer. For a
+value capacity smaller than 128, it pads each weight and scale/zero microtile
+to a 128-key pitch. This input staging runs after quantization, is included
+in attention timing, and does not alter the original cache. It can repeat
+for query chunks sharing a KV head.
+
+Scores, probabilities, partial outputs, the FP32 accumulator, and online
+softmax state use the lower half of LMEM. TMEM slots reserve the larger PV
+qparam footprint. For FP32 export, the two contiguous 32 KiB TMEM output slots already reserved
+by the allocation helper form one 64 KiB output. Input/qparam addresses and
+the helper are unchanged. The decoder validates adjacency and capacity before
+using that union. LMEM uses one FP32 score/partial tile plus a separate FP16
+probability tile, so workers never compact probability over another worker's
+unread scores. This adds `512 * padded_query_rows` LMEM bytes (64 KiB at M=128)
+relative to resident FP16; FP32 online state is unchanged. Production execution
+does not allocate HBM attention intermediates or export them for diagnostics. Each argument record's status
+is checked after every dispatch, including timing and isolated runs.
+The intermediate checker accepts absent score/probability dumps and uses its
+existing CPU attention replay for same-input context diagnostics. The context
+and final decoder output gates retain their original numerical thresholds.
+
+Build from an already configured C4 build directory (the explicit source
+Makefile also includes newly added dependencies if its generated copy is old):
+
+```bash
+source configs/improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_sram_fusion.sh
+make -C build_c4_sram_fusion/tests/regression/llama_decoder_C4 \
+  -f "$PWD/tests/regression/llama_decoder_C4/Makefile" \
+  CXX=/usr/bin/g++ CC=/usr/bin/gcc -j2
+```
+
+For end-to-end verification, use the normal `ci/run_black.sh xrt-vcs-sim`
+flow with `--app llama_decoder_C4` and add `--attention-backend resident`
+to a matching prefill or decode fixture's existing arguments. Compare
+`--attention-backend legacy` using the same fixture and numerical gates.
+Exercise prefill S=16/128/144, decode M=1/4, capacity=32/160/256, and a
+logical KV length crossing 128. These cases cover both padding adapters,
+direct input tiles, GQA, and multiple query/key tiles. A successful software
+build alone does not establish numerical correctness or FPGA latency.
+
+See [resident validation](RESIDENT_VALIDATION.md) for CPU fixture preparation,
+the nine-case prefill/decode matrix, exact simulation/comparison commands, and
+the meaning of the attention phase columns in `profile.csv` and `isolated.csv`.

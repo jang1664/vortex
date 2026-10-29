@@ -24,10 +24,18 @@ struct Operation {
   vx_buffer_h args_buffer = nullptr, dispatch_buffer = nullptr;
   uint32_t gemm_count = 1;
 };
-struct Sample { std::string name; uint64_t cycles; double seconds; };
+struct Sample {
+  std::string name;
+  uint64_t cycles;
+  double seconds;
+  uint64_t attention_total_cycles = 0, gemm_submit_cycles = 0;
+  uint64_t gemm_wait_cycles = 0, sram_copy_cycles = 0, simd_cycles = 0;
+};
 class Decoder {
  public:
-  explicit Decoder(ModelConfig config, bool batch_attention = true);
+  explicit Decoder(ModelConfig config, bool batch_attention = true,
+                   bool resident_attention = false, bool attention_fp32 = false,
+                   uint32_t timeout_ms = 300000);
   ~Decoder();
   Decoder(const Decoder&) = delete;
   Decoder& operator=(const Decoder&) = delete;
@@ -36,11 +44,17 @@ class Decoder {
   std::vector<Sample> run(bool profile, const std::filesystem::path& dump, size_t stop_after = 0);
   std::vector<Sample> isolated(unsigned repetitions);
   void save_output(const std::filesystem::path& folder);
+  Sample attention_traffic(const std::filesystem::path& fixture,
+      const std::filesystem::path& snapshot, const std::filesystem::path& manifest,
+      const std::filesystem::path& output);
   const std::vector<Operation>& operations() const { return ops_; }
   uint64_t cores = 0, warps = 0, threads = 0, tmem = 0;
  private:
   ModelConfig cfg_;
   bool batch_attention_;
+  bool resident_attention_;
+  bool attention_fp32_;
+  uint32_t timeout_ms_;
   vx_device_h device_ = nullptr;
   vx_buffer_h kernel_ = nullptr;
   std::map<std::string, Buffer> buffers_;
@@ -51,6 +65,8 @@ class Decoder {
   void append(Operation op);
   Sample launch(Operation& op, bool profile);
   void dump_buffer(const std::string& name, const std::filesystem::path& folder);
+  void build_resident_attention(uint32_t b, uint32_t s, uint32_t q, uint32_t v,
+      uint32_t d, uint32_t g, uint32_t capacity, uint32_t length);
   void gemm(const std::string& name, const std::string& input,
             const std::string& weight, const std::string& scale, const std::string& zero,
             const std::string& output, uint32_t m, uint32_t k, uint32_t n,

@@ -1,6 +1,7 @@
 #include "common.h"
 #include <vx_intrinsics.h>
 int llama_gemm_batch_main(uint32_t count);
+int llama_flash_attention_batch_main(uint32_t count);
 int llama_rms_main();
 int llama_rope_main();
 int llama_hadamard_main();
@@ -18,6 +19,7 @@ int main() {
   csr_write(VX_CSR_MSCRATCH, packet->args_address);
   int result = -1;
   switch (operation) {
+    case DecoderOp::flash_attention: result = llama_flash_attention_batch_main(packet->gemm_count); break;
     case DecoderOp::gemm: result = llama_gemm_batch_main(packet->gemm_count); break;
     case DecoderOp::rms: result = llama_rms_main(); break;
     case DecoderOp::rope: result = llama_rope_main(); break;
