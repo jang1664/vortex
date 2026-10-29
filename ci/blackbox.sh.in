@@ -320,13 +320,32 @@ run_app() {
         local SIMV_LOG="$SIMV_DIR/simv.log"
         local FSDB_FILE="$SIMV_DIR/vcs_cosim.fsdb"
         echo "Launching VCS simv on port $VCS_PORT (log: $SIMV_LOG)..."
-        (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
+        if [ -n "${VCS_EXIT_STATUS_FILE:-}" ]; then
+            (
+                cd "$SIMV_DIR" || exit 1
+                ./simv $simv_flags > "$SIMV_LOG" 2>&1 &
+                simv_child=$!
+                # The opt-in recorder is a waiting shell, so forward cleanup
+                # to its simulator child. A forced stop is never a full trace.
+                trap 'kill -TERM "$simv_child" 2>/dev/null; wait "$simv_child"; simv_status=$?; printf "forced:%s\n" "$simv_status" > "$VCS_EXIT_STATUS_FILE"; exit 1' TERM INT
+                wait "$simv_child"
+                simv_status=$?
+                printf '%s\n' "$simv_status" > "$VCS_EXIT_STATUS_FILE" || exit 1
+                exit "$simv_status"
+            ) &
+        else
+            (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
+        fi
         VCS_PID=$!
         sleep 3
 
         if ! kill -0 $VCS_PID 2>/dev/null; then
             echo "Error: VCS simv failed to start. Check $SIMV_LOG"
-            cat "$SIMV_LOG"
+            if [ -p "$SIMV_LOG" ]; then
+                echo "VCS log is a FIFO; inspect the external trace collector output."
+            else
+                cat "$SIMV_LOG"
+            fi
             exit 1
         fi
 
@@ -441,6 +460,10 @@ run_app() {
         echo "Running: $cmd_opts"
         eval "$cmd_opts"
         status=$?
+    fi
+
+    if [ -n "${VCS_HOST_EXIT_STATUS_FILE:-}" ]; then
+        printf '%s\n' "$status" > "$VCS_HOST_EXIT_STATUS_FILE" || status=1
     fi
 
     # Clean up VCS and Verdi processes

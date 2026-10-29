@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import csv
 import re
 from dataclasses import dataclass, field
@@ -57,7 +58,8 @@ def read_trace(path: Path, label: str) -> TraceData:
         "GEMM_TILE_OVERLAP": trace.tiles,
         "TMEM_DMA_CMD_PERF": trace.dma,
     }
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
+    with (gzip.open(path, "rt", encoding="utf-8", errors="replace")
+          if path.suffix == ".gz" else path.open("r", encoding="utf-8", errors="replace")) as stream:
         for line_number, line in enumerate(stream, 1):
             match = MARKER_RE.search(line)
             if not match:

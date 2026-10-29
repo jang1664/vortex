@@ -582,7 +582,7 @@ if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   if [[ -n "${DEBUG_FLAG}" ]]; then
     xrt_vcs_env+=("FSDB_DUMP=1" "DEBUG_AXI=1")
   fi
-  env "${xrt_vcs_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
+  env "${xrt_vcs_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}" "${HW_BLACKBOX_FLAGS[@]}"
 fi
 
 # ----------------------------------------------------------------------------
