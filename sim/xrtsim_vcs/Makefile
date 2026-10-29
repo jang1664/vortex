@@ -301,6 +301,9 @@ include $(SRC_DIR)/hbm_tests.mk
 $(DESTDIR)/simv: $(THIRD_PARTY_DIR)/ramulator/libramulator.so
 $(DESTDIR)/simv: $(SRC_DIR)/VX_hbm_axi_guard.sv
 $(DESTDIR)/simv: $(SRC_DIR)/hbm_axi_selftest.svh
+$(DESTDIR)/simv: $(SRC_DIR)/sram_publish_stress.svh
+$(DESTDIR)/simv: $(SRC_DIR)/sram_early_return_check.svh
+$(DESTDIR)/simv: $(SRC_DIR)/decoder_progress_monitor.svh
 
 all: simv applib
 

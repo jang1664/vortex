@@ -193,6 +193,9 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   // DUT
   // =========================================================================
+`ifdef GEMM_SRAM_FUSION
+  `include "sram_resident_connections.svh"
+`endif
   VX_gemm_node #(
     .INSTANCE_ID("gemm_node_0"),
     .N_MASTER(N_MASTER),
@@ -204,6 +207,13 @@ module tb_VX_gemm_node_improve
     .reset       (reset),
     .mmio_if     (mmio_if),
     .dma_axi_m   (dma_axi)
+`ifdef GEMM_SRAM_FUSION
+    ,.fusion_mmio_if(fusion_mmio_if)
+    ,.fusion_lmem_if(fusion_lmem_if)
+    ,.fusion_lmem_write_commit_i(fusion_lmem_commit)
+    ,.fusion_lmem_published_i(fusion_lmem_published)
+    ,.fusion_busy_o(fusion_busy)
+`endif
   );
 
 
@@ -2660,6 +2670,10 @@ module tb_VX_gemm_node_improve
         );
 
       job_alloc(job_eid, job_generation);
+`ifdef GEMM_SRAM_FUSION
+      if ($test$plusargs("SRAM_RESIDENT"))
+        fusion_arm(job_eid, job_generation, 0);
+`endif
       if ($test$plusargs("SINGLE_PARTITION_N")) begin
         if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
           $fatal(1, "[%0t] SINGLE_PARTITION_N requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
@@ -3554,6 +3568,12 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   // Main sim
   // =========================================================================
+`ifdef GEMM_SRAM_FUSION
+  `include "sram_resident_tests.svh"
+  `include "sram_route_tests.svh"
+  `include "sram_local_owner_tests.svh"
+  `include "sram_boundary_tests.svh"
+`endif
   initial begin
     string case_name;
     string first_case_name;
@@ -3649,6 +3669,33 @@ module tb_VX_gemm_node_improve
              require_dual_bank_prefetch, trace_rd_fifo_en);
     apply_reset();
     init_memories();
+`ifdef GEMM_SRAM_FUSION
+    if ($test$plusargs("SRAM_STATUS_EDGES") || $test$plusargs("SRAM_VALIDATION_EDGES")
+     || $test$plusargs("SRAM_RESET_EDGES")) begin
+      if ($test$plusargs("SRAM_STATUS_EDGES")) run_sram_status_edges();
+      if ($test$plusargs("SRAM_VALIDATION_EDGES")) run_sram_validation_edges();
+      if ($test$plusargs("SRAM_RESET_EDGES")) run_sram_reset_edges();
+      $display("SRAM BOUNDARY TESTS PASSED");
+      $finish;
+    end
+    if ($test$plusargs("SRAM_ROUTE") || $test$plusargs("SRAM_LOCAL_OWNER")) begin
+      if ($test$plusargs("SRAM_ROUTE")) begin
+        run_sram_route();
+        $display("SRAM ROUTE GEMM TEST PASSED");
+      end
+      if ($test$plusargs("SRAM_LOCAL_OWNER")) begin
+        run_sram_local_owner();
+        $display("SRAM LOCAL OWNER TEST PASSED");
+      end
+      $finish;
+    end
+    if ($test$plusargs("SRAM_RESIDENT")) begin
+      run_sram_resident(test_m, test_n, test_k, test_qblk,
+                        test_wtrans, test_qdir);
+      $display("SRAM RESIDENT GEMM TEST PASSED");
+      $finish;
+    end
+`endif
     first_case_name = $test$plusargs("BACK_TO_BACK")
                     ? $sformatf("%s_qk", case_name) : case_name;
     run_config_gemm_tiled(

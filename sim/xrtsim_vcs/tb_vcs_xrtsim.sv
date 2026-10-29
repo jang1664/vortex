@@ -321,6 +321,18 @@ module tb_vcs_xrtsim #(
 
 `endif // HBM_AXI_SELFTEST
 
+`ifdef SRAM_PUBLISH_STRESS
+  `include "sram_publish_stress.svh"
+`endif
+
+`ifdef SRAM_EARLY_RETURN_CHECK
+  `include "sram_early_return_check.svh"
+`endif
+
+`ifdef C4_DECODER_PROGRESS
+  `include "decoder_progress_monitor.svh"
+`endif
+
 `ifdef FSDB_DUMP
 `ifndef DISABLE_FSDB
 `ifdef GEMM_BREAKDOWN

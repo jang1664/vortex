@@ -145,6 +145,15 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/mem/VX_tensor_mem_bank.sv \
         $(RTL_DIR)/mem/VX_tmem_switch.sv
 
+ifneq (,$(findstring GEMM_SRAM_FUSION,$(CONFIGS)))
+RTLS += $(RTL_DIR)/core/VX_sram_dma.sv \
+        $(RTL_DIR)/core/VX_sram_fusion_ctrl.sv \
+        $(RTL_DIR)/core/VX_sram_lsu_transport.sv \
+        $(RTL_DIR)/core/VX_sram_publish_link.sv \
+        $(RTL_DIR)/core/VX_sram_busy_export.sv \
+        $(RTL_DIR)/mem/VX_sram_mem_transport.sv
+endif
+
 DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/util.cpp \
             $(VORTEX_HOME)/sim/common/softfloat_ext.cpp \
@@ -153,7 +162,7 @@ DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
 SOFTFLOAT_LIB := $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
 							
 
-INCDIRS_ := $(ROOT_DIR)/hw \
+INCDIRS_ := $(SRC_DIR) $(ROOT_DIR)/hw \
             $(VORTEX_HOME)/hw \
             $(VORTEX_HOME)/sim/common \
             $(RTL_DIR) \
@@ -188,6 +197,9 @@ include $(VORTEX_HOME)/sim/xrtsim_vcs/xilinx_fpu_vcs.mk
 else
 COMPILE_TARGET := compile_fpnew
 SIMV := simv_fpnew
+endif
+ifneq (,$(findstring GEMM_SRAM_FUSION,$(CONFIGS)))
+$(COMPILE_TARGET): $(SRC_DIR)/sram_resident_connections.svh $(SRC_DIR)/sram_resident_tests.svh $(SRC_DIR)/sram_acc_backpressure.svh $(SRC_DIR)/sram_route_tests.svh $(SRC_DIR)/sram_local_owner_tests.svh $(SRC_DIR)/sram_boundary_tests.svh
 endif
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW
