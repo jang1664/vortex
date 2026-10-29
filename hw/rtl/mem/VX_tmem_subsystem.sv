@@ -62,6 +62,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         `W_LMEM_DMA_READY_AHEAD_LOW_WATERMARK,
     parameter int TMEM_ARB_MAX_CONSECUTIVE_URGENT =
         `TMEM_ARB_MAX_CONSECUTIVE_URGENT
+`ifdef GEMM_SRAM_FUSION
+    ,parameter bit FUSION_SEPARATE_RESET = 1'b0
+`endif
 ) (
     input wire clk,
     input wire reset,
@@ -110,6 +113,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master gemm_scale_if,
     VX_mem_bus_if.master gemm_zp_if,
     VX_mem_bus_if.master gemm_output_if
+`ifdef GEMM_SRAM_FUSION
+    ,VX_mem_bus_if.slave fusion_tmem_if
+    ,input wire fusion_owner_i
+    ,input wire fusion_memory_reset_i
+    ,output wire fusion_quiescent_o
+`endif
 `ifdef PERF_ENABLE
     ,output hbm_dma_perf_t hbm_dma_perf
     ,output dma_perf_t     lmem_dma_input_perf
@@ -610,6 +619,94 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // 3. Switches: 1:N address-based bank routing (x5)
     // ================================================================
 
+`ifdef GEMM_SRAM_FUSION
+    VX_mem_bus_if #(.DATA_SIZE(DATA_SIZE), .TAG_WIDTH(TAG_WIDTH)) fusion_switch_in();
+    wire [NUM_LDMA-1:0] fusion_ldma_idle;
+    logic [31:0] fusion_input_pending_q;
+    logic fusion_tmem_pending_q;
+    wire fusion_input_accept = ldma_to_switch[0].req_valid && ldma_to_switch[0].req_ready;
+    wire fusion_input_response = ldma_to_switch[0].rsp_valid && ldma_to_switch[0].rsp_ready;
+    wire fusion_tmem_owner = fusion_tmem_if.req_valid || fusion_tmem_pending_q;
+    wire fusion_tmem_accept = fusion_tmem_if.req_valid && fusion_tmem_if.req_ready;
+    wire fusion_tmem_response = fusion_tmem_if.rsp_valid && fusion_tmem_if.rsp_ready;
+    for (genvar i = 0; i < NUM_LDMA; ++i) begin : g_fusion_ldma_idle
+        assign fusion_ldma_idle[i] = ldma_ctrl_if[i].idle;
+    end
+    always_ff @(posedge clk) begin
+        if (reset)
+            fusion_input_pending_q <= '0;
+        else
+            fusion_input_pending_q <= fusion_input_pending_q
+                + 32'(fusion_input_accept) - 32'(fusion_input_response);
+    end
+    // The input count spans request enqueue through response consumption on
+    // the source side, including requests still in the crossing. Quiescence
+    // therefore needs no combinational return from the memory-side request.
+    assign fusion_quiescent_o = (&fusion_ldma_idle)
+        && (fusion_input_pending_q == 0) && (sched_input_slot_occupancy_o == 0)
+        && !ldma_to_switch[0].req_valid;
+    // Descriptor ownership excludes GEMM at the source. At the memory-side
+    // mux, acquire from the crossed request and retain the single outstanding
+    // transaction until its response enters the return crossing.
+    always_ff @(posedge clk) begin
+        if (FUSION_SEPARATE_RESET ? fusion_memory_reset_i : reset) begin
+            fusion_tmem_pending_q <= 1'b0;
+        end else begin
+            if (fusion_tmem_accept)
+                fusion_tmem_pending_q <= 1'b1;
+            if (fusion_tmem_response)
+                fusion_tmem_pending_q <= 1'b0;
+        end
+    end
+    assign fusion_switch_in.req_valid = fusion_tmem_owner
+        ? fusion_tmem_if.req_valid : input_reserved_to_switch.req_valid;
+    assign fusion_switch_in.req_data = fusion_tmem_owner
+        ? fusion_tmem_if.req_data : input_reserved_to_switch.req_data;
+    assign fusion_tmem_if.req_ready = fusion_tmem_owner && fusion_switch_in.req_ready;
+    assign input_reserved_to_switch.req_ready = !fusion_tmem_owner && fusion_switch_in.req_ready;
+    assign fusion_tmem_if.rsp_valid = fusion_tmem_owner && fusion_switch_in.rsp_valid;
+    assign fusion_tmem_if.rsp_data = fusion_switch_in.rsp_data;
+    assign input_reserved_to_switch.rsp_valid = !fusion_tmem_owner && fusion_switch_in.rsp_valid;
+    assign input_reserved_to_switch.rsp_data = fusion_switch_in.rsp_data;
+    assign fusion_switch_in.rsp_ready = fusion_tmem_owner
+        ? fusion_tmem_if.rsp_ready : input_reserved_to_switch.rsp_ready;
+`ifndef SYNTHESIS
+    logic fusion_tmem_stalled_rsp_q;
+    logic [$bits(fusion_tmem_if.rsp_data)-1:0] fusion_tmem_stalled_data_q;
+    always @(posedge clk) begin
+        if (reset) begin
+            fusion_tmem_stalled_rsp_q <= 1'b0;
+        end else begin
+            if (fusion_input_response)
+                assert (fusion_input_pending_q != 0)
+                    else $fatal(1, "%s: GEMM input response without a pending request", INSTANCE_ID);
+            if (fusion_owner_i)
+                assert (fusion_input_pending_q == 0 && !ldma_to_switch[0].req_valid)
+                    else $fatal(1, "%s: SRAM descriptor acquired a live GEMM input source", INSTANCE_ID);
+            if (fusion_tmem_owner)
+                assert (fusion_owner_i && fusion_input_pending_q == 0
+                     && !input_reserved_to_switch.req_valid)
+                    else $fatal(1, "%s: SRAM bridge overlapped GEMM or lost descriptor ownership", INSTANCE_ID);
+            if (fusion_tmem_accept)
+                assert (!fusion_tmem_pending_q)
+                    else $fatal(1, "%s: SRAM bridge exceeded one outstanding TMEM request", INSTANCE_ID);
+            if (fusion_tmem_if.rsp_valid)
+                assert (fusion_tmem_pending_q)
+                    else $fatal(1, "%s: SRAM bridge response without a pending TMEM request", INSTANCE_ID);
+            if (fusion_tmem_stalled_rsp_q)
+                assert (fusion_tmem_pending_q && fusion_tmem_if.rsp_valid
+                     && fusion_tmem_if.rsp_data === fusion_tmem_stalled_data_q)
+                    else $fatal(1, "%s: stalled SRAM bridge response lost ownership or data", INSTANCE_ID);
+            fusion_tmem_stalled_rsp_q <= fusion_tmem_if.rsp_valid && !fusion_tmem_if.rsp_ready;
+            if (fusion_tmem_if.rsp_valid && !fusion_tmem_if.rsp_ready)
+                fusion_tmem_stalled_data_q <= fusion_tmem_if.rsp_data;
+        end
+    end
+`else
+    `UNUSED_VAR (fusion_owner_i)
+`endif
+`endif
+
     VX_tmem_switch #(
         .INSTANCE_ID    ({INSTANCE_ID, ":sw_in"}),
         .NUM_BANKS      (NUM_BANKS),
@@ -618,11 +715,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     ) u_switch_input (
         .clk        (clk),
         .reset      (reset),
+`ifdef GEMM_SRAM_FUSION
+        .req_urgent_i(fusion_tmem_owner ? 1'b0 : input_reserved_req_urgent),
+        .req_priority_i(fusion_tmem_owner ? '0 : input_reserved_req_priority),
+`else
         .req_urgent_i(input_reserved_req_urgent),
         .req_priority_i(input_reserved_req_priority),
+`endif
         .bank_req_urgent_o(input_bank_req_urgent),
         .bank_req_priority_o(input_bank_req_priority),
+`ifdef GEMM_SRAM_FUSION
+        .bus_in_if  (fusion_switch_in),
+`else
         .bus_in_if  (input_reserved_to_switch),
+`endif
         .bus_out_if (in_switch_to_tmem)
     );
 

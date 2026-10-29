@@ -26,6 +26,9 @@ module VX_stream_arb #(
     parameter SEL_COUNT     = `MIN(NUM_INPUTS, NUM_OUTPUTS),
     parameter LOG_NUM_REQS  = `CLOG2(NUM_REQS),
     parameter NUM_REQS_W    = `UP(LOG_NUM_REQS)
+`ifdef GEMM_SRAM_FUSION
+    ,parameter bit FUSION_BANK_SLICE_LINK = 1'b0
+`endif
 ) (
     input  wire clk,
     input  wire reset,
@@ -40,6 +43,11 @@ module VX_stream_arb #(
 
     output wire [SEL_COUNT-1:0][NUM_REQS_W-1:0] sel_out
 );
+`ifdef GEMM_SRAM_FUSION
+    `VX_STATIC_ASSERT(!FUSION_BANK_SLICE_LINK || (NUM_INPUTS == 16 && NUM_OUTPUTS == 1
+        && MAX_FANOUT == 8 && OUT_BUF == 3 && STICKY == 0
+        && (ARBITER == "P" || ARBITER == "R")), ("bank slice link requires C4 16:1/fanout8 geometry"))
+`endif
     if (NUM_INPUTS > NUM_OUTPUTS) begin : g_input_select
 
         // #Inputs > #Outputs
@@ -64,6 +72,27 @@ module VX_stream_arb #(
 
                 wire [NUM_OUTPUTS-1:0][DATAW-1:0] data_tmp_u;
                 wire [NUM_OUTPUTS-1:0][LOG_NUM_REQS2-1:0] sel_tmp_u;
+`ifdef GEMM_SRAM_FUSION
+                wire [SLICE_SIZE-1:0] slice_input_ready;
+                wire [NUM_OUTPUTS-1:0] slice_valid, slice_ready;
+                if (FUSION_BANK_SLICE_LINK && s == 1) begin : g_fusion_bank_link
+                    assign ready_in[SLICE_END-1:SLICE_BEGIN] = slice_input_ready & {SLICE_SIZE{!reset}};
+                    VX_sram_bank_slice_transport #(.DATAW(DATAW2)) u_transport (
+                        .clk(clk), .reset(reset),
+                        .valid_in(slice_valid[0]), .ready_in(slice_ready[0]),
+                        .data_in({data_tmp_u[0], sel_tmp_u[0]}),
+                        .valid_out(valid_tmp[s][0]), .ready_out(ready_tmp[s][0]),
+                        .data_out(data_tmp[s][0]), .idle_o()
+                    );
+                end else begin : g_fusion_bank_local
+                    assign ready_in[SLICE_END-1:SLICE_BEGIN] = slice_input_ready;
+                    assign valid_tmp[s] = slice_valid;
+                    assign slice_ready = ready_tmp[s];
+                    for (genvar o = 0; o < NUM_OUTPUTS; ++o) begin : g_data_tmp
+                        assign data_tmp[s][o] = {data_tmp_u[o], sel_tmp_u[o]};
+                    end
+                end
+`endif
 
                 VX_stream_arb #(
                     .NUM_INPUTS  (SLICE_SIZE),
@@ -75,6 +104,16 @@ module VX_stream_arb #(
                     .OUT_BUF     (3)
                 ) fanout_slice_arb (
                     .clk       (clk),
+`ifdef GEMM_SRAM_FUSION
+                    .reset     (reset),
+                    .valid_in  (valid_in[SLICE_END-1: SLICE_BEGIN]
+                                & {SLICE_SIZE{!((FUSION_BANK_SLICE_LINK && s == 1) && reset)}}),
+                    .data_in   (data_in[SLICE_END-1: SLICE_BEGIN]),
+                    .ready_in  (slice_input_ready),
+                    .valid_out (slice_valid),
+                    .data_out  (data_tmp_u),
+                    .ready_out (slice_ready),
+`else
                     .reset     (reset),
                     .valid_in  (valid_in[SLICE_END-1: SLICE_BEGIN]),
                     .data_in   (data_in[SLICE_END-1: SLICE_BEGIN]),
@@ -82,12 +121,15 @@ module VX_stream_arb #(
                     .valid_out (valid_tmp[s]),
                     .data_out  (data_tmp_u),
                     .ready_out (ready_tmp[s]),
+`endif
                     .sel_out   (sel_tmp_u)
                 );
 
+`ifndef GEMM_SRAM_FUSION
                 for (genvar o = 0; o < NUM_OUTPUTS; ++o) begin : g_data_tmp
                     assign data_tmp[s][o] = {data_tmp_u[o], sel_tmp_u[o]};
                 end
+`endif
             end
 
             wire [NUM_OUTPUTS-1:0][DATAW2-1:0] data_out_u;

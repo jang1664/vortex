@@ -24,6 +24,9 @@ module VX_stream_xbar #(
     parameter PERF_CTR_BITS = `CLOG2(NUM_INPUTS+1),
     parameter IN_WIDTH      = `LOG2UP(NUM_INPUTS),
     parameter OUT_WIDTH     = `LOG2UP(NUM_OUTPUTS)
+`ifdef GEMM_SRAM_FUSION
+    ,parameter bit FUSION_BANK_SLICE_LINK = 1'b0
+`endif
 ) (
     input wire                              clk,
     input wire                              reset,
@@ -42,6 +45,10 @@ module VX_stream_xbar #(
 );
     `UNUSED_VAR (clk)
     `UNUSED_VAR (reset)
+`ifdef GEMM_SRAM_FUSION
+    `VX_STATIC_ASSERT(!FUSION_BANK_SLICE_LINK || (NUM_INPUTS == 16 && NUM_OUTPUTS == 16
+        && MAX_FANOUT == 8 && OUT_BUF == 3), ("bank slice link requires C4 request xbar"))
+`endif
 
     if (NUM_INPUTS != 1) begin : g_multi_inputs
 
@@ -94,6 +101,9 @@ module VX_stream_xbar #(
                     .ARBITER     (ARBITER),
                     .MAX_FANOUT  (MAX_FANOUT),
                     .OUT_BUF     (OUT_BUF)
+`ifdef GEMM_SRAM_FUSION
+                    ,.FUSION_BANK_SLICE_LINK(FUSION_BANK_SLICE_LINK)
+`endif
                 ) xbar_arb (
                     .clk       (clk),
                     .reset     (reset),

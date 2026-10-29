@@ -46,6 +46,9 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   output logic [NUM_ENTRIES-1:0] occupy_o,
   output logic [NUM_ENTRIES-1:0] working_o,
   output logic [NUM_ENTRIES-1:0][NUM_REGS32-1:0][31:0] regs32_o
+`ifdef GEMM_SRAM_FUSION
+  ,output wire fusion_mmio_pending_o
+`endif
 );
 
   // ------------------------------------------------------------
@@ -624,6 +627,11 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   end
 
   assign mmio_if.rsp_valid     = rsp_valid_q;
+`ifdef GEMM_SRAM_FUSION
+  // Observation only: source credit can return before this request stage
+  // processes a posted CONTROL write. Keep operational ownership continuous.
+  assign fusion_mmio_pending_o = req_capture || req_valid_q;
+`endif
   assign mmio_if.rsp_data.mask = rsp_mask_q;
   assign mmio_if.rsp_data.data = rsp_data_q;
   assign mmio_if.rsp_data.tag  = rsp_tag_q;

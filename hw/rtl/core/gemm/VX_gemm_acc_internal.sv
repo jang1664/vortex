@@ -12,6 +12,9 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
 
     VX_gemm_acc_if.backend   acc_if,
     VX_mem_bus_if.slave      o_lmem_bus_if,
+`ifdef GEMM_SRAM_FUSION
+    input wire               output_fp32_i,
+`endif
 
     output logic [3:0]       early_read_req,
     output logic [3:0]       nominal_read_req,
@@ -53,6 +56,40 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     logic compute_write_exact_conflict;
     logic [`GEMM_SHARED_ACC_COL-1:0][FP16_WIDTH-1:0] fp16_out_data;
     logic [`GEMM_SHARED_ACC_COL-1:0] fp16_out_valid;
+`ifdef GEMM_SRAM_FUSION
+    localparam OUTPUT_BITS = `GEMM_OUTPUT_DATA_SIZE * 8;
+    logic output_fp32_q, output_half_q;
+    logic fp32_capture_q, fp32_rsp_valid_q;
+    logic [OUTPUT_BITS-1:0] fp32_rsp_data_q;
+    wire [`GEMM_SHARED_ACC_COL*FP32_WIDTH-1:0] output_row_data
+        = acc_mem_out_data[output_read_bank_q];
+
+    // A physical ACC row contains two output-bus beats. Capture the selected
+    // half after the synchronous read, before another compute access can
+    // change the bank's read-data register; retain it under backpressure.
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            output_fp32_q <= 1'b0;
+            output_half_q <= 1'b0;
+            fp32_capture_q <= 1'b0;
+            fp32_rsp_valid_q <= 1'b0;
+            fp32_rsp_data_q <= '0;
+        end else begin
+            fp32_capture_q <= output_read_fire && output_fp32_i;
+            if (output_read_fire) begin
+                output_fp32_q <= output_fp32_i;
+                output_half_q <= o_lmem_bus_if.req_data.addr[0];
+            end
+            if (fp32_capture_q) begin
+                fp32_rsp_data_q <= output_row_data
+                    [output_half_q * OUTPUT_BITS +: OUTPUT_BITS];
+                fp32_rsp_valid_q <= 1'b1;
+            end else if (fp32_rsp_valid_q && o_lmem_bus_if.rsp_ready) begin
+                fp32_rsp_valid_q <= 1'b0;
+            end
+        end
+    end
+`endif
 
     function automatic [1:0] get_acc_mem_idx(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr
@@ -207,9 +244,15 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
     end
 
     assign write_bank = get_acc_mem_idx(acc_if.wr_req_addr);
+`ifdef GEMM_SRAM_FUSION
+    assign output_read_addr = output_fp32_i
+        ? `GEMM_ACC_MEM_ADDR_WIDTH'(o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_OUTPUT_DATA_SIZE))
+        : `GEMM_ACC_MEM_ADDR_WIDTH'(o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE));
+`else
     assign output_read_addr
         = `GEMM_ACC_MEM_ADDR_WIDTH'(
             o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE));
+`endif
     assign output_read_bank = get_acc_mem_idx(output_read_addr);
     assign output_group_conflict
         = o_lmem_bus_if.req_valid
@@ -227,8 +270,13 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
        && (read_req_addr[write_bank] == acc_if.wr_req_addr);
     assign output_bank_read_req
         = output_read_fire ? (4'b0001 << output_read_bank) : '0;
+`ifdef GEMM_SRAM_FUSION
+    assign o_lmem_bus_if.rsp_valid = output_fp32_q ? fp32_rsp_valid_q : fp16_out_valid[0];
+    assign o_lmem_bus_if.rsp_data.data = output_fp32_q ? fp32_rsp_data_q : fp16_out_data;
+`else
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data = fp16_out_data;
+`endif
     assign o_lmem_bus_if.rsp_data.tag = output_read_tag_q;
 
     always_ff @(posedge clk or posedge reset) begin
@@ -241,7 +289,11 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
                 output_read_valid <= 1'b1;
                 output_read_bank_q <= output_read_bank;
                 output_read_tag_q <= o_lmem_bus_if.req_data.tag;
+`ifdef GEMM_SRAM_FUSION
+            end else if (o_lmem_bus_if.rsp_valid && o_lmem_bus_if.rsp_ready) begin
+`else
             end else if (fp16_out_valid[0] && o_lmem_bus_if.rsp_ready) begin
+`endif
                 output_read_valid <= 1'b0;
             end
         end
@@ -291,7 +343,11 @@ module VX_gemm_acc_internal import VX_gpu_pkg::*; #(
                 .clk_i    (clk),
                 .resetn_i (~reset),
                 .data_i   (acc_mem_out_data[output_read_bank_q][i]),
+`ifdef GEMM_SRAM_FUSION
+                .valid_i  (output_read_valid && !output_fp32_q),
+`else
                 .valid_i  (output_read_valid),
+`endif
                 .data_o   (fp16_out_data[i]),
                 .valid_o  (fp16_out_valid[i])
             );

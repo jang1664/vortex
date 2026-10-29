@@ -50,6 +50,16 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
         return (addr << ADDR_SHIFT);
     endfunction
 
+`ifdef GEMM_SRAM_FUSION
+    // Atomic route admission relies on independent single-source registered
+    // LOCAL/MMIO slots; GLOBAL may make multi-cycle progress before ready.
+    initial begin
+        if (GLOBAL_OUT_BUF != 0 || LOCAL_OUT_BUF != 1
+         || GEMM_OUT_BUF != 1 || DMA_OUT_BUF != 1)
+            $fatal(1, "VX_lmem_switch: fusion atomic admission requires C4 output buffers");
+    end
+
+`endif
     initial begin
         if (DMA_MMIO_SIZE == 0 || GEMM_MMIO_SIZE == 0)
             $fatal(1, "VX_lmem_switch: MMIO size must be non-zero");
@@ -68,6 +78,15 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     wire req_local_ready;
     wire req_gemm_ready;
     wire req_dma_ready;
+`ifdef GEMM_SRAM_FUSION
+    // Block MMIO handshakes while the common core reset is asserted.
+    wire req_gemm_buffer_ready, req_dma_buffer_ready;
+    wire gemm_buffer_valid, dma_buffer_valid;
+    assign req_gemm_ready = !reset && req_gemm_buffer_ready;
+    assign req_dma_ready = !reset && req_dma_buffer_ready;
+    assign gemm_ctrl_if.req_valid = !reset && gemm_buffer_valid;
+    assign dma_ctrl_if.req_valid = !reset && dma_buffer_valid;
+`endif
 
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_decode
         wire [63:0] lane_byte_addr = to_byte_addr(64'(lsu_in_if.req_data.addr[i]));
@@ -103,7 +122,14 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     ) req_global_buf (
         .clk       (clk),
         .reset     (reset),
+`ifdef GEMM_SRAM_FUSION
+        .valid_in  (lsu_in_if.req_valid && is_addr_global
+                 && (~is_addr_local || req_local_ready)
+                 && (~is_addr_gemm || req_gemm_ready)
+                 && (~is_addr_dma || req_dma_ready)),
+`else
         .valid_in  (lsu_in_if.req_valid && is_addr_global),
+`endif
         .data_in   ({
             lsu_in_if.req_data.mask & is_addr_global_mask,
             lsu_in_if.req_data.rw,
@@ -126,7 +152,14 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     ) req_local_buf (
         .clk       (clk),
         .reset     (reset),
+`ifdef GEMM_SRAM_FUSION
+        .valid_in  (lsu_in_if.req_valid && is_addr_local
+                 && (~is_addr_global || req_global_ready)
+                 && (~is_addr_gemm || req_gemm_ready)
+                 && (~is_addr_dma || req_dma_ready)),
+`else
         .valid_in  (lsu_in_if.req_valid && is_addr_local),
+`endif
         .data_in   ({
             lsu_in_if.req_data.mask & is_addr_local_mask,
             lsu_in_if.req_data.rw,
@@ -142,6 +175,9 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
         .ready_out (local_out_if.req_ready)
     );
 
+`ifdef GEMM_SRAM_FUSION
+    (* KEEP_HIERARCHY = "yes" *)
+`endif
     VX_elastic_buffer #(
         .DATAW   (REQ_DATAW),
         .SIZE    (`TO_OUT_BUF_SIZE(GEMM_OUT_BUF)),
@@ -149,7 +185,14 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     ) req_gemm_buf (
         .clk       (clk),
         .reset     (reset),
+`ifdef GEMM_SRAM_FUSION
+        .valid_in  (!reset && lsu_in_if.req_valid && is_addr_gemm
+                 && (~is_addr_global || req_global_ready)
+                 && (~is_addr_local || req_local_ready)
+                 && (~is_addr_dma || req_dma_ready)),
+`else
         .valid_in  (lsu_in_if.req_valid && is_addr_gemm),
+`endif
         .data_in   ({
             lsu_in_if.req_data.mask & is_addr_gemm_mask,
             lsu_in_if.req_data.rw,
@@ -159,12 +202,23 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
             lsu_in_if.req_data.flags,
             lsu_in_if.req_data.tag
         }),
+`ifdef GEMM_SRAM_FUSION
+        .ready_in  (req_gemm_buffer_ready),
+`else
         .ready_in  (req_gemm_ready),
+`endif
+`ifdef GEMM_SRAM_FUSION
+        .valid_out (gemm_buffer_valid),
+`else
         .valid_out (gemm_ctrl_if.req_valid),
+`endif
         .data_out  (gemm_ctrl_if.req_data),
         .ready_out (gemm_ctrl_if.req_ready)
     );
 
+`ifdef GEMM_SRAM_FUSION
+    (* KEEP_HIERARCHY = "yes" *)
+`endif
     VX_elastic_buffer #(
         .DATAW   (REQ_DATAW),
         .SIZE    (`TO_OUT_BUF_SIZE(DMA_OUT_BUF)),
@@ -172,7 +226,14 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     ) req_dma_buf (
         .clk       (clk),
         .reset     (reset),
+`ifdef GEMM_SRAM_FUSION
+        .valid_in  (!reset && lsu_in_if.req_valid && is_addr_dma
+                 && (~is_addr_global || req_global_ready)
+                 && (~is_addr_local || req_local_ready)
+                 && (~is_addr_gemm || req_gemm_ready)),
+`else
         .valid_in  (lsu_in_if.req_valid && is_addr_dma),
+`endif
         .data_in   ({
             lsu_in_if.req_data.mask & is_addr_dma_mask,
             lsu_in_if.req_data.rw,
@@ -182,8 +243,16 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
             lsu_in_if.req_data.flags,
             lsu_in_if.req_data.tag
         }),
+`ifdef GEMM_SRAM_FUSION
+        .ready_in  (req_dma_buffer_ready),
+`else
         .ready_in  (req_dma_ready),
+`endif
+`ifdef GEMM_SRAM_FUSION
+        .valid_out (dma_buffer_valid),
+`else
         .valid_out (dma_ctrl_if.req_valid),
+`endif
         .data_out  (dma_ctrl_if.req_data),
         .ready_out (dma_ctrl_if.req_ready)
     );

@@ -24,12 +24,21 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
   input wire                     hw_write_valid_i,
   input wire [ENTRYID_W-1:0]     hw_write_entry_id_i,
   input wire [31:0]              hw_write_value_i
+`ifdef GEMM_SRAM_FUSION
+  ,output wire [NUM_ENTRIES-1:0][31:0] fusion_control_o
+  ,output wire fusion_frontend_pending_o
+`endif
 );
 
   logic [NUM_ENTRIES-1:0] valid;
   logic [NUM_ENTRIES-1:0] occupy;
   logic [NUM_ENTRIES-1:0] working;
   logic [NUM_ENTRIES-1:0][NUM_REGS32-1:0][31:0] regs32;
+`ifdef GEMM_SRAM_FUSION
+  wire fusion_mmio_pending;
+  assign fusion_frontend_pending_o = fusion_mmio_pending
+                                 || (|(occupy & (valid | working)));
+`endif
 
   localparam int MMIO_ARB_SEL_BITS = `ARB_SEL_BITS(NUM_MASTERS, 1);
   localparam int MMIO_ARB_TAG_WIDTH = LSU_TAG_WIDTH + MMIO_ARB_SEL_BITS;
@@ -91,7 +100,16 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
     .occupy_o                   (occupy),
     .working_o                  (working),
     .regs32_o                   (regs32)
+`ifdef GEMM_SRAM_FUSION
+    ,.fusion_mmio_pending_o     (fusion_mmio_pending)
+`endif
   );
+
+`ifdef GEMM_SRAM_FUSION
+  for (genvar e = 0; e < NUM_ENTRIES; ++e) begin : g_fusion_control
+    assign fusion_control_o[e] = regs32[e][`JOB_MMIO_CONTROL_REG_IDX];
+  end
+`endif
 
   VX_job_dispatcher #(
     .NUM_ENTRIES (NUM_ENTRIES),

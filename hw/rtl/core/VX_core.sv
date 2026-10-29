@@ -163,6 +163,18 @@ module VX_core import VX_gpu_pkg::*; #(
 
     `SCOPE_IO_SWITCH (3);
 
+`ifdef GEMM_SRAM_FUSION
+    wire fusion_schedule_busy;
+    wire fusion_busy;
+    wire fusion_lmem_write_commit;
+    wire fusion_lmem_published;
+    wire fusion_lmem_busy;
+    assign busy = fusion_schedule_busy || fusion_busy || fusion_lmem_busy;
+`ifndef GEMM_IMPROVE
+    initial $fatal(1, "GEMM_SRAM_FUSION requires GEMM_IMPROVE");
+`endif
+`endif
+
     VX_schedule #(
         .INSTANCE_ID (`SFORMATF(("%s-schedule", INSTANCE_ID))),
         .CORE_ID (CORE_ID)
@@ -189,7 +201,11 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
         .sched_csr_if   (sched_csr_if),
 
+`ifdef GEMM_SRAM_FUSION
+        .busy           (fusion_schedule_busy)
+`else
         .busy           (busy)
+`endif
     );
 
     VX_fetch #(
@@ -305,6 +321,11 @@ module VX_core import VX_gpu_pkg::*; #(
         .dma_ctrl_if       (dma_ctrl_if),
 `endif
         .gemm_ctrl_if      (gemm_ctrl_if),
+`ifdef GEMM_SRAM_FUSION
+        .fusion_lmem_write_commit_o(fusion_lmem_write_commit),
+        .fusion_lmem_published_o(fusion_lmem_published),
+        .fusion_lmem_busy_o(fusion_lmem_busy),
+`endif
         .dma_local_data_if (dma_local_data_if),
         .dma_global_data_if(dma_global_data_if)
 `ifdef GEMM_NAIVE
@@ -384,6 +405,11 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
     );
 `else
+`ifdef GEMM_SRAM_FUSION
+    for (genvar i = 1; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_fusion_dma_lmem
+        `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
+    end
+`else
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl
         VX_lsu_mem_zero_rsp #(
             .NUM_LANES (`NUM_LSU_LANES),
@@ -400,10 +426,18 @@ module VX_core import VX_gpu_pkg::*; #(
         `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
     end
 
+`endif
     `INIT_VX_MEM_BUS_IF (dma_global_data_if)
 
 `ifdef PERF_ENABLE
+`ifdef GEMM_SRAM_FUSION
+    always_comb begin
+        accel_perf.cpu_dma = '0;
+        accel_perf.cpu_dma.busy = fusion_busy;
+    end
+`else
     assign accel_perf.cpu_dma = '0;
+`endif
 `endif
 `endif
 
@@ -520,6 +554,13 @@ module VX_core import VX_gpu_pkg::*; #(
         .lmem_dma_sz_perf     (accel_perf.lmem_dma_sz),
         .lmem_dma_output_perf (accel_perf.lmem_dma_output),
     `endif
+`ifdef GEMM_SRAM_FUSION
+        .fusion_mmio_if(dma_ctrl_if),
+        .fusion_lmem_if(dma_local_data_if[0]),
+        .fusion_lmem_write_commit_i(fusion_lmem_write_commit),
+        .fusion_lmem_published_i(fusion_lmem_published),
+        .fusion_busy_o(fusion_busy),
+`endif
         .mmio_if     (gemm_ctrl_if),
         .dma_axi_m   (dma_axi_m)
     );

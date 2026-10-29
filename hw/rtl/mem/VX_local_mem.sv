@@ -38,6 +38,10 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 
     // Response buffer
     parameter OUT_BUF           = 0
+`ifdef GEMM_SRAM_FUSION
+    ,parameter FUSION_SOURCE_TAG_BIT = 0
+    ,parameter bit FUSION_BANK_SLICE_LINK = 1'b0
+`endif
  ) (
     input wire clk,
     input wire reset,
@@ -48,6 +52,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 `endif
 
     VX_mem_bus_if.slave mem_bus_if [NUM_REQS]
+`ifdef GEMM_SRAM_FUSION
+    ,output wire [NUM_BANKS-1:0] fusion_cpu_write_commit_o
+    ,output wire [NUM_BANKS-1:0] fusion_dma_write_commit_o
+    ,output wire [$clog2(NUM_BANKS+1)-1:0] fusion_cpu_write_commit_count_o
+`endif
 `ifdef GEMM_NAIVE
     ,output wire [NUM_BANKS-1:0][2:0] naive_write_commit
 `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
@@ -56,6 +65,16 @@ module VX_local_mem import VX_gpu_pkg::*; #(
 `endif
 );
     `UNUSED_SPARAM (INSTANCE_ID)
+`ifdef GEMM_SRAM_FUSION
+    `VX_STATIC_ASSERT(!FUSION_BANK_SLICE_LINK || (NUM_REQS == 16 && NUM_BANKS == 16
+        && WORD_SIZE == 8 && `LMEM_XBAR_MAX_FANOUT == 8), ("bank slice link requires C4 LMEM"))
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(!FUSION_BANK_SLICE_LINK, ("bank slice link does not change Omega requests"))
+`endif
+`ifdef LMEM_RSP_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(!FUSION_BANK_SLICE_LINK, ("bank slice link requires unchanged C4 response fabric"))
+`endif
+`endif
 `ifdef GEMM_NAIVE
 `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
 `ifdef LMEM_REQ_OMEGA_ENABLE
@@ -164,6 +183,28 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_BANKS-1:0][STORE_CAM_SLOT_WIDTH-1:0] per_bank_req_store_slot;
 `endif
     wire [NUM_BANKS-1:0]                    per_bank_req_ready;
+`ifdef GEMM_SRAM_FUSION
+    // The existing CPU/DMA lane arbiter inserts this source bit. All fields
+    // come from each complete final request buffer at the physical SRAM.
+    wire [NUM_BANKS-1:0] fusion_dma_source;
+    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_fusion_commit
+        assign fusion_dma_source[b] = per_bank_req_tag[b][FUSION_SOURCE_TAG_BIT];
+`ifndef SYNTHESIS
+        always @(posedge clk) if (!reset && per_bank_req_valid[b] && per_bank_req_rw[b])
+            assert (per_bank_req_ready[b])
+                else $fatal(1,"%s: write acceptance invariant changed",INSTANCE_ID);
+`endif
+    end
+    // Keep count collection with the physical write-event producers (SLR1),
+    // then return every cycle to original-epoch admission accounting (SLR0).
+    (* KEEP_HIERARCHY = "yes" *)
+    VX_sram_commit_return #(.BANKS(NUM_BANKS)) u_fusion_commit_return (
+        .clk(clk), .reset(reset), .valid_i(per_bank_req_valid),
+        .write_i(per_bank_req_rw), .dma_source_i(fusion_dma_source),
+        .cpu_commits_o(fusion_cpu_write_commit_o), .dma_commits_o(fusion_dma_write_commit_o),
+        .count_o(fusion_cpu_write_commit_count_o)
+    );
+`endif
 
 `ifdef GEMM_NAIVE
     for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_naive_commit
@@ -393,6 +434,9 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             .ARBITER       ("P"),
             .OUT_BUF       (3), // output should be registered for the data_store addressing
             .MAX_FANOUT    (`LMEM_XBAR_MAX_FANOUT)
+`ifdef GEMM_SRAM_FUSION
+            ,.FUSION_BANK_SLICE_LINK(FUSION_BANK_SLICE_LINK)
+`endif
         ) req_xbar (
             .clk       (clk),
             .reset     (reset),

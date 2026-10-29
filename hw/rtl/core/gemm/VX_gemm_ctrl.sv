@@ -54,6 +54,16 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     output wire [GEMM_SCHED_PRIORITY_WIDTH-1:0]
                                    sched_source_priority_o [4],
     output wire                    sched_input_source_enable_o
+`ifdef GEMM_SRAM_FUSION
+    ,input wire [2:0]               resident_flags_i
+    ,input wire                     resident_reject_i
+    ,input wire                     bridge_busy_i
+    ,output wire                    output_fp32_o
+    ,output wire                    resident_quiescent_o
+    ,output wire                    resident_done_o
+    ,output wire [31:0]             resident_done_entry_id_o
+    ,output wire [31:0]             resident_error_o
+`endif
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,input wire                   dbg_compute_active_i
@@ -221,6 +231,42 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
                             && scheduler_quiescent;
     wire done_fire = done_if.valid && done_if.ready;
 
+`ifdef GEMM_SRAM_FUSION
+    logic resident_invocation_q;
+    logic resident_done_q;
+    logic [31:0] resident_done_error_q;
+    wire [31:0] resident_fsm_error;
+    wire [31:0] completed_acc_copy_count [2];
+    assign completed_acc_copy_count[0] = effective_sync[RID_ACC_FREE0];
+    assign completed_acc_copy_count[1] = effective_sync[RID_ACC_FREE1];
+    // The node must additionally include its registered memory crossings in
+    // the bridge ownership fence. These are the controller's work domains.
+    assign resident_quiescent_o = new_invocation_ready
+                               && !invocation_active_q && !done_valid_q;
+    assign resident_done_o = done_fire && resident_done_q;
+    assign resident_done_entry_id_o = done_entry_id_q;
+    assign resident_error_o = resident_done_error_q;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        resident_invocation_q <= 1'b0;
+        resident_done_q <= 1'b0;
+        resident_done_error_q <= '0;
+      end else begin
+        if (cfg_fire)
+          resident_invocation_q <= (resident_flags_i != 0) || resident_reject_i;
+        else if (invocation_complete)
+          resident_invocation_q <= 1'b0;
+        if (invocation_complete) begin
+          resident_done_q <= resident_invocation_q;
+          resident_done_error_q <= resident_fsm_error;
+        end else if (done_fire) begin
+          resident_done_q <= 1'b0;
+        end
+      end
+    end
+`endif
+
     function automatic int rid_w_consume_for_idx(
         input gemm_wreg_idx_t idx
     );
@@ -241,9 +287,13 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign dma_issue_tag = dma_issue_tag_reserved_q
                          ? dma_issue_tag_q : dma_free_tag;
 
-    // VX_gemm_fsm applies its own fsm_idle term to cfg_reg_if.ready, yielding
-    // exactly: new_invocation_ready = fsm_idle && scheduler_quiescent.
+    // VX_gemm_fsm applies its own fsm_idle term to cfg_reg_if.ready. SRAM
+    // bridge ownership additionally blocks acceptance when enabled.
+`ifdef GEMM_SRAM_FUSION
+    assign gemm_fsm_if.flag.done = scheduler_quiescent && !bridge_busy_i;
+`else
     assign gemm_fsm_if.flag.done = scheduler_quiescent;
+`endif
     assign gemm_fsm_if.flag.idle = 1'b1;
     // The FSM only sees the elastic-stage acceptance condition.  Queue and
     // readiness-scoreboard backpressure act on the registered stage output,
@@ -267,6 +317,13 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .pending_child_o (fsm_pending_child),
       .pending_scheduler_work_o(fsm_pending_scheduler_work),
       .pending_work_seq_o(fsm_pending_work_seq)
+`ifdef GEMM_SRAM_FUSION
+      ,.output_fp32_o(output_fp32_o)
+      ,.resident_flags_i(resident_flags_i)
+      ,.resident_reject_i(resident_reject_i)
+      ,.completed_acc_copy_count_i(completed_acc_copy_count)
+      ,.resident_error_o(resident_fsm_error)
+`endif
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
       ,.dbg_cmd_meta_valid_o (dbg_fsm_meta_valid)

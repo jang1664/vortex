@@ -354,3 +354,23 @@ GEMM Unit
   (`BANK_SEL_BITS = log2(NUM_BANKS)`). The minimum padding bit preserves a
   write-ack marker even in a single-bank parameterization; production 8-bank
   and 16-bank tag widths are unchanged.
+
+## Optional SRAM bridge ownership
+
+With `GEMM_SRAM_FUSION`, the bridge borrows the input TMEM switch after the
+source controller excludes GEMM for the entire copy descriptor. The memory-side
+mux derives ownership from the crossed bridge request or a single pending bit.
+That bit is set when the switch accepts the bridge request and cleared only
+when the response enters the registered return transport. Request selection,
+response selection, urgency, and priority all use this local ownership; the
+source controller's descriptor-owner signal is used only by simulation
+assertions, not by the synthesized memory-side mux.
+
+The source-side input pending count spans acceptance before request transport
+through returned-response consumption. Together with zero scheduler slot
+occupancy, all local DMAs idle, and no offered source input request, it supplies
+quiescence without a combinational memory-to-source request-valid dependency.
+The bridge remains single-outstanding. Assertions check descriptor ownership,
+absence of overlapping GEMM traffic, request/response accounting, and response
+stability under backpressure. Shared transport and the feature-disabled path
+are unchanged.

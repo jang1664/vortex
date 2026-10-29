@@ -30,6 +30,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    gemm_ctrl_if [`NUM_LSU_BLOCKS],
     VX_mem_bus_if.slave     dma_local_data_if [`LMEM_NUM_PORTS],
     VX_mem_bus_if.slave     dma_global_data_if
+`ifdef GEMM_SRAM_FUSION
+   ,output wire fusion_lmem_write_commit_o
+   ,output wire fusion_lmem_published_o
+   ,output wire fusion_lmem_busy_o
+`endif
 `ifdef GEMM_NAIVE
    ,VX_mem_bus_if.slave     gemm_data_if [`LMEM_NUM_PORTS]
    ,VX_mem_bus_if.slave     gemm_psum_rd_if [`LMEM_NUM_PORTS]
@@ -134,7 +139,24 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (CPU_LMEM_TAG_WIDTH)
     ) lmem_adapt_if[`NUM_LSU_LANES]();
+`ifdef GEMM_SRAM_FUSION
+    VX_lsu_mem_if #(
+        .NUM_LANES (`NUM_LSU_LANES), .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (CPU_LMEM_TAG_WIDTH)
+    ) lmem_vector_if();
+    wire fusion_lmem_vector_owned;
+    (* KEEP_HIERARCHY = "yes" *)
+    VX_sram_lmem_vector_transport #(.INSTANCE_ID(INSTANCE_ID)) u_fusion_lmem_vector (
+        .clk(clk), .source_reset(reset),
+        .destination_reset(reset),
+        .source_if(lmem_arb_if[0]), .destination_if(lmem_vector_if),
+        .source_owned_o(fusion_lmem_vector_owned)
+    );
+`endif
 
+`ifdef GEMM_SRAM_FUSION
+    (* KEEP_HIERARCHY = "yes" *)
+`endif
     VX_lsu_adapter #(
         .NUM_LANES    (`NUM_LSU_LANES),
         .DATA_SIZE    (LSU_WORD_SIZE),
@@ -146,7 +168,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     ) lmem_adapter (
         .clk        (clk),
         .reset      (reset),
+`ifdef GEMM_SRAM_FUSION
+        .lsu_mem_if (lmem_vector_if),
+`else
         .lsu_mem_if (lmem_arb_if[0]),
+`endif
         .mem_bus_if (lmem_adapt_if)
     );
 
@@ -202,6 +228,17 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .TAG_SEL_IDX (GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
             .REQ_OUT_BUF (3),
             .RSP_OUT_BUF (3),
+`ifdef GEMM_SRAM_FUSION
+`ifndef GEMM_NAIVE
+`ifndef LMEM_REQ_OMEGA_ENABLE
+`ifndef LMEM_RSP_OMEGA_ENABLE
+            .FUSION_LANE_REQUEST_LINK((i >= 8) && (i < 16) && (`NUM_LSU_LANES == 16)
+                && (`LMEM_NUM_PORTS == 16) && (`LMEM_NUM_BANKS == 16)
+                && (LSU_WORD_SIZE == 8) && (`LMEM_XBAR_MAX_FANOUT == 8)),
+`endif
+`endif
+`endif
+`endif
 `ifdef GEMM_NAIVE
             .ARBITER     ("R")
 `else
@@ -268,6 +305,51 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef GEMM_SRAM_FUSION
+    wire [`LMEM_NUM_BANKS-1:0] fusion_dma_commits;
+    wire [$clog2(`LMEM_NUM_BANKS+1)-1:0] fusion_cpu_commit_count;
+    wire [31:0] fusion_pending_stores_q;
+    wire [`NUM_LSU_BLOCKS-1:0] fusion_admit_valid, fusion_admit_ready, fusion_admit_write;
+    wire [`NUM_LSU_BLOCKS-1:0][`NUM_LSU_LANES-1:0] fusion_admit_mask;
+    wire [`NUM_LSU_BLOCKS-1:0][`NUM_LSU_LANES-1:0][`MEM_ADDR_WIDTH-$clog2(LSU_WORD_SIZE)-1:0] fusion_admit_addr;
+    wire [`NUM_LSU_BLOCKS-1:0][`NUM_LSU_LANES-1:0][MEM_FLAGS_WIDTH-1:0] fusion_admit_flags;
+    for (genvar block_idx = 0; block_idx < `NUM_LSU_BLOCKS; ++block_idx) begin : g_fusion_admit_block
+        assign fusion_admit_valid[block_idx] = lsu_mem_if[block_idx].req_valid;
+        assign fusion_admit_ready[block_idx] = lsu_mem_if[block_idx].req_ready;
+        assign fusion_admit_write[block_idx] = lsu_mem_if[block_idx].req_data.rw;
+        assign fusion_admit_mask[block_idx] = lsu_mem_if[block_idx].req_data.mask;
+        assign fusion_admit_addr[block_idx] = lsu_mem_if[block_idx].req_data.addr;
+        assign fusion_admit_flags[block_idx] = lsu_mem_if[block_idx].req_data.flags;
+    end
+    // Admission is observed before LOCAL_OUT_BUF, the LSU adapter, lane
+    // arbiters, and the LMEM crossbar. A per-producer MMIO publication read
+    // follows that producer's stores in the LSU request stream.
+    (* KEEP_HIERARCHY = "yes" *)
+    VX_sram_publication_observer #(.INSTANCE_ID(INSTANCE_ID),
+        .GEMM_MMIO_SIZE(GEMM_MMIO_SIZE_B), .DMA_MMIO_SIZE(DMA_MMIO_SIZE_B)
+    ) u_fusion_publication_observer (
+        .clk(clk), .reset(reset), .valid_i(fusion_admit_valid), .ready_i(fusion_admit_ready),
+        .write_i(fusion_admit_write), .mask_i(fusion_admit_mask), .addr_i(fusion_admit_addr),
+        .flags_i(fusion_admit_flags), .committed_count_i(fusion_cpu_commit_count),
+        .published_o(fusion_lmem_published_o), .pending_o(fusion_pending_stores_q)
+    );
+    // All terms are source-local and preserve original-epoch real work.
+    // Do not gate by delayed endpoint reset or add a raw reset-to-data path.
+    // Transport delivery is not physical completion: published also includes
+    // same-edge admissions and delayed physical CPU commit accounting.
+    assign fusion_lmem_busy_o = (|fusion_admit_valid) || lmem_arb_if[0].req_valid
+        || fusion_lmem_vector_owned || !fusion_lmem_published_o;
+    assign fusion_lmem_write_commit_o = |fusion_dma_commits;
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!reset) begin
+            assert ($countones(fusion_dma_commits) <= 1)
+                else $fatal(1, "%s: multiple commits for single-outstanding SRAM DMA", INSTANCE_ID);
+        end
+    end
+`endif
+`endif
+
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
         .SIZE       (`LMEM_SIZE),
@@ -285,7 +367,21 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
 `endif
         .OUT_BUF    (3)
+`ifdef GEMM_SRAM_FUSION
+        ,.FUSION_SOURCE_TAG_BIT(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH)
+`ifndef LMEM_REQ_OMEGA_ENABLE
+`ifndef LMEM_RSP_OMEGA_ENABLE
+        ,.FUSION_BANK_SLICE_LINK((`LMEM_NUM_PORTS == 16) && (`LMEM_NUM_BANKS == 16)
+                                && (LSU_WORD_SIZE == 8) && (`LMEM_XBAR_MAX_FANOUT == 8))
+`endif
+`endif
+`endif
     ) local_mem (
+`ifdef GEMM_SRAM_FUSION
+        .fusion_cpu_write_commit_o(),
+        .fusion_cpu_write_commit_count_o(fusion_cpu_commit_count),
+        .fusion_dma_write_commit_o(fusion_dma_commits),
+`endif
 `ifdef GEMM_NAIVE
         .naive_write_commit(naive_write_commit),
 `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY
@@ -306,6 +402,12 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
 `else
 
+`ifdef GEMM_SRAM_FUSION
+    assign fusion_lmem_write_commit_o = 1'b0;
+    assign fusion_lmem_published_o = 1'b0;
+    assign fusion_lmem_busy_o = 1'b0;
+    initial $fatal(1, "GEMM_SRAM_FUSION requires LMEM_ENABLE");
+`endif
 `ifdef GEMM_NAIVE
     assign naive_write_commit = '0;
 `ifdef GEMM_NAIVE_PSUM_READ_PRIORITY

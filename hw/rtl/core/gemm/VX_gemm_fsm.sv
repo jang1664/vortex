@@ -125,6 +125,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output logic [2:0]       pending_child_o,
     output logic             pending_scheduler_work_o,
     output logic [31:0]      pending_work_seq_o
+`ifdef GEMM_SRAM_FUSION
+    ,input wire [2:0]        resident_flags_i
+    ,output wire             output_fp32_o
+    ,input wire              resident_reject_i
+    ,input wire [31:0]      completed_acc_copy_count_i [2]
+    ,output logic [31:0]    resident_error_o
+`endif
 `ifndef SYNTHESIS
 `ifdef DBG_TRACE_GEMM_CMD_PERF
     ,output logic            dbg_cmd_meta_valid_o
@@ -396,9 +403,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     logic [5:0]  log2_dma_mt, log2_dma_kt, log2_dma_nt;
     logic        wtrans;
     logic        qdir;     // 0=QDIR_COL, 1=QDIR_ROW
+`ifdef GEMM_SRAM_FUSION
+    logic        resident_a;
+    logic        resident_output;
+    logic        resident_output_fp32;
+`endif
   } job_t;
 
   job_t job_q, job_d;
+`ifdef GEMM_SRAM_FUSION
+  assign output_fp32_o = job_q.resident_output_fp32;
+`endif
 
   // Tile dims and last sizes (latched at start)
   mm_dim_t     mt_dim_q, nt_dim_q, kt_dim_q;
@@ -1096,6 +1111,79 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
      && cfg_reg_if.regs[CFG_R_CONTROL][0]
      && cfg_reg_if.valid
      && cfg_reg_if.ready;
+`ifdef GEMM_SRAM_FUSION
+  // Resident jobs use one owned DMA tile. Validate before the first load so
+  // an unsupported descriptor retires with an error instead of overwriting
+  // a live tile or waiting on a skipped producer. The original matrix may
+  // contain padded rows, but it must fit in that same tile.
+  localparam logic [31:0] RESIDENT_ERROR_SHAPE = 32'd1;
+  localparam logic [31:0] RESIDENT_ERROR_METADATA = 32'd2;
+  logic resident_cfg_valid;
+  always_comb begin : validate_resident_config
+    logic [31:0] m, n, k, mt, nt, kt;
+    logic [31:0] target_m, target_n, target_k;
+    logic [31:0] log_mt, log_nt, log_kt, log_qblk;
+    logic [7:0] padded_rows;
+    logic [15:0] input_elements, output_elements;
+    logic [63:0] input_bytes, output_bytes;
+    logic [63:0] input_base, output_base;
+    log_mt = cfg_reg_if.regs[CFG_R_LOG2_DMA_MT][31:0];
+    log_nt = cfg_reg_if.regs[CFG_R_LOG2_DMA_NT][31:0];
+    log_kt = cfg_reg_if.regs[CFG_R_LOG2_DMA_KT][31:0];
+    log_qblk = cfg_reg_if.regs[CFG_R_QBLK_ORIG][31:0];
+    mt = 32'd1 << log_mt[2:0];
+    nt = 32'd1 << log_nt[2:0];
+    kt = 32'd1 << log_kt[2:0];
+    m = cfg_reg_if.regs[CFG_R_M_ORIG][31:0];
+    n = cfg_reg_if.regs[CFG_R_N_ORIG][31:0];
+    k = cfg_reg_if.regs[CFG_R_K_ORIG][31:0];
+    target_m = cfg_reg_if.regs[CFG_R_M_TARGET][31:0];
+    target_n = cfg_reg_if.regs[CFG_R_N_TARGET][31:0];
+    target_k = cfg_reg_if.regs[CFG_R_K_TARGET][31:0];
+    input_base = cfg_get_u64(CFG_R_LMEM_IBUF0_LO, CFG_R_LMEM_IBUF0_HI);
+    output_base = cfg_get_u64(CFG_R_LMEM_OBUF_LO, CFG_R_LMEM_OBUF_HI);
+    // Dimensions outside these eight-bit operands are rejected below. Keep
+    // descriptor validation from inferring full-width address multipliers.
+    padded_rows = 8'(align8_u32(m));
+    input_elements = 16'(padded_rows) * 16'(k[7:0]);
+    output_elements = 16'(padded_rows) * 16'(n[7:0]);
+    input_bytes = 64'(input_elements) * FP16_BYTES;
+    output_bytes = 64'(output_elements) * (resident_flags_i[2] ? FP32_BYTES : FP16_BYTES);
+    resident_cfg_valid = (log_mt >= 3 && log_mt <= $clog2(MT_DEFAULT))
+        && (log_nt >= $clog2(MXU_NT) && log_nt <= $clog2(NT_DEFAULT))
+        && (log_kt >= $clog2(MXU_KT) && log_kt <= $clog2(KT_DEFAULT))
+        && (log_qblk >= $clog2(MXU_NT) && log_qblk <= $clog2(KT_DEFAULT))
+        && (m != 0 && m <= mt && n != 0 && n <= nt && k != 0 && k <= kt)
+        && (target_m != 0 && target_m <= m)
+        && (target_n != 0 && target_n <= n)
+        && (target_k != 0 && target_k <= k)
+        && ((n & (MXU_NT - 1)) == 0 && (target_n & (MXU_NT - 1)) == 0)
+        && ((k & (MXU_KT - 1)) == 0 && (target_k & (MXU_KT - 1)) == 0)
+        && (cfg_reg_if.regs[CFG_R_M_START][31:0] == 0)
+        && (cfg_reg_if.regs[CFG_R_N_START][31:0] == 0)
+        && (cfg_reg_if.regs[CFG_R_WTRANS][31:0] <= 1)
+        && (cfg_reg_if.regs[CFG_R_QDIR][31:0] <= 1);
+    resident_cfg_valid &= (!resident_flags_i[2] || resident_flags_i[1]);
+    if (resident_flags_i[0]) begin
+      resident_cfg_valid &= ((input_base & 64'(`GEMM_INPUT_DATA_SIZE - 1)) == 0)
+          && (input_base < 64'(`NUM_TMEM_BANKS * `TMEM_BANK_SIZE))
+          && (input_bytes <= 64'(`NUM_TMEM_BANKS * `TMEM_BANK_SIZE) - input_base);
+    end
+    if (resident_flags_i[1]) begin
+      resident_cfg_valid &= ((output_base & 64'(`GEMM_OUTPUT_DATA_SIZE - 1)) == 0)
+          && (output_base < 64'(`NUM_TMEM_BANKS * `TMEM_BANK_SIZE))
+          && (output_bytes <= 64'(`NUM_TMEM_BANKS * `TMEM_BANK_SIZE) - output_base);
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (reset)
+      resident_error_o <= '0;
+    else if (gemm_invocation_accept)
+      resident_error_o <= resident_reject_i ? RESIDENT_ERROR_METADATA
+          : ((resident_flags_i != 0 && !resident_cfg_valid) ? RESIDENT_ERROR_SHAPE : 32'd0);
+  end
+`endif
   wire gemm_arm_parent_accept
       = (state_q == S_MXU_ARM_GEMM)
      && out_start_d
@@ -1714,10 +1802,21 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           job_d.log2_dma_nt = cfg_reg_if.regs[CFG_R_LOG2_DMA_NT][5:0];
           job_d.wtrans   = cfg_reg_if.regs[CFG_R_WTRANS][0];
           job_d.qdir     = cfg_reg_if.regs[CFG_R_QDIR][0];
+`ifdef GEMM_SRAM_FUSION
+          job_d.resident_a = resident_flags_i[0];
+          job_d.resident_output = resident_flags_i[1];
+          job_d.resident_output_fp32 = resident_flags_i[2];
+`endif
 
           gemm_start_o = 1'b1;
 
           state_d = S_INIT_STRIDE_0;
+`ifdef GEMM_SRAM_FUSION
+          if (resident_reject_i || (resident_flags_i != 0 && !resident_cfg_valid)) begin
+            gemm_start_o = 1'b0;
+            state_d = S_FINAL_CLEAR;
+          end
+`endif
         end
       end
 
@@ -1731,6 +1830,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_INIT_STRIDE_1: begin
         state_d = S_PRE0_LD_I;
+`ifdef GEMM_SRAM_FUSION
+        // Only the final ZP DMA carries the tile-ready SET notification.
+        // Omitting the A DMA therefore preserves that marker and every wait.
+        if (job_q.resident_a)
+          state_d = S_PRE0_LD_W;
+`endif
       end
 
       // ----------------------------------------------------------------------
@@ -2352,6 +2457,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             output_nt_mxu_dim_d = output_nt_mxu_dim;
             output_group_bytes_d = '0;
             state_d = output_preserve_cur ? S_O_PRELOAD : S_O_ACC2LMEM;
+`ifdef GEMM_SRAM_FUSION
+            // The entire padded SRAM output belongs to this caller. Retain
+            // its initialized inactive bytes without an HBM preservation read.
+            if (job_q.resident_output_fp32) begin
+              output_nb_stride_d = output_nb_stride_d << 1;
+              output_nb_bytes_d = output_nb_bytes_d << 1;
+              output_nb_storage_bytes_d = output_nb_storage_bytes_d << 1;
+            end
+            if (job_q.resident_output) begin
+              output_preserve_d = 1'b0;
+              state_d = S_O_ACC2LMEM;
+            end
+`endif
           end else begin
             state_d = S_ADVANCE_TILES;
           end
@@ -2407,6 +2525,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         c.instr    = make_instr(OP_O_ACC2LMEM, output_nb_bytes_q);
         c.rs1_data  = output_lmem_addr;              // dst
         c.rs2_data  = 64'(acc_group_base + (u32_t'(o_nt_mxu_q) * acc_nb_stride)) >> 1; // src
+`ifdef GEMM_SRAM_FUSION
+        // FP32 exports use the physical ACC byte address; FP16 exposes a
+        // compressed address space with one 32-byte response per ACC row.
+        if (job_q.resident_output_fp32)
+          c.rs2_data = 64'(acc_group_base + (u32_t'(o_nt_mxu_q) * acc_nb_stride));
+`endif
         c.bound     = mt_eff_cur;
         c.eff_mt    = mt_eff_cur;
         c.groups_eff = MXU_NT;
@@ -2431,6 +2555,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           end
           output_group_bytes_d = group_bytes;
           acc_copy_issue_d[tile_acc_group_q] = copy_target;
+`ifdef GEMM_SRAM_FUSION
+          if (job_q.resident_output) begin
+            output_group_bytes_d = '0;
+            if (o_nt_mxu_q + 1 == output_nt_mxu_dim_q)
+              state_d = S_ADVANCE_TILES;
+            else
+              o_nt_mxu_d = o_nt_mxu_q + 1;
+          end else
+`endif
           if (((group_bytes & u32_t'(`MEM_BLOCK_SIZE - 1)) == 0)
            || (o_nt_mxu_q + 1 == output_nt_mxu_dim_q)) begin
             state_d = S_O_LMEM2DRAM;
@@ -2520,6 +2653,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
 
       S_O_WAIT_LMEM2DRAM_FINAL: begin
+`ifdef GEMM_SRAM_FUSION
+        if (job_q.resident_output) begin
+          if ((completed_acc_copy_count_i[0] >= acc_copy_issue_q[0])
+           && (completed_acc_copy_count_i[1] >= acc_copy_issue_q[1])
+           && gemm_fsm_if.flag.done)
+            state_d = S_FINAL_CLEAR;
+        end else
+`endif
         if (completed_output_store_count_i >= o_store_issue_q) begin
           state_d = S_FINAL_CLEAR;
         end
@@ -2719,6 +2860,25 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   always @(posedge clk) begin
     if (reset === 1'b0) begin
+`ifdef GEMM_SRAM_FUSION
+      if (state_q != S_IDLE && resident_error_o != 0) begin
+        assert (!out_start_d)
+          else $fatal(1, "GEMM rejected resident job issued work");
+      end
+      if (state_q != S_IDLE && resident_error_o == 0
+       && (job_q.resident_a || job_q.resident_output)) begin
+        assert (tile_cur_q == 0 && !pre_valid_q)
+          else $fatal(1, "GEMM resident job escaped its owned tile");
+        if (job_q.resident_a) begin
+          assert (state_q != S_PRE0_LD_I)
+            else $fatal(1, "GEMM resident activation was loaded from HBM");
+        end
+        if (job_q.resident_output) begin
+          assert (state_q != S_O_PRELOAD && state_q != S_O_LMEM2DRAM)
+            else $fatal(1, "GEMM resident output accessed HBM");
+        end
+      end
+`endif
       if (state_q == S_INIT_STRIDE_0) begin
         assert (job_q.target_M != 0 && job_q.target_N != 0 && job_q.target_K != 0
              && (64'(job_q.m_start) + 64'(job_q.target_M) <= 64'(job_q.orig_M))
@@ -2959,7 +3119,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
              == out_cmd_d.notify.value)
           else $fatal(1, "GEMM accumulator copy issue count/notify mismatch");
         assert (tile_acc_group_q
+`ifdef GEMM_SRAM_FUSION
+             == (out_cmd_d.rs2_data >= (job_q.resident_output_fp32
+                 ? 64'(ACC_DBUF_STRIDE) : (64'(ACC_DBUF_STRIDE) >> 1))))
+`else
              == (out_cmd_d.rs2_data >= (64'(ACC_DBUF_STRIDE) >> 1)))
+`endif
           else $fatal(1, "GEMM ACC2LMEM accumulator address/group mismatch");
         if (prior_g_wait_valid_q) begin
           assert (out_cmd_d.waits[1].valid
@@ -3012,6 +3177,18 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
 
       if (state_q == S_O_WAIT_LMEM2DRAM_FINAL) begin
+`ifdef GEMM_SRAM_FUSION
+        if (job_q.resident_output) begin
+          assert (o_store_issue_q == 0)
+            else $fatal(1, "GEMM resident output issued an HBM operation");
+          if (state_d == S_FINAL_CLEAR) begin
+            assert (completed_acc_copy_count_i[0] == acc_copy_issue_q[0]
+                 && completed_acc_copy_count_i[1] == acc_copy_issue_q[1]
+                 && gemm_fsm_if.flag.done)
+              else $fatal(1, "GEMM resident output retired before SRAM copies drained");
+          end
+        end else begin
+`endif
         assert ((completed_output_store_count_i >= o_store_issue_q)
              == (state_d == S_FINAL_CLEAR))
           else $fatal(1, "GEMM final output-store drain comparison mismatch");
@@ -3019,6 +3196,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           assert (completed_output_store_count_i == o_store_issue_q)
             else $fatal(1, "GEMM final output-store drain over-completed");
         end
+`ifdef GEMM_SRAM_FUSION
+        end
+`endif
       end
 
       if (state_q != S_IDLE) begin

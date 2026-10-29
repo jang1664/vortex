@@ -25,6 +25,9 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
     parameter MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter ADDR_WIDTH     = (MEM_ADDR_WIDTH-`CLOG2(DATA_SIZE)),
     parameter FLAGS_WIDTH    = MEM_FLAGS_WIDTH
+`ifdef GEMM_SRAM_FUSION
+    ,parameter bit FUSION_LANE_REQUEST_LINK = 1'b0
+`endif
 ) (
     input wire              clk,
     input wire              reset,
@@ -37,6 +40,14 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
     localparam REQ_DATAW    = 1 + ADDR_WIDTH + DATA_WIDTH + DATA_SIZE + FLAGS_WIDTH + TAG_WIDTH;
     localparam RSP_DATAW    = DATA_WIDTH + TAG_WIDTH;
     localparam SEL_COUNT    = `MIN(NUM_INPUTS, NUM_OUTPUTS);
+`ifdef GEMM_SRAM_FUSION
+    `VX_STATIC_ASSERT(!FUSION_LANE_REQUEST_LINK || (NUM_INPUTS == 2 && NUM_OUTPUTS == 1
+        && DATA_SIZE == 8 && REQ_OUT_BUF == 3 && RSP_OUT_BUF == 3 && ARBITER == "P"
+        && TAG_WIDTH == GEMM_LMEM_TAG_WIDTH && TAG_SEL_IDX == GEMM_LMEM_TAG_WIDTH-UUID_WIDTH
+        && MEM_ADDR_WIDTH == `MEM_ADDR_WIDTH && FLAGS_WIDTH == MEM_FLAGS_WIDTH
+        && `NUM_LSU_LANES == 16 && `LMEM_NUM_PORTS == 16 && `LMEM_NUM_BANKS == 16),
+        ("request-only lane link requires C4 CPU/DMA arbiter geometry"))
+`endif
 
     wire [NUM_INPUTS-1:0]                 req_valid_in;
     wire [NUM_INPUTS-1:0][REQ_DATAW-1:0]  req_data_in;
@@ -48,9 +59,36 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
     wire [NUM_OUTPUTS-1:0]                req_ready_out;
 
     for (genvar i = 0; i < NUM_INPUTS; ++i) begin : g_req_data_in
+`ifdef GEMM_SRAM_FUSION
+        if (FUSION_LANE_REQUEST_LINK && i == 0) begin : g_fusion_lane_request
+            wire [REQ_DATAW-1:0] link_data;
+            wire link_valid, link_credit, tx_ready, rx_valid;
+            assign bus_in_if[i].req_ready = !reset && tx_ready;
+            assign req_valid_in[i] = !reset && rx_valid;
+            VX_slr_stream_tx #(.INSTANCE_ID("c4-lane-request"), .DATAW(REQ_DATAW), .DEPTH(4)) u_tx (
+                .clk(clk), .reset(reset),
+                .valid_in(bus_in_if[i].req_valid && !reset), .ready_in(tx_ready),
+                .data_in(bus_in_if[i].req_data),
+                .link_data(link_data), .link_valid(link_valid), .link_credit(link_credit), .idle_out()
+            );
+            VX_slr_stream_rx #(.INSTANCE_ID("c4-lane-request"), .DATAW(REQ_DATAW), .DEPTH(4)) u_rx (
+                .clk(clk), .reset(reset),
+                .link_data(link_data), .link_valid(link_valid), .link_credit(link_credit),
+                .valid_out(rx_valid), .ready_out(req_ready_in[i] && !reset),
+                .data_out(req_data_in[i])
+            );
+        end else begin : g_fusion_request_direct
+            assign req_valid_in[i] = bus_in_if[i].req_valid
+                                  && !(FUSION_LANE_REQUEST_LINK && reset);
+            assign req_data_in[i] = bus_in_if[i].req_data;
+            assign bus_in_if[i].req_ready = req_ready_in[i]
+                                       && !(FUSION_LANE_REQUEST_LINK && reset);
+        end
+`else
         assign req_valid_in[i] = bus_in_if[i].req_valid;
         assign req_data_in[i]  = bus_in_if[i].req_data;
         assign bus_in_if[i].req_ready = req_ready_in[i];
+`endif
     end
 
     VX_stream_arb #(
@@ -73,7 +111,12 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
 
     for (genvar i = 0; i < NUM_OUTPUTS; ++i) begin : g_bus_out_if
         wire [TAG_WIDTH-1:0] req_tag_out;
+`ifdef GEMM_SRAM_FUSION
+        assign bus_out_if[i].req_valid = req_valid_out[i]
+                                      && !(FUSION_LANE_REQUEST_LINK && reset);
+`else
         assign bus_out_if[i].req_valid = req_valid_out[i];
+`endif
         assign {
             bus_out_if[i].req_data.rw,
             bus_out_if[i].req_data.addr,
@@ -82,7 +125,12 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
             bus_out_if[i].req_data.flags,
             req_tag_out
         } = req_data_out[i];
+`ifdef GEMM_SRAM_FUSION
+        assign req_ready_out[i] = bus_out_if[i].req_ready
+                               && !(FUSION_LANE_REQUEST_LINK && reset);
+`else
         assign req_ready_out[i] = bus_out_if[i].req_ready;
+`endif
         
         if (NUM_INPUTS > NUM_OUTPUTS) begin : g_req_tag_sel_out
             VX_bits_insert #(
@@ -100,6 +148,22 @@ module VX_mem_arb import VX_gpu_pkg::*; #(
         end
     end
 
+`ifdef GEMM_SRAM_FUSION
+`ifndef SYNTHESIS
+    if (FUSION_LANE_REQUEST_LINK) begin : g_fusion_request_contract
+        // VX_core initializes DMA lanes1..15 inactive in C4 fusion mode.
+        // This narrow link is enabled only for lanes8..15, never DMA lane0.
+        always @(posedge clk) begin
+            if (!reset)
+                assert (bus_in_if[1].req_valid === 1'b0)
+                    else $fatal(1, "enabled CPU lane link requires inactive DMA input1");
+            if (reset)
+                assert (!(|req_valid_in) && !(|req_ready_out) && !bus_out_if[0].req_valid)
+                    else $fatal(1, "lane request accepted/delivered during core reset");
+        end
+    end
+`endif
+`endif
     ///////////////////////////////////////////////////////////////////////////
 
     wire [NUM_INPUTS-1:0]                 rsp_valid_out;

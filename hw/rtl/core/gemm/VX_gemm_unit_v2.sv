@@ -17,6 +17,9 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
     VX_mem_bus_if.slave      o_lmem_bus_if,
 
     VX_gemm_unit_v2_if.slave gemm_unit_v2_if
+`ifdef GEMM_SRAM_FUSION
+    ,input wire output_fp32_i
+`endif
 `ifdef ENABLE_HW_DEBUG_GEMM
     ,output gemm_unit_debug_t debug
 `endif
@@ -106,6 +109,9 @@ module VX_gemm_unit_v2 import VX_gpu_pkg::*; #(
         .reset                       (reset),
         .acc_if                      (acc_if),
         .o_lmem_bus_if               (o_lmem_bus_if),
+`ifdef GEMM_SRAM_FUSION
+        .output_fp32_i               (output_fp32_i),
+`endif
         .early_read_req              (early_read_req),
         .nominal_read_req            (nominal_read_req),
         .read_req_addr               (read_req_addr),
