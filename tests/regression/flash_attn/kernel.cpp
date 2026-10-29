@@ -5,6 +5,9 @@
 #include <vx_intrinsics.h>
 #include <vx_math.h>
 #include <vx_spawn.h>
+#ifdef GEMM_SRAM_FUSION
+#include <vx_sram_fusion.h>
+#endif
 
 static constexpr uint64_t kGemmRegBase = 0x1080ull;
 static constexpr uint32_t kMmioBeatBytes = 8u;
@@ -13,6 +16,17 @@ static constexpr uint32_t kNumBeats =
     (GEMM_JOB_NUM_REGS32 + kWordsPerBeat - 1u) / kWordsPerBeat;
 static constexpr uint32_t kEntryStrideBytes = kNumBeats * kMmioBeatBytes;
 static constexpr uint32_t kPollLimit = 100000000u;
+
+static inline uint64_t attention_cycles() {
+  __asm__ volatile("" ::: "memory");
+  return csr_read(VX_CSR_MCYCLE);
+}
+
+static inline float gemm_output_value(const kernel_arg_t *arg, uint64_t base,
+                                      uint64_t element) {
+  return arg->output_fp32 ? reinterpret_cast<const float *>(base)[element]
+      : fp16_to_float(reinterpret_cast<const fp16_t *>(base)[element]);
+}
 
 struct gemm_job_t {
   uint64_t input_base;
@@ -23,6 +37,11 @@ struct gemm_job_t {
   uint32_t m;
   uint32_t n;
   uint32_t k;
+  uint32_t resident_flags;
+  uint64_t resident_input_base;
+  uint32_t qblk;
+  uint32_t wtrans;
+  uint32_t qdir;
 };
 
 struct active_job_t {
@@ -108,7 +127,8 @@ static void program_job(uint32_t eid, const kernel_arg_t *arg,
   job_write64(eid, REG_SCALE_BASE_LO, job.scale_base);
   job_write64(eid, REG_ZP_BASE_LO, job.zero_base);
 
-  job_write64(eid, REG_LMEM_IBUF0_LO, arg->lmem_ibuf[0]);
+  job_write64(eid, REG_LMEM_IBUF0_LO,
+      job.resident_flags & 1u ? job.resident_input_base : arg->lmem_ibuf[0]);
   job_write64(eid, REG_LMEM_IBUF1_LO, arg->lmem_ibuf[1]);
   job_write64(eid, REG_LMEM_WBUF0_LO, arg->lmem_wbuf[0]);
   job_write64(eid, REG_LMEM_WBUF1_LO, arg->lmem_wbuf[1]);
@@ -118,17 +138,17 @@ static void program_job(uint32_t eid, const kernel_arg_t *arg,
   job_write64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf[1]);
   job_write64(eid, REG_LMEM_OBUF_LO, arg->lmem_obuf);
 
-  job_write32(eid, REG_M_ORIG, job.m);
+  job_write32(eid, REG_M_ORIG, arg->query_rows_pad);
   job_write32(eid, REG_N_ORIG, job.n);
   job_write32(eid, REG_K_ORIG, job.k);
-  job_write32(eid, REG_QBLK_ORIG, log2_pow2_u32(FLASH_QBLK));
+  job_write32(eid, REG_QBLK_ORIG, log2_pow2_u32(job.qblk));
   job_write32(eid, REG_M_TARGET, job.m);
   job_write32(eid, REG_N_TARGET, job.n);
   job_write32(eid, REG_K_TARGET, job.k);
   job_write32(eid, REG_M_START, 0u);
   job_write32(eid, REG_N_START, 0u);
-  job_write32(eid, REG_WTRANS, 0u);
-  job_write32(eid, REG_QDIR, 0u);
+  job_write32(eid, REG_WTRANS, job.wtrans);
+  job_write32(eid, REG_QDIR, job.qdir);
   job_write32(eid, REG_LOG2_DMA_MT, log2_pow2_u32(FLASH_DMA_MT));
   job_write32(eid, REG_LOG2_DMA_KT, log2_pow2_u32(FLASH_DMA_KT));
   job_write32(eid, REG_LOG2_DMA_NT, log2_pow2_u32(FLASH_DMA_NT));
@@ -139,6 +159,11 @@ static bool start_job(const kernel_arg_t *arg, const gemm_job_t &job,
                       active_job_t &active) {
   if (!allocate_job(active))
     return false;
+#ifdef GEMM_SRAM_FUSION
+  if (arg->resident
+      && vortex::sram_fusion::arm(active.eid, active.generation, job.resident_flags) != 0)
+    return false;
+#endif
   active.expected_progress = ceil_div_u32(job.m, FLASH_DMA_MT)
                            * ceil_div_u32(job.n, FLASH_MXU_NT);
   program_job(active.eid, arg, job);
@@ -184,17 +209,30 @@ static void initialize_state_worker() {
   for (uint32_t row = worker; row < arg->query_rows; row += workers) {
     row_max[row] = VX_NEG_INF;
     row_sum[row] = 0.0f;
+    if (arg->resident)
+      reinterpret_cast<float *>(arg->row_alpha_base)[row] = 0.0f;
   }
   for (uint64_t index = worker;
        index < uint64_t(arg->query_rows) * arg->head_dim;
        index += workers) {
     accumulator[index] = 0.0f;
   }
+  if (arg->resident) {
+    auto *work = reinterpret_cast<uint64_t *>(arg->score_base);
+    const uint32_t elements = arg->query_rows_pad * arg->kv_tile;
+    const uint32_t words = elements * (arg->output_fp32 ? sizeof(float) : sizeof(fp16_t)) / 8u;
+    for (uint32_t i = worker; i < words; i += workers)
+      work[i] = 0;
+    if (arg->output_fp32) {
+      auto *probabilities = reinterpret_cast<uint64_t *>(arg->probability_base);
+      for (uint32_t i = worker; i < elements * sizeof(fp16_t) / 8u; i += workers)
+        probabilities[i] = 0;
+    }
+  }
 }
 
 static void online_softmax_worker() {
   auto *arg = reinterpret_cast<kernel_arg_t *>(csr_read(VX_CSR_MSCRATCH));
-  auto *scores = reinterpret_cast<const fp16_t *>(arg->score_base);
   auto *probabilities = reinterpret_cast<fp16_t *>(arg->probability_base);
   auto *row_max = reinterpret_cast<float *>(arg->row_max_base);
   auto *row_sum = reinterpret_cast<float *>(arg->row_sum_base);
@@ -206,7 +244,8 @@ static void online_softmax_worker() {
   const uint32_t log2_mxu_kt = log2_pow2_u32(FLASH_MXU_KT);
   const uint32_t tile = arg->current_kv_tile;
   const uint32_t key_base = tile * arg->kv_tile;
-  const uint32_t output_tiles = ceil_div_u32(arg->kv_tile, FLASH_MXU_NT);
+  const uint32_t block_width = arg->resident ? arg->kv_tile : FLASH_MXU_NT;
+  const uint32_t output_tiles = ceil_div_u32(arg->kv_tile, block_width);
   const active_job_t qk_active = {
       arg->qk_eid, arg->qk_generation, output_tiles};
 
@@ -214,7 +253,7 @@ static void online_softmax_worker() {
     for (uint32_t output_tile = 0; output_tile < output_tiles; ++output_tile) {
       uint32_t ready = 0u;
       if (lane == 0u)
-        ready = wait_progress_tile(qk_active, output_tile + 1u) ? 1u : 0u;
+        ready = arg->resident || wait_progress_tile(qk_active, output_tile + 1u) ? 1u : 0u;
       ready = uint32_t(vx_shfl_idx(ready, 0u, NUM_THREADS - 1u, 0u));
       if (ready == 0u) {
         if (lane == 0u)
@@ -222,8 +261,8 @@ static void online_softmax_worker() {
         return;
       }
 
-      const uint32_t col_begin = output_tile * FLASH_MXU_NT;
-      const uint32_t col_end = min_u32(col_begin + FLASH_MXU_NT, arg->kv_tile);
+      const uint32_t col_begin = output_tile * block_width;
+      const uint32_t col_end = min_u32(col_begin + block_width, arg->kv_tile);
       float block_max = VX_NEG_INF;
       for (uint32_t col = col_begin + lane; col < col_end;
            col += NUM_THREADS) {
@@ -235,7 +274,7 @@ static void online_softmax_worker() {
           const uint64_t offset = gemm_c_tiled_elem_offset(
               row, col, arg->query_rows_pad, arg->kv_tile,
               log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
-          const float score = fp16_to_float(scores[offset])
+          const float score = gemm_output_value(arg, arg->score_base, offset)
                             * arg->attention_scale;
           if (score > block_max)
             block_max = score;
@@ -257,6 +296,11 @@ static void online_softmax_worker() {
                         ? 0.0f : vx_expf(old_max - new_max);
 
       if (new_max > old_max) {
+        if (!arg->resident) {
+          auto *accumulator = reinterpret_cast<float *>(arg->accumulator_base);
+          for (uint32_t d = lane; d < arg->head_dim; d += NUM_THREADS)
+            accumulator[uint64_t(row) * arg->head_dim + d] *= alpha;
+        }
         for (uint32_t col = lane; col < col_begin; col += NUM_THREADS) {
           const uint64_t offset = gemm_a_tiled_elem_offset(
               row, col, arg->query_rows_pad, arg->kv_tile,
@@ -264,7 +308,7 @@ static void online_softmax_worker() {
           probabilities[offset] = float_to_fp16(
               fp16_to_float(probabilities[offset]) * alpha);
         }
-        if (lane == 0u && row == 0u && output_tile > 0u)
+        if (lane == 0u && row == 0u && (output_tile > 0u || tile > 0u))
           arg->later_max_updates += 1u;
       }
 
@@ -280,7 +324,7 @@ static void online_softmax_worker() {
           const uint64_t input_offset = gemm_c_tiled_elem_offset(
               row, col, arg->query_rows_pad, arg->kv_tile,
               log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
-          const float score = fp16_to_float(scores[input_offset])
+          const float score = gemm_output_value(arg, arg->score_base, input_offset)
                             * arg->attention_scale;
           probability = vx_expf(score - new_max);
         }
@@ -299,8 +343,10 @@ static void online_softmax_worker() {
       if (lane == 0u) {
         row_max[row] = new_max;
         row_sum[row] = alpha * old_sum + block_sum;
+        if (arg->resident)
+          reinterpret_cast<float *>(arg->row_alpha_base)[row] = alpha;
         if (row == 0u)
-          arg->qk_progress_events += 1u;
+          arg->qk_progress_events += block_width / FLASH_MXU_NT;
       }
     }
   }
@@ -309,7 +355,6 @@ static void online_softmax_worker() {
 
 static void accumulate_partial_worker() {
   auto *arg = reinterpret_cast<kernel_arg_t *>(csr_read(VX_CSR_MSCRATCH));
-  auto *partial = reinterpret_cast<const fp16_t *>(arg->partial_base);
   auto *accumulator = reinterpret_cast<float *>(arg->accumulator_base);
   const uint32_t worker = uint32_t(vx_hart_id());
   const uint32_t workers = uint32_t(vx_num_warps() * vx_num_threads());
@@ -323,7 +368,10 @@ static void accumulate_partial_worker() {
     const uint64_t tiled = gemm_c_tiled_elem_offset(
         row, col, arg->query_rows_pad, arg->head_dim,
         log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
-    accumulator[index] += fp16_to_float(partial[tiled]);
+    const float alpha = arg->resident
+        ? reinterpret_cast<const float *>(arg->row_alpha_base)[row] : 1.0f;
+    accumulator[index] = alpha * accumulator[index]
+        + gemm_output_value(arg, arg->partial_base, tiled);
   }
 }
 
@@ -340,25 +388,88 @@ static void finalize_worker() {
        index += workers) {
     const uint32_t row = uint32_t(index / arg->head_dim);
     const float sum = row_sum[row];
-    output[index] = float_to_fp16(sum > 0.0f ? accumulator[index] / sum : 0.0f);
+    const uint32_t col = uint32_t(index % arg->head_dim);
+    const uint64_t destination = arg->output_tiled
+        ? gemm_c_tiled_elem_offset(row, col, arg->query_rows_pad, arg->head_dim,
+            log2_pow2_u32(FLASH_DMA_MT), log2_pow2_u32(FLASH_MXU_NT))
+        : index;
+    output[destination] = float_to_fp16(sum > 0.0f ? accumulator[index] / sum : 0.0f);
   }
+}
+
+static void publish_worker() {
+#ifdef GEMM_SRAM_FUSION
+  auto *arg = reinterpret_cast<kernel_arg_t *>(csr_read(VX_CSR_MSCRATCH));
+  if (arg->resident && vx_thread_id() == 0)
+    vortex::sram_fusion::publish();
+#endif
+}
+
+static void export_debug_worker() {
+  auto *arg = reinterpret_cast<kernel_arg_t *>(csr_read(VX_CSR_MSCRATCH));
+  const uint32_t worker = uint32_t(vx_hart_id());
+  const uint32_t workers = uint32_t(vx_num_warps() * vx_num_threads());
+  if (arg->debug_stage < 3u) {
+    const uint64_t destination = arg->debug_stage == 0u ? arg->debug_score_base
+        : arg->debug_stage == 1u ? arg->debug_probability_base : arg->debug_partial_base;
+    auto *dst = reinterpret_cast<uint64_t *>(destination);
+    const bool probabilities = arg->debug_stage == 1u;
+    auto *src = reinterpret_cast<const uint64_t *>(probabilities
+        ? arg->probability_base : arg->score_base);
+    const uint32_t element_bytes = arg->output_fp32 && !probabilities
+        ? sizeof(float) : sizeof(fp16_t);
+    const uint32_t words = arg->query_rows_pad * arg->kv_tile * element_bytes / 8u;
+    for (uint32_t i = worker; i < words; i += workers)
+      dst[i] = src[i];
+  } else {
+    auto *dst = reinterpret_cast<float *>(arg->debug_accumulator_base);
+    auto *src = reinterpret_cast<const float *>(arg->accumulator_base);
+    for (uint32_t i = worker; i < arg->query_rows * arg->head_dim; i += workers)
+      dst[i] = src[i];
+    for (uint32_t row = worker; row < arg->query_rows; row += workers) {
+      reinterpret_cast<float *>(arg->debug_row_max_base)[row] =
+          reinterpret_cast<const float *>(arg->row_max_base)[row];
+      reinterpret_cast<float *>(arg->debug_row_sum_base)[row] =
+          reinterpret_cast<const float *>(arg->row_sum_base)[row];
+    }
+  }
+}
+
+static void export_debug_stub() {
+  vx_tmc(-1);
+  export_debug_worker();
+  vx_tmc_zero();
+}
+
+static void export_debug(kernel_arg_t *arg, uint32_t stage) {
+  if (!arg->debug_export)
+    return;
+  arg->debug_stage = stage;
+  vx_wspawn(vx_num_warps(), export_debug_stub);
+  vx_tmc(-1);
+  export_debug_worker();
+  vx_tmc_one();
+  vx_wspawn(1, nullptr);
 }
 
 static void initialize_state_stub() {
   vx_tmc(-1);
   initialize_state_worker();
+  publish_worker();
   vx_tmc_zero();
 }
 
 static void online_softmax_stub() {
   vx_tmc(-1);
   online_softmax_worker();
+  publish_worker();
   vx_tmc_zero();
 }
 
 static void accumulate_partial_stub() {
   vx_tmc(-1);
   accumulate_partial_worker();
+  publish_worker();
   vx_tmc_zero();
 }
 
@@ -372,6 +483,7 @@ static void run_initialize() {
   vx_wspawn(vx_num_warps(), initialize_state_stub);
   vx_tmc(-1);
   initialize_state_worker();
+  publish_worker();
   vx_tmc_one();
   vx_wspawn(1, nullptr);
 }
@@ -380,6 +492,7 @@ static void run_online_softmax() {
   vx_wspawn(vx_num_warps(), online_softmax_stub);
   vx_tmc(-1);
   online_softmax_worker();
+  publish_worker();
   vx_tmc_one();
   vx_wspawn(1, nullptr);
 }
@@ -388,6 +501,7 @@ static void run_accumulate_partial() {
   vx_wspawn(vx_num_warps(), accumulate_partial_stub);
   vx_tmc(-1);
   accumulate_partial_worker();
+  publish_worker();
   vx_tmc_one();
   vx_wspawn(1, nullptr);
 }
@@ -405,15 +519,18 @@ static void run_fence() {
 }
 
 static bool run_pv_gemm(kernel_arg_t *arg) {
+  const uint32_t tile = arg->current_kv_tile;
   gemm_job_t pv = {
       arg->probability_base,
-      arg->v_weight_base,
-      arg->v_scale_base,
-      arg->k_zero_base,
+      arg->v_weight_base + uint64_t(tile) * arg->v_weight_tile_bytes,
+      arg->v_scale_base + uint64_t(tile) * arg->v_scale_tile_bytes,
+      arg->v_zero_base + uint64_t(tile) * arg->v_zero_tile_bytes,
       arg->partial_base,
       arg->query_rows,
       arg->head_dim,
       arg->kv_tile,
+      0u, 0u,
+      arg->pv_qblk, arg->pv_wtrans, arg->pv_qdir,
   };
   active_job_t pv_active = {};
   if (!start_job(arg, pv, pv_active)) {
@@ -432,7 +549,118 @@ static bool run_pv_gemm(kernel_arg_t *arg) {
   return true;
 }
 
+#ifdef GEMM_SRAM_FUSION
+static bool copy_sram(kernel_arg_t *arg, bool to_tmem, uint64_t tmem,
+                      bool probabilities = false) {
+  const uint64_t begin = attention_cycles();
+  const uint32_t element_bytes = arg->output_fp32 && !probabilities
+      ? sizeof(float) : sizeof(fp16_t);
+  const uint32_t bytes = arg->query_rows_pad * arg->kv_tile * element_bytes;
+  const int status = vortex::sram_fusion::copy(
+      to_tmem, tmem, probabilities ? arg->probability_base : arg->score_base,
+      bytes, ++arg->dma_sequence);
+  if (status != 0) {
+    arg->status = FLASH_STATUS_SRAM_DMA;
+    return false;
+  }
+  arg->sram_copy_bytes += bytes;
+  arg->sram_copy_cycles += attention_cycles() - begin;
+  return true;
+}
+
+static bool resident_job(kernel_arg_t *arg, const gemm_job_t &job) {
+  active_job_t active = {};
+  const uint64_t begin = attention_cycles();
+  if (!start_job(arg, job, active)) {
+    arg->status = FLASH_STATUS_ALLOC_FAIL;
+    return false;
+  }
+  const uint64_t submitted = attention_cycles();
+  arg->gemm_submit_cycles += submitted - begin;
+  if (!wait_job_done(active)) {
+    arg->status = FLASH_STATUS_JOB_TIMEOUT;
+    return false;
+  }
+  if (vortex::sram_fusion::wait_resident(active.eid, active.generation) != 0) {
+    arg->status = FLASH_STATUS_RESIDENT_JOB;
+    return false;
+  }
+  arg->gemm_wait_cycles += attention_cycles() - submitted;
+  return true;
+}
+
+static bool run_resident_attention(kernel_arg_t *arg) {
+  if (vortex::sram_fusion::read32(vortex::sram_fusion::kCaps)
+      != vortex::sram_fusion::kCapability) {
+    arg->status = FLASH_STATUS_BAD_DEVICE;
+    return false;
+  }
+  uint64_t simd_begin = attention_cycles();
+  run_initialize();
+  arg->simd_cycles += attention_cycles() - simd_begin;
+  // Own and initialize the complete padded output tile; no HBM preservation load.
+  if (!copy_sram(arg, true, arg->lmem_obuf))
+    return false;
+  const uint32_t tiles = ceil_div_u32(arg->kv_length, arg->kv_tile);
+  for (uint32_t tile = 0; tile < tiles; ++tile) {
+    arg->current_kv_tile = tile;
+    gemm_job_t qk = {
+        arg->q_base,
+        arg->k_weight_base + uint64_t(tile) * arg->k_weight_tile_bytes,
+        arg->k_scale_base + uint64_t(tile) * arg->k_scale_tile_bytes,
+        arg->k_zero_base + uint64_t(tile) * arg->k_zero_tile_bytes,
+        0u, arg->query_rows, arg->kv_tile, arg->head_dim,
+        (tile == 0 ? 2u : 3u) | (arg->output_fp32 ? 4u : 0u), arg->lmem_ibuf[0],
+        arg->qk_qblk, arg->qk_wtrans, arg->qk_qdir,
+    };
+    if (!resident_job(arg, qk) || !copy_sram(arg, false, arg->lmem_obuf))
+      return false;
+    if (tile + 1 == tiles)
+      export_debug(arg, 0);
+    simd_begin = attention_cycles();
+    run_online_softmax();
+    arg->simd_cycles += attention_cycles() - simd_begin;
+    if (tile + 1 == tiles)
+      export_debug(arg, 1);
+    if (!copy_sram(arg, true, arg->lmem_ibuf[1], true))
+      return false;
+    gemm_job_t pv = {
+        0u,
+        arg->v_weight_base + uint64_t(tile) * arg->v_weight_tile_bytes,
+        arg->v_scale_base + uint64_t(tile) * arg->v_scale_tile_bytes,
+        arg->v_zero_base + uint64_t(tile) * arg->v_zero_tile_bytes,
+        0u, arg->query_rows, arg->head_dim, arg->kv_tile,
+        3u | (arg->output_fp32 ? 4u : 0u), arg->lmem_ibuf[1],
+        arg->pv_qblk, arg->pv_wtrans, arg->pv_qdir,
+    };
+    if (!resident_job(arg, pv) || !copy_sram(arg, false, arg->lmem_obuf))
+      return false;
+    arg->pv_progress_events += ceil_div_u32(arg->head_dim, FLASH_MXU_NT);
+    if (tile + 1 == tiles)
+      export_debug(arg, 2);
+    simd_begin = attention_cycles();
+    run_accumulate_partial();
+    arg->simd_cycles += attention_cycles() - simd_begin;
+    arg->completed_kv_tiles = tile + 1;
+  }
+  export_debug(arg, 3);
+  simd_begin = attention_cycles();
+  run_finalize();
+  run_fence();
+  arg->simd_cycles += attention_cycles() - simd_begin;
+  return true;
+}
+#endif
+
 static bool run_attention(kernel_arg_t *arg) {
+  if (arg->resident) {
+#ifdef GEMM_SRAM_FUSION
+    return run_resident_attention(arg);
+#else
+    arg->status = FLASH_STATUS_BAD_DEVICE;
+    return false;
+#endif
+  }
   run_initialize();
   run_fence();
 
@@ -463,6 +691,8 @@ static bool run_attention(kernel_arg_t *arg) {
         arg->query_rows,
         arg->kv_tile,
         arg->head_dim,
+        0u, 0u,
+        arg->qk_qblk, arg->qk_wtrans, arg->qk_qdir,
     };
     active_job_t qk_active = {};
     if (!start_job(arg, qk, qk_active)) {
@@ -508,15 +738,26 @@ int main() {
   arg->later_max_updates = 0u;
   arg->current_kv_tile = 0u;
   arg->completed_kv_tiles = 0u;
+  arg->dma_sequence = 0u;
+  arg->sram_copy_bytes = 0u;
+  arg->total_cycles = 0u;
+  arg->gemm_submit_cycles = 0u;
+  arg->gemm_wait_cycles = 0u;
+  arg->sram_copy_cycles = 0u;
+  arg->simd_cycles = 0u;
 
   if (arg->head_dim != 128u || arg->kv_tile != 128u
       || arg->query_rows == 0u || arg->query_rows > FLASH_DMA_MT
-      || arg->query_rows_pad < arg->query_rows) {
+      || arg->query_rows_pad < arg->query_rows || arg->output_fp32 > 1u
+      || (arg->output_fp32 && !arg->resident)) {
     arg->status = FLASH_STATUS_BAD_DEVICE;
     return 0;
   }
 
-  if (run_attention(arg))
+  const uint64_t begin = attention_cycles();
+  const bool success = run_attention(arg);
+  arg->total_cycles = attention_cycles() - begin;
+  if (success)
     arg->status = FLASH_STATUS_OK;
   return 0;
 }

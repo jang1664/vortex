@@ -10,4 +10,8 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 SRCS := $(SRC_DIR)/main.cpp
 VX_SRCS := $(SRC_DIR)/kernel.cpp
 
+CXXFLAGS += -I$(VORTEX_HOME)/kernel/include
+
 include ../common.mk
+
+kernel.elf: $(SRC_DIR)/common.h $(VORTEX_HOME)/kernel/include/vx_flash_attention.h $(VORTEX_HOME)/kernel/include/vx_sram_fusion.h

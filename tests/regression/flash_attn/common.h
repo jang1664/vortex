@@ -60,51 +60,10 @@
 #define FLASH_STATUS_PROGRESS_TIMEOUT  3u
 #define FLASH_STATUS_JOB_TIMEOUT       4u
 #define FLASH_STATUS_BAD_DEVICE        6u
+#define FLASH_STATUS_SRAM_DMA          7u
+#define FLASH_STATUS_RESIDENT_JOB      8u
 
-typedef struct {
-  uint64_t q_base;
-  uint64_t k_weight_base;
-  uint64_t k_scale_base;
-  uint64_t k_zero_base;
-  uint64_t v_weight_base;
-  uint64_t v_scale_base;
-
-  uint64_t score_base;
-  uint64_t probability_base;
-  uint64_t partial_base;
-  uint64_t accumulator_base;
-  uint64_t row_max_base;
-  uint64_t row_sum_base;
-  uint64_t output_base;
-
-  uint64_t k_weight_tile_bytes;
-  uint64_t k_scale_tile_bytes;
-  uint64_t k_zero_tile_bytes;
-
-  uint64_t lmem_ibuf[2];
-  uint64_t lmem_wbuf[2];
-  uint64_t lmem_scbuf[2];
-  uint64_t lmem_zpbuf[2];
-  uint64_t lmem_obuf;
-
-  uint32_t query_rows;
-  uint32_t query_rows_pad;
-  uint32_t kv_length;
-  uint32_t kv_tile;
-  uint32_t head_dim;
-  uint32_t causal;
-  uint32_t pv_only;
-  uint32_t query_position_base;
-  float attention_scale;
-
-  uint32_t status;
-  uint32_t qk_progress_events;
-  uint32_t pv_progress_events;
-  uint32_t later_max_updates;
-  uint32_t qk_eid;
-  uint32_t qk_generation;
-  uint32_t current_kv_tile;
-  uint32_t completed_kv_tiles;
-} kernel_arg_t;
+#include <vx_flash_attention.h>
+typedef vx_flash_attention_args_t kernel_arg_t;
 
 #endif
