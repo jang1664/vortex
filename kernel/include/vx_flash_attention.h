@@ -72,11 +72,11 @@ typedef struct {
   uint32_t completed_kv_tiles;
   uint32_t dma_sequence;
   uint64_t sram_copy_bytes;
-  // Disjoint wall-cycle intervals on control hart. GEMM wait includes HBM loads.
+  // Disjoint control-hart cycle intervals. GEMM wait includes HBM and internal SRAM DMA.
   uint64_t total_cycles;
   uint64_t gemm_submit_cycles;
   uint64_t gemm_wait_cycles;
-  uint64_t sram_copy_cycles;
+  uint64_t sram_copy_cycles; // One-time TMEM output scratch initialization.
   uint64_t simd_cycles;
   // Optional full-precision QK/PV export; probabilities remain FP16.
   uint32_t output_fp32;

@@ -220,6 +220,9 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_LOG2_DMA_NT, log2_pow2_u32(GEMM_NT));
 
   // Start (valid=1)
+#ifdef GEMM_SRAM_FUSION
+  job_write_reg32(eid, 44u, 0u); // Legacy HBM input/output on the unified descriptor.
+#endif
   job_write_reg32(eid, REG_CONTROL, 1u);
 }
 

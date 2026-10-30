@@ -128,7 +128,7 @@ static void program_job(uint32_t eid, const kernel_arg_t *arg,
   job_write64(eid, REG_ZP_BASE_LO, job.zero_base);
 
   job_write64(eid, REG_LMEM_IBUF0_LO,
-      job.resident_flags & 1u ? job.resident_input_base : arg->lmem_ibuf[0]);
+      (job.resident_flags & 3u) ? job.resident_input_base : arg->lmem_ibuf[0]);
   job_write64(eid, REG_LMEM_IBUF1_LO, arg->lmem_ibuf[1]);
   job_write64(eid, REG_LMEM_WBUF0_LO, arg->lmem_wbuf[0]);
   job_write64(eid, REG_LMEM_WBUF1_LO, arg->lmem_wbuf[1]);
@@ -152,6 +152,9 @@ static void program_job(uint32_t eid, const kernel_arg_t *arg,
   job_write32(eid, REG_LOG2_DMA_MT, log2_pow2_u32(FLASH_DMA_MT));
   job_write32(eid, REG_LOG2_DMA_KT, log2_pow2_u32(FLASH_DMA_KT));
   job_write32(eid, REG_LOG2_DMA_NT, log2_pow2_u32(FLASH_DMA_NT));
+#ifdef GEMM_SRAM_FUSION
+  job_write32(eid, vortex::sram_fusion::kIoControl, job.resident_flags);
+#endif
   job_write32(eid, REG_CONTROL, 1u);
 }
 
@@ -159,11 +162,6 @@ static bool start_job(const kernel_arg_t *arg, const gemm_job_t &job,
                       active_job_t &active) {
   if (!allocate_job(active))
     return false;
-#ifdef GEMM_SRAM_FUSION
-  if (arg->resident
-      && vortex::sram_fusion::arm(active.eid, active.generation, job.resident_flags) != 0)
-    return false;
-#endif
   active.expected_progress = ceil_div_u32(job.m, FLASH_DMA_MT)
                            * ceil_div_u32(job.n, FLASH_MXU_NT);
   program_job(active.eid, arg, job);
@@ -550,24 +548,6 @@ static bool run_pv_gemm(kernel_arg_t *arg) {
 }
 
 #ifdef GEMM_SRAM_FUSION
-static bool copy_sram(kernel_arg_t *arg, bool to_tmem, uint64_t tmem,
-                      bool probabilities = false) {
-  const uint64_t begin = attention_cycles();
-  const uint32_t element_bytes = arg->output_fp32 && !probabilities
-      ? sizeof(float) : sizeof(fp16_t);
-  const uint32_t bytes = arg->query_rows_pad * arg->kv_tile * element_bytes;
-  const int status = vortex::sram_fusion::copy(
-      to_tmem, tmem, probabilities ? arg->probability_base : arg->score_base,
-      bytes, ++arg->dma_sequence);
-  if (status != 0) {
-    arg->status = FLASH_STATUS_SRAM_DMA;
-    return false;
-  }
-  arg->sram_copy_bytes += bytes;
-  arg->sram_copy_cycles += attention_cycles() - begin;
-  return true;
-}
-
 static bool resident_job(kernel_arg_t *arg, const gemm_job_t &job) {
   active_job_t active = {};
   const uint64_t begin = attention_cycles();
@@ -586,6 +566,17 @@ static bool resident_job(kernel_arg_t *arg, const gemm_job_t &job) {
     return false;
   }
   arg->gemm_wait_cycles += attention_cycles() - submitted;
+  // Completed-descriptor accounting, not an independent hardware traffic
+  // counter. Internal DMA time is included in gemm_wait_cycles.
+  if ((job.resident_flags & 3u) == vortex::sram_fusion::kLmem) {
+    ++arg->dma_sequence;
+    arg->sram_copy_bytes += uint64_t(arg->query_rows_pad) * job.k * sizeof(fp16_t);
+  }
+  if (((job.resident_flags >> 2) & 3u) == vortex::sram_fusion::kLmem) {
+    ++arg->dma_sequence; // Copy back the completed output tile.
+    arg->sram_copy_bytes += uint64_t(arg->query_rows_pad) * job.n
+        * (arg->output_fp32 ? sizeof(float) : sizeof(fp16_t));
+  }
   return true;
 }
 
@@ -598,9 +589,19 @@ static bool run_resident_attention(kernel_arg_t *arg) {
   uint64_t simd_begin = attention_cycles();
   run_initialize();
   arg->simd_cycles += attention_cycles() - simd_begin;
-  // Own and initialize the complete padded output tile; no HBM preservation load.
-  if (!copy_sram(arg, true, arg->lmem_obuf))
+  // Initialize OBUF once. GEMMs overwrite active elements and retain its
+  // initialized padding while reusing the same output scratch reservation.
+  const uint64_t init_begin = attention_cycles();
+  const uint32_t init_bytes = arg->query_rows_pad * arg->kv_tile
+      * (arg->output_fp32 ? sizeof(float) : sizeof(fp16_t));
+  if (vortex::sram_fusion::copy(true, arg->lmem_obuf, arg->score_base,
+                              init_bytes) != 0) {
+    arg->status = FLASH_STATUS_SRAM_DMA;
     return false;
+  }
+  ++arg->dma_sequence;
+  arg->sram_copy_bytes += init_bytes;
+  arg->sram_copy_cycles += attention_cycles() - init_begin;
   const uint32_t tiles = ceil_div_u32(arg->kv_length, arg->kv_tile);
   for (uint32_t tile = 0; tile < tiles; ++tile) {
     arg->current_kv_tile = tile;
@@ -609,11 +610,11 @@ static bool run_resident_attention(kernel_arg_t *arg) {
         arg->k_weight_base + uint64_t(tile) * arg->k_weight_tile_bytes,
         arg->k_scale_base + uint64_t(tile) * arg->k_scale_tile_bytes,
         arg->k_zero_base + uint64_t(tile) * arg->k_zero_tile_bytes,
-        0u, arg->query_rows, arg->kv_tile, arg->head_dim,
-        (tile == 0 ? 2u : 3u) | (arg->output_fp32 ? 4u : 0u), arg->lmem_ibuf[0],
+        arg->score_base, arg->query_rows, arg->kv_tile, arg->head_dim,
+        (tile == 0 ? 0u : 1u) | (2u << 2) | (arg->output_fp32 ? 16u : 0u), arg->lmem_ibuf[0],
         arg->qk_qblk, arg->qk_wtrans, arg->qk_qdir,
     };
-    if (!resident_job(arg, qk) || !copy_sram(arg, false, arg->lmem_obuf))
+    if (!resident_job(arg, qk))
       return false;
     if (tile + 1 == tiles)
       export_debug(arg, 0);
@@ -622,18 +623,16 @@ static bool run_resident_attention(kernel_arg_t *arg) {
     arg->simd_cycles += attention_cycles() - simd_begin;
     if (tile + 1 == tiles)
       export_debug(arg, 1);
-    if (!copy_sram(arg, true, arg->lmem_ibuf[1], true))
-      return false;
     gemm_job_t pv = {
-        0u,
+        arg->probability_base,
         arg->v_weight_base + uint64_t(tile) * arg->v_weight_tile_bytes,
         arg->v_scale_base + uint64_t(tile) * arg->v_scale_tile_bytes,
         arg->v_zero_base + uint64_t(tile) * arg->v_zero_tile_bytes,
-        0u, arg->query_rows, arg->head_dim, arg->kv_tile,
-        3u | (arg->output_fp32 ? 4u : 0u), arg->lmem_ibuf[1],
+        arg->partial_base, arg->query_rows, arg->head_dim, arg->kv_tile,
+        2u | (2u << 2) | (arg->output_fp32 ? 16u : 0u), arg->lmem_ibuf[1],
         arg->pv_qblk, arg->pv_wtrans, arg->pv_qdir,
     };
-    if (!resident_job(arg, pv) || !copy_sram(arg, false, arg->lmem_obuf))
+    if (!resident_job(arg, pv))
       return false;
     arg->pv_progress_events += ceil_div_u32(arg->head_dim, FLASH_MXU_NT);
     if (tile + 1 == tiles)

@@ -740,7 +740,8 @@ int main(int argc, char **argv) {
             << ", pv_progress_events=" << args.pv_progress_events
             << ", later_max_updates=" << args.later_max_updates
             << ", completed_tiles=" << args.completed_kv_tiles
-            << ", sram_copy_bytes=" << args.sram_copy_bytes << std::endl;
+            << ", sram_copy_bytes=" << args.sram_copy_bytes
+            << ", sram_copy_commands=" << args.dma_sequence << std::endl;
   const uint64_t measured_phases = args.gemm_submit_cycles + args.gemm_wait_cycles
       + args.sram_copy_cycles + args.simd_cycles;
   std::cout << "ATTENTION_CYCLES total=" << args.total_cycles
@@ -756,6 +757,7 @@ int main(int argc, char **argv) {
              && args.pv_progress_events == expected_progress
              && reference.pv_overflows == 0 && reference.qk_overflows == 0;
   if (g_resident) {
+    std::cout << "Internal SRAM DMA cycles are included in gemm_wait; sram_copy measures one-time OBUF initialization. Copy counts are descriptor-derived." << std::endl;
     passed &= args.total_cycles >= measured_phases;
     const uint64_t expected_copies = uint64_t(3) * tile_count + 1;
     const uint64_t expected_bytes = (2 * scratch_bytes + probability_bytes) * tile_count

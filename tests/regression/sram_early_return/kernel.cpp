@@ -21,21 +21,22 @@ int main() {
     for (uint32_t i = 0; i < kCopyWords; ++i)
       source[i] = pattern(i);
     fusion::publish();
-    fusion::write64(fusion::kTmemAddress, 0u);
-    fusion::write64(fusion::kLmemAddress, kSource);
-    fusion::write32(fusion::kLength, kCopyBytes);
-    fusion::write32(fusion::kSequence, kWriteSequence);
-    fusion::write32(fusion::kCommand, 3u);
-    // One same-window read orders the posted doorbell. This is deliberately
-    // not a completion wait: return while the real long copy is still busy.
-    const uint32_t status = fusion::read32(fusion::kStatus);
-    arg->status = (status & 1u) ? 0 : -2;
+    uint32_t entry, generation;
+    const int result = fusion::submit_copy(true, 0u, kSource, kCopyBytes,
+                                           entry, generation);
+    if (result) {
+      arg->status = result;
+      return 0;
+    }
+    // Return without waiting while the long copy still owns this descriptor.
+    const uint32_t control = fusion::entry_read(entry, 0u);
+    arg->status = (control & (1u << JOB_MMIO_CTRL_OCCUPY_BIT)) ? 0 : -2;
     return 0;
   }
 
   if (arg->phase != 1u)
     return 0;
-  const int result = fusion::copy(false, 0u, kDestination, kCopyBytes, kReadSequence);
+  const int result = fusion::copy(false, 0u, kDestination, kCopyBytes);
   if (result) {
     arg->status = result;
     return 0;

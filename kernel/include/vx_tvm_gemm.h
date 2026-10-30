@@ -21,7 +21,7 @@ namespace tvm_gemm {
 static constexpr uint64_t kRegisterBase = 0x1080ull;
 static constexpr uint32_t kBeatBytes = 8;
 static constexpr uint32_t kWordsPerBeat = kBeatBytes / 4;
-static constexpr uint32_t kRegisterCount = 44;
+static constexpr uint32_t kRegisterCount = GEMM_CFG_REG_NUM;
 static constexpr uint32_t kEntryCount = 4;
 static constexpr uint32_t kEntryStride =
     ((kRegisterCount + kWordsPerBeat - 1) / kWordsPerBeat) * kBeatBytes;
@@ -232,6 +232,9 @@ static inline int submit(const void* input, const void* weight, const void* scal
     write32(entry, kModeRegister41, log2_pow2(kTileK));
     write32(entry, kModeRegister42, log2_pow2(kTileN));
   }
+#ifdef GEMM_SRAM_FUSION
+  write32(entry, 44u, 0u); // Legacy HBM input/output on the unified descriptor.
+#endif
   write32(entry, kControl, 1);
 
   for (;;) {

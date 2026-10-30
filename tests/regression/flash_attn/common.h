@@ -51,7 +51,7 @@
 #define REG_LOG2_DMA_NT        42u
 #define REG_OUTPUT_PROGRESS    43u
 
-#define GEMM_JOB_NUM_REGS32  44u
+#define GEMM_JOB_NUM_REGS32  GEMM_CFG_REG_NUM
 #define GEMM_JOB_NUM_ENTRIES  4u
 
 #define FLASH_STATUS_INIT              0u
