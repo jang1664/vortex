@@ -109,7 +109,7 @@ proc ::vortex::slr::require_fusion_marked_groups {root local marked} {
             }
         }
     }
-    # Every retained master has both complete MMIO links. Discover from the
+    # Every retained master has one complete scalar GEMM MMIO link. Discover from the
     # ownership inventory, so deleting a marked half cannot delete its scope.
     set masters {}
     foreach cell [dict keys $owners] {
@@ -119,7 +119,7 @@ proc ::vortex::slr::require_fusion_marked_groups {root local marked} {
     }
     need [dict keys $masters] "fusion MMIO master inventory"
     foreach master [dict keys $masters] {
-        foreach kind {fusion gemm} {
+        foreach kind {gemm} {
             foreach stream {request response} {
                 foreach half {tx rx} {
                     set pattern [format {^g_fusion_mmio_link\[%s\]/u_%s/u_%s_%s/} $master $kind $stream $half]

@@ -405,11 +405,6 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
     );
 `else
-`ifdef GEMM_SRAM_FUSION
-    for (genvar i = 1; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_fusion_dma_lmem
-        `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
-    end
-`else
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl
         VX_lsu_mem_zero_rsp #(
             .NUM_LANES (`NUM_LSU_LANES),
@@ -422,6 +417,11 @@ module VX_core import VX_gpu_pkg::*; #(
         );
     end
 
+`ifdef GEMM_SRAM_FUSION
+    for (genvar i = 1; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_fusion_dma_lmem
+        `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
+    end
+`else
     for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_disabled_dma_lmem
         `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
     end
@@ -555,7 +555,6 @@ module VX_core import VX_gpu_pkg::*; #(
         .lmem_dma_output_perf (accel_perf.lmem_dma_output),
     `endif
 `ifdef GEMM_SRAM_FUSION
-        .fusion_mmio_if(dma_ctrl_if),
         .fusion_lmem_if(dma_local_data_if[0]),
         .fusion_lmem_write_commit_i(fusion_lmem_write_commit),
         .fusion_lmem_published_i(fusion_lmem_published),

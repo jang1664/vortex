@@ -155,7 +155,8 @@ proc ::vortex::slr::recover_fusion_drain_owner {leaf root ref} {
             error "fusion helper must terminate on proven local FFs"
         }
         set marked [expr {[string tolower [get_property USER_SLL_REG $sink]] in {1 true yes}}]
-        if {[string first "$root/u_fusion_ctrl/" $name] == 0 && !$marked} {
+        if {([string first "$root/u_gemm_sram_io/" $name] == 0
+            || [string first "$root/u_fusion_ctrl/" $name] == 0) && !$marked} {
             set controller_witness 1
         } elseif {$name eq "$root/u_fusion_busy_export/busy_tx_q_reg"
             && [get_property REF_PIN_NAME $pin] eq "D" && $marked

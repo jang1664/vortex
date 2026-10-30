@@ -33,7 +33,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // DMA engine AXI ports (pass through to VX_tmem_subsystem -> HBM)
     AXI_BUS.Master          dma_axi_m [NUM_DMA_CHANNELS]
 `ifdef GEMM_SRAM_FUSION
-    ,VX_lsu_mem_if.slave fusion_mmio_if[N_MASTER]
     ,VX_mem_bus_if.master fusion_lmem_if
     ,input wire fusion_lmem_write_commit_i
     ,input wire fusion_lmem_published_i
@@ -318,23 +317,29 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire [31:0] progress_update_value;
 
 `ifdef GEMM_SRAM_FUSION
-    wire [`JOB_MMIO_NUM_ENTRIES-1:0][31:0] fusion_job_control;
     wire [2:0] fusion_resident_flags;
     wire fusion_output_fp32;
     wire fusion_resident_reject;
     wire fusion_ctrl_quiescent, fusion_tmem_quiescent;
-    wire fusion_bridge_busy, fusion_frontend_pending;
-    wire [2*N_MASTER-1:0] fusion_mmio_owned, fusion_mmio_offer;
+    wire fusion_frontend_pending;
+    wire fusion_io_busy;
+    wire [N_MASTER-1:0] fusion_mmio_owned, fusion_mmio_offer, fusion_serial_owned;
+    wire frontend_publish_valid, frontend_publish_ready;
+    wire io_publish_valid, io_publish_ready;
+    wire io_status_valid;
+    wire [`JOB_MMIO_ENTRYID_W-1:0] io_status_entry;
+    wire [31:0] io_status_value;
+    VX_config_reg_if #(.NUM(`GEMM_CFG_REG_NUM), .DW(32)) gemm_issue_if();
+    VX_node_done_if gemm_done_if();
     wire publication_query_valid, publication_query_ready;
     wire publication_query_wait, publication_query_token;
     wire publication_reply_valid, publication_reply_ready;
     wire publication_reply_published, publication_reply_token;
-    VX_lsu_mem_if #(.NUM_LANES(`NUM_LSU_LANES), .DATA_SIZE(LSU_WORD_SIZE),
-        .TAG_WIDTH(LSU_TAG_WIDTH)) fusion_remote_mmio[N_MASTER]();
-    VX_lsu_mem_if #(.NUM_LANES(`NUM_LSU_LANES), .DATA_SIZE(LSU_WORD_SIZE),
+    VX_lsu_mem_if #(.NUM_LANES(1), .DATA_SIZE(LSU_WORD_SIZE),
+        .TAG_WIDTH(LSU_TAG_WIDTH)) fusion_scalar_mmio[N_MASTER]();
+    VX_lsu_mem_if #(.NUM_LANES(1), .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(LSU_TAG_WIDTH)) fusion_remote_gemm_mmio[N_MASTER]();
-    wire fusion_resident_done;
-    wire [31:0] fusion_resident_entry, fusion_resident_error;
+    wire [31:0] fusion_resident_error;
     wire fusion_owner;
     wire fusion_cmd_valid, fusion_cmd_ready, fusion_cmd_direction;
     wire [63:0] fusion_cmd_tmem, fusion_cmd_lmem;
@@ -350,21 +355,50 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     for (genvar m=0; m<N_MASTER; ++m) begin : g_fusion_mmio_link
         (* KEEP_HIERARCHY = "yes" *)
-        VX_sram_lsu_transport #(.INSTANCE_ID({INSTANCE_ID, ":fusion_mmio"})) u_fusion (
-            .clk(clk), .source_reset(reset), .destination_reset(reset),
-            .source_if(fusion_mmio_if[m]), .destination_if(fusion_remote_mmio[m]),
-            .source_owned_o(fusion_mmio_owned[m])
+        VX_mmio_serializer #(.INSTANCE_ID({INSTANCE_ID, ":mmio_serial"})) u_serializer (
+            .clk(clk), .reset(reset), .source_if(mmio_if[m]),
+            .scalar_if(fusion_scalar_mmio[m]), .owned_o(fusion_serial_owned[m])
         );
         (* KEEP_HIERARCHY = "yes" *)
         VX_sram_lsu_transport #(.INSTANCE_ID({INSTANCE_ID, ":gemm_mmio"}),
             .DESTINATION_READ_SLOTS(4)) u_gemm (
             .clk(clk), .source_reset(reset), .destination_reset(reset),
-            .source_if(mmio_if[m]), .destination_if(fusion_remote_gemm_mmio[m]),
-            .source_owned_o(fusion_mmio_owned[N_MASTER+m])
+            .source_if(fusion_scalar_mmio[m]), .destination_if(fusion_remote_gemm_mmio[m]),
+            .source_owned_o(fusion_mmio_owned[m])
         );
-        // Offered work remains visible until the registered link owns it.
-        assign fusion_mmio_offer[m] = fusion_mmio_if[m].req_valid;
-        assign fusion_mmio_offer[N_MASTER+m] = mmio_if[m].req_valid;
+        assign fusion_mmio_offer[m] = mmio_if[m].req_valid || fusion_serial_owned[m];
+    end
+    // Both ordinary MMIO PUBLISH and implicit DMA preparation use the same
+    // request-scoped publication handshake. Only one query is outstanding.
+    typedef enum logic [1:0] {PUB_IDLE, PUB_SEND, PUB_REPLY} publication_state_t;
+    publication_state_t publication_state_q;
+    logic publication_io_q, publication_token_q;
+    assign publication_query_valid = publication_state_q == PUB_SEND;
+    assign publication_query_wait = 1'b1;
+    assign publication_query_token = publication_token_q;
+    assign publication_reply_ready = publication_state_q == PUB_REPLY;
+    wire publication_complete = publication_reply_valid && publication_reply_ready
+                              && publication_reply_published
+                              && publication_reply_token == publication_token_q;
+    assign frontend_publish_ready = publication_complete && !publication_io_q;
+    assign io_publish_ready = publication_complete && publication_io_q;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            publication_state_q <= PUB_IDLE;
+            publication_io_q <= 0;
+            publication_token_q <= 0;
+        end else begin
+            case (publication_state_q)
+                PUB_IDLE: if (io_publish_valid || frontend_publish_valid) begin
+                    publication_io_q <= io_publish_valid;
+                    publication_token_q <= !publication_token_q;
+                    publication_state_q <= PUB_SEND;
+                end
+                PUB_SEND: if (publication_query_ready) publication_state_q <= PUB_REPLY;
+                PUB_REPLY: if (publication_complete) publication_state_q <= PUB_IDLE;
+                default: publication_state_q <= PUB_IDLE;
+            endcase
+        end
     end
     (* KEEP_HIERARCHY = "yes" *) VX_sram_publish_link u_fusion_publication (
         .clk(clk), .controller_reset(reset), .observer_reset(reset),
@@ -375,9 +409,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .published_i(fusion_lmem_published_i)
     );
     (* KEEP_HIERARCHY = "yes" *)
-    VX_sram_busy_export #(.SOURCES(2*N_MASTER)) u_fusion_busy_export (
+    VX_sram_busy_export #(.SOURCES(N_MASTER)) u_fusion_busy_export (
         .clk(clk), .source_reset(reset), .destination_reset(reset),
-        .operational_busy_i(fusion_bridge_busy || fusion_frontend_pending
+        .operational_busy_i(fusion_io_busy || fusion_frontend_pending
             || !fusion_ctrl_quiescent || !fusion_tmem_quiescent
             || !fusion_tmem_request_idle || !fusion_lmem_request_idle),
         .source_owned_i(fusion_mmio_owned), .source_offer_i(fusion_mmio_offer),
@@ -409,35 +443,26 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         else
             fusion_lmem_commit_q <= fusion_lmem_write_commit_i;
     end
-    (* KEEP_HIERARCHY = "yes" *) VX_sram_fusion_ctrl #(
-        .INSTANCE_ID({INSTANCE_ID, ":fusion_ctrl"}), .NUM_MASTERS(N_MASTER),
-        .PUBLICATION_LINK(1'b1)
-    ) u_fusion_ctrl (
-        .clk(clk), .reset(reset), .mmio_if(fusion_remote_mmio),
-        .gemm_quiescent_i(fusion_ctrl_quiescent && fusion_tmem_quiescent
-                       && fusion_tmem_request_idle && fusion_lmem_request_idle),
-        .lmem_published_i(1'b0),
-        .publication_query_valid_o(publication_query_valid),
-        .publication_query_ready_i(publication_query_ready),
-        .publication_query_wait_o(publication_query_wait),
-        .publication_query_token_o(publication_query_token),
-        .publication_reply_valid_i(publication_reply_valid),
-        .publication_reply_ready_o(publication_reply_ready),
-        .publication_reply_published_i(publication_reply_published),
-        .publication_reply_token_i(publication_reply_token),
-        .job_control_i(fusion_job_control),
-        .job_accept_i(issue_if.valid && issue_if.ready),
-        .job_entry_i(issue_if.entry_id), .job_issue_control_i(issue_if.regs[0]),
-        .resident_flags_o(fusion_resident_flags), .resident_reject_o(fusion_resident_reject),
-        .resident_done_i(fusion_resident_done), .resident_done_entry_i(fusion_resident_entry),
-        .resident_error_i(fusion_resident_error),
-        .bridge_busy_o(fusion_bridge_busy), .bridge_owner_o(fusion_owner),
-        .cmd_valid_o(fusion_cmd_valid), .cmd_ready_i(fusion_cmd_ready),
-        .cmd_direction_o(fusion_cmd_direction), .cmd_tmem_addr_o(fusion_cmd_tmem),
-        .cmd_lmem_addr_o(fusion_cmd_lmem), .cmd_length_o(fusion_cmd_length),
-        .cmd_sequence_o(fusion_cmd_sequence), .dma_busy_i(fusion_dma_busy),
-        .dma_done_i(fusion_dma_done), .dma_done_sequence_i(fusion_done_sequence),
-        .dma_error_i(fusion_dma_error)
+    assign fusion_resident_reject = 1'b0;
+    assign fusion_cmd_sequence = 32'd0;
+    (* KEEP_HIERARCHY = "yes" *) VX_gemm_sram_io #(
+        .INSTANCE_ID({INSTANCE_ID, ":sram_io"}),
+        .TMEM_BYTES(64'(NUM_TMEM_BANKS) * `TMEM_BANK_SIZE)
+    ) u_gemm_sram_io (
+        .clk(clk), .reset(reset), .job_if(issue_if), .gemm_if(gemm_issue_if),
+        .gemm_done_if(gemm_done_if), .done_if(done_if),
+        .gemm_error_i(fusion_resident_error),
+        .memory_idle_i(fusion_ctrl_quiescent && fusion_tmem_quiescent
+                      && fusion_tmem_request_idle && fusion_lmem_request_idle),
+        .resident_flags_o(fusion_resident_flags), .busy_o(fusion_io_busy),
+        .dma_owner_o(fusion_owner),
+        .publish_valid_o(io_publish_valid), .publish_ready_i(io_publish_ready),
+        .status_valid_o(io_status_valid), .status_entry_o(io_status_entry),
+        .status_value_o(io_status_value),
+        .dma_valid_o(fusion_cmd_valid), .dma_ready_i(fusion_cmd_ready),
+        .dma_direction_o(fusion_cmd_direction), .dma_tmem_o(fusion_cmd_tmem),
+        .dma_lmem_o(fusion_cmd_lmem), .dma_length_o(fusion_cmd_length),
+        .dma_done_i(fusion_dma_done), .dma_error_i(fusion_dma_error)
     );
     (* KEEP_HIERARCHY = "yes" *) VX_sram_dma #(
         .INSTANCE_ID({INSTANCE_ID, ":sram_dma"}),
@@ -1490,6 +1515,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .HW_WRITE_REG_IDX(OUTPUT_PROGRESS_REG_IDX),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR),
       .ONE_LANE_MMIO(1'b1)
+`ifdef GEMM_SRAM_FUSION
+      ,.MMIO_NUM_LANES(1), .UNIFIED_MMIO(1'b1), .HW_STATUS_REG_IDX(45)
+`endif
     ) u_job_frontend (
       .clk(clk),
       .reset(reset),
@@ -1504,8 +1532,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .hw_write_entry_id_i(progress_update_entry_id),
       .hw_write_value_i(progress_update_value)
 `ifdef GEMM_SRAM_FUSION
-      ,.fusion_control_o(fusion_job_control)
+      ,.fusion_control_o()
       ,.fusion_frontend_pending_o(fusion_frontend_pending)
+      ,.publish_valid_o(frontend_publish_valid), .publish_ready_i(frontend_publish_ready)
+      ,.hw_status_valid_i(io_status_valid), .hw_status_entry_id_i(io_status_entry)
+      ,.hw_status_value_i(io_status_value)
 `endif
     );
 
@@ -1763,19 +1794,27 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
+`ifdef GEMM_SRAM_FUSION
+      .cfg_reg_if(gemm_issue_if),
+`else
       .cfg_reg_if(issue_if),
+`endif
 `ifdef GEMM_SRAM_FUSION
       .output_fp32_o(fusion_output_fp32),
       .resident_flags_i(fusion_resident_flags),
       .resident_reject_i(fusion_resident_reject),
-      .bridge_busy_i(fusion_bridge_busy || reset),
+      .bridge_busy_i(fusion_owner || reset),
       .resident_quiescent_o(fusion_ctrl_quiescent),
-      .resident_done_o(fusion_resident_done),
-      .resident_done_entry_id_o(fusion_resident_entry),
+      .resident_done_o(),
+      .resident_done_entry_id_o(),
       .resident_error_o(fusion_resident_error),
 `endif
       .gemm_ctrl_if(gemm_ctrl_if),
+`ifdef GEMM_SRAM_FUSION
+      .done_if(gemm_done_if),
+`else
       .done_if(done_if),
+`endif
       .gemm_sync_slv_if(gemm_sync_if),
       .output_store_done_i(output_store_done),
       .progress_update_valid_o(progress_update_valid),

@@ -27,6 +27,12 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   parameter int DATA_SIZE              = 4,
   parameter int TAG_WIDTH              = 1,
   parameter bit ONE_LANE               = 1'b0
+`ifdef GEMM_SRAM_FUSION
+  ,parameter bit UNIFIED_MMIO = 1'b0
+  ,parameter int HW_STATUS_REG_IDX = -1
+  ,parameter logic [63:0] PUBLISH_OFFSET = 64'h3f0
+  ,parameter logic [63:0] CAPABILITY_OFFSET = 64'h3f8
+`endif
 ) (
   input  wire clk,
   input  wire reset,
@@ -47,6 +53,11 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   output logic [NUM_ENTRIES-1:0] working_o,
   output logic [NUM_ENTRIES-1:0][NUM_REGS32-1:0][31:0] regs32_o
 `ifdef GEMM_SRAM_FUSION
+  ,output wire publish_valid_o
+  ,input wire publish_ready_i
+  ,input wire hw_status_valid_i
+  ,input wire [ENTRYID_W-1:0] hw_status_entry_id_i
+  ,input wire [31:0] hw_status_value_i
   ,output wire fusion_mmio_pending_o
 `endif
 );
@@ -99,6 +110,12 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   initial begin
     if ((DATA_SIZE & (DATA_SIZE - 1)) != 0) $fatal(1, "%s: DATA_SIZE must be power-of-two", INSTANCE_ID);
     if ((DATA_SIZE % 4) != 0) $fatal(1, "%s: DATA_SIZE must be multiple of 4", INSTANCE_ID);
+`ifdef GEMM_SRAM_FUSION
+    if (UNIFIED_MMIO && (NUM_LANES != 1 || !ONE_LANE))
+      $fatal(1, "%s: unified MMIO requires the scalar register port", INSTANCE_ID);
+    if (UNIFIED_MMIO && GLOBAL_ALLOC_B + NUM_ENTRIES * ENTRY_STRIDE_B > PUBLISH_OFFSET)
+      $fatal(1, "%s: descriptor map overlaps publication register", INSTANCE_ID);
+`endif
     if (WORDS_PER_BEAT <= 0)          $fatal(1, "%s: WORDS_PER_BEAT invalid", INSTANCE_ID);
     if (ENTRYID_W < $clog2(NUM_ENTRIES)) $fatal(1, "%s: ENTRYID_W too small", INSTANCE_ID);
     if (OWNER_W <= 0)                 $fatal(1, "%s: OWNER_W must be >= 1", INSTANCE_ID);
@@ -231,6 +248,15 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   logic                 req_process;
   logic                 req_capture;
 
+`ifdef GEMM_SRAM_FUSION
+  // The scalar publication read stays in the existing request stage until
+  // its transaction-scoped observation returns. Do not use raw published
+  // combinationally in request ready: it includes current LSU admissions.
+  wire publish_request = UNIFIED_MMIO && req_valid_q && !req_rw_q
+      && req_mask_valid_q && get_off(addr_to_byte(req_addr_q)) == PUBLISH_OFFSET;
+  assign publish_valid_o = publish_request && !rsp_holding;
+`endif
+
   // ------------------------------------------------------------
   // next-state + outputs
   // ------------------------------------------------------------
@@ -247,6 +273,12 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     rsp_holding       = rsp_valid_q && ~mmio_if.rsp_ready;
     req_process       = req_valid_q && ~rsp_holding;
     mmio_if.req_ready = ~rsp_holding;
+`ifdef GEMM_SRAM_FUSION
+    if (publish_request && !publish_ready_i) begin
+      req_process = 1'b0;
+      mmio_if.req_ready = 1'b0;
+    end
+`endif
     req_capture       = mmio_if.req_valid && mmio_if.req_ready;
 
     req_mask_valid_sel = 1'b0;
@@ -358,6 +390,16 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       end
     end
 
+`ifdef GEMM_SRAM_FUSION
+    if (UNIFIED_MMIO && hw_status_valid_i
+     && HW_STATUS_REG_IDX >= 0 && HW_STATUS_REG_IDX < NUM_REGS32) begin
+      if (int'(hw_status_entry_id_i) < NUM_ENTRIES
+       && occupy_q[hw_status_entry_id_i]) begin
+        regs32_d[hw_status_entry_id_i][HW_STATUS_REG_IDX] = hw_status_value_i;
+      end
+    end
+`endif
+
     // MMIO request handling
     if (req_process) begin
       req_owner = OWNER_W'(req_tag_q
@@ -376,6 +418,13 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
           byte_addr = addr_to_byte(req_addr_q);
           off       = get_off(byte_addr);
 
+`ifdef GEMM_SRAM_FUSION
+          if (UNIFIED_MMIO && !req_rw_q && off == PUBLISH_OFFSET) begin
+            rsp_data_d[req_lane_q][0 +: 32] = 32'd1;
+          end else if (UNIFIED_MMIO && !req_rw_q && off == CAPABILITY_OFFSET) begin
+            rsp_data_d[req_lane_q][0 +: 32] = 32'h53465203;
+          end else
+`endif
           if (~req_rw_q && is_alloc_reg(off)) begin
             // With the one-hot request contract, the selected lane is the sole
             // owner of this side effect; it does not need to be lane 0.
@@ -398,6 +447,16 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
               if (HW_WRITE_REG_IDX >= 0 && HW_WRITE_REG_IDX < NUM_REGS32) begin
                 regs32_d[alloc_sel_e][HW_WRITE_REG_IDX] = '0;
               end
+`ifdef GEMM_SRAM_FUSION
+              if (UNIFIED_MMIO) begin
+                // Reused slots default to ordinary HBM GEMM, not stale SRAM
+                // destinations or a previous copy-only opcode (ABI word 44).
+                if (NUM_REGS32 > 44)
+                  regs32_d[alloc_sel_e][44] = '0;
+                if (HW_STATUS_REG_IDX >= 0 && HW_STATUS_REG_IDX < NUM_REGS32)
+                  regs32_d[alloc_sel_e][HW_STATUS_REG_IDX] = '0;
+              end
+`endif
               next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
               rr_alloc_d = next_alloc[RRW-1:0];
               rsp_data_d[req_lane_q][0 +: 32] = pack_alloc_rsp(
@@ -441,6 +500,11 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                     new_w = old_w;
                   end
 
+`ifdef GEMM_SRAM_FUSION
+                  if (UNIFIED_MMIO && r32 == HW_STATUS_REG_IDX)
+                    // Preserve a same-cycle hardware completion update.
+                    new_w = regs32_d[eid][r32];
+`endif
                   regs32_d[eid][r32] = new_w;
                 end
               end

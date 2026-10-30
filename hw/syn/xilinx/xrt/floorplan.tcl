@@ -50,7 +50,7 @@ proc ::vortex::slr::logical_path {path} {
     if {[string first "g_output_slr_completion." $path] >= 0} {
         regsub -all {(^|/)g_output_slr_completion[.]} $path {\1g_output_slr_completion/} path
     }
-    regsub -all {(g_fusion_mmio_link\[[0-9]+\])[.](u_fusion|u_gemm)/} $path {\1/\2/} path
+    regsub -all {(g_fusion_mmio_link\[[0-9]+\])[.](u_fusion|u_gemm|u_serializer)/} $path {\1/\2/} path
     # Only architectural generate names used by the ordinary-LMEM links.
     # Keep a match-only view; retained Vivado object names remain untouched.
     foreach token {g_lmem_lane_dma_arb\[[0-9]+\] g_req_data_in\[[0-9]+\] g_fusion_lane_request g_req_hier_valid g_multi_inputs g_multiple_outputs g_xbar_arbs\[[0-9]+\] g_input_select g_fanout g_slice_arbs\[[0-9]+\] g_fusion_bank_link} {
@@ -65,7 +65,7 @@ proc ::vortex::slr::owner_for {path} {
     set original $path
     set path [logical_path $path]
     if {[string match {u_tmem_dma_ctrl/*} $path]} {return 0}
-    if {[regexp {^g_fusion_mmio_link\[[0-9]+\]/(?:u_fusion|u_gemm)/(.+)$} $path -> leaf]} {
+    if {[regexp {^g_fusion_mmio_link\[[0-9]+\]/(?:u_fusion|u_gemm|u_serializer)/(.+)$} $path -> leaf]} {
         if {[regexp {^u_(request_rx|response_tx)/} $leaf]} {return 1}
         return 0
     }

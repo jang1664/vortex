@@ -1510,7 +1510,11 @@ for block_size in range(1, full_bitwidth+1):
 `ifdef GEMM_NAIVE
 `define GEMM_CFG_REG_NUM 44       // Naive LMEM backend register map + reserved tile regs + output progress
 `else
+`ifdef GEMM_SRAM_FUSION
+`define GEMM_CFG_REG_NUM 46       // Ordinary descriptor + memory options and completion error
+`else
 `define GEMM_CFG_REG_NUM 44       // Improve TMEM backend register map + output progress
+`endif
 `endif
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
 `ifdef XLEN_64
