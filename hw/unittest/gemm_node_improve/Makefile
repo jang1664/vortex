@@ -147,7 +147,8 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
 
 ifneq (,$(findstring GEMM_SRAM_FUSION,$(CONFIGS)))
 RTLS += $(RTL_DIR)/core/VX_sram_dma.sv \
-        $(RTL_DIR)/core/VX_sram_fusion_ctrl.sv \
+        $(RTL_DIR)/core/VX_mmio_serializer.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_sram_io.sv \
         $(RTL_DIR)/core/VX_sram_lsu_transport.sv \
         $(RTL_DIR)/core/VX_sram_publish_link.sv \
         $(RTL_DIR)/core/VX_sram_busy_export.sv \
@@ -199,7 +200,7 @@ COMPILE_TARGET := compile_fpnew
 SIMV := simv_fpnew
 endif
 ifneq (,$(findstring GEMM_SRAM_FUSION,$(CONFIGS)))
-$(COMPILE_TARGET): $(SRC_DIR)/sram_resident_connections.svh $(SRC_DIR)/sram_resident_tests.svh $(SRC_DIR)/sram_acc_backpressure.svh $(SRC_DIR)/sram_route_tests.svh $(SRC_DIR)/sram_local_owner_tests.svh $(SRC_DIR)/sram_boundary_tests.svh
+$(COMPILE_TARGET): $(SRC_DIR)/sram_resident_connections.svh $(SRC_DIR)/sram_unified_tests.svh $(SRC_DIR)/sram_acc_backpressure.svh
 endif
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW

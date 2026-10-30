@@ -2,10 +2,6 @@
 // Only the SIMD-side LMEM endpoint is modeled; destination stores deliberately
 // commit several cycles after acceptance to expose premature completion.
 `include "sram_acc_backpressure.svh"
-VX_lsu_mem_if #(
-    .NUM_LANES(`NUM_LSU_LANES), .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(LSU_TAG_WIDTH)
-) fusion_mmio_if[N_MASTER]();
 VX_mem_bus_if #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(LMEM_TAG_WIDTH))
     fusion_lmem_if();
 wire fusion_busy;
@@ -26,8 +22,6 @@ int fusion_input_read_count[NUM_DMA_CHANNELS];
 int fusion_output_read_count[NUM_DMA_CHANNELS];
 logic [63:0] fusion_watch_input, fusion_watch_output;
 int fusion_watch_input_bytes, fusion_watch_output_bytes;
-int unsigned fusion_sequence = 0;
-logic [LSU_TAG_WIDTH-1:0] fusion_mmio_tag = 0;
 
 assign fusion_lmem_if.req_ready = !reset && !fusion_mem_pending
     && !fusion_lmem_if.rsp_valid && (fusion_clock % 5 != 0);
@@ -128,9 +122,3 @@ function automatic int fusion_count(input int kind);
     end
     return count;
 endfunction
-
-initial begin
-    fusion_mmio_if[0].req_valid = 0;
-    fusion_mmio_if[0].req_data = '0;
-    fusion_mmio_if[0].rsp_ready = 1;
-end
