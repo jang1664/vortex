@@ -1,5 +1,7 @@
 # VX_sram_fusion_ctrl
 
+Current C4 integration uses [unified GEMM MMIO](VX_gemm_unified_mmio.md) (ABI v3). The separate fusion MMIO ABI below is historical; the internal resident GEMM flags and completion semantics remain relevant.
+
 The `GEMM_SRAM_FUSION` feature adds an SRAM-copy control endpoint in C4's
 previously unused DMA MMIO window. The existing 44-word GEMM descriptor and
 its allocation/retirement protocol remain unchanged.

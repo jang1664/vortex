@@ -8,9 +8,11 @@ alias names an older configuration and must not be used as evidence for this tar
 ## Execution modes
 
 The default legacy path writes GEMM intermediates to HBM. `-r` selects the
-`GEMM_SRAM_FUSION` implementation: QK and PV results stay in TMEM, a simple
-32-byte/8-byte DMA copies between TMEM and LMEM, and SIMD executes online
-softmax through the existing LMEM crossbar. Scores, probabilities, and PV
+`GEMM_SRAM_FUSION` implementation: GEMM descriptors select LMEM output and
+HBM/TMEM/LMEM input. Internal 32-byte/8-byte DMA transfers connect GEMM's TMEM
+to LMEM before descriptor completion; SIMD executes online softmax through the
+existing LMEM crossbar. All control uses the ordinary serialized GEMM MMIO
+path; there is no separate fusion register bank. Scores, probabilities, and PV
 partials share one LMEM workspace; the maximum, denominator, rescaling factor,
 and output accumulator remain FP32 in LMEM. The final output is FP16 in HBM.
 
@@ -19,7 +21,7 @@ once per query tile and advances K, V, scales, and zero points for each KV tile.
 A larger score maximum rescales the previous output accumulator as well as
 the denominator. Causal masking and invalid tail keys produce zero probability.
 
-`-r -f` selects full FP32 QK/PV export (capability revision2). Probabilities
+`-r -f` selects full FP32 QK/PV export (unified-MMIO capability revision3). Probabilities
 and final output remain FP16. This avoids intermediate overflow when a finite
 final answer requires scores or PV partials outside FP16 range. FP16 mode is
 still available for bounded inputs. The opt-in `-s` cases are `extreme-logits`,
@@ -62,23 +64,36 @@ Reference-only checks use 0.01 and 0.03 respectively. Nonfinite mismatches fail.
 The deterministic input has distinct V tiles and later larger score maxima.
 
 The kernel reports completed KV tiles, progress events, maximum updates, and
-SRAM copy bytes. For T KV tiles and padded M rows, the resident copy total is
-`(3*T + 1) * M * 128 * 2` bytes, including the initial padded-output clear.
-With FP32 output, copy bytes become `(5*T + 2) * M * 128 * 2`; command count
-remains `3*T + 1`.
+SRAM copy bytes derived from completed descriptors. For T KV tiles and padded
+M rows, OBUF is initialized once and then reused. Each tile has QK output
+copyback, PV input copy, and PV output copyback: `3*T+1` copies overall, with
+no per-GEMM output prefill. The byte total is `(3*T+1)*M*128*2` for FP16
+and `(5*T+2)*M*128*2` for FP32 output. These are software accounting values, not
+independent DMA traffic counters. Internal DMA time is included in `gemm_wait`;
+`sram_copy` measures the one-time OBUF initialization. Compare total/core cycles across ABI
+versions rather than treating changed phase boundaries as a speedup.
 These counters alone do not prove absence of intermediate HBM traffic; external
 DMA address traces and the production path without `-d` are required.
 
+ABI v3 uses 46 descriptor words rather than 44, and requires matching software
+and RTL. The r5 hardware image uses ABI v2 and cannot run these new kernels.
+See [unified MMIO](../../../docs/rtl/core/VX_gemm_unified_mmio.md).
+
 ## Implementation status
 
-DMA, physical LMEM publication, and resident GEMM node tests have passed.
-Standalone and decoder host/device builds have passed. Full-core correctness,
-traffic tracing, compatibility measurements, and a new FPGA image evaluation
-are in progress. No FPGA speedup is established. See
-`agent-tasks/c4-sram-flash-attention/STATUS.yaml` and
-`docs/future_optim/c4_flash_attention_tmem_lmem_dma_plan.md` for the complete
-requirements and evidence. Hardware runs require a newly built feature image
-and its explicit alias; existing rev8 images do not contain this feature.
+The no-output-prefill revision passes FP16/FP32 integrated node tests, including
+publication, delayed physical LMEM commits, poisoned LMEM destinations, padding
+reuse and actual DMA command-count assertions. Seven full-core attention cases
+(FP16/FP32 multi-tile, FP32 tail/causal, legacy HBM and FP32 PV/QK overflow) pass.
+Current cycle and copy-count comparisons are recorded in
+[the corrected results](../../../agent-tasks/c4-unified-mmio/no-prefill/RESULTS.md).
+Earlier serializer, 16-lane MMIO, 64 KiB early-return and scoped MMIO synthesis
+evidence remains in [the initial report](../../../agent-tasks/c4-unified-mmio/RESULTS.md).
+No ABI v3 FPGA image or routed Fmax has been measured. Hardware runs require a
+matching new image and its explicit alias; the previous r5 resident image uses
+ABI v2. Earlier architectural requirements and historical results remain in
+`docs/future_optim/c4_flash_attention_tmem_lmem_dma_plan.md` and
+`agent-tasks/c4-sram-flash-attention/STATUS.yaml`.
 
 For FP32 numerical probes, use the same wrapper/config with arguments
 `-r -f -m 1 -n 128 -s pv-overflow` and

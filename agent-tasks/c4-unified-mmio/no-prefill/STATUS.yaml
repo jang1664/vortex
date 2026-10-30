@@ -1,0 +1,166 @@
+task: c4-unified-mmio-no-prefill
+status: complete
+iterations:
+- iteration: 1
+  test: node_fp16
+  status: pass
+  timestamp: '2026-10-30T14:01:22.835388+09:00'
+  error_summary: ''
+  report: agent-tasks/c4-unified-mmio/no-prefill/verification/node_fp16_iter1.json
+  fix_applied: None by verification agent; parent RTL and software changes under test.
+- iteration: 1
+  test: node_fp32
+  status: pass
+  timestamp: '2026-10-30T14:02:06.204642+09:00'
+  error_summary: ''
+  report: agent-tasks/c4-unified-mmio/no-prefill/verification/node_fp32_iter1.json
+  fix_applied: None by verification agent; same properly configured unit binary, FP32
+    plusarg.
+- iteration: 1
+  test: fullcore_fp32_multitile
+  status: invalid_stale_artifact
+  timestamp: '2026-10-30T14:04:28.796079+09:00'
+  error_summary: 'Excluded: wrapper reused prior prefill RTL simv because indirect
+    source dependency was missing.'
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/invalid_stale/fp32_multitile.log
+  core_cycles: 142093
+  attention_cycles:
+    total: 135883
+    gemm_submit: 6097
+    gemm_wait: 50622
+    sram_copy: 6357
+    simd: 65545
+    other: 7262
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+  original_status: pass
+- iteration: 1
+  test: fullcore_artifact_audit
+  status: invalid_stale_artifact
+  timestamp: '2026-10-30T14:05:35.199206+09:00'
+  error_summary: Current simv SHA256 equals prior focused-app simv and mtime predates
+    changed sequencer. Stopped matrix, archived stale attempts; no pass accepted.
+  fix_applied: Moved prior simv to invalid_stale/stale_simv to force normal wrapper
+    recompilation; no RTL or build infrastructure modification.
+- iteration: 1
+  test: fullcore_fp32_multitile
+  status: pass
+  timestamp: '2026-10-30T14:08:02.132683+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp32_multitile.log
+  core_cycles: 119785
+  attention_cycles:
+    total: 113575
+    gemm_submit: 6097
+    gemm_wait: 28314
+    sram_copy: 6357
+    simd: 65545
+    other: 7262
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_fp16_multitile
+  status: pass
+  timestamp: '2026-10-30T14:09:03.358328+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp16_multitile.log
+  core_cycles: 109344
+  attention_cycles:
+    total: 103190
+    gemm_submit: 6097
+    gemm_wait: 19591
+    sram_copy: 3564
+    simd: 66644
+    other: 7294
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_legacy_single
+  status: pass
+  timestamp: '2026-10-30T14:10:00.600976+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/legacy_single.log
+  core_cycles: 96742
+  attention_cycles:
+    total: 90588
+    gemm_submit: 0
+    gemm_wait: 0
+    sram_copy: 0
+    simd: 0
+    other: 90588
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_fp32_tail
+  status: pass
+  timestamp: '2026-10-30T14:14:05.536802+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp32_tail.log
+  core_cycles: 392874
+  attention_cycles:
+    total: 386662
+    gemm_submit: 9072
+    gemm_wait: 82151
+    sram_copy: 12090
+    simd: 274145
+    other: 9204
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_fp32_mask
+  status: pass
+  timestamp: '2026-10-30T14:17:38.760063+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp32_mask.log
+  core_cycles: 369261
+  attention_cycles:
+    total: 363049
+    gemm_submit: 9072
+    gemm_wait: 82151
+    sram_copy: 12090
+    simd: 250532
+    other: 9204
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_fp32_pv_overflow
+  status: pass
+  timestamp: '2026-10-30T14:18:03.064237+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp32_pv_overflow.log
+  core_cycles: 62274
+  attention_cycles:
+    total: 56062
+    gemm_submit: 3122
+    gemm_wait: 13946
+    sram_copy: 6357
+    simd: 27317
+    other: 5320
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+- iteration: 1
+  test: fullcore_fp32_qk_overflow
+  status: pass
+  timestamp: '2026-10-30T14:18:27.743759+09:00'
+  error_summary: ''
+  report: /home/jaeyongjang/project.local/vortex_fpint-feat-gemv/agent-tasks/c4-unified-mmio/no-prefill/fp32_qk_overflow.log
+  core_cycles: 62274
+  attention_cycles:
+    total: 56062
+    gemm_submit: 3122
+    gemm_wait: 13946
+    sram_copy: 6357
+    simd: 27317
+    other: 5320
+  fix_applied: None by verification agent; current no-prefill source and matching
+    config.
+verification_summary:
+  units: FP16 and FP32 node PASS
+  fullcore: All seven fresh-artifact cases PASS
+  traffic: M4 multi-tile 7 copies; M16 tail/mask 10 copies; direct node accepted-DMA
+    monitors prove zero output prefill.
+  artifact_audit: Initial stale full-core attempts excluded. Fresh build explicitly
+    recompiled sequencer; binary hash differs and is newer than source. All valid
+    runs used unchanged sources and binary.
+  fmax_measured: false
+result_report: agent-tasks/c4-unified-mmio/no-prefill/RESULTS.md

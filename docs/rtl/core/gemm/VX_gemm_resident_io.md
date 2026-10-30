@@ -1,5 +1,7 @@
 # Improve GEMM resident I/O
 
+Current C4 integration uses [unified GEMM MMIO](../VX_gemm_unified_mmio.md) (ABI v3). The separate fusion MMIO ABI below is historical; the internal resident GEMM flags and completion semantics remain relevant.
+
 `GEMM_SRAM_FUSION` adds single-DMA-tile resident I/O to `VX_gemm_ctrl` and `VX_gemm_fsm`. With the define absent, the existing ports, state paths, job structure, and completion conditions remain selected.
 
 ## Controller contract
