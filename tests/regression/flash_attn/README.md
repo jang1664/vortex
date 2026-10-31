@@ -89,9 +89,15 @@ Current cycle and copy-count comparisons are recorded in
 [the corrected results](../../../agent-tasks/c4-unified-mmio/no-prefill/RESULTS.md).
 Earlier serializer, 16-lane MMIO, 64 KiB early-return and scoped MMIO synthesis
 evidence remains in [the initial report](../../../agent-tasks/c4-unified-mmio/RESULTS.md).
-No ABI v3 FPGA image or routed Fmax has been measured. Hardware runs require a
-matching new image and its explicit alias; the previous r5 resident image uses
-ABI v2. Earlier architectural requirements and historical results remain in
+The ABI v3 image `20261030_unified_mmio_r1` closes timing at 100 MHz without
+downscaling and passes nine hardware functionality cases. Its alias is
+`improve_th16_tcol16_m16_t8_bigmem_all_bram_spread_v4_nodsp_sram_fusion_unified_mmio_r1`;
+the previous r5 image uses ABI v2. See
+[the hardware results](../../../agent-tasks/c4-unified-mmio/hardware/20261031_unified_mmio_r1/RESULTS.md).
+On three measured Llama3 decoder workloads, resident FP16/FP32 attention is
+slower than the separate QK, softmax and PV cycle sum; see
+[the matched hardware comparison](../../../agent-tasks/c4-unified-mmio/hardware/20261031_attention_comparison/RESULTS.md).
+Earlier architectural requirements and historical results remain in
 `docs/future_optim/c4_flash_attention_tmem_lmem_dma_plan.md` and
 `agent-tasks/c4-sram-flash-attention/STATUS.yaml`.
 
