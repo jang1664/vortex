@@ -99,6 +99,24 @@ simv.vdb/
 /agent-tasks/**/*.fst
 /agent-tasks/**/*.stderr
 /agent-tasks/**/*.json
+/agent-tasks/**/*.jsonl
+# Per-run completion markers contain no source or durable result summary.
+/agent-tasks/**/*.started
+/agent-tasks/**/*.finished
+/agent-tasks/**/*.exit
+# C4 experiment tensor dumps, copied RTL and generated synthesis workspaces.
+/agent-tasks/c4-sram-flash-attention/**/*.bin
+/agent-tasks/c4-sram-flash-attention/**/source_snapshot/
+/agent-tasks/c4-sram-flash-attention/**/generated_at_launch/
+/agent-tasks/c4-sram-flash-attention/**/generated_reference/
+/agent-tasks/c4-sram-flash-attention/direct_reset_runtime_execution_revision1/**/*.tcldict
+/agent-tasks/c4-unified-mmio/**/*.bin
+/agent-tasks/c4-unified-mmio/**/configs.txt
+/agent-tasks/c4-unified-mmio/feature_off_identity/
+/agent-tasks/c4-unified-mmio/mmio-cost/runs/
+/agent-tasks/c4-unified-mmio/no-prefill/invalid_stale/
+/agent-tasks/c4-unified-mmio/no-prefill/verification/
+/agent-tasks/c4-unified-mmio/pnr/**/exit_code.txt
 # Reviewed U55C calibration profiles and compact verification evidence.
 !/agent-tasks/u55c-hbm-performance-calibration/*.json
 !/agent-tasks/u55c-hbm-performance-calibration/profiles/*.json
@@ -142,6 +160,7 @@ vivado*.jou
 /slr_recovered_leaves.tsv
 /slr_recovered_lut_cones.tsv
 /slr_unclassified_leaves.tsv
+/slr_fusion_support_roots.tsv
 
 # ---- documentation DMA experiment artifacts ----
 docs/future_optim/dma_experiments/**/before/
