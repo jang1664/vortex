@@ -1,4 +1,4 @@
-"""Long-sequence prefill compute breakdown.
+"""Long-sequence prefill and single-step decode compute breakdown.
 
 Motivation: existing FPINT-style designs only accelerate the linear-layer
 GEMMs and treat the attention core (QK^T, score·V) as free. That is fine in
@@ -11,18 +11,31 @@ This figure makes that point quantitatively: normalized stacked bars
 (linear vs attention core) across sequence length, with the attention share
 annotated inside each bar.
 
-Definitions (prefill, batch = 1, Llama-3 family with real GQA n_kv=8):
+Definitions (batch = 1, Llama-3 family with real GQA n_kv=8):
   - linear         = Q/K/V/O projections + MLP (gated, 3 matmuls)
   - attention core = QK^T + score·V
+
+Prefill uses query length = KV length = sequence length, retaining the
+original dense attention count (no causal-triangle discount). Decode uses
+query length = 1 and sequence length = total KV length attended in that step,
+including the current token. Cached K/V projections are not recomputed.
+One multiply-add counts as two FLOPs. Both stages exclude the LM head,
+softmax, normalization, RoPE, elementwise operations, and memory traffic.
+The normalized fractions are identical under this dense FLOP convention:
+decode divides both prefill components by sequence length. Absolute counts
+differ and are also saved in CSV files; these figures do not model latency.
 
 Four panels: Llama-3.2 1B, Llama-3.2 3B, Llama-3 8B, Llama-3 70B. Smaller
 models reach the attention-dominant regime at shorter sequence lengths
 because their linear share is relatively smaller.
 
 Output: analysis_workspace/llm_analysis/figures/long_seq_attn_breakdown.{pdf,png,svg}
+        analysis_workspace/llm_analysis/figures/long_seq_attn_breakdown_decode.{pdf,png,svg}
+        Matching .csv files contain the absolute FLOP counts for each stage.
 """
 
 import argparse
+import csv
 from pathlib import Path
 import sys
 
@@ -151,7 +164,12 @@ def parse_args(argv=None):
         "--out-dir",
         type=Path,
         default=DEFAULT_OUT_DIR,
-        help="output directory for long_seq_attn_breakdown.* files")
+        help="output directory for figures and FLOP-count CSV files")
+    parser.add_argument(
+        "--stage",
+        choices=("prefill", "decode", "both"),
+        default="both",
+        help="stage to plot (default: both; decode is one step with query length 1)")
     parser.add_argument(
         "--formats",
         nargs="+",
@@ -168,8 +186,8 @@ def resolve_out_dir(path: Path) -> Path:
     return path
 
 
-def linear_flops_prefill(m: ModelConfig, b: int, s: int) -> int:
-    """Q/K/V/O projection + MLP FLOPs, summed over all layers."""
+def linear_flops(m: ModelConfig, b: int, s: int) -> int:
+    """Q/K/V/O + MLP FLOPs for s new query tokens, summed over all layers."""
     H = m.hidden_dim
     n_h = m.n_head
     n_kv = m.num_key_value_heads
@@ -182,14 +200,14 @@ def linear_flops_prefill(m: ModelConfig, b: int, s: int) -> int:
     return m.num_layers * (qo_proj + kv_proj + mlp)
 
 
-def attn_core_flops_prefill(m: ModelConfig, b: int, s: int) -> int:
-    """QK^T + score·V FLOPs, summed over all layers."""
+def attn_core_flops(m: ModelConfig, b: int, s: int, kv_length: int) -> int:
+    """Dense QK^T + score·V FLOPs for s queries, summed over all layers."""
     H = m.hidden_dim
     n_h = m.n_head
     head_dim = H // n_h
 
-    qkT = 2 * b * n_h * s * s * head_dim
-    scoreV = 2 * b * n_h * s * s * head_dim
+    qkT = 2 * b * n_h * s * kv_length * head_dim
+    scoreV = 2 * b * n_h * s * kv_length * head_dim
     return m.num_layers * (qkT + scoreV)
 
 
@@ -199,24 +217,27 @@ def fmt_seq(s: int) -> str:
     return str(s)
 
 
-def plot_one(ax, model: ModelConfig, show_xlabel: bool):
+def plot_one(ax, model: ModelConfig, show_xlabel: bool, stage: str):
+    query_lengths = [s if stage == "prefill" else 1 for s in SEQS]
     linear = np.array(
-        [linear_flops_prefill(model, BATCH, s) for s in SEQS], dtype=float
+        [linear_flops(model, BATCH, q) for q in query_lengths], dtype=np.int64
     )
     attn = np.array(
-        [attn_core_flops_prefill(model, BATCH, s) for s in SEQS], dtype=float
+        [attn_core_flops(model, BATCH, q, s)
+         for q, s in zip(query_lengths, SEQS)], dtype=np.int64
     )
     total = linear + attn
     linear_share = linear / total
     attn_share = attn / total
     attn_pct = attn_share * 100.0
 
-    linear_T = linear / 1e12
-    attn_T = attn / 1e12
+    scale, unit = (1e12, "TFLOPs") if stage == "prefill" else (1e9, "GFLOPs")
+    length_label = "seq" if stage == "prefill" else "kv"
 
-    print(f"\n== {model.name} ==")
-    for s, lin, at, pct in zip(SEQS, linear_T, attn_T, attn_pct):
-        print(f"  seq={s:>6d}  linear={lin:10.2f} TF  attn={at:11.2f} TF  "
+    print(f"\n== {model.name}: {stage} ==")
+    for s, lin, at, pct in zip(SEQS, linear / scale, attn / scale, attn_pct):
+        print(f"  {length_label}={s:>6d}  linear={lin:10.2f} {unit}  "
+              f"attn={at:11.2f} {unit}  "
               f"attn%={pct:5.1f}")
 
     x = np.arange(len(SEQS))
@@ -224,14 +245,16 @@ def plot_one(ax, model: ModelConfig, show_xlabel: bool):
            label="Linear",
            color=LINEAR_COLOR, edgecolor=BAR_EDGE_COLOR, linewidth=0.5)
     ax.bar(x, attn_share, BAR_WIDTH, bottom=linear_share,
-           label="Attention core",
+           label="Attention",
            color=ATTENTION_COLOR, edgecolor=BAR_EDGE_COLOR, linewidth=0.5)
 
     for i, (lin_share, at_share, pct) in enumerate(
             zip(linear_share, attn_share, attn_pct)):
         if at_share < MIN_LABEL_ATTENTION_SHARE:
-            continue
-        label_y = lin_share + at_share * 0.5
+            label_y = lin_share * 0.5
+            pct = lin_share * 100.0
+        else:
+            label_y = lin_share + at_share * 0.5
         ax.text(x[i], label_y,
                 f"{pct:.0f}%",
                 ha="center", va="center",
@@ -243,25 +266,40 @@ def plot_one(ax, model: ModelConfig, show_xlabel: bool):
                        rotation=45, ha="right")
     ax.tick_params(axis="y", labelsize=TICK_FONTSIZE)
     if show_xlabel:
-        ax.set_xlabel("Sequence length", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.set_xlabel("Sequence length" if stage == "prefill" else "KV length",
+                      fontsize=AXIS_LABEL_FONTSIZE)
     else:
         ax.set_xticklabels([])
     ax.set_title(model.name, fontsize=TITLE_FONTSIZE)
     ax.set_ylim(0, 1.0)
     ax.set_xlim(-0.5, len(SEQS) - 0.5)
     ax.grid(True, axis="y", alpha=0.3)
+    return [
+        dict(model=model.name, stage=stage, batch=BATCH, query_length=q,
+             kv_length=s, linear_flops=int(lin), attention_flops=int(at),
+             total_flops=int(lin + at), attention_fraction=float(share))
+        for q, s, lin, at, share in zip(query_lengths, SEQS, linear, attn, attn_share)
+    ]
 
 
 def main(argv=None):
     args = parse_args(argv)
+    out_dir = resolve_out_dir(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stages = ("prefill", "decode") if args.stage == "both" else (args.stage,)
+    for stage in stages:
+        plot_stage(stage, out_dir, args.formats)
 
+
+def plot_stage(stage: str, out_dir: Path, formats):
     fig, axes = plt.subplots(
         2, 2, figsize=ONE_COLUMN_FIGSIZE, sharey=True
     )
     axes = axes.flatten()
 
+    rows = []
     for i, (ax, model) in enumerate(zip(axes, MODELS)):
-        plot_one(ax, model, show_xlabel=i >= 2)
+        rows.extend(plot_one(ax, model, show_xlabel=i >= 2, stage=stage))
 
     axes[0].set_ylabel("FLOP fraction", fontsize=AXIS_LABEL_FONTSIZE)
     axes[2].set_ylabel("FLOP fraction", fontsize=AXIS_LABEL_FONTSIZE)
@@ -270,17 +308,24 @@ def main(argv=None):
                bbox_to_anchor=(0.5, 0.04),
                fontsize=LEGEND_FONTSIZE, framealpha=0.95)
 
+    title = (f"Prefill FLOP breakdown (batch = {BATCH})" if stage == "prefill"
+             else f"Decode FLOP breakdown (batch={BATCH})")
     fig.suptitle(
-        f"Prefill FLOP breakdown (batch = {BATCH})",
+        title,
         fontsize=TITLE_FONTSIZE,
         y=0.93,
     )
 
-    out_dir = resolve_out_dir(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = "long_seq_attn_breakdown" + ("_decode" if stage == "decode" else "")
+    csv_path = out_dir / f"{stem}.csv"
+    with csv_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"wrote {csv_path}")
     fig.tight_layout(rect=[0, 0.10, 1, 0.955], h_pad=0.6, w_pad=0.5)
-    for ext in args.formats:
-        path = out_dir / f"long_seq_attn_breakdown.{ext}"
+    for ext in formats:
+        path = out_dir / f"{stem}.{ext}"
         fig.savefig(path, dpi=SAVE_DPI)
         print(f"wrote {path}")
     plt.close(fig)
