@@ -1,0 +1,11 @@
+SYNTHETIC UNIT-TEST INPUT. Not a Vivado run or physical result.
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+| Direction | Type | Level | Window |
+| North | Global | 7.5 | synthetic_invalid_level |
+
+2. Router Initial Congestion
+--------------------------------
+| Direction | Type | Level | Window |
+| North | Global | 99 | synthetic_ignored_router_row |

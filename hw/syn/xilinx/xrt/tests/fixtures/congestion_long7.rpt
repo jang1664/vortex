@@ -1,0 +1,21 @@
+SYNTHETIC UNIT-TEST INPUT. Not a Vivado run or physical result.
+
+Table of Contents
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+2. Router Initial Congestion
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+| Direction | Type | Level | Window |
+| North | Global | 6 | synthetic_a |
+| East | Long | 7 | synthetic_ignored_long |
+
+2. Router Initial Congestion
+--------------------------------
+| Direction | Type | Level | Window |
+| North | Global | 99 | synthetic_ignored_router_row |
+
+3. Timing Based Congestion
+| Direction | Type | Level | Window |
+| North | Short | 9 | synthetic_ignored_timing |

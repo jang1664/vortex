@@ -1,0 +1,2 @@
+# Keep controlled unit-test inputs; generated reports remain ignored elsewhere.
+!congestion_*.rpt
