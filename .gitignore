@@ -162,6 +162,18 @@ vivado*.jou
 /slr_unclassified_leaves.tsv
 /slr_fusion_support_roots.tsv
 
+# Completed commit approval notes; durable outcomes are in RESULTS.md and Git.
+/agent-tasks/c4-unified-mmio/commit-plan*.md
+
+# Retired R7/R8 reset-owner validation fixtures. The current floorplan no
+# longer exposes their helper API. Keep active congestion fixtures visible.
+/hw/syn/xilinx/xrt/tests/direct_core_reset_inventory_mock.tcl
+/hw/syn/xilinx/xrt/tests/direct_reset_boundary_insertion.txt
+/hw/syn/xilinx/xrt/tests/source_fixture.tcl
+/hw/syn/xilinx/xrt/tests/test_fusion_bank_lut_ownership.tcl
+/hw/syn/xilinx/xrt/tests/test_r8_floorplan.tcl
+/hw/syn/xilinx/xrt/tests/fixtures/r7_ownership_reference/
+
 # ---- documentation DMA experiment artifacts ----
 docs/future_optim/dma_experiments/**/before/
 docs/future_optim/dma_experiments/**/project/

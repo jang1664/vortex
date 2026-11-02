@@ -34,11 +34,18 @@ specifications, summaries and scripts. Historical candidates and synthetic Tcl
 fixtures still need a separate ownership/relevance review before a commit; a
 `.rpt` or `.tcldict` under a test fixture directory can be intentional source.
 
-The unrelated `analysis_workspace/llm_analysis/plot_long_seq_attn_breakdown.py`
-change, `agent-tasks/fig5-memory-scale2/`, and old untracked files under
-`hw/syn/xilinx/xrt/tests/` are outside this commit set. They remain visible and
-untouched. Existing operational commit-plan notes are also excluded from this
-commit set without a blanket Markdown ignore rule.
+The 2026-11-02 repository cleanup also versions the separate prefill/decode
+FLOP analysis, Fig. 5 memory-scaling scripts and summaries, and the congestion
+fixtures consumed by the current Tcl tests. Retired R7/R8 reset-owner fixtures
+are ignored explicitly because the current floorplan no longer exposes their
+helper API. Completed `commit-plan*.md` approval notes are ignored; their
+durable outcomes are already recorded in Git and the result summaries.
+
+The historical SRAM task has its own explicit `.gitignore` for superseded
+candidate packages, copied test suites, checkpoint probes and old launchers.
+Its top-level design/verification records and reusable Python helpers remain
+versioned, with a README distinguishing historical requirements from the
+current unified-MMIO implementation. None of the local archives are deleted.
 
 Reproduction scripts and Markdown reports reference local raw evidence. Those
 links require the original run workspace or a fresh run; the raw data is not
