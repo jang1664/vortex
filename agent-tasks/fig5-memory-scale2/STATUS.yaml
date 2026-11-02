@@ -1,0 +1,19 @@
+state: DONE
+objective: Measure the missing 2x memory-fabric profile and deliver paired 2x/4x Fig. 5 PDFs.
+build: /home/jaeyongjang/project.local/vortex-fig5-scale2-1e4b367/build-fig5-scale2
+rtl_revision: 1e4b367cca8f1a11cff74ce6b428079621b3a398
+log:
+  - time: '2026-10-27 11:00'
+    message: Confirmed original scaling is LMEM 8-to-32 and cache/AXI inputs 1-to-4; physical HBM ports remain 32. Archived memory sources are available and match their recorded hashes.
+  - time: '2026-10-27 11:03'
+    message: Configured isolated pinned worktree; exact preprocessed RTL hashes match for all three new points. AXI 2-input production static assertions and geometry probe passed. Launched LMEM 16-bank and cache 2-bank synthesis, with AXI 2-input queued.
+  - time: '2026-10-27 11:08'
+    message: LMEM 16-bank passed in 303.1 seconds with 23256 LUTs; cache 2-bank passed in 281.8 seconds with 9486 LUTs. Both optimized-report audits passed. Started AXI 2-input synthesis and regenerated/visually checked the archived 4x figure.
+  - time: '2026-10-27 11:14'
+    message: AXI 2-input passed in 386.6 seconds with 36352 LUTs. Collected and audited all 12 reports and source hashes; 4x values are unchanged. Relative efficiency is 1.604621 engine-only, 1.155188 with 2x memory, and 0.632349 with 4x memory. Generated and visually checked paired PDF/PNG figures in results/ and build/; offline verifier passed.
+  - time: '2026-10-30 15:17'
+    message: Added the requested combined engine/x2/x4 graph with red Memory subsystem overhead annotation and arrows. Reused measured data, visually checked PDF/PNG layout, and refreshed only the plot script provenance hash.
+pitfalls:
+  - Current candidate configs have changed since the archived study; its full verifier fails the historical config hash check. Audit immutable archived reports and regenerate memory RTL at the original revision instead.
+  - CodeGraph is not initialized in this checkout; used targeted existing experiment scripts.
+  - System Python lacks matplotlib; plotting uses /tmp/fig5-scale2-python with the original pinned matplotlib requirements.
