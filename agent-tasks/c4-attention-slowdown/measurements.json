@@ -1,0 +1,1145 @@
+{
+  "baseline_commit": "f0305e136402f6ee52a4a829be78a28ae7302cee",
+  "clock_mhz": 100,
+  "variants": {
+    "constant_dim_actual": {
+      "llama3-8b_decode_p128_c256": {
+        "median_cycles": {
+          "cycles": 1115203,
+          "attention_total_cycles": 1073341,
+          "gemm_submit_cycles": 56093,
+          "gemm_wait_cycles": 166305,
+          "sram_copy_cycles": 28806,
+          "simd_cycles": 759849,
+          "initialize_cycles": 25185,
+          "softmax_cycles": 593407,
+          "accumulate_cycles": 101444,
+          "finalize_cycles": 39813,
+          "input_prepare_cycles": 2625
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1115203",
+            "host_seconds": "0.011178463",
+            "attention_total_cycles": "1073341",
+            "gemm_submit_cycles": "56102",
+            "gemm_wait_cycles": "166305",
+            "sram_copy_cycles": "28806",
+            "simd_cycles": "759849",
+            "initialize_cycles": "25185",
+            "softmax_cycles": "593407",
+            "accumulate_cycles": "101444",
+            "finalize_cycles": "39813",
+            "input_prepare_cycles": "2626"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1114755",
+            "host_seconds": "0.01117435",
+            "attention_total_cycles": "1072981",
+            "gemm_submit_cycles": "56063",
+            "gemm_wait_cycles": "166321",
+            "sram_copy_cycles": "28823",
+            "simd_cycles": "759437",
+            "initialize_cycles": "25186",
+            "softmax_cycles": "592962",
+            "accumulate_cycles": "101444",
+            "finalize_cycles": "39845",
+            "input_prepare_cycles": "2606"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1115484",
+            "host_seconds": "0.01118201",
+            "attention_total_cycles": "1073667",
+            "gemm_submit_cycles": "56093",
+            "gemm_wait_cycles": "166162",
+            "sram_copy_cycles": "28806",
+            "simd_cycles": "760367",
+            "initialize_cycles": "25147",
+            "softmax_cycles": "593963",
+            "accumulate_cycles": "101444",
+            "finalize_cycles": "39813",
+            "input_prepare_cycles": "2625"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 199,
+          "mean_abs": 0.000226679258049,
+          "relative_l2": 0.000513364754907,
+          "cosine": 0.999999871464
+        },
+        "output_sha256": "df1ddfcaadf767021f84b491eed0f6a3c1045b8e05ef0050164febd02c09b070",
+        "context_sha256": "cbd370382921018b7d766634777f7bb91d5874c0e898f41f37419d0e1630f9a7",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/constant_dim_actual/llama3-8b_decode_p128_c256/profile.csv"
+      },
+      "llama3-8b_prefill128": {
+        "median_cycles": {
+          "cycles": 41054974,
+          "attention_total_cycles": 40919214,
+          "gemm_submit_cycles": 112823,
+          "gemm_wait_cycles": 4286387,
+          "sram_copy_cycles": 1464760,
+          "simd_cycles": 34888933,
+          "initialize_cycles": 719009,
+          "softmax_cycles": 24236235,
+          "accumulate_cycles": 5842206,
+          "finalize_cycles": 4091355,
+          "input_prepare_cycles": 10215
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "41054974",
+            "host_seconds": "0.410579201",
+            "attention_total_cycles": "40919214",
+            "gemm_submit_cycles": "112761",
+            "gemm_wait_cycles": "4286816",
+            "sram_copy_cycles": "1464756",
+            "simd_cycles": "34888933",
+            "initialize_cycles": "719137",
+            "softmax_cycles": "24236235",
+            "accumulate_cycles": "5842206",
+            "finalize_cycles": "4091355",
+            "input_prepare_cycles": "10174"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "41058975",
+            "host_seconds": "0.410619139",
+            "attention_total_cycles": "40923179",
+            "gemm_submit_cycles": "112832",
+            "gemm_wait_cycles": "4285815",
+            "sram_copy_cycles": "1464839",
+            "simd_cycles": "34893884",
+            "initialize_cycles": "718942",
+            "softmax_cycles": "24241382",
+            "accumulate_cycles": "5842205",
+            "finalize_cycles": "4091355",
+            "input_prepare_cycles": "10221"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "41036773",
+            "host_seconds": "0.410397487",
+            "attention_total_cycles": "40900800",
+            "gemm_submit_cycles": "112823",
+            "gemm_wait_cycles": "4286387",
+            "sram_copy_cycles": "1464760",
+            "simd_cycles": "34870901",
+            "initialize_cycles": "719009",
+            "softmax_cycles": "24218320",
+            "accumulate_cycles": "5842217",
+            "finalize_cycles": "4091355",
+            "input_prepare_cycles": "10215"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 524288,
+          "violations": 4,
+          "nonfinite": 0,
+          "max_abs": 0.00390625,
+          "max_index": 456,
+          "mean_abs": 0.000166910918779,
+          "relative_l2": 0.000451551340719,
+          "cosine": 0.99999989811
+        },
+        "output_sha256": "1ca5a17b647a2a181fe7ad0b65853dd0b586b003279f993d3be869c14a4dec44",
+        "context_sha256": "f9326bf2a90a0e670821b069c537507cef92480d3e76cf7dab3531e6bca4e552",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/constant_dim_actual/llama3-8b_prefill128/profile.csv"
+      }
+    },
+    "constant_dim_short": {
+      "llama3-8b_decode_p16_c32": {
+        "median_cycles": {
+          "cycles": 1585432,
+          "attention_total_cycles": 565859,
+          "gemm_submit_cycles": 28351,
+          "gemm_wait_cycles": 83974,
+          "sram_copy_cycles": 28807,
+          "simd_cycles": 382328,
+          "initialize_cycles": 25221,
+          "softmax_cycles": 266383,
+          "accumulate_cycles": 50976,
+          "finalize_cycles": 39859,
+          "input_prepare_cycles": 980129
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1585193",
+            "host_seconds": "0.015878981",
+            "attention_total_cycles": "565859",
+            "gemm_submit_cycles": "28348",
+            "gemm_wait_cycles": "84091",
+            "sram_copy_cycles": "28807",
+            "simd_cycles": "382328",
+            "initialize_cycles": "25110",
+            "softmax_cycles": "266383",
+            "accumulate_cycles": "50976",
+            "finalize_cycles": "39859",
+            "input_prepare_cycles": "980129"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1585432",
+            "host_seconds": "0.015880936",
+            "attention_total_cycles": "566071",
+            "gemm_submit_cycles": "28355",
+            "gemm_wait_cycles": "83974",
+            "sram_copy_cycles": "28807",
+            "simd_cycles": "382545",
+            "initialize_cycles": "25221",
+            "softmax_cycles": "266489",
+            "accumulate_cycles": "50976",
+            "finalize_cycles": "39859",
+            "input_prepare_cycles": "980129"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1585435",
+            "host_seconds": "0.015881022",
+            "attention_total_cycles": "565824",
+            "gemm_submit_cycles": "28351",
+            "gemm_wait_cycles": "83974",
+            "sram_copy_cycles": "28838",
+            "simd_cycles": "382318",
+            "initialize_cycles": "25222",
+            "softmax_cycles": "266292",
+            "accumulate_cycles": "50975",
+            "finalize_cycles": "39829",
+            "input_prepare_cycles": "980431"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 248,
+          "mean_abs": 0.000275896862149,
+          "relative_l2": 0.000578285240693,
+          "cosine": 0.999999834891
+        },
+        "output_sha256": "505e491870ec72cb12e41663f096ea11270e8fd530119fc8cfb1b3980c126fd5",
+        "context_sha256": "b38c463c4489dd1056acd01d1747a3ec2cfc0b0efac0a372fa0b95d3d8c92774",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/constant_dim_short/llama3-8b_decode_p16_c32/profile.csv"
+      }
+    },
+    "instrumented": {
+      "llama3-8b_decode_p128_c256": {
+        "median_cycles": {
+          "cycles": 1286276,
+          "attention_total_cycles": 1244366,
+          "gemm_submit_cycles": 56049,
+          "gemm_wait_cycles": 166546,
+          "sram_copy_cycles": 28823,
+          "simd_cycles": 929780,
+          "initialize_cycles": 25254,
+          "softmax_cycles": 593005,
+          "accumulate_cycles": 205747,
+          "finalize_cycles": 105657,
+          "input_prepare_cycles": 2675
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1287362",
+            "host_seconds": "0.012900987",
+            "attention_total_cycles": "1245449",
+            "gemm_submit_cycles": "56046",
+            "gemm_wait_cycles": "166553",
+            "sram_copy_cycles": "28823",
+            "simd_cycles": "930670",
+            "initialize_cycles": "25065",
+            "softmax_cycles": "594055",
+            "accumulate_cycles": "205893",
+            "finalize_cycles": "105657",
+            "input_prepare_cycles": "2716"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1286103",
+            "host_seconds": "0.012888962",
+            "attention_total_cycles": "1244273",
+            "gemm_submit_cycles": "56049",
+            "gemm_wait_cycles": "166546",
+            "sram_copy_cycles": "28834",
+            "simd_cycles": "929324",
+            "initialize_cycles": "25262",
+            "softmax_cycles": "592793",
+            "accumulate_cycles": "205702",
+            "finalize_cycles": "105567",
+            "input_prepare_cycles": "2675"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1286276",
+            "host_seconds": "0.012889714",
+            "attention_total_cycles": "1244366",
+            "gemm_submit_cycles": "56074",
+            "gemm_wait_cycles": "166401",
+            "sram_copy_cycles": "28759",
+            "simd_cycles": "929780",
+            "initialize_cycles": "25254",
+            "softmax_cycles": "593005",
+            "accumulate_cycles": "205747",
+            "finalize_cycles": "105774",
+            "input_prepare_cycles": "2670"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 199,
+          "mean_abs": 0.000226679258049,
+          "relative_l2": 0.000513364754907,
+          "cosine": 0.999999871464
+        },
+        "output_sha256": "df1ddfcaadf767021f84b491eed0f6a3c1045b8e05ef0050164febd02c09b070",
+        "context_sha256": "cbd370382921018b7d766634777f7bb91d5874c0e898f41f37419d0e1630f9a7",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/instrumented/llama3-8b_decode_p128_c256/profile.csv"
+      },
+      "llama3-8b_decode_p16_c32": {
+        "median_cycles": {
+          "cycles": 1705105,
+          "attention_total_cycles": 685500,
+          "gemm_submit_cycles": 28327,
+          "gemm_wait_cycles": 83920,
+          "sram_copy_cycles": 28800,
+          "simd_cycles": 501133,
+          "initialize_cycles": 25199,
+          "softmax_cycles": 266531,
+          "accumulate_cycles": 103601,
+          "finalize_cycles": 105922,
+          "input_prepare_cycles": 980422
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1704836",
+            "host_seconds": "0.017074954",
+            "attention_total_cycles": "685283",
+            "gemm_submit_cycles": "28327",
+            "gemm_wait_cycles": "83920",
+            "sram_copy_cycles": "28760",
+            "simd_cycles": "500987",
+            "initialize_cycles": "25199",
+            "softmax_cycles": "266332",
+            "accumulate_cycles": "103554",
+            "finalize_cycles": "105902",
+            "input_prepare_cycles": "980332"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1705105",
+            "host_seconds": "0.017078802",
+            "attention_total_cycles": "685500",
+            "gemm_submit_cycles": "28334",
+            "gemm_wait_cycles": "83920",
+            "sram_copy_cycles": "28800",
+            "simd_cycles": "501133",
+            "initialize_cycles": "25071",
+            "softmax_cycles": "266531",
+            "accumulate_cycles": "103609",
+            "finalize_cycles": "105922",
+            "input_prepare_cycles": "980422"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1705921",
+            "host_seconds": "0.017085745",
+            "attention_total_cycles": "686225",
+            "gemm_submit_cycles": "28309",
+            "gemm_wait_cycles": "84022",
+            "sram_copy_cycles": "28800",
+            "simd_cycles": "501757",
+            "initialize_cycles": "25223",
+            "softmax_cycles": "266959",
+            "accumulate_cycles": "103601",
+            "finalize_cycles": "105974",
+            "input_prepare_cycles": "980453"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 248,
+          "mean_abs": 0.000275896862149,
+          "relative_l2": 0.000578285240693,
+          "cosine": 0.999999834891
+        },
+        "output_sha256": "505e491870ec72cb12e41663f096ea11270e8fd530119fc8cfb1b3980c126fd5",
+        "context_sha256": "b38c463c4489dd1056acd01d1747a3ec2cfc0b0efac0a372fa0b95d3d8c92774",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/instrumented/llama3-8b_decode_p16_c32/profile.csv"
+      },
+      "llama3-8b_prefill128": {
+        "median_cycles": {
+          "cycles": 53354976,
+          "attention_total_cycles": 53219096,
+          "gemm_submit_cycles": 112755,
+          "gemm_wait_cycles": 4286000,
+          "sram_copy_cycles": 1464600,
+          "simd_cycles": 47183387,
+          "initialize_cycles": 718683,
+          "softmax_cycles": 24256975,
+          "accumulate_cycles": 11382590,
+          "finalize_cycles": 10817997,
+          "input_prepare_cycles": 10267
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "53325666",
+            "host_seconds": "0.533289959",
+            "attention_total_cycles": "53189764",
+            "gemm_submit_cycles": "112755",
+            "gemm_wait_cycles": "4286249",
+            "sram_copy_cycles": "1464622",
+            "simd_cycles": "47153712",
+            "initialize_cycles": "718701",
+            "softmax_cycles": "24241007",
+            "accumulate_cycles": "11382590",
+            "finalize_cycles": "10811414",
+            "input_prepare_cycles": "10187"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "53360891",
+            "host_seconds": "0.53363822",
+            "attention_total_cycles": "53224911",
+            "gemm_submit_cycles": "112699",
+            "gemm_wait_cycles": "4285963",
+            "sram_copy_cycles": "1464600",
+            "simd_cycles": "47189238",
+            "initialize_cycles": "718683",
+            "softmax_cycles": "24256975",
+            "accumulate_cycles": "11382366",
+            "finalize_cycles": "10831214",
+            "input_prepare_cycles": "10273"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "53354976",
+            "host_seconds": "0.533580496",
+            "attention_total_cycles": "53219096",
+            "gemm_submit_cycles": "112755",
+            "gemm_wait_cycles": "4286000",
+            "sram_copy_cycles": "1464596",
+            "simd_cycles": "47183387",
+            "initialize_cycles": "718630",
+            "softmax_cycles": "24263980",
+            "accumulate_cycles": "11382780",
+            "finalize_cycles": "10817997",
+            "input_prepare_cycles": "10267"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 524288,
+          "violations": 4,
+          "nonfinite": 0,
+          "max_abs": 0.00390625,
+          "max_index": 456,
+          "mean_abs": 0.000166910918779,
+          "relative_l2": 0.000451551340719,
+          "cosine": 0.99999989811
+        },
+        "output_sha256": "1ca5a17b647a2a181fe7ad0b65853dd0b586b003279f993d3be869c14a4dec44",
+        "context_sha256": "f9326bf2a90a0e670821b069c537507cef92480d3e76cf7dab3531e6bca4e552",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/instrumented/llama3-8b_prefill128/profile.csv"
+      }
+    },
+    "instrumented_repeat": {
+      "llama3-8b_decode_p128_c256": {
+        "median_cycles": {
+          "cycles": 1286027,
+          "attention_total_cycles": 1244114,
+          "gemm_submit_cycles": 56049,
+          "gemm_wait_cycles": 166410,
+          "sram_copy_cycles": 28791,
+          "simd_cycles": 929277,
+          "initialize_cycles": 25205,
+          "softmax_cycles": 592806,
+          "accumulate_cycles": 205873,
+          "finalize_cycles": 105577,
+          "input_prepare_cycles": 2688
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1286520",
+            "host_seconds": "0.012892648",
+            "attention_total_cycles": "1244618",
+            "gemm_submit_cycles": "56049",
+            "gemm_wait_cycles": "166410",
+            "sram_copy_cycles": "28791",
+            "simd_cycles": "930146",
+            "initialize_cycles": "25188",
+            "softmax_cycles": "593178",
+            "accumulate_cycles": "205949",
+            "finalize_cycles": "105831",
+            "input_prepare_cycles": "2707"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1286027",
+            "host_seconds": "0.012887143",
+            "attention_total_cycles": "1244114",
+            "gemm_submit_cycles": "56049",
+            "gemm_wait_cycles": "166410",
+            "sram_copy_cycles": "28845",
+            "simd_cycles": "929277",
+            "initialize_cycles": "25205",
+            "softmax_cycles": "592806",
+            "accumulate_cycles": "205873",
+            "finalize_cycles": "105393",
+            "input_prepare_cycles": "2688"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1284821",
+            "host_seconds": "0.012874844",
+            "attention_total_cycles": "1243049",
+            "gemm_submit_cycles": "56040",
+            "gemm_wait_cycles": "166543",
+            "sram_copy_cycles": "28759",
+            "simd_cycles": "928310",
+            "initialize_cycles": "25273",
+            "softmax_cycles": "591660",
+            "accumulate_cycles": "205800",
+            "finalize_cycles": "105577",
+            "input_prepare_cycles": "2658"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 199,
+          "mean_abs": 0.000226679258049,
+          "relative_l2": 0.000513364754907,
+          "cosine": 0.999999871464
+        },
+        "output_sha256": "df1ddfcaadf767021f84b491eed0f6a3c1045b8e05ef0050164febd02c09b070",
+        "context_sha256": "cbd370382921018b7d766634777f7bb91d5874c0e898f41f37419d0e1630f9a7",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/instrumented_repeat/llama3-8b_decode_p128_c256/profile.csv"
+      },
+      "llama3-8b_prefill128": {
+        "median_cycles": {
+          "cycles": 53345153,
+          "attention_total_cycles": 53209311,
+          "gemm_submit_cycles": 112780,
+          "gemm_wait_cycles": 4286529,
+          "sram_copy_cycles": 1464610,
+          "simd_cycles": 47172555,
+          "initialize_cycles": 718764,
+          "softmax_cycles": 24248996,
+          "accumulate_cycles": 11393509,
+          "finalize_cycles": 10818204,
+          "input_prepare_cycles": 10235
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "53339415",
+            "host_seconds": "0.533427373",
+            "attention_total_cycles": "53203511",
+            "gemm_submit_cycles": "112786",
+            "gemm_wait_cycles": "4286529",
+            "sram_copy_cycles": "1464635",
+            "simd_cycles": "47167161",
+            "initialize_cycles": "718762",
+            "softmax_cycles": "24241214",
+            "accumulate_cycles": "11382557",
+            "finalize_cycles": "10824628",
+            "input_prepare_cycles": "10255"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "53358433",
+            "host_seconds": "0.533614998",
+            "attention_total_cycles": "53222671",
+            "gemm_submit_cycles": "112780",
+            "gemm_wait_cycles": "4285999",
+            "sram_copy_cycles": "1464564",
+            "simd_cycles": "47186727",
+            "initialize_cycles": "718764",
+            "softmax_cycles": "24256043",
+            "accumulate_cycles": "11393716",
+            "finalize_cycles": "10818204",
+            "input_prepare_cycles": "10235"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "53345153",
+            "host_seconds": "0.533482059",
+            "attention_total_cycles": "53209311",
+            "gemm_submit_cycles": "112724",
+            "gemm_wait_cycles": "4286959",
+            "sram_copy_cycles": "1464610",
+            "simd_cycles": "47172555",
+            "initialize_cycles": "718780",
+            "softmax_cycles": "24248996",
+            "accumulate_cycles": "11393509",
+            "finalize_cycles": "10811270",
+            "input_prepare_cycles": "10233"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 524288,
+          "violations": 4,
+          "nonfinite": 0,
+          "max_abs": 0.00390625,
+          "max_index": 456,
+          "mean_abs": 0.000166910918779,
+          "relative_l2": 0.000451551340719,
+          "cosine": 0.99999989811
+        },
+        "output_sha256": "1ca5a17b647a2a181fe7ad0b65853dd0b586b003279f993d3be869c14a4dec44",
+        "context_sha256": "f9326bf2a90a0e670821b069c537507cef92480d3e76cf7dab3531e6bca4e552",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/instrumented_repeat/llama3-8b_prefill128/profile.csv"
+      }
+    },
+    "resident_softmax": {
+      "llama3-8b_decode_p128_c256": {
+        "median_cycles": {
+          "cycles": 1121157,
+          "attention_total_cycles": 1079251,
+          "gemm_submit_cycles": 56038,
+          "gemm_wait_cycles": 166396,
+          "sram_copy_cycles": 28759,
+          "simd_cycles": 764410,
+          "initialize_cycles": 25254,
+          "softmax_cycles": 428025,
+          "accumulate_cycles": 205701,
+          "finalize_cycles": 105635,
+          "input_prepare_cycles": 2674
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1121553",
+            "host_seconds": "0.011242447",
+            "attention_total_cycles": "1079594",
+            "gemm_submit_cycles": "56037",
+            "gemm_wait_cycles": "166396",
+            "sram_copy_cycles": "28759",
+            "simd_cycles": "765060",
+            "initialize_cycles": "25081",
+            "softmax_cycles": "428592",
+            "accumulate_cycles": "205752",
+            "finalize_cycles": "105635",
+            "input_prepare_cycles": "2658"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1121157",
+            "host_seconds": "0.01123822",
+            "attention_total_cycles": "1079251",
+            "gemm_submit_cycles": "56038",
+            "gemm_wait_cycles": "166544",
+            "sram_copy_cycles": "28759",
+            "simd_cycles": "764410",
+            "initialize_cycles": "25331",
+            "softmax_cycles": "427888",
+            "accumulate_cycles": "205701",
+            "finalize_cycles": "105490",
+            "input_prepare_cycles": "2674"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1120983",
+            "host_seconds": "0.011237023",
+            "attention_total_cycles": "1078942",
+            "gemm_submit_cycles": "56077",
+            "gemm_wait_cycles": "166257",
+            "sram_copy_cycles": "28794",
+            "simd_cycles": "764378",
+            "initialize_cycles": "25254",
+            "softmax_cycles": "428025",
+            "accumulate_cycles": "205428",
+            "finalize_cycles": "105671",
+            "input_prepare_cycles": "2695"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 199,
+          "mean_abs": 0.000226679258049,
+          "relative_l2": 0.000513364754907,
+          "cosine": 0.999999871464
+        },
+        "output_sha256": "df1ddfcaadf767021f84b491eed0f6a3c1045b8e05ef0050164febd02c09b070",
+        "context_sha256": "cbd370382921018b7d766634777f7bb91d5874c0e898f41f37419d0e1630f9a7",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/resident_softmax/llama3-8b_decode_p128_c256/profile.csv"
+      },
+      "llama3-8b_prefill128": {
+        "median_cycles": {
+          "cycles": 45130227,
+          "attention_total_cycles": 44994183,
+          "gemm_submit_cycles": 112731,
+          "gemm_wait_cycles": 4286570,
+          "sram_copy_cycles": 1464594,
+          "simd_cycles": 38957745,
+          "initialize_cycles": 719016,
+          "softmax_cycles": 16039821,
+          "accumulate_cycles": 11382550,
+          "finalize_cycles": 10817753,
+          "input_prepare_cycles": 10270
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "45126162",
+            "host_seconds": "0.451290595",
+            "attention_total_cycles": "44990260",
+            "gemm_submit_cycles": "112731",
+            "gemm_wait_cycles": "4286664",
+            "sram_copy_cycles": "1464607",
+            "simd_cycles": "38954053",
+            "initialize_cycles": "719018",
+            "softmax_cycles": "16041064",
+            "accumulate_cycles": "11382729",
+            "finalize_cycles": "10811242",
+            "input_prepare_cycles": "10217"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "45130227",
+            "host_seconds": "0.451332373",
+            "attention_total_cycles": "44994183",
+            "gemm_submit_cycles": "112743",
+            "gemm_wait_cycles": "4286570",
+            "sram_copy_cycles": "1464594",
+            "simd_cycles": "38957745",
+            "initialize_cycles": "718878",
+            "softmax_cycles": "16038499",
+            "accumulate_cycles": "11382530",
+            "finalize_cycles": "10817838",
+            "input_prepare_cycles": "10313"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "45130464",
+            "host_seconds": "0.45133232",
+            "attention_total_cycles": "44994544",
+            "gemm_submit_cycles": "112725",
+            "gemm_wait_cycles": "4285712",
+            "sram_copy_cycles": "1464567",
+            "simd_cycles": "38959140",
+            "initialize_cycles": "719016",
+            "softmax_cycles": "16039821",
+            "accumulate_cycles": "11382550",
+            "finalize_cycles": "10817753",
+            "input_prepare_cycles": "10270"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 524288,
+          "violations": 4,
+          "nonfinite": 0,
+          "max_abs": 0.00390625,
+          "max_index": 456,
+          "mean_abs": 0.000166910918779,
+          "relative_l2": 0.000451551340719,
+          "cosine": 0.99999989811
+        },
+        "output_sha256": "1ca5a17b647a2a181fe7ad0b65853dd0b586b003279f993d3be869c14a4dec44",
+        "context_sha256": "f9326bf2a90a0e670821b069c537507cef92480d3e76cf7dab3531e6bca4e552",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/resident_softmax/llama3-8b_prefill128/profile.csv"
+      }
+    },
+    "restored": {
+      "llama3-8b_decode_p16_c32": {
+        "median_cycles": {
+          "cycles": 1704738,
+          "attention_total_cycles": 685069,
+          "gemm_submit_cycles": 28327,
+          "gemm_wait_cycles": 84053,
+          "sram_copy_cycles": 28847,
+          "simd_cycles": 500759,
+          "initialize_cycles": 25206,
+          "softmax_cycles": 266203,
+          "accumulate_cycles": 103372,
+          "finalize_cycles": 105877,
+          "input_prepare_cycles": 980399
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1704738",
+            "host_seconds": "0.017074781",
+            "attention_total_cycles": "685067",
+            "gemm_submit_cycles": "28323",
+            "gemm_wait_cycles": "83882",
+            "sram_copy_cycles": "28800",
+            "simd_cycles": "500759",
+            "initialize_cycles": "25204",
+            "softmax_cycles": "266203",
+            "accumulate_cycles": "103529",
+            "finalize_cycles": "105823",
+            "input_prepare_cycles": "980399"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1704846",
+            "host_seconds": "0.017076013",
+            "attention_total_cycles": "685266",
+            "gemm_submit_cycles": "28337",
+            "gemm_wait_cycles": "84063",
+            "sram_copy_cycles": "28847",
+            "simd_cycles": "500803",
+            "initialize_cycles": "25236",
+            "softmax_cycles": "266322",
+            "accumulate_cycles": "103368",
+            "finalize_cycles": "105877",
+            "input_prepare_cycles": "980340"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1704630",
+            "host_seconds": "0.017073981",
+            "attention_total_cycles": "685069",
+            "gemm_submit_cycles": "28327",
+            "gemm_wait_cycles": "84053",
+            "sram_copy_cycles": "28875",
+            "simd_cycles": "500527",
+            "initialize_cycles": "25206",
+            "softmax_cycles": "266030",
+            "accumulate_cycles": "103372",
+            "finalize_cycles": "105919",
+            "input_prepare_cycles": "980405"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 248,
+          "mean_abs": 0.000275896862149,
+          "relative_l2": 0.000578285240693,
+          "cosine": 0.999999834891
+        },
+        "output_sha256": "505e491870ec72cb12e41663f096ea11270e8fd530119fc8cfb1b3980c126fd5",
+        "context_sha256": "b38c463c4489dd1056acd01d1747a3ec2cfc0b0efac0a372fa0b95d3d8c92774",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/restored/llama3-8b_decode_p16_c32/profile.csv"
+      }
+    },
+    "warp_reduce": {
+      "llama3-8b_decode_p128_c256": {
+        "median_cycles": {
+          "cycles": 1242233,
+          "attention_total_cycles": 1199935,
+          "gemm_submit_cycles": 56049,
+          "gemm_wait_cycles": 166410,
+          "sram_copy_cycles": 28770,
+          "simd_cycles": 885476,
+          "initialize_cycles": 25275,
+          "softmax_cycles": 548859,
+          "accumulate_cycles": 205774,
+          "finalize_cycles": 105601,
+          "input_prepare_cycles": 2671
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "1242233",
+            "host_seconds": "0.012450029",
+            "attention_total_cycles": "1199935",
+            "gemm_submit_cycles": "56049",
+            "gemm_wait_cycles": "166260",
+            "sram_copy_cycles": "28769",
+            "simd_cycles": "885476",
+            "initialize_cycles": "25275",
+            "softmax_cycles": "548859",
+            "accumulate_cycles": "205774",
+            "finalize_cycles": "105568",
+            "input_prepare_cycles": "2727"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "1243444",
+            "host_seconds": "0.012462189",
+            "attention_total_cycles": "1201156",
+            "gemm_submit_cycles": "56058",
+            "gemm_wait_cycles": "166689",
+            "sram_copy_cycles": "28770",
+            "simd_cycles": "886302",
+            "initialize_cycles": "25286",
+            "softmax_cycles": "549486",
+            "accumulate_cycles": "205929",
+            "finalize_cycles": "105601",
+            "input_prepare_cycles": "2671"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "1241229",
+            "host_seconds": "0.012439393",
+            "attention_total_cycles": "1198900",
+            "gemm_submit_cycles": "56049",
+            "gemm_wait_cycles": "166410",
+            "sram_copy_cycles": "28807",
+            "simd_cycles": "884452",
+            "initialize_cycles": "25178",
+            "softmax_cycles": "547795",
+            "accumulate_cycles": "205660",
+            "finalize_cycles": "105819",
+            "input_prepare_cycles": "2668"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 4096,
+          "violations": 0,
+          "nonfinite": 0,
+          "max_abs": 0.001953125,
+          "max_index": 199,
+          "mean_abs": 0.000226679258049,
+          "relative_l2": 0.000513364754907,
+          "cosine": 0.999999871464
+        },
+        "output_sha256": "df1ddfcaadf767021f84b491eed0f6a3c1045b8e05ef0050164febd02c09b070",
+        "context_sha256": "cbd370382921018b7d766634777f7bb91d5874c0e898f41f37419d0e1630f9a7",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/warp_reduce/llama3-8b_decode_p128_c256/profile.csv"
+      },
+      "llama3-8b_prefill128": {
+        "median_cycles": {
+          "cycles": 51386874,
+          "attention_total_cycles": 51250474,
+          "gemm_submit_cycles": 112718,
+          "gemm_wait_cycles": 4286099,
+          "sram_copy_cycles": 1464621,
+          "simd_cycles": 45214335,
+          "initialize_cycles": 718718,
+          "softmax_cycles": 22291898,
+          "accumulate_cycles": 11382722,
+          "finalize_cycles": 10811111,
+          "input_prepare_cycles": 10319
+        },
+        "samples": [
+          {
+            "operation": "attention",
+            "repetition": "0",
+            "cycles": "51376286",
+            "host_seconds": "0.513798164",
+            "attention_total_cycles": "51239996",
+            "gemm_submit_cycles": "112718",
+            "gemm_wait_cycles": "4286099",
+            "sram_copy_cycles": "1464612",
+            "simd_cycles": "45204317",
+            "initialize_cycles": "718911",
+            "softmax_cycles": "22291898",
+            "accumulate_cycles": "11382397",
+            "finalize_cycles": "10811111",
+            "input_prepare_cycles": "10255"
+          },
+          {
+            "operation": "attention",
+            "repetition": "1",
+            "cycles": "51386874",
+            "host_seconds": "0.513899457",
+            "attention_total_cycles": "51250474",
+            "gemm_submit_cycles": "112819",
+            "gemm_wait_cycles": "4286244",
+            "sram_copy_cycles": "1464621",
+            "simd_cycles": "45214335",
+            "initialize_cycles": "718707",
+            "softmax_cycles": "22288525",
+            "accumulate_cycles": "11382810",
+            "finalize_cycles": "10824293",
+            "input_prepare_cycles": "10350"
+          },
+          {
+            "operation": "attention",
+            "repetition": "2",
+            "cycles": "51391744",
+            "host_seconds": "0.513948591",
+            "attention_total_cycles": "51255311",
+            "gemm_submit_cycles": "112683",
+            "gemm_wait_cycles": "4285999",
+            "sram_copy_cycles": "1464636",
+            "simd_cycles": "45219695",
+            "initialize_cycles": "718718",
+            "softmax_cycles": "22307147",
+            "accumulate_cycles": "11382722",
+            "finalize_cycles": "10811108",
+            "input_prepare_cycles": "10319"
+          }
+        ],
+        "verification": {
+          "atol": 0.005,
+          "rtol": 0.005,
+          "pass": true,
+          "elements": 524288,
+          "violations": 4,
+          "nonfinite": 0,
+          "max_abs": 0.00390625,
+          "max_index": 456,
+          "mean_abs": 0.000166910918779,
+          "relative_l2": 0.000451551340719,
+          "cosine": 0.99999989811
+        },
+        "output_sha256": "1ca5a17b647a2a181fe7ad0b65853dd0b586b003279f993d3be869c14a4dec44",
+        "context_sha256": "f9326bf2a90a0e670821b069c537507cef92480d3e76cf7dab3531e6bca4e552",
+        "matches_instrumented_baseline": {
+          "q_hadamard.bin": true,
+          "context.bin": true,
+          "output.bin": true
+        },
+        "evidence": "agent-tasks/c4-attention-slowdown/runs/warp_reduce/llama3-8b_prefill128/profile.csv"
+      }
+    },
+    "word_padding": {}
+  },
+  "failed_experiment": {
+    "variant": "word_padding",
+    "slurm_job": 5985,
+    "result": "Stalled at attention for >120 seconds; canceled, exit 143. No valid timing or correctness result.",
+    "adopted": false
+  }
+}

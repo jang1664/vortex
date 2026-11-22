@@ -1,0 +1,37 @@
+--- a/tests/regression/flash_attn/kernel.cpp
++++ b/tests/regression/flash_attn/kernel.cpp
+@@ -359,12 +359,12 @@
+   const uint32_t log2_mxu_nt = log2_pow2_u32(FLASH_MXU_NT);
+ 
+   for (uint64_t index = worker;
+-       index < uint64_t(arg->query_rows) * arg->head_dim;
++       index < uint64_t(arg->query_rows) * 128u;
+        index += workers) {
+-    const uint32_t row = uint32_t(index / arg->head_dim);
+-    const uint32_t col = uint32_t(index - uint64_t(row) * arg->head_dim);
++    const uint32_t row = uint32_t(index / 128u);
++    const uint32_t col = uint32_t(index - uint64_t(row) * 128u);
+     const uint64_t tiled = gemm_c_tiled_elem_offset(
+-        row, col, arg->query_rows_pad, arg->head_dim,
++        row, col, arg->query_rows_pad, 128u,
+         log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
+     const float alpha = arg->resident
+         ? reinterpret_cast<const float *>(arg->row_alpha_base)[row] : 1.0f;
+@@ -382,13 +382,13 @@
+   const uint32_t workers = uint32_t(vx_num_warps() * vx_num_threads());
+ 
+   for (uint64_t index = worker;
+-       index < uint64_t(arg->query_rows) * arg->head_dim;
++       index < uint64_t(arg->query_rows) * 128u;
+        index += workers) {
+-    const uint32_t row = uint32_t(index / arg->head_dim);
++    const uint32_t row = uint32_t(index / 128u);
+     const float sum = row_sum[row];
+-    const uint32_t col = uint32_t(index % arg->head_dim);
++    const uint32_t col = uint32_t(index % 128u);
+     const uint64_t destination = arg->output_tiled
+-        ? gemm_c_tiled_elem_offset(row, col, arg->query_rows_pad, arg->head_dim,
++        ? gemm_c_tiled_elem_offset(row, col, arg->query_rows_pad, 128u,
+             log2_pow2_u32(FLASH_DMA_MT), log2_pow2_u32(FLASH_MXU_NT))
+         : index;
+     output[destination] = float_to_fp16(sum > 0.0f ? accumulator[index] / sum : 0.0f);

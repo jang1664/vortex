@@ -1,0 +1,85 @@
+--- a/tests/regression/flash_attn/kernel.cpp
++++ b/tests/regression/flash_attn/kernel.cpp
+@@ -241,9 +241,9 @@
+   const uint32_t log2_mxu_nt = log2_pow2_u32(FLASH_MXU_NT);
+   const uint32_t log2_mxu_kt = log2_pow2_u32(FLASH_MXU_KT);
+   const uint32_t tile = arg->current_kv_tile;
+-  const uint32_t key_base = tile * arg->kv_tile;
+-  const uint32_t block_width = arg->resident ? arg->kv_tile : FLASH_MXU_NT;
+-  const uint32_t output_tiles = ceil_div_u32(arg->kv_tile, block_width);
++  const uint32_t key_base = tile * 128u;
++  const uint32_t block_width = true ? 128u : FLASH_MXU_NT;
++  const uint32_t output_tiles = ceil_div_u32(128u, block_width);
+   const active_job_t qk_active = {
+       arg->qk_eid, arg->qk_generation, output_tiles};
+ 
+@@ -251,7 +251,7 @@
+     for (uint32_t output_tile = 0; output_tile < output_tiles; ++output_tile) {
+       uint32_t ready = 0u;
+       if (lane == 0u)
+-        ready = arg->resident || wait_progress_tile(qk_active, output_tile + 1u) ? 1u : 0u;
++        ready = true || wait_progress_tile(qk_active, output_tile + 1u) ? 1u : 0u;
+       ready = uint32_t(vx_shfl_idx(ready, 0u, NUM_THREADS - 1u, 0u));
+       if (ready == 0u) {
+         if (lane == 0u)
+@@ -260,7 +260,7 @@
+       }
+ 
+       const uint32_t col_begin = output_tile * block_width;
+-      const uint32_t col_end = min_u32(col_begin + block_width, arg->kv_tile);
++      const uint32_t col_end = min_u32(col_begin + block_width, 128u);
+       float block_max = VX_NEG_INF;
+       for (uint32_t col = col_begin + lane; col < col_end;
+            col += NUM_THREADS) {
+@@ -270,7 +270,7 @@
+                             || key <= arg->query_position_base + row);
+         if (valid) {
+           const uint64_t offset = gemm_c_tiled_elem_offset(
+-              row, col, arg->query_rows_pad, arg->kv_tile,
++              row, col, arg->query_rows_pad, 128u,
+               log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
+           const float score = gemm_output_value(arg, arg->score_base, offset)
+                             * arg->attention_scale;
+@@ -294,14 +294,14 @@
+                         ? 0.0f : vx_expf(old_max - new_max);
+ 
+       if (new_max > old_max) {
+-        if (!arg->resident) {
++        if (!true) {
+           auto *accumulator = reinterpret_cast<float *>(arg->accumulator_base);
+           for (uint32_t d = lane; d < arg->head_dim; d += NUM_THREADS)
+             accumulator[uint64_t(row) * arg->head_dim + d] *= alpha;
+         }
+         for (uint32_t col = lane; col < col_begin; col += NUM_THREADS) {
+           const uint64_t offset = gemm_a_tiled_elem_offset(
+-              row, col, arg->query_rows_pad, arg->kv_tile,
++              row, col, arg->query_rows_pad, 128u,
+               log2_pow2_u32(FLASH_DMA_MT), log2_mxu_kt);
+           probabilities[offset] = float_to_fp16(
+               fp16_to_float(probabilities[offset]) * alpha);
+@@ -320,14 +320,14 @@
+         float probability = 0.0f;
+         if (valid) {
+           const uint64_t input_offset = gemm_c_tiled_elem_offset(
+-              row, col, arg->query_rows_pad, arg->kv_tile,
++              row, col, arg->query_rows_pad, 128u,
+               log2_pow2_u32(FLASH_DMA_MT), log2_mxu_nt);
+           const float score = gemm_output_value(arg, arg->score_base, input_offset)
+                             * arg->attention_scale;
+           probability = vx_expf(score - new_max);
+         }
+         const uint64_t output_offset = gemm_a_tiled_elem_offset(
+-            row, col, arg->query_rows_pad, arg->kv_tile,
++            row, col, arg->query_rows_pad, 128u,
+             log2_pow2_u32(FLASH_DMA_MT), log2_mxu_kt);
+         probabilities[output_offset] = float_to_fp16(probability);
+         local_sum += probability;
+@@ -341,7 +341,7 @@
+       if (lane == 0u) {
+         row_max[row] = new_max;
+         row_sum[row] = alpha * old_sum + block_sum;
+-        if (arg->resident)
++        if (true)
+           reinterpret_cast<float *>(arg->row_alpha_base)[row] = alpha;
+         if (row == 0u)
+           arg->qk_progress_events += block_width / FLASH_MXU_NT;

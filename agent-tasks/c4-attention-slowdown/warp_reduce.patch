@@ -1,0 +1,38 @@
+--- a/tests/regression/flash_attn/kernel.cpp
++++ b/tests/regression/flash_attn/kernel.cpp
+@@ -1,6 +1,7 @@
+ #include "common.h"
+ #include "../layout_fused_common/layout_fused_layouts.h"
+ #include "../vector_common/fp16.h"
++#include "../softmax_common/warp_reduce_full.h"
+ 
+ #include <vx_intrinsics.h>
+ #include <vx_math.h>
+@@ -278,12 +279,7 @@
+             block_max = score;
+         }
+       }
+-      for (uint32_t shift = NUM_THREADS / 2u; shift > 0u; shift >>= 1u) {
+-        const float other = shfl_down_float(block_max, shift);
+-        if (lane + shift < NUM_THREADS && other > block_max)
+-          block_max = other;
+-      }
+-      block_max = shfl_idx_float(block_max, 0u);
++      block_max = softmax_warp_max_full(block_max);
+ 
+       float old_max = lane == 0u ? row_max[row] : 0.0f;
+       float old_sum = lane == 0u ? row_sum[row] : 0.0f;
+@@ -332,12 +328,7 @@
+         probabilities[output_offset] = float_to_fp16(probability);
+         local_sum += probability;
+       }
+-      for (uint32_t shift = NUM_THREADS / 2u; shift > 0u; shift >>= 1u) {
+-        const float other = shfl_down_float(local_sum, shift);
+-        if (lane + shift < NUM_THREADS)
+-          local_sum += other;
+-      }
+-      const float block_sum = shfl_idx_float(local_sum, 0u);
++      const float block_sum = softmax_warp_sum_full(local_sum);
+       if (lane == 0u) {
+         row_max[row] = new_max;
+         row_sum[row] = alpha * old_sum + block_sum;

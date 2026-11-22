@@ -1,0 +1,53 @@
+{
+  "legacy_single": {
+    "passed": true,
+    "log": "runs/iteration1/validation/legacy_single.log",
+    "evidence": [
+      "last_scores: max_abs=0, rel_l2=0, worst[0]=-0.5/-0.5",
+      "last_probabilities: max_abs=0.00146484, rel_l2=0.0013088, worst[1]=0.869629/0.871094",
+      "last_partial: max_abs=0.000366211, rel_l2=0.00194259, worst[132]=0.0842285/0.0845947",
+      "output: max_abs=3.21865e-06, rel_l2=0.00179374, worst[129]=0.000216722/0.000213504",
+      "output_vs_dense: max_abs=3.02575e-06, rel_l2=0.00158527, worst[129]=0.000216722/0.000213697",
+      "accumulator: max_abs=0.000366211, rel_l2=0.00194259, worst[132]=0.0842285/0.0845947",
+      "row_max: max_abs=0, rel_l2=0, worst[0]=0.0911505/0.0911505",
+      "row_sum: max_abs=0.109932, rel_l2=0.000983139, worst[1]=111.662/111.772",
+      "PASSED"
+    ]
+  },
+  "fp16_multitile": {
+    "passed": true,
+    "log": "runs/iteration1/validation/fp16_multitile.log",
+    "evidence": [
+      "output: max_abs=1.19209e-06, rel_l2=0.000957031, worst[133]=0.000361443/0.00036025",
+      "output_vs_dense: max_abs=1.14948e-06, rel_l2=0.000893179, worst[133]=0.000361443/0.000360293",
+      "PASSED"
+    ]
+  },
+  "fp32_multitile": {
+    "passed": true,
+    "log": "runs/iteration1/validation/fp32_multitile.log",
+    "evidence": [
+      "output: max_abs=1.43051e-06, rel_l2=0.00108727, worst[4]=0.000514984/0.000516415",
+      "output_vs_dense: max_abs=1.24337e-06, rel_l2=0.000939712, worst[4]=0.000514984/0.000516228",
+      "PASSED"
+    ]
+  },
+  "fp16_mask_tail": {
+    "passed": true,
+    "log": "runs/iteration1/validation/fp16_mask_tail.log",
+    "evidence": [
+      "output: max_abs=6.10352e-05, rel_l2=0.000480273, worst[130]=0.0939331/0.0938721",
+      "output_vs_dense: max_abs=7.15107e-05, rel_l2=0.00050617, worst[133]=-0.0627441/-0.0626726",
+      "PASSED"
+    ]
+  },
+  "fp32_mask_tail": {
+    "passed": true,
+    "log": "runs/iteration1/validation/fp32_mask_tail.log",
+    "evidence": [
+      "output: max_abs=6.10352e-05, rel_l2=0.000434178, worst[128]=-0.0935669/-0.0936279",
+      "output_vs_dense: max_abs=7.15107e-05, rel_l2=0.000513792, worst[133]=-0.0627441/-0.0626726",
+      "PASSED"
+    ]
+  }
+}
