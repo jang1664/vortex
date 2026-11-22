@@ -171,3 +171,16 @@ docs/**/ooc/
 # and their generated log bundles regardless of the analysis name.
 /docs/hw_analysis/**/fsdb*/
 /docs/hw_analysis/**/logs/
+
+# from feat/flash-attn
+agent-tasks/c4-attention-slowdown/
+agent-tasks/c4-sram-flash-attention/
+agent-tasks/c4-unified-mmio/
+analysis_workspace/latency_on_hw/docs/rev8_v2/
+hw/syn/xilinx/xrt/tests/direct_core_reset_inventory_mock.tcl
+hw/syn/xilinx/xrt/tests/direct_reset_boundary_insertion.txt
+hw/syn/xilinx/xrt/tests/fixtures/
+hw/syn/xilinx/xrt/tests/source_fixture.tcl
+hw/syn/xilinx/xrt/tests/test_fusion_bank_lut_ownership.tcl
+hw/syn/xilinx/xrt/tests/test_r8_floorplan.tcl
+slr_fusion_support_roots.tsv
