@@ -12,4 +12,5 @@ struct DecoderFlashArgs {
   uint64_t value_zero_source;
   uint32_t value_source_rows;
   uint32_t reserved;
+  uint64_t input_prepare_cycles;
 };

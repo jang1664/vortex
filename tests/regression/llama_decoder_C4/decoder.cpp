@@ -144,6 +144,11 @@ Sample Decoder::launch(Operation& operation, bool profile) {
       sample.gemm_wait_cycles+=args[i].attention.gemm_wait_cycles;
       sample.sram_copy_cycles+=args[i].attention.sram_copy_cycles;
       sample.simd_cycles+=args[i].attention.simd_cycles;
+      sample.initialize_cycles+=args[i].attention.initialize_cycles;
+      sample.softmax_cycles+=args[i].attention.softmax_cycles;
+      sample.accumulate_cycles+=args[i].attention.accumulate_cycles;
+      sample.finalize_cycles+=args[i].attention.finalize_cycles;
+      sample.input_prepare_cycles+=args[i].input_prepare_cycles;
     }
     if(profile) std::cout<<"ATTENTION PHASES "<<operation.name
       <<" total="<<sample.attention_total_cycles<<" submit="<<sample.gemm_submit_cycles

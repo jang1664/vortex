@@ -46,9 +46,11 @@ int llama_flash_attention_batch_main(uint32_t count) {
   auto* args=reinterpret_cast<DecoderFlashArgs*>(saved);
   for (uint32_t i=0;i<count;++i) {
     csr_write(VX_CSR_MSCRATCH,reinterpret_cast<uintptr_t>(args+i));
+    const uint64_t prepare_begin=attention_cycles();
     vx_tmc(-1);
     prepare_attention_inputs();
     vx_tmc_one();
+    args[i].input_prepare_cycles=attention_cycles()-prepare_begin;
     csr_write(VX_CSR_MSCRATCH,reinterpret_cast<uintptr_t>(&args[i].attention));
     llama_flash_attention_main();
     if (args[i].attention.status!=FLASH_STATUS_OK) {

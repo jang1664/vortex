@@ -30,6 +30,8 @@ struct Sample {
   double seconds;
   uint64_t attention_total_cycles = 0, gemm_submit_cycles = 0;
   uint64_t gemm_wait_cycles = 0, sram_copy_cycles = 0, simd_cycles = 0;
+  uint64_t initialize_cycles = 0, softmax_cycles = 0;
+  uint64_t accumulate_cycles = 0, finalize_cycles = 0, input_prepare_cycles = 0;
 };
 class Decoder {
  public:

@@ -47,12 +47,14 @@ static bool check_output(const fs::path& fixture,const fs::path& out) {
   return pass;
 }
 static void save_samples(const fs::path& path,const std::vector<Sample>& samples) {
-  std::ofstream file(path); file<<"operation,repetition,cycles,host_seconds,attention_total_cycles,gemm_submit_cycles,gemm_wait_cycles,sram_copy_cycles,simd_cycles\n"<<std::setprecision(12);
+  std::ofstream file(path); file<<"operation,repetition,cycles,host_seconds,attention_total_cycles,gemm_submit_cycles,gemm_wait_cycles,sram_copy_cycles,simd_cycles,initialize_cycles,softmax_cycles,accumulate_cycles,finalize_cycles,input_prepare_cycles\n"<<std::setprecision(12);
   std::map<std::string,unsigned> repetitions;
   for(const auto& sample:samples)
     file<<sample.name<<','<<repetitions[sample.name]++<<','<<sample.cycles<<','<<sample.seconds
       <<','<<sample.attention_total_cycles<<','<<sample.gemm_submit_cycles<<','<<sample.gemm_wait_cycles
-      <<','<<sample.sram_copy_cycles<<','<<sample.simd_cycles<<'\n';
+      <<','<<sample.sram_copy_cycles<<','<<sample.simd_cycles
+      <<','<<sample.initialize_cycles<<','<<sample.softmax_cycles
+      <<','<<sample.accumulate_cycles<<','<<sample.finalize_cycles<<','<<sample.input_prepare_cycles<<'\n';
   if(!file) throw std::runtime_error("could not save samples");
 }
 int main(int argc,char** argv) {

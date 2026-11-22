@@ -15,3 +15,4 @@ CXXFLAGS += -I$(VORTEX_HOME)/kernel/include
 include ../common.mk
 
 kernel.elf: $(SRC_DIR)/common.h $(VORTEX_HOME)/kernel/include/vx_flash_attention.h $(VORTEX_HOME)/kernel/include/vx_sram_fusion.h
+kernel.elf: $(SRC_DIR)/../softmax_common/warp_reduce_full.h

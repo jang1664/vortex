@@ -80,4 +80,9 @@ typedef struct {
   uint64_t simd_cycles;
   // Optional full-precision QK/PV export; probabilities remain FP16.
   uint32_t output_fp32;
+  // Diagnostic subdivisions of simd_cycles; host and kernel must be rebuilt together.
+  uint64_t initialize_cycles;
+  uint64_t softmax_cycles;
+  uint64_t accumulate_cycles;
+  uint64_t finalize_cycles;
 } vx_flash_attention_args_t;
