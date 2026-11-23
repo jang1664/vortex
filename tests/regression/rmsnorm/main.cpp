@@ -104,9 +104,14 @@ int main(int argc, char *argv[]) {
   uint32_t seq_len = 8;
   uint32_t hidden_dim = 128;
   float eps = 1e-6f;
+  uint32_t tiled_heads = 0;
   
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "--tiled-heads") == 0) {
+      if (++i >= argc || !(tiled_heads = atoi(argv[i]))) return 1;
+      continue;
+    }
     if (strcmp(argv[i], "-batch") == 0) {
       batch_size = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-seq") == 0) {
@@ -133,12 +138,15 @@ int main(int argc, char *argv[]) {
 #endif
   
   uint32_t total_tokens = batch_size * seq_len;
+  if (tiled_heads && seq_len % tiled_heads) return 1;
   uint32_t input_size = total_tokens * hidden_dim;
+  uint32_t storage_size = tiled_heads
+      ? qk_padded_rows(total_tokens, tiled_heads) * tiled_heads * hidden_dim : input_size;
   
   // Allocate host memory
   std::vector<data_t> h_input(input_size);
   std::vector<data_t> h_gamma(hidden_dim);
-  std::vector<data_t> h_output_gpu(input_size);
+  std::vector<data_t> h_output_gpu(storage_size);
   std::vector<data_t> h_output_cpu(input_size);
   
   // Initialize data
@@ -150,6 +158,15 @@ int main(int argc, char *argv[]) {
   printf("Running CPU reference...\n");
   rmsnorm_cpu(h_input, h_gamma, h_output_cpu, batch_size, seq_len, hidden_dim, eps);
   
+  if (tiled_heads) {
+    std::vector<data_t> packed(storage_size, 0);
+    for (uint32_t i = 0; i < input_size; ++i) {
+      auto idx = qk_tiled_offset(i / hidden_dim, i % hidden_dim, tiled_heads, hidden_dim,
+                                qk_padded_rows(total_tokens, tiled_heads));
+      packed[idx] = h_input[i];
+    }
+    h_input.swap(packed);
+  }
   // Initialize Vortex
   printf("Initializing Vortex...\n");
   
@@ -164,9 +181,9 @@ int main(int argc, char *argv[]) {
          num_cores, num_warps, num_threads);
   
   // Allocate device memory
-  uint32_t input_bytes = input_size * sizeof(data_t);
+  uint32_t input_bytes = storage_size * sizeof(data_t);
   uint32_t gamma_bytes = hidden_dim * sizeof(data_t);
-  uint32_t output_bytes = input_size * sizeof(data_t);
+  uint32_t output_bytes = storage_size * sizeof(data_t);
   
   RT_CHECK(vx_mem_alloc(device, input_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, gamma_bytes, VX_MEM_READ, &gamma_buffer));
@@ -178,7 +195,8 @@ int main(int argc, char *argv[]) {
   
   // Setup kernel arguments
   kernel_arg_t kernel_arg = {};
-  kernel_arg.kernel_id = KERNEL_RMSNORM;
+  kernel_arg.kernel_id = tiled_heads ? KERNEL_QK_NORM_TILED : KERNEL_RMSNORM;
+  kernel_arg.tiled_heads = tiled_heads;
   
   // Grid/Block configuration
   // Each block processes one token
@@ -236,7 +254,9 @@ int main(int argc, char *argv[]) {
   float max_rel_error = 0.0f;
   
   for (uint32_t i = 0; i < input_size; ++i) {
-    float got = fp16_to_float(h_output_gpu[i]);
+    float got = fp16_to_float(h_output_gpu[tiled_heads
+        ? qk_tiled_offset(i / hidden_dim, i % hidden_dim, tiled_heads, hidden_dim,
+                          qk_padded_rows(total_tokens, tiled_heads)) : i]);
     float expected = fp16_to_float(h_output_cpu[i]);
     float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);

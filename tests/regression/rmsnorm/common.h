@@ -7,6 +7,8 @@
 
 // Kernel IDs
 #define KERNEL_RMSNORM  0
+#define KERNEL_QK_NORM_TILED 1
+#include "../layout_fused_common/layout_fused_layouts.h"
 
 #ifndef RMSNORM_VARIANT_TAG
 #define RMSNORM_VARIANT_TAG 0
@@ -52,5 +54,15 @@ typedef struct {
   float eps;                // Epsilon for numerical stability (typically 1e-6)
   
   uint32_t power_kernel_iterations;
+  uint32_t tiled_heads;
 } kernel_arg_t;
+// The projection stores one GEMM-C matrix, with all heads in its N axis.
+static inline uint32_t qk_padded_rows(uint32_t tokens, uint32_t heads) {
+  return ((tokens / heads + 7u) / 8u) * 8u;
+}
+static inline uint64_t qk_tiled_offset(uint32_t token, uint32_t channel,
+                                      uint32_t heads, uint32_t dim, uint32_t padded_rows) {
+  return gemm_c_tiled_elem_offset(token / heads, (token % heads) * dim + channel,
+                                 padded_rows, heads * dim, 7u, __builtin_ctz(MXU_COL));
+}
 #endif // _COMMON_H_

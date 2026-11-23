@@ -82,6 +82,7 @@ RMSNORM_HELPER float reduce_rms(float sum_sq, uint32_t lane,
 // Use shared memory reduction similar to dotproduct example
 ///////////////////////////////////////////////////////////////////////////////
 
+template <bool Tiled = false>
 void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   auto pInput = reinterpret_cast<data_t *>(arg->input_addr);
   auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
@@ -104,12 +105,22 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   auto pInputRow = pInput + token_idx * hidden_dim;
   auto pOutputRow = pOutput + token_idx * hidden_dim;
   
+  auto offset = [&](uint32_t i) -> uint64_t {
+    if constexpr (Tiled)
+      return qk_tiled_offset(token_idx, i, arg->tiled_heads, hidden_dim,
+                             qk_padded_rows(batch_size * seq_len, arg->tiled_heads));
+    return i;
+  };
+  if constexpr (Tiled) {
+    pInputRow = pInput;
+    pOutputRow = pOutput;
+  }
   // Phase 1: Compute sum of squares with reduction
   float sum_sq = 0.0f;
   
   // Each thread accumulates its portion
   for (uint32_t i = lane; i < hidden_dim; i += block_size) {
-    float val = fp16_to_float(pInputRow[i]);
+    float val = fp16_to_float(pInputRow[offset(i)]);
     sum_sq += val * val;
   }
 
@@ -118,9 +129,9 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   
   // Phase 2: Normalize and apply gamma
   for (uint32_t i = lane; i < hidden_dim; i += block_size) {
-    float val = fp16_to_float(pInputRow[i]);
+    float val = fp16_to_float(pInputRow[offset(i)]);
     float gamma = fp16_to_float(pGamma[i]);
-    pOutputRow[i] = float_to_fp16(val * rms_norm * gamma);
+    pOutputRow[offset(i)] = float_to_fp16(val * rms_norm * gamma);
   }
 }
 
@@ -129,6 +140,9 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
 ///////////////////////////////////////////////////////////////////////////////
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   switch (arg->kernel_id) {
+    case KERNEL_QK_NORM_TILED:
+      kernel_rmsnorm<true>(arg);
+      break;
     case KERNEL_RMSNORM:
       kernel_rmsnorm(arg);
       break;

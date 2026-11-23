@@ -15,6 +15,7 @@ vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
 vx_buffer_h src_buffer = nullptr;
+vx_buffer_h fresh_key_buffer = nullptr;
 vx_buffer_h weight_buffer = nullptr;
 vx_buffer_h scale_buffer = nullptr;
 vx_buffer_h zero_buffer = nullptr;
@@ -32,6 +33,7 @@ vx_buffer_h logical_zero_buffer = nullptr;
   } while (false)
 
 static void cleanup() {
+  if (fresh_key_buffer) vx_mem_free(fresh_key_buffer);
   if (src_buffer) vx_mem_free(src_buffer);
   if (weight_buffer) vx_mem_free(weight_buffer);
   if (scale_buffer) vx_mem_free(scale_buffer);
@@ -144,7 +146,13 @@ int main(int argc, char *argv[]) {
   }
 
   if (source_total_n == 0) source_total_n = N;
-  if (append_update
+  const bool kivi = quant_mode == KV_QUANT_KIVI_INT_ZP;
+  const bool stage_key = kivi && append_update && QDIR == 0;
+  if (stage_key && (src_layout != SRC_LAYOUT_ROW_MAJOR || head_col_offset)) return 1;
+  if (kivi && (QBLK != 32 || N % 32 || GEMM_QDIR != 1 || WTRANS != SOURCE_TRANSPOSED
+      || SOURCE_TRANSPOSED != (QDIR == 0) || (append_update &&
+      (cache_position >= cache_capacity || K != (QDIR == 0 ? cache_position % 32 + 1 : 1))))) return 1;
+  if (append_update && !kivi
       && (K != 1 || QDIR != 1 || QBLK < N
           || cache_capacity == 0 || cache_position >= cache_capacity)) {
     printf("ERROR: append requires K=1, QDIR=1, one source quant group "
@@ -167,7 +175,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  const size_t src_elems = (size_t)source_total_k * source_total_n;
+  const size_t src_elems = (size_t)(stage_key ? 32 : source_total_k) * source_total_n;
   const uint32_t output_K = append_update ? cache_capacity : K;
   const size_t weight_bytes = weight_total_bytes_host(
       output_K, N, SOURCE_TRANSPOSED);
@@ -201,7 +209,8 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), stage_key ? VX_MEM_READ_WRITE : VX_MEM_READ, &src_buffer));
+  if (stage_key) RT_CHECK(vx_mem_alloc(device, N * sizeof(fp16_t), VX_MEM_READ, &fresh_key_buffer));
   const uint32_t output_mem_flags =
       append_update ? VX_MEM_READ_WRITE : VX_MEM_WRITE;
   RT_CHECK(vx_mem_alloc(device, weight_bytes, output_mem_flags, &weight_buffer));
@@ -279,12 +288,17 @@ int main(int argc, char *argv[]) {
     cleanup();
     return 1;
   }
+  if (kivi) arg.src_total_K = source_total_k;
   if (append_update) {
-    arg.K = 1;
+    arg.K = kivi ? K : 1;
     arg.src_total_K = source_total_k;
     arg.persistent_mode = 1;
     arg.cache_capacity = cache_capacity;
     arg.cache_position = cache_position;
+  }
+  if (stage_key) {
+    RT_CHECK(vx_mem_address(fresh_key_buffer, &arg.fresh_key_addr));
+    if (bench.copy_inputs) RT_CHECK(vx_copy_to_dev(fresh_key_buffer, h_src_device.data() + (K-1)*source_total_n, 0, N*sizeof(fp16_t)));
   }
   RT_CHECK(vx_mem_address(src_buffer, &arg.src_addr));
   RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));

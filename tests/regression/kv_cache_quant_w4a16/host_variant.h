@@ -42,6 +42,7 @@ static inline uint32_t kv_cache_quant_log2(uint32_t value) {
 }
 
 static inline uint32_t parse_kv_cache_quant_mode(const char* value) {
+  if (0 == std::strcmp(value, "kivi_int_zp")) return KV_QUANT_KIVI_INT_ZP;
   if (0 == std::strcmp(value, "legacy_uint4_asymmetric")) {
     return KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   }
@@ -56,6 +57,7 @@ static inline uint32_t parse_kv_cache_quant_mode(const char* value) {
 
 static inline const char* kv_cache_quant_mode_name(uint32_t mode) {
   switch (mode) {
+  case KV_QUANT_KIVI_INT_ZP: return "kivi_int_zp";
   case KV_QUANT_LEGACY_UINT4_ASYMMETRIC:
     return "legacy_uint4_asymmetric";
   case KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC:

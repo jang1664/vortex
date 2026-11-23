@@ -295,6 +295,7 @@ TARGET_MODELS = [
 LLAMA_MODEL_LABELS = {
     "llama2_7b": "Llama 2",
     "llama3_8b": "Llama 3",
+    "qwen3_8b": "Qwen3-8B",
     "llama3p2_1b": "Llama 3.2 1B",
     "llama3p2_3b": "Llama 3.2 3B",
 }

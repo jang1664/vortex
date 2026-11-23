@@ -57,8 +57,13 @@ int main(int argc, char *argv[]) {
   uint32_t seq_len = 8;
   uint32_t hidden_dim = 128;
   float eps = 1e-6f;
+  uint32_t tiled_heads = 0;
 
   for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "--tiled-heads") == 0) {
+      if (++i >= argc || !(tiled_heads = atoi(argv[i]))) return 1;
+      continue;
+    }
     if (strcmp(argv[i], "-batch") == 0)       batch_size = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seq") == 0)    seq_len    = atoi(argv[++i]);
     else if (strcmp(argv[i], "-hidden") == 0) hidden_dim = atoi(argv[++i]);
@@ -77,10 +82,13 @@ int main(int argc, char *argv[]) {
   }
 
   uint32_t total_tokens = batch_size * seq_len;
+  if (tiled_heads && seq_len % tiled_heads) return 1;
   uint32_t input_size = total_tokens * hidden_dim;
+  uint32_t storage_size = tiled_heads
+      ? qk_padded_rows(total_tokens, tiled_heads) * tiled_heads * hidden_dim : input_size;
   std::vector<data_t> h_in, h_gamma;
   if (bench.copy_inputs) {
-    h_in.resize(input_size);
+    h_in.resize(storage_size);
     h_gamma.resize(hidden_dim);
     srand(42);
     initialize_random(h_in);
@@ -99,9 +107,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 
-  uint32_t input_bytes = input_size * sizeof(data_t);
+  uint32_t input_bytes = storage_size * sizeof(data_t);
   uint32_t gamma_bytes = hidden_dim * sizeof(data_t);
-  uint32_t output_bytes = input_size * sizeof(data_t);
+  uint32_t output_bytes = storage_size * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, input_bytes,  VX_MEM_READ,  &input_buffer));
   RT_CHECK(vx_mem_alloc(device, gamma_bytes,  VX_MEM_READ,  &gamma_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
@@ -111,7 +119,8 @@ int main(int argc, char *argv[]) {
   }
 
   kernel_arg_t kernel_arg = {};
-  kernel_arg.kernel_id = KERNEL_RMSNORM;
+  kernel_arg.kernel_id = tiled_heads ? KERNEL_QK_NORM_TILED : KERNEL_RMSNORM;
+  kernel_arg.tiled_heads = tiled_heads;
   const uint32_t threads_per_block =
       rmsnorm_threads_per_block(total_tokens, (uint32_t)num_warps,
                                 (uint32_t)num_threads);

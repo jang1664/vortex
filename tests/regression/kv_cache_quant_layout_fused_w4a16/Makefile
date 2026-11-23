@@ -71,3 +71,5 @@ $(PROJECT) $(BENCH_PROJECT): $(SRC_DIR)/host_common.h $(SRC_DIR)/common.h
 # Shared numeric helpers affect both source and variant wrappers.
 kernel.elf: $(VORTEX_HOME)/tests/regression/vector_common/fp16_preserve.h $(VORTEX_HOME)/tests/regression/kv_cache_common/kv_cache_w4a16.h
 $(PROJECT): $(VORTEX_HOME)/tests/regression/kv_cache_common/quant_host_patterns.h
+kernel.elf: $(VORTEX_HOME)/tests/regression/kv_cache_common/kivi_int4.h
+$(PROJECT): $(VORTEX_HOME)/tests/regression/kv_cache_common/kivi_reference.h

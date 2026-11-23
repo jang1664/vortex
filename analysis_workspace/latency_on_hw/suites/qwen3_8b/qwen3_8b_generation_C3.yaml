@@ -1,0 +1,35 @@
+name: qwen3_8b_generation_C3
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw_naive
+  fpga_bin: naive_gemm_th32_tcol32_hwexp_dcache
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: C1
+
+  by_backend:
+    fpint_gemm_naive: C4
+
+  by_app:
+    fpint_gemm_ffn_hw: C4
+    fpint_gemm_ffn_hw_naive: C3
+    rmsnorm: C1
+    rope: C1
+    softmax: C1
+    silu: C1
+    eladd: C1
+    elmul: C1
+
+workloads:
+  - id: qwen3_8b_generation_C3
+    model: qwen3-8b
+    stage: generation
+    variant: all_fpint_gemm_naive_kivi
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 4, 64]}
+      gen_kv_len: {values: [1024, 2048, 4096, 8192, 16384, 32768]}
+      qblk: 128

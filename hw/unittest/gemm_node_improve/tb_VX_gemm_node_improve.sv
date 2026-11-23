@@ -1169,6 +1169,7 @@ module tb_VX_gemm_node_improve
         end else begin
           v = shortreal'(1.0);
         end
+        if ($test$plusargs("OFFSET_CASE")) v = (k == 0) ? 1.0 : 0.0;
         input_mat[m*test_k + k] = main_cpp_nonuniform
                                 ? fp32_to_fp16_rne(v)
                                 : cf_math_util_pkg::fp32_val_to_fp16_bit(v);
@@ -1191,6 +1192,11 @@ module tb_VX_gemm_node_improve
         end else begin
           w = 1;
         end
+        if ($test$plusargs("CHANNEL_TAGS"))
+          w = ((5*k + 3*n + k/7 + n/5) % 15) - 7;
+        // Each 32-column group contains every INT4 code. Float values
+        // are exactly representable as (code/4 - 1/16).
+        if ($test$plusargs("OFFSET_CASE")) w = (n % 16) - 8;
         weight_mat[k*test_n + n] = w[3:0];
         ref_weight[k*test_n + n] = signed'(w[3:0]);
       end
@@ -1271,6 +1277,14 @@ module tb_VX_gemm_node_improve
             // Use scale_vec[ng] as all K rows share same per-group scale
             ref_scale[idx_k_ng] = scale_vec[ng];
             ref_zero[idx_k_ng]  = zp_vec[ng];
+            if ($test$plusargs("OFFSET_CASE")) begin
+              ref_scale[idx_k_ng] = fp32_to_fp16_rne(0.25);
+              ref_zero[idx_k_ng] = -8;  // unsigned ZP round(0.25) = 0
+            end
+            if ($test$plusargs("CHANNEL_TAGS")) begin
+              ref_scale[idx_k_ng] = fp32_to_fp16_rne(shortreal'((1 + ((3*k + ng) % 4)) / 16.0));
+              ref_zero[idx_k_ng] = ((k + 2*ng) % 5) - 2;
+            end
           end
         end
       end
@@ -1826,12 +1840,18 @@ module tb_VX_gemm_node_improve
               logic [15:0] got, exp;
               gm = mt * DMA_MT + m;
               gn = nt * DMA_MXU_NT + n;
+              // Production host layout: M padding is at the end of each DMA tile.
               addr = dram_out_base + dram_idx;
-              got = dram_read_u16(addr);
+              if ($test$plusargs("KIVI_LAYOUT"))
+                addr = dram_out_base + mt * DMA_MT * test_n * 2
+                   + (nt / (DMA_NT / DMA_MXU_NT)) * cur_m_slot * DMA_NT * 2
+                   + ((nt % (DMA_NT / DMA_MXU_NT)) * cur_m * DMA_MXU_NT
+                      + m * DMA_MXU_NT + n) * 2;
+              if (m < cur_m) got = dram_read_u16(addr);
               // Padded rows are reserved address space, not GEMM results.
               if (m < cur_m) begin
                 exp = ref_output[gm * test_n + gn];
-                if (!compare_fp16(got, exp, FP16_TOL)) begin
+                if ($isunknown(got) || ($test$plusargs("CHECK_EXACT") ? (got !== exp) : !compare_fp16(got, exp, FP16_TOL))) begin
                   mismatch_count++;
                   if (mismatch_count <= 20)
                     $display("[%0t] MISMATCH mt=%0d nt=%0d m=%0d n=%0d (gm=%0d gn=%0d) got=%f exp=%f",
@@ -2604,6 +2624,27 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
+  // REG_OUTPUT_PROGRESS counts committed DMA store groups.
+  function automatic int expected_output_stores(input int rows, input int cols);
+    int count, accumulated, cur_m, cur_n;
+    count = 0;
+    for (int mt = 0; mt < rows; mt += DMA_MT) begin
+      cur_m = rows - mt < DMA_MT ? rows - mt : DMA_MT;
+      for (int nt = 0; nt < cols; nt += DMA_NT) begin
+        cur_n = cols - nt < DMA_NT ? cols - nt : DMA_NT;
+        accumulated = 0;
+        for (int nb = 0; nb < cur_n; nb += DMA_MXU_NT) begin
+          accumulated += cur_m * DMA_MXU_NT * 2;
+          if ((accumulated % `MEM_BLOCK_SIZE == 0) || nb + DMA_MXU_NT >= cur_n) begin
+            count += 1;
+            accumulated = 0;
+          end
+        end
+      end
+    end
+    return count;
+  endfunction
+
   task automatic run_config_gemm_tiled(
     input string case_name,
     input int test_m,
@@ -2704,8 +2745,9 @@ module tb_VX_gemm_node_improve
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
         wait_job_done(job_eid,
-                      ((test_m + DMA_MT - 1) / DMA_MT)
-                    * ((test_n + DMA_MXU_NT - 1) / DMA_MXU_NT));
+                      $test$plusargs("KIVI_LAYOUT") ? expected_output_stores(test_m, test_n)
+                      : ((test_m + DMA_MT - 1) / DMA_MT)
+                      * ((test_n + DMA_MXU_NT - 1) / DMA_MXU_NT));
       end
 
       repeat (1000) @(posedge clk);
