@@ -12,6 +12,7 @@
 #define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
 #define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
 #define KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC 2
+#define KV_QUANT_KIVI_INT_ZP 3
 
 #define DEFAULT_DMA_MT       128
 #define DEFAULT_DMA_KT       128
@@ -81,6 +82,7 @@ typedef struct {
   uint32_t cache_capacity;
   uint32_t cache_position;
   uint32_t power_kernel_iterations;
+  uint64_t fresh_key_addr;   // Decode K only, input from the current RoPE step.
 } kernel_arg_t;
 
 // First physical row within one M tile; columns span MXU-width groups.

@@ -698,11 +698,18 @@ VALUE_ORDERS = {
     ],
 }
 
+for _variant in tuple(VALUE_ORDERS["variant"]):
+    if _variant != C4_ALONE_VARIANT:
+        _kivi_variant = _variant.removesuffix("_spinquant") + "_kivi"
+        LABEL_MAPS["variant"][_kivi_variant] = LABEL_MAPS["variant"][_variant]
+        VALUE_ORDERS["variant"].append(_kivi_variant)
+
 
 def plot_label_maps(*, include_c4_alone: bool) -> dict:
     label_maps = {axis: dict(mapping) for axis, mapping in LABEL_MAPS.items()}
     if not include_c4_alone:
         label_maps["variant"][C4_FUSED_VARIANT] = "C4"
+        label_maps["variant"]["all_fpint_gemm_improve_fused_layout_kivi"] = "C4"
     return label_maps
 
 
@@ -789,22 +796,22 @@ CASE_LATENCY_SCALE_RULES = [
     # C1 GEMM scale is 1.0, so no rule is needed.
     LatencyScaleRule(
         "C1_area_norm",
-        {"variant": "all_sgemm_tcu_spinquant"},
+        {"variant": ("all_sgemm_tcu_spinquant", "all_sgemm_tcu_kivi")},
         sum(C1_CELL_AREA.values()),
     ),
     LatencyScaleRule(
         "C2_area_norm",
-        {"variant": "attn_sgemm_tcu_fpint_gemm_naive_spinquant"},
+        {"variant": ("attn_sgemm_tcu_fpint_gemm_naive_spinquant", "attn_sgemm_tcu_fpint_gemm_naive_kivi")},
         sum(C2_CELL_AREA.values()),
     ),
     LatencyScaleRule(
         "C3_area_norm",
-        {"variant": "all_fpint_gemm_naive_spinquant"},
+        {"variant": ("all_fpint_gemm_naive_spinquant", "all_fpint_gemm_naive_kivi")},
         sum(C3_CELL_AREA.values()),
     ),
     LatencyScaleRule(
         "C4_area_norm",
-        {"variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT)},
+        {"variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT, "all_fpint_gemm_improve_fused_layout_kivi")},
         sum(C4_CELL_AREA.values()),
     ),
 ]
@@ -2396,7 +2403,7 @@ def main(argv: list[str] | None = None) -> int:
     selected_models = tuple(
         model.strip() for model in str(args.models).split(",") if model.strip()
     )
-    unknown_models = sorted(set(selected_models) - set(TARGET_MODELS))
+    unknown_models = sorted(set(selected_models) - {*TARGET_MODELS, "qwen3_8b"})
     if not selected_models or unknown_models:
         raise ValueError(
             f"invalid --models selection {selected_models}; "

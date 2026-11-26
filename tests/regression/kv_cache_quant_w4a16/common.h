@@ -8,6 +8,7 @@
 #define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
 #define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
 #define KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC 2
+#define KV_QUANT_KIVI_INT_ZP 3
 
 #define KV_CACHE_QUANT_MAPPING_THREAD_GROUP 0
 #define KV_CACHE_QUANT_MAPPING_WARP_GROUP 1
@@ -34,5 +35,6 @@ typedef struct {
 #if defined(KV_CACHE_QUANT_INPUT_STRIDE) && KV_CACHE_QUANT_INPUT_STRIDE
   uint32_t src_row_stride; // In fp16 elements; 0 means N. Output remains dense.
 #endif
+  uint64_t fresh_key_addr;   // Decode K only, input from the current RoPE step.
 } kernel_arg_t;
 #endif // _KV_CACHE_QUANT_W4A16_COMMON_H_

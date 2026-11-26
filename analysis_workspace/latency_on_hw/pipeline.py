@@ -60,7 +60,7 @@ STAGES = ("generate", "run", "refine", "compose", "prepare", "plot")
 MODEL_NAMES = ("llama2", "llama3")
 EXECUTION_BINS = ("C1", "C3", "C4")
 MEASUREMENT_ACQUISITION = {"warmup": 0, "iterations": 1}
-MODEL_KEYS = {"llama2": "llama2_7b", "llama3": "llama3_8b"}
+MODEL_KEYS = {"llama2": "llama2_7b", "llama3": "llama3_8b", "qwen3": "qwen3_8b"}
 
 
 def _utc_now() -> str:
@@ -1082,20 +1082,27 @@ class PipelineSettings:
         object.__setattr__(self, "candidates", parse_execution_candidates(",".join(self.candidates)))
 
     @property
+    def output_workspace(self) -> Path:
+        if "qwen3" in self.models:
+            return self.workspace / f"outputs_qwen3_kivi_{self.tag}"
+        return self.workspace
+
+    @property
     def state_root(self) -> Path:
-        return self.state_base / f"pipeline_state.{self.tag}"
+        root = self.output_workspace if "qwen3" in self.models and self.state_base == self.workspace else self.state_base
+        return root / f"pipeline_state.{self.tag}"
 
     @property
     def composed_root(self) -> Path:
-        return self.workspace / f"composed_results.{self.tag}"
+        return self.output_workspace / f"composed_results.{self.tag}"
 
     @property
     def prepared_root(self) -> Path:
-        return self.workspace / f"figure_prepare.{self.tag}"
+        return self.output_workspace / f"figure_prepare.{self.tag}"
 
     @property
     def plot_root(self) -> Path:
-        return self.workspace / f"figure_output.{self.tag}"
+        return self.output_workspace / f"figure_output.{self.tag}"
 
     def model_key(self, model: str) -> str:
         return MODEL_KEYS[model]
@@ -1103,14 +1110,20 @@ class PipelineSettings:
     def suite_root(self, model: str) -> Path:
         if self.offline_inputs is not None:
             return self.offline_inputs / "suites" / self.model_key(model)
+        if model == "qwen3":
+            return self.output_workspace / "suites_final"
         return self.workspace / "generated_suites" / (
             f"{self.model_key(model)}_main_{self.suite_size}.{self.tag}"
         )
 
     def result_root(self, model: str) -> Path:
+        if model == "qwen3":
+            return self.output_workspace / "raw"
         return self.workspace / f"outputs_{model}_main.{self.tag}"
 
     def build_root(self, model: str) -> Path:
+        if model == "qwen3":
+            return self.output_workspace / "build_qwen3"
         return self.workspace.parents[1] / f"build_latency_{model}"
 
     @property
@@ -1380,6 +1393,9 @@ def _compose_tasks(settings: PipelineSettings) -> tuple[TaskSpec, ...]:
             "--models", key, "--no-combine", "--out", "{attempt_root}",
             "--raw-db-subdirs", ",".join(EXECUTION_BINS),
         )
+        if model == "qwen3":
+            command += ("--qwen3-results", str(settings.result_root(model)),
+                        "--qwen3-suites", str(settings.suite_root(model)))
         for app in settings.power_skip_apps:
             command += ("--skip-power-app", app)
         tasks.append(TaskSpec(
@@ -2057,9 +2073,9 @@ def run_pipeline(
 
 def _parse_models(value: str) -> tuple[str, ...]:
     models = tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
-    unknown = set(models) - set(MODEL_NAMES)
+    unknown = set(models) - set(MODEL_KEYS)
     if not models or unknown:
-        raise argparse.ArgumentTypeError(f"expected comma-separated llama2,llama3; got {value!r}")
+        raise argparse.ArgumentTypeError(f"expected comma-separated llama2,llama3,qwen3; got {value!r}")
     return models
 
 

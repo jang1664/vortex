@@ -2360,7 +2360,41 @@ void kernel_kv_cache_quant_layout_fused_persistent(
 }
 #endif
 
+#include "../kv_cache_common/kivi_int4.h"
+
+static void kernel_kivi_tiled(kernel_arg_t *__UNIFORM__ arg) {
+  const bool key = arg->QDIR == 0;
+  const uint32_t capacity = arg->persistent_mode ? arg->cache_capacity : arg->K;
+  const uint32_t base = arg->persistent_mode ? arg->cache_position + 1 - arg->K : 0;
+  auto src = reinterpret_cast<const fp16_t*>(arg->src_addr);
+  auto dst = reinterpret_cast<uint8_t*>(arg->weight_addr);
+  auto scales = reinterpret_cast<uint8_t*>(arg->scale_addr);
+  auto zeros = reinterpret_cast<uint8_t*>(arg->zero_addr);
+  const source_view_t view = {arg->src_total_K, arg->src_total_N, arg->src_row_offset, arg->src_col_offset};
+  const auto wk = padded_weight_K(capacity,arg->N,key);
+  const auto wn = padded_weight_N(capacity,arg->N,key);
+  kivi_stage_token(arg->fresh_key_addr,arg->src_addr,view.total_n,arg->K,arg->N,
+      blockIdx.x*blockDim.x+threadIdx.x,gridDim.x*blockDim.x);
+  kivi_quant_groups(arg->K, arg->N, key, blockIdx.x*blockDim.x+threadIdx.x, gridDim.x*blockDim.x,
+      [&](unsigned k, unsigned n) {
+        return load_src_value(src,arg->K,arg->N,k,n,arg->src_layout,arg->log2_mt,arg->log2_mxu_nt,view);
+      },
+      [&](unsigned k, unsigned n, kivi_params p) {
+        store_reused_tiled_qparam(arg,scales,zeros,capacity,arg->N,32,1,key,
+            arg->quant_mode,base+k,n,fused_arith_from_bits(p.scale),(kv_fused_arith_t)p.zero);
+      },
+      [&](unsigned k, unsigned n, unsigned packed) {
+        auto idx = key ? weight_offset_wtrans1(wk,wn,n,base+k,arg->log2_kt,arg->log2_mxu_kt,arg->log2_mxu_nt)
+                       : weight_offset_wtrans0(wk,wn,base+k,n/2,arg->log2_kt,arg->log2_mxu_kt,arg->log2_mxu_nt);
+        dst[idx] = packed;
+      });
+}
+
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
+  if (arg->quant_mode == KV_QUANT_KIVI_INT_ZP) {
+    kernel_kivi_tiled(arg);
+    return;
+  }
   switch (arg->kernel_id) {
     case KERNEL_KV_CACHE_QUANT_LAYOUT_FUSED_W4A16:
 #if KV_FUSED_SPLIT_PERSISTENT

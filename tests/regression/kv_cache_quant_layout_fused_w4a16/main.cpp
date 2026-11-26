@@ -1,3 +1,4 @@
+#include "../kv_cache_common/kivi_reference.h"
 #include "host_common.h"
 #include "../kv_cache_common/quant_host_patterns.h"
 #include <vortex.h>
@@ -16,6 +17,7 @@ vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
 vx_buffer_h src_buffer = nullptr;
+vx_buffer_h fresh_key_buffer = nullptr;
 vx_buffer_h weight_buffer = nullptr;
 vx_buffer_h scale_buffer = nullptr;
 vx_buffer_h zero_buffer = nullptr;
@@ -33,6 +35,7 @@ vx_buffer_h logical_zero_buffer = nullptr;
   } while (false)
 
 static void cleanup() {
+  if (fresh_key_buffer) vx_mem_free(fresh_key_buffer);
   if (src_buffer) vx_mem_free(src_buffer);
   if (weight_buffer) vx_mem_free(weight_buffer);
   if (scale_buffer) vx_mem_free(scale_buffer);
@@ -113,6 +116,14 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     }
   }
 
+  if (quant_mode == KV_QUANT_KIVI_INT_ZP) {
+    int16_t zp;
+    kivi_reference_range(min_v,max_v,scale_bits,zp);
+    zero_bits = float_to_fp16((float)zp);
+    if (scale_fp32) *scale_fp32 = fp16_to_float_preserve(scale_bits);
+    if (zero_fp32) *zero_fp32 = (float)zp;
+    return;
+  }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
     const float scale = reference_div(reference_round(std::max(absmax, 1e-8f)), 7.5f);
     scale_bits = float_to_fp16(scale);
@@ -167,6 +178,8 @@ static uint8_t quant_cpu(const std::vector<fp16_t>& src,
   float zero_fp32 = 0.0f;
   compute_params_cpu(src, K, N, QBLK, QDIR, quant_mode, k, n,
                      scale_bits, zero_bits, &scale_fp32, &zero_fp32);
+  if (quant_mode == KV_QUANT_KIVI_INT_ZP)
+    return kivi_reference_code(fp16_to_float_preserve(src[(uint64_t)k*N+n]),scale_fp32,(int)zero_fp32);
   const float stored_scale = fp16_to_float(scale_bits);
   const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
       ? stored_scale : scale_fp32;
@@ -722,7 +735,13 @@ int main(int argc, char *argv[]) {
                                       DEFAULT_DMA_NT, src_layout, source_total_k,
                                       source_total_n, head_col_offset);
   }
-  if (append_update) {
+  const bool kivi = quant_mode == KV_QUANT_KIVI_INT_ZP;
+  const bool stage_key = kivi && append_update && QDIR == 0;
+  if (stage_key && (src_layout != SRC_LAYOUT_ROW_MAJOR || head_col_offset)) return 1;
+  if (kivi && (QBLK != 32 || N % 32 || GEMM_QDIR != 1 || WTRANS != SOURCE_TRANSPOSED
+      || SOURCE_TRANSPOSED != (QDIR == 0) || emit_correction_qparams || (append_update &&
+      (cache_position >= cache_capacity || K != (QDIR == 0 ? cache_position % 32 + 1 : 1))))) return 1;
+  if (append_update && !kivi) {
     if (K != 1 || QDIR != 1 || QBLK < N
         || cache_capacity == 0 || cache_position >= cache_capacity) {
       printf("ERROR: append correctness mode requires K=1, QDIR=1, "
@@ -774,10 +793,11 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  const uint32_t capacity = append_update ? cache_capacity : K;
   const size_t src_elems = (size_t)K * N;
-  const size_t src_alloc_elems = (size_t)align_up_u32_host(K, TILE_DMA_MXU_KT) * source_total_n;
-  const size_t weight_bytes = weight_total_bytes_host(K, N, SOURCE_TRANSPOSED);
-  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR,
+  const size_t src_alloc_elems = (size_t)align_up_u32_host(stage_key ? 32u : std::max(K,source_total_k), TILE_DMA_MXU_KT) * source_total_n;
+  const size_t weight_bytes = weight_total_bytes_host(capacity, N, SOURCE_TRANSPOSED);
+  const size_t scale_bytes = scale_total_bytes_host(capacity, N, QBLK, GEMM_QDIR,
                                                     SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
   std::vector<fp16_t> h_src(src_elems);
   std::vector<uint8_t> h_weight(weight_bytes);
@@ -797,7 +817,38 @@ int main(int argc, char *argv[]) {
                 h_src_combined.begin() + (uint64_t)k * source_total_n + head_col_offset);
   }
   std::vector<fp16_t> h_src_device(src_alloc_elems);
-  pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n, src_layout, DMA_MT);
+  pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n, src_layout, DMA_MT, source_total_k);
+  if (kivi) {
+    std::fill(h_ref_weight.begin(),h_ref_weight.end(),0xa5);
+    std::fill(h_ref_scales.begin(),h_ref_scales.end(),0xa5);
+    std::fill(h_ref_zeros.begin(),h_ref_zeros.end(),0xa5);
+    const uint32_t start = append_update ? cache_position + 1 - K : 0;
+    const auto wk=padded_weight_K_host(capacity,N,SOURCE_TRANSPOSED);
+    const auto wn=padded_weight_N_host(capacity,N,SOURCE_TRANSPOSED);
+    const auto pk=padded_qparam_K_host(capacity,N,QBLK,1,SOURCE_TRANSPOSED);
+    for (uint32_t row=0; row<K; ++row) {
+      for (uint32_t n=0; n<N; ++n) {
+        const auto k=SOURCE_TRANSPOSED ? n : start+row;
+        const auto col=SOURCE_TRANSPOSED ? start+row : n;
+        auto off=SOURCE_TRANSPOSED ? weight_offset_wtrans1(wk,wn,k & ~1u,col,DMA_KT)
+                                   : weight_offset_wtrans0(wk,wn,k,col/2,DMA_KT);
+        unsigned shift=(n%2)*4;
+        uint8_t code=quant_cpu(h_src,K,N,32,QDIR,quant_mode,row,n);
+        h_ref_weight[off]=(h_ref_weight[off] & ~(15u<<shift)) | (code<<shift);
+        if (SOURCE_TRANSPOSED ? row % 32 : n % 32) continue;
+        fp16_t sc, z;
+        compute_params_cpu(h_src,K,N,32,QDIR,quant_mode,row,n,sc,z);
+        uint32_t kt=k/DMA_KT, nt=col/DMA_NT, ck=std::min(pk-kt*DMA_KT,DMA_KT);
+        auto slot=scale_slot_base_ref(capacity,N,32,1,SOURCE_TRANSPOSED,DMA_KT,DMA_NT,kt,nt);
+        for (uint32_t delta=0;delta<32;delta+=TILE_DMA_MXU_NT) {
+          auto addr=slot+2*((col% DMA_NT+delta)/TILE_DMA_MXU_NT*ck+k%DMA_KT);
+          if (addr+2 > h_ref_scales.size()) continue;
+          store_u16_ref(h_ref_scales,addr,sc);
+          store_u16_ref(h_ref_zeros,addr,uint16_t(int16_t(fp16_to_float(z))));
+        }
+      }
+    }
+  } else
   quantize_layout_fused_cpu(h_src, h_ref_weight, h_ref_scales, h_ref_zeros,
                             K, N, QBLK, QDIR, quant_mode, WTRANS, GEMM_QDIR,
                             SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
@@ -822,7 +873,8 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, src_alloc_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, src_alloc_elems * sizeof(fp16_t), stage_key ? VX_MEM_READ_WRITE : VX_MEM_READ, &src_buffer));
+  if (stage_key) RT_CHECK(vx_mem_alloc(device, N * sizeof(fp16_t), VX_MEM_READ, &fresh_key_buffer));
   RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_WRITE, &weight_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &zero_buffer));
@@ -831,6 +883,13 @@ int main(int argc, char *argv[]) {
                           &logical_scale_buffer));
     RT_CHECK(vx_mem_alloc(device, logical_qparam_count * sizeof(fp16_t), VX_MEM_WRITE,
                           &logical_zero_buffer));
+  }
+  if (kivi) {
+    std::fill(h_weight.begin(),h_weight.end(),0xa5);
+    std::fill(h_scales.begin(),h_scales.end(),0xa5);
+    RT_CHECK(vx_copy_to_dev(weight_buffer,h_weight.data(),0,weight_bytes));
+    RT_CHECK(vx_copy_to_dev(scale_buffer,h_scales.data(),0,scale_bytes));
+    RT_CHECK(vx_copy_to_dev(zero_buffer,h_scales.data(),0,scale_bytes));
   }
   RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_alloc_elems * sizeof(fp16_t)));
 
@@ -867,12 +926,25 @@ int main(int argc, char *argv[]) {
   const uint32_t blocks = single_group ? 1u : std::min(
       (work_items + tpb - 1u) / tpb,
       std::max(1u, (uint32_t)num_cores * (cross_group ? (uint32_t)num_warps : 4u)));
-  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
+  if (!init_kernel_arg(arg, capacity, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                        SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
                        blocks, tpb, quant_mode, source_total_n, head_col_offset)) {
     printf("ERROR: failed to initialize kernel args\n");
     cleanup();
     return 1;
+  }
+  if (kivi) {
+    arg.K = K;
+    arg.src_total_K = source_total_k;
+    arg.cache_capacity = capacity;
+    arg.cache_position = cache_position;
+    arg.persistent_mode = append_update;
+  }
+  if (stage_key) {
+    RT_CHECK(vx_mem_address(fresh_key_buffer, &arg.fresh_key_addr));
+    RT_CHECK(vx_copy_to_dev(fresh_key_buffer, h_src.data()+(K-1)*N, 0, N*sizeof(fp16_t)));
+    std::vector<fp16_t> poison(N, 0x7e00);
+    RT_CHECK(vx_copy_to_dev(src_buffer, poison.data(), (K-1)*source_total_n*sizeof(fp16_t), N*sizeof(fp16_t)));
   }
   RT_CHECK(vx_mem_address(src_buffer, &arg.src_addr));
   RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));
@@ -897,6 +969,12 @@ int main(int argc, char *argv[]) {
   }
 
   size_t errors = 0;
+  if (stage_key) {
+    std::vector<fp16_t> retained(N);
+    RT_CHECK(vx_copy_from_dev(retained.data(), src_buffer, (K-1)*source_total_n*sizeof(fp16_t), N*sizeof(fp16_t)));
+    if (!std::equal(retained.begin(),retained.end(),h_src.begin()+(K-1)*N)) ++errors;
+  }
+
   for (size_t i = 0; i < weight_bytes; ++i) {
     if (h_weight[i] != h_ref_weight[i]) {
       if (errors < 8) {

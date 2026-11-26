@@ -1,3 +1,4 @@
+#include "../kv_cache_common/kivi_reference.h"
 #if defined(KV_CACHE_QUANT_REFERENCE_FP32)
 #include "main.fp32.cpp"
 #else
@@ -16,6 +17,7 @@ vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
 vx_buffer_h src_buffer = nullptr;
+vx_buffer_h fresh_key_buffer = nullptr;
 vx_buffer_h dst_buffer = nullptr;
 vx_buffer_h scale_buffer = nullptr;
 vx_buffer_h zero_buffer = nullptr;
@@ -31,6 +33,7 @@ vx_buffer_h zero_buffer = nullptr;
   } while (false)
 
 static void cleanup() {
+  if (fresh_key_buffer) vx_mem_free(fresh_key_buffer);
   if (src_buffer) vx_mem_free(src_buffer);
   if (dst_buffer) vx_mem_free(dst_buffer);
   if (scale_buffer) vx_mem_free(scale_buffer);
@@ -89,6 +92,11 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     }
   }
 
+  if (quant_mode == KV_QUANT_KIVI_INT_ZP) {
+    kivi_reference_range((float)min_v,(float)max_v,scale_bits,zp);
+    if (quant_scale_out) *quant_scale_out = kv_fp16_from_bits(scale_bits);
+    return;
+  }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
     const kv_fp16_arith_t abs_min = min_v < 0.0f ? -min_v : min_v;
     const kv_fp16_arith_t abs_max = max_v < 0.0f ? -max_v : max_v;
@@ -133,6 +141,8 @@ static uint8_t quantize_cpu_value(kv_fp16_arith_t value,
                                   kv_fp16_arith_t scale,
                                   int16_t zero,
                                   uint32_t quant_mode) {
+  if (quant_mode == KV_QUANT_KIVI_INT_ZP)
+    return kivi_reference_code(float(value),float(scale),zero);
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     return kv_quantize_value_scale_fp16(value, scale, zero);
   }
@@ -190,6 +200,7 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 16;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 0;
+  bool stage_key = false;
   uint32_t src_row_stride = 0;
   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   for (int i = 1; i < argc; ++i) {
@@ -197,6 +208,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-n") == 0) N = atoi(argv[++i]);
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--kivi-update-key") == 0) stage_key = true;
     else if (strcmp(argv[i], "--src-row-stride") == 0) src_row_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
     else if (strcmp(argv[i], "--quant-mode") == 0)
@@ -211,7 +223,7 @@ int main(int argc, char *argv[]) {
     }
   }
   if ((N & 1u) != 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1
-      || quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+      || quant_mode > KV_QUANT_KIVI_INT_ZP) {
     printf("ERROR: require even N, QBLK>0, QDIR/WTRANS in {0,1}, and a valid quant mode\n");
     return 1;
   }
@@ -221,7 +233,9 @@ int main(int argc, char *argv[]) {
 #if !defined(KV_CACHE_QUANT_INPUT_STRIDE) || !KV_CACHE_QUANT_INPUT_STRIDE
   if (src_row_stride != N) { fprintf(stderr, "strided input requires groupwise_fp16\n"); return 1; }
 #endif
-  const size_t src_storage_elems = (size_t)K * src_row_stride;
+  if (quant_mode == KV_QUANT_KIVI_INT_ZP && (QBLK != 32 || N % 32 || !K)) return 1;
+  if (stage_key && (QDIR || K>32 || quant_mode != KV_QUANT_KIVI_INT_ZP)) return 1;
+  const size_t src_storage_elems = (size_t)(stage_key ? 32 : K) * src_row_stride;
   const size_t src_elems = (size_t)K * N;
   const size_t packed_bytes = src_elems / 2;
   const size_t qparam_elems = kv_qparam_count(K, N, QBLK, QDIR);
@@ -248,7 +262,8 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, src_storage_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, src_storage_elems * sizeof(fp16_t), stage_key ? VX_MEM_READ_WRITE : VX_MEM_READ, &src_buffer));
+  if (stage_key) RT_CHECK(vx_mem_alloc(device, N * sizeof(fp16_t), VX_MEM_READ, &fresh_key_buffer));
   RT_CHECK(vx_mem_alloc(device, packed_bytes, VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(fp16_t), VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, qparam_elems * sizeof(int16_t), VX_MEM_WRITE, &zero_buffer));
@@ -276,6 +291,12 @@ int main(int argc, char *argv[]) {
   arg.block_dim[0] = tpb;
   arg.block_dim[1] = 1;
   arg.block_dim[2] = 1;
+  if (stage_key) {
+    RT_CHECK(vx_mem_address(fresh_key_buffer, &arg.fresh_key_addr));
+    RT_CHECK(vx_copy_to_dev(fresh_key_buffer, h_src.data()+(K-1)*N, 0, N*sizeof(fp16_t)));
+    std::vector<fp16_t> poison(N, 0x7e00);
+    RT_CHECK(vx_copy_to_dev(src_buffer, poison.data(), (K-1)*src_row_stride*sizeof(fp16_t), N*sizeof(fp16_t)));
+  }
   RT_CHECK(vx_mem_address(src_buffer, &arg.src_addr));
   RT_CHECK(vx_mem_address(dst_buffer, &arg.dst_addr));
   RT_CHECK(vx_mem_address(scale_buffer, &arg.scale_addr));
@@ -300,6 +321,12 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_from_dev(h_zeros.data(), zero_buffer, 0, qparam_elems * sizeof(int16_t)));
 
   int errors = 0;
+  if (stage_key) {
+    std::vector<fp16_t> retained(N);
+    RT_CHECK(vx_copy_from_dev(retained.data(), src_buffer, (K-1)*src_row_stride*sizeof(fp16_t), N*sizeof(fp16_t)));
+    if (!std::equal(retained.begin(),retained.end(),h_src.begin()+(K-1)*N)) ++errors;
+  }
+
   for (size_t i = 0; i < packed_bytes; ++i) {
     if (h_packed[i] != h_ref_packed[i]) {
       if (errors < 8) {

@@ -50,6 +50,20 @@ MODELS: dict[str, dict[str, int | float]] = {
         "rms_norm_eps": 1e-5,
         "rope_theta": 500000.0,
     },
+    "qwen3-8b": {
+        "hidden_size": 4096,
+        "intermediate_size": 12288,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "num_layers": 36,
+        "vocab_size": 151936,
+        "max_position_embeddings": 40960,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 1000000.0,
+        "attention_bias": False,
+        "qk_norm": True,
+    },
     "llama3p2-1b": {
         "hidden_size": 2048,
         "intermediate_size": 8192,
@@ -129,8 +143,10 @@ ALL_ASYMMETRIC_WKV4_VARIANTS = tuple(
     f"{variant}{SPINQUANT_VARIANT_SUFFIX}{ALL_ASYMMETRIC_WKV4_SUFFIX}"
     for variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT)
 )
+KIVI_VARIANTS = tuple(v + "_kivi" for v in (ALL_SGEMM_TCU_VARIANT,
+    ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT, ALL_FPINT_GEMM_NAIVE_VARIANT, LAYOUT_FUSED_VARIANT))
 WORKLOAD_VARIANTS = (
-    BASE_WORKLOAD_VARIANTS
+    KIVI_VARIANTS + BASE_WORKLOAD_VARIANTS
     + SPINQUANT_WORKLOAD_VARIANTS
     + ALL_ASYMMETRIC_WKV4_VARIANTS
 )
@@ -213,6 +229,8 @@ def _llm_kernel(name: str,
 
 
 def _base_workload_variant(variant: str) -> str:
+    if variant in KIVI_VARIANTS:
+        return variant.removesuffix("_kivi")
     if variant in BASE_WORKLOAD_VARIANTS:
         return variant
     if variant.endswith(ALL_ASYMMETRIC_WKV4_SUFFIX):
@@ -238,6 +256,12 @@ def _is_all_asymmetric_wkv4_variant(variant: str) -> bool:
 
 
 def _quantization_policy(variant: str, qblk: int) -> dict:
+    if variant in KIVI_VARIANTS:
+        fmt = {"scheme": "signed_asymmetric_int4", "scale_dtype": "float16", "zero_point_dtype": "int16"}
+        return {"name": "kivi_int_zp", "residual_window": 0,
+                "weight": dict(fmt, group_size=128, axis="reduction"),
+                "key": dict(fmt, group_size=32, axis="tokens"),
+                "value": dict(fmt, group_size=32, axis="channels")}
     if _is_spinquant_variant(variant):
         return {
             "name": "signed_all_asymmetric_wkv4_v1",
@@ -408,6 +432,12 @@ def _decode_length_alignment(kernel: dict) -> int | None:
         return None
 
     backend = str(kernel.get("backend", ""))
+    cache_axis = {"attn_qkT": "N", "attn_pv": "K"}.get(name)
+    if (cache_axis and kernel.get("variant") in KIVI_VARIANTS
+            and backend == FPINT_GEMM_NAIVE_BACKEND and kernel["shape"][cache_axis] > 8192):
+        return 128
+    if kernel.get("variant") in KIVI_VARIANTS and (name in {"attn_qkT", "attn_pv"} or backend == "kv_cache_dequant_w4a16"):
+        return 32
     if name == "attn_v_transpose":
         return 1
     if backend in FPINT_GEMM_BACKENDS:
@@ -465,12 +495,16 @@ def _annotate_decode_padding_reference(kernel: dict, logical_seq_kv: int) -> dic
         padded_args = _replace_integer_arg(padded_args, "-seqk-stride", stride)
         shape["padded_capacity_stride"] = stride
 
+    if kernel.get("variant") in KIVI_VARIANTS and name in {"attn_qkT", "attn_pv"}:
+        out["args"] = padded_args
     out["padded_args"] = padded_args
     out["shape"] = shape
     return out
 
 
 def _decode_sampling_class(kernel: dict) -> str:
+    if kernel["variant"] in KIVI_VARIANTS and kernel["name"] == "kv_cache_quant_rope_k_to_attn_qkT":
+        return "partial_k_group"
     if _decode_length_alignment(kernel) is None:
         return "invariant"
     if kernel.get("name") == "attn_v_transpose" or str(kernel.get("backend", "")) in {
@@ -482,7 +516,9 @@ def _decode_sampling_class(kernel: dict) -> str:
 
 def _sample_decode_group(kernels: list[dict], interval: int) -> list[dict]:
     sampling_class = _decode_sampling_class(kernels[0])
-    if sampling_class == "invariant":
+    if sampling_class == "partial_k_group":
+        selected_indices = list(range(len(kernels)))
+    elif sampling_class == "invariant":
         selected_indices = [0]
     elif sampling_class == "tile_step":
         buckets: dict[int, list[int]] = {}
@@ -1178,6 +1214,61 @@ def _apply_row_major_attention_layout(kernels: list[dict], *, heads_kv: int,
             args += " -r 1"
             update = {"B_layout": "row_major_fp16"}
         out.append(_with_kernel_updates(kernel, args=args, shape_update=update))
+    return out
+
+
+def _apply_head_reorders(kernels: list[dict], *, stage: str, batch: int,
+                         seq_q: int, seq_kv: int, heads_q: int, heads_kv: int,
+                         head_dim: int, layers: int, variant: str) -> list[dict]:
+    """Account for connections absent from standalone row-major benchmarks."""
+    if _base_workload_variant(variant) not in STANDARD_KV_CACHE_QUANT_VARIANTS:
+        return kernels
+    names = {kernel["name"] for kernel in kernels}
+
+    def reorder(name: str, producer: str, consumer: str, *, seq: int,
+                heads: int, transpose: bool = False) -> dict:
+        return _llm_kernel(
+            name=name, kind="reorder", backend="head_reorder", stage=stage,
+            args=(f"-batch {1 if transpose else batch} -seq {seq} "
+                  f"-heads {heads} -headdim {head_dim} -mode {2 if transpose else 1}"),
+            calls_per_forward=layers * batch * heads_kv if transpose else layers,
+            shape={
+                "batch": 1 if transpose else batch, "seq": seq,
+                "heads": heads, "headdim": head_dim,
+                "layout_from": "head_major_row_fp16" if transpose else "row_major_fp16",
+                "layout_to": "col_major_fp16" if transpose else "head_major_row_fp16",
+                "producer": producer, "consumer": consumer,
+                "layout_group": name,
+            },
+            variant=variant,
+        )
+
+    after = {
+        "rope_q": reorder(
+            "attn_q_head_reorder", "rope_q",
+            "spinquant_r3_q_hadamard" if "spinquant_r3_q_hadamard" in names else "attn_qkT",
+            seq=seq_q, heads=heads_q),
+        "rope_k": reorder(
+            "attn_k_head_reorder", "rope_k",
+            "spinquant_r3_k_hadamard" if "spinquant_r3_k_hadamard" in names
+            else "kv_cache_quant_rope_k_to_attn_qkT",
+            seq=seq_q, heads=heads_kv),
+        "v_proj": reorder(
+            "attn_v_head_reorder", "v_proj", "kv_cache_quant_v_cache_to_attn_pv",
+            seq=seq_q, heads=heads_kv),
+    }
+    # V dequantization emits [S_kv, D]; the TCU B-col-major consumer needs
+    # [D, S_kv]. Each KV head is transposed once and shared by its query heads.
+    dequant = _kv_cache_dequant_name("attn_pv")
+    if dequant in names:
+        after[dequant] = reorder(
+            "attn_v_transpose", dequant, "attn_pv",
+            seq=seq_kv, heads=1, transpose=True)
+    out = []
+    for kernel in kernels:
+        out.append(kernel)
+        if kernel["name"] in after:
+            out.append(after[kernel["name"]])
     return out
 
 
@@ -2044,6 +2135,57 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
     return out
 
 
+def _qwen_kivi_kernels(kernels, stage, variant, seq_q, seq_kv, batch,
+                       heads_q, heads_kv, head_dim, layers, eps):
+    out = []
+    fused = _base_workload_variant(variant) == LAYOUT_FUSED_VARIANT
+    for kernel in kernels:
+        name = kernel["name"]
+        shape = kernel["shape"]
+        if fused and name == "rope_k":
+            kernel["args"] = kernel["args"].replace("--layout-to row_major", "--layout-to head_major_row")
+            shape["layout_to"] = "head_major_row_fp16"
+        if name in {"q_proj", "k_proj"}:
+            out.append(kernel)
+            heads = heads_q if name == "q_proj" else heads_kv
+            layout = "gemm_c_tiled" if fused else "row_major_fp16"
+            out.append(_llm_kernel(
+                name=name[0] + "_head_norm", stage=stage, kind="rmsnorm",
+                args=f"-batch {batch} -seq {seq_q * heads} -hidden {head_dim} -eps {eps:.9g}"
+                     + (f" --tiled-heads {heads}" if fused else ""),
+                calls_per_forward=layers,
+                shape={"batch": batch, "seq": seq_q * heads, "hidden": head_dim, "heads": heads,
+                       "eps": eps, "producer": name, "consumer": "rope_" + name[0],
+                       "layout_from": layout, "layout_to": layout}, variant=variant))
+            continue
+        if name in {"kv_cache_quant_rope_k_to_attn_qkT", "kv_cache_quant_v_cache_to_attn_pv"}:
+            key = name == "kv_cache_quant_rope_k_to_attn_qkT"
+            valid = ((seq_kv - 1) % 32 + 1 if key else 1) if stage == "generation" else seq_kv
+            shape.update(K=valid, WTRANS=int(key), QBLK=32, QDIR=int(not key), source_QDIR=int(not key),
+                         gemm_QDIR=1, source_token_count=valid, quant_mode="kivi_int_zp")
+            args = f"-k {valid} -n {head_dim} -q 32 -d {int(not key)} -t {int(key)} --quant-mode kivi_int_zp"
+            if key and stage == "generation":
+                shape["fp16_quant_scratch_tokens"] = 32
+                if not fused:
+                    args += " --kivi-update-key"
+            if fused:
+                args += " --gemm-qdir 1"
+                if key:
+                    shape["layout_from"] = "head_major_row_fp16"
+                    args += " --source-transposed"
+                else:
+                    args += f" --layout-from gemm_c_tiled --source-total-n {heads_kv * head_dim}"
+                    shape["source_total_n"] = heads_kv * head_dim
+            kernel["args"] = args
+        elif name in {_kv_cache_dequant_name("attn_qkT"), _kv_cache_dequant_name("attn_pv")}:
+            key = name == _kv_cache_dequant_name("attn_qkT")
+            shape.update(QBLK=32, QDIR=int(not key), quant_mode="signed_int4_asymmetric")
+            kernel["args"] = (f"-k {seq_kv} -n {head_dim} -q 32 -d {int(not key)} -t {int(key)}"
+                              " --quant-mode signed_int4_asymmetric")
+        out.append(kernel)
+    return out
+
+
 def build_decoder_pass_kernels(config: dict,
                                stage: str,
                                batch: int,
@@ -2195,7 +2337,7 @@ def build_decoder_pass_kernels(config: dict,
     # KV head into the GEMM M dimension instead of emitting separate GEMVs.
     out.append(_llm_gemm_kernel(
         name="attn_qkT", stage=stage, calls_per_forward=attention_calls,
-        M=attention_M, N=seq_kv, K=D, qblk=D, wtrans=1, qdir=0,
+        M=attention_M, N=seq_kv, K=D, qblk=32 if variant in KIVI_VARIANTS else D, wtrans=1, qdir=int(variant in KIVI_VARIANTS),
         variant=variant, per_head=True, shape_update=attention_shape_update,
     ))
 
@@ -2221,7 +2363,7 @@ def build_decoder_pass_kernels(config: dict,
     # as QK^T, turning per-query-head GEMV work into small GEMMs.
     out.append(_llm_gemm_kernel(
         name="attn_pv", stage=stage, calls_per_forward=attention_calls,
-        M=attention_M, N=D, K=seq_kv, qblk=D, wtrans=0, qdir=1,
+        M=attention_M, N=D, K=seq_kv, qblk=32 if variant in KIVI_VARIANTS else D, wtrans=0, qdir=1,
         variant=variant, per_head=True, shape_update=attention_shape_update,
     ))
 
@@ -2402,6 +2544,12 @@ def build_decoder_pass_kernels(config: dict,
             kernels, stage=stage, capacity=softmax_k_stride,
             heads_q=H_q, heads_kv=H_kv,
         )
+    if variant in KIVI_VARIANTS:
+        kernels = _qwen_kivi_kernels(kernels, stage, variant, seq_q, seq_kv,
+                                     batch, H_q, H_kv, D, L, rms_eps)
+        return _apply_head_reorders(kernels, stage=stage, batch=batch, seq_q=seq_q,
+                                    seq_kv=seq_kv, heads_q=H_q, heads_kv=H_kv,
+                                    head_dim=D, layers=L, variant=variant)
     return _apply_row_major_attention_layout(
         kernels, heads_kv=H_kv, head_dim=D, variant=variant,
     )
@@ -2426,6 +2574,10 @@ def build_llm_kernels(model_name: str,
             f"{sorted(MODELS.keys())}"
         )
     config = MODELS[model_name]
+    if (variant in KIVI_VARIANTS) != bool(config.get("qk_norm")):
+        raise ValueError("Select a Qwen3-8B KIVI variant together with the Qwen3 model")
+    if variant in KIVI_VARIANTS and qblk != 128:
+        raise ValueError("Qwen3-8B KIVI requires W4 g128")
     if variant not in WORKLOAD_VARIANTS:
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
@@ -2516,7 +2668,7 @@ def build_llm_kernels(model_name: str,
                             "cache_position": logical_seq_kv - 1,
                             "cache_allocation": "fixed",
                             "persistent_layout": "gemm_w_tiled_transposed",
-                            "source_token_count": 1,
+                            "source_token_count": shape.get("source_token_count", 1),
                         })
                         if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
                             kernel["args"] += (
@@ -2587,7 +2739,7 @@ def build_llm_kernels(model_name: str,
         "kernels": kernels,
     }
     quantization = payload["config"]["quantization_policy"]
-    if quantization["name"] == "signed_all_asymmetric_wkv4_v1":
+    if quantization["name"] in {"signed_all_asymmetric_wkv4_v1", "kivi_int_zp"}:
         weight_ops = {
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj", "lm_head",
@@ -2601,7 +2753,15 @@ def build_llm_kernels(model_name: str,
                 shape["operand_quantization"] = dict(quantization["key"])
             elif name in ("kv_cache_quant_v_cache_to_attn_pv", "attn_pv"):
                 shape["operand_quantization"] = dict(quantization["value"])
-    annotate_kernel_flow(payload["kernels"])
+    if variant in KIVI_VARIANTS:
+        by_step = {}
+        for kernel in payload["kernels"]:
+            step = (kernel["stage"], kernel["shape"].get("output_token_index"))
+            by_step.setdefault(step, []).append(kernel)
+        for group in by_step.values():
+            annotate_kernel_flow(group)
+    else:
+        annotate_kernel_flow(payload["kernels"])
     return payload
 
 
@@ -3535,9 +3695,12 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     # Insert the explicit connection between the existing producer/consumer
     # edges after their normal flow annotations have been assigned.
     for kernel in kernels:
-        if kernel.get("kind") != "reorder":
+        if kernel.get("kind") != "reorder" and kernel["name"] not in {"q_head_norm", "k_head_norm"}:
             continue
         shape = kernel["shape"]
+        if kernel["name"] in {"q_head_norm", "k_head_norm"}:
+            _set_flow(kernel, inputs=[_input_flow("x", shape["producer"], shape["layout_from"])],
+                      outputs=[_output_flow("normalized", shape["consumer"], shape["layout_to"])])
         producer = kernels_by_name[shape["producer"]]
         consumer = kernels_by_name[shape["consumer"]]
         for edge in producer["outputs"]:

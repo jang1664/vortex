@@ -518,7 +518,13 @@ void kernel_kv_cache_quant(kernel_arg_t *__UNIFORM__ arg) {
   }
 }
 
+#include "kivi_dense.h"
+
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
+  if (arg->quant_mode == KV_QUANT_KIVI_INT_ZP) {
+    quantize_kivi_dense(arg);
+    return;
+  }
   if (arg->kernel_id == KERNEL_KV_CACHE_QUANT_W4A16) kernel_kv_cache_quant(arg);
 }
 

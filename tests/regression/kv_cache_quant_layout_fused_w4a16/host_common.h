@@ -25,7 +25,7 @@ static inline bool valid_fused_quant_shape(uint32_t K,
                                            uint32_t head_col_offset = 0) {
   if (K == 0 || N == 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1 ||
       GEMM_QDIR > 1 || SOURCE_TRANSPOSED > 1 ||
-      quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+      quant_mode > KV_QUANT_KIVI_INT_ZP) {
     return false;
   }
   if (SOURCE_TRANSPOSED != 0 && WTRANS == 0) {
@@ -42,6 +42,7 @@ static inline bool valid_fused_quant_shape(uint32_t K,
 }
 
 static inline uint32_t parse_quant_mode(const char* value) {
+  if (0 == strcmp(value, "kivi_int_zp")) return KV_QUANT_KIVI_INT_ZP;
   if (0 == strcmp(value, "legacy_uint4_asymmetric")) {
     return KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
   }
@@ -56,6 +57,7 @@ static inline uint32_t parse_quant_mode(const char* value) {
 
 static inline const char* quant_mode_name(uint32_t mode) {
   switch (mode) {
+  case KV_QUANT_KIVI_INT_ZP: return "kivi_int_zp";
   case KV_QUANT_LEGACY_UINT4_ASYMMETRIC:
     return "legacy_uint4_asymmetric";
   case KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC:
