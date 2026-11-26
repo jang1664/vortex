@@ -50,6 +50,28 @@ def config(model, batch, seq, reduction_width, capacity=None):
     )
 
 
+def unpack_cache_prefix(path, template, plan, pack):
+    """Invert the existing byte/element permutation for a hardware KV dump."""
+    indices = np.arange(1, template.size + 1).reshape(template.shape)
+    # Packing small integer digits works for FP16 metadata and packed W4 bytes.
+    destination = None
+    for shift in range(0, int(template.size).bit_length(), 8):
+        digits = ((indices >> shift) & 255).astype(template.dtype)
+        physical = pack(digits, plan).astype(np.int64) << shift
+        destination = physical if destination is None else destination + physical
+    raw = np.fromfile(path, dtype=template.dtype)
+    if raw.size != destination.size:
+        raise ValueError(f'KV dump size mismatch: {path}')
+    used = destination != 0
+    if not np.array_equal(np.unique(destination[used]), np.arange(1, template.size + 1)):
+        raise ValueError(f'KV layout does not cover every source element: {path}')
+    result = np.empty(template.size, dtype=template.dtype)
+    result[destination[used] - 1] = raw[used]
+    if not np.array_equal(result[destination[used] - 1], raw[used]):
+        raise ValueError(f"inconsistent replicated KV metadata: {path}")
+    return result.reshape(template.shape)
+
+
 def generate(args):
     root = args.fixture
     root.mkdir(parents=True, exist_ok=True)
@@ -89,7 +111,11 @@ def generate(args):
         write_tensor(name, archive.tensor(key))
 
     rng = np.random.default_rng(args.seed + (2 if decode else 1))
-    hidden = torch.from_numpy(rng.uniform(-1, 1, (args.batch, args.seq_len, cfg.hidden_size)).astype('float16'))
+    if args.hidden_input is None:
+        hidden = torch.from_numpy(rng.uniform(-1, 1, (args.batch, args.seq_len, cfg.hidden_size)).astype('float16'))
+    else:
+        shape = (args.batch, args.seq_len, cfg.hidden_size)
+        hidden = torch.from_numpy(np.fromfile(args.hidden_input, dtype=np.float16).reshape(shape))
     positions = (torch.arange(args.seq_len, dtype=torch.int64) + (args.past_kv_len if decode else 0)).expand(args.batch, -1)
     model = (Llama3LayerDecodeCheckpoints if decode else Llama3LayerPrefillCheckpoints)(cfg)
     local_params = {k.removeprefix('layers.0.'): v for k, v in params.items()}
@@ -100,6 +126,7 @@ def generate(args):
     write_tensor('hadamard.r3', model.r3_base.half().numpy())
     write_tensor('hadamard.r4', model.r4_base.half().numpy())
     initial_cache = []
+    device_initial = []
     if decode:
         past_meta = json.loads((args.past_fixture / 'fixture.json').read_text())
         if (past_meta['model'] != args.model or past_meta['seed'] != args.seed
@@ -117,15 +144,27 @@ def generate(args):
                 cache[i] = value.reshape(args.batch, cfg.num_key_value_heads, cfg.cache_capacity, -1)
                 cache[i][:, :, :args.past_kv_len] = torch.from_numpy(past[f'cache_{i + (0 if is_key else 3)}'][:, :, :args.past_kv_len])
             initial_cache.extend(cache)
+            device_cache = [tensor.numpy().copy() for tensor in cache]
+            device_initial.extend(device_cache)
             plan = plan_improve_layout(1, cfg.cache_capacity if is_key else cfg.head_dim,
                 cfg.head_dim if is_key else cfg.cache_capacity, cfg.kv_group_size, is_key, 0 if is_key else 1, layout_profile)
             for b in range(args.batch):
                 for h in range(cfg.num_key_value_heads):
                     name = f'{"key" if is_key else "value"}.{b}.{h}'
-                    write_tensor(name + '.weight', prepack_improve_weight(cache[0][b,h].numpy(), plan))
-                    write_tensor(name + '.scale', prepack_improve_qparam(cache[1][b,h].numpy(), plan, 'float16'))
-                    write_tensor(name + '.zero', prepack_improve_qparam(cache[2][b,h].numpy(), plan, 'int16'))
-        np.savez(root / 'initial_cache.npz', **{f'cache_{i}': t.numpy() for i,t in enumerate(initial_cache)})
+                    for idx, suffix in enumerate(('weight', 'scale', 'zero')):
+                        data = device_cache[idx][b,h]
+                        pack = (prepack_improve_weight if idx == 0 else
+                                lambda array, layout: prepack_improve_qparam(array, layout, data.dtype))
+                        if args.past_hw_output:
+                            length = args.past_kv_len
+                            old_plan = plan_improve_layout(length, length if is_key else cfg.head_dim,
+                                cfg.head_dim if is_key else length, cfg.kv_group_size, is_key,
+                                0 if is_key else 1, layout_profile)
+                            data[:length] = unpack_cache_prefix(
+                                args.past_hw_output / f'{name}.{suffix}.bin',
+                                data[:length], old_plan, pack)
+                        write_tensor(name + '.' + suffix, pack(data, plan))
+        np.savez(root / 'initial_cache.npz', **{f'cache_{i}': t for i,t in enumerate(device_initial)})
     (root / 'tensors.tsv').write_text(''.join(records))
     fields = dict(model=args.model, batch=args.batch, seq=args.seq_len, hidden=cfg.hidden_size,
                   ffn=cfg.intermediate_size, q_heads=cfg.num_attention_heads,
@@ -349,9 +388,10 @@ def tvm_stage(args):
         params = {name: torch.from_numpy(np.array(archive.tensor(name), copy=True)) for name in names}
         descriptors = []
         model_type = Llama3StackPrefillCheckpoints if args.checkpoints else Llama3StackPrefill
+        packed_kv = int(profile.target.attrs.get("vortex_gemm_abi_version", 2)) >= 3
         executable, seconds = _build(model_type(cfg, 1, prepacked_weights=True),
             (torch.from_numpy(hidden), torch.from_numpy(positions), params),
-            profile.target, 'fused', 'bytecode', True, descriptors)
+            profile.target, 'fused', 'bytecode', packed_kv, descriptors if packed_kv else None)
         executable.export_library(str(artifact / 'prefill.so'))
         record = dict(profile_fingerprint=profile.fingerprint, config=asdict(cfg),
                       parameter_order=names, packed_kv=descriptors, build_seconds=seconds,
@@ -432,7 +472,9 @@ def main():
     parser.add_argument('--decoder-stage', choices=['prefill', 'decode'], default='prefill')
     parser.add_argument('--past-kv-len', type=int, default=0)
     parser.add_argument('--cache-capacity', type=int, default=0)
+    parser.add_argument('--past-hw-output', type=Path, help='prefill layer dump supplying device KV data')
     parser.add_argument('--past-fixture', type=Path)
+    parser.add_argument('--hidden-input', type=Path, help='FP16 output of the preceding decoder layer')
     parser.add_argument('--seed', type=int, default=20260831)
     parser.add_argument('--manifest', default=DEFAULT_MANIFEST)
     parser.add_argument('--mxu', type=int, default=16)

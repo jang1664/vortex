@@ -55,7 +55,11 @@ def generate(a):
         for name in PROJECTION_DIMS:
             write(name + '.fp16', local[name + '.weight'].numpy().T)
     rng = np.random.default_rng(a.seed + (2 if decode else 1))
-    hidden = torch.from_numpy(rng.uniform(-1, 1, (a.batch, a.seq_len, cfg.hidden_size)).astype('float16'))
+    if a.hidden_input is None:
+        hidden = torch.from_numpy(rng.uniform(-1, 1, (a.batch, a.seq_len, cfg.hidden_size)).astype('float16'))
+    else:
+        shape = (a.batch, a.seq_len, cfg.hidden_size)
+        hidden = torch.from_numpy(np.fromfile(a.hidden_input, dtype=np.float16).reshape(shape))
     positions = (torch.arange(a.seq_len) + (a.past_kv_len if decode else 0)).expand(a.batch, -1)
     freq = positions[0].float()[:, None] * model.rope_inv_freq[None, :]
     for name, value in (('hidden', hidden), ('rope.cos', freq.cos().half()), ('rope.sin', freq.sin().half()), ('hadamard.r3', model.r3_base.half()), ('hadamard.r4', model.r4_base.half())):
@@ -71,12 +75,18 @@ def generate(a):
             full = np.zeros((*v.shape[:2], cfg.cache_capacity, v.shape[-1]), dtype=v.dtype)
             full[:, :, :a.past_kv_len] = v
             initial.append(torch.from_numpy(full))
+        device_initial = [tensor.numpy().copy() for tensor in initial]
         for kind, offset in (('key', 0), ('value', 3)):
             for b in range(a.batch):
                 for h in range(cfg.num_key_value_heads):
                     for j, suffix in enumerate(('weight', 'scale', 'zero')):
-                        write(f'{kind}.{b}.{h}.{suffix}', initial[offset + j][b, h].numpy())
-        np.savez(root / 'initial_cache.npz', **{f'cache_{i}': v.numpy() for i, v in enumerate(initial)})
+                        name = f'{kind}.{b}.{h}.{suffix}'
+                        payload = device_initial[offset + j][b, h]
+                        if a.past_hw_output:
+                            prefix = np.fromfile(a.past_hw_output / f'{name}.bin', dtype=payload.dtype)
+                            payload[:a.past_kv_len] = prefix.reshape(payload[:a.past_kv_len].shape)
+                        write(name, payload)
+        np.savez(root / 'initial_cache.npz', **{f'cache_{i}': v for i, v in enumerate(device_initial)})
     (root / 'tensors.tsv').write_text(''.join(records))
     fields = dict(candidate=a.candidate, model=a.model, batch=a.batch, seq=a.seq_len, hidden=cfg.hidden_size, ffn=cfg.intermediate_size, q_heads=cfg.num_attention_heads, kv_heads=cfg.num_key_value_heads, head_dim=cfg.head_dim)
     if decode:
@@ -220,7 +230,9 @@ def main():
     p.add_argument('--decoder-stage', choices=('prefill', 'decode'), default='prefill')
     p.add_argument('--past-kv-len', type=int, default=0)
     p.add_argument('--cache-capacity', type=int, default=0)
+    p.add_argument('--past-hw-output', type=Path, help='prefill layer dump supplying device KV data')
     p.add_argument('--past-fixture', type=Path)
+    p.add_argument('--hidden-input', type=Path, help='FP16 output of the preceding decoder layer')
     p.add_argument('--seed', type=int, default=20260831)
     p.add_argument('--threads', type=int, default=16)
     a = p.parse_args()

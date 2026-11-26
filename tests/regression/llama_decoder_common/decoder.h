@@ -11,6 +11,7 @@
 
 void rt_check(int status, const char* action);
 struct Buffer {
+  bool borrowed = false;
   vx_buffer_h handle = nullptr;
   uint64_t address = 0, bytes = 0;
   std::string name, layout;
@@ -32,12 +33,30 @@ class Decoder {
   Decoder& operator=(const Decoder&) = delete;
   void load(const std::filesystem::path& fixture);
   void build();
+  void prepare_iteration();
+  void configure_residency(uint32_t slots) { slots_ = slots; }
+  uint64_t free_hbm() const {
+    uint64_t free = 0, used = 0;
+    rt_check(vx_mem_info(device_, &free, &used), "query HBM capacity");
+    return free;
+  }
+  double staging_seconds() const { return staging_seconds_; }
+  void append_layer(const std::filesystem::path& fixture, uint32_t index);
   std::vector<Sample> run(bool profile, const std::filesystem::path& dump, size_t stop_after = 0);
   std::vector<Sample> isolated(unsigned repetitions);
   void save_output(const std::filesystem::path& folder);
   const std::vector<Operation>& operations() const { return ops_; }
   uint64_t cores = 0, warps = 0, threads = 0, tmem = 0, local_mem = 0;
  private:
+  struct Upload { vx_buffer_h buffer; std::filesystem::path file; uint64_t bytes; std::vector<uint8_t> host; };
+  uint32_t slots_ = UINT32_MAX, layer_ = 0;
+  double staging_seconds_ = 0;
+  bool first_group_ready_ = false;
+  std::vector<std::vector<Upload>> uploads_{1};
+  std::vector<size_t> starts_{0};
+  void stage_group(uint32_t first);
+  void spill_kv(uint32_t first, uint32_t end);
+  std::map<std::string, std::vector<uint8_t>> spilled_kv_;
   ModelConfig cfg_;
   vx_device_h device_ = nullptr;
   vx_buffer_h kernel_ = nullptr;

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include "../llama_decoder_common/stack_driver.h"
 
 namespace fs=std::filesystem;
 static std::vector<uint16_t> read_half(const fs::path& path) {
@@ -57,13 +58,15 @@ int main(int argc,char** argv) {
   try {
     std::string model="llama3-8b",mode="verify",stage="prefill",attention_launch="batched";
     fs::path fixture,out="decoder_results";
+    uint32_t layers=1, resident_layers=UINT32_MAX;
     uint32_t batch=1,seq=32,repetitions=3,stop_after=0,past_kv=0,capacity=0;
     bool diagnostic_timing=false,output_pass=true;
     for(int i=1;i<argc;++i) {
       std::string key=argv[i];
       if(key=="--help" || key=="-h") {
         std::cout<<"--model llama3-8b|llama2-7b --batch 1 --seq-len 32 --fixture DIR\n"
-                   "--mode verify|timing|isolated --output DIR --repetitions 3\n"
+                   "--layers 1|2|32 --resident-layers auto|N\n"
+                   "--mode verify|timing|isolated|decode-step --output DIR --repetitions 3\n"
                    "--stage prefill|decode --past-kv-len N --cache-capacity N\n"
                    "--attention-launch batched|per-head (default: batched)\n"
                    "--diagnostic-timing (measure despite output mismatch; still exit nonzero)\n"
@@ -80,6 +83,8 @@ int main(int argc,char** argv) {
       else if(key=="--attention-launch") attention_launch=value;
       else if(key=="--past-kv-len") past_kv=extent();
       else if(key=="--cache-capacity") capacity=extent();
+      else if(key=="--resident-layers") resident_layers=value=="auto" ? UINT32_MAX : extent();
+      else if(key=="--layers") layers=extent();
       else if(key=="--fixture") fixture=value;
       else if(key=="--output") out=value;
       else if(key=="--batch") batch=extent();
@@ -89,19 +94,43 @@ int main(int argc,char** argv) {
       else throw std::invalid_argument("unknown option "+key);
     }
     if(fixture.empty()) throw std::invalid_argument("--fixture is required");
-    if(mode!="verify" && mode!="timing" && mode!="isolated") throw std::invalid_argument("unknown mode");
+    if(mode!="verify" && mode!="timing" && mode!="isolated" && mode!="decode-step") throw std::invalid_argument("unknown mode");
     if(attention_launch!="batched" && attention_launch!="per-head") throw std::invalid_argument("unknown attention launch mode");
     if(stop_after && mode!="verify") throw std::invalid_argument("partial execution is only supported in verify mode");
     auto config=ModelConfig::preset(model); config.batch=batch; config.seq=seq; config.stage=stage; config.past_kv=past_kv; config.cache_capacity=capacity; config.validate();
-    if(!fs::exists(fixture/"reference/output.bin")) throw std::invalid_argument("fixture needs CPU reference/output.bin");
+    if (layers > 1 && mode == "isolated")
+      throw std::invalid_argument("isolated kernels use the single-layer fixture");
+    const auto stack_root = fixture;
+    if (layers != 1 && layers != 2 && layers != 32)
+      throw std::invalid_argument("--layers must be 1, 2, or 32");
+    if (layers > 1) fixture = stack_root / "layer-0";
+    if(mode!="decode-step" && !fs::exists(fixture/"reference/output.bin")) throw std::invalid_argument("fixture needs CPU reference/output.bin");
     fs::create_directories(out);
-    Decoder decoder(config,attention_launch=="batched"); decoder.load(fixture); decoder.build();
+    uint32_t slots = 0;
+    auto instance = build_decoder_stack([&] { return std::make_unique<Decoder>(config, attention_launch=="batched"); },
+                                       stack_root, fixture, layers, resident_layers, slots);
+    Decoder& decoder = *instance;
     size_t gemms=0,gemm_jobs=0;
     for(const auto& o:decoder.operations()) if(o.kind==DecoderOp::gemm) { ++gemms; gemm_jobs+=o.gemm_count; }
     std::cout<<"DECODER "<<model<<" B="<<batch<<" S="<<seq<<" heads="<<config.q_heads
       <<" stage="<<stage<<" past_kv="<<past_kv<<" capacity="<<capacity
       <<" kv_heads="<<config.kv_heads<<" operations="<<decoder.operations().size()<<" gemms="<<gemms
       <<" gemm_jobs="<<gemm_jobs<<" attention_launch="<<attention_launch<<std::endl;
+    if (mode == "decode-step") {
+      if (!config.decode()) throw std::invalid_argument("decode-step requires decode stage");
+      decoder.prepare_iteration();
+      const auto start = std::chrono::steady_clock::now();
+      decoder.run(false, {});
+      const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      decoder.save_output(out);
+      std::ofstream timing(out/"step.csv");
+      timing << "past_kv,layers,resident_layers,wall_s,staging_s,resident_s\n"
+             << std::setprecision(12) << past_kv << ',' << layers << ',' << slots << ','
+             << wall << ',' << decoder.staging_seconds() << ',' << wall-decoder.staging_seconds() << std::endl;
+      if (!timing) throw std::runtime_error("failed to write step timing");
+      if (fs::exists(fixture/"reference/output.bin")) check_output(fixture, out);
+      return 0;
+    }
     if(mode=="verify") {
       auto samples=decoder.run(true,out,stop_after); save_samples(out/"profile.csv",samples);
       if(stop_after && samples.size()<decoder.operations().size()) {
@@ -112,17 +141,25 @@ int main(int argc,char** argv) {
       std::cout<<"PASSED: decoder final output; intermediate checks are in reference.py"<<std::endl;
     } else {
       // Verify the actual chain once before collecting latency.
-      decoder.run(false,out);
+      decoder.run(false,layers == 1 ? out : fs::path{});
+      if (layers > 1) decoder.save_output(out);
       output_pass=check_output(fixture,out);
       if(!output_pass && !diagnostic_timing) throw std::runtime_error("correctness gate failed; timing skipped");
       if(!output_pass) std::cout<<"DIAGNOSTIC TIMING: output gate failed; these measurements are not a functionality PASS"<<std::endl;
       if(mode=="isolated") save_samples(out/"isolated.csv",decoder.isolated(repetitions));
       else {
+        std::ofstream stack_times(out/"stack_timings.csv");
+        stack_times << "repetition,layers,resident_layers,method,actual_wall_s,staging_s,resident_s\n" << std::setprecision(12);
         std::vector<double> times;
         for(uint32_t r=0;r<repetitions;++r) {
+          decoder.prepare_iteration();
           auto start=std::chrono::steady_clock::now(); decoder.run(false,{});
           auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-          times.push_back(elapsed); std::cout<<"TIMING "<<r<<' '<<elapsed<<std::endl;
+          stack_times << r << ',' << layers << ',' << slots << ','
+                      << (slots == layers ? "resident_direct" : "resident_estimated") << ','
+                      << elapsed << ',' << decoder.staging_seconds() << ',' << (elapsed-decoder.staging_seconds()) << std::endl;
+          std::cout<<"STACK actual_wall="<<elapsed<<" staging="<<decoder.staging_seconds()<<" resident="<<(elapsed-decoder.staging_seconds())<<std::endl;
+          times.push_back(elapsed-decoder.staging_seconds()); std::cout<<"TIMING "<<r<<' '<<elapsed<<std::endl;
         }
         std::ofstream file(out/"timings.csv"); file<<"repetition,seconds\n"<<std::setprecision(12);
         for(size_t i=0;i<times.size();++i) file<<i<<','<<times[i]<<'\n';

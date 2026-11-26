@@ -52,13 +52,25 @@ Decoder::Decoder(ModelConfig config) : cfg_(std::move(config)) {
 }
 Decoder::~Decoder() {
   for (auto& x:ops_) { if(x.dispatch_buffer) vx_mem_free(x.dispatch_buffer); if(x.args_buffer) vx_mem_free(x.args_buffer); }
-  for (auto& x:buffers_) if(x.second.handle) vx_mem_free(x.second.handle);
+  for (auto& x:buffers_) if(x.second.handle && !x.second.borrowed) vx_mem_free(x.second.handle);
   if(kernel_) vx_mem_free(kernel_);
   if(device_) vx_dev_close(device_);
 }
 Buffer& Decoder::alloc(const std::string& name, uint64_t bytes, const std::string& layout,
     uint32_t matrices, uint32_t rows, uint32_t cols) {
   if (!bytes || buffers_.count(name)) throw std::runtime_error("invalid/duplicate buffer "+name);
+  if (layer_ && name != "hidden" && name != "output") {
+    const bool persistent = layout == "fixture" || layout == "w" || layout == "scale" || layout == "zero";
+    if (!persistent || layer_ >= slots_) {
+      auto first = persistent ? layer_ % slots_ : 0u;
+      const auto& storage = buffers_.at("layer-" + std::to_string(first) + "/" + name);
+      if (storage.bytes != bytes || storage.layout != layout)
+        throw std::runtime_error("stack buffer layout mismatch: " + name);
+      auto alias = storage;
+      alias.borrowed = true;
+      return buffers_.emplace(name, alias).first->second;
+    }
+  }
   Buffer b; b.name=name; b.bytes=bytes; b.layout=layout; b.matrices=matrices; b.rows=rows; b.cols=cols;
   // The original TCU kernel rounds M to its hardware tile. Extra output rows
   // never change the logical row pitch; reserve and initialize the tail so
@@ -99,7 +111,15 @@ void Decoder::load(const fs::path& fixture) {
   while(std::getline(list,line)) {
     std::istringstream s(line); std::string name,file; uint64_t bytes;
     if(!(s>>name>>bytes>>file)) throw std::runtime_error("invalid tensor record");
+    if (name == "hidden" && buffers_.count(name)) {
+      if (buffers_.at(name).bytes < bytes) throw std::runtime_error("short preceding layer output");
+      continue;
+    }
     auto& buffer=alloc(name,bytes,"fixture");
+    if (slots_ != UINT32_MAX && name != "hidden") {
+      uploads_.at(layer_).push_back({buffer.handle, fixture/file, bytes, {}});
+      if (layer_ >= slots_) continue;
+    }
     std::ifstream data(fixture/file,std::ios::binary);
     if(!data || fs::file_size(fixture/file)!=bytes) throw std::runtime_error("invalid fixture tensor "+name);
     std::vector<uint8_t> chunk(std::min<uint64_t>(bytes,1<<20));
@@ -111,6 +131,7 @@ void Decoder::load(const fs::path& fixture) {
     }
   }
 }
+#include "../llama_decoder_common/stack_layer.inc"
 void Decoder::append(Operation operation) {
   for(const auto& name:operation.inputs) (void)buffers_.at(name);
   for(const auto& name:operation.outputs) (void)buffers_.at(name);
@@ -134,25 +155,64 @@ Sample Decoder::launch(Operation& operation, bool profile) {
 void Decoder::dump_buffer(const std::string& name,const fs::path& folder) {
   const auto& b=buffers_.at(name); std::vector<uint8_t> bytes(b.bytes);
   rt_check(vx_copy_from_dev(bytes.data(),b.handle,0,b.bytes), "dump tensor");
-  std::ofstream out(folder/(name+".bin"),std::ios::binary);
+  const auto path = folder/(name+".bin");
+  fs::create_directories(path.parent_path());
+  std::ofstream out(path,std::ios::binary);
   out.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());
   if(!out) throw std::runtime_error("could not dump "+name);
 }
 void Decoder::save_output(const fs::path& folder) {
   dump_buffer("output",folder);
-  if(cfg_.decode()) for(const auto& operation:ops_)
-    if(operation.kind==DecoderOp::quant)
-      for(const auto& name:operation.outputs) dump_buffer(name,folder);
+  for (uint32_t i = 0; i < layer_; ++i)
+    dump_buffer("layer-" + std::to_string(i) + "/output", folder);
+  if (!cfg_.decode() && layer_ == 0) return;
+  for (const auto& operation : ops_) {
+    if (operation.kind != DecoderOp::quant) continue;
+    for (const auto& name : operation.outputs) {
+      if (layer_ && name.find(".logical_") != std::string::npos) continue;
+      auto saved = spilled_kv_.find(name);
+      if (saved == spilled_kv_.end()) {
+        dump_buffer(name, folder);
+      } else {
+        auto path = folder / (name + ".bin");
+        fs::create_directories(path.parent_path());
+        std::ofstream file(path, std::ios::binary);
+        const auto& bytes = saved->second;
+        if (!file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size()))
+          throw std::runtime_error("could not save spilled KV: " + name);
+      }
+    }
+  }
 }
 std::vector<Sample> Decoder::run(bool profile,const fs::path& dump,size_t stop_after) {
   std::vector<Sample> samples;
   if(!dump.empty()) {
     fs::create_directories(dump);
-    std::ofstream catalog(dump/"buffers.tsv");
-    for(const auto& [name,b]:buffers_)
-      catalog<<name<<'\t'<<b.layout<<'\t'<<b.matrices<<'\t'<<b.rows<<'\t'<<b.cols<<'\t'<<b.bytes<<'\n';
+    for (const auto& op : ops_) fs::create_directories((dump / op.name).parent_path());
+    std::map<std::string, std::ofstream> catalogs;
+    for (const auto& [name, b] : buffers_) {
+      const fs::path path(name);
+      const auto parent = path.parent_path().string();
+      auto& catalog = catalogs[parent];
+      if (!catalog.is_open()) catalog.open(dump / parent / "buffers.tsv");
+      catalog << path.filename().string() << '\t' << b.layout << '\t' << b.matrices
+              << '\t' << b.rows << '\t' << b.cols << '\t' << b.bytes << '\n';
+      if (!catalog) throw std::runtime_error("failed to write decoder buffer catalog");
+    }
   }
+  staging_seconds_ = 0;
+  if (slots_ <= layer_ && !first_group_ready_) prepare_iteration();
+  uint32_t next_group = slots_;
+  first_group_ready_ = false;
   for(auto& operation:ops_) {
+    if (slots_ <= layer_ && next_group <= layer_ && samples.size() == starts_[next_group]) {
+      auto start = std::chrono::steady_clock::now();
+      spill_kv(next_group - slots_, next_group);
+      stage_group(next_group);
+      staging_seconds_ += std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+      next_group += slots_;
+    }
+
     if(!dump.empty()) std::cout<<"BEGIN "<<samples.size()<<' '<<operation.name<<std::endl;
     samples.push_back(launch(operation,profile));
     if(!dump.empty()) {
@@ -214,7 +274,7 @@ void Decoder::multiply(const std::string& name,const std::string& input,const st
 #endif
 }
 void Decoder::build() {
-  if(!ops_.empty())throw std::runtime_error("decoder already built");
+  if (buffers_.count("output")) throw std::runtime_error("decoder already built");
   const uint32_t B=cfg_.batch,S=cfg_.seq,M=B*S,H=cfg_.hidden,F=cfg_.ffn;
   const uint32_t Q=cfg_.q_heads,V=cfg_.kv_heads,D=cfg_.head_dim;
   const uint32_t G=cfg_.attention_group_size();
